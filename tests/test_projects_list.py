@@ -18,11 +18,12 @@ PROJECT_B = {**PROJECT_A, "client_slug": "list-proj-b"}
 @pytest.fixture(autouse=True)
 def clean():
     # Remove any leftover DB files before each test so list tests start fresh
-    settings = get_settings()
-    db_dir = Path(settings.database_dir)
+    db_dir = Path(get_settings().database_dir)
     for db_file in db_dir.glob("*.db"):
         db_file.unlink(missing_ok=True)
     yield
+    for db_file in db_dir.glob("*.db"):
+        db_file.unlink(missing_ok=True)
     get_settings.cache_clear()
 
 
@@ -42,3 +43,4 @@ async def test_list_projects_returns_all(client):
     slugs = [p["slug"] for p in resp.json()]
     assert "list-proj-a" in slugs
     assert "list-proj-b" in slugs
+    assert len(slugs) == 2
