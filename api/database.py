@@ -52,15 +52,6 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             notes       TEXT,
             reviewed_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
-
-        CREATE TABLE IF NOT EXISTS users (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            username    TEXT UNIQUE NOT NULL,
-            role        TEXT NOT NULL DEFAULT 'consultant',
-            hashed_pw   TEXT NOT NULL,
-            project_slug TEXT,
-            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
     """)
     # executescript issues an implicit COMMIT before running; the call below
     # is a safety flush but the schema is already committed.

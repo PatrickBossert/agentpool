@@ -22,7 +22,7 @@ async def test_init_db_creates_tables(db):
         "SELECT name FROM sqlite_master WHERE type='table'"
     ) as cursor:
         tables = {row[0] async for row in cursor}
-    assert {"projects", "crew_runs", "agent_outputs", "human_reviews", "users"}.issubset(tables)
+    assert {"projects", "crew_runs", "agent_outputs", "human_reviews"}.issubset(tables)
 
 
 @pytest.mark.asyncio
