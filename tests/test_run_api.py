@@ -35,3 +35,4 @@ async def test_run_known_project_queues_run(client):
     assert data["project_slug"] == "run-test"
     assert data["crew"] == "discovery"
     assert data["status"] == "queued"
+    assert isinstance(data["run_id"], int)

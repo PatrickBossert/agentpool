@@ -5,7 +5,7 @@ from api.services.project_service import get_project_status
 
 router = APIRouter(tags=["websocket"])
 
-# In-memory log queues per project slug — agents push log lines here
+# In-memory log queues per slug. No eviction — acceptable for single-instance MVP.
 _log_queues: dict[str, asyncio.Queue] = {}
 
 
@@ -23,12 +23,11 @@ async def push_log(slug: str, message: str) -> None:
 
 @router.websocket("/ws/{slug}")
 async def websocket_log_stream(websocket: WebSocket, slug: str):
+    await websocket.accept()
     status = await get_project_status(slug)
     if not status:
         await websocket.close(code=4004)
         return
-
-    await websocket.accept()
     q = get_log_queue(slug)
     try:
         while True:
