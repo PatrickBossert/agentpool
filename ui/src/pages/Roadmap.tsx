@@ -20,7 +20,7 @@ export default function Roadmap() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-slate-100">Roadmap</h2>
-        <div className="flex rounded-lg overflow-hidden border border-slate-700">
+        <div className="flex rounded-lg overflow-hidden border border-slate-700" role="tablist">
           {(['visual', 'gantt'] as Tab[]).map((t) => (
             <button
               key={t}
