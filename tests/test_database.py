@@ -11,6 +11,7 @@ async def db(tmp_path):
     db_path = tmp_path / "test.db"
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA foreign_keys = ON")
         await init_db(conn)
         yield conn
 
@@ -27,11 +28,35 @@ async def test_init_db_creates_tables(db):
 @pytest.mark.asyncio
 async def test_insert_and_fetch_project(db):
     from api.database import insert_project, fetch_project
-    await insert_project(db, slug="acme", llm_mode="standard", sector="rail", config_json='{}')
+    result = await insert_project(db, slug="acme", llm_mode="standard", sector="rail", config_json='{}')
+    assert result is True
     project = await fetch_project(db, slug="acme")
     assert project["slug"] == "acme"
     assert project["llm_mode"] == "standard"
     assert project["status"] == "created"
+
+
+@pytest.mark.asyncio
+async def test_insert_project_duplicate_slug_returns_false(db):
+    from api.database import insert_project
+    first = await insert_project(db, slug="dup", llm_mode="standard", sector="rail", config_json='{}')
+    second = await insert_project(db, slug="dup", llm_mode="standard", sector="rail", config_json='{}')
+    assert first is True
+    assert second is False
+
+
+@pytest.mark.asyncio
+async def test_get_connection_context_manager(tmp_path, monkeypatch):
+    import api.config as cfg
+    cfg.get_settings.cache_clear()
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    cfg.get_settings.cache_clear()
+    from api.database import get_connection
+    async with get_connection("conn-test") as conn:
+        async with conn.execute("SELECT name FROM sqlite_master WHERE type='table'") as cur:
+            tables = {row[0] async for row in cur}
+    assert "projects" in tables
+    cfg.get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 # api/database.py
 import aiosqlite
+from contextlib import asynccontextmanager
 from pathlib import Path
 from api.config import get_settings
 
@@ -9,6 +10,7 @@ def get_db_path(slug: str) -> Path:
 
 
 async def init_db(conn: aiosqlite.Connection) -> None:
+    await conn.execute("PRAGMA foreign_keys = ON")
     await conn.executescript("""
         CREATE TABLE IF NOT EXISTS projects (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,33 +62,42 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    # executescript issues an implicit COMMIT before running; the call below
+    # is a safety flush but the schema is already committed.
     await conn.commit()
 
 
-async def get_connection(slug: str) -> aiosqlite.Connection:
+@asynccontextmanager
+async def get_connection(slug: str):
     path = get_db_path(slug)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = await aiosqlite.connect(path)
-    conn.row_factory = aiosqlite.Row
-    await init_db(conn)
-    return conn
+    async with aiosqlite.connect(path) as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await init_db(conn)
+        yield conn
 
 
-async def insert_project(conn, *, slug: str, llm_mode: str, sector: str, config_json: str) -> None:
-    await conn.execute(
-        "INSERT OR IGNORE INTO projects (slug, llm_mode, sector, config_json) VALUES (?,?,?,?)",
-        (slug, llm_mode, sector, config_json),
-    )
-    await conn.commit()
+async def insert_project(conn: aiosqlite.Connection, *, slug: str, llm_mode: str, sector: str, config_json: str) -> bool:
+    """Insert a project. Returns True if inserted, False if slug already exists."""
+    try:
+        await conn.execute(
+            "INSERT INTO projects (slug, llm_mode, sector, config_json) VALUES (?,?,?,?)",
+            (slug, llm_mode, sector, config_json),
+        )
+        await conn.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False
 
 
-async def fetch_project(conn, *, slug: str) -> dict | None:
+async def fetch_project(conn: aiosqlite.Connection, *, slug: str) -> dict | None:
     async with conn.execute("SELECT * FROM projects WHERE slug=?", (slug,)) as cur:
         row = await cur.fetchone()
         return dict(row) if row else None
 
 
-async def insert_crew_run(conn, *, project_id: int, crew_name: str, status: str) -> int:
+async def insert_crew_run(conn: aiosqlite.Connection, *, project_id: int, crew_name: str, status: str) -> int:
     cur = await conn.execute(
         "INSERT INTO crew_runs (project_id, crew_name, status, started_at) VALUES (?,?,?, CURRENT_TIMESTAMP)",
         (project_id, crew_name, status),
@@ -95,14 +106,14 @@ async def insert_crew_run(conn, *, project_id: int, crew_name: str, status: str)
     return cur.lastrowid
 
 
-async def fetch_crew_runs(conn, *, project_id: int) -> list[dict]:
+async def fetch_crew_runs(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
     async with conn.execute(
         "SELECT * FROM crew_runs WHERE project_id=? ORDER BY created_at DESC", (project_id,)
     ) as cur:
         return [dict(r) async for r in cur]
 
 
-async def insert_agent_output(conn, *, project_id: int, agent_name: str,
+async def insert_agent_output(conn: aiosqlite.Connection, *, project_id: int, agent_name: str,
                                output_type: str, file_path: str, version: int) -> int:
     cur = await conn.execute(
         "INSERT INTO agent_outputs (project_id, agent_name, output_type, file_path, version) VALUES (?,?,?,?,?)",
@@ -112,7 +123,7 @@ async def insert_agent_output(conn, *, project_id: int, agent_name: str,
     return cur.lastrowid
 
 
-async def fetch_agent_outputs(conn, *, project_id: int) -> list[dict]:
+async def fetch_agent_outputs(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
     async with conn.execute(
         "SELECT * FROM agent_outputs WHERE project_id=? ORDER BY created_at DESC", (project_id,)
     ) as cur:
