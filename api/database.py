@@ -97,6 +97,11 @@ async def fetch_project(conn: aiosqlite.Connection, *, slug: str) -> dict | None
         return dict(row) if row else None
 
 
+async def list_projects(conn: aiosqlite.Connection) -> list[dict]:
+    async with conn.execute("SELECT * FROM projects ORDER BY created_at DESC") as cur:
+        return [dict(r) async for r in cur]
+
+
 async def insert_crew_run(conn: aiosqlite.Connection, *, project_id: int, crew_name: str, status: str) -> int:
     cur = await conn.execute(
         "INSERT INTO crew_runs (project_id, crew_name, status, started_at) VALUES (?,?,?, CURRENT_TIMESTAMP)",

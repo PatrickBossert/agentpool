@@ -1,10 +1,15 @@
 # api/routers/projects.py
 from fastapi import APIRouter, HTTPException, Response
 from api.database import get_db_path
-from api.models import ProjectCreate, StatusResponse
-from api.services.project_service import create_project, get_project_status
+from api.models import ProjectCreate, StatusResponse, ProjectResponse
+from api.services.project_service import create_project, get_project_status, list_all_projects
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.get("", response_model=list[ProjectResponse])
+async def list_projects_endpoint():
+    return await list_all_projects()
 
 
 @router.post("", status_code=201)

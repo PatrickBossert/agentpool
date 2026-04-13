@@ -12,6 +12,7 @@ from api.database import (
     fetch_project,
     fetch_crew_runs,
     fetch_agent_outputs,
+    list_projects,
 )
 from api.models import ProjectCreate
 
@@ -69,3 +70,20 @@ async def get_project_outputs(slug: str) -> list[dict]:
         if not project:
             return []
         return await fetch_agent_outputs(conn, project_id=project["id"])
+
+
+async def list_all_projects() -> list[dict]:
+    """Return all projects across all project DBs."""
+    settings = get_settings()
+    db_dir = Path(settings.database_dir)
+    if not db_dir.exists():
+        return []
+    results = []
+    for db_file in sorted(db_dir.glob("*.db")):
+        slug = db_file.stem
+        if slug == "system":
+            continue  # system.db holds users, not projects
+        async with get_connection(slug) as conn:
+            rows = await list_projects(conn)
+            results.extend(rows)
+    return results
