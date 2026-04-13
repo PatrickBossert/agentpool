@@ -1,0 +1,10 @@
+[project]
+enable_telemetry = false
+
+[UI]
+name = "AgentPool"
+show_readme_as_default = true
+default_collapse_content = true
+
+[features]
+multi_modal = true
