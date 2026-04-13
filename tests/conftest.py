@@ -11,6 +11,8 @@ from pathlib import Path
 os.environ.setdefault("DATABASE_DIR", "/tmp/agentpool_test")
 os.environ.setdefault("PROJECTS_DIR", "/tmp/agentpool_test_projects")
 os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("ADMIN_PASSWORD", "test-admin-pw")
+os.environ.setdefault("ADMIN_USERNAME", "admin")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 os.environ.setdefault("LITELLM_PROXY_URL", "http://localhost:4000")
 os.environ.setdefault("LLAMACPP_BASE_URL", "http://localhost:10000")

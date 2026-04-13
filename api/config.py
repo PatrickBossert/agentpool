@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     database_dir: str = "/Users/pboagents/Documents/agentpool1/data"
     projects_dir: str = "/Users/pboagents/Documents/agentpool1/projects"
     jwt_secret: str
+    admin_username: str = "admin"
+    admin_password: str = "changeme"
 
     model_config = SettingsConfigDict(env_file=".env")
 

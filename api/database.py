@@ -133,3 +133,50 @@ async def fetch_agent_outputs(conn: aiosqlite.Connection, *, project_id: int) ->
         "SELECT * FROM agent_outputs WHERE project_id=? ORDER BY created_at DESC", (project_id,)
     ) as cur:
         return [dict(r) async for r in cur]
+
+
+# ── System DB (users) ────────────────────────────────────────────────────────
+
+def get_system_db_path() -> Path:
+    return Path(get_settings().database_dir) / "system.db"
+
+
+@asynccontextmanager
+async def get_system_connection():
+    path = get_system_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    async with aiosqlite.connect(path) as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                username    TEXT UNIQUE NOT NULL,
+                role        TEXT NOT NULL DEFAULT 'consultant',
+                hashed_pw   TEXT NOT NULL,
+                project_slug TEXT,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        await conn.commit()
+        yield conn
+
+
+async def fetch_user(conn: aiosqlite.Connection, *, username: str) -> dict | None:
+    async with conn.execute("SELECT * FROM users WHERE username=?", (username,)) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def insert_user(conn: aiosqlite.Connection, *, username: str, role: str,
+                      hashed_pw: str, project_slug: str | None = None) -> bool:
+    """Returns True if inserted, False if username already exists."""
+    try:
+        await conn.execute(
+            "INSERT INTO users (username, role, hashed_pw, project_slug) VALUES (?,?,?,?)",
+            (username, role, hashed_pw, project_slug),
+        )
+        await conn.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False
