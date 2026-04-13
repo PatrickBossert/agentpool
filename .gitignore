@@ -1,5 +1,8 @@
 .superpowers/
-data/
+data/chroma/*
+!data/chroma/.gitkeep
+data/n8n/*
+!data/n8n/.gitkeep
 models/
 projects/*
 !projects/example/
