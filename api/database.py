@@ -165,6 +165,31 @@ async def fetch_documents(conn: aiosqlite.Connection, *, project_id: int) -> lis
         return [dict(r) async for r in cur]
 
 
+async def insert_review(
+    conn: aiosqlite.Connection, *,
+    output_id: int,
+    reviewer: str,
+    decision: str,
+    notes: str,
+) -> int:
+    cur = await conn.execute(
+        "INSERT INTO human_reviews (output_id, reviewer, decision, notes) VALUES (?,?,?,?)",
+        (output_id, reviewer, decision, notes),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_outputs_by_type(
+    conn: aiosqlite.Connection, *, project_id: int, output_type: str
+) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM agent_outputs WHERE project_id=? AND output_type=? ORDER BY created_at DESC",
+        (project_id, output_type),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
 # ── System DB (users) ────────────────────────────────────────────────────────
 
 def get_system_db_path() -> Path:

@@ -1,6 +1,6 @@
 # api/routers/projects.py
 from fastapi import APIRouter, HTTPException, Response
-from api.database import get_db_path
+from api.database import get_db_path, get_connection, fetch_project, fetch_outputs_by_type
 from api.models import ProjectCreate, StatusResponse, ProjectResponse
 from api.services.project_service import create_project, get_project_status, list_all_projects
 
@@ -25,3 +25,25 @@ async def get_status(slug: str):
     if not result:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     return result
+
+
+@router.get("/{slug}/value-chain")
+async def get_value_chain(slug: str):
+    if not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+        return await fetch_outputs_by_type(conn, project_id=project["id"], output_type="value_chain")
+
+
+@router.get("/{slug}/roadmap")
+async def get_roadmap(slug: str):
+    if not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+        return await fetch_outputs_by_type(conn, project_id=project["id"], output_type="roadmap")
