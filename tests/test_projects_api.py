@@ -4,10 +4,13 @@ from pathlib import Path
 
 import pytest
 
+from api.config import get_settings
+
 
 @pytest.fixture(autouse=True)
 def clean_test_state():
     """Remove any leftover test-rail state before each test."""
+    get_settings.cache_clear()
     db_dir = Path("/tmp/agentpool_test")
     proj_dir = Path("/tmp/agentpool_test_projects")
     for d in (db_dir, proj_dir):
@@ -43,7 +46,9 @@ async def test_create_project_returns_201(client):
 async def test_create_project_idempotent(client):
     await client.post("/projects", json=PROJECT_PAYLOAD)
     resp = await client.post("/projects", json=PROJECT_PAYLOAD)
-    assert resp.status_code == 200  # already exists → 200
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["slug"] == "test-rail"
 
 
 @pytest.mark.asyncio
