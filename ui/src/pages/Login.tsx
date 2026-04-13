@@ -18,7 +18,7 @@ export default function Login() {
     setLoading(true)
     try {
       const resp = await authApi.login(username, password)
-      let payload = { sub: '' }
+      let payload = { sub: '', role: '', exp: 0 }
       try {
         payload = JSON.parse(atob(resp.access_token.split('.')[1]))
       } catch {

@@ -4,6 +4,14 @@ import type { UserPayload } from '../types'
 
 const TOKEN_KEY = 'ap_token'
 
+function parseToken(token: string): UserPayload | null {
+  try {
+    return JSON.parse(atob(token.split('.')[1])) as UserPayload
+  } catch {
+    return null
+  }
+}
+
 interface AuthState {
   token: string | null
   user: UserPayload | null
@@ -17,7 +25,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(
     () => localStorage.getItem(TOKEN_KEY)
   )
-  const [user, setUser] = useState<UserPayload | null>(null)
+  const [user, setUser] = useState<UserPayload | null>(() => {
+    const t = localStorage.getItem(TOKEN_KEY)
+    return t ? parseToken(t) : null
+  })
 
   function login(newToken: string, newUser: UserPayload) {
     localStorage.setItem(TOKEN_KEY, newToken)
