@@ -10,3 +10,4 @@ projects/*
 __pycache__/
 .env
 .worktrees/
+.pids/
