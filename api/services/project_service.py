@@ -1,9 +1,18 @@
 # api/services/project_service.py
 import json
+import os
+import tempfile
 import yaml
 from pathlib import Path
-from api.config import get_settings, load_project_config
-from api.database import get_connection, insert_project, fetch_project
+from api.config import get_settings
+from api.database import (
+    get_connection,
+    get_db_path,
+    insert_project,
+    fetch_project,
+    fetch_crew_runs,
+    fetch_agent_outputs,
+)
 from api.models import ProjectCreate
 
 
@@ -16,12 +25,18 @@ async def create_project(req: ProjectCreate) -> dict:
     (project_dir / "docs").mkdir(parents=True, exist_ok=True)
     (project_dir / "outputs").mkdir(parents=True, exist_ok=True)
 
-    # Write config.yaml only if it doesn't exist (idempotent)
+    # Write config.yaml atomically (tempfile + os.replace prevents partial writes)
     config = req.model_dump()
     config_path = project_dir / "config.yaml"
     if not config_path.exists():
-        with open(config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False)
+        fd, tmp_path = tempfile.mkstemp(dir=project_dir, suffix=".yaml.tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+            os.replace(tmp_path, config_path)
+        except Exception:
+            os.unlink(tmp_path)
+            raise
 
     # Initialise SQLite DB and insert project
     async with get_connection(slug) as conn:
@@ -36,7 +51,8 @@ async def create_project(req: ProjectCreate) -> dict:
 
 
 async def get_project_status(slug: str) -> dict | None:
-    from api.database import fetch_crew_runs
+    if not get_db_path(slug).exists():
+        return None
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
@@ -46,7 +62,8 @@ async def get_project_status(slug: str) -> dict | None:
 
 
 async def get_project_outputs(slug: str) -> list[dict]:
-    from api.database import fetch_agent_outputs
+    if not get_db_path(slug).exists():
+        return []
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
