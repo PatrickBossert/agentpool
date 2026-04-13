@@ -44,8 +44,8 @@ export const projectsApi = {
   roadmap: (slug: string): Promise<AgentOutput[]> =>
     apiClient.get<AgentOutput[]>(`/projects/${slug}/roadmap`).then((r) => r.data),
 
-  review: (slug: string, outputId: number, decision: string): Promise<void> =>
+  review: (slug: string, outputId: number, decision: string, notes = '') =>
     apiClient
-      .post(`/projects/${slug}/outputs/${outputId}/review`, { decision })
-      .then(() => undefined),
+      .post(`/projects/${slug}/review`, { output_id: outputId, decision, notes })
+      .then((r) => r.data),
 }

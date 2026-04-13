@@ -22,7 +22,7 @@ app = FastAPI(title="AgentPool API", version="0.1.0", lifespan=lifespan, favicon
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
