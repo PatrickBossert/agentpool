@@ -1,7 +1,9 @@
 .superpowers/
 data/
 models/
-projects/
+projects/*
+!projects/example/
+!projects/example/**
 __pycache__/
 .env
 .worktrees/
