@@ -22,10 +22,16 @@ cd chainlit_app && chainlit run app.py --port 8001 &
 echo $! > .pids/chainlit.pid
 cd ..
 
+echo "Starting React UI on :3000..."
+cd ui && npm run dev -- --port 3000 &
+echo $! > ../.pids/ui.pid
+cd ..
+
 echo ""
 echo "AgentPool services running:"
 echo "  FastAPI:   http://localhost:8000/docs"
 echo "  Chainlit:  http://localhost:8001"
+echo "  React UI:  http://localhost:3000"
 echo "  n8n:       http://localhost:5678"
 echo "  ChromaDB:  http://localhost:8002"
 echo "  LiteLLM:   http://localhost:4000"
