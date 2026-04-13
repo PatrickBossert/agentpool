@@ -1,0 +1,6 @@
+.superpowers/
+data/
+models/
+projects/
+__pycache__/
+.env
