@@ -1,0 +1,119 @@
+# api/database.py
+import aiosqlite
+from pathlib import Path
+from api.config import get_settings
+
+
+def get_db_path(slug: str) -> Path:
+    return Path(get_settings().database_dir) / f"{slug}.db"
+
+
+async def init_db(conn: aiosqlite.Connection) -> None:
+    await conn.executescript("""
+        CREATE TABLE IF NOT EXISTS projects (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug        TEXT UNIQUE NOT NULL,
+            llm_mode    TEXT NOT NULL DEFAULT 'standard',
+            sector      TEXT,
+            config_json TEXT,
+            status      TEXT NOT NULL DEFAULT 'created',
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS crew_runs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  INTEGER NOT NULL REFERENCES projects(id),
+            crew_name   TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            result_json TEXT,
+            started_at  DATETIME,
+            finished_at DATETIME,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_outputs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  INTEGER NOT NULL REFERENCES projects(id),
+            agent_name  TEXT NOT NULL,
+            output_type TEXT NOT NULL,
+            file_path   TEXT NOT NULL,
+            version     INTEGER NOT NULL DEFAULT 1,
+            review_status TEXT NOT NULL DEFAULT 'pending',
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS human_reviews (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            output_id   INTEGER NOT NULL REFERENCES agent_outputs(id),
+            reviewer    TEXT,
+            decision    TEXT NOT NULL,
+            notes       TEXT,
+            reviewed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            username    TEXT UNIQUE NOT NULL,
+            role        TEXT NOT NULL DEFAULT 'consultant',
+            hashed_pw   TEXT NOT NULL,
+            project_slug TEXT,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    await conn.commit()
+
+
+async def get_connection(slug: str) -> aiosqlite.Connection:
+    path = get_db_path(slug)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = await aiosqlite.connect(path)
+    conn.row_factory = aiosqlite.Row
+    await init_db(conn)
+    return conn
+
+
+async def insert_project(conn, *, slug: str, llm_mode: str, sector: str, config_json: str) -> None:
+    await conn.execute(
+        "INSERT OR IGNORE INTO projects (slug, llm_mode, sector, config_json) VALUES (?,?,?,?)",
+        (slug, llm_mode, sector, config_json),
+    )
+    await conn.commit()
+
+
+async def fetch_project(conn, *, slug: str) -> dict | None:
+    async with conn.execute("SELECT * FROM projects WHERE slug=?", (slug,)) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def insert_crew_run(conn, *, project_id: int, crew_name: str, status: str) -> int:
+    cur = await conn.execute(
+        "INSERT INTO crew_runs (project_id, crew_name, status, started_at) VALUES (?,?,?, CURRENT_TIMESTAMP)",
+        (project_id, crew_name, status),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_crew_runs(conn, *, project_id: int) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM crew_runs WHERE project_id=? ORDER BY created_at DESC", (project_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def insert_agent_output(conn, *, project_id: int, agent_name: str,
+                               output_type: str, file_path: str, version: int) -> int:
+    cur = await conn.execute(
+        "INSERT INTO agent_outputs (project_id, agent_name, output_type, file_path, version) VALUES (?,?,?,?,?)",
+        (project_id, agent_name, output_type, file_path, version),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_agent_outputs(conn, *, project_id: int) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM agent_outputs WHERE project_id=? ORDER BY created_at DESC", (project_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
