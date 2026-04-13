@@ -4,3 +4,4 @@ models/
 projects/
 __pycache__/
 .env
+.worktrees/
