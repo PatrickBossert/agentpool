@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash /Users/pboagents/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/brainstorming/scripts/start-server.sh --project-dir /Users/pboagents/Documents/agentpool1)",
+      "Bash(brew install:*)",
+      "Bash(pdftoppm -r 150 \"/Users/pboagents/Downloads/Roadmap pt 1.pdf\" /tmp/roadmap1)",
+      "Read(//private/tmp/**)",
+      "Bash(pdftoppm -r 150 \"/Users/pboagents/Downloads/Roadmap pt 2.pdf\" /tmp/roadmap2)",
+      "Bash(ls /tmp/roadmap2*)",
+      "Bash(convert /tmp/roadmap1-1.ppm /tmp/roadmap1-1.png)",
+      "Bash(convert /tmp/roadmap2-1.ppm /tmp/roadmap2-1.png)",
+      "Bash(sips -s format png /tmp/roadmap1-1.ppm --out /tmp/roadmap1-1.png)",
+      "Bash(sips -s format png /tmp/roadmap2-1.ppm --out /tmp/roadmap2-1.png)",
+      "Bash(git -C /Users/pboagents/Documents/agentpool1 init)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
+    ]
+  }
+}

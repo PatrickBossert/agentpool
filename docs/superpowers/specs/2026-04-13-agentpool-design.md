@@ -55,7 +55,7 @@ SP2 and SP3 can partially overlap once SP1 is stable.
 ## 4. Directory Structure
 
 ```
-~/agentpool/
+/Users/pboagents/Documents/agentpool1/
   agents/           # CrewAI agent definitions (one file per agent)
   crews/            # Crew + Flow definitions
   tools/            # Shared agent tools (search, ingest, output, etc.)
@@ -226,6 +226,7 @@ Routes all agent LLM calls based on project `llm_mode`:
 
 ### Embedding
 - Model: `nomic-embed-text` via llama.cpp
+- **Note:** The existing llama.cpp instance runs Qwen3 4B. A second llama.cpp instance (or model swap) is needed to serve `nomic-embed-text` for embeddings. Simplest option: run a dedicated second llama.cpp process on port :10001 loaded with the nomic-embed-text GGUF. Alternatively, use `sentence-transformers` (Python library, no server needed) for embeddings — this avoids running a second server and is simpler for v1.
 - All vector indexing stays local — no cloud embedding API calls
 - One ChromaDB collection per project: `{client-slug}_docs`
 - Shared sector knowledge base collection: `sector_knowledge`
