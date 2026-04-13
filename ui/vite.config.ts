@@ -12,10 +12,5 @@ export default defineConfig({
     },
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
-    poolOptions: {
-      forks: {
-        execArgv: ['--localstorage-file=/tmp/vitest-localstorage.json'],
-      },
-    },
   },
 })
