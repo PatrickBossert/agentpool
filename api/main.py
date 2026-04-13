@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.config import get_settings
 from api.routers import projects, run, outputs, ws
 from api.routers import auth as auth_router
+from api.routers import documents as documents_router
 
 
 @asynccontextmanager
@@ -31,3 +32,4 @@ app.include_router(run.router)
 app.include_router(outputs.router)
 app.include_router(ws.router)
 app.include_router(auth_router.router)
+app.include_router(documents_router.router)

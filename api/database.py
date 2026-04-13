@@ -52,6 +52,18 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             notes       TEXT,
             reviewed_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS client_documents (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id   INTEGER NOT NULL REFERENCES projects(id),
+            filename     TEXT NOT NULL,
+            original_name TEXT NOT NULL,
+            file_path    TEXT NOT NULL,
+            content_type TEXT,
+            size_bytes   INTEGER,
+            ingested     INTEGER NOT NULL DEFAULT 0,
+            uploaded_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     # executescript issues an implicit COMMIT before running; the call below
     # is a safety flush but the schema is already committed.
@@ -122,6 +134,33 @@ async def insert_agent_output(conn: aiosqlite.Connection, *, project_id: int, ag
 async def fetch_agent_outputs(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
     async with conn.execute(
         "SELECT * FROM agent_outputs WHERE project_id=? ORDER BY created_at DESC", (project_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def insert_document(
+    conn: aiosqlite.Connection, *,
+    project_id: int,
+    filename: str,
+    original_name: str,
+    file_path: str,
+    content_type: str,
+    size_bytes: int,
+) -> int:
+    cur = await conn.execute(
+        """INSERT INTO client_documents
+           (project_id, filename, original_name, file_path, content_type, size_bytes)
+           VALUES (?,?,?,?,?,?)""",
+        (project_id, filename, original_name, file_path, content_type, size_bytes),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_documents(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM client_documents WHERE project_id=? ORDER BY uploaded_at DESC",
+        (project_id,),
     ) as cur:
         return [dict(r) async for r in cur]
 
