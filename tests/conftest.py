@@ -5,6 +5,8 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from pathlib import Path
 
+# asyncio_mode = strict (see pytest.ini) — all async tests must use @pytest.mark.asyncio
+
 # Point to a temp directory so tests never touch real project data
 os.environ.setdefault("DATABASE_DIR", "/tmp/agentpool_test")
 os.environ.setdefault("PROJECTS_DIR", "/tmp/agentpool_test_projects")
