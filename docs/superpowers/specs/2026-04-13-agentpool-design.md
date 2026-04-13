@@ -98,6 +98,7 @@ value_stream_labels:
 roadmap_time_axis: "quarters"  # quarters | years | horizons
 crews_enabled:
   - discovery
+  - discovery_journeys   # optional: User Journey Capture Agent
   - value_design
   - architecture
   - delivery
@@ -145,6 +146,15 @@ slack_channel: "#acme-rail-agents"
 - **Inputs:** Annual reports, market data, financial filings
 - **Outputs:** Value lever register with sizing estimates
 
+#### User Journey Capture Agent _(SP3+ — optional per project)_
+- **Model:** Claude Sonnet 4.6
+- **Interaction:** Conversational HITL — facilitates journey mapping workshops via Chainlit; iterates stages, steps, pain points, and emotions until approved
+- **Tools:** Chainlit journey mapping dialogue, PDF/DOCX upload (existing journey assets), Mermaid swim-lane diagram generation, ChromaDB journey store, python-docx journey register export
+- **Inputs:** Approved value chain (actor/entity context), stakeholder list, any existing journey documentation
+- **Outputs:** User journey register — per-persona journeys with steps, pain points, emotional state, and opportunity annotations
+- **Integration:** Pain points and opportunities from user journeys feed directly into the Value Proposition Generator alongside value chain activity analysis. Both inputs are merged at the proposition generation stage.
+- **Config gate:** Enabled via `crews_enabled: [discovery_journeys]` in project config — optional per engagement
+
 ---
 
 ### Crew 2 — Value Design
@@ -153,7 +163,7 @@ slack_channel: "#acme-rail-agents"
 - **Model:** Claude Opus 4.6
 - **Interaction:** Automated synthesis → human review gate before portfolio management
 - **Tools:** Multi-source synthesis across Discovery outputs, financial estimation logic, python-docx proposition documents, ChromaDB proposition store
-- **Inputs:** Value lever register, requirements register, value chain
+- **Inputs:** Value lever register, requirements register, value chain (pain points + opportunities), user journey register (pain points + opportunities, where captured)
 - **Outputs:** Value proposition statements with change articulation and value estimates
 
 #### Portfolio Manager
@@ -315,6 +325,7 @@ POST   /projects/{id}/review             Submit human review decision
 ### Extensibility
 Future views (SP2+ phases) are each a new React route + FastAPI endpoint. No structural platform changes required:
 - Value Propositions, Capabilities, Architecture Register, Initiative Register, Stakeholder CRM, Business Plan, Operating Model, People & Change
+- **User Journeys** — swim-lane journey view per persona, linked to value chain activities and value propositions (enabled when `discovery_journeys` is in project config)
 
 ---
 
