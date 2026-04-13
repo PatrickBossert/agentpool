@@ -1,2 +1,21 @@
-from fastapi import APIRouter
-router = APIRouter()
+# api/routers/run.py
+from fastapi import APIRouter, HTTPException
+from api.database import get_connection, fetch_project, insert_crew_run
+from api.models import RunRequest, RunResponse
+from api.services.project_service import get_project_status
+
+router = APIRouter(prefix="/projects", tags=["run"])
+
+
+@router.post("/{slug}/run", status_code=202, response_model=RunResponse)
+async def run_crew(slug: str, req: RunRequest):
+    status = await get_project_status(slug)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+
+    crew = req.crew or "pam"
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        run_id = await insert_crew_run(conn, project_id=project["id"], crew_name=crew, status="queued")
+
+    return RunResponse(run_id=run_id, project_slug=slug, crew=crew, status="queued")
