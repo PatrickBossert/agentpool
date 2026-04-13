@@ -13,13 +13,13 @@ def test_settings_loads_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CHROMA_HOST", "localhost")
     monkeypatch.setenv("CHROMA_PORT", "8002")
 
-    # Re-import to pick up monkeypatched env
-    import importlib
     import api.config as cfg_module
-    importlib.reload(cfg_module)
-
-    assert cfg_module.settings.jwt_secret == "s3cr3t"
-    assert cfg_module.settings.anthropic_api_key == "sk-test"
+    cfg_module.get_settings.cache_clear()
+    s = cfg_module.get_settings()
+    assert s.jwt_secret == "s3cr3t"
+    assert s.anthropic_api_key == "sk-test"
+    assert s.chroma_port == 8002  # verify str→int coercion
+    cfg_module.get_settings.cache_clear()  # clean up after test
 
 
 def test_load_project_config(tmp_path):
@@ -47,3 +47,10 @@ def test_load_project_config_missing_raises(tmp_path):
     from api.config import load_project_config
     with pytest.raises(FileNotFoundError):
         load_project_config(tmp_path / "nonexistent")
+
+
+def test_load_project_config_empty_yaml_raises(tmp_path):
+    from api.config import load_project_config
+    (tmp_path / "config.yaml").write_text("")
+    with pytest.raises(ValueError, match="empty or not a valid YAML mapping"):
+        load_project_config(tmp_path)

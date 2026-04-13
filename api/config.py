@@ -1,4 +1,5 @@
 # api/config.py
+from functools import lru_cache
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import yaml
@@ -17,7 +18,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
 
-settings = Settings()
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
 
 
 def load_project_config(project_dir: Path) -> dict:
@@ -25,4 +28,7 @@ def load_project_config(project_dir: Path) -> dict:
     if not config_path.exists():
         raise FileNotFoundError(f"No config.yaml found in {project_dir}")
     with open(config_path) as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"config.yaml in {project_dir} is empty or not a valid YAML mapping")
+    return data
