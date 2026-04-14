@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     llamacpp_base_url: str = "http://localhost:10000"
     chroma_host: str = "localhost"
     chroma_port: int = 8002
-    database_dir: str = "/Users/pboagents/Documents/agentpool1/data"
-    projects_dir: str = "/Users/pboagents/Documents/agentpool1/projects"
+    database_dir: str = "./data"
+    projects_dir: str = "./projects"
     jwt_secret: str
     admin_username: str = "admin"
     admin_password: str = "changeme"
