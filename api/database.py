@@ -45,12 +45,14 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         );
 
         CREATE TABLE IF NOT EXISTS human_reviews (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            output_id   INTEGER NOT NULL REFERENCES agent_outputs(id),
-            reviewer    TEXT,
-            decision    TEXT NOT NULL,
-            notes       TEXT,
-            reviewed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            output_id    INTEGER REFERENCES agent_outputs(id),
+            crew_run_id  INTEGER REFERENCES crew_runs(id),
+            reviewer     TEXT,
+            decision     TEXT NOT NULL DEFAULT 'pending',
+            prompt       TEXT,
+            notes        TEXT,
+            reviewed_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS client_documents (
@@ -70,6 +72,43 @@ async def init_db(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_human_reviews(conn: aiosqlite.Connection) -> None:
+    """Add prompt/crew_run_id columns and make output_id nullable on existing DBs."""
+    async with conn.execute("PRAGMA table_info(human_reviews)") as cur:
+        cols = {row["name"]: row async for row in cur}
+
+    if "prompt" not in cols:
+        await conn.execute("ALTER TABLE human_reviews ADD COLUMN prompt TEXT")
+    if "crew_run_id" not in cols:
+        await conn.execute(
+            "ALTER TABLE human_reviews ADD COLUMN crew_run_id INTEGER REFERENCES crew_runs(id)"
+        )
+
+    output_id_col = cols.get("output_id")
+    if output_id_col and output_id_col["notnull"]:
+        # SQLite can't drop NOT NULL via ALTER — rebuild the table.
+        await conn.executescript("""
+            CREATE TABLE human_reviews_new (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                output_id    INTEGER REFERENCES agent_outputs(id),
+                crew_run_id  INTEGER REFERENCES crew_runs(id),
+                reviewer     TEXT,
+                decision     TEXT NOT NULL DEFAULT 'pending',
+                prompt       TEXT,
+                notes        TEXT,
+                reviewed_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO human_reviews_new
+                (id, output_id, reviewer, decision, notes, reviewed_at)
+                SELECT id, output_id, reviewer, decision, notes, reviewed_at
+                FROM human_reviews;
+            DROP TABLE human_reviews;
+            ALTER TABLE human_reviews_new RENAME TO human_reviews;
+        """)
+
+    await conn.commit()
+
+
 @asynccontextmanager
 async def get_connection(slug: str):
     path = get_db_path(slug)
@@ -78,6 +117,7 @@ async def get_connection(slug: str):
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA foreign_keys = ON")
         await init_db(conn)
+        await _migrate_human_reviews(conn)
         yield conn
 
 
@@ -178,6 +218,18 @@ async def insert_review(
     )
     await conn.commit()
     return cur.lastrowid
+
+
+async def update_review(
+    conn: aiosqlite.Connection, *, review_id: int, decision: str, notes: str
+) -> bool:
+    """Update an existing review record. Returns True if the record was found."""
+    cur = await conn.execute(
+        "UPDATE human_reviews SET decision=?, notes=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?",
+        (decision, notes, review_id),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
 
 
 async def fetch_outputs_by_type(
