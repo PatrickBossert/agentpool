@@ -61,3 +61,57 @@ def test_ea_task_has_hitl(mock_llm):
     task = create_enterprise_architect_task(agent=agent)
     assert "HumanInputTool" in task.description
     assert "approved" in task.description
+
+
+# ── Initiative Identifier ─────────────────────────────────────────────────────
+
+def test_ii_agent_role(mock_llm):
+    from agents.architecture.initiative_identifier import create_initiative_identifier
+    agent = create_initiative_identifier(slug="test", llm=mock_llm, tools=[])
+    assert agent.role == "Initiative Identifier"
+
+
+def test_ii_task_reads_three_inputs(mock_llm):
+    from agents.architecture.initiative_identifier import (
+        create_initiative_identifier,
+        create_initiative_identifier_task,
+    )
+    agent = create_initiative_identifier(slug="test", llm=mock_llm, tools=[])
+    task = create_initiative_identifier_task(agent=agent, context_tasks=[])
+    assert "key='propositions'" in task.description
+    assert "key='architecture_register'" in task.description
+    assert "key='requirements'" in task.description
+
+
+def test_ii_task_writes_initiative_register(mock_llm):
+    from agents.architecture.initiative_identifier import (
+        create_initiative_identifier,
+        create_initiative_identifier_task,
+    )
+    agent = create_initiative_identifier(slug="test", llm=mock_llm, tools=[])
+    task = create_initiative_identifier_task(agent=agent, context_tasks=[])
+    assert "key='initiative_register'" in task.description
+    assert "operation='write'" in task.description
+
+
+def test_ii_task_has_hitl(mock_llm):
+    from agents.architecture.initiative_identifier import (
+        create_initiative_identifier,
+        create_initiative_identifier_task,
+    )
+    agent = create_initiative_identifier(slug="test", llm=mock_llm, tools=[])
+    task = create_initiative_identifier_task(agent=agent, context_tasks=[])
+    assert "HumanInputTool" in task.description
+    assert "approved" in task.description
+
+
+def test_ii_task_covers_all_categories(mock_llm):
+    from agents.architecture.initiative_identifier import (
+        create_initiative_identifier,
+        create_initiative_identifier_task,
+    )
+    agent = create_initiative_identifier(slug="test", llm=mock_llm, tools=[])
+    task = create_initiative_identifier_task(agent=agent, context_tasks=[])
+    assert "enabling" in task.description
+    assert "operating_model" in task.description
+    assert "business_change" in task.description
