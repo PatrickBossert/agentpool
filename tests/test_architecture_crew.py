@@ -115,3 +115,35 @@ def test_ii_task_covers_all_categories(mock_llm):
     assert "enabling" in task.description
     assert "operating_model" in task.description
     assert "business_change" in task.description
+
+
+# ── Crew wiring ───────────────────────────────────────────────────────────────
+
+def test_architecture_crew_has_two_agents(mock_llm):
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.architecture_crew import create_architecture_crew
+        crew = create_architecture_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+        )
+    assert len(crew.agents) == 2
+
+
+def test_architecture_crew_agent_roles(mock_llm):
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.architecture_crew import create_architecture_crew
+        crew = create_architecture_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+        )
+    roles = {a.role for a in crew.agents}
+    assert "Enterprise Architect" in roles
+    assert "Initiative Identifier" in roles
+
+
+def test_architecture_crew_sequential_process(mock_llm):
+    from crewai import Process
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.architecture_crew import create_architecture_crew
+        crew = create_architecture_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+        )
+    assert crew.process == Process.sequential
