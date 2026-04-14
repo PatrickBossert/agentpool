@@ -159,6 +159,26 @@ def setup_test_project(test_slug, chroma_client):
     conn.commit()
     conn.close()
 
+    # Seed the test document into ChromaDB so agents that use ChromaQueryTool
+    # (e.g. Enterprise Architect) can retrieve content without needing a live
+    # DocumentIngestionTool call.
+    try:
+        collection = chroma_client.get_or_create_collection(f"{test_slug}_docs")
+        doc_text = (docs_dir / "test_document.txt").read_text()
+        # Chunk into ~500-char pieces with 100-char overlap
+        chunks, start = [], 0
+        while start < len(doc_text):
+            chunks.append(doc_text[start: start + 500])
+            start += 400
+        chunks = [c for c in chunks if c.strip()]
+        collection.upsert(
+            documents=chunks,
+            ids=[f"test_document.txt::{i}" for i in range(len(chunks))],
+            metadatas=[{"filename": "test_document.txt", "chunk": i} for i in range(len(chunks))],
+        )
+    except Exception as e:
+        print(f"WARNING: ChromaDB seeding failed: {e}")
+
     yield
 
     # Teardown: remove SQLite DB, project dir, ChromaDB collection
