@@ -1,5 +1,6 @@
 # tests/test_run_api.py
 import pytest
+from unittest.mock import patch, AsyncMock
 from api.config import get_settings
 
 PROJECT_PAYLOAD = {
@@ -29,10 +30,11 @@ async def test_run_unknown_project_returns_404(client):
 @pytest.mark.asyncio
 async def test_run_known_project_queues_run(client):
     await client.post("/projects", json=PROJECT_PAYLOAD)
-    resp = await client.post("/projects/run-test/run", json={"crew": "discovery"})
+    with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
+        resp = await client.post("/projects/run-test/run", json={"crew": "discovery"})
     assert resp.status_code == 202
     data = resp.json()
     assert data["project_slug"] == "run-test"
     assert data["crew"] == "discovery"
-    assert data["status"] == "queued"
+    assert data["status"] == "running"
     assert isinstance(data["run_id"], int)
