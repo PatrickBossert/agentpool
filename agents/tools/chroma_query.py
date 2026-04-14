@@ -44,7 +44,10 @@ class ChromaQueryTool(BaseTool):
         except Exception:
             return f"Collection '{collection_name}' not found. Ingest documents first."
 
-        results = col.query(query_texts=[query], n_results=min(top_k, col.count()))
+        count = col.count()
+        if count == 0:
+            return "No documents in collection. Ingest documents first."
+        results = col.query(query_texts=[query], n_results=min(top_k, count))
         docs = results.get("documents", [[]])[0]
         if not docs:
             return "No relevant documents found."

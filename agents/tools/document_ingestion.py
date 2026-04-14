@@ -60,12 +60,19 @@ class DocumentIngestionTool(BaseTool):
         if not paths:
             return "No supported documents found (.txt, .md, .pdf)"
 
-        client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-        collection = client.get_or_create_collection(name=f"{self.slug}_docs")
+        try:
+            client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+            collection = client.get_or_create_collection(name=f"{self.slug}_docs")
+        except Exception as e:
+            return f"Error: ChromaDB unavailable — {e}"
 
         ingested = []
         for path in paths:
-            text = _read_file(path)
+            try:
+                text = _read_file(path)
+            except Exception as e:
+                ingested.append(f"{path.name} (skipped: {e})")
+                continue
             if not text.strip():
                 continue
             chunks = _chunk_text(text)

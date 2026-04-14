@@ -7,6 +7,8 @@ from crewai.tools import BaseTool
 from api.config import get_settings
 from agents.tools._db import insert_hitl_review, get_review_decision, complete_hitl_review
 
+_DEFAULT_HITL_TIMEOUT = 86400  # 24 hours
+
 
 class HumanInputToolInput(BaseModel):
     prompt: str = Field(
@@ -32,9 +34,12 @@ class HumanInputTool(BaseTool):
         # Check for auto-respond (env var for tests, or instance attribute)
         auto = self.test_auto_respond or os.getenv("HITL_AUTO_RESPOND")
 
-        review_id = insert_hitl_review(
-            slug=self.slug, run_id=self.run_id, prompt=prompt
-        )
+        try:
+            review_id = insert_hitl_review(
+                slug=self.slug, run_id=self.run_id, prompt=prompt
+            )
+        except Exception as e:
+            return f"Error: could not create review record — {e}"
 
         if auto:
             complete_hitl_review(slug=self.slug, review_id=review_id, decision=auto)
@@ -61,8 +66,15 @@ class HumanInputTool(BaseTool):
                 pass  # Don't block the crew if n8n is unreachable
 
         # Poll until the human updates the review via PATCH /projects/{slug}/reviews/{id}
+        timeout_seconds = int(os.getenv("HITL_TIMEOUT_SECONDS", str(_DEFAULT_HITL_TIMEOUT)))
+        deadline = time.monotonic() + timeout_seconds
         while True:
             time.sleep(5)
-            decision, notes = get_review_decision(slug=self.slug, review_id=review_id)
+            if time.monotonic() > deadline:
+                return "timeout: no human response received within the allowed window"
+            try:
+                decision, notes = get_review_decision(slug=self.slug, review_id=review_id)
+            except Exception as e:
+                return f"Error: could not read review decision — {e}"
             if decision != "pending":
                 return notes if notes else decision
