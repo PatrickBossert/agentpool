@@ -134,7 +134,7 @@ def test_excel_output_tool_freeze_panes(slug):
 def test_excel_output_tool_error_on_save_failure(slug):
     """Returns error string when the file cannot be saved."""
     from agents.tools.excel_output import ExcelOutputTool
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
 
     with patch("agents.tools.excel_output.insert_agent_output_sync"), \
          patch("openpyxl.Workbook.save", side_effect=OSError("disk full")):
