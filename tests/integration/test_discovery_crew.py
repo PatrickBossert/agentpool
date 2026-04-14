@@ -7,6 +7,7 @@ HITL pauses are auto-responded via HITL_AUTO_RESPOND env var set in conftest.
 
 Takes 3-10 minutes. Run with: pytest -m integration -v
 """
+import contextlib
 import json
 import sqlite3
 import pytest
@@ -20,7 +21,6 @@ def test_discovery_crew_end_to_end(test_slug, project_id):
     Run the full Discovery Crew and verify all outputs are produced.
     Uses synchronous execution (crew.kickoff()) for test simplicity.
     """
-    import asyncio
     from agents.llm import get_test_llm
     from agents.crews.discovery_crew import create_discovery_crew
 
@@ -54,31 +54,30 @@ def test_discovery_crew_end_to_end(test_slug, project_id):
 
     # 1. crew_runs record should still exist (updated by run_service in production;
     #    in this test we called kickoff() directly so we update manually)
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE crew_runs SET status='completed', finished_at=CURRENT_TIMESTAMP WHERE id=?",
-        (run_id,),
-    )
-    conn.commit()
+    with contextlib.closing(sqlite3.connect(db_path)) as conn:
+        conn.execute(
+            "UPDATE crew_runs SET status='completed', finished_at=CURRENT_TIMESTAMP WHERE id=?",
+            (run_id,),
+        )
+        conn.commit()
 
-    # 2. Verify crew_runs status
-    cur = conn.execute("SELECT status FROM crew_runs WHERE id=?", (run_id,))
-    assert cur.fetchone()[0] == "completed"
+        # 2. Verify crew_runs status
+        cur = conn.execute("SELECT status FROM crew_runs WHERE id=?", (run_id,))
+        assert cur.fetchone()[0] == "completed"
 
-    # 3. agent_outputs: at least one record per agent (excluding state-type)
-    cur = conn.execute(
-        "SELECT DISTINCT agent_name FROM agent_outputs WHERE project_id=? AND output_type != 'state'",
-        (project_id,),
-    )
-    agent_names = {row[0] for row in cur.fetchall()}
-    assert "value_chain_mapper" in agent_names, "Value Chain Mapper produced no output"
+        # 3. agent_outputs: at least one record per agent (excluding state-type)
+        cur = conn.execute(
+            "SELECT DISTINCT agent_name FROM agent_outputs WHERE project_id=? AND output_type != 'state'",
+            (project_id,),
+        )
+        agent_names = {row[0] for row in cur.fetchall()}
+        assert "value_chain_mapper" in agent_names, "Value Chain Mapper produced no output"
 
-    # 4. human_reviews: at least one HITL record for this run
-    cur = conn.execute(
-        "SELECT COUNT(*) FROM human_reviews WHERE crew_run_id=?", (run_id,)
-    )
-    hitl_count = cur.fetchone()[0]
-    conn.close()
+        # 4. human_reviews: at least one HITL record for this run
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM human_reviews WHERE crew_run_id=?", (run_id,)
+        )
+        hitl_count = cur.fetchone()[0]
     assert hitl_count >= 1, "No HITL reviews created during crew run"
 
     # 5. Output files
