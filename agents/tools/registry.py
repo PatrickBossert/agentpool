@@ -26,6 +26,7 @@ def get_tools_for_agent(
     from agents.tools.chroma_query import ChromaQueryTool
     from agents.tools.tavily_search import TavilySearchTool
     from agents.tools.mermaid_render import MermaidRenderTool
+    from agents.tools.excel_output import ExcelOutputTool
 
     if not sector:
         settings = get_settings()
@@ -62,6 +63,25 @@ def get_tools_for_agent(
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "pam": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+        ],
+        "value_proposition_generator": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+        ],
+        "portfolio_manager": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+            ExcelOutputTool(slug=slug),
+        ],
+        "enterprise_architect": [
+            ChromaQueryTool(slug=slug, sector=sector),
+            MermaidRenderTool(slug=slug),
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+        ],
+        "initiative_identifier": [
             SQLiteStateTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
