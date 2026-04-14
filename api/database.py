@@ -88,6 +88,7 @@ async def _migrate_human_reviews(conn: aiosqlite.Connection) -> None:
     if output_id_col and output_id_col["notnull"]:
         # SQLite can't drop NOT NULL via ALTER — rebuild the table.
         await conn.executescript("""
+            DROP TABLE IF EXISTS human_reviews_new;
             CREATE TABLE human_reviews_new (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 output_id    INTEGER REFERENCES agent_outputs(id),
