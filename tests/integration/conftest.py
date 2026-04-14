@@ -182,3 +182,131 @@ def project_id(test_slug, setup_test_project) -> int:
     if row is None:
         raise RuntimeError(f"Project with slug '{test_slug}' not found in database")
     return row[0]
+
+
+@pytest.fixture(scope="session")
+def seed_discovery_outputs(test_slug, setup_test_project):
+    """
+    Write mock Discovery crew outputs to the test project's outputs directory.
+    Required by Value Design integration tests (VPG reads these via SQLiteStateTool).
+    """
+    from api.config import get_settings
+    import json
+    settings = get_settings()
+    outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    requirements = [
+        {
+            "id": "REQ-001",
+            "description": "Automate manual order entry process end-to-end",
+            "stakeholder_group": "Operations",
+            "priority": "high",
+            "source": "stakeholder_interview",
+        },
+        {
+            "id": "REQ-002",
+            "description": "Integrate warehouse management system with ERP",
+            "stakeholder_group": "IT",
+            "priority": "high",
+            "source": "document_analysis",
+        },
+        {
+            "id": "REQ-003",
+            "description": "Implement real-time supply chain visibility dashboard",
+            "stakeholder_group": "Operations",
+            "priority": "medium",
+            "source": "stakeholder_interview",
+        },
+    ]
+    (outputs_dir / "requirements.json").write_text(json.dumps(requirements))
+
+    value_levers = [
+        {
+            "lever": "Process Automation",
+            "description": "Automate high-volume manual processes across order management",
+            "value_impact": "high",
+            "effort": "medium",
+            "related_requirements": ["REQ-001"],
+            "evidence": "Industry benchmarks show 60–80% reduction in processing time",
+        },
+        {
+            "lever": "Systems Integration",
+            "description": "Connect disparate WMS, ERP and CRM platforms",
+            "value_impact": "high",
+            "effort": "high",
+            "related_requirements": ["REQ-002"],
+            "evidence": "Eliminates manual data re-entry across 3 systems",
+        },
+        {
+            "lever": "Real-time Visibility",
+            "description": "End-to-end tracking and reporting across the supply chain",
+            "value_impact": "medium",
+            "effort": "medium",
+            "related_requirements": ["REQ-003"],
+            "evidence": "Reduces exception resolution time by ~50%",
+        },
+    ]
+    (outputs_dir / "value_levers.json").write_text(json.dumps(value_levers))
+
+    value_chain_summary = {
+        "activities": [
+            "Inbound Logistics",
+            "Warehouse Operations",
+            "Outbound Logistics",
+            "Customer Service",
+        ],
+        "sector": "logistics",
+    }
+    (outputs_dir / "value_chain_summary.json").write_text(json.dumps(value_chain_summary))
+
+    yield  # no teardown needed — project dir is cleaned up by setup_test_project
+
+
+@pytest.fixture(scope="session")
+def seed_value_design_outputs(test_slug, seed_discovery_outputs):
+    """
+    Write mock Value Design crew outputs to the test project's outputs directory.
+    Required by Architecture integration tests (Initiative Identifier reads propositions).
+    """
+    from api.config import get_settings
+    import json
+    settings = get_settings()
+    outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    propositions = [
+        {
+            "id": "VP-001",
+            "title": "Automated Order Management",
+            "change_articulation": (
+                "Replace manual order entry with an end-to-end automated order management platform. "
+                "Eliminates data re-entry errors and reduces processing time from 4 hours to 15 minutes."
+            ),
+            "impacted_stakeholder_groups": ["Operations", "Finance"],
+            "value_estimate": "High",
+            "value_estimate_rationale": "Addresses the highest-priority requirement with clear ROI benchmark evidence.",
+            "supporting_evidence": [
+                {"type": "requirement", "ref": "REQ-001", "summary": "Automate manual order entry"},
+                {"type": "lever", "ref": "lever_0", "summary": "Process Automation"},
+            ],
+        },
+        {
+            "id": "VP-002",
+            "title": "Integrated Supply Chain Platform",
+            "change_articulation": (
+                "Connect WMS, ERP, and CRM into a unified integration layer. "
+                "Provides a single source of truth for inventory, orders and customer data."
+            ),
+            "impacted_stakeholder_groups": ["IT", "Operations"],
+            "value_estimate": "High",
+            "value_estimate_rationale": "Resolves the root cause of data inconsistency across three systems.",
+            "supporting_evidence": [
+                {"type": "requirement", "ref": "REQ-002", "summary": "Integrate WMS with ERP"},
+                {"type": "lever", "ref": "lever_1", "summary": "Systems Integration"},
+            ],
+        },
+    ]
+    (outputs_dir / "propositions.json").write_text(json.dumps(propositions))
+
+    yield  # no teardown needed
