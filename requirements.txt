@@ -16,8 +16,8 @@ anyio==4.7.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.2.1
-python-multipart
-crewai>=1.14.0
-anthropic>=0.94.0
-pypdf>=4.3.0
-tavily-python>=0.3.0
+python-multipart==0.0.26
+crewai==1.14.1
+anthropic==0.94.1
+pypdf==6.10.0
+tavily-python==0.7.23

@@ -1,6 +1,7 @@
 # api/config.py
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import yaml
 
@@ -16,8 +17,8 @@ class Settings(BaseSettings):
     jwt_secret: str
     admin_username: str = "admin"
     admin_password: str = "changeme"
-    tavily_api_key: str = ""
-    n8n_webhook_url: str = ""
+    tavily_api_key: Optional[str] = None
+    n8n_webhook_url: Optional[str] = None
     frontend_url: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(env_file=".env")
