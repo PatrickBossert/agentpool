@@ -12,6 +12,8 @@ import os
 import uuid
 import json
 import sqlite3
+import shutil
+import yaml
 from pathlib import Path
 import pytest
 import chromadb
@@ -79,7 +81,6 @@ def setup_test_project(test_slug, chroma_client):
         "slack_channel": "",
         "requirements_capture_max_turns": 3,
     }
-    import yaml
     (project_dir / "config.yaml").write_text(yaml.dump(config))
 
     # Create SQLite DB with project row
@@ -148,7 +149,6 @@ def setup_test_project(test_slug, chroma_client):
     yield
 
     # Teardown: remove SQLite DB, project dir, ChromaDB collection
-    import shutil
     db_path.unlink(missing_ok=True)
     shutil.rmtree(project_dir, ignore_errors=True)
     try:
@@ -158,7 +158,7 @@ def setup_test_project(test_slug, chroma_client):
 
 
 @pytest.fixture(scope="session")
-def project_id(test_slug) -> int:
+def project_id(test_slug, setup_test_project) -> int:
     from api.config import get_settings
     settings = get_settings()
     db_path = Path(settings.database_dir) / f"{test_slug}.db"
@@ -166,4 +166,6 @@ def project_id(test_slug) -> int:
     cur = conn.execute("SELECT id FROM projects WHERE slug=?", (test_slug,))
     row = cur.fetchone()
     conn.close()
+    if row is None:
+        raise RuntimeError(f"Project with slug '{test_slug}' not found in database")
     return row[0]
