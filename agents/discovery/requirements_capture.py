@@ -1,56 +1,61 @@
 # agents/discovery/requirements_capture.py
+from pathlib import Path
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
+from api.config import get_settings, load_project_config
 
 
 def create_requirements_capture(slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
     return Agent(
         role="Requirements Capture Specialist",
         goal=(
-            "Conduct structured stakeholder interviews to capture business requirements, "
-            "pain points, and strategic priorities. Produce a structured requirements list."
+            "Conduct a structured stakeholder interview to surface digital modernisation requirements. "
+            "Use the value chain as a frame to ask targeted, high-value questions."
         ),
         backstory=(
-            "You are a senior business analyst with expertise in requirements engineering and "
-            "stakeholder management. You use structured interview techniques — open questions, "
-            "probing follow-ups, and active listening — to uncover both stated and unstated needs. "
-            "You are skilled at interviewing stakeholders at all levels, from C-suite to "
-            "front-line operations."
+            "You are an experienced business analyst who has conducted hundreds of requirements "
+            "workshops. You know how to ask open questions that reveal hidden pain points, "
+            "and how to probe for priorities, constraints, and success criteria."
         ),
-        tools=tools,
         llm=llm,
+        tools=tools,
         verbose=True,
         allow_delegation=False,
     )
 
 
 def create_requirements_capture_task(
-    slug: str, stakeholder_groups: list[str], max_turns: int = 5
+    agent: Agent, context_tasks: list[Task], slug: str
 ) -> Task:
-    groups_str = ", ".join(stakeholder_groups) if stakeholder_groups else "key stakeholders"
+    settings = get_settings()
+    try:
+        config = load_project_config(Path(settings.projects_dir) / slug)
+        max_turns = config.get("requirements_capture_max_turns", 10)
+    except Exception:
+        max_turns = 10
+
     return Task(
         description=(
-            f"Conduct stakeholder interviews with representatives from: {groups_str}.\n\n"
-            f"Interview each group using HumanInputTool (maximum {max_turns} exchanges total).\n\n"
-            "Interview structure:\n"
-            "1. Open with: 'What are the biggest operational challenges your team faces today?'\n"
-            "2. For each challenge mentioned, probe: 'How significant is this? What's the "
-            "   business impact?'\n"
-            "3. Ask about strategic priorities: 'What outcomes would make this initiative a "
-            "   clear success for you?'\n"
-            "4. Constraints: 'Are there budget, timeline, or regulatory constraints we should "
-            "   be aware of?'\n"
-            "5. After all exchanges, consolidate into a structured requirements list.\n\n"
-            "For each requirement, capture:\n"
-            "- requirement_id (e.g. REQ-001)\n"
-            "- description\n"
-            "- stakeholder_group\n"
-            "- priority (high/medium/low)\n"
-            "- type (functional/non-functional/constraint)\n\n"
-            "Use SQLiteStateTool to save the final requirements list with key='requirements'.\n"
+            "Conduct a structured stakeholder interview to capture digital modernisation requirements.\n\n"
+            "The value chain map is available from the previous task's output. "
+            f"Conduct the interview over a minimum of 5 and a maximum of {max_turns} exchanges.\n\n"
+            "Process:\n"
+            "1. Formulate your first question covering the most critical pain points in the value chain.\n"
+            "2. Use HumanInputTool to ask the question.\n"
+            "3. Based on the response, formulate a follow-up question that probes deeper or covers "
+            "a new area. Cover: pain points by value chain activity, current technology constraints, "
+            "desired outcomes, priorities, regulatory constraints, and budget/timeline context.\n"
+            "4. Repeat steps 2-3 until you have sufficient coverage (minimum 5 exchanges) or "
+            f"reach {max_turns} questions.\n"
+            "5. Use SQLiteStateTool with operation='write', key='interview_transcript', "
+            "agent_name='requirements_capture' to save the complete Q&A as JSON: "
+            "[{\"question\": \"...\", \"answer\": \"...\"}, ...].\n"
         ),
         expected_output=(
-            "A JSON array of requirement objects, each with: requirement_id, description, "
-            "stakeholder_group, priority, type."
+            "A complete interview transcript saved via SQLiteStateTool under key 'interview_transcript', "
+            f"containing between 5 and {max_turns} question-answer pairs covering "
+            "pain points, constraints, priorities, and desired outcomes."
         ),
+        agent=agent,
+        context=context_tasks,
     )

@@ -7,48 +7,52 @@ def create_value_lever_analyst(slug: str, llm: LLM, tools: list[BaseTool]) -> Ag
     return Agent(
         role="Value Lever Analyst",
         goal=(
-            "Identify high-impact digital modernisation opportunities (value levers) "
-            "across the client's value chain, prioritised by ROI potential and feasibility."
+            "Identify the highest-impact value levers for digital modernisation by connecting "
+            "the requirements register to known transformation patterns and sector benchmarks."
         ),
         backstory=(
-            "You are a digital transformation strategist with a track record of identifying "
-            "where technology investment delivers the greatest business value. You combine "
-            "deep sector knowledge with analytical rigour to prioritise opportunities by "
-            "impact, feasibility, and strategic alignment. You communicate findings clearly "
-            "to executive audiences."
+            "You are a transformation strategist with expertise in identifying where digital "
+            "interventions create the most business value. You combine requirements analysis "
+            "with market knowledge to pinpoint high-ROI modernisation opportunities."
         ),
-        tools=tools,
         llm=llm,
+        tools=tools,
         verbose=True,
         allow_delegation=False,
     )
 
 
-def create_value_lever_task(slug: str, sector: str) -> Task:
+def create_value_lever_analyst_task(
+    agent: Agent, context_tasks: list[Task]
+) -> Task:
     return Task(
         description=(
-            "Identify and prioritise digital modernisation value levers.\n\n"
+            "Identify the highest-impact value levers from the requirements register and value chain.\n\n"
             "Steps:\n"
-            "1. Use SQLiteStateTool (operation='read', key='requirements_validated') to load "
-            "   the validated requirements.\n"
-            "2. Use SQLiteStateTool (operation='read', key='value_chain') to load the "
-            "   value chain.\n"
-            f"3. Use TavilySearchTool to research digital transformation ROI benchmarks for "
-            f"   the {sector} sector.\n"
-            "4. Use ChromaQueryTool (collection='sector') to retrieve sector knowledge base "
-            "   content about typical transformation patterns.\n"
-            "5. For each value lever identified, assess:\n"
-            "   - impact_score (1-10)\n"
-            "   - feasibility_score (1-10)\n"
-            "   - estimated_roi_range\n"
-            "   - affected_value_chain_stage\n"
-            "   - technology_category (e.g. AI/ML, RPA, Cloud, IoT, Data Platform)\n"
-            "6. Use HumanInputTool to present the top levers and request stakeholder validation.\n"
-            "7. Use SQLiteStateTool to save the final levers with key='value_levers'.\n"
+            "1. Use SQLiteStateTool with operation='read', key='requirements', "
+            "agent_name='value_lever_analyst' to retrieve the requirements.\n"
+            "2. Use ChromaQueryTool with collection='sector' to retrieve known digital transformation "
+            "patterns and value levers for this sector.\n"
+            "3. Use TavilySearchTool to research best practices and benchmarks relevant to "
+            "the top requirements.\n"
+            "4. Produce a value levers analysis as a JSON array. Each lever must follow this schema:\n"
+            "   {\"lever\": \"...\", \"description\": \"...\", \"value_impact\": \"high|medium|low\", "
+            "\"effort\": \"high|medium|low\", \"related_requirements\": [\"REQ-001\", ...], "
+            "\"evidence\": \"...\"}\n"
+            "   Order levers by value_impact (high first), then by effort (low first).\n"
+            "5. Use SQLiteStateTool with operation='write', key='value_levers', "
+            "agent_name='value_lever_analyst' to save the JSON array.\n"
+            "6. Use HumanInputTool with prompt: 'Please review the value levers analysis saved at "
+            "outputs/value_levers.json. Reply \"approved\" to conclude the Discovery phase, "
+            "or provide notes.'\n"
+            "7. If revision notes are received, revise and call HumanInputTool again (maximum 3 times).\n"
         ),
         expected_output=(
-            "A JSON array of value lever objects, each with: lever_id, name, description, "
-            "impact_score, feasibility_score, estimated_roi_range, affected_value_chain_stage, "
-            "technology_category."
+            "A JSON value levers analysis saved to outputs/value_levers.json "
+            "and confirmed approved by a human reviewer. "
+            "Analysis must contain at least 3 levers each with lever, description, value_impact, "
+            "effort, related_requirements, and evidence fields."
         ),
+        agent=agent,
+        context=context_tasks,
     )

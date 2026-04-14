@@ -7,41 +7,50 @@ def create_requirements_analyst(slug: str, llm: LLM, tools: list[BaseTool]) -> A
     return Agent(
         role="Requirements Analyst",
         goal=(
-            "Analyse and validate captured requirements against the value chain and "
-            "existing documentation. Identify gaps, conflicts, and implicit requirements."
+            "Synthesise the stakeholder interview transcript and client documents into a "
+            "structured, prioritised requirements register ready for value design."
         ),
         backstory=(
-            "You are an experienced requirements analyst who bridges the gap between business "
-            "stakeholders and technical teams. You excel at identifying inconsistencies, "
-            "unstated assumptions, and missing requirements by cross-referencing interview "
-            "findings with organisational documentation and industry standards."
+            "You are a meticulous business analyst who specialises in translating messy "
+            "stakeholder inputs into clear, actionable requirements. You are skilled at "
+            "deduplication, prioritisation, and linking requirements to business outcomes."
         ),
-        tools=tools,
         llm=llm,
+        tools=tools,
         verbose=True,
         allow_delegation=False,
     )
 
 
-def create_requirements_analyst_task(slug: str, sector: str) -> Task:
+def create_requirements_analyst_task(
+    agent: Agent, context_tasks: list[Task]
+) -> Task:
     return Task(
         description=(
-            "Analyse and validate the captured requirements.\n\n"
+            "Synthesise the interview transcript and client documents into a structured requirements register.\n\n"
             "Steps:\n"
-            "1. Use SQLiteStateTool (operation='read', key='requirements') to load the "
-            "   captured requirements.\n"
-            "2. Use SQLiteStateTool (operation='read', key='value_chain') to load the "
-            "   value chain context.\n"
-            "3. Use ChromaQueryTool to search project documents for additional context.\n"
-            "4. Identify: gaps (areas with no requirements), conflicts (contradictory requirements), "
-            "   and implicit requirements (things stakeholders assumed but didn't state).\n"
-            "5. Enrich each requirement with a 'validated' flag and any 'notes' from your analysis.\n"
-            "6. Use HumanInputTool to present your analysis summary and request confirmation "
-            "   before finalising.\n"
-            "7. Use SQLiteStateTool to save the validated requirements with key='requirements_validated'.\n"
+            "1. Use SQLiteStateTool with operation='read', key='interview_transcript', "
+            "agent_name='requirements_analyst' to retrieve the interview transcript.\n"
+            "2. Use ChromaQueryTool with collection='project' to retrieve any additional context "
+            "from client documents.\n"
+            "3. Use ChromaQueryTool with collection='sector' to compare against sector-standard requirements.\n"
+            "4. Produce a requirements register as a JSON array. Each requirement must follow this schema:\n"
+            "   {\"id\": \"REQ-001\", \"description\": \"...\", \"source\": \"interview|document\", "
+            "\"priority\": \"high|medium|low\", \"value_chain_activity\": \"...\", "
+            "\"acceptance_criteria\": \"...\"}\n"
+            "   Number requirements sequentially from REQ-001. Deduplicate overlapping requirements.\n"
+            "5. Use SQLiteStateTool with operation='write', key='requirements', "
+            "agent_name='requirements_analyst' to save the JSON array.\n"
+            "6. Use HumanInputTool with prompt: 'Please review the requirements register saved at "
+            "outputs/requirements.json. Reply \"approved\" to proceed, or provide notes.'\n"
+            "7. If revision notes are received, revise and call HumanInputTool again (maximum 3 times).\n"
         ),
         expected_output=(
-            "A JSON object with keys: 'requirements' (enriched list with validated flag), "
-            "'gaps' (list of identified gaps), 'conflicts' (list of conflicts)."
+            "A JSON requirements register saved to outputs/requirements.json "
+            "and confirmed approved by a human reviewer. "
+            "Register must contain at least 3 requirements with id, description, source, "
+            "priority, value_chain_activity, and acceptance_criteria fields."
         ),
+        agent=agent,
+        context=context_tasks,
     )
