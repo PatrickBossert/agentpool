@@ -64,14 +64,14 @@ def create_initiative_identifier_task(
             "   IDs must be sequential: INIT-001, INIT-002, etc.\n"
             "9. Use SQLiteStateTool with operation='write', key='initiative_register', "
             "agent_name='initiative_identifier' to save the JSON array.\n"
-            "10. Use HumanInputTool with prompt: 'Please review the initiative register saved at "
-            "outputs/initiative_register.json. Reply \"approved\" to conclude the Architecture "
-            "phase, or provide notes.'\n"
+            "10. Use HumanInputTool with prompt: 'Please review the initiative register "
+            "(key=initiative_register in the project database). Reply \"approved\" to conclude "
+            "the Architecture phase, or provide notes.'\n"
             "11. If revision notes are received, revise and call HumanInputTool again. "
             "Maximum 3 revision cycles.\n"
         ),
         expected_output=(
-            "A JSON initiative register saved to outputs/initiative_register.json "
+            "A JSON initiative register written to the project database under key='initiative_register', "
             "containing at least 1 initiative per approved value proposition, "
             "each with id, title, description, proposition_ids, capability_gaps, "
             "category, complexity_score, complexity_rationale, and related_requirements. "
