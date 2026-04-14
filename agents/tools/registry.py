@@ -5,9 +5,12 @@ Maps agent names to their tool lists.
 Usage:
     tools = get_tools_for_agent("value_chain_mapper", slug="acme", run_id=7, sector="logistics")
 """
+import logging
+from pathlib import Path
 from crewai.tools import BaseTool
 from api.config import get_settings, load_project_config
-from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 def get_tools_for_agent(
@@ -29,7 +32,8 @@ def get_tools_for_agent(
         try:
             config = load_project_config(Path(settings.projects_dir) / slug)
             sector = config.get("sector", "")
-        except Exception:
+        except Exception as e:
+            _log.warning("Could not load project config for %s: %s", slug, e)
             sector = ""
 
     tool_map: dict[str, list[BaseTool]] = {

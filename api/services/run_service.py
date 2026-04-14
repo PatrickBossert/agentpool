@@ -25,13 +25,16 @@ async def dispatch_crew(slug: str, crew_name: str, run_id: int) -> None:
             await update_crew_run_status(conn, run_id=run_id, status="completed")
         await push_log(slug, json.dumps({"type": "crew_completed", "crew": crew_name, "run_id": run_id}))
     except Exception as e:
-        async with get_connection(slug) as conn:
-            await update_crew_run_status(
-                conn,
-                run_id=run_id,
-                status="failed",
-                result_json=json.dumps({"error": str(e)}),
-            )
+        try:
+            async with get_connection(slug) as conn:
+                await update_crew_run_status(
+                    conn,
+                    run_id=run_id,
+                    status="failed",
+                    result_json=json.dumps({"error": str(e)}),
+                )
+        except Exception:
+            pass  # Best-effort — don't mask the original exception
         await push_log(slug, json.dumps({"type": "crew_failed", "crew": crew_name, "error": str(e)}))
         raise
 

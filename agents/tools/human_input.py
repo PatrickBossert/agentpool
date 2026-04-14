@@ -68,13 +68,18 @@ class HumanInputTool(BaseTool):
         # Poll until the human updates the review via PATCH /projects/{slug}/reviews/{id}
         timeout_seconds = int(os.getenv("HITL_TIMEOUT_SECONDS", str(_DEFAULT_HITL_TIMEOUT)))
         deadline = time.monotonic() + timeout_seconds
+        consecutive_errors = 0
         while True:
             time.sleep(5)
             if time.monotonic() > deadline:
                 return "timeout: no human response received within the allowed window"
             try:
                 decision, notes = get_review_decision(slug=self.slug, review_id=review_id)
+                consecutive_errors = 0
             except Exception as e:
-                return f"Error: could not read review decision — {e}"
+                consecutive_errors += 1
+                if consecutive_errors >= 5:
+                    return f"Error: could not read review decision after 5 attempts — {e}"
+                continue
             if decision != "pending":
                 return notes if notes else decision
