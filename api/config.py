@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     jwt_secret: str
     admin_username: str = "admin"
     admin_password: str = "changeme"
+    tavily_api_key: str = ""
+    n8n_webhook_url: str = ""
+    frontend_url: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(env_file=".env")
 
