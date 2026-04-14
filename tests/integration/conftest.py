@@ -3,8 +3,8 @@
 Integration test infrastructure for SP3a.
 
 Requires:
-- ANTHROPIC_API_KEY set in environment
-- ChromaDB running: docker run -p 8002:8000 chromadb/chroma
+- ANTHROPIC_API_KEY in .env (or environment)
+- CHROMA_API_KEY in .env for ChromaDB Cloud, or a local ChromaDB on port 8002
 
 Run with: pytest -m integration
 """
@@ -17,17 +17,23 @@ import yaml
 from pathlib import Path
 import pytest
 import chromadb
+from dotenv import load_dotenv
 
-# Set env vars before any app imports so settings are correct
-os.environ.setdefault("DATABASE_DIR", "/tmp/agentpool_integration_test")
-os.environ.setdefault("PROJECTS_DIR", "/tmp/agentpool_integration_test_projects")
+# Load .env with override=True so real keys take precedence over the dummy
+# values set by tests/conftest.py (which runs first as the parent conftest).
+_env_file = Path(__file__).parents[2] / ".env"
+load_dotenv(_env_file, override=True)
+
+# Override dirs to isolated tmp paths, then clear the cached settings so
+# get_settings() re-reads all values (including real API keys from .env).
+from api.config import get_settings
+os.environ["DATABASE_DIR"] = "/tmp/agentpool_integration_test"
+os.environ["PROJECTS_DIR"] = "/tmp/agentpool_integration_test_projects"
+get_settings.cache_clear()
+
 os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ.setdefault("ADMIN_PASSWORD", "test-admin-pw")
 os.environ.setdefault("ADMIN_USERNAME", "admin")
-os.environ.setdefault("LITELLM_PROXY_URL", "http://localhost:4000")
-os.environ.setdefault("LLAMACPP_BASE_URL", "http://localhost:10000")
-os.environ.setdefault("CHROMA_HOST", "localhost")
-os.environ.setdefault("CHROMA_PORT", "8002")
 # Auto-respond to all HITL prompts in integration tests
 os.environ["HITL_AUTO_RESPOND"] = "approved"
 
@@ -42,7 +48,14 @@ def test_slug() -> str:
 
 @pytest.fixture(scope="session")
 def chroma_client():
-    return chromadb.HttpClient(host="localhost", port=8002)
+    settings = get_settings()
+    if settings.chroma_api_key:
+        return chromadb.CloudClient(
+            tenant=settings.chroma_tenant,
+            database=settings.chroma_database,
+            api_key=settings.chroma_api_key,
+        )
+    return chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
 
 
 @pytest.fixture(scope="session", autouse=True)

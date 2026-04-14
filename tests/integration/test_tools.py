@@ -78,20 +78,16 @@ def test_human_input_tool_auto_respond(test_slug, project_id):
 
 
 @pytest.mark.integration
-def test_document_ingestion_tool(test_slug):
+def test_document_ingestion_tool(test_slug, chroma_client):
     from agents.tools.document_ingestion import DocumentIngestionTool
-    from api.config import get_settings
-    import chromadb
 
-    settings = get_settings()
     tool = DocumentIngestionTool(slug=test_slug)
 
     result = tool._run(filename=None)  # ingest all docs in projects/{slug}/docs/
     assert "test_document.txt" in result
 
-    # Verify documents are in ChromaDB
-    client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-    collection = client.get_collection(f"{test_slug}_docs")
+    # Verify documents are in ChromaDB (chroma_client uses Cloud or local as configured)
+    collection = chroma_client.get_collection(f"{test_slug}_docs")
     count = collection.count()
     assert count > 0
 
