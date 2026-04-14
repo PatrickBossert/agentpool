@@ -83,6 +83,7 @@ def test_pm_task_requests_weights_via_hitl(mock_llm):
     task = create_portfolio_manager_task(agent=agent, context_tasks=[])
     assert "HumanInputTool" in task.description
     assert "weights" in task.description.lower()
+    assert "approved" in task.description
 
 
 def test_pm_task_uses_excel_output_tool(mock_llm):
@@ -105,3 +106,16 @@ def test_pm_task_writes_portfolio_register(mock_llm):
     task = create_portfolio_manager_task(agent=agent, context_tasks=[])
     assert "key='portfolio_register'" in task.description
     assert "operation='write'" in task.description
+
+
+def test_pm_task_context_is_wired(mock_llm):
+    """context_tasks list is passed through to Task.context for crew chaining."""
+    from crewai import Task
+    from agents.value_design.portfolio_manager import (
+        create_portfolio_manager,
+        create_portfolio_manager_task,
+    )
+    agent = create_portfolio_manager(slug="test", llm=mock_llm, tools=[])
+    sentinel = Task(description="sentinel task", expected_output="output", agent=agent)
+    task = create_portfolio_manager_task(agent=agent, context_tasks=[sentinel])
+    assert task.context == [sentinel]
