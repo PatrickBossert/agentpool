@@ -19,6 +19,8 @@ async def dispatch_crew(slug: str, crew_name: str, run_id: int) -> None:
         await push_log(slug, json.dumps({"type": "crew_started", "crew": crew_name, "run_id": run_id}))
         if crew_name == "discovery":
             await _run_discovery_crew(slug=slug, run_id=run_id)
+        elif crew_name == "value_design":
+            await _run_value_design_crew(slug=slug, run_id=run_id)
         else:
             raise ValueError(f"Unknown crew: '{crew_name}'")
         async with get_connection(slug) as conn:
@@ -54,4 +56,21 @@ async def _run_discovery_crew(slug: str, run_id: int) -> None:
         sector=sector,
     )
     # kickoff_async() runs the crew on the event loop without blocking
+    await crew.kickoff_async()
+
+
+async def _run_value_design_crew(slug: str, run_id: int) -> None:
+    """Build and run the Value Design Crew asynchronously."""
+    settings = get_settings()
+    config = load_project_config(Path(settings.projects_dir) / slug)
+    llm_mode = config.get("llm_mode", "standard")
+    sector = config.get("sector", "")
+
+    from agents.crews.value_design_crew import create_value_design_crew
+    crew = create_value_design_crew(
+        slug=slug,
+        run_id=run_id,
+        llm_mode=llm_mode,
+        sector=sector,
+    )
     await crew.kickoff_async()

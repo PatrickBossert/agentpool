@@ -38,3 +38,15 @@ async def test_run_known_project_queues_run(client):
     assert data["crew"] == "discovery"
     assert data["status"] == "running"
     assert isinstance(data["run_id"], int)
+
+
+@pytest.mark.asyncio
+async def test_run_value_design_crew_queues_run(client):
+    payload = {**PROJECT_PAYLOAD, "client_slug": "vd-test", "crews_enabled": ["value_design"]}
+    await client.post("/projects", json=payload)
+    with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
+        resp = await client.post("/projects/vd-test/run", json={"crew": "value_design"})
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["crew"] == "value_design"
+    assert data["status"] == "running"

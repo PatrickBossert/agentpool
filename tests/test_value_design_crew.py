@@ -1,7 +1,7 @@
 # tests/test_value_design_crew.py
 """Unit tests for Value Design crew agents and crew assembly."""
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from crewai import LLM
 
 
@@ -119,3 +119,47 @@ def test_pm_task_context_is_wired(mock_llm):
     sentinel = Task(description="sentinel task", expected_output="output", agent=agent)
     task = create_portfolio_manager_task(agent=agent, context_tasks=[sentinel])
     assert task.context == [sentinel]
+
+
+# ── Crew wiring ───────────────────────────────────────────────────────────────
+
+def test_value_design_crew_has_two_agents(mock_llm):
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.value_design_crew import create_value_design_crew
+        crew = create_value_design_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+        )
+    assert len(crew.agents) == 2
+
+
+def test_value_design_crew_agent_roles(mock_llm):
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.value_design_crew import create_value_design_crew
+        crew = create_value_design_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+        )
+    roles = {a.role for a in crew.agents}
+    assert "Value Proposition Generator" in roles
+    assert "Portfolio Manager" in roles
+
+
+def test_value_design_crew_sequential_process(mock_llm):
+    from crewai import Process
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.value_design_crew import create_value_design_crew
+        crew = create_value_design_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+        )
+    assert crew.process == Process.sequential
+
+
+def test_value_design_crew_sensitive_mode_uses_local_llm(mock_llm):
+    """In sensitive mode, a single local LLM is used (not the test override)."""
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
+         patch("agents.crews.value_design_crew.get_crew_llm") as mock_local:
+        mock_local.return_value = mock_llm
+        from agents.crews.value_design_crew import create_value_design_crew
+        crew = create_value_design_crew(
+            slug="test", run_id=1, llm_mode="sensitive", sector="logistics"
+        )
+    mock_local.assert_called_once_with("sensitive")
