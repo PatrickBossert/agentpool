@@ -73,4 +73,5 @@ async def _run_value_design_crew(slug: str, run_id: int) -> None:
         llm_mode=llm_mode,
         sector=sector,
     )
+    # kickoff_async() runs the crew on the event loop without blocking
     await crew.kickoff_async()

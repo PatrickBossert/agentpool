@@ -50,3 +50,5 @@ async def test_run_value_design_crew_queues_run(client):
     data = resp.json()
     assert data["crew"] == "value_design"
     assert data["status"] == "running"
+    assert data["project_slug"] == "vd-test"
+    assert isinstance(data["run_id"], int)
