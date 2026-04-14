@@ -1,7 +1,7 @@
 # tests/test_value_design_crew.py
 """Unit tests for Value Design crew agents and crew assembly."""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from crewai import LLM
 
 
