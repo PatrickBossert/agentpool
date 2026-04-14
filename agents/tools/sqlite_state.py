@@ -42,13 +42,16 @@ class SQLiteStateTool(BaseTool):
                 json.loads(value)
             except json.JSONDecodeError as e:
                 return f"Error: value is not valid JSON — {e}"
-            file_path.write_text(value)
-            insert_agent_output_sync(
-                slug=self.slug,
-                agent_name=agent_name,
-                output_type="state",
-                file_path=str(file_path),
-            )
+            try:
+                file_path.write_text(value)
+                insert_agent_output_sync(
+                    slug=self.slug,
+                    agent_name=agent_name,
+                    output_type="state",
+                    file_path=str(file_path),
+                )
+            except (OSError, ValueError) as e:
+                return f"Error: write failed — {e}"
             return f"Written to {file_path}"
 
         if operation == "read":
