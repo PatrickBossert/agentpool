@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     llamacpp_base_url: str = "http://localhost:10000"
     chroma_host: str = "localhost"
     chroma_port: int = 8002
+    chroma_api_key: Optional[str] = None
+    chroma_tenant: str = "default_tenant"
+    chroma_database: str = "default_database"
     database_dir: str = "./data"
     projects_dir: str = "./projects"
     jwt_secret: str

@@ -33,7 +33,14 @@ class ChromaQueryTool(BaseTool):
         top_k: int = 5,
     ) -> str:
         settings = get_settings()
-        client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+        if settings.chroma_api_key:
+            client = chromadb.CloudClient(
+                tenant=settings.chroma_tenant,
+                database=settings.chroma_database,
+                api_key=settings.chroma_api_key,
+            )
+        else:
+            client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
 
         collection_name = (
             f"{self.slug}_docs" if collection == "project" else f"sector_{self.sector}"

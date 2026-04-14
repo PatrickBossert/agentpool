@@ -61,7 +61,14 @@ class DocumentIngestionTool(BaseTool):
             return "No supported documents found (.txt, .md, .pdf)"
 
         try:
-            client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+            if settings.chroma_api_key:
+                client = chromadb.CloudClient(
+                    tenant=settings.chroma_tenant,
+                    database=settings.chroma_database,
+                    api_key=settings.chroma_api_key,
+                )
+            else:
+                client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
             collection = client.get_or_create_collection(name=f"{self.slug}_docs")
         except Exception as e:
             return f"Error: ChromaDB unavailable — {e}"
