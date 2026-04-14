@@ -43,7 +43,6 @@ async def submit_review(slug: str, req: ReviewRequest):
 class HITLReviewRequest(BaseModel):
     decision: str   # "approved" | "changes_requested"
     notes: str = ""
-    reviewer: str = "consultant"
 
 
 @router.patch("/{slug}/reviews/{review_id}", status_code=200)
