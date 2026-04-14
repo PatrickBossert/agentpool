@@ -288,3 +288,17 @@ async def insert_user(conn: aiosqlite.Connection, *, username: str, role: str,
         return True
     except aiosqlite.IntegrityError:
         return False
+
+
+async def update_crew_run_status(
+    conn: aiosqlite.Connection,
+    *,
+    run_id: int,
+    status: str,
+    result_json: str = "{}",
+) -> None:
+    await conn.execute(
+        "UPDATE crew_runs SET status=?, result_json=?, finished_at=CURRENT_TIMESTAMP WHERE id=?",
+        (status, result_json, run_id),
+    )
+    await conn.commit()
