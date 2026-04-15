@@ -260,7 +260,7 @@ class FinancialModelTool(BaseTool):
             insert_agent_output_sync(
                 slug=self.slug,
                 agent_name=agent_name,
-                output_type="xlsx",
+                output_type="excel",
                 file_path=str(file_path),
             )
         except (OSError, ValueError) as e:

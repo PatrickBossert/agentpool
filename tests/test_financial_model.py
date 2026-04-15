@@ -159,3 +159,61 @@ def test_financial_model_error_on_write_failure(slug, sample_inputs):
         tool = FinancialModelTool(slug=slug)
         result = tool._run(**sample_inputs)
     assert result.startswith("Error: render failed")
+
+
+def test_calculate_npv_exact_value():
+    """_calculate_npv returns the correct discounted value for a known input."""
+    from agents.tools.financial_model import _calculate_npv
+    # cf=[100, 110], rate=0.1: 100/(1.1^0) + 110/(1.1^1) = 100 + 100 = 200
+    result = _calculate_npv([100.0, 110.0], rate_per_period=0.1)
+    assert abs(result - 200.0) < 0.01
+
+
+def test_calculate_irr_returns_none_for_all_negative():
+    """_calculate_irr returns None when cashflows have no IRR solution."""
+    from agents.tools.financial_model import _calculate_irr
+    # All negative cashflows have no IRR
+    result = _calculate_irr([-100.0, -50.0, -25.0])
+    assert result is None
+
+
+def test_financial_model_npv_exact_value(slug, sample_inputs):
+    """NPV in Financial Summary matches the expected value for the fixture data."""
+    import openpyxl
+    from agents.tools.financial_model import FinancialModelTool
+    with patch("agents.tools.financial_model.insert_agent_output_sync"):
+        tool = FinancialModelTool(slug=slug)
+        result = tool._run(**sample_inputs)
+    wb = openpyxl.load_workbook(result)
+    ws = wb["Financial Summary"]
+    npv_value = None
+    for row in ws.iter_rows(values_only=True):
+        if row[0] and "NPV" in str(row[0]):
+            npv_value = row[1]
+            break
+    # Fixture: INIT-001 £100k Q1, INIT-002 £200k Q2
+    # VP-001 £500k/yr = £125k/qtr from Q2, VP-002 £200k/yr = £50k/qtr from Q3
+    # net = [-100k, -75k, 175k, 175k], rate_per_period = 0.08 * 3/12 = 0.02
+    # Expected NPV ≈ 159581.53 — allow ±100 for floating point
+    assert npv_value is not None
+    assert isinstance(npv_value, (int, float))
+    assert abs(npv_value - 159581.53) < 200, f"NPV {npv_value} not near expected 159581.53"
+
+
+def test_financial_model_max_borrowing_exact_value(slug, sample_inputs):
+    """Max borrowing matches expected peak funding need from fixture data."""
+    import openpyxl
+    from agents.tools.financial_model import FinancialModelTool
+    with patch("agents.tools.financial_model.insert_agent_output_sync"):
+        tool = FinancialModelTool(slug=slug)
+        result = tool._run(**sample_inputs)
+    wb = openpyxl.load_workbook(result)
+    ws = wb["Financial Summary"]
+    max_borrow = None
+    for row in ws.iter_rows(values_only=True):
+        if row[0] and "Maximum Borrowing" in str(row[0]):
+            max_borrow = row[1]
+            break
+    # Fixture: cumulative = [-100k, -175k, 0, 175k] → min = -175k
+    assert max_borrow is not None
+    assert abs(max_borrow - (-175000.0)) < 1.0, f"Max borrowing {max_borrow} not near expected -175000"
