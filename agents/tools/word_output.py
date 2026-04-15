@@ -117,7 +117,7 @@ class WordOutputTool(BaseTool):
                 output_type="docx",
                 file_path=str(file_path),
             )
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, KeyError) as e:
             return f"Error: render failed — {e}"
 
         return str(file_path)

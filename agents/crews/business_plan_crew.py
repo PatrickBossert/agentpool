@@ -22,7 +22,8 @@ def create_business_plan_crew(
         slug: Project slug (used for DB/file scoping).
         run_id: crew_runs.id for this execution (used by HumanInputTool).
         llm_mode: "standard" | "sensitive" | "fallback" — determines LLM routing.
-            Sensitive mode uses the local LLM. All other modes use Opus 4.6 via get_pam_llm().
+            Sensitive mode uses the local LLM. Standard and fallback both use Opus 4.6
+            via get_pam_llm() — business plan quality requires Opus regardless of mode.
         sector: Client sector (passed to tool registry).
         llm: Optional LLM override (used in tests to inject a cheap model).
     """
