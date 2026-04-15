@@ -18,6 +18,7 @@ def get_tools_for_agent(
     slug: str,
     run_id: int = 0,
     sector: str = "",
+    hitl_tool=None,
 ) -> list[BaseTool]:
     """Return instantiated tools for the given agent, scoped to the project slug."""
     from agents.tools.sqlite_state import SQLiteStateTool
@@ -106,4 +107,8 @@ def get_tools_for_agent(
     tools = tool_map.get(agent_name)
     if tools is None:
         raise ValueError(f"Unknown agent: {agent_name}")
+
+    if hitl_tool is not None:
+        tools = [hitl_tool if isinstance(t, HumanInputTool) else t for t in tools]
+
     return tools
