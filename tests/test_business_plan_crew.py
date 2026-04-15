@@ -114,3 +114,15 @@ def test_business_plan_crew_sensitive_mode_uses_local_llm(mock_llm):
             slug="test", run_id=1, llm_mode="sensitive", sector="logistics"
         )
     mock_get_llm.assert_called_once_with("sensitive")
+
+
+def test_business_plan_crew_standard_mode_uses_opus(mock_llm):
+    """Standard mode calls get_pam_llm (Opus 4.6), not get_crew_llm."""
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
+         patch("agents.crews.business_plan_crew.get_pam_llm") as mock_pam:
+        mock_pam.return_value = mock_llm
+        from agents.crews.business_plan_crew import create_business_plan_crew
+        create_business_plan_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics"
+        )
+    mock_pam.assert_called_once()
