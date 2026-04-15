@@ -73,19 +73,22 @@ class WordOutputTool(BaseTool):
             run.font.size = Pt(24)
             run.font.bold = True
             run.font.color.rgb = _navy
+            run.font.name = "Arial"
 
             subtitle_para = doc.add_paragraph()
             subtitle_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run2 = subtitle_para.add_run("Digital Modernisation Business Plan")
             run2.font.size = Pt(18)
             run2.font.color.rgb = _navy
+            run2.font.name = "Arial"
 
             meta_para = doc.add_paragraph()
             meta_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             fy = metadata.get("financial_year", "")
             sponsor = metadata.get("sponsor", "")
             doc_date = metadata.get("date", str(date.today()))
-            meta_para.add_run(f"{fy}  |  {sponsor}  |  {doc_date}")
+            meta_run = meta_para.add_run(f"{fy}  |  {sponsor}  |  {doc_date}")
+            meta_run.font.name = "Arial"
 
             doc.add_page_break()
 
@@ -93,6 +96,7 @@ class WordOutputTool(BaseTool):
             toc_heading = doc.add_heading("Contents", level=1)
             for h_run in toc_heading.runs:
                 h_run.font.color.rgb = _navy
+                h_run.font.name = "Arial"
             for i, section in enumerate(sections, start=1):
                 doc.add_paragraph(f"{i}.  {section['title']}")
 
@@ -103,6 +107,7 @@ class WordOutputTool(BaseTool):
                 heading = doc.add_heading(section["title"], level=1)
                 for h_run in heading.runs:
                     h_run.font.color.rgb = _navy
+                    h_run.font.name = "Arial"
                 doc.add_paragraph(section.get("content", ""))
 
             doc.save(file_path)
