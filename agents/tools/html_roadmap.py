@@ -1,4 +1,5 @@
 # agents/tools/html_roadmap.py
+import html
 from pathlib import Path
 from typing import Any
 from pydantic import BaseModel, Field
@@ -122,16 +123,16 @@ class HtmlRoadmapTool(BaseTool):
             vs_propositions = [p for p in propositions if vs in p.get("value_streams", [])]
 
             parts.append(f'<div class="value-stream">')
-            parts.append(f'<h2 class="vs-header">{vs}</h2>')
+            parts.append(f'<h2 class="vs-header">{html.escape(vs)}</h2>')
             parts.append('<table class="roadmap-grid"><thead><tr>')
             parts.append('<th class="row-label"></th>')
             for period in periods:
-                parts.append(f'<th class="period-header">{period}</th>')
+                parts.append(f'<th class="period-header">{html.escape(period)}</th>')
             parts.append('</tr></thead><tbody>')
 
             # One row per stakeholder group — shows VP titles for matching group + period
             for sg in stakeholder_groups:
-                parts.append(f'<tr><td class="row-label">{sg}</td>')
+                parts.append(f'<tr><td class="row-label">{html.escape(sg)}</td>')
                 for period in periods:
                     cell_vps = [
                         p for p in vs_propositions
@@ -139,7 +140,7 @@ class HtmlRoadmapTool(BaseTool):
                         and p.get("realisation_period") == period
                     ]
                     cells = "".join(
-                        f'<span class="vp-chip">{p["title"]}</span>'
+                        f'<span class="vp-chip">{html.escape(p["title"])}</span>'
                         for p in cell_vps
                     )
                     parts.append(f'<td class="vp-cell">{cells}</td>')
@@ -155,8 +156,8 @@ class HtmlRoadmapTool(BaseTool):
                     '<span class="complexity-badge">{score}</span>'
                     "</span>".format(
                         colour=_CATEGORY_COLOURS.get(i.get("category", ""), "#9ca3af"),
-                        title=i["title"],
-                        score=i.get("complexity_score", ""),
+                        title=html.escape(i["title"]),
+                        score=html.escape(str(i.get("complexity_score", ""))),
                     )
                     for i in cell_inits
                 )
@@ -169,12 +170,12 @@ class HtmlRoadmapTool(BaseTool):
                 period_vps = [p for p in vs_propositions if p.get("realisation_period") == period]
                 cells = ""
                 for p in period_vps:
-                    levers = " · ".join(p.get("value_levers", []))
+                    levers = " · ".join(html.escape(lever) for lever in p.get("value_levers", []))
                     estimate = p.get("value_estimate", "")
                     cells += (
                         '<div class="benefit-block">'
                         f'<span class="lever-names">{levers}</span>'
-                        f'<span class="estimate-badge badge-{estimate.lower()}">{estimate}</span>'
+                        f'<span class="estimate-badge badge-{estimate.lower()}">{html.escape(estimate)}</span>'
                         "</div>"
                     )
                 parts.append(f'<td class="benefits-cell">{cells}</td>')
