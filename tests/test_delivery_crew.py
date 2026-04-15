@@ -132,3 +132,53 @@ def test_rg_task_embeds_config_values(mock_llm):
     assert "Finance" in task.description
     assert "CEO" in task.description
     assert "horizons" in task.description
+
+
+# ── Crew wiring ───────────────────────────────────────────────────────────────
+
+def test_delivery_crew_has_one_agent(mock_llm):
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.delivery_crew import create_delivery_crew
+        crew = create_delivery_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
+            roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
+        )
+    assert len(crew.agents) == 1
+
+
+def test_delivery_crew_agent_role(mock_llm):
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.delivery_crew import create_delivery_crew
+        crew = create_delivery_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
+            roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
+        )
+    assert crew.agents[0].role == "Roadmap Generator"
+
+
+def test_delivery_crew_sequential_process(mock_llm):
+    from crewai import Process
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.delivery_crew import create_delivery_crew
+        crew = create_delivery_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
+            roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
+        )
+    assert crew.process == Process.sequential
+
+
+def test_delivery_crew_sensitive_mode_uses_local_llm(mock_llm):
+    """In sensitive mode, get_crew_llm is called with 'sensitive'."""
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
+         patch("agents.crews.delivery_crew.get_crew_llm") as mock_get_llm:
+        mock_get_llm.return_value = mock_llm
+        from agents.crews.delivery_crew import create_delivery_crew
+        create_delivery_crew(
+            slug="test", run_id=1, llm_mode="sensitive", sector="logistics",
+            value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
+            roadmap_time_axis=_TIME_AXIS,
+        )
+    mock_get_llm.assert_called_once_with("sensitive")
