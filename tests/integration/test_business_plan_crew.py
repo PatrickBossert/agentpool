@@ -14,6 +14,7 @@ import contextlib
 import json
 import sqlite3
 import pytest
+import openpyxl
 from pathlib import Path
 from api.config import get_settings
 
@@ -75,7 +76,6 @@ def test_business_plan_crew_end_to_end(test_slug, project_id, seed_delivery_outp
     assert pptx_path.stat().st_size > 0, "executive_presentation.pptx is empty"
 
     # 3. cost_benefit_model.xlsx exists with 3 sheets and numeric NPV + max_borrowing
-    import openpyxl
     xlsx_path = outputs_dir / "cost_benefit_model.xlsx"
     assert xlsx_path.exists(), "cost_benefit_model.xlsx not created"
     wb = openpyxl.load_workbook(xlsx_path)
