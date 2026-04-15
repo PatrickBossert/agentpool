@@ -35,3 +35,12 @@ def get_test_llm() -> LLM:
         model="anthropic/claude-haiku-4-5-20251001",
         api_key=settings.anthropic_api_key,
     )
+
+
+def get_haiku_llm() -> LLM:
+    """For agents spec'd to use claude-haiku-4-5 in production (e.g. Portfolio Manager)."""
+    settings = get_settings()
+    return LLM(
+        model="anthropic/claude-haiku-4-5-20251001",
+        api_key=settings.anthropic_api_key,
+    )
