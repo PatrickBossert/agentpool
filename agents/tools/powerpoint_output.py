@@ -46,7 +46,7 @@ class PowerPointOutputTool(BaseTool):
     ) -> str:
         try:
             from pptx import Presentation
-            from pptx.util import Inches, Pt
+            from pptx.util import Inches
             from pptx.dml.color import RGBColor
         except ImportError:
             return "Error: python-pptx not installed — run: pip install python-pptx"
@@ -70,7 +70,13 @@ class PowerPointOutputTool(BaseTool):
             # ── Slide 1: Title ─────────────────────────────────────────────
             title_layout = prs.slide_layouts[0]  # Title Slide layout
             slide = prs.slides.add_slide(title_layout)
-            slide.shapes.title.text = metadata.get("org_name", "")
+            title_shape = slide.shapes.title
+            title_shape.text = metadata.get("org_name", "")
+            for para in title_shape.text_frame.paragraphs:
+                for run in para.runs:
+                    run.font.color.rgb = _navy
+                    run.font.name = "Arial"
+                    run.font.bold = True
             if len(slide.placeholders) > 1:
                 slide.placeholders[1].text = (
                     f"Digital Modernisation Business Plan\n"
