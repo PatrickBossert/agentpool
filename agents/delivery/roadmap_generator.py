@@ -73,7 +73,7 @@ def create_roadmap_generator_task(
             "in the value lever register. Return a list of lever name strings.\n"
             "7. Assemble the complete roadmap JSON object with this exact structure:\n"
             "   {\n"
-            f'     "time_axis": "{roadmap_time_axis}",\n'
+            f'     "time_axis": {json.dumps(roadmap_time_axis)},\n'
             '     "periods": ["Q1 2026", ...],\n'
             f'     "value_streams": {streams_json},\n'
             f'     "stakeholder_groups": {groups_json},\n'

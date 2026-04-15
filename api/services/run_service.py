@@ -109,6 +109,11 @@ async def _run_delivery_crew(slug: str, run_id: int) -> None:
     stakeholder_groups = config.get("stakeholder_groups", [])
     roadmap_time_axis = config.get("roadmap_time_axis", "quarters")
 
+    if not value_stream_labels:
+        raise ValueError("Project config is missing 'value_stream_labels' — required for Delivery crew")
+    if not stakeholder_groups:
+        raise ValueError("Project config is missing 'stakeholder_groups' — required for Delivery crew")
+
     from agents.crews.delivery_crew import create_delivery_crew
     crew = create_delivery_crew(
         slug=slug,

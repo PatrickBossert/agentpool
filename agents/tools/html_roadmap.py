@@ -96,8 +96,8 @@ class HtmlRoadmapTool(BaseTool):
         file_path = outputs_dir / filename
 
         try:
-            html = self._render_html(roadmap_data)
-            file_path.write_text(html, encoding="utf-8")
+            rendered = self._render_html(roadmap_data)
+            file_path.write_text(rendered, encoding="utf-8")
             insert_agent_output_sync(
                 slug=self.slug,
                 agent_name=agent_name,
