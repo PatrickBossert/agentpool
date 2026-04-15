@@ -23,6 +23,8 @@ async def dispatch_crew(slug: str, crew_name: str, run_id: int) -> None:
             await _run_value_design_crew(slug=slug, run_id=run_id)
         elif crew_name == "architecture":
             await _run_architecture_crew(slug=slug, run_id=run_id)
+        elif crew_name == "delivery":
+            await _run_delivery_crew(slug=slug, run_id=run_id)
         else:
             raise ValueError(f"Unknown crew: '{crew_name}'")
         async with get_connection(slug) as conn:
@@ -92,6 +94,30 @@ async def _run_architecture_crew(slug: str, run_id: int) -> None:
         run_id=run_id,
         llm_mode=llm_mode,
         sector=sector,
+    )
+    # kickoff_async() runs the crew on the event loop without blocking
+    await crew.kickoff_async()
+
+
+async def _run_delivery_crew(slug: str, run_id: int) -> None:
+    """Build and run the Delivery Planning Crew asynchronously."""
+    settings = get_settings()
+    config = load_project_config(Path(settings.projects_dir) / slug)
+    llm_mode = config.get("llm_mode", "standard")
+    sector = config.get("sector", "")
+    value_stream_labels = config.get("value_stream_labels", [])
+    stakeholder_groups = config.get("stakeholder_groups", [])
+    roadmap_time_axis = config.get("roadmap_time_axis", "quarters")
+
+    from agents.crews.delivery_crew import create_delivery_crew
+    crew = create_delivery_crew(
+        slug=slug,
+        run_id=run_id,
+        llm_mode=llm_mode,
+        sector=sector,
+        value_stream_labels=value_stream_labels,
+        stakeholder_groups=stakeholder_groups,
+        roadmap_time_axis=roadmap_time_axis,
     )
     # kickoff_async() runs the crew on the event loop without blocking
     await crew.kickoff_async()

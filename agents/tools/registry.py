@@ -27,6 +27,7 @@ def get_tools_for_agent(
     from agents.tools.tavily_search import TavilySearchTool
     from agents.tools.mermaid_render import MermaidRenderTool
     from agents.tools.excel_output import ExcelOutputTool
+    from agents.tools.html_roadmap import HtmlRoadmapTool
 
     if not sector:
         settings = get_settings()
@@ -84,6 +85,11 @@ def get_tools_for_agent(
         "initiative_identifier": [
             SQLiteStateTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
+        ],
+        "roadmap_generator": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+            HtmlRoadmapTool(slug=slug),
         ],
     }
 

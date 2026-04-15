@@ -330,3 +330,48 @@ def seed_value_design_outputs(test_slug, seed_discovery_outputs):
     (outputs_dir / "propositions.json").write_text(json.dumps(propositions))
 
     yield  # no teardown needed
+
+
+@pytest.fixture(scope="session")
+def seed_architecture_outputs(test_slug, seed_value_design_outputs):
+    """
+    Write mock Architecture crew outputs to the test project's outputs directory.
+    Required by Delivery Planning integration tests (Roadmap Generator reads initiative_register).
+    seed_value_design_outputs is a dependency — it transitively seeds discovery outputs too.
+    """
+    from api.config import get_settings
+    import json
+    settings = get_settings()
+    outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    initiative_register = [
+        {
+            "id": "INIT-001",
+            "title": "Automate Order Entry System",
+            "description": "Implement end-to-end automated order management replacing manual entry.",
+            "proposition_ids": ["VP-001"],
+            "capability_gaps": ["No automated order capture system exists"],
+            "category": "enabling",
+            "complexity_score": 2,
+            "complexity_rationale": "Well-understood technology with clear vendor options.",
+            "related_requirements": ["REQ-001"],
+        },
+        {
+            "id": "INIT-002",
+            "title": "Integrate WMS and ERP Platforms",
+            "description": "Build integration layer connecting WMS, ERP, and CRM systems.",
+            "proposition_ids": ["VP-002"],
+            "capability_gaps": [
+                "No system integration layer exists",
+                "Data duplicated across systems",
+            ],
+            "category": "operating_model",
+            "complexity_score": 3,
+            "complexity_rationale": "Requires significant data mapping and change management.",
+            "related_requirements": ["REQ-002"],
+        },
+    ]
+    (outputs_dir / "initiative_register.json").write_text(json.dumps(initiative_register))
+
+    yield  # no teardown needed
