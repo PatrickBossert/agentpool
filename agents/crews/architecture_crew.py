@@ -18,6 +18,7 @@ def create_architecture_crew(
     llm_mode: str,
     sector: str,
     llm: LLM | None = None,
+    hitl_tool=None,
 ) -> Crew:
     """
     Assemble and return the Architecture Crew.
@@ -35,12 +36,12 @@ def create_architecture_crew(
     ea = create_enterprise_architect(
         slug=slug,
         llm=llm,
-        tools=get_tools_for_agent("enterprise_architect", slug=slug, run_id=run_id, sector=sector),
+        tools=get_tools_for_agent("enterprise_architect", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
     ii = create_initiative_identifier(
         slug=slug,
         llm=llm,
-        tools=get_tools_for_agent("initiative_identifier", slug=slug, run_id=run_id, sector=sector),
+        tools=get_tools_for_agent("initiative_identifier", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 
     ea_task = create_enterprise_architect_task(agent=ea)

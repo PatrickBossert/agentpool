@@ -126,3 +126,18 @@ def test_business_plan_crew_standard_mode_uses_opus(mock_llm):
             slug="test", run_id=1, llm_mode="standard", sector="logistics"
         )
     mock_pam.assert_called_once()
+
+
+def test_business_plan_crew_accepts_hitl_tool_override(mock_llm):
+    """hitl_tool is forwarded to get_tools_for_agent."""
+    mock_hitl = MagicMock()
+    with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]) as mock_reg:
+        from agents.crews.business_plan_crew import create_business_plan_crew
+        create_business_plan_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            llm=mock_llm, hitl_tool=mock_hitl,
+        )
+    mock_reg.assert_called_once_with(
+        "business_plan_generator", slug="test", run_id=1,
+        sector="logistics", hitl_tool=mock_hitl,
+    )

@@ -18,6 +18,7 @@ def create_value_design_crew(
     llm_mode: str,
     sector: str,
     llm: LLM | None = None,
+    hitl_tool=None,
 ) -> Crew:
     """
     Assemble and return the Value Design Crew.
@@ -44,12 +45,12 @@ def create_value_design_crew(
     vpg = create_value_proposition_generator(
         slug=slug,
         llm=vpg_llm,
-        tools=get_tools_for_agent("value_proposition_generator", slug=slug, run_id=run_id, sector=sector),
+        tools=get_tools_for_agent("value_proposition_generator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
     pm = create_portfolio_manager(
         slug=slug,
         llm=pm_llm,
-        tools=get_tools_for_agent("portfolio_manager", slug=slug, run_id=run_id, sector=sector),
+        tools=get_tools_for_agent("portfolio_manager", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 
     vpg_task = create_value_proposition_generator_task(agent=vpg)

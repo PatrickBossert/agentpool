@@ -26,6 +26,7 @@ def create_discovery_crew(
     llm_mode: str,
     sector: str,
     llm: LLM | None = None,
+    hitl_tool=None,
 ) -> Crew:
     """
     Assemble and return the Discovery Crew.
@@ -43,22 +44,22 @@ def create_discovery_crew(
     vcm = create_value_chain_mapper(
         slug=slug,
         llm=llm,
-        tools=get_tools_for_agent("value_chain_mapper", slug=slug, run_id=run_id, sector=sector),
+        tools=get_tools_for_agent("value_chain_mapper", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
     rc = create_requirements_capture(
         slug=slug,
         llm=llm,
-        tools=get_tools_for_agent("requirements_capture", slug=slug, run_id=run_id, sector=sector),
+        tools=get_tools_for_agent("requirements_capture", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
     ra = create_requirements_analyst(
         slug=slug,
         llm=llm,
-        tools=get_tools_for_agent("requirements_analyst", slug=slug, run_id=run_id, sector=sector),
+        tools=get_tools_for_agent("requirements_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
     vla = create_value_lever_analyst(
         slug=slug,
         llm=llm,
-        tools=get_tools_for_agent("value_lever_analyst", slug=slug, run_id=run_id, sector=sector),
+        tools=get_tools_for_agent("value_lever_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 
     vcm_task = create_value_chain_mapper_task(agent=vcm)

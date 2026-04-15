@@ -14,6 +14,7 @@ def create_business_plan_crew(
     llm_mode: str,
     sector: str,
     llm: LLM | None = None,
+    hitl_tool=None,
 ) -> Crew:
     """
     Assemble and return the Business Plan Crew.
@@ -38,7 +39,7 @@ def create_business_plan_crew(
         slug=slug,
         llm=bpg_llm,
         tools=get_tools_for_agent(
-            "business_plan_generator", slug=slug, run_id=run_id, sector=sector
+            "business_plan_generator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
         ),
     )
 

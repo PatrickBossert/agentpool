@@ -163,3 +163,18 @@ def test_value_design_crew_sensitive_mode_uses_local_llm(mock_llm):
             slug="test", run_id=1, llm_mode="sensitive", sector="logistics"
         )
     mock_local.assert_called_once_with("sensitive")
+
+
+def test_value_design_crew_accepts_hitl_tool_override(mock_llm):
+    """hitl_tool is forwarded to every get_tools_for_agent call."""
+    mock_hitl = MagicMock()
+    with patch("agents.crews.value_design_crew.get_tools_for_agent", return_value=[]) as mock_reg:
+        from agents.crews.value_design_crew import create_value_design_crew
+        create_value_design_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            llm=mock_llm, hitl_tool=mock_hitl,
+        )
+    assert mock_reg.call_args_list, "get_tools_for_agent was never called"
+    for call in mock_reg.call_args_list:
+        assert call.kwargs.get("hitl_tool") == mock_hitl, \
+            f"Expected hitl_tool in call: {call}"

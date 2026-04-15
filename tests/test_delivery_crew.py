@@ -182,3 +182,19 @@ def test_delivery_crew_sensitive_mode_uses_local_llm(mock_llm):
             roadmap_time_axis=_TIME_AXIS,
         )
     mock_get_llm.assert_called_once_with("sensitive")
+
+
+def test_delivery_crew_accepts_hitl_tool_override(mock_llm):
+    """hitl_tool is forwarded to get_tools_for_agent."""
+    mock_hitl = MagicMock()
+    with patch("agents.crews.delivery_crew.get_tools_for_agent", return_value=[]) as mock_reg:
+        from agents.crews.delivery_crew import create_delivery_crew
+        create_delivery_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            value_stream_labels=["A", "B"], stakeholder_groups=["X"],
+            roadmap_time_axis="quarters", llm=mock_llm, hitl_tool=mock_hitl,
+        )
+    assert mock_reg.call_args_list, "get_tools_for_agent was never called"
+    for call in mock_reg.call_args_list:
+        assert call.kwargs.get("hitl_tool") == mock_hitl, \
+            f"Expected hitl_tool in call: {call}"
