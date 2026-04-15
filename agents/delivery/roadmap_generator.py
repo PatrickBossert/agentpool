@@ -1,4 +1,5 @@
 # agents/delivery/roadmap_generator.py
+import json
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
@@ -32,6 +33,8 @@ def create_roadmap_generator_task(
 ) -> Task:
     streams_str = ", ".join(value_stream_labels)
     groups_str = ", ".join(stakeholder_groups)
+    streams_json = json.dumps(value_stream_labels)
+    groups_json = json.dumps(stakeholder_groups)
     return Task(
         description=(
             "Build a time-phased delivery roadmap from the initiative register.\n\n"
@@ -72,8 +75,8 @@ def create_roadmap_generator_task(
             "   {\n"
             f'     "time_axis": "{roadmap_time_axis}",\n'
             '     "periods": ["Q1 2026", ...],\n'
-            f'     "value_streams": {value_stream_labels},\n'
-            f'     "stakeholder_groups": {stakeholder_groups},\n'
+            f'     "value_streams": {streams_json},\n'
+            f'     "stakeholder_groups": {groups_json},\n'
             '     "initiatives": [\n'
             '       {\n'
             '         "id": "INIT-001",\n'
