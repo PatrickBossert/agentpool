@@ -81,3 +81,36 @@ def test_bpg_task_has_review_hitl(mock_llm):
     agent = create_business_plan_generator(slug="test", llm=mock_llm, tools=[])
     task = create_business_plan_generator_task(agent=agent)
     assert "approved" in task.description
+
+
+# ── Crew wiring ───────────────────────────────────────────────────────────────
+
+def test_business_plan_crew_has_one_agent(mock_llm):
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.business_plan_crew import create_business_plan_crew
+        crew = create_business_plan_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+        )
+    assert len(crew.agents) == 1
+
+
+def test_business_plan_crew_sequential_process(mock_llm):
+    from crewai import Process
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+        from agents.crews.business_plan_crew import create_business_plan_crew
+        crew = create_business_plan_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+        )
+    assert crew.process == Process.sequential
+
+
+def test_business_plan_crew_sensitive_mode_uses_local_llm(mock_llm):
+    """In sensitive mode, get_crew_llm is called with 'sensitive'."""
+    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
+         patch("agents.crews.business_plan_crew.get_crew_llm") as mock_get_llm:
+        mock_get_llm.return_value = mock_llm
+        from agents.crews.business_plan_crew import create_business_plan_crew
+        create_business_plan_crew(
+            slug="test", run_id=1, llm_mode="sensitive", sector="logistics"
+        )
+    mock_get_llm.assert_called_once_with("sensitive")

@@ -25,6 +25,8 @@ async def dispatch_crew(slug: str, crew_name: str, run_id: int) -> None:
             await _run_architecture_crew(slug=slug, run_id=run_id)
         elif crew_name == "delivery":
             await _run_delivery_crew(slug=slug, run_id=run_id)
+        elif crew_name == "business_plan":
+            await _run_business_plan_crew(slug=slug, run_id=run_id)
         else:
             raise ValueError(f"Unknown crew: '{crew_name}'")
         async with get_connection(slug) as conn:
@@ -125,4 +127,21 @@ async def _run_delivery_crew(slug: str, run_id: int) -> None:
         roadmap_time_axis=roadmap_time_axis,
     )
     # kickoff_async() runs the crew on the event loop without blocking
+    await crew.kickoff_async()
+
+
+async def _run_business_plan_crew(slug: str, run_id: int) -> None:
+    """Build and run the Business Plan Crew asynchronously."""
+    settings = get_settings()
+    config = load_project_config(Path(settings.projects_dir) / slug)
+    llm_mode = config.get("llm_mode", "standard")
+    sector = config.get("sector", "")
+
+    from agents.crews.business_plan_crew import create_business_plan_crew
+    crew = create_business_plan_crew(
+        slug=slug,
+        run_id=run_id,
+        llm_mode=llm_mode,
+        sector=sector,
+    )
     await crew.kickoff_async()

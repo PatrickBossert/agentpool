@@ -80,3 +80,17 @@ async def test_run_delivery_crew_queues_run(client):
     assert data["status"] == "running"
     assert data["project_slug"] == "delivery-test"
     assert isinstance(data["run_id"], int)
+
+
+@pytest.mark.asyncio
+async def test_run_business_plan_crew_queues_run(client):
+    payload = {**PROJECT_PAYLOAD, "client_slug": "bp-test", "crews_enabled": ["business_plan"]}
+    await client.post("/projects", json=payload)
+    with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
+        resp = await client.post("/projects/bp-test/run", json={"crew": "business_plan"})
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["crew"] == "business_plan"
+    assert data["status"] == "running"
+    assert data["project_slug"] == "bp-test"
+    assert isinstance(data["run_id"], int)

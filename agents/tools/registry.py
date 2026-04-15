@@ -28,6 +28,9 @@ def get_tools_for_agent(
     from agents.tools.mermaid_render import MermaidRenderTool
     from agents.tools.excel_output import ExcelOutputTool
     from agents.tools.html_roadmap import HtmlRoadmapTool
+    from agents.tools.word_output import WordOutputTool
+    from agents.tools.powerpoint_output import PowerPointOutputTool
+    from agents.tools.financial_model import FinancialModelTool
 
     if not sector:
         settings = get_settings()
@@ -90,6 +93,13 @@ def get_tools_for_agent(
             SQLiteStateTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
             HtmlRoadmapTool(slug=slug),
+        ],
+        "business_plan_generator": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+            WordOutputTool(slug=slug),
+            PowerPointOutputTool(slug=slug),
+            FinancialModelTool(slug=slug),
         ],
     }
 
