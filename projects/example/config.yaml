@@ -1,0 +1,21 @@
+# projects/example/config.yaml
+client_slug: "example"
+llm_mode: "standard"           # standard | sensitive | fallback
+sector: "transport"
+stakeholder_groups:
+  - "Operations"
+  - "Customer"
+  - "Finance"
+  - "Technology"
+value_stream_labels:
+  - "Asset Management"
+  - "Passenger Experience"
+  - "Corporate"
+roadmap_time_axis: "quarters"  # quarters | years | horizons
+crews_enabled:
+  - discovery
+  - value_design
+  - architecture
+  - delivery
+review_gates: true
+slack_channel: "#example-agents"

@@ -1,0 +1,115 @@
+// ui/src/components/AppLayout.tsx
+import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { projectsApi } from '../api/endpoints'
+import { useAuth } from '../context/AuthContext'
+import type { Project } from '../types'
+
+export default function AppLayout() {
+  const { slug } = useParams<{ slug?: string }>()
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+
+  const { data: projects = [] } = useQuery<Project[]>({
+    queryKey: ['projects'],
+    queryFn: projectsApi.list,
+    refetchInterval: 10_000,
+  })
+
+  function handleLogout() {
+    logout()
+    navigate('/login')
+  }
+
+  const navItems = slug
+    ? [
+        { to: `/${slug}`, label: 'Dashboard', end: true },
+        { to: `/${slug}/value-chain`, label: 'Value Chain' },
+        { to: `/${slug}/roadmap`, label: 'Roadmap' },
+        { to: `/${slug}/documents`, label: 'Documents' },
+      ]
+    : [{ to: '/', label: 'Dashboard', end: true }]
+
+  return (
+    <div className="min-h-screen bg-surface flex flex-col">
+      {/* Top nav */}
+      <header className="bg-surface-raised border-b border-slate-800 px-4 h-12 flex items-center gap-6">
+        <span className="font-bold text-brand-light text-sm tracking-wide">AgentPool</span>
+        <nav className="flex gap-4">
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                `text-sm pb-0.5 border-b-2 transition-colors ${
+                  isActive
+                    ? 'text-sky-300 border-sky-300'
+                    : 'text-slate-400 border-transparent hover:text-slate-200'
+                }`
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="ml-auto flex items-center gap-3">
+          {slug && (
+            <>
+              <a
+                href="http://localhost:8001"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-slate-500 hover:text-slate-300"
+              >
+                Chainlit ↗
+              </a>
+              <a
+                href="http://localhost:5678"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-slate-500 hover:text-slate-300"
+              >
+                n8n ↗
+              </a>
+            </>
+          )}
+          <span className="text-xs text-slate-500">{user?.sub}</span>
+          <button onClick={handleLogout} className="text-xs text-slate-500 hover:text-slate-300">
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      <div className="flex flex-1">
+        {/* Sidebar */}
+        <aside className="w-44 bg-surface-raised border-r border-slate-800 p-3 flex flex-col gap-1">
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
+            Projects
+          </p>
+          {projects.map((p) => (
+            <button
+              key={p.slug}
+              onClick={() => navigate(`/${p.slug}`)}
+              className={`w-full text-left text-sm px-2 py-1.5 rounded transition-colors ${
+                slug === p.slug
+                  ? 'bg-sky-900/40 text-sky-300'
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
+            >
+              {p.slug}
+            </button>
+          ))}
+          {projects.length === 0 && (
+            <p className="text-xs text-slate-600 px-2">No projects yet</p>
+          )}
+        </aside>
+
+        {/* Main content */}
+        <main className="flex-1 overflow-auto">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  )
+}

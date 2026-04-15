@@ -1,0 +1,41 @@
+# litellm_config.yaml
+# LiteLLM proxy routing — all agents call :4000 instead of APIs directly.
+# routing modes (per project config.yaml):
+#   standard  → claude-opus / claude-sonnet / claude-haiku (Claude API)
+#   sensitive → local-qwen3 only (llama.cpp, no data leaves machine)
+#   fallback  → Claude API with local-qwen3 as fallback
+
+model_list:
+  - model_name: claude-opus
+    litellm_params:
+      model: anthropic/claude-opus-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: local-qwen3
+    litellm_params:
+      model: openai/qwen3-4b
+      api_base: http://localhost:10000
+      api_key: "none"
+
+litellm_settings:
+  drop_params: true
+  num_retries: 2
+  request_timeout: 120
+
+router_settings:
+  routing_strategy: simple-shuffle
+  fallbacks:
+    - claude-opus:
+        - local-qwen3
+    - claude-sonnet:
+        - local-qwen3
