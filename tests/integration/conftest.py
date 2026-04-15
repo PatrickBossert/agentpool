@@ -375,3 +375,69 @@ def seed_architecture_outputs(test_slug, seed_value_design_outputs):
     (outputs_dir / "initiative_register.json").write_text(json.dumps(initiative_register))
 
     yield  # no teardown needed
+
+
+@pytest.fixture(scope="session")
+def seed_delivery_outputs(test_slug, seed_architecture_outputs):
+    """
+    Write mock Delivery crew outputs to the test project's outputs directory.
+    Required by Business Plan integration tests (BPG reads roadmap_data via SQLiteStateTool).
+    seed_architecture_outputs is a dependency — it transitively seeds all prior crew outputs.
+    """
+    from api.config import get_settings
+    import json
+    settings = get_settings()
+    outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    roadmap_data = {
+        "time_axis": "quarters",
+        "periods": ["Q1 2026", "Q2 2026", "Q3 2026"],
+        "value_streams": ["Inbound", "Warehousing", "Outbound", "Last Mile"],
+        "stakeholder_groups": ["Operations", "IT", "Finance"],
+        "initiatives": [
+            {
+                "id": "INIT-001",
+                "title": "Automate Order Entry System",
+                "category": "enabling",
+                "complexity_score": 2,
+                "period": "Q1 2026",
+                "value_streams": ["Inbound", "Warehousing"],
+                "proposition_ids": ["VP-001"],
+            },
+            {
+                "id": "INIT-002",
+                "title": "Integrate WMS and ERP Platforms",
+                "category": "operating_model",
+                "complexity_score": 3,
+                "period": "Q2 2026",
+                "value_streams": ["Warehousing", "Outbound"],
+                "proposition_ids": ["VP-002"],
+            },
+        ],
+        "propositions": [
+            {
+                "id": "VP-001",
+                "title": "Automated Order Management",
+                "value_estimate": "High",
+                "change_articulation": "Replace manual order entry with automation.",
+                "realisation_period": "Q2 2026",
+                "value_streams": ["Inbound"],
+                "impacted_stakeholder_groups": ["Operations", "Finance"],
+                "value_levers": ["Process Automation", "OpEx Reduction"],
+            },
+            {
+                "id": "VP-002",
+                "title": "Integrated Supply Chain Platform",
+                "value_estimate": "High",
+                "change_articulation": "Connect WMS, ERP, and CRM into a unified layer.",
+                "realisation_period": "Q3 2026",
+                "value_streams": ["Warehousing", "Outbound"],
+                "impacted_stakeholder_groups": ["IT", "Operations"],
+                "value_levers": ["Systems Integration"],
+            },
+        ],
+    }
+    (outputs_dir / "roadmap_data.json").write_text(json.dumps(roadmap_data))
+
+    yield  # no teardown needed — project dir is cleaned up by setup_test_project
