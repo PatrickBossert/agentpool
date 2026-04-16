@@ -11,6 +11,7 @@ from api.database import (
     insert_project,
     fetch_project,
     fetch_crew_runs,
+    fetch_latest_orchestration_run,
     fetch_agent_outputs,
     list_projects,
 )
@@ -59,7 +60,13 @@ async def get_project_status(slug: str) -> dict | None:
         if not project:
             return None
         runs = await fetch_crew_runs(conn, project_id=project["id"])
-        return {"project_slug": slug, "project_status": project["status"], "crew_runs": runs}
+        latest_orch = await fetch_latest_orchestration_run(conn, project_id=project["id"])
+        return {
+            "project_slug": slug,
+            "project_status": project["status"],
+            "crew_runs": runs,
+            "latest_orchestration_run": latest_orch,
+        }
 
 
 async def get_project_outputs(slug: str) -> list[dict]:

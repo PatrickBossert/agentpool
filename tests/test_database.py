@@ -140,3 +140,33 @@ async def test_update_orchestration_run_status_running_leaves_completed_at_null(
     await update_orchestration_run_status(db, run_id=run_id, status="running")
     run = await fetch_orchestration_run(db, run_id=run_id)
     assert run["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_orchestration_run_returns_none_when_empty(db):
+    from api.database import insert_project, fetch_latest_orchestration_run
+    await insert_project(db, slug="orch-none", llm_mode="standard", sector="rail", config_json="{}")
+    async with db.execute("SELECT id FROM projects WHERE slug='orch-none'") as cur:
+        project_id = (await cur.fetchone())["id"]
+    result = await fetch_latest_orchestration_run(db, project_id=project_id)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_orchestration_run_returns_most_recent(db):
+    from api.database import insert_project, fetch_latest_orchestration_run
+    await insert_project(db, slug="orch-latest", llm_mode="standard", sector="rail", config_json="{}")
+    async with db.execute("SELECT id FROM projects WHERE slug='orch-latest'") as cur:
+        project_id = (await cur.fetchone())["id"]
+    await db.execute(
+        "INSERT INTO orchestration_runs (project_id, status, started_at) VALUES (?, 'completed', '2026-01-01 10:00:00')",
+        (project_id,),
+    )
+    await db.execute(
+        "INSERT INTO orchestration_runs (project_id, status, started_at) VALUES (?, 'running', '2026-01-02 10:00:00')",
+        (project_id,),
+    )
+    await db.commit()
+    result = await fetch_latest_orchestration_run(db, project_id=project_id)
+    assert result is not None
+    assert result["status"] == "running"

@@ -7,10 +7,12 @@ class ProjectCreate(BaseModel):
     client_slug: str
     llm_mode: Literal["standard", "sensitive", "fallback"] = "standard"
     sector: str
-    stakeholder_groups: list[str]
-    value_stream_labels: list[str]
+    stakeholder_groups: list[str] = []
+    value_stream_labels: list[str] = []
     roadmap_time_axis: Literal["quarters", "years", "horizons"] = "quarters"
-    crews_enabled: list[str]
+    crews_enabled: list[str] = [
+        "discovery", "value_design", "architecture", "delivery", "business_plan"
+    ]
     review_gates: bool = True
     slack_channel: str = ""
 
@@ -43,7 +45,15 @@ class OutputResponse(BaseModel):
     review_status: str
 
 
+class OrchestrationRunStatus(BaseModel):
+    id: int
+    status: str
+    started_at: str | None
+    completed_at: str | None
+
+
 class StatusResponse(BaseModel):
     project_slug: str
     project_status: str
     crew_runs: list[dict]
+    latest_orchestration_run: OrchestrationRunStatus | None = None

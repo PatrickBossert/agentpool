@@ -65,3 +65,23 @@ async def test_get_project_status(client):
 async def test_get_status_unknown_project_returns_404(client):
     resp = await client.get("/projects/does-not-exist/status")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_project_minimal_payload(client):
+    """POST /projects with only client_slug + sector uses model defaults."""
+    resp = await client.post("/projects", json={"client_slug": "minimal-co", "sector": "retail"})
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["slug"] == "minimal-co"
+    assert data["status"] == "created"
+
+
+@pytest.mark.asyncio
+async def test_get_project_status_includes_orchestration_run_field(client):
+    await client.post("/projects", json=PROJECT_PAYLOAD)
+    resp = await client.get("/projects/test-rail/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "latest_orchestration_run" in data
+    assert data["latest_orchestration_run"] is None

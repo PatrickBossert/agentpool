@@ -51,3 +51,22 @@ async def test_create_project_idempotent(tmp_path, monkeypatch):
     r2 = await create_project(req)
     assert r1["id"] == r2["id"]
     cfg.get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_get_project_status_includes_latest_orchestration_run_none(tmp_path, monkeypatch):
+    import api.config as cfg
+    cfg.get_settings.cache_clear()
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    cfg.get_settings.cache_clear()
+
+    from api.services.project_service import create_project, get_project_status
+    from api.models import ProjectCreate
+    req = ProjectCreate(client_slug="orch-status-test", sector="rail")
+    await create_project(req)
+    status = await get_project_status("orch-status-test")
+    assert status is not None
+    assert "latest_orchestration_run" in status
+    assert status["latest_orchestration_run"] is None
+    cfg.get_settings.cache_clear()

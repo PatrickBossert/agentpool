@@ -170,6 +170,19 @@ async def fetch_crew_runs(conn: aiosqlite.Connection, *, project_id: int) -> lis
         return [dict(r) async for r in cur]
 
 
+async def fetch_latest_orchestration_run(
+    conn: aiosqlite.Connection, *, project_id: int
+) -> dict | None:
+    async with conn.execute(
+        "SELECT id, status, started_at, completed_at "
+        "FROM orchestration_runs WHERE project_id=? "
+        "ORDER BY started_at DESC LIMIT 1",
+        (project_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def insert_agent_output(conn: aiosqlite.Connection, *, project_id: int, agent_name: str,
                                output_type: str, file_path: str, version: int) -> int:
     cur = await conn.execute(
