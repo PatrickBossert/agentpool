@@ -783,18 +783,35 @@ git commit -m "feat(tools): add RunCrewTool for PAM sub-crew dispatch (SP4c)"
 ## Task 5: PAM agent + tasks
 
 **Files:**
-- Create: `agents/pam/__init__.py`
+- Replace: `agents/pam.py` → `agents/pam/__init__.py` (move constants)
 - Create: `agents/pam/pam_agent.py`
 
 > No standalone tests for this task — the agent/task factories are tested via the PAM crew tests in Task 7. Task 5 is purely structural.
+>
+> **Important:** Python cannot have both `agents/pam.py` (module) and `agents/pam/` (package) with the same name. The existing `agents/pam.py` holds constants (`PAM_ROLE`, `PAM_GOAL`, etc.) that are not yet imported anywhere in the codebase. Task 5 migrates them into the package `__init__.py` and deletes the old module file.
 
-### Step 5.1: Create `agents/pam/__init__.py`
+### Step 5.1: Create `agents/pam/__init__.py` with constants (replaces `agents/pam.py`)
 
 ```python
 # agents/pam/__init__.py
+"""PAM (Programme Architecture Manager) configuration constants."""
+
+PAM_NAME = "PAM"
+PAM_MODEL = "anthropic/claude-opus-4-6"
+PAM_ROLE = "Programme Architecture Manager"
+PAM_GOAL = (
+    "Orchestrate the end-to-end delivery of AI-assisted strategy consulting, "
+    "coordinating specialist crews and ensuring quality outputs at each stage."
+)
 ```
 
-(Empty file — makes `agents.pam` a package.)
+### Step 5.1b: Delete `agents/pam.py`
+
+```bash
+git rm agents/pam.py
+```
+
+(This removes the old module file and stages the deletion.)
 
 ### Step 5.2: Create `agents/pam/pam_agent.py`
 
@@ -912,7 +929,8 @@ Expected: 164 tests passing, 0 failures.
 
 ```bash
 git add agents/pam/__init__.py agents/pam/pam_agent.py
-git commit -m "feat(pam): add PAM agent and 5 task factories (SP4c)"
+# agents/pam.py deletion was staged by git rm in Step 5.1b
+git commit -m "feat(pam): migrate constants to package, add PAM agent and 5 task factories (SP4c)"
 ```
 
 ---
@@ -1716,7 +1734,7 @@ Expected: **174 tests passing** (was 145, added 29), 0 failures.
 | 2. run_service refactor | 2 | `api/services/run_service.py`, `tests/test_run_service.py` |
 | 3. SlackNotifyTool | 4 | `agents/tools/slack_notify.py`, `tests/test_slack_notify_tool.py` |
 | 4. RunCrewTool | 9 | `agents/tools/run_crew.py`, `tests/test_run_crew_tool.py` |
-| 5. PAM agent + tasks | 0 | `agents/pam/__init__.py`, `agents/pam/pam_agent.py` |
+| 5. PAM agent + tasks | 0 | `agents/pam/__init__.py` (replaces `agents/pam.py`), `agents/pam/pam_agent.py` |
 | 6. Registry update | 0 | `agents/tools/registry.py` |
 | 7. PAM crew | 5 | `agents/crews/pam_crew.py`, `tests/test_pam_crew.py` |
 | 8. Orchestration service + endpoint | 5 | `api/services/orchestration_service.py`, `api/routers/orchestrate.py`, `api/main.py`, `tests/test_orchestration_service.py` |
