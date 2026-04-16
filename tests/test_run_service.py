@@ -29,12 +29,13 @@ def fake_config(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_and_run_crew_dispatches_discovery(fake_config):
+    import agents.crews.discovery_crew  # ensure module is in sys.modules before patching
     mock_crew = MagicMock()
     mock_crew.kickoff_async = AsyncMock(return_value="done")
     with patch("agents.crews.discovery_crew.create_discovery_crew", return_value=mock_crew) as mock_factory:
         from api.services.run_service import build_and_run_crew
         result = await build_and_run_crew("acme", "discovery", run_id=1)
-    mock_factory.assert_called_once()
+    mock_factory.assert_called_once_with(slug="acme", run_id=1, llm_mode="standard", sector="transport")
     mock_crew.kickoff_async.assert_awaited_once()
     assert result == "done"
 
