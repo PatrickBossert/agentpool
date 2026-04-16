@@ -1,14 +1,17 @@
 // ui/src/components/AppLayout.tsx
+import { useState } from 'react'
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import { useAuth } from '../context/AuthContext'
+import NewProjectModal from './NewProjectModal'
 import type { Project } from '../types'
 
 export default function AppLayout() {
   const { slug } = useParams<{ slug?: string }>()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const [showModal, setShowModal] = useState(false)
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['projects'],
@@ -103,6 +106,15 @@ export default function AppLayout() {
           {projects.length === 0 && (
             <p className="text-xs text-slate-600 px-2">No projects yet</p>
           )}
+          {/* New Project button — pinned to bottom of sidebar */}
+          <div className="mt-auto pt-3">
+            <button
+              onClick={() => setShowModal(true)}
+              className="w-full text-xs text-slate-500 hover:text-slate-200 border border-slate-700 hover:border-slate-500 rounded px-2 py-1.5 transition-colors text-left"
+            >
+              + New Project
+            </button>
+          </div>
         </aside>
 
         {/* Main content */}
@@ -110,6 +122,8 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+
+      {showModal && <NewProjectModal onClose={() => setShowModal(false)} />}
     </div>
   )
 }
