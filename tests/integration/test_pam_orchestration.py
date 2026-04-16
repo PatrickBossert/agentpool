@@ -333,6 +333,6 @@ def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collectio
     assert (outputs / "roadmap.html").exists(), (
         "delivery: roadmap.html not created"
     )
-    assert (outputs / "business_plan.docx").exists(), (
-        "business_plan: business_plan.docx not created"
-    )
+    docx_path = outputs / "business_plan.docx"
+    assert docx_path.exists(), "business_plan: business_plan.docx not created"
+    assert docx_path.stat().st_size > 0, "business_plan: business_plan.docx is empty"
