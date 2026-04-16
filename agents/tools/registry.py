@@ -23,6 +23,8 @@ def get_tools_for_agent(
     """Return instantiated tools for the given agent, scoped to the project slug."""
     from agents.tools.sqlite_state import SQLiteStateTool
     from agents.tools.human_input import HumanInputTool
+    from agents.tools.run_crew import RunCrewTool
+    from agents.tools.slack_notify import SlackNotifyTool
     from agents.tools.document_ingestion import DocumentIngestionTool
     from agents.tools.chroma_query import ChromaQueryTool
     from agents.tools.tavily_search import TavilySearchTool
@@ -68,8 +70,9 @@ def get_tools_for_agent(
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "pam": [
+            RunCrewTool(slug=slug, orchestration_run_id=run_id),
+            SlackNotifyTool(slug=slug),
             SQLiteStateTool(slug=slug),
-            HumanInputTool(slug=slug, run_id=run_id),
         ],
         "value_proposition_generator": [
             SQLiteStateTool(slug=slug),
