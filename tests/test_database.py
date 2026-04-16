@@ -136,6 +136,7 @@ async def test_update_orchestration_run_status_running_leaves_completed_at_null(
     project_id = (await project_row.fetchone())[0]
 
     run_id = await insert_orchestration_run(db, project_id=project_id)
-    # status stays 'running' — completed_at should remain NULL
+    # Explicitly call with non-terminal status — should NOT set completed_at
+    await update_orchestration_run_status(db, run_id=run_id, status="running")
     run = await fetch_orchestration_run(db, run_id=run_id)
     assert run["completed_at"] is None
