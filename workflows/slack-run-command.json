@@ -1,0 +1,85 @@
+{
+  "name": "AgentPool Slack Run Command",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerOn": "slash_command",
+        "command": "/run"
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000001",
+      "name": "Slack Trigger",
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "slack-run-trigger",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "AgentPool Slack"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8000/projects/{{ $json.text.trim() }}/orchestrate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "id": "b1c2d3e4-0002-0002-0002-000000000002",
+      "name": "HTTP Orchestrate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "channel": "={{ $('Slack Trigger').item.json.channel_id }}",
+        "text": "=⚙ Starting pipeline for *{{ $('Slack Trigger').item.json.text.trim() }}*…",
+        "otherOptions": {}
+      },
+      "id": "b1c2d3e4-0003-0003-0003-000000000003",
+      "name": "Slack Confirm",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "AgentPool Slack"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Slack Trigger": {
+      "main": [
+        [{"node": "HTTP Orchestrate", "type": "main", "index": 0}]
+      ]
+    },
+    "HTTP Orchestrate": {
+      "main": [
+        [{"node": "Slack Confirm", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "sp4c-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
