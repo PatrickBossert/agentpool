@@ -83,6 +83,33 @@ async def test_start_orchestration_fires_background_task():
     mock_task.assert_called_once()
 
 
+# ── run_pam_crew failure path ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_run_pam_crew_sets_failed_on_exception():
+    """run_pam_crew updates status to 'failed' when the crew raises."""
+    from api.database import get_connection, insert_project, fetch_orchestration_run, insert_orchestration_run, fetch_project
+
+    async with get_connection("orch-fail-test") as conn:
+        await insert_project(
+            conn, slug="orch-fail-test",
+            llm_mode="standard", sector="rail", config_json="{}"
+        )
+        project = await fetch_project(conn, slug="orch-fail-test")
+        run_id = await insert_orchestration_run(conn, project_id=project["id"])
+
+    # create_pam_crew is imported inside run_pam_crew (deferred), so patch at the source.
+    import agents.crews.pam_crew  # ensure module is in sys.modules before patching
+    with patch("agents.crews.pam_crew.create_pam_crew", side_effect=RuntimeError("boom")):
+        from api.services.orchestration_service import run_pam_crew
+        await run_pam_crew("orch-fail-test", run_id)
+
+    async with get_connection("orch-fail-test") as conn:
+        row = await fetch_orchestration_run(conn, run_id=run_id)
+
+    assert row["status"] == "failed"
+
+
 # ── /orchestrate endpoint ─────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

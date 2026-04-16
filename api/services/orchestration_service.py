@@ -1,8 +1,11 @@
 # api/services/orchestration_service.py
 """Start and track full-pipeline PAM orchestration runs."""
 import asyncio
+import logging
 from pathlib import Path
 from api.config import get_settings, load_project_config
+
+_log = logging.getLogger(__name__)
 from api.database import (
     get_connection,
     fetch_project,
@@ -44,6 +47,11 @@ async def run_pam_crew(slug: str, orchestration_run_id: int) -> None:
                 conn, run_id=orchestration_run_id, status="completed"
             )
     except Exception:
+        _log.exception(
+            "PAM crew failed for slug=%s orchestration_run_id=%d",
+            slug,
+            orchestration_run_id,
+        )
         async with get_connection(slug) as conn:
             await update_orchestration_run_status(
                 conn, run_id=orchestration_run_id, status="failed"

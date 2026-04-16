@@ -3,6 +3,10 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
+# Pre-import api.services.run_service so the deferred `from ... import build_and_run_crew`
+# inside _arun() finds it in sys.modules and the patch on the module attribute takes effect.
+import api.services.run_service  # noqa: F401
+
 
 def _make_tool(slug="acme", orchestration_run_id=99):
     from agents.tools.run_crew import RunCrewTool
