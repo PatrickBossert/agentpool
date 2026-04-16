@@ -13,7 +13,7 @@ class RunCrewTool(BaseTool):
     orchestration_run_id: int
 
     def _run(self, crew_name: str) -> str:
-        raise NotImplementedError("Use _arun for async execution.")
+        return "Error: RunCrewTool requires async execution (_arun only)."
 
     async def _arun(self, crew_name: str) -> str:
         from api.database import (

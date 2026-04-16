@@ -29,7 +29,9 @@ async def test_arun_creates_crew_run_record(monkeypatch, tmp_path):
         tool = _make_tool()
         await tool._arun("discovery")
 
-    mock_insert.assert_awaited()
+    mock_insert.assert_awaited_once_with(
+        mock_conn, project_id=1, crew_name="discovery", status="running"
+    )
 
 
 @pytest.mark.asyncio
@@ -105,8 +107,7 @@ async def test_arun_calls_build_and_run_crew_with_correct_name(crew_name):
         tool = _make_tool()
         await tool._arun(crew_name)
 
-    first_call_args = mock_build.call_args
-    assert first_call_args.args[1] == crew_name
+    mock_build.assert_awaited_once_with("acme", crew_name, 1)
 
 
 @pytest.mark.asyncio
