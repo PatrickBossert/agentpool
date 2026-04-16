@@ -1,6 +1,6 @@
 // ui/src/pages/Dashboard.tsx
-import { useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import StatusBadge from '../components/StatusBadge'
 import ReviewQueue from '../components/ReviewQueue'
@@ -8,6 +8,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 
 export default function Dashboard() {
   const { slug } = useParams<{ slug?: string }>()
+  const navigate = useNavigate()
   const logs = useWebSocket(slug)
 
   const { data: status } = useQuery({
@@ -24,6 +25,13 @@ export default function Dashboard() {
     refetchInterval: 5_000,
   })
 
+  const runMutation = useMutation({
+    mutationFn: () => projectsApi.orchestrate(slug!),
+    onSuccess: (data) => {
+      navigate(`/${slug}/runs/${data.orchestration_run_id}`)
+    },
+  })
+
   if (!slug) {
     return (
       <div className="p-8 text-slate-400">
@@ -32,15 +40,76 @@ export default function Dashboard() {
     )
   }
 
+  const orch = status?.latest_orchestration_run
+
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-slate-100 mb-1">{slug}</h2>
-        {status && (
-          <div className="flex items-center gap-2">
-            <StatusBadge status={status.project_status} />
-          </div>
-        )}
+      {/* Project header + Run Pipeline control */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-100 mb-1">{slug}</h2>
+          {status && (
+            <div className="flex items-center gap-2">
+              <StatusBadge status={status.project_status} />
+            </div>
+          )}
+        </div>
+
+        {/* Run Pipeline button — four states */}
+        <div className="flex items-center gap-3">
+          {!orch && (
+            <button
+              onClick={() => runMutation.mutate()}
+              disabled={runMutation.isPending}
+              className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm rounded"
+            >
+              Run Pipeline
+            </button>
+          )}
+
+          {orch?.status === 'running' && (
+            <>
+              <button
+                disabled
+                className="px-4 py-1.5 bg-slate-700 text-slate-400 text-sm rounded opacity-60 cursor-not-allowed flex items-center gap-2"
+              >
+                <span className="inline-block w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                Running…
+              </button>
+              <button
+                onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
+                className="text-sm text-sky-400 hover:text-sky-300"
+              >
+                View Run →
+              </button>
+            </>
+          )}
+
+          {(orch?.status === 'completed' || orch?.status === 'failed') && (
+            <>
+              <span
+                className={`text-sm font-medium ${
+                  orch.status === 'completed' ? 'text-emerald-400' : 'text-red-400'
+                }`}
+              >
+                {orch.status === 'completed' ? 'Completed' : 'Failed'}
+              </span>
+              <button
+                onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
+                className="text-sm text-sky-400 hover:text-sky-300"
+              >
+                View Last Run →
+              </button>
+              <button
+                onClick={() => runMutation.mutate()}
+                disabled={runMutation.isPending}
+                className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm rounded"
+              >
+                Run Again
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Crew progress */}
