@@ -86,3 +86,56 @@ async def test_insert_agent_output(db):
     outputs = await fetch_agent_outputs(db, project_id=project["id"])
     assert outputs[0]["agent_name"] == "value_chain_mapper"
     assert outputs[0]["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_init_db_creates_orchestration_runs_table(db):
+    async with db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ) as cur:
+        tables = {row[0] async for row in cur}
+    assert "orchestration_runs" in tables
+
+
+@pytest.mark.asyncio
+async def test_insert_and_fetch_orchestration_run(db):
+    from api.database import insert_project, insert_orchestration_run, fetch_orchestration_run
+    await insert_project(db, slug="orch-test", llm_mode="standard", sector="rail", config_json='{}')
+    project_row = await db.execute("SELECT id FROM projects WHERE slug='orch-test'")
+    project_id = (await project_row.fetchone())[0]
+
+    run_id = await insert_orchestration_run(db, project_id=project_id)
+    assert isinstance(run_id, int)
+
+    run = await fetch_orchestration_run(db, run_id=run_id)
+    assert run is not None
+    assert run["status"] == "running"
+    assert run["project_id"] == project_id
+
+
+@pytest.mark.asyncio
+async def test_update_orchestration_run_status_sets_completed_at(db):
+    from api.database import insert_project, insert_orchestration_run, update_orchestration_run_status, fetch_orchestration_run
+    await insert_project(db, slug="orch-update-test", llm_mode="standard", sector="rail", config_json='{}')
+    project_row = await db.execute("SELECT id FROM projects WHERE slug='orch-update-test'")
+    project_id = (await project_row.fetchone())[0]
+
+    run_id = await insert_orchestration_run(db, project_id=project_id)
+    await update_orchestration_run_status(db, run_id=run_id, status="completed")
+
+    run = await fetch_orchestration_run(db, run_id=run_id)
+    assert run["status"] == "completed"
+    assert run["completed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_update_orchestration_run_status_running_leaves_completed_at_null(db):
+    from api.database import insert_project, insert_orchestration_run, update_orchestration_run_status, fetch_orchestration_run
+    await insert_project(db, slug="orch-null-test", llm_mode="standard", sector="rail", config_json='{}')
+    project_row = await db.execute("SELECT id FROM projects WHERE slug='orch-null-test'")
+    project_id = (await project_row.fetchone())[0]
+
+    run_id = await insert_orchestration_run(db, project_id=project_id)
+    # status stays 'running' — completed_at should remain NULL
+    run = await fetch_orchestration_run(db, run_id=run_id)
+    assert run["completed_at"] is None
