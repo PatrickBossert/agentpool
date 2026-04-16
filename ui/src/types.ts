@@ -19,10 +19,18 @@ export interface CrewRun {
   created_at: string
 }
 
+export interface OrchestrationRun {
+  id: number
+  status: string  // 'running' | 'completed' | 'failed'
+  started_at: string | null
+  completed_at: string | null
+}
+
 export interface ProjectStatus {
   project_slug: string
   project_status: string
   crew_runs: CrewRun[]
+  latest_orchestration_run: OrchestrationRun | null
 }
 
 export interface AgentOutput {

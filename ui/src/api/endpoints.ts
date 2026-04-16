@@ -21,6 +21,13 @@ export const projectsApi = {
   list: (): Promise<Project[]> =>
     apiClient.get<Project[]>('/projects').then((r) => r.data),
 
+  create: (payload: {
+    client_slug: string
+    sector: string
+    llm_mode?: string
+  }): Promise<Project> =>
+    apiClient.post<Project>('/projects', payload).then((r) => r.data),
+
   status: (slug: string): Promise<ProjectStatus> =>
     apiClient.get<ProjectStatus>(`/projects/${slug}/status`).then((r) => r.data),
 
@@ -48,4 +55,7 @@ export const projectsApi = {
     apiClient
       .post(`/projects/${slug}/review`, { output_id: outputId, decision, notes })
       .then((r) => r.data),
+
+  orchestrate: (slug: string): Promise<{ orchestration_run_id: number; status: string }> =>
+    apiClient.post(`/projects/${slug}/orchestrate`).then((r) => r.data),
 }
