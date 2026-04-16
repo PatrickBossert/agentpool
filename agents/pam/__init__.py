@@ -1,4 +1,4 @@
-# agents/pam.py
+# agents/pam/__init__.py
 """PAM (Programme Architecture Manager) configuration constants."""
 
 PAM_NAME = "PAM"
