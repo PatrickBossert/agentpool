@@ -1,6 +1,7 @@
 # agents/llm.py
 from crewai import LLM
 from api.config import get_settings
+from agents.pam import PAM_MODEL
 
 
 def get_crew_llm(llm_mode: str) -> LLM:
@@ -23,7 +24,7 @@ def get_pam_llm() -> LLM:
     """PAM always uses claude-opus-4-6, never routes to sensitive/local."""
     settings = get_settings()
     return LLM(
-        model="anthropic/claude-opus-4-6",
+        model=PAM_MODEL,
         api_key=settings.anthropic_api_key,
     )
 

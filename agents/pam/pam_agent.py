@@ -9,10 +9,11 @@ def create_pam_agent(slug: str, llm: LLM, tools: list) -> Agent:
         role=PAM_ROLE,
         goal=PAM_GOAL,
         backstory=(
-            "You are PAM, the Programme Architecture Manager for AgentPool. "
-            "You orchestrate specialist crews in sequence to deliver end-to-end "
-            "AI strategy consulting. You use RunCrewTool to run each crew and "
-            "SlackNotifyTool to post progress updates."
+            f"You are PAM, the Programme Architecture Manager for AgentPool. "
+            f"You are orchestrating project '{slug}'. "
+            f"You orchestrate specialist crews in sequence to deliver end-to-end "
+            f"AI strategy consulting. You use RunCrewTool to run each crew and "
+            f"SlackNotifyTool to post progress updates."
         ),
         llm=llm,
         tools=tools,
