@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     n8n_webhook_url: Optional[str] = None
     frontend_url: str = "http://localhost:3000"
 
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 @lru_cache(maxsize=1)

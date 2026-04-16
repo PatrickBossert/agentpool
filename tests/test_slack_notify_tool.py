@@ -48,7 +48,8 @@ def test_run_posts_to_webhook(tmp_path, monkeypatch):
 def test_run_skipped_when_no_webhook(tmp_path, monkeypatch):
     """When N8N_WEBHOOK_URL is not set, _run returns a skip message without raising."""
     import api.config as cfg
-    monkeypatch.delenv("N8N_WEBHOOK_URL", raising=False)
+    # Override with empty string — delenv alone falls back to .env file if present
+    monkeypatch.setenv("N8N_WEBHOOK_URL", "")
     cfg.get_settings.cache_clear()
 
     with patch("agents.tools.slack_notify.httpx.post") as mock_post:
