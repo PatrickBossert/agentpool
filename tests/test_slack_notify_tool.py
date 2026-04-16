@@ -31,7 +31,7 @@ def test_run_posts_to_webhook(tmp_path, monkeypatch):
     cfg.get_settings.cache_clear()
 
     mock_resp = MagicMock()
-    with patch("httpx.post", return_value=mock_resp) as mock_post:
+    with patch("agents.tools.slack_notify.httpx.post", return_value=mock_resp) as mock_post:
         tool = _make_tool()
         result = tool._run("hello world")
 
@@ -51,7 +51,7 @@ def test_run_skipped_when_no_webhook(tmp_path, monkeypatch):
     monkeypatch.delenv("N8N_WEBHOOK_URL", raising=False)
     cfg.get_settings.cache_clear()
 
-    with patch("httpx.post") as mock_post:
+    with patch("agents.tools.slack_notify.httpx.post") as mock_post:
         tool = _make_tool()
         result = tool._run("msg")
 
@@ -71,7 +71,7 @@ def test_run_skipped_on_http_error(tmp_path, monkeypatch):
     monkeypatch.setenv("N8N_WEBHOOK_URL", "http://n8n.local/webhook/agentpool")
     cfg.get_settings.cache_clear()
 
-    with patch("httpx.post", side_effect=httpx.ConnectError("timeout")):
+    with patch("agents.tools.slack_notify.httpx.post", side_effect=httpx.ConnectError("timeout")):
         tool = _make_tool()
         result = tool._run("msg")
 
@@ -95,7 +95,7 @@ def test_run_includes_slug_in_payload(tmp_path, monkeypatch):
         captured.update(json)
         return MagicMock()
 
-    with patch("httpx.post", side_effect=fake_post):
+    with patch("agents.tools.slack_notify.httpx.post", side_effect=fake_post):
         tool = _make_tool(slug="myproject")
         tool._run("test")
 
