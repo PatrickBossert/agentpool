@@ -1,7 +1,8 @@
 # api/routers/documents.py
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
+from api.services.ingest_service import ingest_document
 from api.config import get_settings
 from api.database import get_connection, get_db_path, fetch_project, insert_document, fetch_documents
 
@@ -26,7 +27,11 @@ async def list_documents(slug: str):
 
 
 @router.post("/{slug}/documents/upload", status_code=201)
-async def upload_document(slug: str, file: UploadFile = File(...)):
+async def upload_document(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
@@ -62,4 +67,5 @@ async def upload_document(slug: str, file: UploadFile = File(...)):
             raise
 
         docs = await fetch_documents(conn, project_id=project["id"])
+        background_tasks.add_task(ingest_document, slug, doc_id, str(dest))
         return _coerce_doc(next(d for d in docs if d["id"] == doc_id))

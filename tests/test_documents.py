@@ -71,3 +71,29 @@ async def test_list_documents_after_upload(client):
 async def test_documents_unknown_project_returns_404(client):
     resp = await client.get("/projects/ghost/documents")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_upload_triggers_ingest_background_task(client, tmp_path):
+    """After upload, background task runs and sets ingested=True (AsyncClient runs tasks inline)."""
+    from unittest.mock import AsyncMock, patch
+
+    await client.post("/projects", json=PROJECT)
+
+    mock_ingest = AsyncMock()
+    with patch("api.routers.documents.ingest_document", mock_ingest):
+        file_content = b"Quarterly review document with strategy details."
+        resp = await client.post(
+            "/projects/doc-test/documents/upload",
+            files={"file": ("strategy.txt", io.BytesIO(file_content), "text/plain")},
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["original_name"] == "strategy.txt"
+    # Background task ran (AsyncClient + ASGITransport executes tasks inline)
+    mock_ingest.assert_awaited_once()
+    call_args = mock_ingest.call_args
+    assert call_args.args[0] == "doc-test"          # slug
+    assert isinstance(call_args.args[1], int)        # doc_id
+    assert call_args.args[2].endswith(".txt")        # file_path ends with .txt extension
