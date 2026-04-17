@@ -170,3 +170,24 @@ async def test_fetch_latest_orchestration_run_returns_most_recent(db):
     result = await fetch_latest_orchestration_run(db, project_id=project_id)
     assert result is not None
     assert result["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_update_document_ingested(db):
+    from api.database import insert_project, insert_document, update_document_ingested
+    await insert_project(db, slug="ingest-flag", llm_mode="standard", sector="rail", config_json="{}")
+    async with db.execute("SELECT id FROM projects WHERE slug='ingest-flag'") as cur:
+        project_id = (await cur.fetchone())["id"]
+    doc_id = await insert_document(
+        db,
+        project_id=project_id,
+        filename="test.txt",
+        original_name="test.txt",
+        file_path="/tmp/test.txt",
+        content_type="text/plain",
+        size_bytes=10,
+    )
+    await update_document_ingested(db, doc_id=doc_id)
+    async with db.execute("SELECT ingested FROM client_documents WHERE id=?", (doc_id,)) as cur:
+        row = await cur.fetchone()
+    assert row["ingested"] == 1

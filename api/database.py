@@ -227,6 +227,16 @@ async def fetch_documents(conn: aiosqlite.Connection, *, project_id: int) -> lis
         return [dict(r) async for r in cur]
 
 
+async def update_document_ingested(
+    conn: aiosqlite.Connection, *, doc_id: int
+) -> None:
+    await conn.execute(
+        "UPDATE client_documents SET ingested=1 WHERE id=?",
+        (doc_id,),
+    )
+    await conn.commit()
+
+
 async def insert_review(
     conn: aiosqlite.Connection, *,
     output_id: int,
