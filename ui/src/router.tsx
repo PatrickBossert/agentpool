@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import Documents from './pages/Documents'
 import ValueChain from './pages/ValueChain'
 import Roadmap from './pages/Roadmap'
+import RunDetail from './pages/RunDetail'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
       { path: ':slug/value-chain', element: <ValueChain /> },
       { path: ':slug/roadmap', element: <Roadmap /> },
       { path: ':slug/documents', element: <Documents /> },
+      { path: ':slug/runs/:runId', element: <RunDetail /> },
     ],
   },
 ])
