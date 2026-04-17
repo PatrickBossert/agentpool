@@ -26,6 +26,8 @@ def _extract_text(path: Path) -> str:
 
 
 def _chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
+    if overlap >= chunk_size:
+        raise ValueError(f"overlap ({overlap}) must be less than chunk_size ({chunk_size})")
     chunks, start = [], 0
     while start < len(text):
         chunks.append(text[start : start + chunk_size])

@@ -24,6 +24,14 @@ def _make_chroma_mock():
 # ---------------------------------------------------------------------------
 
 
+def test_chunk_text_overlap_gte_chunk_size_raises():
+    """_chunk_text must raise ValueError when overlap >= chunk_size to prevent infinite loop."""
+    from api.services.ingest_service import _chunk_text
+
+    with pytest.raises(ValueError, match="overlap"):
+        _chunk_text("hello", chunk_size=10, overlap=10)
+
+
 @pytest.mark.asyncio
 async def test_unsupported_extension_skips(tmp_path):
     """A .zip file should be silently skipped — no ChromaDB call, ingested stays 0."""

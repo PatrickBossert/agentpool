@@ -45,7 +45,7 @@ async def upload_document(
         docs_dir.mkdir(parents=True, exist_ok=True)
 
         # Unique filename to prevent collisions
-        suffix = Path(file.filename).suffix
+        suffix = Path(file.filename or "").suffix
         unique_name = f"{uuid.uuid4().hex}{suffix}"
         dest = docs_dir / unique_name
 
