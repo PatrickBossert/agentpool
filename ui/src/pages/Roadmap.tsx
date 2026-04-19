@@ -16,6 +16,16 @@ export default function Roadmap() {
     enabled: !!slug,
   })
 
+  // Pick the latest output record (API returns DESC order)
+  const latest = outputs[0] ?? null
+
+  const { data: contentData, isLoading: contentLoading, isError: contentError } = useQuery({
+    queryKey: ['outputContent', slug, latest?.id],
+    queryFn: () => projectsApi.getOutputContent(slug!, latest!.id),
+    // Only fetch when on the visual tab and an output exists
+    enabled: !!slug && !!latest && tab === 'visual',
+  })
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
@@ -54,19 +64,26 @@ export default function Roadmap() {
         </div>
       )}
 
-      {outputs.length > 0 && tab === 'visual' && (
-        <div className="bg-surface-card rounded-xl p-4">
-          <div className="space-y-2">
-            {outputs.map((output) => (
-              <div key={output.id} className="text-sm text-slate-300">
-                {output.agent_name} — {output.file_path}
-              </div>
-            ))}
-          </div>
+      {latest && tab === 'visual' && (
+        <div className="bg-surface-card rounded-xl overflow-hidden">
+          {contentLoading && (
+            <p className="text-sm text-slate-500 p-4">Loading roadmap…</p>
+          )}
+          {contentError && !contentLoading && (
+            <p className="text-sm text-red-400 p-4">Failed to load roadmap.</p>
+          )}
+          {contentData && (
+            <iframe
+              srcDoc={contentData.content}
+              sandbox="allow-scripts"
+              style={{ width: '100%', height: '520px', border: 'none' }}
+              title="Roadmap"
+            />
+          )}
         </div>
       )}
 
-      {outputs.length > 0 && tab === 'gantt' && (
+      {latest && tab === 'gantt' && (
         <div className="bg-surface-card rounded-xl p-4">
           <p className="text-sm text-slate-400">Gantt data available — full chart in SP4.</p>
         </div>
