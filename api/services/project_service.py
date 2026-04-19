@@ -14,8 +14,9 @@ from api.database import (
     fetch_latest_orchestration_run,
     fetch_agent_outputs,
     list_projects,
+    update_project_config,
 )
-from api.models import ProjectCreate
+from api.models import ProjectCreate, ProjectSettings
 
 
 async def create_project(req: ProjectCreate) -> dict:
@@ -94,3 +95,44 @@ async def list_all_projects() -> list[dict]:
             rows = await list_projects(conn)
             results.extend(rows)
     return results
+
+
+async def get_project_settings(slug: str) -> dict | None:
+    if not get_db_path(slug).exists():
+        return None
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+        config = json.loads(project["config_json"])
+        config.pop("client_slug", None)
+        return config
+
+
+async def update_project_settings(slug: str, settings: ProjectSettings) -> dict | None:
+    if not get_db_path(slug).exists():
+        return None
+    settings_dict = settings.model_dump()
+    full_config = {"client_slug": slug, **settings_dict}
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+        await update_project_config(
+            conn,
+            project_id=project["id"],
+            llm_mode=settings.llm_mode,
+            sector=settings.sector,
+            config_json=json.dumps(full_config),
+        )
+    project_dir = Path(get_settings().projects_dir) / slug
+    config_path = project_dir / "config.yaml"
+    fd, tmp_path = tempfile.mkstemp(dir=project_dir, suffix=".yaml.tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.dump(full_config, f, default_flow_style=False)
+        os.replace(tmp_path, config_path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+    return settings_dict

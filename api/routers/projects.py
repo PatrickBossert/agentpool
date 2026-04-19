@@ -1,8 +1,14 @@
 # api/routers/projects.py
 from fastapi import APIRouter, HTTPException, Response
 from api.database import get_db_path, get_connection, fetch_project, fetch_outputs_by_type
-from api.models import ProjectCreate, StatusResponse, ProjectResponse
-from api.services.project_service import create_project, get_project_status, list_all_projects
+from api.models import ProjectCreate, ProjectSettings, StatusResponse, ProjectResponse
+from api.services.project_service import (
+    create_project,
+    get_project_status,
+    list_all_projects,
+    get_project_settings,
+    update_project_settings,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -47,3 +53,19 @@ async def get_roadmap(slug: str):
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
         return await fetch_outputs_by_type(conn, project_id=project["id"], output_type="roadmap")
+
+
+@router.get("/{slug}/settings", response_model=ProjectSettings)
+async def get_settings_endpoint(slug: str):
+    result = await get_project_settings(slug)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    return result
+
+
+@router.patch("/{slug}/settings", response_model=ProjectSettings)
+async def patch_settings_endpoint(slug: str, req: ProjectSettings):
+    result = await update_project_settings(slug, req)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    return result
