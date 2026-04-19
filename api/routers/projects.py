@@ -1,13 +1,14 @@
 # api/routers/projects.py
 from fastapi import APIRouter, HTTPException, Response
 from api.database import get_db_path, get_connection, fetch_project, fetch_outputs_by_type
-from api.models import ProjectCreate, ProjectSettings, StatusResponse, ProjectResponse
+from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
 from api.services.project_service import (
     create_project,
     get_project_status,
     list_all_projects,
     get_project_settings,
     update_project_settings,
+    get_output_content,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -68,4 +69,14 @@ async def patch_settings_endpoint(slug: str, req: ProjectSettings):
     result = await update_project_settings(slug, req)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    return result
+
+
+@router.get("/{slug}/outputs/{output_id}/content", response_model=OutputContent)
+async def get_output_content_endpoint(slug: str, output_id: int):
+    result = await get_output_content(slug, output_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Output {output_id} not found for project '{slug}'")
+    if result.get("not_found_on_disk"):
+        raise HTTPException(status_code=404, detail="Output file not found on disk")
     return result

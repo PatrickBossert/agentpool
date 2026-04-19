@@ -16,7 +16,7 @@ from api.database import (
     list_projects,
     update_project_config,
 )
-from api.models import ProjectCreate, ProjectSettings
+from api.models import ProjectCreate, ProjectSettings, OutputContent  # noqa: F401
 
 
 async def create_project(req: ProjectCreate) -> dict:
@@ -138,3 +138,31 @@ async def update_project_settings(slug: str, settings: ProjectSettings) -> dict 
         os.unlink(tmp_path)
         raise
     return settings_dict
+
+
+async def get_output_content(slug: str, output_id: int) -> dict | None:
+    """Return file content for a given output record.
+
+    Returns:
+        None — project not found or output not found in this project's DB
+        {"not_found_on_disk": True} — row exists but file deleted from disk
+        {"content": str, "output_type": str} — success
+    """
+    if not get_db_path(slug).exists():
+        return None
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+        async with conn.execute(
+            "SELECT file_path, output_type FROM agent_outputs WHERE id=? AND project_id=?",
+            (output_id, project["id"]),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+    file_path = Path(row["file_path"])
+    if not file_path.exists():
+        return {"not_found_on_disk": True}
+    content = file_path.read_text(encoding="utf-8")
+    return {"content": content, "output_type": row["output_type"]}

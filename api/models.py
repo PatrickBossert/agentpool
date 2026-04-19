@@ -30,6 +30,11 @@ class ProjectSettings(BaseModel):
     slack_channel: str = ""
 
 
+class OutputContent(BaseModel):
+    content: str
+    output_type: str
+
+
 class ProjectResponse(BaseModel):
     id: int
     slug: str
