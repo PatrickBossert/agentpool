@@ -127,6 +127,7 @@ async def update_project_settings(slug: str, settings: ProjectSettings) -> dict 
         )
     project_dir = Path(get_settings().projects_dir) / slug
     config_path = project_dir / "config.yaml"
+    project_dir.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=project_dir, suffix=".yaml.tmp")
     try:
         with os.fdopen(fd, "w") as f:
