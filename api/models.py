@@ -17,6 +17,19 @@ class ProjectCreate(BaseModel):
     slack_channel: str = ""
 
 
+class ProjectSettings(BaseModel):
+    llm_mode: Literal["standard", "sensitive", "fallback"] = "standard"
+    sector: str
+    stakeholder_groups: list[str] = []
+    value_stream_labels: list[str] = []
+    roadmap_time_axis: Literal["quarters", "years", "horizons"] = "quarters"
+    crews_enabled: list[str] = [
+        "discovery", "value_design", "architecture", "delivery", "business_plan"
+    ]
+    review_gates: bool = True
+    slack_channel: str = ""
+
+
 class ProjectResponse(BaseModel):
     id: int
     slug: str

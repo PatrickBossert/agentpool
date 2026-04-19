@@ -227,6 +227,21 @@ async def fetch_documents(conn: aiosqlite.Connection, *, project_id: int) -> lis
         return [dict(r) async for r in cur]
 
 
+async def update_project_config(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    llm_mode: str,
+    sector: str,
+    config_json: str,
+) -> None:
+    await conn.execute(
+        "UPDATE projects SET llm_mode=?, sector=?, config_json=? WHERE id=?",
+        (llm_mode, sector, config_json, project_id),
+    )
+    await conn.commit()
+
+
 async def update_document_ingested(
     conn: aiosqlite.Connection, *, doc_id: int
 ) -> None:

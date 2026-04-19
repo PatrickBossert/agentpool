@@ -191,3 +191,21 @@ async def test_update_document_ingested(db):
     async with db.execute("SELECT ingested FROM client_documents WHERE id=?", (doc_id,)) as cur:
         row = await cur.fetchone()
     assert row["ingested"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_project_config(db):
+    from api.database import insert_project, fetch_project, update_project_config
+    await insert_project(db, slug="cfg-test", llm_mode="standard", sector="rail", config_json='{"sector":"rail"}')
+    project = await fetch_project(db, slug="cfg-test")
+    await update_project_config(
+        db,
+        project_id=project["id"],
+        llm_mode="sensitive",
+        sector="energy",
+        config_json='{"sector":"energy","llm_mode":"sensitive"}',
+    )
+    updated = await fetch_project(db, slug="cfg-test")
+    assert updated["llm_mode"] == "sensitive"
+    assert updated["sector"] == "energy"
+    assert updated["config_json"] == '{"sector":"energy","llm_mode":"sensitive"}'
