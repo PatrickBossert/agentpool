@@ -104,7 +104,8 @@ async def get_project_settings(slug: str) -> dict | None:
         project = await fetch_project(conn, slug=slug)
         if not project:
             return None
-        config = json.loads(project["config_json"])
+        raw = project.get("config_json") or "{}"
+        config = json.loads(raw)
         config.pop("client_slug", None)
         return config
 
