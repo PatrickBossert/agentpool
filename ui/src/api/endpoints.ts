@@ -6,6 +6,7 @@ import type {
   AgentOutput,
   ClientDocument,
   ProjectSettings,
+  OutputContent,
   TokenResponse,
 } from '../types'
 
@@ -65,4 +66,7 @@ export const projectsApi = {
 
   updateSettings: (slug: string, data: ProjectSettings): Promise<ProjectSettings> =>
     apiClient.patch<ProjectSettings>(`/projects/${slug}/settings`, data).then((r) => r.data),
+
+  getOutputContent: (slug: string, outputId: number): Promise<OutputContent> =>
+    apiClient.get<OutputContent>(`/projects/${slug}/outputs/${outputId}/content`).then((r) => r.data),
 }

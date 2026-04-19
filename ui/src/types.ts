@@ -66,6 +66,11 @@ export interface ProjectSettings {
   slack_channel: string
 }
 
+export interface OutputContent {
+  content: string
+  output_type: string
+}
+
 export interface Review {
   id: number
   output_id: number
