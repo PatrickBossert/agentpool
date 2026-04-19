@@ -91,17 +91,27 @@ export default function AppLayout() {
             Projects
           </p>
           {projects.map((p) => (
-            <button
-              key={p.slug}
-              onClick={() => navigate(`/${p.slug}`)}
-              className={`w-full text-left text-sm px-2 py-1.5 rounded transition-colors ${
-                slug === p.slug
-                  ? 'bg-sky-900/40 text-sky-300'
-                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-              }`}
-            >
-              {p.slug}
-            </button>
+            <div key={p.slug} className="flex items-center gap-1">
+              <button
+                onClick={() => navigate(`/${p.slug}`)}
+                className={`flex-1 text-left text-sm px-2 py-1.5 rounded transition-colors ${
+                  slug === p.slug
+                    ? 'bg-sky-900/40 text-sky-300'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                }`}
+              >
+                {p.slug}
+              </button>
+              {slug === p.slug && (
+                <button
+                  onClick={() => navigate(`/${p.slug}/settings`)}
+                  className="text-slate-500 hover:text-slate-300 text-sm px-1 flex-shrink-0"
+                  title="Settings"
+                >
+                  ⚙
+                </button>
+              )}
+            </div>
           ))}
           {projects.length === 0 && (
             <p className="text-xs text-slate-600 px-2">No projects yet</p>
