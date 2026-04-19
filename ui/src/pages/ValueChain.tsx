@@ -26,18 +26,19 @@ export default function ValueChain() {
   })
 
   const svgContainerRef = useRef<HTMLDivElement>(null)
+  const mountKey = useRef(Math.random().toString(36).slice(2))
   const [renderError, setRenderError] = useState(false)
 
   useEffect(() => {
     if (!contentData?.content || !svgContainerRef.current) return
+    let cancelled = false
     const container = svgContainerRef.current
     setRenderError(false)
     ;(async () => {
       try {
-        const { svg } = await mermaid.render(
-          'vc-diagram-' + (latest?.id ?? 0),
-          contentData.content,
-        )
+        const renderId = 'vc-' + mountKey.current + '-' + (latest?.id ?? 0)
+        const { svg } = await mermaid.render(renderId, contentData.content)
+        if (cancelled) return
         // Use DOMParser to safely parse the SVG string into a DOM node
         // (avoids innerHTML; mermaid's output is trusted — generated from
         // our own stored Mermaid source, not user-supplied HTML)
@@ -46,10 +47,13 @@ export default function ValueChain() {
         const svgEl = svgDoc.documentElement
         container.replaceChildren(svgEl)
       } catch {
-        setRenderError(true)
-        container.replaceChildren()
+        if (!cancelled) setRenderError(true)
+        if (!cancelled) container.replaceChildren()
       }
     })()
+    return () => {
+      cancelled = true
+    }
   }, [contentData?.content, latest?.id])
 
   return (
