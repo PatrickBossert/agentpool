@@ -55,6 +55,17 @@ export interface ClientDocument {
   uploaded_at: string
 }
 
+export interface ProjectSettings {
+  llm_mode: 'standard' | 'sensitive' | 'fallback'
+  sector: string
+  stakeholder_groups: string[]
+  value_stream_labels: string[]
+  roadmap_time_axis: 'quarters' | 'years' | 'horizons'
+  crews_enabled: string[]
+  review_gates: boolean
+  slack_channel: string
+}
+
 export interface Review {
   id: number
   output_id: number

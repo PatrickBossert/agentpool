@@ -5,6 +5,7 @@ import type {
   ProjectStatus,
   AgentOutput,
   ClientDocument,
+  ProjectSettings,
   TokenResponse,
 } from '../types'
 
@@ -58,4 +59,10 @@ export const projectsApi = {
 
   orchestrate: (slug: string): Promise<{ orchestration_run_id: number; status: string }> =>
     apiClient.post(`/projects/${slug}/orchestrate`).then((r) => r.data),
+
+  getSettings: (slug: string): Promise<ProjectSettings> =>
+    apiClient.get<ProjectSettings>(`/projects/${slug}/settings`).then((r) => r.data),
+
+  updateSettings: (slug: string, data: ProjectSettings): Promise<ProjectSettings> =>
+    apiClient.patch<ProjectSettings>(`/projects/${slug}/settings`, data).then((r) => r.data),
 }
