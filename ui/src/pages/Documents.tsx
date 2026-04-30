@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef, ChangeEvent } from 'react'
 import { projectsApi } from '../api/endpoints'
 import type { ClientDocument, AgentOutput } from '../types'
+import { useAuth } from '../context/AuthContext'
+import { downloadOutput } from '../utils/download'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -14,6 +16,7 @@ function formatBytes(bytes: number): string {
 export default function Documents() {
   const { slug } = useParams<{ slug: string }>()
   const qc = useQueryClient()
+  const { token } = useAuth()
   const inputRef = useRef<HTMLInputElement>(null)
 
   const { data: clientDocs = [] } = useQuery<ClientDocument[]>({
@@ -109,9 +112,14 @@ export default function Documents() {
               >
                 <div>
                   <p className="text-sm font-medium text-slate-200">{o.agent_name}</p>
-                  <p className="text-xs text-slate-500">{o.output_type} · v{o.version}</p>
+                  <p className="text-xs text-slate-500">{o.output_type} · v{o.version} · {o.review_status}</p>
                 </div>
-                <span className="text-xs text-slate-500">{o.review_status}</span>
+                <button
+                  onClick={() => downloadOutput(slug, o.id, o.file_path.split('/').pop() ?? o.output_type, token!).catch(console.error)}
+                  className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+                >
+                  ↓ Download
+                </button>
               </div>
             ))}
           </div>
