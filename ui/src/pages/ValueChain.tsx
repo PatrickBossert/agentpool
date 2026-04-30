@@ -4,11 +4,14 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import mermaid from 'mermaid'
 import { projectsApi } from '../api/endpoints'
+import { useAuth } from '../context/AuthContext'
+import { downloadOutput } from '../utils/download'
 
 mermaid.initialize({ startOnLoad: false, theme: 'dark' })
 
 export default function ValueChain() {
   const { slug } = useParams<{ slug: string }>()
+  const { token } = useAuth()
 
   const { data: outputs = [], isLoading } = useQuery({
     queryKey: ['value-chain', slug],
@@ -76,9 +79,17 @@ export default function ValueChain() {
           {/* Output metadata row */}
           <div className="flex justify-between items-center mb-4">
             <span className="text-sm text-slate-200">{latest.agent_name}</span>
-            <span className="text-xs text-slate-500">
-              v{latest.version} · {latest.review_status}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500">
+                v{latest.version} · {latest.review_status}
+              </span>
+              <button
+                onClick={() => downloadOutput(slug!, latest.id, latest.file_path.split('/').pop() ?? latest.output_type, token!).catch(console.error)}
+                className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                ↓ Download
+              </button>
+            </div>
           </div>
 
           {/* Diagram area */}

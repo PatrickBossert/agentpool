@@ -3,12 +3,15 @@ import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { projectsApi } from '../api/endpoints'
+import { useAuth } from '../context/AuthContext'
+import { downloadOutput } from '../utils/download'
 
 type Tab = 'visual' | 'gantt'
 
 export default function Roadmap() {
   const { slug } = useParams<{ slug: string }>()
   const [tab, setTab] = useState<Tab>('visual')
+  const { token } = useAuth()
 
   const { data: outputs = [], isLoading } = useQuery({
     queryKey: ['roadmap', slug],
@@ -66,6 +69,18 @@ export default function Roadmap() {
 
       {latest && tab === 'visual' && (
         <div className="bg-surface-card rounded-xl overflow-hidden">
+          <div className="flex justify-between items-center px-4 py-3 border-b border-slate-800">
+            <span className="text-sm text-slate-200">{latest.agent_name}</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500">v{latest.version} · {latest.review_status}</span>
+              <button
+                onClick={() => downloadOutput(slug!, latest.id, latest.file_path.split('/').pop() ?? latest.output_type, token!).catch(console.error)}
+                className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                ↓ Download
+              </button>
+            </div>
+          </div>
           {contentLoading && (
             <p className="text-sm text-slate-500 p-4">Loading roadmap…</p>
           )}
