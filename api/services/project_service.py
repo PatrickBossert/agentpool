@@ -193,3 +193,31 @@ async def get_output_file(slug: str, output_id: int) -> dict | None:
     if not file_path.exists():
         return {"not_found_on_disk": True}
     return {"file_path": file_path, "filename": file_path.name}
+
+
+async def get_roadmap_data(slug: str) -> dict | None:
+    """Return parsed roadmap JSON for the Gantt tab.
+
+    Returns:
+        None — project not found or no roadmap_data output exists
+        {"not_found_on_disk": True} — row exists but file deleted from disk
+        dict — parsed roadmap_data JSON (periods, initiatives, etc.)
+    """
+    if not get_db_path(slug).exists():
+        return None
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+        async with conn.execute(
+            "SELECT file_path FROM agent_outputs "
+            "WHERE project_id=? AND output_type=? ORDER BY created_at DESC LIMIT 1",
+            (project["id"], "roadmap_data"),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+    file_path = Path(row["file_path"])
+    if not file_path.exists():
+        return {"not_found_on_disk": True}
+    return json.loads(file_path.read_text(encoding="utf-8"))

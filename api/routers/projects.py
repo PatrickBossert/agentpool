@@ -12,6 +12,7 @@ from api.services.project_service import (
     update_project_settings,
     get_output_content,
     get_output_file,
+    get_roadmap_data,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -113,3 +114,13 @@ async def download_output_endpoint(slug: str, output_id: int):
         media_type=_content_type(file_path),
         headers={"X-Filename": filename},
     )
+
+
+@router.get("/{slug}/roadmap-data")
+async def get_roadmap_data_endpoint(slug: str):
+    result = await get_roadmap_data(slug)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No roadmap data found for project '{slug}'")
+    if isinstance(result, dict) and result.get("not_found_on_disk"):
+        raise HTTPException(status_code=404, detail="Roadmap data file not found on disk")
+    return result
