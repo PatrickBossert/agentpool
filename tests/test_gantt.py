@@ -99,3 +99,26 @@ async def test_get_roadmap_data_file_missing_on_disk_404(client):
 
     resp = await client.get(f"/projects/{SLUG}/roadmap-data")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_html_roadmap_tool_writes_json(client):
+    """HtmlRoadmapTool._run() writes roadmap_data.json alongside roadmap.html."""
+    await client.post("/projects", json=PROJECT)
+    settings = get_settings()
+
+    from agents.tools.html_roadmap import HtmlRoadmapTool
+    tool = HtmlRoadmapTool(slug=SLUG)
+    tool._run(
+        roadmap_data=MINIMAL_ROADMAP,
+        filename="roadmap.html",
+        agent_name="test_roadmap_agent",
+    )
+
+    outputs_dir = Path(settings.projects_dir) / SLUG / "outputs"
+    json_file = outputs_dir / "roadmap_data.json"
+    assert json_file.exists(), "roadmap_data.json was not written"
+    data = json.loads(json_file.read_text(encoding="utf-8"))
+    assert "periods" in data
+    assert "initiatives" in data
+    assert "value_streams" in data

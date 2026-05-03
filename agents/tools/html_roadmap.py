@@ -1,5 +1,6 @@
 # agents/tools/html_roadmap.py
 import html
+import json
 from pathlib import Path
 from typing import Any
 from pydantic import BaseModel, Field
@@ -103,6 +104,17 @@ class HtmlRoadmapTool(BaseTool):
                 agent_name=agent_name,
                 output_type="html",
                 file_path=str(file_path),
+            )
+            # Also write raw JSON for the Gantt tab
+            json_path = outputs_dir / filename.replace(".html", "_data.json")
+            json_path.write_text(
+                json.dumps(roadmap_data, ensure_ascii=False), encoding="utf-8"
+            )
+            insert_agent_output_sync(
+                slug=self.slug,
+                agent_name=agent_name,
+                output_type="roadmap_data",
+                file_path=str(json_path),
             )
         except (OSError, ValueError, KeyError) as e:
             return f"Error: render failed — {e}"
