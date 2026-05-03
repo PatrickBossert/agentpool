@@ -13,6 +13,7 @@ from api.services.project_service import (
     get_output_content,
     get_output_file,
     get_roadmap_data,
+    get_financial_summary,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -123,4 +124,14 @@ async def get_roadmap_data_endpoint(slug: str):
         raise HTTPException(status_code=404, detail=f"No roadmap data found for project '{slug}'")
     if isinstance(result, dict) and result.get("not_found_on_disk"):
         raise HTTPException(status_code=404, detail="Roadmap data file not found on disk")
+    return result
+
+
+@router.get("/{slug}/financial-summary")
+async def get_financial_summary_endpoint(slug: str):
+    result = await get_financial_summary(slug)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No financial model found for project '{slug}'")
+    if isinstance(result, dict) and result.get("not_found_on_disk"):
+        raise HTTPException(status_code=404, detail="Financial model file not found on disk")
     return result

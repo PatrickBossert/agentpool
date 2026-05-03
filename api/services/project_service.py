@@ -221,3 +221,37 @@ async def get_roadmap_data(slug: str) -> dict | None:
     if not file_path.exists():
         return {"not_found_on_disk": True}
     return json.loads(file_path.read_text(encoding="utf-8"))
+
+
+async def get_financial_summary(slug: str) -> dict | None:
+    """Return parsed financial summary metrics from the latest excel output.
+
+    Returns:
+        None — project not found or no excel output exists
+        {"not_found_on_disk": True} — row exists but file deleted
+        dict — six metric keys extracted from Sheet 2
+    """
+    if not get_db_path(slug).exists():
+        return None
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+        async with conn.execute(
+            "SELECT file_path FROM agent_outputs "
+            "WHERE project_id=? AND output_type=? ORDER BY created_at DESC LIMIT 1",
+            (project["id"], "excel"),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+    file_path = Path(row["file_path"])
+    if not file_path.exists():
+        return {"not_found_on_disk": True}
+    import openpyxl
+    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    if "Financial Summary" not in wb.sheetnames:
+        return {"not_found_on_disk": True}
+    ws = wb["Financial Summary"]
+    keys = ["npv", "irr", "payback_period", "max_borrowing", "total_investment", "total_benefits"]
+    return {key: ws.cell(row=i + 2, column=2).value for i, key in enumerate(keys)}
