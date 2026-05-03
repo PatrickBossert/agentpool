@@ -29,6 +29,7 @@ export default function AppLayout() {
         { to: `/${slug}`, label: 'Dashboard', end: true },
         { to: `/${slug}/value-chain`, label: 'Value Chain' },
         { to: `/${slug}/roadmap`, label: 'Roadmap' },
+        { to: `/${slug}/business-plan`, label: 'Business Plan' },
         { to: `/${slug}/documents`, label: 'Documents' },
       ]
     : [{ to: '/', label: 'Dashboard', end: true }]
