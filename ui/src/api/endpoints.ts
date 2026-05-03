@@ -9,6 +9,7 @@ import type {
   OutputContent,
   TokenResponse,
   RoadmapData,
+  FinancialSummary,
 } from '../types'
 
 export const authApi = {
@@ -73,4 +74,7 @@ export const projectsApi = {
 
   roadmapData: (slug: string): Promise<RoadmapData> =>
     apiClient.get<RoadmapData>(`/projects/${slug}/roadmap-data`).then((r) => r.data),
+
+  financialSummary: (slug: string): Promise<FinancialSummary> =>
+    apiClient.get<FinancialSummary>(`/projects/${slug}/financial-summary`).then((r) => r.data),
 }

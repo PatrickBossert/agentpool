@@ -104,3 +104,12 @@ export interface RoadmapData {
   initiatives: Initiative[]
   propositions: unknown[]
 }
+
+export interface FinancialSummary {
+  npv: number | null
+  irr: number | null
+  payback_period: string | null
+  max_borrowing: number | null
+  total_investment: number | null
+  total_benefits: number | null
+}
