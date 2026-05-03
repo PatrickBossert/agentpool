@@ -88,3 +88,19 @@ export interface UserPayload {
   role: string
   exp: number
 }
+
+export interface Initiative {
+  title: string
+  value_streams: string[]
+  period: string
+  category: string
+  complexity_score: number | string
+}
+
+export interface RoadmapData {
+  periods: string[]
+  value_streams: string[]
+  stakeholder_groups: string[]
+  initiatives: Initiative[]
+  propositions: unknown[]
+}

@@ -8,6 +8,7 @@ import type {
   ProjectSettings,
   OutputContent,
   TokenResponse,
+  RoadmapData,
 } from '../types'
 
 export const authApi = {
@@ -69,4 +70,7 @@ export const projectsApi = {
 
   getOutputContent: (slug: string, outputId: number): Promise<OutputContent> =>
     apiClient.get<OutputContent>(`/projects/${slug}/outputs/${outputId}/content`).then((r) => r.data),
+
+  roadmapData: (slug: string): Promise<RoadmapData> =>
+    apiClient.get<RoadmapData>(`/projects/${slug}/roadmap-data`).then((r) => r.data),
 }
