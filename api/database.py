@@ -293,7 +293,7 @@ async def fetch_pending_reviews(
         FROM human_reviews hr
         JOIN crew_runs cr ON cr.id = hr.crew_run_id
         WHERE cr.project_id = ? AND hr.decision = 'pending'
-        ORDER BY hr.reviewed_at DESC
+        ORDER BY hr.id DESC
         """,
         (project_id,),
     ) as cur:
