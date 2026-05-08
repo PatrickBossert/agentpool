@@ -19,17 +19,28 @@ export default function AppLayout() {
     refetchInterval: 10_000,
   })
 
+  const { data: reviews = [] } = useQuery({
+    queryKey: ['reviews', slug],
+    queryFn: () => projectsApi.listReviews(slug!),
+    enabled: !!slug,
+    refetchInterval: 5000,
+  })
+  const pendingReviewCount = reviews.length
+
   function handleLogout() {
     logout()
     navigate('/login')
   }
 
-  const navItems = slug
+  type NavItem = { to: string; label: string; end?: boolean; badge?: number }
+
+  const navItems: NavItem[] = slug
     ? [
         { to: `/${slug}`, label: 'Dashboard', end: true },
         { to: `/${slug}/value-chain`, label: 'Value Chain' },
         { to: `/${slug}/roadmap`, label: 'Roadmap' },
         { to: `/${slug}/business-plan`, label: 'Business Plan' },
+        { to: `/${slug}/reviews`, label: 'Reviews', badge: pendingReviewCount > 0 ? pendingReviewCount : undefined },
         { to: `/${slug}/documents`, label: 'Documents' },
       ]
     : [{ to: '/', label: 'Dashboard', end: true }]
@@ -46,7 +57,7 @@ export default function AppLayout() {
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `text-sm pb-0.5 border-b-2 transition-colors ${
+                `text-sm pb-0.5 border-b-2 transition-colors flex items-center gap-1.5 ${
                   isActive
                     ? 'text-sky-300 border-sky-300'
                     : 'text-slate-400 border-transparent hover:text-slate-200'
@@ -54,6 +65,11 @@ export default function AppLayout() {
               }
             >
               {item.label}
+              {item.badge !== undefined && (
+                <span className="bg-amber-500 text-slate-900 text-xs font-bold rounded-full px-1.5 leading-4 min-w-[18px] text-center">
+                  {item.badge}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>

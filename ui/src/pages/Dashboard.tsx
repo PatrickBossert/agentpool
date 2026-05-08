@@ -1,5 +1,5 @@
 // ui/src/pages/Dashboard.tsx
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import StatusBadge from '../components/StatusBadge'
@@ -24,6 +24,14 @@ export default function Dashboard() {
     enabled: !!slug,
     refetchInterval: 5_000,
   })
+
+  const { data: reviews = [] } = useQuery({
+    queryKey: ['reviews', slug],
+    queryFn: () => projectsApi.listReviews(slug!),
+    enabled: !!slug,
+    refetchInterval: 5000,
+  })
+  const pendingReviewCount = reviews.length
 
   const runMutation = useMutation({
     mutationFn: () => projectsApi.orchestrate(slug!),
@@ -132,6 +140,31 @@ export default function Dashboard() {
           ))}
         </div>
       </section>
+
+      {/* Pending reviews banner */}
+      {pendingReviewCount > 0 && (
+        <section>
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
+            Pending Reviews
+          </h3>
+          <div className="bg-surface rounded-lg border-l-4 border-amber-500 px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="rounded px-2 py-0.5 text-xs font-bold tracking-wide bg-amber-500/10 text-amber-400 uppercase">
+                {pendingReviewCount} pending
+              </span>
+              <p className="text-sm text-slate-400">
+                {pendingReviewCount === 1 ? 'A crew is' : 'Crews are'} waiting for your input
+              </p>
+            </div>
+            <Link
+              to={`/${slug}/reviews`}
+              className="text-xs text-sky-400 hover:text-sky-300 border border-sky-900/40 rounded px-2.5 py-1.5 transition-colors"
+            >
+              Go to Reviews →
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* Review queue */}
       <section>

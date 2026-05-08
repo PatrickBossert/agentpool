@@ -11,6 +11,7 @@ import Roadmap from './pages/Roadmap'
 import RunDetail from './pages/RunDetail'
 import Settings from './pages/Settings'
 import BusinessPlan from './pages/BusinessPlan'
+import Reviews from './pages/Reviews'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { path: ':slug/value-chain', element: <ValueChain /> },
       { path: ':slug/roadmap', element: <Roadmap /> },
       { path: ':slug/business-plan', element: <BusinessPlan /> },
+      { path: ':slug/reviews', element: <Reviews /> },
       { path: ':slug/documents', element: <Documents /> },
       { path: ':slug/runs/:runId', element: <RunDetail /> },
       { path: ':slug/settings', element: <Settings /> },
