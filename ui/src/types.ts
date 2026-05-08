@@ -78,6 +78,14 @@ export interface Review {
   notes: string
 }
 
+export interface HumanReview {
+  id: number
+  prompt: string
+  crew_run_id: number
+  decision: string
+  reviewed_at: string
+}
+
 export interface TokenResponse {
   access_token: string
   token_type: string

@@ -10,6 +10,7 @@ import type {
   TokenResponse,
   RoadmapData,
   FinancialSummary,
+  HumanReview,
 } from '../types'
 
 export const authApi = {
@@ -77,4 +78,12 @@ export const projectsApi = {
 
   financialSummary: (slug: string): Promise<FinancialSummary> =>
     apiClient.get<FinancialSummary>(`/projects/${slug}/financial-summary`).then((r) => r.data),
+
+  listReviews: (slug: string): Promise<HumanReview[]> =>
+    apiClient.get<HumanReview[]>(`/projects/${slug}/reviews`).then((r) => r.data),
+
+  resolveReview: (slug: string, reviewId: number, decision: string, notes: string): Promise<void> =>
+    apiClient
+      .patch(`/projects/${slug}/reviews/${reviewId}`, { decision, notes })
+      .then(() => undefined),
 }
