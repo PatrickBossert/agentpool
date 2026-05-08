@@ -15,6 +15,7 @@ from api.database import (
     fetch_agent_outputs,
     list_projects,
     update_project_config,
+    fetch_pending_reviews,
 )
 from api.models import ProjectCreate, ProjectSettings, OutputContent  # noqa: F401
 
@@ -255,3 +256,14 @@ async def get_financial_summary(slug: str) -> dict | None:
     ws = wb["Financial Summary"]
     keys = ["npv", "irr", "payback_period", "max_borrowing", "total_investment", "total_benefits"]
     return {key: ws.cell(row=i + 2, column=2).value for i, key in enumerate(keys)}
+
+
+async def get_pending_reviews(slug: str) -> list[dict] | None:
+    """Return pending HITL reviews for a project. Returns None if project not found."""
+    if not get_db_path(slug).exists():
+        return None
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+        return await fetch_pending_reviews(conn, project["id"])

@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from aiosqlite import IntegrityError as AioSQLiteIntegrityError
 from api.database import get_connection, get_db_path, fetch_project, insert_review, update_review
+from api.services.project_service import get_pending_reviews
 
 router = APIRouter(prefix="/projects", tags=["reviews"])
 
@@ -59,3 +60,11 @@ async def resolve_hitl_review(slug: str, review_id: int, req: HITLReviewRequest)
         if not updated:
             raise HTTPException(status_code=404, detail=f"Review {review_id} not found")
         return {"id": review_id, "decision": req.decision, "notes": req.notes}
+
+
+@router.get("/{slug}/reviews")
+async def list_pending_reviews(slug: str):
+    result = await get_pending_reviews(slug)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    return result

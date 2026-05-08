@@ -279,6 +279,28 @@ async def update_review(
     return cur.rowcount > 0
 
 
+async def fetch_pending_reviews(
+    conn: aiosqlite.Connection, project_id: int
+) -> list[dict]:
+    """Return pending HITL human_reviews rows for a project, newest first.
+
+    Joins through crew_runs because human_reviews has no direct project_id.
+    Rows with crew_run_id IS NULL (legacy output reviews) are excluded by the JOIN.
+    """
+    async with conn.execute(
+        """
+        SELECT hr.id, hr.prompt, hr.crew_run_id, hr.decision, hr.reviewed_at
+        FROM human_reviews hr
+        JOIN crew_runs cr ON cr.id = hr.crew_run_id
+        WHERE cr.project_id = ? AND hr.decision = 'pending'
+        ORDER BY hr.reviewed_at DESC
+        """,
+        (project_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 async def fetch_outputs_by_type(
     conn: aiosqlite.Connection, *, project_id: int, output_type: str
 ) -> list[dict]:
