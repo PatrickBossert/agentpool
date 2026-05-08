@@ -266,4 +266,4 @@ async def get_pending_reviews(slug: str) -> list[dict] | None:
         project = await fetch_project(conn, slug=slug)
         if not project:
             return None
-        return await fetch_pending_reviews(conn, project["id"])
+        return await fetch_pending_reviews(conn, project_id=project["id"])

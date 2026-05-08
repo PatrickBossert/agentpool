@@ -4,22 +4,28 @@ from api.config import get_settings
 from api.database import get_connection, fetch_project, insert_crew_run
 
 SLUG = "rev-test"
+SLUG2 = "rev-test-2"
 PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail"}
+PROJECT2 = {"client_slug": SLUG2, "llm_mode": "standard", "sector": "rail"}
 
 
 @pytest.fixture(autouse=True)
 def clean():
     settings = get_settings()
     db_path = Path(settings.database_dir) / f"{SLUG}.db"
+    db_path2 = Path(settings.database_dir) / f"{SLUG2}.db"
     db_path.unlink(missing_ok=True)
+    db_path2.unlink(missing_ok=True)
     yield
     get_settings.cache_clear()
     db_path.unlink(missing_ok=True)
+    db_path2.unlink(missing_ok=True)
 
 
 async def _insert_pending_review(prompt: str, decision: str = "pending") -> None:
     async with get_connection(SLUG) as conn:
         project = await fetch_project(conn, slug=SLUG)
+        assert project is not None, f"Project '{SLUG}' not found in DB"
         run_id = await insert_crew_run(
             conn, project_id=project["id"], crew_name="TestCrew", status="running"
         )
@@ -57,3 +63,26 @@ async def test_list_reviews_excludes_resolved(client):
 async def test_list_reviews_unknown_project_404(client):
     resp = await client.get("/projects/no-such-project/reviews")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_reviews_excludes_other_project(client):
+    """Pending reviews from another project must not appear in this project's list."""
+    await client.post("/projects", json=PROJECT)
+    await client.post("/projects", json=PROJECT2)
+    # Insert pending review for SLUG2
+    async with get_connection(SLUG2) as conn:
+        project2 = await fetch_project(conn, slug=SLUG2)
+        assert project2 is not None
+        run_id = await insert_crew_run(
+            conn, project_id=project2["id"], crew_name="TestCrew", status="running"
+        )
+        await conn.execute(
+            "INSERT INTO human_reviews (crew_run_id, decision, prompt) VALUES (?,?,?)",
+            (run_id, "pending", "Other project's review"),
+        )
+        await conn.commit()
+    # SLUG should have no reviews
+    resp = await client.get(f"/projects/{SLUG}/reviews")
+    assert resp.status_code == 200
+    assert resp.json() == []

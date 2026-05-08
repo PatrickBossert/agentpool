@@ -280,9 +280,9 @@ async def update_review(
 
 
 async def fetch_pending_reviews(
-    conn: aiosqlite.Connection, project_id: int
+    conn: aiosqlite.Connection, *, project_id: int
 ) -> list[dict]:
-    """Return pending HITL human_reviews rows for a project, newest first.
+    """Return pending HITL human_reviews rows for a project, by insertion order (id DESC).
 
     Joins through crew_runs because human_reviews has no direct project_id.
     Rows with crew_run_id IS NULL (legacy output reviews) are excluded by the JOIN.
