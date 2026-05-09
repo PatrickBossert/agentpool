@@ -11,6 +11,7 @@ from api.routers import reviews as reviews_router
 from api.routers import orchestrate as orchestrate_router
 from api.routers import runs as runs_router
 from api.routers import stakeholders as stakeholders_router
+from api.routers import campaigns as campaigns_router
 
 
 @asynccontextmanager
@@ -41,3 +42,4 @@ app.include_router(reviews_router.router)
 app.include_router(orchestrate_router.router)
 app.include_router(runs_router.router)
 app.include_router(stakeholders_router.router)
+app.include_router(campaigns_router.router)
