@@ -69,7 +69,7 @@ export default function Dashboard() {
             <button
               onClick={() => runMutation.mutate()}
               disabled={runMutation.isPending}
-              className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm rounded"
+              className="px-4 py-1.5 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm rounded"
             >
               Run Pipeline
             </button>
@@ -86,7 +86,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
-                className="text-sm text-sky-400 hover:text-sky-300"
+                className="text-sm text-brand hover:text-brand-light"
               >
                 View Run →
               </button>
@@ -104,14 +104,14 @@ export default function Dashboard() {
               </span>
               <button
                 onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
-                className="text-sm text-sky-400 hover:text-sky-300"
+                className="text-sm text-brand hover:text-brand-light"
               >
                 View Last Run →
               </button>
               <button
                 onClick={() => runMutation.mutate()}
                 disabled={runMutation.isPending}
-                className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm rounded"
+                className="px-4 py-1.5 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm rounded"
               >
                 Run Again
               </button>
@@ -158,7 +158,7 @@ export default function Dashboard() {
             </div>
             <Link
               to={`/${slug}/reviews`}
-              className="text-xs text-sky-400 hover:text-sky-300 border border-sky-900/40 rounded px-2.5 py-1.5 transition-colors"
+              className="text-xs text-brand hover:text-brand-light border border-brand/20 rounded px-2.5 py-1.5 transition-colors"
             >
               Go to Reviews →
             </Link>

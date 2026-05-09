@@ -62,7 +62,7 @@ export default function AppLayout() {
               className={({ isActive }) =>
                 `text-sm pb-0.5 border-b-2 transition-colors flex items-center gap-1.5 ${
                   isActive
-                    ? 'text-sky-300 border-sky-300'
+                    ? 'text-brand border-brand'
                     : 'text-slate-400 border-transparent hover:text-slate-200'
                 }`
               }
@@ -116,7 +116,7 @@ export default function AppLayout() {
                 onClick={() => navigate(`/${p.slug}`)}
                 className={`flex-1 text-left text-sm px-2 py-1.5 rounded transition-colors ${
                   slug === p.slug
-                    ? 'bg-sky-900/40 text-sky-300'
+                    ? 'bg-brand/10 text-brand'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
                 }`}
               >

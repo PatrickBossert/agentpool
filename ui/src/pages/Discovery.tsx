@@ -94,7 +94,7 @@ export default function Discovery() {
           onChange={(e) => setBrief(e.target.value)}
           rows={5}
           placeholder="e.g. The client operates primarily in passenger rail in the UK. Focus on operational efficiency and safety compliance themes."
-          className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-sky-600 resize-y"
+          className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-brand resize-y"
         />
       </section>
 
@@ -109,7 +109,7 @@ export default function Discovery() {
           <ul className="mb-3 space-y-1">
             {links.map((link, i) => (
               <li key={i} className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-3 py-2">
-                <span className="text-sky-400 text-xs font-mono flex-1 truncate">{link.url}</span>
+                <span className="text-brand text-xs font-mono flex-1 truncate">{link.url}</span>
                 {link.label && <span className="text-slate-400 text-xs">{link.label}</span>}
                 <button
                   type="button"
@@ -129,20 +129,20 @@ export default function Discovery() {
             onChange={(e) => setNewUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addLink()}
             placeholder="https://..."
-            className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-sky-600"
+            className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-brand"
           />
           <input
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addLink()}
             placeholder="Label (optional)"
-            className="w-40 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-sky-600"
+            className="w-40 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-brand"
           />
           <button
             type="button"
             onClick={addLink}
             disabled={!newUrl.trim()}
-            className="px-4 py-2 bg-sky-700 hover:bg-sky-600 disabled:opacity-40 text-white text-sm rounded"
+            className="px-4 py-2 bg-brand hover:bg-brand-dark disabled:opacity-40 text-white text-sm rounded"
           >
             Add
           </button>
@@ -167,7 +167,7 @@ export default function Discovery() {
                   id={`doc-${doc.id}`}
                   checked={selectedDocIds.includes(doc.id)}
                   onChange={() => toggleDoc(doc.id)}
-                  className="accent-sky-500"
+                  className="accent-brand"
                 />
                 <label htmlFor={`doc-${doc.id}`} className="text-sm text-slate-300 cursor-pointer">
                   {doc.original_name}
