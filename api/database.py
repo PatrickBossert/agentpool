@@ -1,5 +1,6 @@
 # api/database.py
 import aiosqlite
+import json as _json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from api.config import get_settings
@@ -129,6 +130,34 @@ async def _migrate_crew_runs(conn: aiosqlite.Connection) -> None:
         await conn.commit()
 
 
+async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
+    """Create stakeholders table if it doesn't exist."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS stakeholders (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id          INTEGER NOT NULL REFERENCES projects(id),
+            name                TEXT NOT NULL,
+            job_title           TEXT NOT NULL DEFAULT '',
+            organisation        TEXT NOT NULL DEFAULT '',
+            email               TEXT NOT NULL DEFAULT '',
+            slack_handle        TEXT NOT NULL DEFAULT '',
+            stakeholder_groups  TEXT NOT NULL DEFAULT '[]',
+            project_role        TEXT NOT NULL DEFAULT 'recipient',
+            value_streams       TEXT NOT NULL DEFAULT '[]',
+            value_chain_stage   TEXT NOT NULL DEFAULT '',
+            activity            TEXT NOT NULL DEFAULT '',
+            disposition         TEXT NOT NULL DEFAULT 'neutral',
+            location            TEXT NOT NULL DEFAULT '',
+            country_code        TEXT NOT NULL DEFAULT '',
+            timezone            TEXT NOT NULL DEFAULT '',
+            preferred_language  TEXT NOT NULL DEFAULT '',
+            currency            TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
 @asynccontextmanager
 async def get_connection(slug: str):
     path = get_db_path(slug)
@@ -139,6 +168,7 @@ async def get_connection(slug: str):
         await init_db(conn)
         await _migrate_human_reviews(conn)
         await _migrate_crew_runs(conn)
+        await _migrate_stakeholders(conn)
         yield conn
 
 
@@ -422,6 +452,111 @@ async def fetch_all_orchestration_runs(
                 {"crew_name": r["crew_name"], "status": r["crew_status"]}
             )
     return list(runs.values())
+
+
+async def insert_stakeholder(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    name: str,
+    job_title: str = '',
+    organisation: str = '',
+    email: str = '',
+    slack_handle: str = '',
+    stakeholder_groups: list = None,
+    project_role: str = 'recipient',
+    value_streams: list = None,
+    value_chain_stage: str = '',
+    activity: str = '',
+    disposition: str = 'neutral',
+    location: str = '',
+    country_code: str = '',
+    timezone: str = '',
+    preferred_language: str = '',
+    currency: str = '',
+) -> int:
+    """Insert a stakeholder row. Returns new id."""
+    cur = await conn.execute(
+        """INSERT INTO stakeholders
+           (project_id, name, job_title, organisation, email, slack_handle,
+            stakeholder_groups, project_role, value_streams, value_chain_stage,
+            activity, disposition, location, country_code, timezone,
+            preferred_language, currency)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            project_id, name, job_title, organisation, email, slack_handle,
+            _json.dumps(stakeholder_groups or []),
+            project_role,
+            _json.dumps(value_streams or []),
+            value_chain_stage, activity, disposition,
+            location, country_code, timezone, preferred_language, currency,
+        ),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+def _deserialize_stakeholder(row: dict) -> dict:
+    """Convert JSON text columns back to Python lists."""
+    row["stakeholder_groups"] = _json.loads(row.get("stakeholder_groups") or "[]")
+    row["value_streams"] = _json.loads(row.get("value_streams") or "[]")
+    return row
+
+
+async def fetch_stakeholders(
+    conn: aiosqlite.Connection, *, project_id: int
+) -> list[dict]:
+    """Return all stakeholders for a project, ordered by name ASC."""
+    async with conn.execute(
+        "SELECT * FROM stakeholders WHERE project_id=? ORDER BY name ASC",
+        (project_id,),
+    ) as cur:
+        return [_deserialize_stakeholder(dict(r)) async for r in cur]
+
+
+async def fetch_stakeholder(
+    conn: aiosqlite.Connection, *, stakeholder_id: int, project_id: int
+) -> dict | None:
+    """Return one stakeholder; None if not found or belongs to different project."""
+    async with conn.execute(
+        "SELECT * FROM stakeholders WHERE id=? AND project_id=?",
+        (stakeholder_id, project_id),
+    ) as cur:
+        row = await cur.fetchone()
+    return _deserialize_stakeholder(dict(row)) if row else None
+
+
+async def update_stakeholder(
+    conn: aiosqlite.Connection, *, stakeholder_id: int, **fields
+) -> bool:
+    """Update stakeholder fields by id. Returns False if not found.
+
+    JSON-serializes list fields automatically.
+    """
+    for key in ("stakeholder_groups", "value_streams"):
+        if key in fields and isinstance(fields[key], list):
+            fields[key] = _json.dumps(fields[key])
+
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{k}=?" for k in fields)
+    values = list(fields.values()) + [stakeholder_id]
+    cur = await conn.execute(
+        f"UPDATE stakeholders SET {set_clause} WHERE id=?", values
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def delete_stakeholder(
+    conn: aiosqlite.Connection, *, stakeholder_id: int
+) -> bool:
+    """Hard delete. Returns False if not found."""
+    cur = await conn.execute(
+        "DELETE FROM stakeholders WHERE id=?", (stakeholder_id,)
+    )
+    await conn.commit()
+    return cur.rowcount > 0
 
 
 # ── System DB (users) ────────────────────────────────────────────────────────
