@@ -25,6 +25,9 @@ const EMPTY: FormData = {
   timezone: '',
   preferred_language: '',
   currency: '',
+  interview_status: null,
+  interview_invited_at: null,
+  interview_completed_at: null,
 }
 
 function SectionHeading({ children }: { children: React.ReactNode }) {

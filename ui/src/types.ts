@@ -161,6 +161,9 @@ export interface Stakeholder {
   timezone: string
   preferred_language: string
   currency: string
+  interview_status: string | null
+  interview_invited_at: string | null
+  interview_completed_at: string | null
   created_at: string
 }
 
@@ -168,4 +171,47 @@ export interface StakeholderImportResult {
   created: number
   updated: number
   errors: { row: number; reason: string }[]
+}
+
+export interface Campaign {
+  id: number
+  project_id: number
+  value_stream_name: string
+  listenlabs_campaign_id: string
+  campaign_name: string
+  interview_start: string | null
+  interview_close: string | null
+  findings_summary: string
+  created_at: string
+}
+
+export interface ReminderEmail {
+  id: number
+  project_id: number
+  campaign_id: number
+  stakeholder_id: number
+  subject: string
+  body: string
+  escalation_level: 'gentle' | 'firm' | 'urgent'
+  status: 'pending' | 'approved' | 'dismissed'
+  created_at: string
+}
+
+export interface InterviewSummary {
+  active_campaigns: {
+    id: number
+    value_stream_name: string
+    total_stakeholders: number
+    completed: number
+    window_open: boolean
+  }[]
+  total_stakeholders: number
+  total_completed: number
+}
+
+export interface ImportResult {
+  updated?: number
+  imported?: number
+  skipped?: number
+  unmatched?: number
 }
