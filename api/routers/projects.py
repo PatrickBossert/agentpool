@@ -14,6 +14,7 @@ from api.services.project_service import (
     get_output_file,
     get_roadmap_data,
     get_financial_summary,
+    get_portfolio_register,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -134,4 +135,12 @@ async def get_financial_summary_endpoint(slug: str):
         raise HTTPException(status_code=404, detail=f"No financial model found for project '{slug}'")
     if isinstance(result, dict) and result.get("not_found_on_disk"):
         raise HTTPException(status_code=404, detail="Financial model file not found on disk")
+    return result
+
+
+@router.get("/{slug}/portfolio-register")
+async def get_portfolio_register_endpoint(slug: str):
+    result = await get_portfolio_register(slug)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     return result

@@ -1,4 +1,5 @@
 # tests/test_projects_api.py
+import json
 import shutil
 from pathlib import Path
 
@@ -85,3 +86,49 @@ async def test_get_project_status_includes_orchestration_run_field(client):
     data = resp.json()
     assert "latest_orchestration_run" in data
     assert data["latest_orchestration_run"] is None
+
+
+@pytest.mark.asyncio
+async def test_portfolio_register_empty(client):
+    """Returns [] when project exists but portfolio_register.json does not."""
+    await client.post("/projects", json=PROJECT_PAYLOAD)
+    resp = await client.get("/projects/test-rail/portfolio-register")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_portfolio_register_returns_data(client):
+    """Returns parsed JSON array when portfolio_register.json exists on disk."""
+    await client.post("/projects", json=PROJECT_PAYLOAD)
+
+    register = [
+        {
+            "rank": 1,
+            "id": "VP-001",
+            "title": "Modernise Asset Management",
+            "change_articulation": "Replaces manual inspection logs with IoT-driven data.",
+            "impacted_stakeholder_groups": ["Operations", "Safety"],
+            "value_estimate": "High",
+            "score_value": 8.0,
+            "score_feasibility": 7.0,
+            "score_strategic_fit": 9.0,
+            "score_value_rationale": "Direct cost reduction.",
+            "score_feasibility_rationale": "APIs exist.",
+            "score_strategic_fit_rationale": "Core strategy.",
+            "total_score": 80.0,
+            "weights_used": {"value": 5, "feasibility": 3, "strategic_fit": 2},
+        }
+    ]
+    outputs_dir = Path("/tmp/agentpool_test_projects/test-rail/outputs")
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    (outputs_dir / "portfolio_register.json").write_text(
+        json.dumps(register), encoding="utf-8"
+    )
+
+    resp = await client.get("/projects/test-rail/portfolio-register")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["id"] == "VP-001"
+    assert data[0]["total_score"] == 80.0

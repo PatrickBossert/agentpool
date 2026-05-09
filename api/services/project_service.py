@@ -259,6 +259,23 @@ async def get_financial_summary(slug: str) -> dict | None:
     return {key: ws.cell(row=i + 2, column=2).value for i, key in enumerate(keys)}
 
 
+async def get_portfolio_register(slug: str) -> list | None:
+    """Return the portfolio register JSON array for a project.
+
+    Returns:
+        None  — project DB does not exist (unknown project)
+        []    — project exists but portfolio_register.json not on disk yet
+        list  — parsed JSON array from outputs/portfolio_register.json
+    """
+    if not get_db_path(slug).exists():
+        return None
+    settings = get_settings()
+    file_path = Path(settings.projects_dir) / slug / "outputs" / "portfolio_register.json"
+    if not file_path.exists():
+        return []
+    return json.loads(file_path.read_text(encoding="utf-8"))
+
+
 async def get_pending_reviews(slug: str) -> list[dict] | None:
     """Return pending HITL reviews for a project. Returns None if project not found."""
     if not get_db_path(slug).exists():
