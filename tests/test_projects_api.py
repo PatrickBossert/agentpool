@@ -132,3 +132,10 @@ async def test_portfolio_register_returns_data(client):
     assert len(data) == 1
     assert data[0]["id"] == "VP-001"
     assert data[0]["total_score"] == 80.0
+
+
+@pytest.mark.asyncio
+async def test_portfolio_register_unknown_project(client):
+    """Returns 404 when the project does not exist."""
+    resp = await client.get("/projects/nonexistent/portfolio-register")
+    assert resp.status_code == 404

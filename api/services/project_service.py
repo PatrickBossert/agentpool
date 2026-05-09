@@ -273,7 +273,10 @@ async def get_portfolio_register(slug: str) -> list | None:
     file_path = Path(settings.projects_dir) / slug / "outputs" / "portfolio_register.json"
     if not file_path.exists():
         return []
-    return json.loads(file_path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(file_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
 
 
 async def get_pending_reviews(slug: str) -> list[dict] | None:
