@@ -7,12 +7,14 @@ from pathlib import Path
 
 @pytest_asyncio.fixture
 async def db(tmp_path):
-    from api.database import init_db
+    from api.database import init_db, _migrate_human_reviews, _migrate_crew_runs
     db_path = tmp_path / "test.db"
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA foreign_keys = ON")
         await init_db(conn)
+        await _migrate_human_reviews(conn)
+        await _migrate_crew_runs(conn)
         yield conn
 
 

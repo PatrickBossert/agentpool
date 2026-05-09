@@ -118,6 +118,17 @@ async def _migrate_human_reviews(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_crew_runs(conn: aiosqlite.Connection) -> None:
+    """Add orchestration_run_id FK column to crew_runs on existing DBs."""
+    async with conn.execute("PRAGMA table_info(crew_runs)") as cur:
+        cols = [row["name"] async for row in cur]
+    if "orchestration_run_id" not in cols:
+        await conn.execute(
+            "ALTER TABLE crew_runs ADD COLUMN orchestration_run_id INTEGER REFERENCES orchestration_runs(id)"
+        )
+        await conn.commit()
+
+
 @asynccontextmanager
 async def get_connection(slug: str):
     path = get_db_path(slug)
@@ -127,6 +138,7 @@ async def get_connection(slug: str):
         await conn.execute("PRAGMA foreign_keys = ON")
         await init_db(conn)
         await _migrate_human_reviews(conn)
+        await _migrate_crew_runs(conn)
         yield conn
 
 
@@ -154,10 +166,18 @@ async def list_projects(conn: aiosqlite.Connection) -> list[dict]:
         return [dict(r) async for r in cur]
 
 
-async def insert_crew_run(conn: aiosqlite.Connection, *, project_id: int, crew_name: str, status: str) -> int:
+async def insert_crew_run(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    crew_name: str,
+    status: str,
+    orchestration_run_id: int | None = None,
+) -> int:
     cur = await conn.execute(
-        "INSERT INTO crew_runs (project_id, crew_name, status, started_at) VALUES (?,?,?, CURRENT_TIMESTAMP)",
-        (project_id, crew_name, status),
+        "INSERT INTO crew_runs (project_id, crew_name, status, started_at, orchestration_run_id) "
+        "VALUES (?,?,?, CURRENT_TIMESTAMP, ?)",
+        (project_id, crew_name, status, orchestration_run_id),
     )
     await conn.commit()
     return cur.lastrowid

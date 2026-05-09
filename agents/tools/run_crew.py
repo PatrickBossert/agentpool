@@ -29,7 +29,11 @@ class RunCrewTool(BaseTool):
             async with get_connection(self.slug) as conn:
                 project = await fetch_project(conn, slug=self.slug)
                 run_id = await insert_crew_run(
-                    conn, project_id=project["id"], crew_name=crew_name, status="running"
+                    conn,
+                    project_id=project["id"],
+                    crew_name=crew_name,
+                    status="running",
+                    orchestration_run_id=self.orchestration_run_id,
                 )
             result = await build_and_run_crew(self.slug, crew_name, run_id)
             async with get_connection(self.slug) as conn:
