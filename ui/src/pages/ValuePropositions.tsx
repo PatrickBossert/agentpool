@@ -1,5 +1,5 @@
 // ui/src/pages/ValuePropositions.tsx
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
@@ -76,9 +76,8 @@ export default function ValuePropositions() {
               </thead>
               <tbody>
                 {items.map((item) => (
-                  <>
+                  <Fragment key={item.id}>
                     <tr
-                      key={item.id}
                       onClick={() => toggleRow(item.id)}
                       className="border-b border-slate-800 hover:bg-slate-800/40 cursor-pointer transition-colors"
                     >
@@ -121,7 +120,7 @@ export default function ValuePropositions() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
