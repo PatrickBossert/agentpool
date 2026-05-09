@@ -39,6 +39,7 @@ export default function AppLayout() {
         { to: `/${slug}`, label: 'Dashboard', end: true },
         { to: `/${slug}/value-chain`, label: 'Value Chain' },
         { to: `/${slug}/roadmap`, label: 'Roadmap' },
+        { to: `/${slug}/stakeholders`, label: 'Stakeholders' },
         { to: `/${slug}/business-plan`, label: 'Business Plan' },
         { to: `/${slug}/reviews`, label: 'Reviews', badge: pendingReviewCount > 0 ? pendingReviewCount : undefined },
         { to: `/${slug}/runs`, label: 'Runs' },
