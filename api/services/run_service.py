@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 from api.config import get_settings, load_project_config
-from api.database import get_connection, update_crew_run_status
+from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents
 from api.routers.ws import push_log
 
 
@@ -23,7 +23,34 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
 
     if crew_name == "discovery":
         from agents.crews.discovery_crew import create_discovery_crew
-        crew = create_discovery_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
+        from api.database import fetch_project, fetch_documents
+
+        discovery_brief = config.get("discovery_brief", "")
+        discovery_links = config.get("discovery_links", [])
+        discovery_document_ids = config.get("discovery_document_ids", [])
+
+        priority_doc_names: list[str] = []
+        if discovery_document_ids:
+            async with get_connection(slug) as conn:
+                project_row = await fetch_project(conn, slug=slug)
+                if project_row:
+                    all_docs = await fetch_documents(conn, project_id=project_row["id"])
+                    doc_map = {d["id"]: d["original_name"] for d in all_docs}
+                    priority_doc_names = [
+                        doc_map[doc_id]
+                        for doc_id in discovery_document_ids
+                        if doc_id in doc_map
+                    ]
+
+        crew = create_discovery_crew(
+            slug=slug,
+            run_id=run_id,
+            llm_mode=llm_mode,
+            sector=sector,
+            discovery_brief=discovery_brief,
+            discovery_links=discovery_links,
+            priority_doc_names=priority_doc_names,
+        )
 
     elif crew_name == "value_design":
         from agents.crews.value_design_crew import create_value_design_crew

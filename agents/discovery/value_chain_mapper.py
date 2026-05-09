@@ -22,9 +22,48 @@ def create_value_chain_mapper(slug: str, llm: LLM, tools: list[BaseTool]) -> Age
     )
 
 
-def create_value_chain_mapper_task(agent: Agent) -> Task:
+def _build_discovery_context(
+    discovery_brief: str,
+    discovery_links: list[dict],
+    priority_doc_names: list[str],
+) -> str:
+    """Build a context preamble for the task description. Returns empty string if all inputs are empty."""
+    parts = []
+    if discovery_brief:
+        parts.append(f"Research brief: {discovery_brief}")
+    if discovery_links:
+        links_list = "\n".join(
+            f"  {i+1}. {entry.get('label', entry['url'])} — {entry['url']}"
+            for i, entry in enumerate(discovery_links)
+        )
+        parts.append(
+            "The client has provided these research links — fetch and read each "
+            "using WebFetchTool before beginning your analysis:\n" + links_list
+        )
+    if priority_doc_names:
+        docs_list = ", ".join(priority_doc_names)
+        parts.append(
+            f"Priority source documents (prioritise these when querying ChromaDB): {docs_list}"
+        )
+    if not parts:
+        return ""
+    return "\n\n".join(parts) + "\n\n"
+
+
+def create_value_chain_mapper_task(
+    agent: Agent,
+    discovery_brief: str = "",
+    discovery_links: list[dict] | None = None,
+    priority_doc_names: list[str] | None = None,
+) -> Task:
+    context_preamble = _build_discovery_context(
+        discovery_brief=discovery_brief,
+        discovery_links=discovery_links or [],
+        priority_doc_names=priority_doc_names or [],
+    )
     return Task(
         description=(
+            f"{context_preamble}"
             "Analyse the client documents and sector context to map the organisation's value chain.\n\n"
             "Steps:\n"
             "1. Use DocumentIngestionTool with filename=None to ingest all client documents.\n"

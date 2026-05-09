@@ -27,6 +27,9 @@ def create_discovery_crew(
     sector: str,
     llm: LLM | None = None,
     hitl_tool=None,
+    discovery_brief: str = "",
+    discovery_links: list[dict] | None = None,
+    priority_doc_names: list[str] | None = None,
 ) -> Crew:
     """
     Assemble and return the Discovery Crew.
@@ -62,7 +65,12 @@ def create_discovery_crew(
         tools=get_tools_for_agent("value_lever_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 
-    vcm_task = create_value_chain_mapper_task(agent=vcm)
+    vcm_task = create_value_chain_mapper_task(
+        agent=vcm,
+        discovery_brief=discovery_brief,
+        discovery_links=discovery_links,
+        priority_doc_names=priority_doc_names,
+    )
     rc_task = create_requirements_capture_task(agent=rc, context_tasks=[vcm_task], slug=slug)
     ra_task = create_requirements_analyst_task(agent=ra, context_tasks=[vcm_task, rc_task])
     vla_task = create_value_lever_analyst_task(agent=vla, context_tasks=[vcm_task, ra_task])

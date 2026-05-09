@@ -34,6 +34,7 @@ def get_tools_for_agent(
     from agents.tools.word_output import WordOutputTool
     from agents.tools.powerpoint_output import PowerPointOutputTool
     from agents.tools.financial_model import FinancialModelTool
+    from agents.tools.web_fetch_tool import WebFetchTool
 
     if not sector:
         settings = get_settings()
@@ -48,6 +49,7 @@ def get_tools_for_agent(
         "value_chain_mapper": [
             DocumentIngestionTool(slug=slug),
             TavilySearchTool(),
+            WebFetchTool(),
             ChromaQueryTool(slug=slug, sector=sector),
             MermaidRenderTool(slug=slug),
             SQLiteStateTool(slug=slug),
