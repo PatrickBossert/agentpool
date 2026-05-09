@@ -152,7 +152,7 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
             timezone            TEXT NOT NULL DEFAULT '',
             preferred_language  TEXT NOT NULL DEFAULT '',
             currency            TEXT NOT NULL DEFAULT '',
-            created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
     await conn.commit()
@@ -526,13 +526,26 @@ async def fetch_stakeholder(
     return _deserialize_stakeholder(dict(row)) if row else None
 
 
+_STAKEHOLDER_UPDATABLE_FIELDS = frozenset({
+    "name", "job_title", "organisation", "email", "slack_handle",
+    "stakeholder_groups", "project_role", "value_streams", "value_chain_stage",
+    "activity", "disposition", "location", "country_code", "timezone",
+    "preferred_language", "currency",
+})
+
+
 async def update_stakeholder(
     conn: aiosqlite.Connection, *, stakeholder_id: int, **fields
 ) -> bool:
     """Update stakeholder fields by id. Returns False if not found.
 
     JSON-serializes list fields automatically.
+    Only allows updates to known columns (prevents SQL injection via key names).
     """
+    invalid = set(fields) - _STAKEHOLDER_UPDATABLE_FIELDS
+    if invalid:
+        raise ValueError(f"Unknown stakeholder fields: {invalid}")
+
     for key in ("stakeholder_groups", "value_streams"):
         if key in fields and isinstance(fields[key], list):
             fields[key] = _json.dumps(fields[key])
