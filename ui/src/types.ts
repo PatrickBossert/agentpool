@@ -134,3 +134,30 @@ export interface OrchestrationRunHistory {
   completed_at: string | null
   crew_runs: RunCrewSummary[]
 }
+
+export interface Stakeholder {
+  id: number
+  name: string
+  job_title: string
+  organisation: string
+  email: string
+  slack_handle: string
+  stakeholder_groups: string[]
+  project_role: 'recipient' | 'governing' | 'actor'
+  value_streams: string[]
+  value_chain_stage: string
+  activity: string
+  disposition: 'champion' | 'supporter' | 'neutral' | 'skeptic' | 'blocker'
+  location: string
+  country_code: string
+  timezone: string
+  preferred_language: string
+  currency: string
+  created_at: string
+}
+
+export interface StakeholderImportResult {
+  created: number
+  updated: number
+  errors: { row: number; reason: string }[]
+}

@@ -12,6 +12,8 @@ import type {
   FinancialSummary,
   HumanReview,
   OrchestrationRunHistory,
+  Stakeholder,
+  StakeholderImportResult,
 } from '../types'
 
 export const authApi = {
@@ -90,4 +92,30 @@ export const projectsApi = {
 
   listRuns: (slug: string): Promise<OrchestrationRunHistory[]> =>
     apiClient.get<OrchestrationRunHistory[]>(`/projects/${slug}/runs`).then((r) => r.data),
+}
+
+export const stakeholdersApi = {
+  list: (slug: string): Promise<Stakeholder[]> =>
+    apiClient.get<Stakeholder[]>(`/projects/${slug}/stakeholders`).then((r) => r.data),
+
+  create: (slug: string, data: Omit<Stakeholder, 'id' | 'created_at'>): Promise<Stakeholder> =>
+    apiClient.post<Stakeholder>(`/projects/${slug}/stakeholders`, data).then((r) => r.data),
+
+  update: (
+    slug: string,
+    id: number,
+    data: Omit<Stakeholder, 'id' | 'created_at'>,
+  ): Promise<Stakeholder> =>
+    apiClient.put<Stakeholder>(`/projects/${slug}/stakeholders/${id}`, data).then((r) => r.data),
+
+  remove: (slug: string, id: number): Promise<void> =>
+    apiClient.delete(`/projects/${slug}/stakeholders/${id}`).then(() => undefined),
+
+  importCsv: (slug: string, file: File): Promise<StakeholderImportResult> => {
+    const form = new FormData()
+    form.append('file', file)
+    return apiClient
+      .post<StakeholderImportResult>(`/projects/${slug}/stakeholders/import`, form)
+      .then((r) => r.data)
+  },
 }
