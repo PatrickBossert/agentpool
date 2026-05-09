@@ -112,3 +112,31 @@ async def test_patch_settings_unknown_project_404(client):
     }
     resp = await client.patch("/projects/ghost/settings", json=patch_body)
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_settings_discovery_fields(client):
+    await client.post("/projects", json=PROJECT)
+    patch_body = {
+        "llm_mode": "standard",
+        "sector": "rail",
+        "stakeholder_groups": [],
+        "value_stream_labels": [],
+        "roadmap_time_axis": "quarters",
+        "crews_enabled": ["discovery"],
+        "review_gates": True,
+        "slack_channel": "",
+        "discovery_brief": "Focus on freight operations.",
+        "discovery_links": [{"url": "https://example.com", "label": "Example"}],
+        "discovery_document_ids": [1, 2],
+    }
+    resp = await client.patch("/projects/settings-test/settings", json=patch_body)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["discovery_brief"] == "Focus on freight operations."
+    assert data["discovery_links"] == [{"url": "https://example.com", "label": "Example"}]
+    assert data["discovery_document_ids"] == [1, 2]
+    get_resp = await client.get("/projects/settings-test/settings")
+    assert get_resp.json()["discovery_brief"] == "Focus on freight operations."
+    assert get_resp.json()["discovery_links"] == [{"url": "https://example.com", "label": "Example"}]
+    assert get_resp.json()["discovery_document_ids"] == [1, 2]

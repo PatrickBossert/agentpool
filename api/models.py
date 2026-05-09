@@ -28,6 +28,9 @@ class ProjectSettings(BaseModel):
     ]
     review_gates: bool = True
     slack_channel: str = ""
+    discovery_brief: str = ""
+    discovery_links: list[dict] = []
+    discovery_document_ids: list[int] = []
 
 
 class OutputContent(BaseModel):
