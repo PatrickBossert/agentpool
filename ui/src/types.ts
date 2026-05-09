@@ -121,3 +121,16 @@ export interface FinancialSummary {
   total_investment: number | null
   total_benefits: number | null
 }
+
+export interface RunCrewSummary {
+  crew_name: string
+  status: string
+}
+
+export interface OrchestrationRunHistory {
+  id: number
+  status: string
+  started_at: string | null
+  completed_at: string | null
+  crew_runs: RunCrewSummary[]
+}

@@ -41,6 +41,7 @@ export default function AppLayout() {
         { to: `/${slug}/roadmap`, label: 'Roadmap' },
         { to: `/${slug}/business-plan`, label: 'Business Plan' },
         { to: `/${slug}/reviews`, label: 'Reviews', badge: pendingReviewCount > 0 ? pendingReviewCount : undefined },
+        { to: `/${slug}/runs`, label: 'Runs' },
         { to: `/${slug}/documents`, label: 'Documents' },
       ]
     : [{ to: '/', label: 'Dashboard', end: true }]

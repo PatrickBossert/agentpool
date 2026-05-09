@@ -11,6 +11,7 @@ import type {
   RoadmapData,
   FinancialSummary,
   HumanReview,
+  OrchestrationRunHistory,
 } from '../types'
 
 export const authApi = {
@@ -86,4 +87,7 @@ export const projectsApi = {
     apiClient
       .patch(`/projects/${slug}/reviews/${reviewId}`, { decision, notes })
       .then(() => undefined),
+
+  listRuns: (slug: string): Promise<OrchestrationRunHistory[]> =>
+    apiClient.get<OrchestrationRunHistory[]>(`/projects/${slug}/runs`).then((r) => r.data),
 }
