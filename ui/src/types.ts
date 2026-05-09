@@ -55,6 +55,11 @@ export interface ClientDocument {
   uploaded_at: string
 }
 
+export interface DiscoveryLink {
+  url: string
+  label: string
+}
+
 export interface ProjectSettings {
   llm_mode: 'standard' | 'sensitive' | 'fallback'
   sector: string
@@ -64,6 +69,9 @@ export interface ProjectSettings {
   crews_enabled: string[]
   review_gates: boolean
   slack_channel: string
+  discovery_brief: string
+  discovery_links: DiscoveryLink[]
+  discovery_document_ids: number[]
 }
 
 export interface OutputContent {

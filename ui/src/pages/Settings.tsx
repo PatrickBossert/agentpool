@@ -16,6 +16,9 @@ const DEFAULTS: ProjectSettings = {
   crews_enabled: [...KNOWN_CREWS],
   review_gates: true,
   slack_channel: '',
+  discovery_brief: '',
+  discovery_links: [],
+  discovery_document_ids: [],
 }
 
 function TagInput({

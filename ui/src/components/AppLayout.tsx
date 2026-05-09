@@ -37,6 +37,7 @@ export default function AppLayout() {
   const navItems: NavItem[] = slug
     ? [
         { to: `/${slug}`, label: 'Dashboard', end: true },
+        { to: `/${slug}/discovery`, label: 'Discovery' },
         { to: `/${slug}/value-chain`, label: 'Value Chain' },
         { to: `/${slug}/roadmap`, label: 'Roadmap' },
         { to: `/${slug}/stakeholders`, label: 'Stakeholders' },
