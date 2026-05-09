@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import { downloadOutput } from '../utils/download'
 import type { RoadmapData, Initiative } from '../types'
 
-type Tab = 'visual' | 'gantt'
+type Tab = 'visual' | 'gantt' | 'register'
 type GroupBy = 'category' | 'value_stream'
 
 const CATEGORY_COLOURS: Record<string, string> = {
@@ -48,7 +48,7 @@ export default function Roadmap() {
   const { data: roadmapData } = useQuery({
     queryKey: ['roadmap-data', slug],
     queryFn: () => projectsApi.roadmapData(slug!),
-    enabled: !!slug && tab === 'gantt',
+    enabled: !!slug && (tab === 'gantt' || tab === 'register'),
   })
 
   return (
@@ -56,7 +56,7 @@ export default function Roadmap() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-slate-100">Roadmap</h2>
         <div className="flex rounded-lg overflow-hidden border border-slate-700" role="tablist">
-          {(['visual', 'gantt'] as Tab[]).map((t) => (
+          {(['visual', 'gantt', 'register'] as Tab[]).map((t) => (
             <button
               key={t}
               role="tab"
@@ -171,6 +171,38 @@ export default function Roadmap() {
           {roadmapData && <GanttTable data={roadmapData} groupBy={groupBy} />}
         </div>
       )}
+
+      {tab === 'register' && (
+        <div className="bg-surface-card rounded-xl overflow-hidden">
+          {/* Controls row — same Group By toggle as Gantt */}
+          <div className="flex items-center px-4 py-3 border-b border-slate-800">
+            <span className="text-xs text-slate-500 uppercase tracking-widest">Group by</span>
+            <div className="flex rounded-lg overflow-hidden border border-slate-700 ml-3">
+              {(['category', 'value_stream'] as GroupBy[]).map((g) => (
+                <button
+                  key={g}
+                  onClick={() => setGroupBy(g)}
+                  className={`px-3 py-1 text-xs capitalize transition-colors ${
+                    groupBy === g ? 'bg-brand text-white' : 'text-slate-400 hover:bg-slate-800'
+                  }`}
+                >
+                  {g === 'value_stream' ? 'Value Stream' : 'Category'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Empty state */}
+          {!roadmapData && (
+            <p className="text-sm text-slate-500 p-4">
+              Initiative register will appear here once initiatives are identified.
+            </p>
+          )}
+
+          {/* Register table */}
+          {roadmapData && <RegisterTable data={roadmapData} groupBy={groupBy} />}
+        </div>
+      )}
     </div>
   )
 }
@@ -237,6 +269,103 @@ function GanttTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) 
                         </td>
                       )
                     })}
+                  </tr>
+                ))}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) {
+  const hasUnassigned =
+    groupBy === 'value_stream' && data.initiatives.some((i) => i.value_streams.length === 0)
+  const groups =
+    groupBy === 'category'
+      ? [...new Set(data.initiatives.map((i) => i.category))]
+      : hasUnassigned
+      ? [...data.value_streams, 'Unassigned']
+      : data.value_streams
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-slate-900">
+            <th className="px-4 py-2 text-left text-slate-500 font-medium min-w-[200px]">
+              Initiative
+            </th>
+            {groupBy === 'value_stream' && (
+              <th className="px-3 py-2 text-left text-slate-500 font-medium">Category</th>
+            )}
+            <th className="px-3 py-2 text-left text-slate-500 font-medium">Value Streams</th>
+            <th className="px-3 py-2 text-center text-slate-500 font-medium min-w-[90px]">
+              Period
+            </th>
+            <th className="px-3 py-2 text-center text-slate-500 font-medium min-w-[80px]">
+              Complexity
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((group) => {
+            const members =
+              groupBy === 'category'
+                ? data.initiatives.filter((i) => i.category === group)
+                : group === 'Unassigned'
+                ? data.initiatives.filter((i) => i.value_streams.length === 0)
+                : data.initiatives.filter((i) => i.value_streams.includes(group))
+            const colour =
+              groupBy === 'category' ? (CATEGORY_COLOURS[group] ?? '#9ca3af') : '#6366f1'
+            const columnCount = groupBy === 'value_stream' ? 5 : 4
+
+            return (
+              <Fragment key={group}>
+                <tr className="bg-slate-900/60 border-t-2 border-slate-800">
+                  <td
+                    colSpan={columnCount}
+                    className="px-4 py-1.5 text-xs font-semibold uppercase tracking-widest"
+                    style={{ color: colour }}
+                  >
+                    ● {group.replace(/_/g, ' ')}
+                  </td>
+                </tr>
+                {members.map((initiative: Initiative) => (
+                  <tr
+                    key={`${group}-${initiative.title}`}
+                    className="border-t border-slate-800"
+                  >
+                    <td className="px-4 py-2 text-slate-300">{initiative.title}</td>
+                    {groupBy === 'value_stream' && (
+                      <td className="px-3 py-2">
+                        <span
+                          className="rounded px-2 py-0.5 text-xs font-medium"
+                          style={{
+                            background: `${CATEGORY_COLOURS[initiative.category] ?? '#9ca3af'}20`,
+                            color: CATEGORY_COLOURS[initiative.category] ?? '#9ca3af',
+                          }}
+                        >
+                          {initiative.category.replace(/_/g, ' ')}
+                        </span>
+                      </td>
+                    )}
+                    <td className="px-3 py-2 text-slate-400">
+                      {initiative.value_streams.join(', ')}
+                    </td>
+                    <td className="px-3 py-2 text-center text-slate-400">{initiative.period}</td>
+                    <td className="px-3 py-2 text-center">
+                      <span
+                        className="rounded px-2 py-0.5 text-xs font-bold text-white"
+                        style={{
+                          background: CATEGORY_COLOURS[initiative.category] ?? '#9ca3af',
+                        }}
+                      >
+                        {initiative.complexity_score}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </Fragment>
