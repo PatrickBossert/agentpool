@@ -19,6 +19,41 @@ export const CREW_LABELS: Record<CrewName, string> = {
   business_plan: 'Business Plan',
 }
 
+const CREW_ICONS: Record<CrewName, JSX.Element> = {
+  discovery: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.35-4.35" />
+      <path d="M8 11h6M11 8v6" />
+    </svg>
+  ),
+  value_design: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+    </svg>
+  ),
+  architecture: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+      <rect x="2" y="14" width="8" height="7" rx="1" />
+      <rect x="9" y="7" width="8" height="7" rx="1" />
+      <rect x="16" y="2" width="6" height="6" rx="1" />
+      <path d="M6 14V9.5M13 7V5M19 8v-2" />
+    </svg>
+  ),
+  delivery: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+      <path d="M12 19V5M5 12l7-7 7 7" />
+      <path d="M5 19h14" />
+    </svg>
+  ),
+  business_plan: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M8 17v-5M12 17v-9M16 17v-3" />
+    </svg>
+  ),
+}
+
 export const CREW_AGENTS: Record<CrewName, string[]> = {
   discovery: ['Value Chain Mapper', 'Industry Analyst', 'Document Analyst'],
   value_design: ['Value Prop Generator', 'Portfolio Manager'],
@@ -74,22 +109,40 @@ function CrewNode({ name, crewRun, isActive, isIdle, logs, interviewBadge, onCli
 
   const opacityClass = isIdle || (!isActive && status === 'queued') ? 'opacity-50' : ''
 
+  const iconColour =
+    status === 'completed'
+      ? 'text-brand-green'
+      : isActive
+        ? 'text-brand'
+        : 'text-slate-500'
+
   return (
     <div className={`flex flex-col gap-1 ${opacityClass}`}>
       <button
         onClick={onClick}
-        className={`relative border ${borderClass} ${bgClass} rounded-lg px-3 py-2.5 text-left transition-all min-w-[110px]`}
+        className={`relative border ${borderClass} ${bgClass} rounded-lg p-3 text-left transition-all w-32 h-24 flex flex-col justify-between`}
       >
+        {/* Status indicator */}
         {isActive && (
           <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-brand animate-pulse" />
         )}
         {status === 'completed' && (
-          <span className="absolute top-2 right-2 text-brand-green text-xs">✓</span>
+          <span className="absolute top-2 right-2 text-brand-green text-xs leading-none">✓</span>
         )}
-        <p className="text-xs font-semibold text-slate-200 pr-4">{CREW_LABELS[name]}</p>
-        {interviewBadge && name === 'discovery' && (
-          <p className="text-[10px] text-brand mt-0.5">{interviewBadge}</p>
-        )}
+
+        {/* Icon */}
+        <span className={`${iconColour} transition-colors`}>
+          {CREW_ICONS[name]}
+        </span>
+
+        {/* Label + sub-label */}
+        <div>
+          <p className="text-xs font-semibold text-slate-200 leading-tight pr-4">{CREW_LABELS[name]}</p>
+          <p className="text-[10px] text-slate-500 leading-tight">Agent Team</p>
+          {interviewBadge && name === 'discovery' && (
+            <p className="text-[10px] text-brand mt-0.5">{interviewBadge}</p>
+          )}
+        </div>
       </button>
 
       {isActive && agentStatuses && (
