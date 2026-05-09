@@ -16,6 +16,7 @@ import Runs from './pages/Runs'
 import Stakeholders from './pages/Stakeholders'
 import StakeholderForm from './pages/StakeholderForm'
 import Discovery from './pages/Discovery'
+import ValuePropositions from './pages/ValuePropositions'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
       { path: ':slug', element: <Dashboard /> },
       { path: ':slug/discovery', element: <Discovery /> },
       { path: ':slug/value-chain', element: <ValueChain /> },
+      { path: ':slug/value-propositions', element: <ValuePropositions /> },
       { path: ':slug/roadmap', element: <Roadmap /> },
       { path: ':slug/stakeholders', element: <Stakeholders /> },
       { path: ':slug/stakeholders/new', element: <StakeholderForm /> },
