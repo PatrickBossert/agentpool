@@ -14,6 +14,7 @@ import BusinessPlan from './pages/BusinessPlan'
 import Reviews from './pages/Reviews'
 import Runs from './pages/Runs'
 import Stakeholders from './pages/Stakeholders'
+import StakeholderForm from './pages/StakeholderForm'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -39,6 +40,8 @@ export const router = createBrowserRouter([
       { path: ':slug/value-chain', element: <ValueChain /> },
       { path: ':slug/roadmap', element: <Roadmap /> },
       { path: ':slug/stakeholders', element: <Stakeholders /> },
+      { path: ':slug/stakeholders/new', element: <StakeholderForm /> },
+      { path: ':slug/stakeholders/:id/edit', element: <StakeholderForm /> },
       { path: ':slug/business-plan', element: <BusinessPlan /> },
       { path: ':slug/reviews', element: <Reviews /> },
       { path: ':slug/runs', element: <Runs /> },
