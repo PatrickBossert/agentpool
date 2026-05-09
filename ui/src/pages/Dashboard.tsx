@@ -1,10 +1,13 @@
 // ui/src/pages/Dashboard.tsx
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
-import StatusBadge from '../components/StatusBadge'
+import { campaignsApi } from '../api/campaigns'
 import ReviewQueue from '../components/ReviewQueue'
+import OrgChart, { type CrewName } from '../components/OrgChart'
+import InfoCard from '../components/InfoCard'
 import { useWebSocket } from '../hooks/useWebSocket'
+import type { CrewRun } from '../types'
 
 export default function Dashboard() {
   const { slug } = useParams<{ slug?: string }>()
@@ -25,13 +28,18 @@ export default function Dashboard() {
     refetchInterval: 5_000,
   })
 
-  const { data: reviews = [] } = useQuery({
-    queryKey: ['reviews', slug],
-    queryFn: () => projectsApi.listReviews(slug!),
+  const { data: runs = [] } = useQuery({
+    queryKey: ['runs', slug],
+    queryFn: () => projectsApi.listRuns(slug!),
     enabled: !!slug,
-    refetchInterval: 5000,
   })
-  const pendingReviewCount = reviews.length
+
+  const { data: interviewSummary } = useQuery({
+    queryKey: ['interview-summary', slug],
+    queryFn: () => campaignsApi.interviewSummary(slug!),
+    enabled: !!slug,
+    refetchInterval: 30_000,
+  })
 
   const runMutation = useMutation({
     mutationFn: () => projectsApi.orchestrate(slug!),
@@ -48,123 +56,57 @@ export default function Dashboard() {
     )
   }
 
+  const crewRuns: CrewRun[] = status?.crew_runs ?? []
   const orch = status?.latest_orchestration_run
+  const isPipelineActive = orch?.status === 'running'
+  const activeRun = crewRuns.find((r) => r.status === 'running')
+  const lastRun = runs[0] ?? null
+
+  const interviewBadge: string | null = (() => {
+    if (!interviewSummary || interviewSummary.total_stakeholders === 0) return null
+    return `${interviewSummary.total_completed} / ${interviewSummary.total_stakeholders} ✓`
+  })()
+
+  function handleCrewClick(name: CrewName) {
+    if (name === 'discovery') navigate(`/${slug}/discovery`)
+  }
 
   return (
     <div className="p-6 space-y-6">
-      {/* Project header + Run Pipeline control */}
+      {/* Project header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100 mb-1">{slug}</h2>
-          {status && (
-            <div className="flex items-center gap-2">
-              <StatusBadge status={status.project_status} />
-            </div>
-          )}
-        </div>
-
-        {/* Run Pipeline button — four states */}
-        <div className="flex items-center gap-3">
-          {!orch && (
-            <button
-              onClick={() => runMutation.mutate()}
-              disabled={runMutation.isPending}
-              className="px-4 py-1.5 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm rounded"
-            >
-              Run Pipeline
-            </button>
-          )}
-
-          {orch?.status === 'running' && (
-            <>
-              <button
-                disabled
-                className="px-4 py-1.5 bg-slate-700 text-slate-400 text-sm rounded opacity-60 cursor-not-allowed flex items-center gap-2"
-              >
-                <span className="inline-block w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-                Running…
-              </button>
-              <button
-                onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
-                className="text-sm text-brand hover:text-brand-light"
-              >
-                View Run →
-              </button>
-            </>
-          )}
-
-          {(orch?.status === 'completed' || orch?.status === 'failed') && (
-            <>
-              <span
-                className={`text-sm font-medium ${
-                  orch.status === 'completed' ? 'text-emerald-400' : 'text-red-400'
-                }`}
-              >
-                {orch.status === 'completed' ? 'Completed' : 'Failed'}
-              </span>
-              <button
-                onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
-                className="text-sm text-brand hover:text-brand-light"
-              >
-                View Last Run →
-              </button>
-              <button
-                onClick={() => runMutation.mutate()}
-                disabled={runMutation.isPending}
-                className="px-4 py-1.5 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm rounded"
-              >
-                Run Again
-              </button>
-            </>
-          )}
-        </div>
+        <h2 className="text-lg font-semibold text-slate-100">{slug}</h2>
+        {(orch?.status === 'completed' || orch?.status === 'failed') && (
+          <button
+            onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
+            className="text-xs text-brand hover:text-brand-light"
+          >
+            View Last Run →
+          </button>
+        )}
       </div>
 
-      {/* Crew progress */}
-      <section>
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
-          Crew Progress
-        </h3>
-        {status?.crew_runs.length === 0 && (
-          <p className="text-sm text-slate-500">No crew runs yet.</p>
-        )}
-        <div className="space-y-2">
-          {status?.crew_runs.map((run) => (
-            <div
-              key={run.id}
-              className="flex items-center justify-between bg-surface-card rounded-lg px-4 py-3"
-            >
-              <span className="text-sm text-slate-200">{run.crew_name}</span>
-              <StatusBadge status={run.status} />
-            </div>
-          ))}
+      {/* Org chart + info card */}
+      <section className="grid grid-cols-[1fr_320px] gap-4 items-start">
+        <div className="bg-surface-card border border-slate-700 rounded-xl p-4">
+          <OrgChart
+            crewRuns={crewRuns}
+            isPipelineActive={isPipelineActive}
+            logs={logs}
+            interviewBadge={interviewBadge}
+            onCrewClick={handleCrewClick}
+          />
         </div>
+        <InfoCard
+          activeRun={activeRun}
+          isPipelineActive={isPipelineActive}
+          logs={logs}
+          lastRun={lastRun}
+          interviewBadge={interviewBadge}
+          onRun={() => runMutation.mutate()}
+          isRunPending={runMutation.isPending}
+        />
       </section>
-
-      {/* Pending reviews banner */}
-      {pendingReviewCount > 0 && (
-        <section>
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
-            Pending Reviews
-          </h3>
-          <div className="bg-surface rounded-lg border-l-4 border-amber-500 px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="rounded px-2 py-0.5 text-xs font-bold tracking-wide bg-amber-500/10 text-amber-400 uppercase">
-                {pendingReviewCount} pending
-              </span>
-              <p className="text-sm text-slate-400">
-                {pendingReviewCount === 1 ? 'A crew is' : 'Crews are'} waiting for your input
-              </p>
-            </div>
-            <Link
-              to={`/${slug}/reviews`}
-              className="text-xs text-brand hover:text-brand-light border border-brand/20 rounded px-2.5 py-1.5 transition-colors"
-            >
-              Go to Reviews →
-            </Link>
-          </div>
-        </section>
-      )}
 
       {/* Review queue */}
       <section>
@@ -173,20 +115,6 @@ export default function Dashboard() {
         </h3>
         <ReviewQueue slug={slug} outputs={outputs} />
       </section>
-
-      {/* Live log */}
-      {logs.length > 0 && (
-        <section>
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
-            Agent Log
-          </h3>
-          <div className="bg-black/40 rounded-lg p-4 font-mono text-xs text-emerald-400 space-y-0.5 max-h-48 overflow-y-auto">
-            {logs.map((line, i) => (
-              <p key={i}>{line}</p>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   )
 }
