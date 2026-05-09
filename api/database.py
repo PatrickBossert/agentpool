@@ -627,6 +627,200 @@ async def delete_stakeholder(
     return cur.rowcount > 0
 
 
+# ── Campaigns ─────────────────────────────────────────────────────────────────
+
+async def insert_campaign(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    value_stream_name: str = '',
+    listenlabs_campaign_id: str = '',
+    campaign_name: str = '',
+    interview_start: str | None = None,
+    interview_close: str | None = None,
+) -> int:
+    cur = await conn.execute(
+        """INSERT INTO campaigns
+           (project_id, value_stream_name, listenlabs_campaign_id, campaign_name,
+            interview_start, interview_close)
+           VALUES (?,?,?,?,?,?)""",
+        (project_id, value_stream_name, listenlabs_campaign_id, campaign_name,
+         interview_start, interview_close),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_campaigns(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM campaigns WHERE project_id=? ORDER BY created_at ASC",
+        (project_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def fetch_campaign(
+    conn: aiosqlite.Connection, *, campaign_id: int, project_id: int
+) -> dict | None:
+    async with conn.execute(
+        "SELECT * FROM campaigns WHERE id=? AND project_id=?",
+        (campaign_id, project_id),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+_CAMPAIGN_UPDATABLE = frozenset({
+    'value_stream_name', 'listenlabs_campaign_id', 'campaign_name',
+    'interview_start', 'interview_close', 'findings_summary',
+})
+
+
+async def update_campaign(
+    conn: aiosqlite.Connection, *, campaign_id: int, **fields
+) -> bool:
+    invalid = set(fields) - _CAMPAIGN_UPDATABLE
+    if invalid:
+        raise ValueError(f"Unknown campaign fields: {invalid}")
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{k}=?" for k in fields)
+    values = list(fields.values()) + [campaign_id]
+    cur = await conn.execute(
+        f"UPDATE campaigns SET {set_clause} WHERE id=?", values
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def delete_campaign(conn: aiosqlite.Connection, *, campaign_id: int) -> bool:
+    cur = await conn.execute("DELETE FROM campaigns WHERE id=?", (campaign_id,))
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def fetch_stakeholders_for_value_stream(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    value_stream_name: str,
+    exclude_completed: bool = False,
+) -> list[dict]:
+    """Return stakeholders whose value_streams JSON array contains value_stream_name."""
+    clause = "WHERE project_id=? AND value_streams LIKE ?"
+    params: list = [project_id, f'%"{value_stream_name}"%']
+    if exclude_completed:
+        clause += " AND (interview_status IS NULL OR interview_status != 'completed')"
+    async with conn.execute(
+        f"SELECT * FROM stakeholders {clause} ORDER BY name ASC", params
+    ) as cur:
+        return [_deserialize_stakeholder(dict(r)) async for r in cur]
+
+
+async def update_stakeholder_interview_status(
+    conn: aiosqlite.Connection,
+    *,
+    stakeholder_id: int,
+    status: str,
+    completed_at: str | None = None,
+    invited_at: str | None = None,
+) -> bool:
+    parts = ["interview_status=?"]
+    vals: list = [status]
+    if completed_at is not None:
+        parts.append("interview_completed_at=?")
+        vals.append(completed_at)
+    if invited_at is not None:
+        parts.append("interview_invited_at=?")
+        vals.append(invited_at)
+    vals.append(stakeholder_id)
+    cur = await conn.execute(
+        f"UPDATE stakeholders SET {', '.join(parts)} WHERE id=?", vals
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def insert_interview_response(
+    conn: aiosqlite.Connection,
+    *,
+    stakeholder_id: int,
+    campaign_id: int,
+    raw_data: str,
+) -> int:
+    cur = await conn.execute(
+        "INSERT INTO interview_responses (stakeholder_id, campaign_id, raw_data) VALUES (?,?,?)",
+        (stakeholder_id, campaign_id, raw_data),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_interview_responses(
+    conn: aiosqlite.Connection, *, campaign_id: int
+) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM interview_responses WHERE campaign_id=? ORDER BY imported_at ASC",
+        (campaign_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def insert_reminder_email(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    campaign_id: int,
+    stakeholder_id: int,
+    subject: str,
+    body: str,
+    escalation_level: str,
+) -> int:
+    cur = await conn.execute(
+        """INSERT INTO reminder_emails
+           (project_id, campaign_id, stakeholder_id, subject, body, escalation_level)
+           VALUES (?,?,?,?,?,?)""",
+        (project_id, campaign_id, stakeholder_id, subject, body, escalation_level),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_reminder_emails(
+    conn: aiosqlite.Connection, *, project_id: int, status: str = 'pending'
+) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM reminder_emails WHERE project_id=? AND status=? ORDER BY created_at DESC",
+        (project_id, status),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def update_reminder_email(
+    conn: aiosqlite.Connection,
+    *,
+    email_id: int,
+    project_id: int,
+    status: str,
+    subject: str | None = None,
+    body: str | None = None,
+) -> bool:
+    parts = ["status=?"]
+    vals: list = [status]
+    if subject is not None:
+        parts.append("subject=?")
+        vals.append(subject)
+    if body is not None:
+        parts.append("body=?")
+        vals.append(body)
+    vals += [email_id, project_id]
+    cur = await conn.execute(
+        f"UPDATE reminder_emails SET {', '.join(parts)} WHERE id=? AND project_id=?", vals
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
 # ── System DB (users) ────────────────────────────────────────────────────────
 
 def get_system_db_path() -> Path:
