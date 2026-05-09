@@ -158,6 +158,60 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_campaigns(conn: aiosqlite.Connection) -> None:
+    """Create campaigns, interview_responses, reminder_emails tables;
+    add interview_status/interview_invited_at/interview_completed_at to stakeholders."""
+
+    await conn.executescript("""
+        CREATE TABLE IF NOT EXISTS campaigns (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id              INTEGER NOT NULL REFERENCES projects(id),
+            value_stream_name       TEXT NOT NULL DEFAULT '',
+            listenlabs_campaign_id  TEXT NOT NULL DEFAULT '',
+            campaign_name           TEXT NOT NULL DEFAULT '',
+            interview_start         TEXT,
+            interview_close         TEXT,
+            findings_summary        TEXT NOT NULL DEFAULT '',
+            created_at              DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS interview_responses (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            stakeholder_id  INTEGER NOT NULL REFERENCES stakeholders(id),
+            campaign_id     INTEGER NOT NULL REFERENCES campaigns(id),
+            raw_data        TEXT NOT NULL,
+            imported_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS reminder_emails (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id          INTEGER NOT NULL REFERENCES projects(id),
+            campaign_id         INTEGER NOT NULL REFERENCES campaigns(id),
+            stakeholder_id      INTEGER NOT NULL REFERENCES stakeholders(id),
+            subject             TEXT NOT NULL DEFAULT '',
+            body                TEXT NOT NULL DEFAULT '',
+            escalation_level    TEXT NOT NULL DEFAULT 'gentle',
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    await conn.commit()
+
+    # Add interview columns to stakeholders if missing
+    async with conn.execute("PRAGMA table_info(stakeholders)") as cur:
+        cols = {row["name"] async for row in cur}
+
+    for col, defn in [
+        ("interview_status",       "TEXT"),
+        ("interview_invited_at",   "DATETIME"),
+        ("interview_completed_at", "DATETIME"),
+    ]:
+        if col not in cols:
+            await conn.execute(f"ALTER TABLE stakeholders ADD COLUMN {col} {defn}")
+
+    await conn.commit()
+
+
 @asynccontextmanager
 async def get_connection(slug: str):
     path = get_db_path(slug)
@@ -169,6 +223,7 @@ async def get_connection(slug: str):
         await _migrate_human_reviews(conn)
         await _migrate_crew_runs(conn)
         await _migrate_stakeholders(conn)
+        await _migrate_campaigns(conn)
         yield conn
 
 
