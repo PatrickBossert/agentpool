@@ -17,6 +17,11 @@ VALID_ROLES = {"recipient", "governing", "actor"}
 VALID_DISPOSITIONS = {"champion", "supporter", "neutral", "skeptic", "blocker"}
 
 
+def _split_semi(val: str) -> list[str]:
+    """Split a semicolon-delimited string into a stripped list, ignoring blanks."""
+    return [v.strip() for v in val.split(";") if v.strip()] if val else []
+
+
 async def list_stakeholders(slug: str) -> list[dict] | None:
     """None = project not found."""
     if not get_db_path(slug).exists():
@@ -114,18 +119,15 @@ async def import_csv(slug: str, content: str) -> dict | None:
                 errors.append({"row": i, "reason": f"Invalid project_role '{project_role}'"})
                 continue
 
-            def split_semi(val: str) -> list[str]:
-                return [v.strip() for v in val.split(";") if v.strip()] if val else []
-
             data = {
                 "name": row.get("name", ""),
                 "job_title": row.get("job_title", ""),
                 "organisation": row.get("organisation", ""),
                 "email": row.get("email", ""),
                 "slack_handle": row.get("slack_handle", ""),
-                "stakeholder_groups": split_semi(row.get("stakeholder_groups", "")),
+                "stakeholder_groups": _split_semi(row.get("stakeholder_groups", "")),
                 "project_role": project_role,
-                "value_streams": split_semi(row.get("value_streams", "")),
+                "value_streams": _split_semi(row.get("value_streams", "")),
                 "value_chain_stage": row.get("value_chain_stage", ""),
                 "activity": row.get("activity", ""),
                 "disposition": disposition,
