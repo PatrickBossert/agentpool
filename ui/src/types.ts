@@ -215,3 +215,20 @@ export interface ImportResult {
   skipped?: number
   unmatched?: number
 }
+
+export interface PortfolioItem {
+  rank: number
+  id: string                        // e.g. "VP-001"
+  title: string
+  change_articulation: string
+  impacted_stakeholder_groups: string[]
+  value_estimate: 'High' | 'Medium' | 'Low'
+  score_value: number
+  score_feasibility: number
+  score_strategic_fit: number
+  score_value_rationale: string
+  score_feasibility_rationale: string
+  score_strategic_fit_rationale: string
+  total_score: number
+  weights_used: { value: number; feasibility: number; strategic_fit: number }
+}

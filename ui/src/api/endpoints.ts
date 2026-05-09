@@ -14,6 +14,7 @@ import type {
   OrchestrationRunHistory,
   Stakeholder,
   StakeholderImportResult,
+  PortfolioItem,
 } from '../types'
 
 export const authApi = {
@@ -81,6 +82,9 @@ export const projectsApi = {
 
   financialSummary: (slug: string): Promise<FinancialSummary> =>
     apiClient.get<FinancialSummary>(`/projects/${slug}/financial-summary`).then((r) => r.data),
+
+  portfolioRegister: (slug: string): Promise<PortfolioItem[]> =>
+    apiClient.get<PortfolioItem[]>(`/projects/${slug}/portfolio-register`).then((r) => r.data),
 
   listReviews: (slug: string): Promise<HumanReview[]> =>
     apiClient.get<HumanReview[]>(`/projects/${slug}/reviews`).then((r) => r.data),
