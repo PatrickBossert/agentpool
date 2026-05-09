@@ -16,6 +16,7 @@ from api.database import (
     list_projects,
     update_project_config,
     fetch_pending_reviews,
+    fetch_all_orchestration_runs,
 )
 from api.models import ProjectCreate, ProjectSettings, OutputContent  # noqa: F401
 
@@ -267,3 +268,14 @@ async def get_pending_reviews(slug: str) -> list[dict] | None:
         if not project:
             return None
         return await fetch_pending_reviews(conn, project_id=project["id"])
+
+
+async def get_run_history(slug: str) -> list[dict] | None:
+    """Return all orchestration runs with crew summaries. None = project not found."""
+    if not get_db_path(slug).exists():
+        return None
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+        return await fetch_all_orchestration_runs(conn, project_id=project["id"])

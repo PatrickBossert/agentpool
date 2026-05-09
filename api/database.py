@@ -378,6 +378,52 @@ async def fetch_orchestration_run(conn: aiosqlite.Connection, *, run_id: int) ->
         return dict(row) if row else None
 
 
+async def fetch_all_orchestration_runs(
+    conn: aiosqlite.Connection, *, project_id: int
+) -> list[dict]:
+    """Return all orchestration_runs for a project (newest first) with crew summaries.
+
+    Uses LEFT JOIN so orch runs with no linked crew_runs still appear (crew_runs=[]).
+    Crew runs with orchestration_run_id IS NULL are excluded by the JOIN condition.
+    """
+    async with conn.execute(
+        """
+        SELECT
+            o.id,
+            o.status,
+            o.started_at,
+            o.completed_at,
+            cr.crew_name,
+            cr.status AS crew_status
+        FROM orchestration_runs o
+        LEFT JOIN crew_runs cr ON cr.orchestration_run_id = o.id
+        WHERE o.project_id = ?
+        ORDER BY o.started_at DESC, cr.id ASC
+        """,
+        (project_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    # Group crew_runs per orchestration run, preserving DESC order of orch runs
+    runs: dict[int, dict] = {}
+    for row in rows:
+        r = dict(row)
+        oid = r["id"]
+        if oid not in runs:
+            runs[oid] = {
+                "id": oid,
+                "status": r["status"],
+                "started_at": r["started_at"],
+                "completed_at": r["completed_at"],
+                "crew_runs": [],
+            }
+        if r["crew_name"] is not None:
+            runs[oid]["crew_runs"].append(
+                {"crew_name": r["crew_name"], "status": r["crew_status"]}
+            )
+    return list(runs.values())
+
+
 # ── System DB (users) ────────────────────────────────────────────────────────
 
 def get_system_db_path() -> Path:
