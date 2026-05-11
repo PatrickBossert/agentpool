@@ -134,7 +134,7 @@ async def test_portfolio_register_returns_data(client):
             "score_performance": 7.5,
             "score_performance_rationale": "Increases asset availability by reducing unplanned outages.",
             "score_performance_unit": "Throughput % / availability %",
-            "total_score": 68.5,
+            "total_score": 68.25,
             "weights_used": {
                 "financial": 20,
                 "manufactured": 10,
@@ -160,6 +160,7 @@ async def test_portfolio_register_returns_data(client):
     assert data[0]["id"] == "VP-001"
     assert data[0]["score_financial"] == 7.0
     assert data[0]["weights_used"]["safety"] == 20
+    assert data[0]["total_score"] == 68.25
 
 
 @pytest.mark.asyncio
