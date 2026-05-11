@@ -212,6 +212,21 @@ async def _migrate_campaigns(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_stakeholder_assignments(conn: aiosqlite.Connection) -> None:
+    """Create stakeholder_assignments table if it doesn't exist."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS stakeholder_assignments (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            orchestration_run_id  INTEGER NOT NULL REFERENCES orchestration_runs(id),
+            stakeholder_id        INTEGER NOT NULL REFERENCES stakeholders(id),
+            level                 TEXT NOT NULL,
+            node_label            TEXT NOT NULL,
+            created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
 @asynccontextmanager
 async def get_connection(slug: str):
     path = get_db_path(slug)
@@ -224,6 +239,7 @@ async def get_connection(slug: str):
         await _migrate_crew_runs(conn)
         await _migrate_stakeholders(conn)
         await _migrate_campaigns(conn)
+        await _migrate_stakeholder_assignments(conn)
         yield conn
 
 
@@ -866,3 +882,37 @@ async def insert_user(conn: aiosqlite.Connection, *, username: str, role: str,
         return True
     except aiosqlite.IntegrityError:
         return False
+
+
+# ── Stakeholder Assignments ───────────────────────────────────────────────────
+
+async def fetch_stakeholder_assignments(
+    conn: aiosqlite.Connection, *, orchestration_run_id: int
+) -> list[dict]:
+    """Return all assignments for an orchestration run, ordered by id."""
+    async with conn.execute(
+        "SELECT * FROM stakeholder_assignments WHERE orchestration_run_id=? ORDER BY id",
+        (orchestration_run_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def replace_stakeholder_assignments(
+    conn: aiosqlite.Connection,
+    *,
+    orchestration_run_id: int,
+    assignments: list[dict],
+) -> int:
+    """Replace all assignments for this run. Returns count saved."""
+    await conn.execute(
+        "DELETE FROM stakeholder_assignments WHERE orchestration_run_id=?",
+        (orchestration_run_id,),
+    )
+    for a in assignments:
+        await conn.execute(
+            "INSERT INTO stakeholder_assignments "
+            "(orchestration_run_id, stakeholder_id, level, node_label) VALUES (?,?,?,?)",
+            (orchestration_run_id, a["stakeholder_id"], a["level"], a["node_label"]),
+        )
+    await conn.commit()
+    return len(assignments)
