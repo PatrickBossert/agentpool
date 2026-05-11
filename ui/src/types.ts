@@ -218,17 +218,53 @@ export interface ImportResult {
 
 export interface PortfolioItem {
   rank: number
-  id: string                        // e.g. "VP-001"
+  id: string
   title: string
   change_articulation: string
   impacted_stakeholder_groups: string[]
   value_estimate: 'High' | 'Medium' | 'Low'
-  score_value: number
-  score_feasibility: number
-  score_strategic_fit: number
-  score_value_rationale: string
-  score_feasibility_rationale: string
-  score_strategic_fit_rationale: string
+
+  score_financial: number
+  score_financial_rationale: string
+  score_financial_unit: string
+
+  score_manufactured: number
+  score_manufactured_rationale: string
+  score_manufactured_unit: string
+
+  score_intellectual: number
+  score_intellectual_rationale: string
+  score_intellectual_unit: string
+
+  score_human: number
+  score_human_rationale: string
+  score_human_unit: string
+
+  score_social_relationship: number
+  score_social_relationship_rationale: string
+  score_social_relationship_unit: string
+
+  score_natural: number
+  score_natural_rationale: string
+  score_natural_unit: string
+
+  score_safety: number
+  score_safety_rationale: string
+  score_safety_unit: string
+
+  score_performance: number
+  score_performance_rationale: string
+  score_performance_unit: string
+
   total_score: number
-  weights_used: { value: number; feasibility: number; strategic_fit: number }
+  weights_used: {
+    financial: number
+    manufactured: number
+    intellectual: number
+    human: number
+    social_relationship: number
+    natural: number
+    safety: number
+    performance: number
+  }
 }
