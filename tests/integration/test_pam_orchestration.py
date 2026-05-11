@@ -211,6 +211,10 @@ def chroma_collection_pam(test_slug_pam, chroma_client, project_id_pam):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason="SP10c split PAM into two phases; run_pam_crew removed. "
+           "Replaced by test_pam_phase1_end_to_end and test_pam_phase2_end_to_end (SP10d)."
+)
 @pytest.mark.integration
 def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collection_pam):
     """
@@ -227,7 +231,6 @@ def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collectio
     import api.config as cfg
     from agents.llm import get_test_llm
     from api.database import fetch_project, get_connection, insert_orchestration_run
-    from api.services.orchestration_service import run_pam_crew
 
     settings = get_settings()
     slug = test_slug_pam
