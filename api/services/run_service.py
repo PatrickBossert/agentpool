@@ -53,7 +53,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
 
     elif crew_name == "discovery":
         from agents.crews.discovery_crew import create_discovery_crew
-        from api.database import fetch_project, fetch_documents
 
         discovery_brief = config.get("discovery_brief", "")
         discovery_links = config.get("discovery_links", [])
