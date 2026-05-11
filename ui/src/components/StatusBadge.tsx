@@ -6,6 +6,7 @@ const COLORS: Record<string, string> = {
   completed: 'bg-emerald-900/50 text-emerald-300',
   failed:    'bg-red-900/50 text-red-300',
   created:   'bg-slate-700 text-slate-300',
+  awaiting_assignment: 'bg-amber-900/50 text-amber-300',
 }
 
 export default function StatusBadge({ status }: { status: string }) {

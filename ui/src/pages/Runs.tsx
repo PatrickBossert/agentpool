@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import StatusBadge from '../components/StatusBadge'
@@ -13,7 +13,7 @@ function formatDuration(started: string | null, completed: string | null): strin
   return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
 }
 
-function RunRow({ run }: { run: OrchestrationRunHistory }) {
+function RunRow({ run, slug }: { run: OrchestrationRunHistory; slug: string }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -25,6 +25,15 @@ function RunRow({ run }: { run: OrchestrationRunHistory }) {
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-slate-200">Run #{run.id}</span>
           <StatusBadge status={run.status} />
+          {run.status === 'awaiting_assignment' && (
+            <Link
+              to={`/${slug}/assignment`}
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-2"
+            >
+              Go to Assignment →
+            </Link>
+          )}
           {run.crew_runs.length > 0 && (
             <span className="text-xs text-slate-500">
               {run.crew_runs.length} crew{run.crew_runs.length !== 1 ? 's' : ''}
@@ -68,8 +77,10 @@ export default function Runs() {
     queryFn: () => projectsApi.listRuns(slug!),
     enabled: !!slug,
     refetchInterval: (query) => {
-      const hasRunning = query.state.data?.some((r) => r.status === 'running')
-      return hasRunning ? 5000 : false
+      const hasActive = query.state.data?.some(
+        (r) => r.status === 'running' || r.status === 'awaiting_assignment',
+      )
+      return hasActive ? 5000 : false
     },
   })
 
@@ -82,7 +93,7 @@ export default function Runs() {
       )}
       <div className="space-y-3">
         {runs.map((run) => (
-          <RunRow key={run.id} run={run} />
+          <RunRow key={run.id} run={run} slug={slug!} />
         ))}
       </div>
     </div>
