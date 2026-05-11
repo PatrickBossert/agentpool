@@ -110,14 +110,41 @@ async def test_portfolio_register_returns_data(client):
             "change_articulation": "Replaces manual inspection logs with IoT-driven data.",
             "impacted_stakeholder_groups": ["Operations", "Safety"],
             "value_estimate": "High",
-            "score_value": 8.0,
-            "score_feasibility": 7.0,
-            "score_strategic_fit": 9.0,
-            "score_value_rationale": "Direct cost reduction.",
-            "score_feasibility_rationale": "APIs exist.",
-            "score_strategic_fit_rationale": "Core strategy.",
-            "total_score": 80.0,
-            "weights_used": {"value": 5, "feasibility": 3, "strategic_fit": 2},
+            "score_financial": 7.0,
+            "score_financial_rationale": "Reduces OpEx by automating inspections.",
+            "score_financial_unit": "NPV £M",
+            "score_manufactured": 6.5,
+            "score_manufactured_rationale": "Extends asset life through predictive maintenance.",
+            "score_manufactured_unit": "Asset replacement value £M",
+            "score_intellectual": 5.5,
+            "score_intellectual_rationale": "Generates proprietary sensor datasets.",
+            "score_intellectual_unit": "R&D £M / IP count",
+            "score_human": 6.0,
+            "score_human_rationale": "Upskills maintenance staff in data analysis.",
+            "score_human_unit": "FTE-days / skills uplift",
+            "score_social_relationship": 5.5,
+            "score_social_relationship_rationale": "Improves regulator confidence through transparency.",
+            "score_social_relationship_unit": "NPS / beneficiary count",
+            "score_natural": 6.0,
+            "score_natural_rationale": "Reduces unnecessary site visits and emissions.",
+            "score_natural_unit": "CO₂e t / water ML / land ha",
+            "score_safety": 8.0,
+            "score_safety_rationale": "Early fault detection reduces RIDDOR-reportable incidents.",
+            "score_safety_unit": "RIDDOR rate / safety risk score",
+            "score_performance": 7.5,
+            "score_performance_rationale": "Increases asset availability by reducing unplanned outages.",
+            "score_performance_unit": "Throughput % / availability %",
+            "total_score": 68.5,
+            "weights_used": {
+                "financial": 20,
+                "manufactured": 10,
+                "intellectual": 5,
+                "human": 5,
+                "social_relationship": 5,
+                "natural": 20,
+                "safety": 20,
+                "performance": 15,
+            },
         }
     ]
     outputs_dir = Path("/tmp/agentpool_test_projects/test-rail/outputs")
@@ -131,7 +158,8 @@ async def test_portfolio_register_returns_data(client):
     data = resp.json()
     assert len(data) == 1
     assert data[0]["id"] == "VP-001"
-    assert data[0]["total_score"] == 80.0
+    assert data[0]["score_financial"] == 7.0
+    assert data[0]["weights_used"]["safety"] == 20
 
 
 @pytest.mark.asyncio
