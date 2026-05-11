@@ -21,7 +21,37 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     llm_mode = config.get("llm_mode", "standard")
     sector = config.get("sector", "")
 
-    if crew_name == "discovery":
+    if crew_name == "discovery_mapping":
+        from agents.crews.discovery_mapping_crew import create_discovery_mapping_crew
+
+        discovery_brief = config.get("discovery_brief", "")
+        discovery_links = config.get("discovery_links", [])
+        discovery_document_ids = config.get("discovery_document_ids", [])
+
+        priority_doc_names: list[str] = []
+        if discovery_document_ids:
+            async with get_connection(slug) as conn:
+                project_row = await fetch_project(conn, slug=slug)
+                if project_row:
+                    all_docs = await fetch_documents(conn, project_id=project_row["id"])
+                    doc_map = {d["id"]: d["original_name"] for d in all_docs}
+                    priority_doc_names = [
+                        doc_map[doc_id]
+                        for doc_id in discovery_document_ids
+                        if doc_id in doc_map
+                    ]
+
+        crew = create_discovery_mapping_crew(
+            slug=slug,
+            run_id=run_id,
+            llm_mode=llm_mode,
+            sector=sector,
+            discovery_brief=discovery_brief,
+            discovery_links=discovery_links,
+            priority_doc_names=priority_doc_names,
+        )
+
+    elif crew_name == "discovery":
         from agents.crews.discovery_crew import create_discovery_crew
         from api.database import fetch_project, fetch_documents
 

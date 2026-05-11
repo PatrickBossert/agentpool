@@ -58,3 +58,33 @@ def test_value_chain_mapper_task_unchanged_when_no_inputs():
     _, kwargs = MockTask.call_args
     desc = kwargs["description"]
     assert "Research brief:" not in desc
+
+
+def test_discovery_mapping_crew_has_one_agent():
+    from agents.crews.discovery_mapping_crew import create_discovery_mapping_crew
+    mock_llm = MagicMock(spec=LLM)
+    with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
+        crew = create_discovery_mapping_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
+        )
+    assert len(crew.agents) == 1
+
+
+def test_discovery_mapping_crew_has_one_task():
+    from agents.crews.discovery_mapping_crew import create_discovery_mapping_crew
+    mock_llm = MagicMock(spec=LLM)
+    with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
+        crew = create_discovery_mapping_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
+        )
+    assert len(crew.tasks) == 1
+
+
+def test_discovery_mapping_crew_task_mentions_value_chain_tree():
+    from agents.crews.discovery_mapping_crew import create_discovery_mapping_crew
+    mock_llm = MagicMock(spec=LLM)
+    with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
+        crew = create_discovery_mapping_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
+        )
+    assert "value_chain_tree" in crew.tasks[0].description

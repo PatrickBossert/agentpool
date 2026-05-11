@@ -299,3 +299,27 @@ async def get_run_history(slug: str) -> list[dict] | None:
         if not project:
             return None
         return await fetch_all_orchestration_runs(conn, project_id=project["id"])
+
+
+async def get_value_chain_tree(slug: str) -> list | None:
+    """Return the value chain tree JSON for the assignment page.
+
+    Returns:
+        None  — project DB does not exist (unknown project)
+        []    — project exists but value_chain_tree.json not yet on disk
+        list  — parsed JSON array from outputs/value_chain_tree.json
+    """
+    if not get_db_path(slug).exists():
+        return None
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+    settings = get_settings()
+    path = Path(settings.projects_dir) / slug / "outputs" / "value_chain_tree.json"
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
