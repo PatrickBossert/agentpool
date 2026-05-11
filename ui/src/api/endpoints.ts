@@ -15,6 +15,8 @@ import type {
   Stakeholder,
   StakeholderImportResult,
   PortfolioItem,
+  AssignmentData,
+  StakeholderAssignment,
 } from '../types'
 
 export const authApi = {
@@ -96,6 +98,28 @@ export const projectsApi = {
 
   listRuns: (slug: string): Promise<OrchestrationRunHistory[]> =>
     apiClient.get<OrchestrationRunHistory[]>(`/projects/${slug}/runs`).then((r) => r.data),
+
+  getAssignment: (slug: string, orchestrationRunId: number): Promise<AssignmentData> =>
+    apiClient
+      .get<AssignmentData>(`/projects/${slug}/assignment/${orchestrationRunId}`)
+      .then((r) => r.data),
+
+  saveAssignment: (
+    slug: string,
+    orchestrationRunId: number,
+    items: StakeholderAssignment[],
+  ): Promise<{ saved: number }> =>
+    apiClient
+      .post<{ saved: number }>(`/projects/${slug}/assignment/${orchestrationRunId}`, items)
+      .then((r) => r.data),
+
+  advanceOrchestrationRun: (
+    slug: string,
+    orchestrationRunId: number,
+  ): Promise<{ status: string }> =>
+    apiClient
+      .patch<{ status: string }>(`/projects/${slug}/orchestration-runs/${orchestrationRunId}/advance`)
+      .then((r) => r.data),
 }
 
 export const stakeholdersApi = {

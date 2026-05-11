@@ -268,3 +268,21 @@ export interface PortfolioItem {
     performance: number
   }
 }
+
+export interface ValueChainNode {
+  label: string
+  level: 'L1' | 'L2' | 'L3'
+  children?: ValueChainNode[]
+}
+
+export interface StakeholderAssignment {
+  stakeholder_id: number
+  level: string
+  node_label: string
+}
+
+export interface AssignmentData {
+  value_chain_tree: ValueChainNode[]
+  assignments: StakeholderAssignment[]
+  stakeholders: Stakeholder[]
+}
