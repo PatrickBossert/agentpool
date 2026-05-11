@@ -21,6 +21,19 @@ def create_pam_agent(slug: str, llm: LLM, tools: list) -> Agent:
     )
 
 
+def create_run_discovery_mapping_task(agent: Agent, slug: str) -> Task:
+    return Task(
+        description=(
+            f"Use RunCrewTool with crew_name='discovery_mapping' to run the Discovery Mapping crew "
+            f"for project '{slug}'. Wait for it to complete. "
+            f"Then use SlackNotifyTool to send: "
+            f"'✓ Value chain mapping complete for {slug}. Awaiting stakeholder assignment.'"
+        ),
+        expected_output="Confirmation that discovery_mapping crew completed and Slack notified.",
+        agent=agent,
+    )
+
+
 def create_run_discovery_task(agent: Agent, slug: str) -> Task:
     return Task(
         description=(
