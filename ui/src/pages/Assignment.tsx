@@ -1,5 +1,5 @@
 // ui/src/pages/Assignment.tsx
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
@@ -94,10 +94,13 @@ export default function Assignment() {
 
   // Initialise pending from loaded data
   const [initialised, setInitialised] = useState(false)
-  if (data && !initialised) {
-    setPending(data.assignments.map((a) => ({ stakeholder_id: a.stakeholder_id, level: a.level, node_label: a.node_label })))
-    setInitialised(true)
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (data && !initialised) {
+      setPending(data.assignments.map((a) => ({ stakeholder_id: a.stakeholder_id, level: a.level, node_label: a.node_label })))
+      setInitialised(true)
+    }
+  }, [data, initialised])
 
   const assignedCounts = useMemo(() => {
     const counts: Record<NodeKey, number> = {}
@@ -155,6 +158,7 @@ export default function Assignment() {
   })
 
   async function handleConfirm() {
+    if (!runId) return
     await saveMutation.mutateAsync()
     await advanceMutation.mutateAsync()
     navigate(`/${slug}/runs`)
