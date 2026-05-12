@@ -107,6 +107,18 @@ def get_tools_for_agent(
             PowerPointOutputTool(slug=slug),
             FinancialModelTool(slug=slug),
         ],
+        "interview_coordinator": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+        ],
+        "stakeholder_interviewer": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+        ],
+        "synthesis_analyst": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+        ],
     }
 
     tools = tool_map.get(agent_name)
