@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 from api.config import get_settings, load_project_config
-from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents
+from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_stakeholder_assignments, fetch_stakeholders
 from api.routers.ws import push_log
 
 
@@ -21,7 +21,56 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     llm_mode = config.get("llm_mode", "standard")
     sector = config.get("sector", "")
 
-    if crew_name == "discovery_mapping":
+    if crew_name == "discovery_interviews":
+        interview_method = config.get("interview_method", "none")
+        if interview_method != "agent":
+            raise ValueError(
+                f"Cannot dispatch discovery_interviews crew: "
+                f"interview_method is '{interview_method}', expected 'agent'"
+            )
+
+        # Recover orchestration_run_id from the crew_run row
+        async with get_connection(slug) as conn:
+            async with conn.execute(
+                "SELECT orchestration_run_id FROM crew_runs WHERE id=?", (run_id,)
+            ) as cur:
+                cr_row = await cur.fetchone()
+            orchestration_run_id = cr_row["orchestration_run_id"] if cr_row else None
+            if not orchestration_run_id:
+                raise ValueError(
+                    f"crew_run {run_id} has no orchestration_run_id — "
+                    "discovery_interviews must be dispatched via PAM"
+                )
+
+            # Fetch assignments and enrich with stakeholder details
+            raw_assignments = await fetch_stakeholder_assignments(
+                conn, orchestration_run_id=orchestration_run_id
+            )
+            project_row = await fetch_project(conn, slug=slug)
+            all_stakeholders = await fetch_stakeholders(conn, project_id=project_row["id"])
+            stakeholder_map = {s["id"]: s for s in all_stakeholders}
+
+            stakeholder_assignments = [
+                {
+                    "name": stakeholder_map.get(a["stakeholder_id"], {}).get("name", "Unknown"),
+                    "job_title": stakeholder_map.get(a["stakeholder_id"], {}).get("job_title", ""),
+                    "level": a["level"],
+                    "node_label": a["node_label"],
+                }
+                for a in raw_assignments
+                if a["stakeholder_id"] in stakeholder_map
+            ]
+
+        from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew
+        crew = create_discovery_interviews_crew(
+            slug=slug,
+            run_id=run_id,
+            llm_mode=llm_mode,
+            sector=sector,
+            stakeholder_assignments=stakeholder_assignments,
+        )
+
+    elif crew_name == "discovery_mapping":
         from agents.crews.discovery_mapping_crew import create_discovery_mapping_crew
 
         discovery_brief = config.get("discovery_brief", "")
