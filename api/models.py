@@ -31,6 +31,7 @@ class ProjectSettings(BaseModel):
     discovery_brief: str = ""
     discovery_links: list[dict] = []
     discovery_document_ids: list[int] = []
+    interview_method: Literal["agent", "listenlabs", "none"] = "none"
 
 
 class OutputContent(BaseModel):

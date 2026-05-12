@@ -72,6 +72,7 @@ export interface ProjectSettings {
   discovery_brief: string
   discovery_links: DiscoveryLink[]
   discovery_document_ids: number[]
+  interview_method: 'agent' | 'listenlabs' | 'none'
 }
 
 export interface OutputContent {

@@ -19,6 +19,7 @@ const DEFAULTS: ProjectSettings = {
   discovery_brief: '',
   discovery_links: [],
   discovery_document_ids: [],
+  interview_method: 'none',
 }
 
 function TagInput({
@@ -221,6 +222,34 @@ export default function Settings() {
             }`}
           />
         </button>
+      </section>
+
+      {/* Discovery */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Discovery</h3>
+        <div>
+          <label className="text-xs text-slate-400 block mb-2">Interview Method</label>
+          <div className="flex flex-col gap-2">
+            {(
+              [
+                ['none', 'None — skip interview phase'],
+                ['agent', 'Agent interviews — platform conducts text-based interviews'],
+                ['listenlabs', 'ListenLabs — external campaign via ListenLabs API'],
+              ] as [ProjectSettings['interview_method'], string][]
+            ).map(([value, label]) => (
+              <label key={value} className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="interview_method"
+                  value={value}
+                  checked={form.interview_method === value}
+                  onChange={() => setForm({ ...form, interview_method: value })}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
       </section>
 
       {/* Footer */}
