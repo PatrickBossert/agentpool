@@ -52,6 +52,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
 
             stakeholder_assignments = [
                 {
+                    "stakeholder_id": a["stakeholder_id"],
                     "name": stakeholder_map.get(a["stakeholder_id"], {}).get("name", "Unknown"),
                     "job_title": stakeholder_map.get(a["stakeholder_id"], {}).get("job_title", ""),
                     "level": a["level"],

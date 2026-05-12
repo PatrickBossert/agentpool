@@ -23,11 +23,12 @@ def _format_assignments(stakeholder_assignments: list[dict]) -> str:
         return "(No stakeholder assignments provided)"
     lines = []
     for a in stakeholder_assignments:
+        stakeholder_id = a.get("stakeholder_id", "?")
         name = a.get("name", "Unknown")
         job_title = a.get("job_title", "")
         level = a.get("level", "")
         node_label = a.get("node_label", "")
-        line = f"- {name}"
+        line = f"- [id:{stakeholder_id}] {name}"
         if job_title:
             line += f" ({job_title})"
         if level and node_label:
