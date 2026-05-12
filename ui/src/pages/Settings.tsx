@@ -83,7 +83,7 @@ export default function Settings() {
   })
 
   useEffect(() => {
-    if (settings) setForm(settings)
+    if (settings) setForm({ ...DEFAULTS, ...settings })
   }, [settings])
 
   const mutation = useMutation({
