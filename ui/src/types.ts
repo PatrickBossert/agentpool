@@ -106,12 +106,34 @@ export interface UserPayload {
   exp: number
 }
 
+export interface CapabilityUplift {
+  dimension: 'people' | 'data' | 'systems' | 'organisation' | 'partnership' | 'architectural' | 'operating_model'
+  description: string
+}
+
+export interface CostEstimate {
+  low: number
+  high: number
+  currency: string
+  rationale: string
+}
+
 export interface Initiative {
+  id: string
   title: string
-  value_streams: string[]
-  period: string
-  category: string
-  complexity_score: number | string
+  description: string
+  proposition_ids: string[]
+  capability_uplifts: CapabilityUplift[]
+  initiative_type: 'enabler' | 'change_activity'
+  enabler_dependencies: string[]
+  change_dependencies: string[]
+  complexity_score: number
+  complexity_rationale: string
+  cost_estimate: CostEstimate
+  related_requirements: string[]
+  // Roadmap fields (added by roadmap_generator)
+  value_streams?: string[]
+  period?: string
 }
 
 export interface RoadmapData {

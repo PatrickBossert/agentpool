@@ -112,9 +112,8 @@ def test_ii_task_covers_all_categories(mock_llm):
     )
     agent = create_initiative_identifier(slug="test", llm=mock_llm, tools=[])
     task = create_initiative_identifier_task(agent=agent, context_tasks=[])
-    assert "enabling" in task.description
-    assert "operating_model" in task.description
-    assert "business_change" in task.description
+    assert "initiative_type='enabler'" in task.description
+    assert "initiative_type='change_activity'" in task.description
 
 
 # ── Crew wiring ───────────────────────────────────────────────────────────────
