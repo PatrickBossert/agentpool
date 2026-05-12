@@ -34,6 +34,20 @@ def create_run_discovery_mapping_task(agent: Agent, slug: str) -> Task:
     )
 
 
+def create_run_discovery_interviews_task(agent: Agent, slug: str, context_tasks: list) -> Task:
+    return Task(
+        description=(
+            f"Use RunCrewTool with crew_name='discovery_interviews' to run the "
+            f"Discovery Interviews crew for project '{slug}'. Wait for it to complete. "
+            f"Then use SlackNotifyTool to send: "
+            f"'✓ Discovery interviews complete for {slug}. Starting Value Design.'"
+        ),
+        expected_output="Confirmation that discovery_interviews crew completed and Slack notified.",
+        agent=agent,
+        context=context_tasks,
+    )
+
+
 def create_run_value_design_task(agent: Agent, slug: str, context_tasks: list) -> Task:
     return Task(
         description=(

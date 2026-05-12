@@ -87,3 +87,32 @@ def test_pam_crews_use_registry(mock_llm):
     assert call.args[0] == "pam"
     assert call.kwargs.get("slug") == "myslug"
     assert call.kwargs.get("run_id") == 77
+
+
+def _build_resume_crew_with_interviews(mock_llm):
+    with patch("agents.crews.pam_crew.get_tools_for_agent", return_value=[]):
+        from agents.crews.pam_crew import create_pam_resume_crew
+        return create_pam_resume_crew(
+            slug="test",
+            orchestration_run_id=1,
+            llm_mode="standard",
+            interview_method="agent",
+            llm=mock_llm,
+        )
+
+
+def test_pam_resume_crew_agent_method_has_five_tasks(mock_llm):
+    """When interview_method='agent', the resume crew has 5 tasks (interviews + 4 crews)."""
+    crew = _build_resume_crew_with_interviews(mock_llm)
+    assert len(crew.tasks) == 5
+
+
+def test_pam_resume_crew_agent_method_first_task_references_discovery_interviews(mock_llm):
+    crew = _build_resume_crew_with_interviews(mock_llm)
+    assert "discovery_interviews" in crew.tasks[0].description
+
+
+def test_pam_resume_crew_none_method_has_four_tasks(mock_llm):
+    """When interview_method='none', the resume crew still has 4 tasks (no interviews prepended)."""
+    crew = _build_resume_crew(mock_llm)
+    assert len(crew.tasks) == 4

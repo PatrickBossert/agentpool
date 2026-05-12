@@ -172,3 +172,33 @@ async def test_resume_orchestration_sets_status_running_and_fires_phase2():
 
     assert row["status"] == "running"
     mock_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_pam_phase2_passes_interview_method_to_crew():
+    """run_pam_phase2 reads interview_method from config and passes it to create_pam_resume_crew."""
+    from api.database import get_connection, insert_project, insert_orchestration_run, fetch_project
+
+    async with get_connection("orch-imethod-test") as conn:
+        await insert_project(
+            conn, slug="orch-imethod-test",
+            llm_mode="standard", sector="rail", config_json="{}"
+        )
+        project = await fetch_project(conn, slug="orch-imethod-test")
+        run_id = await insert_orchestration_run(conn, project_id=project["id"])
+
+    mock_crew = AsyncMock()
+    mock_crew.kickoff_async = AsyncMock(return_value=None)
+
+    with patch(
+        "api.services.orchestration_service.load_project_config",
+        return_value={"llm_mode": "standard", "interview_method": "agent"},
+    ), patch(
+        "agents.crews.pam_crew.create_pam_resume_crew", return_value=mock_crew
+    ) as mock_factory:
+        from api.services.orchestration_service import run_pam_phase2
+        await run_pam_phase2("orch-imethod-test", run_id)
+
+    mock_factory.assert_called_once()
+    call_kwargs = mock_factory.call_args.kwargs
+    assert call_kwargs.get("interview_method") == "agent"

@@ -77,6 +77,7 @@ async def run_pam_phase2(slug: str, orchestration_run_id: int) -> None:
             slug=slug,
             orchestration_run_id=orchestration_run_id,
             llm_mode=config.get("llm_mode", "standard"),
+            interview_method=config.get("interview_method", "none"),
         )
         await crew.kickoff_async()
         async with get_connection(slug) as conn:
