@@ -140,7 +140,17 @@ async def test_complete_interview_success(client):
 
 
 # ---------------------------------------------------------------------------
-# 7. GET /sessions/{slug} — project exists but no orchestration runs
+# 7. GET /sessions/{slug} — unknown slug returns 404
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_sessions_unknown_slug(client):
+    resp = await client.get("/api/interviews/sessions/nonexistent-slug-xyz")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 8. GET /sessions/{slug} — project exists but no orchestration runs
 # ---------------------------------------------------------------------------
 
 _SESSIONS_SLUG_NO_RUNS = "sessions-no-runs-test"

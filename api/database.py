@@ -1027,7 +1027,6 @@ async def fetch_interview_sessions_for_run(
     conn: aiosqlite.Connection, orchestration_run_id: int
 ) -> list[aiosqlite.Row]:
     """Return all interview_sessions rows for an orchestration run, joined with stakeholder name."""
-    conn.row_factory = aiosqlite.Row
     cur = await conn.execute(
         """
         SELECT
