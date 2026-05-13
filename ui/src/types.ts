@@ -309,3 +309,42 @@ export interface AssignmentData {
   assignments: StakeholderAssignment[]
   stakeholders: Stakeholder[]
 }
+
+export interface VoiceConfig {
+  language: string
+  country_code: string
+  elevenlabs_voice_id: string
+}
+
+export interface InterviewQuestion {
+  id: string
+  text: string
+  follow_up_count: number
+  probing_instructions: string
+  follow_up_branches: string[]
+  evasion_signals: string[]
+}
+
+export interface InterviewSection {
+  title: string
+  questions: InterviewQuestion[]
+}
+
+export interface InterviewScript {
+  node_label: string
+  level: string
+  research_brief: string
+  study_objectives: string[]
+  welcome_message: string
+  closing_message: string
+  sections: InterviewSection[]
+}
+
+export interface InterviewSession {
+  id: number
+  stakeholder_id: number
+  node_label: string
+  session_token: string
+  status: string
+  voice_config: VoiceConfig
+}

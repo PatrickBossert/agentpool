@@ -18,6 +18,7 @@ import StakeholderForm from './pages/StakeholderForm'
 import Discovery from './pages/Discovery'
 import ValuePropositions from './pages/ValuePropositions'
 import Assignment from './pages/Assignment'
+import VoiceInterview from './pages/VoiceInterview'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -29,6 +30,10 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <Login />,
+  },
+  {
+    path: '/interview/:sessionToken',
+    element: <VoiceInterview />,
   },
   {
     path: '/',
