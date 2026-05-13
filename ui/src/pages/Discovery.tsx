@@ -1,13 +1,123 @@
 // ui/src/pages/Discovery.tsx
 import { useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { campaignsApi } from '../api/campaigns'
-import type { Campaign } from '../types'
+import type { Campaign, ProjectSettings, InterviewSessionsResponse, InterviewSessionStatus } from '../types'
+
+// ── InterviewSessionsPanel ────────────────────────────────────────────────────
+
+const STATUS_CLASSES: Record<InterviewSessionStatus['status'], string> = {
+  pending:   'bg-gray-100 text-gray-700',
+  active:    'bg-amber-100 text-amber-700',
+  completed: 'bg-teal-100 text-teal-700',
+  abandoned: 'bg-slate-100 text-slate-500',
+}
+
+function InterviewSessionsPanel({ slug }: { slug: string }) {
+  const queryClient = useQueryClient()
+  const [copiedToken, setCopiedToken] = useState<string | null>(null)
+
+  const { data, isLoading } = useQuery<InterviewSessionsResponse>({
+    queryKey: ['interview-sessions', slug],
+    queryFn: () => fetch(`/api/interviews/sessions/${slug}`).then(r => r.json()),
+    enabled: !!slug,
+  })
+
+  async function abandon(token: string) {
+    await fetch(`/api/interviews/${token}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'abandoned' }),
+    })
+    queryClient.invalidateQueries({ queryKey: ['interview-sessions', slug] })
+  }
+
+  function copyUrl(session: InterviewSessionStatus) {
+    navigator.clipboard.writeText(session.interview_url)
+    setCopiedToken(session.session_token)
+    setTimeout(() => setCopiedToken(null), 1500)
+  }
+
+  if (isLoading) return <p className="text-sm text-slate-400 py-4">Loading sessions…</p>
+
+  const sessions = data?.sessions ?? []
+  const summary = data?.summary
+
+  return (
+    <div className="mt-4">
+      {/* Summary badges */}
+      {summary && (
+        <div className="flex gap-3 mb-4">
+          {(['pending', 'active', 'completed', 'abandoned'] as const).map(s => (
+            <span key={s} className={`text-xs px-2.5 py-1 rounded-full font-medium capitalize ${STATUS_CLASSES[s]}`}>
+              {s}: {summary[s]}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {sessions.length === 0 ? (
+        <p className="text-sm text-gray-500 py-4">No interview sessions found for the latest pipeline run.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-slate-300">
+            <thead>
+              <tr className="border-b border-slate-700 text-left text-slate-500 uppercase tracking-wider">
+                {['Name', 'Node', 'Status', 'Interview URL', 'Started', 'Completed', 'Actions'].map(h => (
+                  <th key={h} className="pb-2 pr-4 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {sessions.map(s => (
+                <tr key={s.id} className="py-2">
+                  <td className="py-2 pr-4">{s.name}</td>
+                  <td className="py-2 pr-4 text-slate-400">{s.node_label}</td>
+                  <td className="py-2 pr-4">
+                    <span className={`px-2 py-0.5 rounded-full capitalize ${STATUS_CLASSES[s.status]}`}>
+                      {s.status}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <button
+                      onClick={() => copyUrl(s)}
+                      className="text-xs px-2 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded"
+                    >
+                      {copiedToken === s.session_token ? 'Copied!' : 'Copy'}
+                    </button>
+                  </td>
+                  <td className="py-2 pr-4 text-slate-500">{s.started_at ? new Date(s.started_at).toLocaleString() : '—'}</td>
+                  <td className="py-2 pr-4 text-slate-500">{s.completed_at ? new Date(s.completed_at).toLocaleString() : '—'}</td>
+                  <td className="py-2">
+                    {(s.status === 'pending' || s.status === 'active') && (
+                      <button
+                        onClick={() => abandon(s.session_token)}
+                        className="text-xs px-2 py-0.5 text-red-400 hover:text-red-300 border border-red-800 hover:border-red-600 rounded"
+                      >
+                        Abandon
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Discovery() {
   const { slug } = useParams<{ slug: string }>()
   const [activeTab, setActiveTab] = useState<'interviews' | 'layer-map'>('interviews')
+
+  const { data: settings } = useQuery<ProjectSettings>({
+    queryKey: ['settings', slug],
+    queryFn: () => fetch(`/api/projects/${slug}/settings`).then(r => r.json()),
+    enabled: !!slug,
+  })
 
   const { data: campaigns = [], refetch: refetchCampaigns } = useQuery<Campaign[]>({
     queryKey: ['campaigns', slug],
@@ -92,6 +202,10 @@ export default function Discovery() {
       {/* ── Interviews tab ────────────────────────────────────── */}
       {activeTab === 'interviews' && (
         <div className="max-w-3xl">
+          {settings?.interview_method === 'agent' ? (
+            <InterviewSessionsPanel slug={slug!} />
+          ) : (
+          <>
           <p className="text-slate-400 text-sm mb-6">
             Link a ListenLabs campaign to each value stream. Export interview targets, import
             results, and generate reminders.
@@ -255,6 +369,8 @@ export default function Discovery() {
           >
             + Link Campaign
           </button>
+          </>
+          )}
         </div>
       )}
 

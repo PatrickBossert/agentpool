@@ -348,3 +348,29 @@ export interface InterviewSession {
   status: string
   voice_config: VoiceConfig
 }
+
+export interface SessionSummary {
+  pending: number
+  active: number
+  completed: number
+  abandoned: number
+}
+
+export interface InterviewSessionStatus {
+  id: number
+  stakeholder_id: number
+  name: string
+  node_label: string
+  session_token: string
+  status: 'pending' | 'active' | 'completed' | 'abandoned'
+  interview_url: string
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+}
+
+export interface InterviewSessionsResponse {
+  orchestration_run_id: number | null
+  sessions: InterviewSessionStatus[]
+  summary: SessionSummary
+}
