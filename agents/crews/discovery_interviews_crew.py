@@ -1,8 +1,12 @@
 # agents/crews/discovery_interviews_crew.py
-"""Discovery Interviews crew — Interview Coordinator → Stakeholder Interviewer → Synthesis Analyst."""
+"""Discovery Interviews crew — Script Designer → Interview Coordinator → Stakeholder Interviewer → Synthesis Analyst."""
 from crewai import Crew, Process, LLM
 from agents.llm import get_pam_llm
 from agents.tools.registry import get_tools_for_agent
+from agents.discovery.interview_script_designer import (
+    create_interview_script_designer_agent,
+    create_interview_script_designer_task,
+)
 from agents.discovery.interview_coordinator import (
     create_interview_coordinator,
     create_interview_coordinator_task,
@@ -43,6 +47,7 @@ def create_discovery_interviews_crew(
     llm_mode: str,
     sector: str,
     stakeholder_assignments: list[dict],
+    discovery_brief: str = "",
     llm: LLM | None = None,
     hitl_tool=None,
 ) -> Crew:
@@ -55,6 +60,14 @@ def create_discovery_interviews_crew(
 
     assignments_str = _format_assignments(stakeholder_assignments)
 
+    script_designer = create_interview_script_designer_agent(
+        slug=slug,
+        run_id=run_id,
+        llm_mode=llm_mode,
+        sector=sector,
+        llm=llm,
+        tools=get_tools_for_agent("interview_script_designer", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
+    )
     coordinator = create_interview_coordinator(
         slug=slug,
         llm=llm,
@@ -71,13 +84,18 @@ def create_discovery_interviews_crew(
         tools=get_tools_for_agent("synthesis_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 
-    t1 = create_interview_coordinator_task(agent=coordinator, stakeholder_assignments=assignments_str)
+    t0 = create_interview_script_designer_task(
+        agent=script_designer,
+        discovery_brief=discovery_brief,
+        stakeholder_assignments_block=assignments_str,
+    )
+    t1 = create_interview_coordinator_task(agent=coordinator, stakeholder_assignments=assignments_str, context=[t0])
     t2 = create_stakeholder_interviewer_task(agent=interviewer, context_tasks=[t1])
     t3 = create_synthesis_analyst_task(agent=analyst, context_tasks=[t2])
 
     return Crew(
-        agents=[coordinator, interviewer, analyst],
-        tasks=[t1, t2, t3],
+        agents=[script_designer, coordinator, interviewer, analyst],
+        tasks=[t0, t1, t2, t3],
         process=Process.sequential,
         verbose=True,
     )

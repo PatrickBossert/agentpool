@@ -69,6 +69,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             llm_mode=llm_mode,
             sector=sector,
             stakeholder_assignments=stakeholder_assignments,
+            discovery_brief=config.get("discovery_brief", ""),
         )
 
     elif crew_name == "discovery_mapping":

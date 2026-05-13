@@ -107,6 +107,10 @@ def get_tools_for_agent(
             PowerPointOutputTool(slug=slug),
             FinancialModelTool(slug=slug),
         ],
+        "interview_script_designer": [
+            SQLiteStateTool(slug=slug),
+            HumanInputTool(slug=slug, run_id=run_id),
+        ],
         "interview_coordinator": [
             SQLiteStateTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
