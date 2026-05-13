@@ -35,6 +35,7 @@ def get_tools_for_agent(
     from agents.tools.powerpoint_output import PowerPointOutputTool
     from agents.tools.financial_model import FinancialModelTool
     from agents.tools.web_fetch_tool import WebFetchTool
+    from agents.tools.interview_session_tool import InterviewSessionTool
 
     if not sector:
         settings = get_settings()
@@ -114,10 +115,12 @@ def get_tools_for_agent(
         "interview_coordinator": [
             SQLiteStateTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
+            InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
         ],
         "stakeholder_interviewer": [
             SQLiteStateTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
+            InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
         ],
         "synthesis_analyst": [
             SQLiteStateTool(slug=slug),
