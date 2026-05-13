@@ -196,6 +196,12 @@ def test_interview_session_tool_create(tmp_path):
         )
     assert "abc-123" in result
     assert "https://app.example.com" in result
+    # verify DB state
+    with contextlib.closing(sqlite3.connect(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM interview_sessions WHERE session_token='abc-123'").fetchone()
+        assert row is not None
+        assert row["status"] == "pending"
 
 
 def test_interview_session_tool_get_status(tmp_path):
@@ -211,7 +217,7 @@ def test_interview_session_tool_get_status(tmp_path):
         tool = InterviewSessionTool(slug="myslug", orchestration_run_id=1)
         result = tool._run(operation="get_status", sessions=[], session_tokens=[])
     assert "pending" in result
-    assert "1" in result
+    assert "pending=1" in result
 
 
 def test_interview_session_tool_mark_abandoned(tmp_path):
@@ -230,6 +236,15 @@ def test_interview_session_tool_mark_abandoned(tmp_path):
     with contextlib.closing(sqlite3.connect(db_path)) as conn:
         row = conn.execute("SELECT status FROM interview_sessions WHERE session_token='tok-y'").fetchone()
     assert row[0] == "abandoned"
+
+
+def test_interview_session_tool_unknown_operation(tmp_path):
+    db_path = _setup_sync_db(tmp_path)
+    from agents.tools.interview_session_tool import InterviewSessionTool
+    with patch("agents.tools.interview_session_tool._db_path", return_value=db_path):
+        tool = InterviewSessionTool(slug="myslug", orchestration_run_id=1)
+        result = tool._run(operation="foobar", sessions=[], session_tokens=[])
+    assert "unknown" in result.lower() or "Error" in result
 
 
 def test_interview_session_tool_get_transcripts(tmp_path):

@@ -48,39 +48,42 @@ class InterviewSessionTool(BaseTool):
     orchestration_run_id: int  # Receives crew_run_id; resolves actual orch_run_id at runtime
 
     def _run(self, operation: str, sessions: list[dict], session_tokens: list[str]) -> str:
-        db = _db_path(self.slug)
+        try:
+            db = _db_path(self.slug)
 
-        with contextlib.closing(sqlite3.connect(db)) as conn:
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON")
+            with contextlib.closing(sqlite3.connect(db)) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON")
 
-            # Get project_id
-            row = conn.execute("SELECT id FROM projects WHERE slug=?", (self.slug,)).fetchone()
-            if not row:
-                return f"Error: project '{self.slug}' not found"
-            project_id = row["id"]
+                # Get project_id
+                row = conn.execute("SELECT id FROM projects WHERE slug=?", (self.slug,)).fetchone()
+                if not row:
+                    return f"Error: project '{self.slug}' not found"
+                project_id = row["id"]
 
-            # Resolve actual orchestration_run_id from crew_run_id
-            orch_row = conn.execute(
-                "SELECT orchestration_run_id FROM crew_runs WHERE id=?",
-                (self.orchestration_run_id,),
-            ).fetchone()
-            actual_orch_id = (
-                orch_row["orchestration_run_id"]
-                if (orch_row and orch_row["orchestration_run_id"])
-                else self.orchestration_run_id
-            )
+                # Resolve actual orchestration_run_id from crew_run_id
+                orch_row = conn.execute(
+                    "SELECT orchestration_run_id FROM crew_runs WHERE id=?",
+                    (self.orchestration_run_id,),
+                ).fetchone()
+                actual_orch_id = (
+                    orch_row["orchestration_run_id"]
+                    if (orch_row and orch_row["orchestration_run_id"])
+                    else self.orchestration_run_id
+                )
 
-            if operation == "create":
-                return self._create(conn, project_id, actual_orch_id, sessions)
-            elif operation == "get_status":
-                return self._get_status(conn, actual_orch_id)
-            elif operation == "get_transcripts":
-                return self._get_transcripts(conn, actual_orch_id)
-            elif operation == "mark_abandoned":
-                return self._mark_abandoned(conn, session_tokens)
-            else:
-                return f"Error: unknown operation '{operation}'"
+                if operation == "create":
+                    return self._create(conn, project_id, actual_orch_id, sessions)
+                elif operation == "get_status":
+                    return self._get_status(conn, actual_orch_id)
+                elif operation == "get_transcripts":
+                    return self._get_transcripts(conn, actual_orch_id)
+                elif operation == "mark_abandoned":
+                    return self._mark_abandoned(conn, session_tokens)
+                else:
+                    return f"Error: unknown operation '{operation}'"
+        except sqlite3.Error as e:
+            return f"Error: database error — {e}"
 
     def _create(
         self,
@@ -93,6 +96,12 @@ class InterviewSessionTool(BaseTool):
         base_url = settings.frontend_url.rstrip("/")
         urls = []
         for s in sessions:
+            try:
+                stakeholder_id = s["stakeholder_id"]
+                node_label = s["node_label"]
+                session_token = s["session_token"]
+            except KeyError as e:
+                return f"Error: session dict missing required key {e}"
             conn.execute(
                 "INSERT OR IGNORE INTO interview_sessions "
                 "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token) "
@@ -100,12 +109,12 @@ class InterviewSessionTool(BaseTool):
                 (
                     project_id,
                     orchestration_run_id,
-                    s["stakeholder_id"],
-                    s["node_label"],
-                    s["session_token"],
+                    stakeholder_id,
+                    node_label,
+                    session_token,
                 ),
             )
-            url = f"{base_url}/interview/{s['session_token']}"
+            url = f"{base_url}/interview/{session_token}"
             urls.append(f"- {s.get('name', 'Stakeholder')}: {url}")
         conn.commit()
         return "Sessions created. Interview URLs:\n" + "\n".join(urls)
@@ -135,22 +144,32 @@ class InterviewSessionTool(BaseTool):
             "WHERE is_.orchestration_run_id=? AND is_.status='completed'",
             (orchestration_run_id,),
         ).fetchall()
-        results = [
-            {
+        results = []
+        for row in rows:
+            raw = row["transcript_json"]
+            try:
+                parsed = json.loads(raw) if raw else None
+            except json.JSONDecodeError:
+                parsed = None
+            results.append({
                 "stakeholder_id": row["stakeholder_id"],
                 "name": row["name"],
                 "node_label": row["node_label"],
-                "transcript_json": row["transcript_json"],
-            }
-            for row in rows
-        ]
+                "transcript_json": parsed,
+            })
         return json.dumps(results)
 
     def _mark_abandoned(self, conn: sqlite3.Connection, session_tokens: list[str]) -> str:
+        missed = []
         for token in session_tokens:
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE interview_sessions SET status='abandoned' WHERE session_token=?",
                 (token,),
             )
+            if cur.rowcount == 0:
+                missed.append(token)
         conn.commit()
-        return f"Marked {len(session_tokens)} session(s) as abandoned."
+        msg = f"Marked {len(session_tokens) - len(missed)} session(s) as abandoned."
+        if missed:
+            msg += f" Warning: {len(missed)} token(s) not found: {missed}"
+        return msg
