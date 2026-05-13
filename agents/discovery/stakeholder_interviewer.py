@@ -7,13 +7,14 @@ def create_stakeholder_interviewer(slug: str, llm: LLM, tools: list[BaseTool]) -
     return Agent(
         role="Stakeholder Interviewer",
         goal=(
-            "Conduct text-based interviews with each assigned stakeholder, "
-            "capturing their responses verbatim to build a rich discovery transcript."
+            "Orchestrate self-serve voice interview sessions, monitor completion, "
+            "and collect transcripts from all participating stakeholders."
         ),
         backstory=(
-            "You are an experienced discovery interviewer who builds rapport quickly "
-            "and asks probing follow-up questions. You faithfully record responses "
-            "without interpretation, preserving the stakeholder's own language."
+            "You are an experienced discovery interviewer who coordinates asynchronous "
+            "voice interviews. You create sessions in the portal, share links with the "
+            "consultant, wait for stakeholder responses, then harvest transcripts for "
+            "synthesis."
         ),
         llm=llm,
         tools=tools,
@@ -28,35 +29,46 @@ def create_stakeholder_interviewer_task(
 ) -> Task:
     return Task(
         description=(
-            "Conduct text-based interviews with each stakeholder listed in the interview plan.\n\n"
-            "Steps:\n"
+            "Run the stakeholder interview sessions using a three-phase approach.\n\n"
+            "── Phase 1: Create sessions ──\n"
             "1. Use SQLiteStateTool with operation='read', key='interview_plan', "
-            "agent_name='stakeholder_interviewer' to retrieve the interview plan.\n"
-            "2. For each stakeholder in the plan, conduct their interview:\n"
-            "   a. Use HumanInputTool with a prompt that introduces yourself and the purpose "
-            "of the interview, then asks the first question. Example:\n"
-            "      'Hi [Name], I'm conducting a discovery interview for this engagement. "
-            "I'd like to ask you about [node_labels]. "
-            "First question: [questions[0]]'\n"
-            "   b. Record the response, then ask each subsequent question in turn using "
-            "HumanInputTool. Adapt follow-up phrasing naturally based on prior answers.\n"
-            "   c. Once all questions are asked, thank the stakeholder and move to the next.\n"
-            "3. Compile all Q&A pairs into a JSON array where each element is:\n"
+            "agent_name='stakeholder_interviewer' to retrieve the approved interview plan.\n"
+            "2. Use InterviewSessionTool with operation='create', sessions=[<interview_plan array>] "
+            "to insert one interview_sessions DB row per stakeholder (initial status: pending). "
+            "Each row stores the session_token, stakeholder_id, node_label, and voice_config.\n"
+            "3. Produce a formatted interview URL list, one line per stakeholder:\n"
+            "   [Name] — [node_label] — https://interview.portal/s/[session_token]\n"
+            "4. Use HumanInputTool with prompt:\n"
+            "   'Interview sessions are live. Please share these links with your stakeholders:"
+            "\\n\\n[URL list]\\n\\nReply \"ready\" when all interviews are complete, "
+            "or \"partial\" to proceed with whoever has responded.'\n\n"
+            "── Phase 2: Wait for completion ──\n"
+            "5. When the consultant replies, use InterviewSessionTool with "
+            "operation='get_status' to retrieve pending/active/completed/abandoned counts.\n"
+            "6. If any sessions are still pending or active and the consultant replied "
+            "'ready', flag the discrepancy and ask again via HumanInputTool:\n"
+            "   'There are still [N] session(s) pending or active. "
+            "Reply \"ready\" to proceed anyway, or \"wait\" to check again shortly.'\n"
+            "   Repeat until the consultant confirms readiness or explicitly proceeds.\n\n"
+            "── Phase 3: Collect transcripts ──\n"
+            "7. Use InterviewSessionTool with operation='get_transcripts' to retrieve all "
+            "completed session transcripts.\n"
+            "8. Compile transcripts into a JSON array where each element is:\n"
             "   {\n"
             "     \"stakeholder_id\": 1,\n"
             "     \"name\": \"Alice Chen\",\n"
-            "     \"node_labels\": [\"Order Fulfilment\"],\n"
+            "     \"node_labels\": [\"Goods-in Inspection\"],\n"
             "     \"qa_pairs\": [\n"
-            "       {\"question\": \"Walk me through how an order is processed.\", "
+            "       {\"question\": \"Walk me through how an order is received.\", "
             "\"answer\": \"We receive orders via email...\"}\n"
             "     ]\n"
             "   }\n"
-            "4. Use SQLiteStateTool with operation='write', key='interview_transcripts', "
+            "9. Use SQLiteStateTool with operation='write', key='interview_transcripts', "
             "agent_name='stakeholder_interviewer' to save the JSON array.\n"
         ),
         expected_output=(
-            "A JSON transcript file saved to outputs/interview_transcripts.json containing "
-            "all Q&A pairs for every interviewed stakeholder."
+            "A JSON interview_transcripts array saved via SQLiteStateTool, containing all "
+            "Q&A pairs for every completed stakeholder interview session."
         ),
         agent=agent,
         context=context_tasks,
