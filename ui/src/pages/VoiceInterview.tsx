@@ -67,7 +67,7 @@ export default function VoiceInterview() {
     setStatusMessage('')
   }
 
-  function listenForAnswer(): Promise<string> {
+  function listenForAnswer(lang: string = 'en-GB'): Promise<string> {
     return new Promise((resolve) => {
       const SpeechRecognition =
         (window as Window & { SpeechRecognition?: typeof webkitSpeechRecognition }).SpeechRecognition ||
@@ -79,7 +79,7 @@ export default function VoiceInterview() {
       const recognition = new SpeechRecognition()
       recognition.continuous = true
       recognition.interimResults = false
-      recognition.lang = 'en-GB'
+      recognition.lang = lang
 
       const parts: string[] = []
 
@@ -135,6 +135,7 @@ export default function VoiceInterview() {
     if (!sessionData) return
     const { session, script } = sessionData
     const voiceId = session.voice_config.elevenlabs_voice_id
+    const lang = `${session.voice_config.language}-${session.voice_config.country_code}`
 
     setPhase('interviewing')
 
@@ -161,7 +162,7 @@ export default function VoiceInterview() {
         await speakText(question.text, voiceId)
 
         // Record primary answer
-        let answer = await listenForAnswer()
+        let answer = await listenForAnswer(lang)
 
         const needsElaboration =
           answer.split(' ').length < 20 ||
@@ -174,23 +175,24 @@ export default function VoiceInterview() {
           const pressText = await getElaborationPress(question.text, answer, question.probing_instructions)
           setCurrentQuestion(pressText)
           await speakText(pressText, voiceId)
-          const followUpAnswer = await listenForAnswer()
+          const followUpAnswer = await listenForAnswer(lang)
           qaRef.current.push({ question: pressText, answer: followUpAnswer })
           answer = `${answer} ${followUpAnswer}`.trim()
           followUpCount++
         }
+
+        // Push primary Q&A before follow-up branches
+        qaRef.current.push({ question: question.text, answer })
 
         // Pre-scripted follow-up branches
         while (followUpCount < question.follow_up_count && question.follow_up_branches[followUpCount]) {
           const branch = question.follow_up_branches[followUpCount]
           setCurrentQuestion(branch)
           await speakText(branch, voiceId)
-          const branchAnswer = await listenForAnswer()
+          const branchAnswer = await listenForAnswer(lang)
           qaRef.current.push({ question: branch, answer: branchAnswer })
           followUpCount++
         }
-
-        qaRef.current.push({ question: question.text, answer })
       }
     }
 
