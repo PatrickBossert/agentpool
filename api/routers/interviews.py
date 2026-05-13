@@ -87,12 +87,15 @@ async def get_elaboration_press(session_token: str, body: ElaborationPressReques
     result = await get_session_with_script(session_token)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
-    press_text = await elaboration_press(
-        body.question_text,
-        body.response_text,
-        body.probing_instructions,
-        body.stakeholder_name,
-    )
+    try:
+        press_text = await elaboration_press(
+            body.question_text,
+            body.response_text,
+            body.probing_instructions,
+            body.stakeholder_name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return {"press_text": press_text}
 
 
