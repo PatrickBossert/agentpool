@@ -227,6 +227,26 @@ async def _migrate_stakeholder_assignments(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
+    """Create interview_sessions table if it doesn't exist."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS interview_sessions (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id            INTEGER NOT NULL REFERENCES projects(id),
+            orchestration_run_id  INTEGER REFERENCES orchestration_runs(id),
+            stakeholder_id        INTEGER NOT NULL REFERENCES stakeholders(id),
+            node_label            TEXT NOT NULL,
+            session_token         TEXT NOT NULL UNIQUE,
+            status                TEXT NOT NULL DEFAULT 'pending',
+            transcript_json       TEXT,
+            started_at            TEXT,
+            completed_at          TEXT,
+            created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
 @asynccontextmanager
 async def get_connection(slug: str):
     path = get_db_path(slug)
@@ -240,6 +260,7 @@ async def get_connection(slug: str):
         await _migrate_stakeholders(conn)
         await _migrate_campaigns(conn)
         await _migrate_stakeholder_assignments(conn)
+        await _migrate_interview_sessions(conn)
         yield conn
 
 
@@ -916,3 +937,87 @@ async def replace_stakeholder_assignments(
         )
     await conn.commit()
     return len(assignments)
+
+
+# ── Interview Sessions ────────────────────────────────────────────────────────
+
+async def insert_interview_session(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    orchestration_run_id: int | None,
+    stakeholder_id: int,
+    node_label: str,
+    session_token: str,
+) -> int:
+    cur = await conn.execute(
+        "INSERT INTO interview_sessions "
+        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token) "
+        "VALUES (?,?,?,?,?)",
+        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_interview_session(
+    conn: aiosqlite.Connection, session_token: str
+) -> dict | None:
+    async with conn.execute(
+        "SELECT * FROM interview_sessions WHERE session_token=?", (session_token,)
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def fetch_interview_sessions_status(
+    conn: aiosqlite.Connection, *, orchestration_run_id: int
+) -> dict:
+    """Return counts of sessions by status for a given orchestration run."""
+    counts = {"pending": 0, "active": 0, "completed": 0, "abandoned": 0}
+    async with conn.execute(
+        "SELECT status, COUNT(*) as n FROM interview_sessions "
+        "WHERE orchestration_run_id=? GROUP BY status",
+        (orchestration_run_id,),
+    ) as cur:
+        async for row in cur:
+            status = row["status"]
+            if status in counts:
+                counts[status] = row["n"]
+    return counts
+
+
+async def fetch_interview_transcripts(
+    conn: aiosqlite.Connection, *, orchestration_run_id: int
+) -> list[dict]:
+    """Return completed sessions with stakeholder name for transcript assembly."""
+    async with conn.execute(
+        "SELECT s.name, is_.stakeholder_id, is_.node_label, is_.transcript_json "
+        "FROM interview_sessions is_ "
+        "JOIN stakeholders s ON s.id = is_.stakeholder_id "
+        "WHERE is_.orchestration_run_id=? AND is_.status='completed'",
+        (orchestration_run_id,),
+    ) as cur:
+        return [dict(row) async for row in cur]
+
+
+async def update_interview_session_status(
+    conn: aiosqlite.Connection, session_token: str, status: str
+) -> None:
+    await conn.execute(
+        "UPDATE interview_sessions SET status=? WHERE session_token=?",
+        (status, session_token),
+    )
+    await conn.commit()
+
+
+async def complete_interview_session(
+    conn: aiosqlite.Connection, session_token: str, transcript_json: str
+) -> None:
+    await conn.execute(
+        "UPDATE interview_sessions "
+        "SET status='completed', transcript_json=?, completed_at=datetime('now') "
+        "WHERE session_token=?",
+        (transcript_json, session_token),
+    )
+    await conn.commit()
