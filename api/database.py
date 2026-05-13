@@ -1021,3 +1021,30 @@ async def complete_interview_session(
         (transcript_json, session_token),
     )
     await conn.commit()
+
+
+async def fetch_interview_sessions_for_run(
+    conn: aiosqlite.Connection, orchestration_run_id: int
+) -> list[aiosqlite.Row]:
+    """Return all interview_sessions rows for an orchestration run, joined with stakeholder name."""
+    conn.row_factory = aiosqlite.Row
+    cur = await conn.execute(
+        """
+        SELECT
+            is_.id,
+            is_.stakeholder_id,
+            s.name,
+            is_.node_label,
+            is_.session_token,
+            is_.status,
+            is_.started_at,
+            is_.completed_at,
+            is_.created_at
+        FROM interview_sessions is_
+        LEFT JOIN stakeholders s ON s.id = is_.stakeholder_id
+        WHERE is_.orchestration_run_id = ?
+        ORDER BY is_.created_at ASC
+        """,
+        (orchestration_run_id,),
+    )
+    return await cur.fetchall()

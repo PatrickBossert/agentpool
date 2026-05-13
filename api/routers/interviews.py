@@ -9,7 +9,12 @@ import aiosqlite
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from api.database import update_interview_session_status
+from api.config import get_settings
+from api.database import (
+    fetch_interview_sessions_for_run,
+    get_connection,
+    update_interview_session_status,
+)
 from api.services.interview_service import (
     _find_session_db,
     complete_session,
@@ -131,3 +136,69 @@ async def complete_interview(session_token: str, body: CompleteRequest):
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 7: GET /sessions/{slug}
+# ---------------------------------------------------------------------------
+
+_EMPTY_SUMMARY = {"pending": 0, "active": 0, "completed": 0, "abandoned": 0}
+
+
+@router.get("/sessions/{slug}")
+async def get_sessions_for_project(slug: str):
+    """Return all interview sessions for the latest orchestration run of a project."""
+    async with get_connection(slug) as conn:
+        # 1. Look up project by slug
+        async with conn.execute(
+            "SELECT id FROM projects WHERE slug=?", (slug,)
+        ) as cur:
+            project_row = await cur.fetchone()
+        if not project_row:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # 2. Find latest orchestration run
+        async with conn.execute(
+            "SELECT id FROM orchestration_runs WHERE project_id=? ORDER BY started_at DESC LIMIT 1",
+            (project_row["id"],),
+        ) as cur:
+            run_row = await cur.fetchone()
+
+        if not run_row:
+            return {
+                "orchestration_run_id": None,
+                "sessions": [],
+                "summary": {**_EMPTY_SUMMARY},
+            }
+
+        orchestration_run_id = run_row["id"]
+
+        # 3. Fetch sessions
+        rows = await fetch_interview_sessions_for_run(conn, orchestration_run_id)
+
+    # 4. Build response
+    frontend_url = get_settings().frontend_url
+    summary = {**_EMPTY_SUMMARY}
+    sessions = []
+    for row in rows:
+        status = row["status"]
+        if status in summary:
+            summary[status] += 1
+        sessions.append({
+            "id": row["id"],
+            "stakeholder_id": row["stakeholder_id"],
+            "name": row["name"],
+            "node_label": row["node_label"],
+            "session_token": row["session_token"],
+            "status": status,
+            "interview_url": f"{frontend_url}/interview/{row['session_token']}",
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "created_at": row["created_at"],
+        })
+
+    return {
+        "orchestration_run_id": orchestration_run_id,
+        "sessions": sessions,
+        "summary": summary,
+    }
