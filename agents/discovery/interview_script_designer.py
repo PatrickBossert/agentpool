@@ -9,13 +9,15 @@ def create_interview_script_designer_agent(
     llm_mode: str,
     sector: str,
     llm=None,
+    tools=None,
 ) -> Agent:
-    tools = get_tools_for_agent(
-        "interview_script_designer",
-        slug=slug,
-        run_id=run_id,
-        sector=sector,
-    )
+    if tools is None:
+        tools = get_tools_for_agent(
+            "interview_script_designer",
+            slug=slug,
+            run_id=run_id,
+            sector=sector,
+        )
     return Agent(
         role="Interview Script Designer",
         goal=(

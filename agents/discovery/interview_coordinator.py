@@ -37,6 +37,7 @@ def create_interview_coordinator(slug: str, llm: LLM, tools: list[BaseTool]) -> 
 def create_interview_coordinator_task(
     agent: Agent,
     stakeholder_assignments: str = "",
+    context: list | None = None,
 ) -> Task:
     assignments_block = (
         f"Stakeholder assignments:\n{stakeholder_assignments}\n\n"
@@ -83,4 +84,5 @@ def create_interview_coordinator_task(
             "a human reviewer."
         ),
         agent=agent,
+        context=context,
     )
