@@ -13,6 +13,7 @@ from api.routers import runs as runs_router
 from api.routers import stakeholders as stakeholders_router
 from api.routers import campaigns as campaigns_router
 from api.routers import assignment as assignment_router
+from api.routers import interviews as interviews_router
 
 
 @asynccontextmanager
@@ -45,3 +46,4 @@ app.include_router(runs_router.router)
 app.include_router(stakeholders_router.router)
 app.include_router(campaigns_router.router)
 app.include_router(assignment_router.router)
+app.include_router(interviews_router.router)
