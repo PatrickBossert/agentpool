@@ -25,16 +25,17 @@ function InterviewSessionsPanel({ slug }: { slug: string }) {
   })
 
   async function abandon(token: string) {
-    await fetch(`/api/interviews/${token}/status`, {
+    const res = await fetch(`/api/interviews/${token}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'abandoned' }),
     })
+    if (!res.ok) return
     queryClient.invalidateQueries({ queryKey: ['interview-sessions', slug] })
   }
 
   function copyUrl(session: InterviewSessionStatus) {
-    navigator.clipboard.writeText(session.interview_url)
+    navigator.clipboard.writeText(session.interview_url).catch(() => {})
     setCopiedToken(session.session_token)
     setTimeout(() => setCopiedToken(null), 1500)
   }
