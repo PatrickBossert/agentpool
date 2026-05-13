@@ -1,0 +1,166 @@
+# api/services/interview_service.py
+"""Service layer for voice interview public endpoints.
+
+Provides session lookup, TTS (ElevenLabs), STT token generation (Deepgram),
+LLM elaboration press, and session completion helpers.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import aiosqlite
+import httpx
+
+from api.config import get_settings
+from api.database import fetch_interview_session, complete_interview_session
+
+
+async def _find_session_db(session_token: str) -> str | None:
+    """Scan all project DB files to find the one containing session_token.
+
+    Returns the absolute path string of the matching DB, or None.
+    """
+    settings = get_settings()
+    db_dir = Path(settings.database_dir)
+    if not db_dir.exists():
+        return None
+
+    # Scan top-level .db files (one db per project slug)
+    candidate_paths: list[Path] = list(db_dir.glob("*.db"))
+    # Also one level down, just in case layout varies
+    candidate_paths.extend(db_dir.glob("*/*.db"))
+
+    for db_path in candidate_paths:
+        try:
+            async with aiosqlite.connect(str(db_path)) as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
+                    "SELECT id FROM interview_sessions WHERE session_token=?",
+                    (session_token,),
+                ) as cur:
+                    row = await cur.fetchone()
+                if row:
+                    return str(db_path)
+        except Exception:
+            # Skip files that aren't valid databases or lack the table
+            continue
+    return None
+
+
+async def get_session_with_script(session_token: str) -> dict | None:
+    """Fetch interview session row plus its script from the state store.
+
+    Returns ``{"session": <row dict>, "script": <script dict or None>}``
+    or ``None`` if the session is not found.
+    """
+    db_path = await _find_session_db(session_token)
+    if not db_path:
+        return None
+
+    settings = get_settings()
+
+    async with aiosqlite.connect(db_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        session_row = await fetch_interview_session(conn, session_token)
+        if not session_row:
+            return None
+
+    # interview_scripts are written by SQLiteStateTool as a JSON file at:
+    # {projects_dir}/{slug}/outputs/interview_scripts.json
+    # Derive the slug from the db filename (e.g. "myproject.db" → "myproject")
+    slug = Path(db_path).stem
+    scripts_path = (
+        Path(settings.projects_dir) / slug / "outputs" / "interview_scripts.json"
+    )
+    script = None
+    if scripts_path.exists():
+        try:
+            scripts = json.loads(scripts_path.read_text())
+            node_label = session_row.get("node_label") if isinstance(session_row, dict) else session_row["node_label"]
+            script = scripts.get(node_label)
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    return {"session": dict(session_row), "script": script}
+
+
+async def generate_deepgram_token() -> str:
+    """Create a short-lived Deepgram streaming token via the REST API."""
+    settings = get_settings()
+    if not settings.deepgram_api_key:
+        raise ValueError("DEEPGRAM_API_KEY not configured")
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://api.deepgram.com/v1/auth/grant",
+            headers={"Authorization": f"Token {settings.deepgram_api_key}"},
+            json={"grant_type": "instant"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return resp.json()["key"]
+
+
+async def speak(text: str, voice_id: str) -> bytes:
+    """Call ElevenLabs TTS API and return raw audio bytes."""
+    settings = get_settings()
+    if not settings.elevenlabs_api_key:
+        raise ValueError("ELEVENLABS_API_KEY not configured")
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={
+                "xi-api-key": settings.elevenlabs_api_key,
+                "Content-Type": "application/json",
+            },
+            json={
+                "text": text,
+                "model_id": "eleven_monolingual_v1",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return resp.content
+
+
+async def elaboration_press(
+    question_text: str,
+    response_text: str,
+    probing_instructions: str,
+    stakeholder_name: str = "",
+) -> str:
+    """Generate a follow-up press question via Claude Haiku."""
+    from anthropic import AsyncAnthropic
+
+    client = AsyncAnthropic()
+    name_clause = f" {stakeholder_name}" if stakeholder_name else ""
+    prompt = (
+        f"You are a polite but insistent interviewer.{name_clause} has given an "
+        f"insufficient answer to the following question.\n\n"
+        f"Question: {question_text}\n\n"
+        f"Their answer: {response_text}\n\n"
+        f"Probing instructions: {probing_instructions}\n\n"
+        "Generate one natural follow-up question (max 2 sentences) that presses for "
+        "elaboration without being confrontational. Return only the question text, no preamble."
+    )
+    response = await client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=150,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text.strip()
+
+
+async def complete_session(session_token: str, qa_pairs: list[dict]) -> bool:
+    """Write the Q&A transcript and mark the session as completed.
+
+    Returns True on success, False if the session was not found.
+    """
+    db_path = await _find_session_db(session_token)
+    if not db_path:
+        return False
+    async with aiosqlite.connect(db_path) as conn:
+        transcript_json = json.dumps(qa_pairs)
+        await complete_interview_session(conn, session_token, transcript_json)
+    return True

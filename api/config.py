@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     tavily_api_key: Optional[str] = None
     n8n_webhook_url: Optional[str] = None
     frontend_url: str = "http://localhost:3000"
+    elevenlabs_api_key: str = ""
+    deepgram_api_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
