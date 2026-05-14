@@ -120,6 +120,12 @@ export const projectsApi = {
     apiClient
       .patch<{ status: string }>(`/projects/${slug}/orchestration-runs/${orchestrationRunId}/advance`)
       .then((r) => r.data),
+
+  uploadBrandingImage: (slug: string, file: File): Promise<{ url: string }> => {
+    const form = new FormData()
+    form.append('file', file)
+    return apiClient.post<{ url: string }>(`/projects/${slug}/branding/image`, form).then((r) => r.data)
+  },
 }
 
 export const stakeholdersApi = {

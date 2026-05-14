@@ -60,6 +60,7 @@ export interface DiscoveryLink {
   label: string
 }
 
+// Used by VoiceInterview.tsx (SP12b Task 3)
 export interface InterviewBranding {
   header_image_url: string
   primary_color: string

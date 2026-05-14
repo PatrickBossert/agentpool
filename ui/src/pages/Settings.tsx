@@ -3,8 +3,10 @@ import type { KeyboardEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
-import { API_BASE } from '../api/client'
 import type { ProjectSettings } from '../types'
+
+const DEFAULT_PRIMARY_COLOR = '#0d9488'  // must match api/models.py default
+const DEFAULT_TEXT_COLOR = '#1f2937'
 
 const KNOWN_CREWS = ['discovery', 'value_design', 'architecture', 'delivery', 'business_plan']
 
@@ -76,7 +78,8 @@ export default function Settings() {
   const [form, setForm] = useState<ProjectSettings>(DEFAULTS)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [imageStatus, setImageStatus] = useState<string | null>(null)
+  const [imageStatus, setImageStatus] = useState<string>('')
+  const [imageError, setImageError] = useState(false)
   const [imageUploading, setImageUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -116,22 +119,15 @@ export default function Settings() {
     const file = fileInputRef.current?.files?.[0]
     if (!file || !slug) return
     setImageUploading(true)
-    setImageStatus(null)
+    setImageStatus('')
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      const token = localStorage.getItem('ap_token')
-      const res = await fetch(`${API_BASE}/api/projects/${slug}/branding/image`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: formData,
-      })
-      if (!res.ok) throw new Error(`Upload failed (${res.status})`)
-      const data = (await res.json()) as { url: string }
+      const data = await projectsApi.uploadBrandingImage(slug, file)
       setForm((f) => ({ ...f, brand_header_image_url: `${data.url}?t=${Date.now()}` }))
       setImageStatus('Image uploaded successfully.')
-    } catch (err) {
-      setImageStatus(err instanceof Error ? err.message : 'Upload failed.')
+      setImageError(false)
+    } catch {
+      setImageStatus('Upload failed.')
+      setImageError(true)
     } finally {
       setImageUploading(false)
     }
@@ -300,6 +296,7 @@ export default function Settings() {
               ref={fileInputRef}
               type="file"
               accept="image/*"
+              onChange={() => { setImageStatus(''); setImageError(false) }}
               className="text-sm text-slate-400 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-slate-700 file:text-slate-200 hover:file:bg-slate-600"
             />
             <button
@@ -312,7 +309,7 @@ export default function Settings() {
             </button>
           </div>
           {imageStatus && (
-            <p className={`text-xs mt-1 ${imageStatus.includes('failed') || imageStatus.includes('Failed') ? 'text-red-400' : 'text-green-400'}`}>
+            <p className={`text-xs mt-1 ${imageError ? 'text-red-400' : 'text-green-400'}`}>
               {imageStatus}
             </p>
           )}
@@ -325,12 +322,11 @@ export default function Settings() {
             <div className="flex items-center gap-2">
               <input
                 type="color"
-                value={form.brand_primary_color ?? '#0ea5e9'}
-                onBlur={(e) => setForm({ ...form, brand_primary_color: e.target.value })}
+                value={form.brand_primary_color ?? DEFAULT_PRIMARY_COLOR}
                 onChange={(e) => setForm({ ...form, brand_primary_color: e.target.value })}
                 className="h-8 w-10 rounded border border-slate-700 bg-slate-900 cursor-pointer p-0.5"
               />
-              <span className="text-xs text-slate-400 font-mono">{form.brand_primary_color ?? '#0ea5e9'}</span>
+              <span className="text-xs text-slate-400 font-mono">{form.brand_primary_color ?? DEFAULT_PRIMARY_COLOR}</span>
             </div>
           </div>
           <div>
@@ -338,12 +334,11 @@ export default function Settings() {
             <div className="flex items-center gap-2">
               <input
                 type="color"
-                value={form.brand_text_color ?? '#ffffff'}
-                onBlur={(e) => setForm({ ...form, brand_text_color: e.target.value })}
+                value={form.brand_text_color ?? DEFAULT_TEXT_COLOR}
                 onChange={(e) => setForm({ ...form, brand_text_color: e.target.value })}
                 className="h-8 w-10 rounded border border-slate-700 bg-slate-900 cursor-pointer p-0.5"
               />
-              <span className="text-xs text-slate-400 font-mono">{form.brand_text_color ?? '#ffffff'}</span>
+              <span className="text-xs text-slate-400 font-mono">{form.brand_text_color ?? DEFAULT_TEXT_COLOR}</span>
             </div>
           </div>
         </div>
