@@ -17,6 +17,10 @@ export default {
         },
       },
       keyframes: {
+        blink: {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0' },
+        },
         ekg: {
           '0%, 100%': { opacity: '0.25' },
           '50%': { opacity: '1' },
@@ -45,6 +49,7 @@ export default {
         },
       },
       animation: {
+        blink:        'blink 1.2s step-end infinite',
         ekg:          'ekg 1.6s ease-in-out infinite',
         crewGlow:     'crewGlow 3s ease-in-out infinite',
         agentPulse:   'agentPulse 0.8s ease-in-out infinite',
