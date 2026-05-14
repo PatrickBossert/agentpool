@@ -140,7 +140,56 @@ async def test_complete_interview_success(client):
 
 
 # ---------------------------------------------------------------------------
-# 7. GET /sessions/{slug} — unknown slug returns 404
+# 7. PATCH /{session_token}/complete — with ratings
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_complete_with_ratings(client):
+    with patch(
+        "api.routers.interviews.complete_session",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as mock_complete:
+        r = await client.patch(
+            "/api/interviews/test-token-abc/complete",
+            json={
+                "qa_pairs": [],
+                "ratings": [{"section_id": "S1", "ratings": {"S1Q1": 3}, "commentary": "good"}],
+            },
+        )
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    mock_complete.assert_awaited_once_with(
+        "test-token-abc",
+        [],
+        [{"section_id": "S1", "ratings": {"S1Q1": 3}, "commentary": "good"}],
+    )
+
+
+# ---------------------------------------------------------------------------
+# 8. PATCH /{session_token}/complete — without ratings (defaults to None)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_complete_without_ratings(client):
+    with patch(
+        "api.routers.interviews.complete_session",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as mock_complete:
+        r = await client.patch(
+            "/api/interviews/test-token-abc/complete",
+            json={"qa_pairs": []},
+        )
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    mock_complete.assert_awaited_once_with("test-token-abc", [], None)
+
+
+# ---------------------------------------------------------------------------
+# 9. GET /sessions/{slug} — unknown slug returns 404
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio

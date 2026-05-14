@@ -194,11 +194,12 @@ async def update_session_status(session_token: str, body: StatusUpdateRequest):
 
 class CompleteRequest(BaseModel):
     qa_pairs: list[dict]
+    ratings: list[dict] | None = None
 
 
 @router.patch("/{session_token}/complete")
 async def complete_interview(session_token: str, body: CompleteRequest):
-    success = await complete_session(session_token, body.qa_pairs)
+    success = await complete_session(session_token, body.qa_pairs, body.ratings)
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"ok": True}

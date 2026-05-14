@@ -247,6 +247,15 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_interview_sessions_ratings(conn: aiosqlite.Connection) -> None:
+    """Add ratings_json column to interview_sessions if missing."""
+    async with conn.execute("PRAGMA table_info(interview_sessions)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "ratings_json" not in cols:
+        await conn.execute("ALTER TABLE interview_sessions ADD COLUMN ratings_json TEXT")
+        await conn.commit()
+
+
 async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None:
     """Create node_template_assignments table if it doesn't exist."""
     await conn.execute("""
@@ -279,6 +288,7 @@ async def get_connection(slug: str):
         await _migrate_stakeholder_assignments(conn)
         await _migrate_interview_sessions(conn)
         await _migrate_node_template_assignments(conn)
+        await _migrate_interview_sessions_ratings(conn)
         yield conn
 
 
@@ -1055,13 +1065,14 @@ async def update_interview_session_status(
 
 
 async def complete_interview_session(
-    conn: aiosqlite.Connection, session_token: str, transcript_json: str
+    conn, session_token: str, transcript_json: str, ratings_json: str | None = None
 ) -> None:
     await conn.execute(
-        "UPDATE interview_sessions "
-        "SET status='completed', transcript_json=?, completed_at=datetime('now') "
-        "WHERE session_token=?",
-        (transcript_json, session_token),
+        """UPDATE interview_sessions
+           SET status='completed', transcript_json=?, ratings_json=?,
+               completed_at=datetime('now')
+           WHERE session_token=?""",
+        (transcript_json, ratings_json, session_token),
     )
     await conn.commit()
 

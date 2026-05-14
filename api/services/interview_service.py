@@ -205,7 +205,11 @@ async def elaboration_press(
     return response.content[0].text.strip()
 
 
-async def complete_session(session_token: str, qa_pairs: list[dict]) -> bool:
+async def complete_session(
+    session_token: str,
+    qa_pairs: list[dict],
+    ratings: list[dict] | None = None,
+) -> bool:
     """Write the Q&A transcript and mark the session as completed.
 
     Returns True on success, False if the session was not found.
@@ -215,5 +219,6 @@ async def complete_session(session_token: str, qa_pairs: list[dict]) -> bool:
         return False
     async with aiosqlite.connect(db_path) as conn:
         transcript_json = json.dumps(qa_pairs)
-        await complete_interview_session(conn, session_token, transcript_json)
+        ratings_json = json.dumps(ratings) if ratings is not None else None
+        await complete_interview_session(conn, session_token, transcript_json, ratings_json)
     return True
