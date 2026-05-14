@@ -15,6 +15,8 @@ export default function VoiceInterview() {
   const [statusMessage, setStatusMessage] = useState<string>('')
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [branding, setBranding] = useState<InterviewBranding | null>(null)
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef<InstanceType<typeof window.webkitSpeechRecognition> | null>(null)
   const qaRef = useRef<{ question: string; answer: string }[]>([])
 
   useEffect(() => {
@@ -80,14 +82,27 @@ export default function VoiceInterview() {
       }
       const recognition = new SpeechRecognition()
       recognition.continuous = true
-      recognition.interimResults = false
+      recognition.interimResults = true
       recognition.lang = lang
+
+      recognitionRef.current = recognition
 
       const parts: string[] = []
 
-      setStatusMessage('Listening… (speak your answer)')
+      setStatusMessage('Listening…')
+      setIsListening(true)
+
+      let silenceTimer: ReturnType<typeof setTimeout> | null = null
+
+      function resetSilenceTimer() {
+        if (silenceTimer) clearTimeout(silenceTimer)
+        silenceTimer = setTimeout(() => {
+          try { recognition.stop() } catch { /* already stopped */ }
+        }, 3000)
+      }
 
       recognition.onresult = (event: SpeechRecognitionEvent) => {
+        resetSilenceTimer()
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
             parts.push(event.results[i][0].transcript)
@@ -96,22 +111,27 @@ export default function VoiceInterview() {
       }
 
       recognition.onend = () => {
+        if (silenceTimer) clearTimeout(silenceTimer)
+        recognitionRef.current = null
+        setIsListening(false)
         setStatusMessage('')
         resolve(parts.join(' ').trim())
       }
 
       recognition.onerror = () => {
+        if (silenceTimer) clearTimeout(silenceTimer)
+        recognitionRef.current = null
+        setIsListening(false)
         setStatusMessage('')
         resolve(parts.join(' ').trim())
       }
 
       recognition.start()
-
-      // Auto-stop after 30 seconds of max silence
-      setTimeout(() => {
-        try { recognition.stop() } catch { /* already stopped */ }
-      }, 30000)
     })
+  }
+
+  function submitAnswer() {
+    try { recognitionRef.current?.stop() } catch { /* already stopped */ }
   }
 
   async function getElaborationPress(
@@ -167,7 +187,7 @@ export default function VoiceInterview() {
         let answer = await listenForAnswer(lang)
 
         const needsElaboration =
-          answer.split(' ').length < 20 ||
+          answer.trim().length > 0 &&
           question.evasion_signals.some(sig => answer.toLowerCase().includes(sig.toLowerCase()))
 
         let followUpCount = 0
@@ -309,12 +329,22 @@ export default function VoiceInterview() {
           <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
         </div>
 
-        {/* Status */}
-        {statusMessage && (
-          <div className="text-center">
-            <p className="text-teal-600 font-medium animate-pulse">{statusMessage}</p>
-          </div>
-        )}
+        {/* Status + Done button */}
+        <div className="text-center">
+          {statusMessage && (
+            <p className="text-teal-600 font-medium animate-pulse mb-4">{statusMessage}</p>
+          )}
+          {isListening && (
+            <button
+              onClick={submitAnswer}
+              style={{ backgroundColor: branding?.primary_color }}
+              className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-8 rounded-full text-lg transition-colors shadow-md"
+              aria-label="Done speaking"
+            >
+              ✓ Done
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
