@@ -526,6 +526,7 @@ function TemplateRow({
         {item.description && <p className="text-slate-500 text-xs mt-0.5">{item.description}</p>}
       </td>
       <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDate(item.created_at)}</td>
+      <td className="px-3 py-2.5 text-xs text-slate-400 text-center">—</td>
       <td className="px-3 py-2.5 text-right">
         <div className="flex items-center justify-end gap-3">
           <button onClick={onEdit} className="text-xs text-sky-400 hover:text-sky-300 transition-colors">
@@ -592,6 +593,7 @@ function TemplateTab({
               <tr className="bg-slate-900">
                 <th className="px-4 py-2 text-left text-xs text-slate-500 font-medium">Name</th>
                 <th className="px-3 py-2 text-left text-xs text-slate-500 font-medium">Created</th>
+                <th className="px-3 py-2 text-center text-xs text-slate-500 font-medium">Questions</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
