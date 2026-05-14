@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import type { InterviewSession, InterviewScript } from '../types'
+import type { InterviewSession, InterviewScript, InterviewBranding } from '../types'
 
 type Phase = 'loading' | 'ready' | 'interviewing' | 'complete' | 'error'
 
@@ -14,6 +14,7 @@ export default function VoiceInterview() {
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [statusMessage, setStatusMessage] = useState<string>('')
   const [errorMessage, setErrorMessage] = useState<string>('')
+  const [branding, setBranding] = useState<InterviewBranding | null>(null)
   const qaRef = useRef<{ question: string; answer: string }[]>([])
 
   useEffect(() => {
@@ -31,6 +32,7 @@ export default function VoiceInterview() {
       )
       setProgress({ current: 0, total })
       setSessionData(data)
+      setBranding(data.branding ?? null)
       setPhase('ready')
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Unknown error')
@@ -218,6 +220,9 @@ export default function VoiceInterview() {
   if (phase === 'loading') {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        {branding?.header_image_url && (
+          <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+        )}
         <p className="text-gray-500 text-lg">Loading your interview…</p>
       </div>
     )
@@ -227,6 +232,9 @@ export default function VoiceInterview() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
         <div className="text-center">
+          {branding?.header_image_url && (
+            <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+          )}
           <p className="text-red-600 text-xl font-semibold mb-2">Unable to load interview</p>
           <p className="text-gray-500">{errorMessage}</p>
         </div>
@@ -238,6 +246,9 @@ export default function VoiceInterview() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
         <div className="text-center max-w-md">
+          {branding?.header_image_url && (
+            <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+          )}
           <div className="text-5xl mb-4">✓</div>
           <h1 className="text-2xl font-bold text-gray-800 mb-2">Thank you!</h1>
           <p className="text-gray-500">Your responses have been recorded. You may now close this window.</p>
@@ -250,7 +261,10 @@ export default function VoiceInterview() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
         <div className="text-center max-w-lg">
-          <h1 className="text-2xl font-bold text-gray-800 mb-2">
+          {branding?.header_image_url && (
+            <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+          )}
+          <h1 className="text-2xl font-bold text-gray-800 mb-2" style={{ color: branding?.text_color }}>
             {sessionData.script.node_label} Interview
           </h1>
           <p className="text-gray-500 mb-8 text-sm">
@@ -259,6 +273,7 @@ export default function VoiceInterview() {
           <button
             onClick={runInterview}
             className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
+            style={{ backgroundColor: branding?.primary_color }}
           >
             Start Interview
           </button>
@@ -274,6 +289,9 @@ export default function VoiceInterview() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
       <div className="max-w-2xl w-full">
+        {branding?.header_image_url && (
+          <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+        )}
         {/* Progress */}
         <div className="flex justify-between text-sm text-gray-400 mb-2">
           <span>Question {progress.current} of {progress.total}</span>
@@ -282,7 +300,7 @@ export default function VoiceInterview() {
         <div className="w-full bg-gray-200 rounded-full h-1.5 mb-8">
           <div
             className="bg-teal-500 h-1.5 rounded-full transition-all"
-            style={{ width: `${(progress.current / Math.max(progress.total, 1)) * 100}%` }}
+            style={{ width: `${(progress.current / Math.max(progress.total, 1)) * 100}%`, backgroundColor: branding?.primary_color }}
           />
         </div>
 
