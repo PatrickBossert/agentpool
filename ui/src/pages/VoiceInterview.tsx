@@ -22,6 +22,7 @@ export default function VoiceInterview() {
   const [pendingRatings, setPendingRatings] = useState<Record<string, number>>({})
   const recognitionRef = useRef<InstanceType<typeof window.webkitSpeechRecognition> | null>(null)
   const qaRef = useRef<{ question: string; answer: string }[]>([])
+  const sectionRatingsRef = useRef<SectionRatings[]>([])
 
   useEffect(() => {
     fetchSession()
@@ -160,14 +161,19 @@ export default function VoiceInterview() {
 
   async function submitResponses(ratings: SectionRatings[]) {
     setStatusMessage('Saving your responses…')
-    await fetch(`${BASE}/interviews/${sessionToken}/complete`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        qa_pairs: qaRef.current,
-        ratings: ratings.length > 0 ? ratings : undefined,
-      }),
-    })
+    try {
+      const res = await fetch(`${BASE}/interviews/${sessionToken}/complete`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          qa_pairs: qaRef.current,
+          ratings: ratings.length > 0 ? ratings : undefined,
+        }),
+      })
+      if (!res.ok) console.warn('complete endpoint returned', res.status)
+    } catch (err) {
+      console.error('Failed to submit responses', err)
+    }
     setPhase('complete')
     setStatusMessage('')
     setCurrentQuestion('')
@@ -246,6 +252,7 @@ export default function VoiceInterview() {
       setPhase('assessing')
       setCurrentAssessSection(0)
       setPendingRatings({})
+      sectionRatingsRef.current = []
       return  // assessment phase will call submitResponses when done
     }
     // else submit directly with no ratings
@@ -272,14 +279,14 @@ export default function VoiceInterview() {
       ratings: { ...pendingRatings },
       commentary,
     }
-    const updated = [...sectionRatings, completed]
-    setSectionRatings(updated)
+    sectionRatingsRef.current = [...sectionRatingsRef.current, completed]
+    setSectionRatings(sectionRatingsRef.current)
 
     if (currentAssessSection + 1 < questionnaire.sections.length) {
       setCurrentAssessSection(i => i + 1)
       setPendingRatings({})
     } else {
-      submitResponses(updated)
+      submitResponses(sectionRatingsRef.current)
     }
   }
 
@@ -354,6 +361,7 @@ export default function VoiceInterview() {
                     <button
                       key={score}
                       onClick={() => setPendingRatings(r => ({ ...r, [q.id]: score }))}
+                      aria-label={`Score ${score} for: ${q.text}`}
                       className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
                         pendingRatings[q.id] === score
                           ? 'bg-teal-600 text-white border-teal-600'
