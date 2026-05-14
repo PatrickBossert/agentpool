@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import type { InterviewSession, InterviewScript, InterviewBranding } from '../types'
+import type { InterviewSession, InterviewScript, InterviewBranding, QuestionnaireTemplateSchema, SectionRatings } from '../types'
 
-type Phase = 'loading' | 'ready' | 'interviewing' | 'complete' | 'error'
+type Phase = 'loading' | 'ready' | 'interviewing' | 'assessing' | 'complete' | 'error'
 
 const BASE = '/api'
 
@@ -16,6 +16,10 @@ export default function VoiceInterview() {
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [branding, setBranding] = useState<InterviewBranding | null>(null)
   const [isListening, setIsListening] = useState(false)
+  const [questionnaire, setQuestionnaire] = useState<QuestionnaireTemplateSchema | null>(null)
+  const [sectionRatings, setSectionRatings] = useState<SectionRatings[]>([])
+  const [currentAssessSection, setCurrentAssessSection] = useState(0)
+  const [pendingRatings, setPendingRatings] = useState<Record<string, number>>({})
   const recognitionRef = useRef<InstanceType<typeof window.webkitSpeechRecognition> | null>(null)
   const qaRef = useRef<{ question: string; answer: string }[]>([])
 
@@ -35,6 +39,7 @@ export default function VoiceInterview() {
       setProgress({ current: 0, total })
       setSessionData(data)
       setBranding(data.branding ?? null)
+      if (data.questionnaire) setQuestionnaire(data.questionnaire)
       setPhase('ready')
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Unknown error')
@@ -153,6 +158,21 @@ export default function VoiceInterview() {
     }
   }
 
+  async function submitResponses(ratings: SectionRatings[]) {
+    setStatusMessage('Saving your responses…')
+    await fetch(`${BASE}/interviews/${sessionToken}/complete`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        qa_pairs: qaRef.current,
+        ratings: ratings.length > 0 ? ratings : undefined,
+      }),
+    })
+    setPhase('complete')
+    setStatusMessage('')
+    setCurrentQuestion('')
+  }
+
   async function runInterview() {
     if (!sessionData) return
     const { session, script } = sessionData
@@ -222,17 +242,45 @@ export default function VoiceInterview() {
     setCurrentQuestion(script.closing_message)
     await speakText(script.closing_message, voiceId)
 
-    // Submit
-    setStatusMessage('Saving your responses…')
-    await fetch(`${BASE}/interviews/${sessionToken}/complete`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qa_pairs: qaRef.current }),
-    })
+    if (questionnaire) {
+      setPhase('assessing')
+      setCurrentAssessSection(0)
+      setPendingRatings({})
+      return  // assessment phase will call submitResponses when done
+    }
+    // else submit directly with no ratings
+    await submitResponses([])
+  }
 
-    setPhase('complete')
-    setStatusMessage('')
-    setCurrentQuestion('')
+  async function startCommentary() {
+    if (sessionData && questionnaire) {
+      const { session } = sessionData
+      const voiceId = session.voice_config.elevenlabs_voice_id
+      const section = questionnaire.sections[currentAssessSection]
+      await speakText(`Any additional commentary on ${section.title}?`, voiceId)
+    }
+    const commentary = await listenForAnswer()
+    advanceSection(commentary)
+  }
+
+  function advanceSection(commentary: string) {
+    if (!questionnaire) return
+    const section = questionnaire.sections[currentAssessSection]
+    const completed: SectionRatings = {
+      section_id: section.id,
+      section_title: section.title,
+      ratings: { ...pendingRatings },
+      commentary,
+    }
+    const updated = [...sectionRatings, completed]
+    setSectionRatings(updated)
+
+    if (currentAssessSection + 1 < questionnaire.sections.length) {
+      setCurrentAssessSection(i => i + 1)
+      setPendingRatings({})
+    } else {
+      submitResponses(updated)
+    }
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -272,6 +320,98 @@ export default function VoiceInterview() {
           <div className="text-5xl mb-4">✓</div>
           <h1 className="text-2xl font-bold text-gray-800 mb-2">Thank you!</h1>
           <p className="text-gray-500">Your responses have been recorded. You may now close this window.</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (phase === 'assessing' && questionnaire) {
+    const section = questionnaire.sections[currentAssessSection]
+    const allRated = section.questions.every(q => pendingRatings[q.id] !== undefined)
+
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full">
+          {branding?.header_image_url && (
+            <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+          )}
+          <div className="mb-6">
+            <p className="text-xs text-teal-600 font-medium uppercase tracking-wide mb-1">
+              Assessment · Section {currentAssessSection + 1} of {questionnaire.sections.length}
+            </p>
+            <h2 className="text-xl font-bold text-gray-800">{section.title}</h2>
+            {section.description && (
+              <p className="text-sm text-gray-500 mt-1">{section.description}</p>
+            )}
+          </div>
+
+          <div className="space-y-6 mb-8">
+            {section.questions.map(q => (
+              <div key={q.id} className="bg-white rounded-xl shadow-sm p-5">
+                <p className="text-gray-800 mb-3">{q.text}</p>
+                <div className="flex gap-2">
+                  {[0, 1, 2, 3, 4].map(score => (
+                    <button
+                      key={score}
+                      onClick={() => setPendingRatings(r => ({ ...r, [q.id]: score }))}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                        pendingRatings[q.id] === score
+                          ? 'bg-teal-600 text-white border-teal-600'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-teal-400'
+                      }`}
+                    >
+                      {score}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex justify-between text-xs text-gray-400 mt-1 px-1">
+                  <span>Not Accounted For</span>
+                  <span>Optimized</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {allRated ? (
+            <div className="bg-white rounded-xl shadow-sm p-5 mb-6">
+              <p className="text-sm font-medium text-gray-700 mb-3">
+                Any additional commentary for this section? (speak or skip)
+              </p>
+              {statusMessage && (
+                <p className="text-teal-600 text-sm animate-pulse mb-2">{statusMessage}</p>
+              )}
+              <div className="flex gap-3">
+                {!isListening ? (
+                  <button
+                    onClick={startCommentary}
+                    className="bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
+                    style={{ backgroundColor: branding?.primary_color }}
+                  >
+                    Speak
+                  </button>
+                ) : (
+                  <button
+                    onClick={submitAnswer}
+                    className="bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium py-2 px-4 rounded-full transition-colors"
+                    style={{ backgroundColor: branding?.primary_color }}
+                  >
+                    ✓ Done
+                  </button>
+                )}
+                <button
+                  onClick={() => advanceSection('')}
+                  disabled={isListening}
+                  className="text-sm text-gray-400 hover:text-gray-600 py-2 px-4 disabled:opacity-40"
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 text-center mb-6">
+              Please rate all statements above to continue.
+            </p>
+          )}
         </div>
       </div>
     )

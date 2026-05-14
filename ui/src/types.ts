@@ -435,3 +435,10 @@ export interface QuestionnaireTemplateSchema {
 export interface TemplateDetail extends TemplateListItem {
   schema_json: InterviewTemplateSchema | QuestionnaireTemplateSchema
 }
+
+export interface SectionRatings {
+  section_id: string
+  section_title: string
+  ratings: Record<string, number>  // question id → 0-4
+  commentary: string
+}
