@@ -108,17 +108,25 @@ landing/
   index.html   ← "FutureMomentum.ai — Coming Soon"
 ```
 
-### 6. IONOS SMTP via n8n
+### 6. Resend SMTP via n8n
 
-n8n already dispatches campaign reminder emails. A new SMTP credential is added in n8n's credential store for sending interview invitation emails.
+n8n already dispatches campaign reminder emails. A new SMTP credential is added in n8n's credential store pointing to Resend — a transactional email service with established IP reputation and proper DKIM/SPF, which avoids the spam-folder problems common with shared hosting SMTP (e.g. IONOS).
+
+**One-time domain setup (done in Resend dashboard + Cloudflare DNS):**
+1. Create account at resend.com
+2. Add domain `futuremomentum.ai` → Resend generates one DKIM DNS record
+3. Add that record in Cloudflare DNS (one click — domain already managed there)
+4. Emails send from `noreply@futuremomentum.ai` — on-brand, verified sender
 
 **Credential settings (configured in n8n UI — not in code):**
 - Type: SMTP
-- Host: `smtp.ionos.co.uk`
-- Port: `587`
-- Security: STARTTLS
-- Username: IONOS email address (e.g. `hello@futureedge.consulting`)
-- Password: IONOS email account password
+- Host: `smtp.resend.com`
+- Port: `465`
+- Security: SSL/TLS
+- Username: `resend`
+- Password: Resend API key (generated in Resend dashboard)
+
+**Free tier:** 3,000 emails/month, 100/day — sufficient for a consulting engagement.
 
 The interview invitation email body uses the stable public URL:
 ```
