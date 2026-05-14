@@ -1,6 +1,8 @@
 // ui/src/components/OrgChart.tsx
 import type { CrewRun } from '../types'
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
 export const CREW_ORDER = [
   'discovery',
   'value_design',
@@ -9,62 +11,57 @@ export const CREW_ORDER = [
   'business_plan',
 ] as const
 
-export type CrewName = (typeof CREW_ORDER)[number]
+export type CrewName = (typeof CREW_ORDER)[number] | 'discovery_interviews'
 
-export const CREW_LABELS: Record<CrewName, string> = {
-  discovery: 'Discovery',
-  value_design: 'Value Design',
-  architecture: 'Architecture',
-  delivery: 'Delivery',
-  business_plan: 'Business Plan',
+export const CREW_LABELS: Record<string, string> = {
+  discovery:             'Discovery',
+  discovery_interviews:  'Discovery Interviews',
+  value_design:          'Value Design',
+  architecture:          'Architecture',
+  delivery:              'Delivery',
+  business_plan:         'Business Plan',
 }
 
-const CREW_ICONS: Record<CrewName, JSX.Element> = {
-  discovery: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-      <circle cx="11" cy="11" r="7" />
-      <path d="M21 21l-4.35-4.35" />
-      <path d="M8 11h6M11 8v6" />
-    </svg>
-  ),
-  value_design: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-    </svg>
-  ),
-  architecture: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-      <rect x="2" y="14" width="8" height="7" rx="1" />
-      <rect x="9" y="7" width="8" height="7" rx="1" />
-      <rect x="16" y="2" width="6" height="6" rx="1" />
-      <path d="M6 14V9.5M13 7V5M19 8v-2" />
-    </svg>
-  ),
-  delivery: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-      <path d="M12 19V5M5 12l7-7 7 7" />
-      <path d="M5 19h14" />
-    </svg>
-  ),
-  business_plan: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <path d="M8 17v-5M12 17v-9M16 17v-3" />
-    </svg>
-  ),
+export const CREW_AGENTS: Record<string, string[]> = {
+  discovery: [
+    'Value Chain Mapper',
+    'Requirements Capture',
+    'Requirements Analyst',
+    'Value Lever Analyst',
+  ],
+  discovery_interviews: [
+    'Interview Script Designer',
+    'Interview Coordinator',
+    'Stakeholder Interviewer',
+    'Synthesis Analyst',
+  ],
+  value_design:  ['Value Proposition Generator', 'Portfolio Manager'],
+  architecture:  ['Enterprise Architect', 'Initiative Identifier'],
+  delivery:      ['Roadmap Generator'],
+  business_plan: ['Business Plan Generator'],
 }
 
-export const CREW_AGENTS: Record<CrewName, string[]> = {
-  discovery: ['Value Chain Mapper', 'Industry Analyst', 'Document Analyst'],
-  value_design: ['Value Prop Generator', 'Portfolio Manager'],
-  architecture: ['Solution Architect', 'Tech Evaluator'],
-  delivery: ['Delivery Planner', 'Risk Analyst'],
-  business_plan: ['Financial Modeller', 'Report Writer'],
+const CREW_ICONS: Record<string, string> = {
+  discovery:            '🔍',
+  discovery_interviews: '🎙',
+  value_design:         '⭐',
+  architecture:         '🏛',
+  delivery:             '🚀',
+  business_plan:        '📊',
 }
 
-type AgentStatus = 'completed' | 'running' | 'queued'
+// Heights (px) for EKG bars — 7 bars, varying heights for waveform look
+const EKG_HEIGHTS = [3, 9, 5, 13, 4, 7, 3]
 
-function inferAgentStatuses(agents: string[], logs: string[]): AgentStatus[] {
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type AgentStatus = 'running' | 'completed' | 'queued' | 'idle'
+type CrewStatus  = 'running' | 'completed' | 'failed' | 'queued' | 'idle'
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function inferAgentStatuses(crewKey: string, logs: string[]): AgentStatus[] {
+  const agents = CREW_AGENTS[crewKey] ?? []
   const joined = logs.join('\n').toLowerCase()
   let lastIdx = -1
   agents.forEach((agent, idx) => {
@@ -78,99 +75,127 @@ function inferAgentStatuses(agents: string[], logs: string[]): AgentStatus[] {
   })
 }
 
-interface CrewNodeProps {
-  name: CrewName
-  crewRun: CrewRun | undefined
-  isActive: boolean
-  isIdle: boolean
-  logs: string[]
-  interviewBadge?: string | null
-  onClick: () => void
+function getCrewStatus(
+  crewRun: CrewRun | undefined,
+  isActive: boolean,
+  isPipelineActive: boolean,
+): CrewStatus {
+  if (isActive) return 'running'
+  if (crewRun?.status === 'completed') return 'completed'
+  if (crewRun?.status === 'failed') return 'failed'
+  if (isPipelineActive) return 'queued'
+  return 'idle'
 }
 
-function CrewNode({ name, crewRun, isActive, isIdle, logs, interviewBadge, onClick }: CrewNodeProps) {
-  const status = crewRun?.status ?? 'queued'
-  const agents = CREW_AGENTS[name]
-  const agentStatuses = isActive ? inferAgentStatuses(agents, logs) : null
+// ── AgentRow ──────────────────────────────────────────────────────────────────
 
-  const borderClass =
-    status === 'completed'
-      ? 'border-brand-green'
-      : isActive
-        ? 'border-brand'
-        : 'border-slate-700'
+function AgentRow({ name, status }: { name: string; status: AgentStatus }) {
+  const barClass =
+    status === 'running'   ? 'bg-brand animate-agentPulse' :
+    status === 'completed' ? 'bg-brand-green' :
+    status === 'queued'    ? 'bg-slate-800' :
+                             'bg-slate-900'
 
-  const bgClass =
-    status === 'completed'
-      ? 'bg-brand-green/5'
-      : isActive
-        ? 'bg-brand/5'
-        : 'bg-surface-card'
-
-  const opacityClass = isIdle || (!isActive && status === 'queued') ? 'opacity-50' : ''
-
-  const iconColour =
-    status === 'completed'
-      ? 'text-brand-green'
-      : isActive
-        ? 'text-brand'
-        : 'text-slate-500'
+  const nameClass =
+    status === 'running'   ? 'text-slate-100 font-semibold' :
+    status === 'completed' ? 'text-slate-500' :
+    status === 'queued'    ? 'text-slate-700' :
+                             'text-slate-800'
 
   return (
-    <div className={`flex flex-col gap-1 ${opacityClass}`}>
-      <button
-        onClick={onClick}
-        className={`relative border ${borderClass} ${bgClass} rounded-lg p-3 text-left transition-all w-32 h-24 flex flex-col justify-between`}
-      >
-        {/* Status indicator */}
-        {isActive && (
-          <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-brand animate-pulse" />
-        )}
-        {status === 'completed' && (
-          <span className="absolute top-2 right-2 text-brand-green text-xs leading-none">✓</span>
-        )}
-
-        {/* Icon */}
-        <span className={`${iconColour} transition-colors`}>
-          {CREW_ICONS[name]}
-        </span>
-
-        {/* Label + sub-label */}
-        <div>
-          <p className="text-xs font-semibold text-slate-200 leading-tight pr-4">{CREW_LABELS[name]}</p>
-          <p className="text-[10px] text-slate-500 leading-tight">Agent Team</p>
-          {interviewBadge && name === 'discovery' && (
-            <p className="text-[10px] text-brand mt-0.5">{interviewBadge}</p>
-          )}
-        </div>
-      </button>
-
-      {isActive && agentStatuses && (
-        <div className="ml-3 flex flex-col gap-1 border-l-2 border-brand/30 pl-2">
-          {agents.map((agent, idx) => {
-            const s = agentStatuses[idx]
-            return (
-              <div key={agent} className="flex items-center gap-1.5">
-                <span className={`text-[10px] ${
-                  s === 'completed' ? 'text-brand-green' :
-                  s === 'running' ? 'text-brand' :
-                  'text-slate-600'
-                }`}>
-                  {s === 'completed' ? '✓' : s === 'running' ? '▶' : '○'}
-                </span>
-                <span className={`text-[10px] ${
-                  s === 'completed' ? 'text-slate-400' :
-                  s === 'running' ? 'text-slate-200 font-medium' :
-                  'text-slate-600'
-                }`}>{agent}</span>
-              </div>
-            )
-          })}
-        </div>
-      )}
+    <div className="flex items-center gap-2">
+      <div className={`w-0.5 h-3.5 rounded-sm flex-shrink-0 ${barClass}`} />
+      <span className={`text-[10px] font-mono leading-none ${nameClass}`}>{name}</span>
     </div>
   )
 }
+
+// ── CrewNode ──────────────────────────────────────────────────────────────────
+
+interface CrewNodeProps {
+  crewKey: string
+  crewRun: CrewRun | undefined
+  isActive: boolean
+  isPipelineActive: boolean
+  logs: string[]
+  interviewBadge?: string | null
+  onClick?: () => void
+}
+
+function CrewNode({
+  crewKey, crewRun, isActive, isPipelineActive, logs, interviewBadge, onClick,
+}: CrewNodeProps) {
+  const status = getCrewStatus(crewRun, isActive, isPipelineActive)
+  const agents = CREW_AGENTS[crewKey] ?? []
+
+  const agentStatuses: AgentStatus[] = (() => {
+    if (isActive) return inferAgentStatuses(crewKey, logs)
+    if (status === 'completed') return agents.map(() => 'completed' as AgentStatus)
+    return agents.map(() => (isPipelineActive ? 'queued' : 'idle') as AgentStatus)
+  })()
+
+  const borderClass =
+    status === 'running'   ? 'border-brand animate-crewGlow' :
+    status === 'completed' ? 'border-brand-green/40' :
+    status === 'failed'    ? 'border-red-500/40' :
+    status === 'queued'    ? 'border-slate-700' :
+                             'border-slate-800'
+
+  const bgClass =
+    status === 'running'   ? 'bg-brand/5' :
+    status === 'completed' ? 'bg-brand-green/5' :
+    status === 'failed'    ? 'bg-red-500/5' :
+                             'bg-surface'
+
+  const headNameClass =
+    status === 'running'   ? 'text-brand' :
+    status === 'completed' ? 'text-brand-green' :
+    status === 'failed'    ? 'text-red-400' :
+    status === 'queued'    ? 'text-slate-500' :
+                             'text-slate-700'
+
+  const statusBadge =
+    status === 'running'   ? <span className="text-[9px] font-mono text-brand animate-blink ml-auto">● RUNNING</span> :
+    status === 'completed' ? <span className="text-[9px] font-mono text-brand-green ml-auto">✓ DONE</span> :
+    status === 'failed'    ? <span className="text-[9px] font-mono text-red-400 ml-auto">✗ FAILED</span> :
+    status === 'queued'    ? <span className="text-[9px] font-mono text-slate-700 ml-auto">○ QUEUED</span> :
+                             null
+
+  return (
+    <div
+      className={`relative border rounded-lg overflow-hidden ${borderClass} ${bgClass} ${onClick ? 'cursor-pointer' : ''}`}
+      onClick={onClick}
+    >
+      {/* Scanline sweep — only on running crew */}
+      {status === 'running' && (
+        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-brand to-transparent animate-scanline pointer-events-none" />
+      )}
+
+      {/* Header */}
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-slate-800/60">
+        <span className="text-sm leading-none">{CREW_ICONS[crewKey]}</span>
+        <span className={`text-[10px] font-mono font-bold tracking-wider ${headNameClass}`}>
+          {(CREW_LABELS[crewKey] ?? crewKey).toUpperCase()}
+        </span>
+        {statusBadge}
+      </div>
+
+      {/* Agent list — always rendered */}
+      <div className="flex flex-col gap-1.5 px-2.5 py-2">
+        {agents.map((agent, idx) => (
+          <AgentRow key={agent} name={agent} status={agentStatuses[idx]} />
+        ))}
+        {interviewBadge && crewKey === 'discovery' && (
+          <div className="text-[9px] text-brand border border-brand/20 rounded px-1.5 py-0.5 bg-brand/5 mt-0.5 font-mono">
+            {interviewBadge}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── OrgChart (main export) ────────────────────────────────────────────────────
 
 interface OrgChartProps {
   crewRuns: CrewRun[]
@@ -178,53 +203,147 @@ interface OrgChartProps {
   logs: string[]
   interviewBadge?: string | null
   onCrewClick?: (name: CrewName) => void
+  onRun: () => void
+  isRunPending: boolean
+  lastRun?: { started_at: string | null; completed_at: string | null } | null
+  orch?: { id: number; status: string } | null
 }
 
-export default function OrgChart({ crewRuns, isPipelineActive, logs, interviewBadge, onCrewClick }: OrgChartProps) {
-  const runMap = new Map(crewRuns.map((r) => [r.crew_name, r]))
-  const activeCrewName = crewRuns.find((r) => r.status === 'running')?.crew_name as CrewName | undefined
+export default function OrgChart({
+  crewRuns, isPipelineActive, logs, interviewBadge,
+  onCrewClick, onRun, isRunPending, lastRun: _lastRun, orch,
+}: OrgChartProps) {
+  const runMap = new Map(crewRuns.map(r => [r.crew_name, r]))
+  const activeCrewName = crewRuns.find(r => r.status === 'running')?.crew_name
+  const hasEverRun = crewRuns.length > 0
+
+  // PAM bar status text
+  const statusText = isPipelineActive && activeCrewName
+    ? `${(CREW_LABELS[activeCrewName] ?? activeCrewName).toUpperCase()} RUNNING`
+    : orch?.status === 'completed' ? 'COMPLETED'
+    : orch?.status === 'failed'    ? 'FAILED'
+    : null
+
+  const statusClass = isPipelineActive
+    ? 'text-brand animate-blink'
+    : orch?.status === 'completed' ? 'text-brand-green'
+    : 'text-red-400'
+
+  const statusPrefix = isPipelineActive ? '● ' : orch?.status === 'completed' ? '✓ ' : '✗ '
+
+  // discovery_interviews is a sub-node shown only when a run record exists
+  const showDiscoveryInterviews =
+    runMap.has('discovery_interviews') || activeCrewName === 'discovery_interviews'
+
+  function renderCrew(crewKey: string, clickable = false) {
+    return (
+      <CrewNode
+        key={crewKey}
+        crewKey={crewKey}
+        crewRun={runMap.get(crewKey)}
+        isActive={activeCrewName === crewKey}
+        isPipelineActive={isPipelineActive}
+        logs={logs}
+        interviewBadge={interviewBadge}
+        onClick={clickable ? () => onCrewClick?.(crewKey as CrewName) : undefined}
+      />
+    )
+  }
 
   return (
-    <div className="flex flex-col items-center gap-2">
-      {/* PAM node */}
-      <div className={`border rounded-lg px-4 py-2 text-center transition-all ${
-        isPipelineActive
-          ? 'border-brand bg-brand/5'
-          : 'border-slate-700 bg-surface-card opacity-50'
-      }`}>
-        <div className="flex items-center gap-2">
-          {isPipelineActive && (
-            <span className="w-2 h-2 rounded-full bg-brand animate-pulse" />
-          )}
-          <p className="text-xs font-bold text-slate-200">PAM</p>
-          {isPipelineActive && (
-            <span className="w-2 h-2 rounded-full bg-brand animate-pulse" />
+    <div className="bg-surface-card border border-slate-700 rounded-xl overflow-hidden">
+
+      {/* ── PAM bar ──────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 px-4 py-2.5 bg-surface-raised border-b border-slate-700">
+        <span className="text-brand animate-pamPulse text-sm font-mono leading-none">◈</span>
+        <span className="text-[11px] font-mono font-bold tracking-[0.18em] text-brand">
+          PAM · ORCHESTRATOR
+        </span>
+
+        {/* EKG waveform — always animating */}
+        <div className="flex items-end gap-px ml-3">
+          {EKG_HEIGHTS.map((h, i) => (
+            <div
+              key={i}
+              className="w-0.5 bg-brand rounded-sm animate-ekg"
+              style={{ height: `${h}px`, animationDelay: `${i * 0.1}s` }}
+            />
+          ))}
+        </div>
+
+        {statusText && (
+          <span className={`text-[10px] font-mono ml-2 ${statusClass}`}>
+            {statusPrefix}{statusText}
+          </span>
+        )}
+
+        <div className="ml-auto">
+          {!isPipelineActive && (
+            <button
+              onClick={onRun}
+              disabled={isRunPending}
+              className="text-[11px] font-mono font-semibold px-3 py-1.5 rounded-md bg-brand text-surface disabled:opacity-50 transition-all"
+              style={{ boxShadow: isRunPending ? 'none' : '0 0 12px rgba(25,212,232,0.35)' }}
+            >
+              {isRunPending ? 'Starting…' : '▶ Run Pipeline'}
+            </button>
           )}
         </div>
-        <p className="text-[10px] text-slate-500 mt-0.5">Orchestrator</p>
       </div>
 
-      {/* Connector line */}
-      <div className={`w-px h-4 ${isPipelineActive ? 'bg-brand/30' : 'bg-slate-700'}`} />
+      {/* ── Spine + crew columns ─────────────────────────────────── */}
+      <div className="flex gap-0 p-4">
 
-      {/* Horizontal bar */}
-      <div className={`w-full h-px ${isPipelineActive ? 'bg-brand/30' : 'bg-slate-700'}`} />
+        {/* Left column: Discovery · Architecture · Business Plan */}
+        <div className="flex-1 flex flex-col gap-3">
+          {renderCrew('discovery', true)}
+          {showDiscoveryInterviews && (
+            <div className="ml-4 border-l-2 border-brand/20 pl-3">
+              {renderCrew('discovery_interviews')}
+            </div>
+          )}
+          {renderCrew('architecture')}
+          {renderCrew('business_plan')}
+        </div>
 
-      {/* Crew nodes */}
-      <div className="flex gap-3 items-start justify-center w-full pt-1">
-        {CREW_ORDER.map((name) => (
-          <CrewNode
-            key={name}
-            name={name}
-            crewRun={runMap.get(name)}
-            isActive={activeCrewName === name}
-            isIdle={!isPipelineActive}
-            logs={logs}
-            interviewBadge={interviewBadge}
-            onClick={() => onCrewClick?.(name)}
-          />
-        ))}
+        {/* Neural spine */}
+        <div className="relative w-px mx-5 bg-gradient-to-b from-brand to-brand/10 self-stretch">
+          {hasEverRun && [0, 1, 2].map(i => (
+            <div
+              key={i}
+              className="absolute -left-[3px] w-2 h-2 rounded-full bg-brand animate-particleFlow"
+              style={{
+                animationDelay: `${i}s`,
+                boxShadow: '0 0 8px #19d4e8, 0 0 16px #19d4e840',
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Right column: Value Design · Delivery — offset to interleave */}
+        <div className="flex-1 flex flex-col gap-3 pt-28">
+          {renderCrew('value_design', true)}
+          {renderCrew('delivery')}
+        </div>
+
       </div>
+
+      {/* ── Log strip ────────────────────────────────────────────── */}
+      {logs.length > 0 && (
+        <div className="mx-4 mb-4 rounded-lg bg-black/40 border border-slate-800 px-3 py-2">
+          {logs.slice(-3).map((line, i, arr) => (
+            <p
+              key={i}
+              className={`text-[10px] font-mono leading-relaxed truncate ${
+                i === arr.length - 1 ? 'text-brand/70' : 'text-slate-700'
+              }`}
+            >
+              {line}
+            </p>
+          ))}
+        </div>
+      )}
+
     </div>
   )
 }

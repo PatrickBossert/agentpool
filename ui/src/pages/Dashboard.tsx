@@ -95,6 +95,8 @@ export default function Dashboard() {
             logs={logs}
             interviewBadge={interviewBadge}
             onCrewClick={handleCrewClick}
+            onRun={() => {}}
+            isRunPending={false}
           />
         </div>
         <InfoCard
