@@ -20,6 +20,7 @@ import ValuePropositions from './pages/ValuePropositions'
 import Assignment from './pages/Assignment'
 import VoiceInterview from './pages/VoiceInterview'
 import Templates from './pages/Templates'
+import Report from './pages/Report'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -35,6 +36,14 @@ export const router = createBrowserRouter([
   {
     path: '/interview/:sessionToken',
     element: <VoiceInterview />,
+  },
+  {
+    path: '/:slug/report',
+    element: (
+      <ProtectedRoute>
+        <Report />
+      </ProtectedRoute>
+    ),
   },
   {
     path: '/',

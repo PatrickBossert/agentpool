@@ -1,0 +1,167 @@
+/* ui/src/pages/Report.css — print styles for client report */
+
+/* Screen: preview container */
+.report-root {
+  min-height: 100vh;
+  background: #1a1825;
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.report-print-btn {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 50;
+  padding: 0.5rem 1.25rem;
+  background: #19d4e8;
+  color: #0f172a;
+  border: none;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.report-print-btn:hover {
+  background: #7eedf6;
+}
+
+/* Page sections */
+.report-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 3rem 2rem;
+}
+
+.report-section {
+  padding: 3rem 2rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* Cover page */
+.report-cover {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 4rem;
+  border-bottom: 2px solid #19d4e8;
+}
+
+/* Section headers */
+.report-section-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #19d4e8;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Metric cards */
+.report-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.report-metric-card {
+  background: #2a2640;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+/* Initiative table */
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.report-table th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  background: #2a2640;
+  color: #94a3b8;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.7rem;
+}
+
+.report-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #1e293b;
+  vertical-align: top;
+}
+
+.report-table .group-header td {
+  background: #1a1825;
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.75rem 0.75rem 0.25rem;
+}
+
+/* ── PRINT OVERRIDES ──────────────────────────────────────────────────── */
+@media print {
+  @page {
+    size: A4;
+    margin: 18mm 15mm;
+  }
+
+  body {
+    background: white !important;
+    color: #111 !important;
+    font-size: 11pt;
+  }
+
+  .report-print-btn {
+    display: none !important;
+  }
+
+  .report-root {
+    background: white;
+    color: #111;
+  }
+
+  .report-cover {
+    border-bottom: 2px solid #19d4e8;
+    page-break-after: always;
+  }
+
+  .report-section {
+    page-break-before: always;
+  }
+
+  .report-section-title {
+    color: #0891b2;
+  }
+
+  .report-metric-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+  }
+
+  .report-table th {
+    background: #f1f5f9;
+    color: #475569;
+  }
+
+  .report-table td {
+    border-bottom: 1px solid #e2e8f0;
+    color: #1e293b;
+  }
+
+  .report-table .group-header td {
+    background: #f8fafc;
+    color: #64748b;
+  }
+}
