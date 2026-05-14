@@ -19,6 +19,7 @@ import Discovery from './pages/Discovery'
 import ValuePropositions from './pages/ValuePropositions'
 import Assignment from './pages/Assignment'
 import VoiceInterview from './pages/VoiceInterview'
+import Templates from './pages/Templates'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -58,6 +59,7 @@ export const router = createBrowserRouter([
       { path: ':slug/documents', element: <Documents /> },
       { path: ':slug/runs/:runId', element: <RunDetail /> },
       { path: ':slug/assignment', element: <Assignment /> },
+      { path: ':slug/templates', element: <Templates /> },
       { path: ':slug/settings', element: <Settings /> },
     ],
   },
