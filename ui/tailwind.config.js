@@ -41,11 +41,7 @@ export default {
         },
         pamPulse: {
           '0%, 100%': { opacity: '1' },
-          '50%':      { opacity: '0.55' },
-        },
-        blink: {
-          '0%, 100%': { opacity: '1' },
-          '50%':      { opacity: '0' },
+          '50%':      { opacity: '0.6' },
         },
       },
       animation: {
@@ -55,7 +51,6 @@ export default {
         particleFlow: 'particleFlow 3s linear infinite',
         scanline:     'scanline 2s linear infinite',
         pamPulse:     'pamPulse 2s ease-in-out infinite',
-        blink:        'blink 1.2s step-end infinite',
       },
     },
   },

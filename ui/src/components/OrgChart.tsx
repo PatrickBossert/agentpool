@@ -285,7 +285,7 @@ export default function OrgChart({
               className="text-[11px] font-mono font-semibold px-3 py-1.5 rounded-md bg-brand text-surface disabled:opacity-50 transition-all"
               style={{ boxShadow: isRunPending ? 'none' : '0 0 12px rgba(25,212,232,0.35)' }}
             >
-              {isRunPending ? 'Starting…' : '▶ Run Pipeline'}
+              {isRunPending ? 'Running…' : '▶ Run Pipeline'}
             </button>
           )}
         </div>
@@ -307,8 +307,8 @@ export default function OrgChart({
         </div>
 
         {/* Neural spine */}
-        <div className="relative w-px mx-5 bg-gradient-to-b from-brand to-brand/10 self-stretch">
-          {hasEverRun && [0, 1, 2].map(i => (
+        <div className="relative w-px mx-5 bg-gradient-to-b from-brand to-brand/20 self-stretch">
+          {(isPipelineActive || hasEverRun) && [0, 1, 2].map(i => (
             <div
               key={i}
               className="absolute -left-[3px] w-2 h-2 rounded-full bg-brand animate-particleFlow"
