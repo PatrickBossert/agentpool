@@ -74,14 +74,22 @@ export default function Dashboard() {
       {/* Project header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-100">{slug}</h2>
-        {(orch?.status === 'completed' || orch?.status === 'failed') && (
+        <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
-            className="text-xs text-brand hover:text-brand-light"
+            onClick={() => window.open(`/${slug}/report`, '_blank')}
+            className="text-xs px-3 py-1.5 rounded bg-surface-card border border-slate-700 text-slate-300 hover:text-slate-100 hover:border-slate-500"
           >
-            View Last Run →
+            Export Report
           </button>
-        )}
+          {(orch?.status === 'completed' || orch?.status === 'failed') && (
+            <button
+              onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
+              className="text-xs text-brand hover:text-brand-light"
+            >
+              View Last Run →
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Org chart */}
