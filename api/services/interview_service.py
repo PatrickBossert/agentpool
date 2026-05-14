@@ -60,16 +60,29 @@ async def get_session_with_script(session_token: str) -> dict | None:
 
     settings = get_settings()
 
+    # Derive slug from db filename (e.g. "myproject.db" → "myproject")
+    slug = Path(db_path).stem
+
+    config: dict = {}
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         session_row = await fetch_interview_session(conn, session_token)
         if not session_row:
             return None
 
+        # Read project config for branding fields in the same connection
+        try:
+            async with conn.execute(
+                "SELECT config_json FROM projects WHERE slug=?", (slug,)
+            ) as cur:
+                proj_row = await cur.fetchone()
+            if proj_row and proj_row["config_json"]:
+                config = json.loads(proj_row["config_json"])
+        except Exception:
+            pass
+
     # interview_scripts are written by SQLiteStateTool as a JSON file at:
     # {projects_dir}/{slug}/outputs/interview_scripts.json
-    # Derive the slug from the db filename (e.g. "myproject.db" → "myproject")
-    slug = Path(db_path).stem
     scripts_path = (
         Path(settings.projects_dir) / slug / "outputs" / "interview_scripts.json"
     )
@@ -82,7 +95,13 @@ async def get_session_with_script(session_token: str) -> dict | None:
         except (json.JSONDecodeError, KeyError):
             pass
 
-    return {"session": dict(session_row), "script": script}
+    branding = {
+        "header_image_url": config.get("brand_header_image_url", ""),
+        "primary_color": config.get("brand_primary_color", "#0d9488"),
+        "text_color": config.get("brand_text_color", "#1f2937"),
+    }
+
+    return {"session": dict(session_row), "script": script, "branding": branding}
 
 
 async def generate_deepgram_token() -> str:

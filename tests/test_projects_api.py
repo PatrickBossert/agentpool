@@ -168,3 +168,93 @@ async def test_portfolio_register_unknown_project(client):
     """Returns 404 when the project does not exist."""
     resp = await client.get("/projects/nonexistent/portfolio-register")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Branding image upload and serve
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_branding_image_upload_and_serve(client):
+    """Upload a small PNG, verify 200 with url field; GET returns image content-type."""
+    # Create project
+    await client.post("/projects", json=PROJECT_PAYLOAD)
+
+    # Obtain a JWT token
+    login_resp = await client.post(
+        "/auth/login", data={"username": "admin", "password": "test-admin-pw"}
+    )
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Minimal 1×1 red PNG (valid PNG bytes)
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+        b"\x00\x00\x00\x90wS\xde"
+        b"\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
+        b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    resp = await client.post(
+        "/projects/test-rail/branding/image",
+        headers=headers,
+        files={"file": ("header.png", png_bytes, "image/png")},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert "url" in data
+    assert data["url"] == "/api/projects/test-rail/branding/image"
+
+    # GET the image endpoint (no auth)
+    img_resp = await client.get("/projects/test-rail/branding/image")
+    assert img_resp.status_code == 200
+    assert "image" in img_resp.headers.get("content-type", "")
+
+
+@pytest.mark.asyncio
+async def test_branding_in_session_response():
+    """get_session_with_script returns a branding key."""
+    import json as _json
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    slug = "branding-proj"
+    fake_db = "/tmp/agentpool_test/" + slug + ".db"
+    fake_session = {
+        "id": 1,
+        "session_token": "tok-branding",
+        "node_label": "exec_interview",
+        "status": "pending",
+    }
+
+    with (
+        patch(
+            "api.services.interview_service._find_session_db", new_callable=AsyncMock
+        ) as mock_find,
+        patch(
+            "api.services.interview_service.fetch_interview_session",
+            new_callable=AsyncMock,
+        ) as mock_fetch,
+        patch("api.services.interview_service.get_settings") as mock_settings,
+        patch("aiosqlite.connect"),
+    ):
+        mock_find.return_value = fake_db
+        mock_fetch.return_value = fake_session
+        settings_obj = MagicMock()
+        settings_obj.projects_dir = "/tmp/agentpool_test_projects"
+        mock_settings.return_value = settings_obj
+
+        from api.services.interview_service import get_session_with_script
+
+        result = await get_session_with_script("tok-branding")
+
+    assert result is not None
+    assert "branding" in result
+    assert "header_image_url" in result["branding"]
+    assert "primary_color" in result["branding"]
+    assert "text_color" in result["branding"]
+    # Defaults when no config stored
+    assert result["branding"]["primary_color"] == "#0d9488"
+    assert result["branding"]["text_color"] == "#1f2937"

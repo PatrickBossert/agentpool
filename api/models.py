@@ -32,6 +32,9 @@ class ProjectSettings(BaseModel):
     discovery_links: list[dict] = []
     discovery_document_ids: list[int] = []
     interview_method: Literal["agent", "listenlabs", "none"] = "none"
+    brand_header_image_url: str = ""
+    brand_primary_color: str = "#0d9488"
+    brand_text_color: str = "#1f2937"
 
 
 class OutputContent(BaseModel):

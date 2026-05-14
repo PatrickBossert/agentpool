@@ -1,8 +1,11 @@
 # api/routers/projects.py
+import json
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
-from api.database import get_db_path, get_connection, fetch_project, fetch_outputs_by_type
+from api.auth import get_token_payload
+from api.config import get_settings
+from api.database import get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
 from api.services.project_service import (
     create_project,
@@ -144,3 +147,78 @@ async def get_portfolio_register_endpoint(slug: str):
     if result is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     return result
+
+
+_IMAGE_CONTENT_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+}
+
+_MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2 MB
+
+
+@router.post("/{slug}/branding/image")
+async def upload_branding_image(
+    slug: str,
+    file: UploadFile = File(...),
+    _user: dict = Depends(get_token_payload),
+):
+    """Upload a header image for the project branding."""
+    if not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+
+        # Validate content type
+        content_type = file.content_type or ""
+        if content_type not in _IMAGE_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unsupported image type '{content_type}'. Must be image/png, image/jpeg, or image/webp.",
+            )
+
+        # Read and validate size
+        data = await file.read()
+        if len(data) > _MAX_IMAGE_SIZE:
+            raise HTTPException(
+                status_code=422,
+                detail="Image exceeds maximum allowed size of 2 MB.",
+            )
+
+        # Save file
+        ext = _IMAGE_CONTENT_TYPES[content_type]
+        assets_dir = Path(get_settings().projects_dir) / slug / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        image_path = assets_dir / f"header{ext}"
+        image_path.write_bytes(data)
+
+        # Update brand_header_image_url in project config
+        raw = project.get("config_json") or "{}"
+        config = json.loads(raw)
+        image_url = f"/api/projects/{slug}/branding/image"
+        config["brand_header_image_url"] = image_url
+        await update_project_config(
+            conn,
+            project_id=project["id"],
+            llm_mode=project["llm_mode"],
+            sector=project["sector"],
+            config_json=json.dumps(config),
+        )
+
+    return {"url": image_url}
+
+
+@router.get("/{slug}/branding/image")
+async def get_branding_image(slug: str):
+    """Serve the project header branding image. No auth required."""
+    assets_dir = Path(get_settings().projects_dir) / slug / "assets"
+    # Try each supported extension
+    for ext, ct in ((".png", "image/png"), (".jpg", "image/jpeg"), (".webp", "image/webp")):
+        candidate = assets_dir / f"header{ext}"
+        if candidate.exists():
+            return FileResponse(path=candidate, media_type=ct)
+    raise HTTPException(status_code=404, detail="No branding image found for this project.")
