@@ -385,6 +385,12 @@ export interface InterviewSessionsResponse {
   summary: SessionSummary
 }
 
+export interface NodeTemplateAssignment {
+  node_label: string
+  interview_template_id: number | null
+  questionnaire_template_id: number | null
+}
+
 export interface TemplateListItem {
   id: number
   name: string

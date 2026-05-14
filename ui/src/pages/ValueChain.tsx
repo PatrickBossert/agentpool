@@ -4,9 +4,11 @@ import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import mermaid from 'mermaid'
 import { projectsApi } from '../api/endpoints'
+import { listTemplates } from '../api/templates'
+import { listNodeTemplates, putNodeTemplate, publishNodeTemplate } from '../api/nodeTemplates'
 import { useAuth } from '../context/AuthContext'
 import { downloadOutput } from '../utils/download'
-import type { ProjectSettings, DiscoveryLink, ClientDocument } from '../types'
+import type { ProjectSettings, DiscoveryLink, ClientDocument, NodeTemplateAssignment, TemplateListItem } from '../types'
 
 mermaid.initialize({ startOnLoad: false, theme: 'dark' })
 
@@ -126,13 +128,69 @@ export default function ValueChain() {
     }
   }, [contentData?.content, latest?.id])
 
+  // ── Templates tab state ──────────────────────────────────────
+  const [nodeAssignments, setNodeAssignments] = useState<NodeTemplateAssignment[]>([])
+  const [interviewTemplates, setInterviewTemplates] = useState<TemplateListItem[]>([])
+  const [questionnaireTemplates, setQuestionnaireTemplates] = useState<TemplateListItem[]>([])
+
   // ── Tab ──────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'setup' | 'diagram'>('setup')
+  const [activeTab, setActiveTab] = useState<'setup' | 'diagram' | 'templates'>('setup')
 
   // Switch to Diagram tab automatically once outputs are known to exist
   useEffect(() => {
     if (!isLoading && outputs.length > 0) setActiveTab('diagram')
   }, [isLoading, outputs.length])
+
+  // Fetch templates data when Templates tab is active
+  useEffect(() => {
+    if (activeTab !== 'templates' || !slug) return
+    Promise.all([
+      listNodeTemplates(slug),
+      listTemplates('interview'),
+      listTemplates('questionnaire'),
+    ]).then(([assignments, interviewTpls, questionnaireTpls]) => {
+      setNodeAssignments(assignments)
+      setInterviewTemplates(interviewTpls)
+      setQuestionnaireTemplates(questionnaireTpls)
+    }).catch(console.error)
+  }, [activeTab, slug])
+
+  async function handleTemplateChange(
+    nodeLabel: string,
+    field: 'interview_template_id' | 'questionnaire_template_id',
+    value: number | null,
+  ) {
+    const current = nodeAssignments.find((a) => a.node_label === nodeLabel)
+    const updated: NodeTemplateAssignment = current
+      ? { ...current, [field]: value }
+      : { node_label: nodeLabel, interview_template_id: null, questionnaire_template_id: null, [field]: value }
+
+    setNodeAssignments((prev) =>
+      prev.some((a) => a.node_label === nodeLabel)
+        ? prev.map((a) => (a.node_label === nodeLabel ? updated : a))
+        : [...prev, updated],
+    )
+
+    try {
+      await putNodeTemplate(slug!, nodeLabel, {
+        interview_template_id: updated.interview_template_id,
+        questionnaire_template_id: updated.questionnaire_template_id,
+      })
+    } catch (e) {
+      console.error('Auto-save failed', e)
+    }
+  }
+
+  async function handlePublish(nodeLabel: string) {
+    const name = window.prompt(`Template name for "${nodeLabel}":`)
+    if (!name || !name.trim()) return
+    try {
+      await publishNodeTemplate(slug!, nodeLabel, { name: name.trim(), description: '' })
+    } catch (e) {
+      console.error('Publish failed', e)
+      alert('Publish failed — check that the interview script has been generated for this node.')
+    }
+  }
 
   return (
     <div className="p-6">
@@ -140,7 +198,7 @@ export default function ValueChain() {
 
       {/* Tab strip */}
       <div className="flex border-b border-slate-700 mb-6">
-        {(['setup', 'diagram'] as const).map((tab) => (
+        {(['setup', 'diagram', 'templates'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -150,7 +208,7 @@ export default function ValueChain() {
                 : 'text-slate-400 border-transparent hover:text-slate-200'
             }`}
           >
-            {tab === 'setup' ? 'Setup' : 'Diagram'}
+            {tab === 'setup' ? 'Setup' : tab === 'diagram' ? 'Diagram' : 'Templates'}
           </button>
         ))}
       </div>
@@ -269,6 +327,90 @@ export default function ValueChain() {
             </button>
             {saved && <span className="text-emerald-400 text-sm">Saved.</span>}
           </div>
+        </div>
+      )}
+
+      {/* ── Templates tab ─────────────────────────────────────── */}
+      {activeTab === 'templates' && (
+        <div>
+          <p className="text-slate-400 text-sm mb-6">
+            Assign interview and questionnaire templates to each value chain node. Changes save automatically.
+          </p>
+
+          {nodeAssignments.length === 0 ? (
+            <div className="bg-surface-card rounded-xl p-8 text-center">
+              <p className="text-slate-400 text-sm">Run the Value Chain crew first to generate nodes.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-700 text-left">
+                    <th className="pb-2 pr-4 text-slate-400 font-medium">Node</th>
+                    <th className="pb-2 pr-4 text-slate-400 font-medium">Interview Template</th>
+                    <th className="pb-2 pr-4 text-slate-400 font-medium">Questionnaire Template</th>
+                    <th className="pb-2 text-slate-400 font-medium">Publish</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {nodeAssignments.map((assignment) => (
+                    <tr key={assignment.node_label} className="border-b border-slate-800">
+                      <td className="py-3 pr-4 text-slate-200 font-medium">{assignment.node_label}</td>
+                      <td className="py-3 pr-4">
+                        <select
+                          value={assignment.interview_template_id ?? ''}
+                          onChange={(e) =>
+                            handleTemplateChange(
+                              assignment.node_label,
+                              'interview_template_id',
+                              e.target.value ? Number(e.target.value) : null,
+                            )
+                          }
+                          className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 outline-none focus:border-brand w-full max-w-xs"
+                        >
+                          <option value="">— None —</option>
+                          {interviewTemplates.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <select
+                          value={assignment.questionnaire_template_id ?? ''}
+                          onChange={(e) =>
+                            handleTemplateChange(
+                              assignment.node_label,
+                              'questionnaire_template_id',
+                              e.target.value ? Number(e.target.value) : null,
+                            )
+                          }
+                          className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 outline-none focus:border-brand w-full max-w-xs"
+                        >
+                          <option value="">— None —</option>
+                          {questionnaireTemplates.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-3">
+                        <button
+                          type="button"
+                          onClick={() => handlePublish(assignment.node_label)}
+                          className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded transition-colors"
+                        >
+                          Publish
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
