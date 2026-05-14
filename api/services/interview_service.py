@@ -13,7 +13,14 @@ import aiosqlite
 import httpx
 
 from api.config import get_settings
-from api.database import fetch_interview_session, complete_interview_session
+from api.database import (
+    fetch_interview_session,
+    complete_interview_session,
+    fetch_node_template_assignments,
+    get_system_db_path,
+    init_system_db,
+    fetch_template,
+)
 
 
 async def _find_session_db(session_token: str) -> str | None:
@@ -106,13 +113,10 @@ async def get_session_with_script(session_token: str) -> dict | None:
     # Fetch questionnaire template for this node if assigned
     questionnaire = None
     try:
-        from api.database import fetch_node_template_assignments, get_system_db_path, init_system_db, fetch_template
-        import json as _json_inner
-
         # Re-open the DB to get project id and node assignments
         async with aiosqlite.connect(db_path) as qconn:
             qconn.row_factory = aiosqlite.Row
-            async with qconn.execute("SELECT id FROM projects LIMIT 1") as cur:
+            async with qconn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
                 proj_row = await cur.fetchone()
             if proj_row:
                 node_assignments = await fetch_node_template_assignments(qconn, proj_row["id"])
@@ -129,7 +133,7 @@ async def get_session_with_script(session_token: str) -> dict | None:
                         tpl = await fetch_template(sys_conn, qid)
                     if tpl:
                         try:
-                            questionnaire = _json_inner.loads(tpl["schema_json"])
+                            questionnaire = json.loads(tpl["schema_json"])
                         except Exception:
                             questionnaire = None
     except Exception:
