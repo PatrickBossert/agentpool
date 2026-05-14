@@ -277,7 +277,7 @@ export default function Report() {
     enabled: !!slug,
   })
 
-  const { data: financialSummary = null } = useQuery({
+  const { data: financialSummary } = useQuery({
     queryKey: ['financial-summary', slug],
     queryFn: () => projectsApi.financialSummary(slug!),
     enabled: !!slug,
@@ -321,7 +321,7 @@ export default function Report() {
       <CoverPage slug={slug ?? ''} sector={settings?.sector ?? ''} />
       <ValuePropositionsSection items={propositions} />
       <InitiativeRegisterSection initiatives={initiatives} />
-      <FinancialSummarySection summary={financialSummary} />
+      <FinancialSummarySection summary={financialSummary ?? null} />
       <DeliverablesSection outputs={outputs} />
     </div>
   )
