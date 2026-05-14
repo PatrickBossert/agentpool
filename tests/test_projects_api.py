@@ -4,6 +4,8 @@ import shutil
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
 
 from api.config import get_settings
 
@@ -258,3 +260,63 @@ async def test_branding_in_session_response():
     # Defaults when no config stored
     assert result["branding"]["primary_color"] == "#0d9488"
     assert result["branding"]["text_color"] == "#1f2937"
+
+
+# ── Node template assignment fixtures and tests ───────────────────────────────
+
+@pytest_asyncio.fixture
+async def auth_client():
+    """AsyncClient with a valid Bearer token for the test admin user."""
+    system_db = Path("/tmp/agentpool_test/system.db")
+    system_db.unlink(missing_ok=True)
+    get_settings.cache_clear()
+
+    from api.main import app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        login = await ac.post("/auth/login", data={"username": "admin", "password": "test-admin-pw"})
+        token = login.json()["access_token"]
+        ac.headers.update({"Authorization": f"Bearer {token}"})
+        yield ac
+
+    system_db.unlink(missing_ok=True)
+    get_settings.cache_clear()
+
+
+@pytest_asyncio.fixture
+async def create_project(auth_client):
+    """Create the test-rail project and return its slug."""
+    resp = await auth_client.post("/projects", json=PROJECT_PAYLOAD)
+    assert resp.status_code in (200, 201)
+    return resp.json()["slug"]
+
+
+@pytest.mark.asyncio
+async def test_list_node_templates_empty(auth_client, create_project):
+    slug = create_project
+    resp = await auth_client.get(f"/projects/{slug}/node-templates")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_upsert_node_template(auth_client, create_project):
+    slug = create_project
+    resp = await auth_client.put(
+        f"/projects/{slug}/node-templates/Goods-in%20Inspection",
+        json={"interview_template_id": 1, "questionnaire_template_id": None},
+    )
+    assert resp.status_code == 200
+    # Verify it appears in list
+    list_resp = await auth_client.get(f"/projects/{slug}/node-templates")
+    assignments = list_resp.json()
+    assert any(a["node_label"] == "Goods-in Inspection" for a in assignments)
+
+
+@pytest.mark.asyncio
+async def test_publish_node_template_not_found(auth_client, create_project):
+    slug = create_project
+    resp = await auth_client.post(
+        f"/projects/{slug}/node-templates/NonExistentNode/publish",
+        json={"name": "T1", "description": ""},
+    )
+    assert resp.status_code == 404

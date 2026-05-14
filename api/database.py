@@ -247,6 +247,23 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None:
+    """Create node_template_assignments table if it doesn't exist."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS node_template_assignments (
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id                INTEGER NOT NULL REFERENCES projects(id),
+            node_label                TEXT    NOT NULL,
+            interview_template_id     INTEGER,
+            questionnaire_template_id INTEGER,
+            created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, node_label)
+        )
+    """)
+    await conn.commit()
+
+
 @asynccontextmanager
 async def get_connection(slug: str):
     path = get_db_path(slug)
@@ -261,6 +278,7 @@ async def get_connection(slug: str):
         await _migrate_campaigns(conn)
         await _migrate_stakeholder_assignments(conn)
         await _migrate_interview_sessions(conn)
+        await _migrate_node_template_assignments(conn)
         yield conn
 
 
@@ -1100,6 +1118,33 @@ async def delete_template(conn, template_id: int) -> bool:
     )
     await conn.commit()
     return cur.rowcount > 0
+
+
+# ── Node Template Assignments ─────────────────────────────────────────────────
+
+async def fetch_node_template_assignments(conn, project_id: int) -> list:
+    async with conn.execute(
+        "SELECT node_label, interview_template_id, questionnaire_template_id "
+        "FROM node_template_assignments WHERE project_id=? ORDER BY node_label",
+        (project_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def upsert_node_template_assignment(
+    conn, project_id: int, node_label: str,
+    interview_template_id, questionnaire_template_id,
+) -> None:
+    await conn.execute("""
+        INSERT INTO node_template_assignments
+            (project_id, node_label, interview_template_id, questionnaire_template_id)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(project_id, node_label) DO UPDATE SET
+            interview_template_id=excluded.interview_template_id,
+            questionnaire_template_id=excluded.questionnaire_template_id,
+            updated_at=datetime('now')
+    """, (project_id, node_label, interview_template_id, questionnaire_template_id))
+    await conn.commit()
 
 
 async def fetch_interview_sessions_for_run(

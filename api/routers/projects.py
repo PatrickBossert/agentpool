@@ -3,10 +3,16 @@ import json
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from api.auth import get_token_payload
 from api.config import get_settings
-from api.database import get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config
+from api.database import (
+    get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config,
+    fetch_node_template_assignments, upsert_node_template_assignment,
+    get_system_db_path, init_system_db, insert_template,
+)
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
+import aiosqlite
 from api.services.project_service import (
     create_project,
     get_project_status,
@@ -238,3 +244,74 @@ async def get_branding_image(slug: str):
         if candidate.exists():
             return FileResponse(path=candidate, media_type=ct)
     raise HTTPException(status_code=404, detail="No branding image found for this project.")
+
+
+# ── Node Template Assignment endpoints ────────────────────────────────────────
+
+class NodeTemplateAssignmentBody(BaseModel):
+    interview_template_id: int | None = None
+    questionnaire_template_id: int | None = None
+
+
+class PublishNodeTemplateBody(BaseModel):
+    name: str
+    description: str = ""
+
+
+@router.get("/{slug}/node-templates", dependencies=[Depends(get_token_payload)])
+async def list_node_templates(slug: str):
+    """Return all node→template assignments for a project."""
+    if not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+        return await fetch_node_template_assignments(conn, project["id"])
+
+
+@router.put("/{slug}/node-templates/{node_label}", dependencies=[Depends(get_token_payload)])
+async def upsert_node_template(slug: str, node_label: str, body: NodeTemplateAssignmentBody):
+    """Create or update the template assignment for a node label."""
+    if not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+        await upsert_node_template_assignment(
+            conn,
+            project["id"],
+            node_label,
+            body.interview_template_id,
+            body.questionnaire_template_id,
+        )
+    return {"ok": True}
+
+
+@router.post("/{slug}/node-templates/{node_label}/publish", dependencies=[Depends(get_token_payload)])
+async def publish_node_template(slug: str, node_label: str, body: PublishNodeTemplateBody):
+    """Publish an interview script for a node as a reusable template."""
+    scripts_path = Path(get_settings().projects_dir) / slug / "outputs" / "interview_scripts.json"
+    if not scripts_path.exists():
+        raise HTTPException(status_code=404, detail="interview_scripts.json not found for this project")
+
+    scripts = json.loads(scripts_path.read_text(encoding="utf-8"))
+    if node_label not in scripts:
+        raise HTTPException(status_code=404, detail=f"Node '{node_label}' not found in interview_scripts.json")
+
+    entry = dict(scripts[node_label])
+    # Strip non-template fields, keep only template-compatible ones
+    for field in ("node_label", "level", "research_brief", "study_objectives"):
+        entry.pop(field, None)
+
+    schema_json = json.dumps(entry)
+
+    sys_path = get_system_db_path()
+    sys_path.parent.mkdir(parents=True, exist_ok=True)
+    async with aiosqlite.connect(str(sys_path)) as sys_conn:
+        sys_conn.row_factory = aiosqlite.Row
+        await init_system_db(sys_conn)
+        template_id = await insert_template(sys_conn, body.name, body.description, "interview", schema_json)
+
+    return {"template_id": template_id}
