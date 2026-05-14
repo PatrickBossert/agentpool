@@ -5,7 +5,6 @@ import { projectsApi } from '../api/endpoints'
 import { campaignsApi } from '../api/campaigns'
 import ReviewQueue from '../components/ReviewQueue'
 import OrgChart, { type CrewName } from '../components/OrgChart'
-import InfoCard from '../components/InfoCard'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { CrewRun } from '../types'
 
@@ -59,7 +58,6 @@ export default function Dashboard() {
   const crewRuns: CrewRun[] = status?.crew_runs ?? []
   const orch = status?.latest_orchestration_run
   const isPipelineActive = orch?.status === 'running'
-  const activeRun = crewRuns.find((r) => r.status === 'running')
   const lastRun = runs[0] ?? null
 
   const interviewBadge: string | null = (() => {
@@ -86,27 +84,18 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Org chart + info card */}
-      <section className="grid grid-cols-[1fr_320px] gap-4 items-start">
-        <div className="bg-surface-card border border-slate-700 rounded-xl p-4">
-          <OrgChart
-            crewRuns={crewRuns}
-            isPipelineActive={isPipelineActive}
-            logs={logs}
-            interviewBadge={interviewBadge}
-            onCrewClick={handleCrewClick}
-            onRun={() => {}}
-            isRunPending={false}
-          />
-        </div>
-        <InfoCard
-          activeRun={activeRun}
+      {/* Org chart */}
+      <section>
+        <OrgChart
+          crewRuns={crewRuns}
           isPipelineActive={isPipelineActive}
           logs={logs}
-          lastRun={lastRun}
           interviewBadge={interviewBadge}
+          onCrewClick={handleCrewClick}
           onRun={() => runMutation.mutate()}
           isRunPending={runMutation.isPending}
+          lastRun={lastRun}
+          orch={orch}
         />
       </section>
 
