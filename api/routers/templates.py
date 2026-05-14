@@ -3,7 +3,7 @@
 import json
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from api.auth import get_token_payload
 from api.database import (
     get_system_db,
@@ -18,18 +18,18 @@ router = APIRouter(prefix="/api/templates", tags=["templates"])
 
 
 class TemplateCreate(BaseModel):
-    model_config = {"populate_by_name": True}
+    model_config = ConfigDict(populate_by_name=True)
     name: str
     description: str = ""
     type: str
-    schema_json: Any = {}
+    schema_data: Any = Field(default={}, alias="schema_json")
 
 
 class TemplatePatch(BaseModel):
-    model_config = {"populate_by_name": True}
+    model_config = ConfigDict(populate_by_name=True)
     name: str | None = None
     description: str | None = None
-    schema_json: Any = None
+    schema_data: Any = Field(default=None, alias="schema_json")
 
 
 @router.get("")
@@ -47,10 +47,10 @@ async def create_template(
     _user: dict = Depends(get_token_payload),
     conn=Depends(get_system_db),
 ):
-    if isinstance(body.schema_json, str):
-        schema_str = body.schema_json
+    if isinstance(body.schema_data, str):
+        schema_str = body.schema_data
     else:
-        schema_str = json.dumps(body.schema_json)
+        schema_str = json.dumps(body.schema_data)
     tid = await insert_template(conn, body.name, body.description, body.type, schema_str)
     row = await fetch_template(conn, tid)
     result = dict(row)
@@ -91,11 +91,11 @@ async def patch_template(
     name = body.name if body.name is not None else existing["name"]
     description = body.description if body.description is not None else existing["description"]
 
-    if body.schema_json is not None:
-        if isinstance(body.schema_json, str):
-            schema_str = body.schema_json
+    if body.schema_data is not None:
+        if isinstance(body.schema_data, str):
+            schema_str = body.schema_data
         else:
-            schema_str = json.dumps(body.schema_json)
+            schema_str = json.dumps(body.schema_data)
     else:
         schema_str = existing["schema_json"]
 
