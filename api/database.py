@@ -858,10 +858,36 @@ async def update_reminder_email(
     return cur.rowcount > 0
 
 
-# ── System DB (users) ────────────────────────────────────────────────────────
+# ── System DB (users + templates) ────────────────────────────────────────────
 
 def get_system_db_path() -> Path:
     return Path(get_settings().database_dir) / "system.db"
+
+
+async def init_system_db(conn: aiosqlite.Connection) -> None:
+    """Initialise all system.db tables (idempotent)."""
+    await conn.execute("PRAGMA foreign_keys = ON")
+    await conn.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            username    TEXT UNIQUE NOT NULL,
+            role        TEXT NOT NULL DEFAULT 'consultant',
+            hashed_pw   TEXT NOT NULL,
+            project_slug TEXT,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS interview_templates (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL,
+            description TEXT    NOT NULL DEFAULT '',
+            type        TEXT    NOT NULL CHECK(type IN ('interview', 'questionnaire')),
+            schema_json TEXT    NOT NULL,
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+    """)
+    await conn.commit()
 
 
 @asynccontextmanager
@@ -870,18 +896,17 @@ async def get_system_connection():
     path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(path) as conn:
         conn.row_factory = aiosqlite.Row
-        await conn.execute("PRAGMA foreign_keys = ON")
-        await conn.executescript("""
-            CREATE TABLE IF NOT EXISTS users (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                username    TEXT UNIQUE NOT NULL,
-                role        TEXT NOT NULL DEFAULT 'consultant',
-                hashed_pw   TEXT NOT NULL,
-                project_slug TEXT,
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        await conn.commit()
+        await init_system_db(conn)
+        yield conn
+
+
+async def get_system_db():
+    """FastAPI dependency: yields an aiosqlite connection to system.db."""
+    path = get_system_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    async with aiosqlite.connect(str(path)) as conn:
+        conn.row_factory = aiosqlite.Row
+        await init_system_db(conn)
         yield conn
 
 
@@ -1021,6 +1046,60 @@ async def complete_interview_session(
         (transcript_json, session_token),
     )
     await conn.commit()
+
+
+# ── Interview Templates ───────────────────────────────────────────────────────
+
+async def fetch_all_templates(conn, type_filter=None) -> list:
+    """List all templates; optionally filter by type ('interview'|'questionnaire')."""
+    if type_filter:
+        async with conn.execute(
+            "SELECT id, name, description, type, created_at, updated_at "
+            "FROM interview_templates WHERE type=? ORDER BY name",
+            (type_filter,),
+        ) as cur:
+            return [dict(r) async for r in cur]
+    async with conn.execute(
+        "SELECT id, name, description, type, created_at, updated_at "
+        "FROM interview_templates ORDER BY name"
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def fetch_template(conn, template_id: int):
+    """Fetch one template including schema_json. Returns dict or None."""
+    async with conn.execute(
+        "SELECT * FROM interview_templates WHERE id=?", (template_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def insert_template(conn, name: str, description: str, type_: str, schema_json: str) -> int:
+    cur = await conn.execute(
+        "INSERT INTO interview_templates (name, description, type, schema_json) VALUES (?,?,?,?)",
+        (name, description, type_, schema_json),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def update_template(conn, template_id: int, name: str, description: str, schema_json: str) -> None:
+    await conn.execute(
+        """UPDATE interview_templates
+           SET name=?, description=?, schema_json=?, updated_at=datetime('now')
+           WHERE id=?""",
+        (name, description, schema_json, template_id),
+    )
+    await conn.commit()
+
+
+async def delete_template(conn, template_id: int) -> bool:
+    cur = await conn.execute(
+        "DELETE FROM interview_templates WHERE id=?", (template_id,)
+    )
+    await conn.commit()
+    return cur.rowcount > 0
 
 
 async def fetch_interview_sessions_for_run(
