@@ -1,5 +1,5 @@
 // ui/src/pages/Report.tsx
-import { useEffect } from 'react'
+import React, { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -10,7 +10,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { projectsApi } from '../api/endpoints'
-import type { PortfolioItem, Initiative, CostEstimate } from '../types'
+import type { PortfolioItem, Initiative, CostEstimate, AgentOutput } from '../types'
 import './Report.css'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -177,8 +177,8 @@ function InitiativeRegisterSection({ initiatives }: { initiatives: Initiative[] 
         </thead>
         <tbody>
           {Object.entries(groups).map(([vs, inits]) => (
-            <>
-              <tr key={`group-${vs}`} className="group-header">
+            <React.Fragment key={`group-${vs}`}>
+              <tr className="group-header">
                 <td colSpan={4}>{vs}</td>
               </tr>
               {inits.map((init) => (
@@ -196,7 +196,7 @@ function InitiativeRegisterSection({ initiatives }: { initiatives: Initiative[] 
                   <td>{init.period ?? '—'}</td>
                 </tr>
               ))}
-            </>
+            </React.Fragment>
           ))}
         </tbody>
       </table>
@@ -229,7 +229,7 @@ function FinancialSummarySection({ summary }: { summary: { npv: number | null; i
   )
 }
 
-function DeliverablesSection({ outputs }: { outputs: { id: number; output_type: string; agent_name: string; version: number; created_at: string }[] }) {
+function DeliverablesSection({ outputs }: { outputs: AgentOutput[] }) {
   const deliverables = outputs.filter((o) => DELIVERABLE_TYPES[o.output_type])
 
   return (
@@ -271,12 +271,6 @@ function DeliverablesSection({ outputs }: { outputs: { id: number; output_type: 
 export default function Report() {
   const { slug } = useParams<{ slug: string }>()
 
-  // Auto-trigger print dialog after short delay to allow render
-  useEffect(() => {
-    const timer = setTimeout(() => window.print(), 300)
-    return () => clearTimeout(timer)
-  }, [])
-
   const { data: settings } = useQuery({
     queryKey: ['settings', slug],
     queryFn: () => projectsApi.getSettings(slug!),
@@ -306,6 +300,15 @@ export default function Report() {
     queryFn: () => projectsApi.outputs(slug!),
     enabled: !!slug,
   })
+
+  const allLoaded = settings !== undefined && financialSummary !== undefined && roadmapData !== undefined
+
+  // Auto-trigger print dialog once all data has loaded
+  useEffect(() => {
+    if (!allLoaded) return
+    const timer = setTimeout(() => window.print(), 300)
+    return () => clearTimeout(timer)
+  }, [allLoaded])
 
   const initiatives: Initiative[] = roadmapData?.initiatives ?? []
 
