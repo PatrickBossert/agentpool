@@ -384,3 +384,48 @@ export interface InterviewSessionsResponse {
   sessions: InterviewSessionStatus[]
   summary: SessionSummary
 }
+
+export interface TemplateListItem {
+  id: number
+  name: string
+  description: string
+  type: 'interview' | 'questionnaire'
+  created_at: string
+  updated_at: string
+}
+
+export interface InterviewTemplateSchema {
+  welcome_message: string
+  closing_message: string
+  sections: {
+    title: string
+    questions: {
+      id: string
+      text: string
+      follow_up_count: number
+      probing_instructions: string
+      follow_up_branches: string[]
+      evasion_signals: string[]
+    }[]
+  }[]
+}
+
+export interface QuestionnaireScale {
+  min: number
+  max: number
+  labels: Record<string, string>
+}
+
+export interface QuestionnaireTemplateSchema {
+  scale: QuestionnaireScale
+  sections: {
+    id: string
+    title: string
+    description: string
+    questions: { id: string; text: string }[]
+  }[]
+}
+
+export interface TemplateDetail extends TemplateListItem {
+  schema_json: InterviewTemplateSchema | QuestionnaireTemplateSchema
+}
