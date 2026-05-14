@@ -101,7 +101,41 @@ async def get_session_with_script(session_token: str) -> dict | None:
         "text_color": config.get("brand_text_color", "#1f2937"),
     }
 
-    return {"session": dict(session_row), "script": script, "branding": branding}
+    session_dict = dict(session_row)
+
+    # Fetch questionnaire template for this node if assigned
+    questionnaire = None
+    try:
+        from api.database import fetch_node_template_assignments, get_system_db_path, init_system_db, fetch_template
+        import json as _json_inner
+
+        # Re-open the DB to get project id and node assignments
+        async with aiosqlite.connect(db_path) as qconn:
+            qconn.row_factory = aiosqlite.Row
+            async with qconn.execute("SELECT id FROM projects LIMIT 1") as cur:
+                proj_row = await cur.fetchone()
+            if proj_row:
+                node_assignments = await fetch_node_template_assignments(qconn, proj_row["id"])
+                node_label = session_dict["node_label"]
+                node_assignment = next(
+                    (a for a in node_assignments if a["node_label"] == node_label), None
+                )
+                if node_assignment and node_assignment["questionnaire_template_id"]:
+                    qid = node_assignment["questionnaire_template_id"]
+                    sys_db_path = get_system_db_path()
+                    async with aiosqlite.connect(str(sys_db_path)) as sys_conn:
+                        sys_conn.row_factory = aiosqlite.Row
+                        await init_system_db(sys_conn)
+                        tpl = await fetch_template(sys_conn, qid)
+                    if tpl:
+                        try:
+                            questionnaire = _json_inner.loads(tpl["schema_json"])
+                        except Exception:
+                            questionnaire = None
+    except Exception:
+        pass
+
+    return {"session": session_dict, "script": script, "branding": branding, "questionnaire": questionnaire}
 
 
 async def generate_deepgram_token() -> str:

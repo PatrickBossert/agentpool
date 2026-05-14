@@ -48,6 +48,7 @@ def create_discovery_interviews_crew(
     sector: str,
     stakeholder_assignments: list[dict],
     discovery_brief: str = "",
+    node_templates_block: str = "",
     llm: LLM | None = None,
     hitl_tool=None,
 ) -> Crew:
@@ -88,6 +89,7 @@ def create_discovery_interviews_crew(
         agent=script_designer,
         discovery_brief=discovery_brief,
         stakeholder_assignments_block=assignments_str,
+        node_templates_block=node_templates_block,
     )
     t1 = create_interview_coordinator_task(agent=coordinator, stakeholder_assignments=assignments_str, context=[t0])
     t2 = create_stakeholder_interviewer_task(agent=interviewer, context_tasks=[t1])

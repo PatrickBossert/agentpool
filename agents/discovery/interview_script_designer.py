@@ -42,6 +42,7 @@ def create_interview_script_designer_task(
     agent: Agent,
     discovery_brief: str = "",
     stakeholder_assignments_block: str = "",
+    node_templates_block: str = "",   # NEW
 ) -> Task:
     brief_block = (
         f"Discovery brief:\n{discovery_brief}\n\n"
@@ -53,12 +54,23 @@ def create_interview_script_designer_task(
         if stakeholder_assignments_block
         else ""
     )
+    templates_block = (
+        f"Assigned interview templates by node (use as starting point if provided):\n"
+        f"{node_templates_block}\n\n"
+        "For nodes that have an assigned template, adapt the template questions to fit this "
+        "specific value chain node and engagement context. You may add, remove, or rephrase "
+        "questions, but preserve the overall structure and follow-up branch pattern.\n"
+        "For nodes without an assigned template, design from scratch as before.\n\n"
+        if node_templates_block
+        else ""
+    )
     return Task(
         description=(
             "Design one structured interview script for every value chain node that "
             "appears in the stakeholder assignments below.\n\n"
             f"{brief_block}"
             f"{assignments_block}"
+            f"{templates_block}"
             "Steps:\n"
             "1. Use SQLiteStateTool with operation='read', key='value_chain_tree', "
             "agent_name='interview_script_designer' to retrieve the approved value chain structure.\n"
