@@ -1,4 +1,5 @@
 // ui/src/components/OrgChart.tsx
+import { useMemo, useCallback } from 'react'
 import type { CrewRun } from '../types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -128,11 +129,11 @@ function CrewNode({
   const status = getCrewStatus(crewRun, isActive, isPipelineActive)
   const agents = CREW_AGENTS[crewKey] ?? []
 
-  const agentStatuses: AgentStatus[] = (() => {
+  const agentStatuses = useMemo<AgentStatus[]>(() => {
     if (isActive) return inferAgentStatuses(crewKey, logs)
     if (status === 'completed') return agents.map(() => 'completed' as AgentStatus)
     return agents.map(() => (isPipelineActive ? 'queued' : 'idle') as AgentStatus)
-  })()
+  }, [isActive, crewKey, logs, status, agents, isPipelineActive])
 
   const borderClass =
     status === 'running'   ? 'border-brand animate-crewGlow' :
@@ -235,20 +236,18 @@ export default function OrgChart({
   const showDiscoveryInterviews =
     runMap.has('discovery_interviews') || activeCrewName === 'discovery_interviews'
 
-  function renderCrew(crewKey: string, clickable = false) {
-    return (
-      <CrewNode
-        key={crewKey}
-        crewKey={crewKey}
-        crewRun={runMap.get(crewKey)}
-        isActive={activeCrewName === crewKey}
-        isPipelineActive={isPipelineActive}
-        logs={logs}
-        interviewBadge={interviewBadge}
-        onClick={clickable ? () => onCrewClick?.(crewKey as CrewName) : undefined}
-      />
-    )
-  }
+  const renderCrew = useCallback((crewKey: string, clickable = false) => (
+    <CrewNode
+      key={crewKey}
+      crewKey={crewKey}
+      crewRun={runMap.get(crewKey)}
+      isActive={activeCrewName === crewKey}
+      isPipelineActive={isPipelineActive}
+      logs={logs}
+      interviewBadge={interviewBadge}
+      onClick={clickable ? () => onCrewClick?.(crewKey as CrewName) : undefined}
+    />
+  ), [runMap, activeCrewName, isPipelineActive, logs, interviewBadge, onCrewClick])
 
   return (
     <div className="bg-surface-card border border-slate-700 rounded-xl overflow-hidden">
@@ -333,7 +332,7 @@ export default function OrgChart({
         <div className="mx-4 mb-4 rounded-lg bg-black/40 border border-slate-800 px-3 py-2">
           {logs.slice(-3).map((line, i, arr) => (
             <p
-              key={i}
+              key={logs.length - arr.length + i}
               className={`text-[10px] font-mono leading-relaxed truncate ${
                 i === arr.length - 1 ? 'text-brand/70' : 'text-slate-700'
               }`}
