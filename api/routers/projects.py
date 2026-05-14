@@ -189,12 +189,28 @@ async def upload_branding_image(
                 detail="Image exceeds maximum allowed size of 2 MB.",
             )
 
+        # Magic-byte content-type verification
+        MAGIC_BYTES = {
+            "image/png": b"\x89PNG",
+            "image/jpeg": b"\xff\xd8",
+            "image/webp": b"RIFF",
+        }
+        if not data[:4].startswith(MAGIC_BYTES.get(file.content_type, b"")):
+            raise HTTPException(status_code=422, detail="File content does not match declared content type")
+
         # Save file
         ext = _IMAGE_CONTENT_TYPES[content_type]
         assets_dir = Path(get_settings().projects_dir) / slug / "assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
-        image_path = assets_dir / f"header{ext}"
-        image_path.write_bytes(data)
+        file_path = assets_dir / f"header{ext}"
+
+        # Remove any previously stored header images with different extensions
+        for old_ext in [".png", ".jpg", ".webp"]:
+            old_path = assets_dir / f"header{old_ext}"
+            if old_path != file_path and old_path.exists():
+                old_path.unlink()
+
+        file_path.write_bytes(data)
 
         # Update brand_header_image_url in project config
         raw = project.get("config_json") or "{}"

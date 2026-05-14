@@ -1,5 +1,5 @@
 # api/models.py
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Literal
 
 
@@ -33,8 +33,8 @@ class ProjectSettings(BaseModel):
     discovery_document_ids: list[int] = []
     interview_method: Literal["agent", "listenlabs", "none"] = "none"
     brand_header_image_url: str = ""
-    brand_primary_color: str = "#0d9488"
-    brand_text_color: str = "#1f2937"
+    brand_primary_color: str = Field(default="#0d9488", pattern=r"^#[0-9a-fA-F]{3,8}$")
+    brand_text_color: str = Field(default="#1f2937", pattern=r"^#[0-9a-fA-F]{3,8}$")
 
 
 class OutputContent(BaseModel):
