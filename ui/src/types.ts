@@ -60,6 +60,12 @@ export interface DiscoveryLink {
   label: string
 }
 
+export interface InterviewBranding {
+  header_image_url: string
+  primary_color: string
+  text_color: string
+}
+
 export interface ProjectSettings {
   llm_mode: 'standard' | 'sensitive' | 'fallback'
   sector: string
@@ -73,6 +79,9 @@ export interface ProjectSettings {
   discovery_links: DiscoveryLink[]
   discovery_document_ids: number[]
   interview_method: 'agent' | 'listenlabs' | 'none'
+  brand_header_image_url?: string
+  brand_primary_color?: string
+  brand_text_color?: string
 }
 
 export interface OutputContent {
