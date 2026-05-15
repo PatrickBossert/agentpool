@@ -11,7 +11,7 @@
 
 	# Homepage — static landing page
 	handle {
-		root * /Users/pboagents/Documents/agentpool1/.worktrees/sp16a-deployment/landing
+		root * landing
 		file_server
 	}
 }
