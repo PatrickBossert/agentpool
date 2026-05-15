@@ -22,10 +22,24 @@ import VoiceInterview from './pages/VoiceInterview'
 import Templates from './pages/Templates'
 import Report from './pages/Report'
 import Architecture from './pages/Architecture'
+import AdminDashboard from './pages/AdminDashboard'
+import OrgDetail from './pages/OrgDetail'
+import UserList from './pages/UserList'
+import UserForm from './pages/UserForm'
+import OrgPanel from './pages/OrgPanel'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
   if (!token) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
+
+type Role = 'sysadmin' | 'org_admin' | 'reviewer'
+
+function AdminRoute({ children, allow }: { children: ReactNode; allow: Role[] }) {
+  const { token, user } = useAuth()
+  if (!token) return <Navigate to="/login" replace />
+  if (!user || !allow.includes(user.role as Role)) return <Navigate to="/" replace />
   return <>{children}</>
 }
 
@@ -79,6 +93,54 @@ export const router = createBrowserRouter([
       { path: ':slug/assignment', element: <Assignment /> },
       { path: ':slug/templates', element: <Templates /> },
       { path: ':slug/settings', element: <Settings /> },
+      {
+        path: 'admin',
+        element: (
+          <AdminRoute allow={['sysadmin']}>
+            <AdminDashboard />
+          </AdminRoute>
+        ),
+      },
+      {
+        path: 'admin/orgs/:orgId',
+        element: (
+          <AdminRoute allow={['sysadmin']}>
+            <OrgDetail />
+          </AdminRoute>
+        ),
+      },
+      {
+        path: 'admin/users',
+        element: (
+          <AdminRoute allow={['sysadmin', 'org_admin']}>
+            <UserList />
+          </AdminRoute>
+        ),
+      },
+      {
+        path: 'admin/users/new',
+        element: (
+          <AdminRoute allow={['sysadmin', 'org_admin']}>
+            <UserForm />
+          </AdminRoute>
+        ),
+      },
+      {
+        path: 'admin/users/:userId/edit',
+        element: (
+          <AdminRoute allow={['sysadmin', 'org_admin']}>
+            <UserForm />
+          </AdminRoute>
+        ),
+      },
+      {
+        path: 'org',
+        element: (
+          <AdminRoute allow={['org_admin']}>
+            <OrgPanel />
+          </AdminRoute>
+        ),
+      },
     ],
   },
 ], { basename: '/dashboard' })
