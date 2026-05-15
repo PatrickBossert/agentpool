@@ -112,7 +112,8 @@ export interface TokenResponse {
 
 export interface UserPayload {
   sub: string
-  role: string
+  role: 'sysadmin' | 'org_admin' | 'reviewer'
+  org_id?: number
   exp: number
 }
 
@@ -441,4 +442,46 @@ export interface SectionRatings {
   section_title: string
   ratings: Record<string, number>  // question id → 0-4
   commentary: string
+}
+
+// ── Admin types ───────────────────────────────────────────────────────────────
+
+export interface Organisation {
+  id: number
+  slug: string
+  name: string
+  created_at: string
+}
+
+export interface OrgMember {
+  id: number
+  username: string
+  email: string
+  role: string
+  org_role: string
+  created_at: string
+}
+
+export interface AdminUser {
+  id: number
+  username: string
+  email: string
+  role: string
+  created_at: string
+}
+
+export interface ProjectRegistryEntry {
+  id: number
+  slug: string
+  org_id: number
+  display_name: string
+  org_name?: string
+  created_at: string
+}
+
+export interface ProjectMembership {
+  id: number
+  user_id: number
+  project_slug: string
+  created_at: string
 }
