@@ -924,7 +924,8 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
         CREATE TABLE IF NOT EXISTS users (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             username    TEXT UNIQUE NOT NULL,
-            role        TEXT NOT NULL DEFAULT 'consultant',
+            email       TEXT NOT NULL DEFAULT '',
+            role        TEXT NOT NULL DEFAULT 'sysadmin',
             hashed_pw   TEXT NOT NULL,
             project_slug TEXT,
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -939,7 +940,48 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
             updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS organisations (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug       TEXT    UNIQUE NOT NULL,
+            name       TEXT    NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS org_memberships (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            org_id     INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+            role       TEXT    NOT NULL CHECK(role IN ('org_admin', 'member')),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, org_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS project_registry (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug         TEXT    UNIQUE NOT NULL,
+            org_id       INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+            display_name TEXT    NOT NULL DEFAULT '',
+            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS project_memberships (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            project_slug TEXT    NOT NULL,
+            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, project_slug)
+        );
     """)
+    await conn.commit()
+
+    # Idempotent migrations on existing DBs
+    async with conn.execute("PRAGMA table_info(users)") as cur:
+        user_cols = {row["name"] async for row in cur}
+    if "email" not in user_cols:
+        await conn.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+    # Migrate legacy 'consultant' role to 'sysadmin'
+    await conn.execute("UPDATE users SET role='sysadmin' WHERE role='consultant'")
     await conn.commit()
 
 
