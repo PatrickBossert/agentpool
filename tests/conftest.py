@@ -27,5 +27,9 @@ Path("/tmp/agentpool_test_projects").mkdir(exist_ok=True)
 @pytest_asyncio.fixture
 async def client():
     from api.main import app
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    from api.auth import create_access_token
+    # Use a sysadmin token so all project-scoped endpoints pass auth checks
+    token = create_access_token("admin", "sysadmin", "test-secret")
+    headers = {"Authorization": f"Bearer {token}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=headers) as ac:
         yield ac

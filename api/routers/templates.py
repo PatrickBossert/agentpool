@@ -4,7 +4,7 @@ import json
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
-from api.auth import get_token_payload
+from api.auth import require_any_auth
 from api.database import (
     get_system_db,
     fetch_all_templates,
@@ -35,7 +35,7 @@ class TemplatePatch(BaseModel):
 @router.get("")
 async def list_templates(
     type: str | None = None,
-    _user: dict = Depends(get_token_payload),
+    _user: dict = Depends(require_any_auth),
     conn=Depends(get_system_db),
 ):
     return await fetch_all_templates(conn, type_filter=type)
@@ -44,7 +44,7 @@ async def list_templates(
 @router.post("", status_code=201)
 async def create_template(
     body: TemplateCreate,
-    _user: dict = Depends(get_token_payload),
+    _user: dict = Depends(require_any_auth),
     conn=Depends(get_system_db),
 ):
     if isinstance(body.schema_data, str):
@@ -61,7 +61,7 @@ async def create_template(
 @router.get("/{template_id}")
 async def get_template(
     template_id: int,
-    _user: dict = Depends(get_token_payload),
+    _user: dict = Depends(require_any_auth),
     conn=Depends(get_system_db),
 ):
     row = await fetch_template(conn, template_id)
@@ -80,7 +80,7 @@ async def get_template(
 async def patch_template(
     template_id: int,
     body: TemplatePatch,
-    _user: dict = Depends(get_token_payload),
+    _user: dict = Depends(require_any_auth),
     conn=Depends(get_system_db),
 ):
     existing = await fetch_template(conn, template_id)
@@ -113,7 +113,7 @@ async def patch_template(
 @router.delete("/{template_id}", status_code=204)
 async def delete_template_endpoint(
     template_id: int,
-    _user: dict = Depends(get_token_payload),
+    _user: dict = Depends(require_any_auth),
     conn=Depends(get_system_db),
 ):
     existing = await fetch_template(conn, template_id)

@@ -1,7 +1,8 @@
 # api/routers/documents.py
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
+from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.services.ingest_service import ingest_document
 from api.config import get_settings
 from api.database import get_connection, get_db_path, fetch_project, insert_document, fetch_documents
@@ -16,7 +17,8 @@ def _coerce_doc(doc: dict) -> dict:
 
 
 @router.get("/{slug}/documents")
-async def list_documents(slug: str):
+async def list_documents(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     async with get_connection(slug) as conn:
@@ -31,7 +33,9 @@ async def upload_document(
     slug: str,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    payload: dict = Depends(require_org_admin_or_above),
 ):
+    await check_project_access(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 

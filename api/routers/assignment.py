@@ -1,7 +1,8 @@
 # api/routers/assignment.py
 """Assignment endpoints: GET/POST assignment data, PATCH advance orchestration."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.database import (
     get_connection,
     fetch_project,
@@ -23,8 +24,9 @@ class AssignmentItem(BaseModel):
 
 
 @router.get("/projects/{slug}/assignment/{orchestration_run_id}")
-async def get_assignment(slug: str, orchestration_run_id: int):
+async def get_assignment(slug: str, orchestration_run_id: int, payload: dict = Depends(require_any_auth)):
     """Return value chain tree, current assignments, and stakeholder list."""
+    await check_project_access(slug, payload)
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
@@ -44,8 +46,9 @@ async def get_assignment(slug: str, orchestration_run_id: int):
 
 
 @router.post("/projects/{slug}/assignment/{orchestration_run_id}")
-async def save_assignment(slug: str, orchestration_run_id: int, items: list[AssignmentItem]):
+async def save_assignment(slug: str, orchestration_run_id: int, items: list[AssignmentItem], payload: dict = Depends(require_org_admin_or_above)):
     """Replace all stakeholder assignments for an orchestration run."""
+    await check_project_access(slug, payload)
     if not items:
         raise HTTPException(status_code=422, detail="At least one assignment is required")
     async with get_connection(slug) as conn:
@@ -61,8 +64,9 @@ async def save_assignment(slug: str, orchestration_run_id: int, items: list[Assi
 
 
 @router.patch("/projects/{slug}/orchestration-runs/{orchestration_run_id}/advance")
-async def advance_orchestration(slug: str, orchestration_run_id: int):
+async def advance_orchestration(slug: str, orchestration_run_id: int, payload: dict = Depends(require_org_admin_or_above)):
     """Advance an awaiting_assignment run to Phase 2 (triggers resume_orchestration)."""
+    await check_project_access(slug, payload)
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:

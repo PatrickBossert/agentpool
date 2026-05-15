@@ -4,12 +4,13 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from api.auth import get_token_payload
+from api.auth import get_token_payload, require_any_auth, require_org_admin_or_above, check_project_access
 from api.config import get_settings
 from api.database import (
     get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config,
     fetch_node_template_assignments, upsert_node_template_assignment,
     get_system_db_path, init_system_db, insert_template,
+    get_system_connection, insert_project_registry,
 )
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
 import aiosqlite
@@ -30,19 +31,36 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 @router.get("", response_model=list[ProjectResponse])
-async def list_projects_endpoint():
-    return await list_all_projects()
+async def list_projects_endpoint(payload: dict = Depends(require_any_auth)):
+    return await list_all_projects(payload)
 
 
 @router.post("", status_code=201)
-async def create_project_endpoint(req: ProjectCreate, response: Response):
+async def create_project_endpoint(
+    req: ProjectCreate,
+    response: Response,
+    payload: dict = Depends(require_org_admin_or_above),
+):
     if get_db_path(req.client_slug).exists():
         response.status_code = 200
-    return await create_project(req)
+    result = await create_project(req)
+    # Auto-register to org for org_admin
+    if payload.get("role") == "org_admin":
+        org_id = payload.get("org_id")
+        if org_id:
+            async with get_system_connection() as sys_conn:
+                await insert_project_registry(
+                    sys_conn,
+                    slug=req.client_slug,
+                    org_id=org_id,
+                    display_name=req.client_slug,
+                )
+    return result
 
 
 @router.get("/{slug}/status", response_model=StatusResponse)
-async def get_status(slug: str):
+async def get_status(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await get_project_status(slug)
     if not result:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -50,7 +68,8 @@ async def get_status(slug: str):
 
 
 @router.get("/{slug}/value-chain")
-async def get_value_chain(slug: str):
+async def get_value_chain(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     async with get_connection(slug) as conn:
@@ -61,7 +80,8 @@ async def get_value_chain(slug: str):
 
 
 @router.get("/{slug}/roadmap")
-async def get_roadmap(slug: str):
+async def get_roadmap(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     async with get_connection(slug) as conn:
@@ -72,7 +92,8 @@ async def get_roadmap(slug: str):
 
 
 @router.get("/{slug}/settings", response_model=ProjectSettings)
-async def get_settings_endpoint(slug: str):
+async def get_settings_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await get_project_settings(slug)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -80,7 +101,8 @@ async def get_settings_endpoint(slug: str):
 
 
 @router.patch("/{slug}/settings", response_model=ProjectSettings)
-async def patch_settings_endpoint(slug: str, req: ProjectSettings):
+async def patch_settings_endpoint(slug: str, req: ProjectSettings, payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     result = await update_project_settings(slug, req)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -88,7 +110,8 @@ async def patch_settings_endpoint(slug: str, req: ProjectSettings):
 
 
 @router.get("/{slug}/outputs/{output_id}/content", response_model=OutputContent)
-async def get_output_content_endpoint(slug: str, output_id: int):
+async def get_output_content_endpoint(slug: str, output_id: int, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await get_output_content(slug, output_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Output {output_id} not found for project '{slug}'")
@@ -111,7 +134,8 @@ def _content_type(path: Path) -> str:
 
 
 @router.get("/{slug}/outputs/{output_id}/download")
-async def download_output_endpoint(slug: str, output_id: int):
+async def download_output_endpoint(slug: str, output_id: int, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await get_output_file(slug, output_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Output {output_id} not found for project '{slug}'")
@@ -128,7 +152,8 @@ async def download_output_endpoint(slug: str, output_id: int):
 
 
 @router.get("/{slug}/roadmap-data")
-async def get_roadmap_data_endpoint(slug: str):
+async def get_roadmap_data_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await get_roadmap_data(slug)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No roadmap data found for project '{slug}'")
@@ -138,7 +163,8 @@ async def get_roadmap_data_endpoint(slug: str):
 
 
 @router.get("/{slug}/financial-summary")
-async def get_financial_summary_endpoint(slug: str):
+async def get_financial_summary_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await get_financial_summary(slug)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No financial model found for project '{slug}'")
@@ -148,7 +174,8 @@ async def get_financial_summary_endpoint(slug: str):
 
 
 @router.get("/{slug}/portfolio-register")
-async def get_portfolio_register_endpoint(slug: str):
+async def get_portfolio_register_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await get_portfolio_register(slug)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -258,9 +285,10 @@ class PublishNodeTemplateBody(BaseModel):
     description: str = ""
 
 
-@router.get("/{slug}/node-templates", dependencies=[Depends(get_token_payload)])
-async def list_node_templates(slug: str):
+@router.get("/{slug}/node-templates")
+async def list_node_templates(slug: str, payload: dict = Depends(require_any_auth)):
     """Return all node→template assignments for a project."""
+    await check_project_access(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     async with get_connection(slug) as conn:
@@ -270,8 +298,8 @@ async def list_node_templates(slug: str):
         return await fetch_node_template_assignments(conn, project["id"])
 
 
-@router.put("/{slug}/node-templates/{node_label}", dependencies=[Depends(get_token_payload)])
-async def upsert_node_template(slug: str, node_label: str, body: NodeTemplateAssignmentBody):
+@router.put("/{slug}/node-templates/{node_label}")
+async def upsert_node_template(slug: str, node_label: str, body: NodeTemplateAssignmentBody, payload: dict = Depends(require_org_admin_or_above)):
     """Create or update the template assignment for a node label."""
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -289,8 +317,8 @@ async def upsert_node_template(slug: str, node_label: str, body: NodeTemplateAss
     return {"ok": True}
 
 
-@router.post("/{slug}/node-templates/{node_label}/publish", dependencies=[Depends(get_token_payload)])
-async def publish_node_template(slug: str, node_label: str, body: PublishNodeTemplateBody):
+@router.post("/{slug}/node-templates/{node_label}/publish")
+async def publish_node_template(slug: str, node_label: str, body: PublishNodeTemplateBody, payload: dict = Depends(require_org_admin_or_above)):
     """Publish an interview script for a node as a reusable template."""
     scripts_path = Path(get_settings().projects_dir) / slug / "outputs" / "interview_scripts.json"
     if not scripts_path.exists():

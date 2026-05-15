@@ -1,8 +1,9 @@
 # api/routers/campaigns.py
 """Campaign management, interview import/export, and reminder email endpoints."""
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.services.campaign_service import (
     list_campaigns,
     create_campaign_svc,
@@ -53,7 +54,8 @@ class ReminderEmailPatch(BaseModel):
 # ── Campaign CRUD ──────────────────────────────────────────────────────────────
 
 @router.get("/{slug}/campaigns")
-async def list_campaigns_endpoint(slug: str):
+async def list_campaigns_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await list_campaigns(slug)
     if result is None:
         _404(f"Project '{slug}' not found")
@@ -61,7 +63,8 @@ async def list_campaigns_endpoint(slug: str):
 
 
 @router.post("/{slug}/campaigns", status_code=201)
-async def create_campaign_endpoint(slug: str, body: CampaignIn):
+async def create_campaign_endpoint(slug: str, body: CampaignIn, payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     result = await create_campaign_svc(slug, body.model_dump(exclude_none=True))
     if result is None:
         _404(f"Project '{slug}' not found")
@@ -69,7 +72,8 @@ async def create_campaign_endpoint(slug: str, body: CampaignIn):
 
 
 @router.patch("/{slug}/campaigns/{campaign_id}")
-async def update_campaign_endpoint(slug: str, campaign_id: int, body: CampaignPatch):
+async def update_campaign_endpoint(slug: str, campaign_id: int, body: CampaignPatch, payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     data = {k: v for k, v in body.model_dump().items() if v is not None}
     result = await update_campaign_svc(slug, campaign_id, data)
     if result is None:
@@ -78,7 +82,8 @@ async def update_campaign_endpoint(slug: str, campaign_id: int, body: CampaignPa
 
 
 @router.delete("/{slug}/campaigns/{campaign_id}", status_code=204)
-async def delete_campaign_endpoint(slug: str, campaign_id: int):
+async def delete_campaign_endpoint(slug: str, campaign_id: int, payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     result = await delete_campaign_svc(slug, campaign_id)
     if result is None:
         _404(f"Project '{slug}' not found")
@@ -89,7 +94,8 @@ async def delete_campaign_endpoint(slug: str, campaign_id: int):
 # ── Import / Export ─────────────────────────────────────────────────────────────
 
 @router.get("/{slug}/campaigns/{campaign_id}/export-targets")
-async def export_targets_endpoint(slug: str, campaign_id: int):
+async def export_targets_endpoint(slug: str, campaign_id: int, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     csv_content = await export_targets_csv(slug, campaign_id)
     if csv_content is None:
         _404("Project or campaign not found")
@@ -106,7 +112,8 @@ async def export_targets_endpoint(slug: str, campaign_id: int):
 
 
 @router.post("/{slug}/campaigns/{campaign_id}/mark-invited")
-async def mark_invited_endpoint(slug: str, campaign_id: int):
+async def mark_invited_endpoint(slug: str, campaign_id: int, payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     result = await mark_invited_svc(slug, campaign_id)
     if result is None:
         _404("Project or campaign not found")
@@ -114,7 +121,8 @@ async def mark_invited_endpoint(slug: str, campaign_id: int):
 
 
 @router.post("/{slug}/campaigns/{campaign_id}/import-progress")
-async def import_progress_endpoint(slug: str, campaign_id: int, file: UploadFile = File(...)):
+async def import_progress_endpoint(slug: str, campaign_id: int, file: UploadFile = File(...), payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     content = (await file.read()).decode("utf-8", errors="replace")
     result = await import_progress_svc(slug, campaign_id, content)
     if result is None:
@@ -123,7 +131,8 @@ async def import_progress_endpoint(slug: str, campaign_id: int, file: UploadFile
 
 
 @router.post("/{slug}/campaigns/{campaign_id}/import-results")
-async def import_results_endpoint(slug: str, campaign_id: int, file: UploadFile = File(...)):
+async def import_results_endpoint(slug: str, campaign_id: int, file: UploadFile = File(...), payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     content = (await file.read()).decode("utf-8", errors="replace")
     result = await import_results_svc(slug, campaign_id, content)
     if result is None:
@@ -132,7 +141,8 @@ async def import_results_endpoint(slug: str, campaign_id: int, file: UploadFile 
 
 
 @router.post("/{slug}/campaigns/{campaign_id}/import-summary")
-async def import_summary_endpoint(slug: str, campaign_id: int, file: UploadFile = File(...)):
+async def import_summary_endpoint(slug: str, campaign_id: int, file: UploadFile = File(...), payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     content = (await file.read()).decode("utf-8", errors="replace")
     result = await import_summary_svc(slug, campaign_id, content)
     if result is None:
@@ -143,7 +153,8 @@ async def import_summary_endpoint(slug: str, campaign_id: int, file: UploadFile 
 # ── Reminder generation ─────────────────────────────────────────────────────────
 
 @router.post("/{slug}/campaigns/{campaign_id}/generate-reminders")
-async def generate_reminders_endpoint(slug: str, campaign_id: int):
+async def generate_reminders_endpoint(slug: str, campaign_id: int, payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     result = await generate_reminders_svc(slug, campaign_id)
     if result is None:
         _404("Project or campaign not found")
@@ -153,7 +164,8 @@ async def generate_reminders_endpoint(slug: str, campaign_id: int):
 # ── Interview summary (for dashboard badge) ─────────────────────────────────────
 
 @router.get("/{slug}/interview-summary")
-async def interview_summary_endpoint(slug: str):
+async def interview_summary_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await get_interview_summary(slug)
     if result is None:
         _404(f"Project '{slug}' not found")
@@ -163,7 +175,8 @@ async def interview_summary_endpoint(slug: str):
 # ── Reminder emails ─────────────────────────────────────────────────────────────
 
 @router.get("/{slug}/reminder-emails")
-async def list_reminder_emails_endpoint(slug: str):
+async def list_reminder_emails_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
     result = await list_reminder_emails_svc(slug)
     if result is None:
         _404(f"Project '{slug}' not found")
@@ -171,7 +184,8 @@ async def list_reminder_emails_endpoint(slug: str):
 
 
 @router.post("/{slug}/reminder-emails/send")
-async def send_reminder_emails_endpoint(slug: str):
+async def send_reminder_emails_endpoint(slug: str, payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     result = await send_reminder_emails_svc(slug)
     if result is None:
         _404(f"Project '{slug}' not found")
@@ -179,7 +193,8 @@ async def send_reminder_emails_endpoint(slug: str):
 
 
 @router.patch("/{slug}/reminder-emails/{email_id}")
-async def update_reminder_email_endpoint(slug: str, email_id: int, body: ReminderEmailPatch):
+async def update_reminder_email_endpoint(slug: str, email_id: int, body: ReminderEmailPatch, payload: dict = Depends(require_org_admin_or_above)):
+    await check_project_access(slug, payload)
     result = await update_reminder_email_svc(
         slug, email_id, body.status, subject=body.subject, body=body.body
     )

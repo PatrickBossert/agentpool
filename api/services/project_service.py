@@ -17,6 +17,10 @@ from api.database import (
     update_project_config,
     fetch_pending_reviews,
     fetch_all_orchestration_runs,
+    get_system_connection,
+    fetch_user,
+    fetch_org_projects,
+    fetch_user_project_memberships,
 )
 from api.models import ProjectCreate, ProjectSettings, OutputContent  # noqa: F401
 
@@ -82,21 +86,38 @@ async def get_project_outputs(slug: str) -> list[dict]:
         return await fetch_agent_outputs(conn, project_id=project["id"])
 
 
-async def list_all_projects() -> list[dict]:
-    """Return all projects across all project DBs."""
+async def list_all_projects(payload: dict | None = None) -> list[dict]:
+    """Return projects visible to the calling user. Pass None to skip filtering (internal use)."""
     settings = get_settings()
-    db_dir = Path(settings.database_dir)
-    if not db_dir.exists():
+    data_dir = Path(settings.database_dir)
+    if not data_dir.exists():
         return []
+    all_slugs = [p.stem for p in data_dir.glob("*.db") if p.stem != "system"]
+
+    if payload is None or payload.get("role") == "sysadmin":
+        slugs_to_show = all_slugs
+    else:
+        async with get_system_connection() as sys_conn:
+            if payload.get("role") == "org_admin":
+                org_id = payload.get("org_id")
+                rows = await fetch_org_projects(sys_conn, org_id=org_id) if org_id else []
+                visible = {r["slug"] for r in rows}
+            else:  # reviewer
+                user = await fetch_user(sys_conn, username=payload["sub"])
+                if not user:
+                    return []
+                rows = await fetch_user_project_memberships(sys_conn, user_id=user["id"])
+                visible = {r["project_slug"] for r in rows}
+        slugs_to_show = [s for s in all_slugs if s in visible]
+
     results = []
-    for db_file in sorted(db_dir.glob("*.db")):
-        slug = db_file.stem
-        if slug == "system":
-            continue  # system.db holds users, not projects
-        async with get_connection(slug) as conn:
-            rows = await list_projects(conn)
-            results.extend(rows)
-    return results
+    for slug in slugs_to_show:
+        if get_db_path(slug).exists():
+            async with get_connection(slug) as conn:
+                project = await fetch_project(conn, slug=slug)
+                if project:
+                    results.append(dict(project))
+    return sorted(results, key=lambda p: p.get("created_at", ""), reverse=True)
 
 
 async def get_project_settings(slug: str) -> dict | None:
