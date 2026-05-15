@@ -1011,13 +1011,20 @@ async def fetch_user(conn: aiosqlite.Connection, *, username: str) -> dict | Non
         return dict(row) if row else None
 
 
-async def insert_user(conn: aiosqlite.Connection, *, username: str, role: str,
-                      hashed_pw: str, project_slug: str | None = None) -> bool:
+async def insert_user(
+    conn: aiosqlite.Connection,
+    *,
+    username: str,
+    email: str = "",
+    role: str,
+    hashed_pw: str,
+    project_slug: str | None = None,
+) -> bool:
     """Returns True if inserted, False if username already exists."""
     try:
         await conn.execute(
-            "INSERT INTO users (username, role, hashed_pw, project_slug) VALUES (?,?,?,?)",
-            (username, role, hashed_pw, project_slug),
+            "INSERT INTO users (username, email, role, hashed_pw, project_slug) VALUES (?,?,?,?,?)",
+            (username, email, role, hashed_pw, project_slug),
         )
         await conn.commit()
         return True
@@ -1263,3 +1270,226 @@ async def fetch_interview_sessions_for_run(
         (orchestration_run_id,),
     )
     return await cur.fetchall()
+
+
+# ── Organisation helpers ──────────────────────────────────────────────────────
+
+async def insert_organisation(conn: aiosqlite.Connection, *, slug: str, name: str) -> int:
+    cur = await conn.execute(
+        "INSERT INTO organisations (slug, name) VALUES (?,?)", (slug, name)
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_all_organisations(conn: aiosqlite.Connection) -> list[dict]:
+    async with conn.execute("SELECT * FROM organisations ORDER BY name") as cur:
+        return [dict(r) async for r in cur]
+
+
+async def fetch_organisation(conn: aiosqlite.Connection, *, org_id: int) -> dict | None:
+    async with conn.execute("SELECT * FROM organisations WHERE id=?", (org_id,)) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def update_organisation(conn: aiosqlite.Connection, *, org_id: int, name: str) -> None:
+    await conn.execute("UPDATE organisations SET name=? WHERE id=?", (name, org_id))
+    await conn.commit()
+
+
+async def delete_organisation(conn: aiosqlite.Connection, *, org_id: int) -> None:
+    await conn.execute("DELETE FROM organisations WHERE id=?", (org_id,))
+    await conn.commit()
+
+
+# ── Org membership helpers ────────────────────────────────────────────────────
+
+async def insert_org_membership(
+    conn: aiosqlite.Connection, *, user_id: int, org_id: int, role: str
+) -> bool:
+    try:
+        await conn.execute(
+            "INSERT INTO org_memberships (user_id, org_id, role) VALUES (?,?,?)",
+            (user_id, org_id, role),
+        )
+        await conn.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False
+
+
+async def fetch_org_members(conn: aiosqlite.Connection, *, org_id: int) -> list[dict]:
+    async with conn.execute(
+        """SELECT u.id, u.username, u.email, u.role AS user_role, om.role, u.created_at
+           FROM org_memberships om
+           JOIN users u ON u.id = om.user_id
+           WHERE om.org_id=? ORDER BY u.username""",
+        (org_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def update_org_membership_role(
+    conn: aiosqlite.Connection, *, user_id: int, org_id: int, role: str
+) -> None:
+    await conn.execute(
+        "UPDATE org_memberships SET role=? WHERE user_id=? AND org_id=?",
+        (role, user_id, org_id),
+    )
+    await conn.commit()
+
+
+async def delete_org_membership(
+    conn: aiosqlite.Connection, *, user_id: int, org_id: int
+) -> None:
+    await conn.execute(
+        "DELETE FROM org_memberships WHERE user_id=? AND org_id=?", (user_id, org_id)
+    )
+    await conn.commit()
+
+
+async def fetch_user_org(conn: aiosqlite.Connection, *, user_id: int) -> dict | None:
+    """Return the first org_membership row for this user (users belong to one org)."""
+    async with conn.execute(
+        "SELECT * FROM org_memberships WHERE user_id=? LIMIT 1", (user_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+# ── Project registry helpers ──────────────────────────────────────────────────
+
+async def insert_project_registry(
+    conn: aiosqlite.Connection, *, slug: str, org_id: int, display_name: str
+) -> None:
+    await conn.execute(
+        "INSERT OR IGNORE INTO project_registry (slug, org_id, display_name) VALUES (?,?,?)",
+        (slug, org_id, display_name),
+    )
+    await conn.commit()
+
+
+async def fetch_project_registry(
+    conn: aiosqlite.Connection, *, slug: str
+) -> dict | None:
+    async with conn.execute(
+        "SELECT * FROM project_registry WHERE slug=?", (slug,)
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def fetch_org_projects(conn: aiosqlite.Connection, *, org_id: int) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM project_registry WHERE org_id=? ORDER BY display_name", (org_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def fetch_all_registry(conn: aiosqlite.Connection) -> list[dict]:
+    async with conn.execute(
+        "SELECT pr.*, o.name AS org_name FROM project_registry pr "
+        "JOIN organisations o ON o.id = pr.org_id ORDER BY pr.slug"
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def delete_project_registry(conn: aiosqlite.Connection, *, slug: str) -> None:
+    await conn.execute("DELETE FROM project_registry WHERE slug=?", (slug,))
+    await conn.commit()
+
+
+# ── Project membership helpers ────────────────────────────────────────────────
+
+async def insert_project_membership(
+    conn: aiosqlite.Connection, *, user_id: int, project_slug: str
+) -> bool:
+    try:
+        await conn.execute(
+            "INSERT INTO project_memberships (user_id, project_slug) VALUES (?,?)",
+            (user_id, project_slug),
+        )
+        await conn.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False
+
+
+async def delete_project_membership(
+    conn: aiosqlite.Connection, *, user_id: int, project_slug: str
+) -> None:
+    await conn.execute(
+        "DELETE FROM project_memberships WHERE user_id=? AND project_slug=?",
+        (user_id, project_slug),
+    )
+    await conn.commit()
+
+
+async def fetch_user_project_memberships(
+    conn: aiosqlite.Connection, *, user_id: int
+) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM project_memberships WHERE user_id=? ORDER BY project_slug",
+        (user_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def has_project_membership(
+    conn: aiosqlite.Connection, *, user_id: int, project_slug: str
+) -> bool:
+    async with conn.execute(
+        "SELECT 1 FROM project_memberships WHERE user_id=? AND project_slug=?",
+        (user_id, project_slug),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+# ── Extended user helpers ─────────────────────────────────────────────────────
+
+async def fetch_user_by_id(conn: aiosqlite.Connection, *, user_id: int) -> dict | None:
+    async with conn.execute("SELECT * FROM users WHERE id=?", (user_id,)) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def fetch_all_users(conn: aiosqlite.Connection) -> list[dict]:
+    async with conn.execute("SELECT * FROM users ORDER BY username") as cur:
+        return [dict(r) async for r in cur]
+
+
+async def fetch_users_by_org(conn: aiosqlite.Connection, *, org_id: int) -> list[dict]:
+    async with conn.execute(
+        """SELECT u.* FROM users u
+           JOIN org_memberships om ON om.user_id = u.id
+           WHERE om.org_id=? ORDER BY u.username""",
+        (org_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def update_user(
+    conn: aiosqlite.Connection,
+    *,
+    user_id: int,
+    email: str,
+    role: str,
+    hashed_pw: str | None = None,
+) -> None:
+    if hashed_pw:
+        await conn.execute(
+            "UPDATE users SET email=?, role=?, hashed_pw=? WHERE id=?",
+            (email, role, hashed_pw, user_id),
+        )
+    else:
+        await conn.execute(
+            "UPDATE users SET email=?, role=? WHERE id=?",
+            (email, role, user_id),
+        )
+    await conn.commit()
+
+
+async def delete_user(conn: aiosqlite.Connection, *, user_id: int) -> None:
+    await conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    await conn.commit()
