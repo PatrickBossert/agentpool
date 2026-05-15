@@ -101,7 +101,7 @@ function CoverPage({ slug, sector }: { slug: string; sector: string }) {
       <p className="text-sm text-slate-500 mt-8 print:text-slate-500">
         Generated {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
       </p>
-      <p className="text-xs text-slate-600 mt-2 print:text-slate-400">Prepared by AgentPool</p>
+      <p className="text-xs text-slate-600 mt-2 print:text-slate-400">Prepared by FutureMomentum</p>
     </div>
   )
 }
@@ -260,7 +260,7 @@ function DeliverablesSection({ outputs }: { outputs: AgentOutput[] }) {
         </table>
       )}
       <p className="text-xs text-slate-600 mt-4 print:text-slate-400">
-        Full documents available in the AgentPool Documents tab for this project.
+        Full documents available in the FutureMomentum Documents tab for this project.
       </p>
     </div>
   )

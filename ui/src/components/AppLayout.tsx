@@ -54,7 +54,7 @@ export default function AppLayout() {
     <div className="min-h-screen bg-surface flex flex-col">
       {/* Top nav */}
       <header className="bg-surface-raised border-b border-slate-800 px-4 h-12 flex items-center gap-6">
-        <span className="font-bold text-brand-light text-sm tracking-wide">AgentPool</span>
+        <span className="font-bold text-brand-light text-sm tracking-wide">FutureMomentum</span>
         <nav className="flex gap-4">
           {navItems.map((item) => (
             <NavLink
