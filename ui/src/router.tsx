@@ -72,4 +72,4 @@ export const router = createBrowserRouter([
       { path: ':slug/settings', element: <Settings /> },
     ],
   },
-])
+], { basename: '/dashboard' })

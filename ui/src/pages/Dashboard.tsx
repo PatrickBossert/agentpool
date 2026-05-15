@@ -76,7 +76,7 @@ export default function Dashboard() {
         <h2 className="text-lg font-semibold text-slate-100">{slug}</h2>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => window.open(`/${slug}/report`, '_blank')}
+            onClick={() => window.open(`/dashboard/${slug}/report`, '_blank')}
             className="text-xs px-3 py-1.5 rounded bg-surface-card border border-slate-700 text-slate-300 hover:text-slate-100 hover:border-slate-500"
           >
             Export Report
