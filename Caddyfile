@@ -1,0 +1,17 @@
+:80 {
+	# API — FastAPI handles JWT auth
+	handle /api/* {
+		reverse_proxy localhost:8000
+	}
+
+	# Dashboard and all SPA routes (including public interview under /dashboard/interview/*)
+	handle /dashboard* {
+		reverse_proxy localhost:3000
+	}
+
+	# Homepage — static landing page
+	handle {
+		root * /Users/pboagents/Documents/agentpool1/.worktrees/sp16a-deployment/landing
+		file_server
+	}
+}
