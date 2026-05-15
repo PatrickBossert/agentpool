@@ -138,8 +138,39 @@ export default function AppLayout() {
           {projects.length === 0 && (
             <p className="text-xs text-slate-600 px-2">No projects yet</p>
           )}
+          {/* Admin nav — role-gated */}
+          {(user?.role === 'sysadmin' || user?.role === 'org_admin') && (
+            <div className="mt-auto pt-3 border-t border-slate-800">
+              <p className="text-xs font-bold text-slate-600 uppercase tracking-widest mb-2 px-2">
+                Admin
+              </p>
+              {user.role === 'sysadmin' && (
+                <button
+                  onClick={() => navigate('/admin')}
+                  className="w-full text-left text-sm px-2 py-1.5 rounded transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                >
+                  Admin Panel
+                </button>
+              )}
+              {user.role === 'org_admin' && (
+                <button
+                  onClick={() => navigate('/org')}
+                  className="w-full text-left text-sm px-2 py-1.5 rounded transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                >
+                  Team
+                </button>
+              )}
+              <button
+                onClick={() => navigate('/admin/users')}
+                className="w-full text-left text-sm px-2 py-1.5 rounded transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+              >
+                Users
+              </button>
+            </div>
+          )}
+
           {/* New Project button — pinned to bottom of sidebar */}
-          <div className="mt-auto pt-3">
+          <div className={user?.role === 'sysadmin' || user?.role === 'org_admin' ? 'pt-3' : 'mt-auto pt-3'}>
             <button
               onClick={() => setShowModal(true)}
               className="w-full text-xs text-slate-500 hover:text-slate-200 border border-slate-700 hover:border-slate-500 rounded px-2 py-1.5 transition-colors text-left"
