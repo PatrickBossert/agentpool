@@ -208,9 +208,9 @@ export default function Roadmap() {
 }
 
 function GanttTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) {
-  const groups =
+  const groups: string[] =
     groupBy === 'category'
-      ? [...new Set(data.initiatives.map((i) => i.category))]
+      ? [...new Set(data.initiatives.map((i) => i.category).filter((c): c is string => c !== undefined))]
       : data.value_streams
 
   return (
@@ -233,7 +233,7 @@ function GanttTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) 
             const members =
               groupBy === 'category'
                 ? data.initiatives.filter((i) => i.category === group)
-                : data.initiatives.filter((i) => i.value_streams.includes(group))
+                : data.initiatives.filter((i) => (i.value_streams ?? []).includes(group))
             const colour =
               groupBy === 'category' ? (CATEGORY_COLOURS[group] ?? '#9ca3af') : '#6366f1'
             return (
@@ -282,10 +282,10 @@ function GanttTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) 
 
 function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) {
   const hasUnassigned =
-    groupBy === 'value_stream' && data.initiatives.some((i) => i.value_streams.length === 0)
-  const groups =
+    groupBy === 'value_stream' && data.initiatives.some((i) => (i.value_streams ?? []).length === 0)
+  const groups: string[] =
     groupBy === 'category'
-      ? [...new Set(data.initiatives.map((i) => i.category))]
+      ? [...new Set(data.initiatives.map((i) => i.category).filter((c): c is string => c !== undefined))]
       : hasUnassigned
       ? [...data.value_streams, 'Unassigned']
       : data.value_streams
@@ -316,8 +316,8 @@ function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy 
               groupBy === 'category'
                 ? data.initiatives.filter((i) => i.category === group)
                 : group === 'Unassigned'
-                ? data.initiatives.filter((i) => i.value_streams.length === 0)
-                : data.initiatives.filter((i) => i.value_streams.includes(group))
+                ? data.initiatives.filter((i) => (i.value_streams ?? []).length === 0)
+                : data.initiatives.filter((i) => (i.value_streams ?? []).includes(group))
             const colour =
               groupBy === 'category' ? (CATEGORY_COLOURS[group] ?? '#9ca3af') : '#6366f1'
             const columnCount = groupBy === 'value_stream' ? 5 : 4
@@ -344,23 +344,23 @@ function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy 
                         <span
                           className="rounded px-2 py-0.5 text-xs font-medium"
                           style={{
-                            background: `${CATEGORY_COLOURS[initiative.category] ?? '#9ca3af'}20`,
-                            color: CATEGORY_COLOURS[initiative.category] ?? '#9ca3af',
+                            background: `${CATEGORY_COLOURS[initiative.category ?? ''] ?? '#9ca3af'}20`,
+                            color: CATEGORY_COLOURS[initiative.category ?? ''] ?? '#9ca3af',
                           }}
                         >
-                          {initiative.category.replace(/_/g, ' ')}
+                          {(initiative.category ?? '').replace(/_/g, ' ')}
                         </span>
                       </td>
                     )}
                     <td className="px-3 py-2 text-slate-400">
-                      {initiative.value_streams.join(', ')}
+                      {(initiative.value_streams ?? []).join(', ')}
                     </td>
                     <td className="px-3 py-2 text-center text-slate-400">{initiative.period}</td>
                     <td className="px-3 py-2 text-center">
                       <span
                         className="rounded px-2 py-0.5 text-xs font-bold text-white"
                         style={{
-                          background: CATEGORY_COLOURS[initiative.category] ?? '#9ca3af',
+                          background: CATEGORY_COLOURS[initiative.category ?? ''] ?? '#9ca3af',
                         }}
                       >
                         {initiative.complexity_score}

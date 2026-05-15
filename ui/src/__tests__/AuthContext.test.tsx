@@ -7,7 +7,7 @@ function TestConsumer() {
   return (
     <div>
       <span data-testid="token">{token ?? 'none'}</span>
-      <button onClick={() => login('fake-token', { sub: 'admin', role: 'consultant', exp: 9999999999 })}>
+      <button onClick={() => login('fake-token', { sub: 'admin', role: 'sysadmin', exp: 9999999999 })}>
         Login
       </button>
       <button onClick={logout}>Logout</button>

@@ -143,6 +143,7 @@ export interface Initiative {
   cost_estimate: CostEstimate
   related_requirements: string[]
   // Roadmap fields (added by roadmap_generator)
+  category?: string
   value_streams?: string[]
   period?: string
 }

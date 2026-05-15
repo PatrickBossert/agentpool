@@ -3,6 +3,7 @@ import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../api/endpoints'
 import { useAuth } from '../context/AuthContext'
+import type { UserPayload } from '../types'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -18,7 +19,7 @@ export default function Login() {
     setLoading(true)
     try {
       const resp = await authApi.login(username, password)
-      let payload = { sub: '', role: '', exp: 0 }
+      let payload = { sub: '', role: 'sysadmin', exp: 0 } as UserPayload
       try {
         payload = JSON.parse(atob(resp.access_token.split('.')[1]))
       } catch {

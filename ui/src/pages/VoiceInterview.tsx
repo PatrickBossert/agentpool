@@ -2,6 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import type { InterviewSession, InterviewScript, InterviewBranding, QuestionnaireTemplateSchema, SectionRatings } from '../types'
 
+// webkit speech recognition types (Chrome/Safari vendor prefix)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const webkitSpeechRecognition: any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const SpeechRecognitionEvent: any
+
 type Phase = 'loading' | 'ready' | 'interviewing' | 'assessing' | 'complete' | 'error'
 
 const BASE = '/api'
@@ -17,10 +23,11 @@ export default function VoiceInterview() {
   const [branding, setBranding] = useState<InterviewBranding | null>(null)
   const [isListening, setIsListening] = useState(false)
   const [questionnaire, setQuestionnaire] = useState<QuestionnaireTemplateSchema | null>(null)
-  const [sectionRatings, setSectionRatings] = useState<SectionRatings[]>([])
+  const [, setSectionRatings] = useState<SectionRatings[]>([])
   const [currentAssessSection, setCurrentAssessSection] = useState(0)
   const [pendingRatings, setPendingRatings] = useState<Record<string, number>>({})
-  const recognitionRef = useRef<InstanceType<typeof window.webkitSpeechRecognition> | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null)
   const qaRef = useRef<{ question: string; answer: string }[]>([])
   const sectionRatingsRef = useRef<SectionRatings[]>([])
 
@@ -80,8 +87,10 @@ export default function VoiceInterview() {
   function listenForAnswer(lang: string = 'en-GB'): Promise<string> {
     return new Promise((resolve) => {
       const SpeechRecognition =
-        (window as Window & { SpeechRecognition?: typeof webkitSpeechRecognition }).SpeechRecognition ||
-        window.webkitSpeechRecognition
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).SpeechRecognition ||
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).webkitSpeechRecognition
       if (!SpeechRecognition) {
         resolve('')
         return
@@ -107,7 +116,7 @@ export default function VoiceInterview() {
         }, 3000)
       }
 
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
+      recognition.onresult = (event: typeof SpeechRecognitionEvent) => {
         resetSilenceTimer()
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
