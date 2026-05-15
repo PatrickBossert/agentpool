@@ -32,11 +32,11 @@ echo $! > ../.pids/ui.pid
 cd ..
 
 echo "Starting Caddy on :80..."
-caddy run --config Caddyfile --adapter caddyfile &
+/opt/homebrew/bin/caddy run --config Caddyfile --adapter caddyfile &
 echo $! > .pids/caddy.pid
 
 echo "Starting Cloudflare Tunnel..."
-cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
+/opt/homebrew/bin/cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
 echo $! > .pids/cloudflared.pid
 
 echo ""
