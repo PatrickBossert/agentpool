@@ -35,9 +35,13 @@ echo "Starting Caddy on :80..."
 /opt/homebrew/bin/caddy run --config Caddyfile --adapter caddyfile &
 echo $! > .pids/caddy.pid
 
-echo "Starting Cloudflare Tunnel..."
-/opt/homebrew/bin/cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
-echo $! > .pids/cloudflared.pid
+if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+  echo "Starting Cloudflare Tunnel..."
+  /opt/homebrew/bin/cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
+  echo $! > .pids/cloudflared.pid
+else
+  echo "Skipping Cloudflare Tunnel (CLOUDFLARE_TUNNEL_TOKEN not set)"
+fi
 
 echo ""
 echo "FutureMomentum services running:"
