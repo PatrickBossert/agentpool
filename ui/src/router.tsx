@@ -21,6 +21,7 @@ import Assignment from './pages/Assignment'
 import VoiceInterview from './pages/VoiceInterview'
 import Templates from './pages/Templates'
 import Report from './pages/Report'
+import Architecture from './pages/Architecture'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -36,6 +37,14 @@ export const router = createBrowserRouter([
   {
     path: '/interview/:sessionToken',
     element: <VoiceInterview />,
+  },
+  {
+    path: '/architecture',
+    element: (
+      <ProtectedRoute>
+        <Architecture />
+      </ProtectedRoute>
+    ),
   },
   {
     path: '/:slug/report',

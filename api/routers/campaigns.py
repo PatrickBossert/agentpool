@@ -17,6 +17,7 @@ from api.services.campaign_service import (
     get_interview_summary,
     list_reminder_emails_svc,
     update_reminder_email_svc,
+    send_reminder_emails_svc,
 )
 
 router = APIRouter(prefix="/projects", tags=["campaigns"])
@@ -164,6 +165,14 @@ async def interview_summary_endpoint(slug: str):
 @router.get("/{slug}/reminder-emails")
 async def list_reminder_emails_endpoint(slug: str):
     result = await list_reminder_emails_svc(slug)
+    if result is None:
+        _404(f"Project '{slug}' not found")
+    return result
+
+
+@router.post("/{slug}/reminder-emails/send")
+async def send_reminder_emails_endpoint(slug: str):
+    result = await send_reminder_emails_svc(slug)
     if result is None:
         _404(f"Project '{slug}' not found")
     return result

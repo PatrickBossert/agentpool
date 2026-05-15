@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     litellm_proxy_url: str = "http://localhost:4000"
     llamacpp_base_url: str = "http://localhost:10000"
+    local_llm_model: str = "local-model"
     chroma_host: str = "localhost"
     chroma_port: int = 8002
     chroma_api_key: Optional[str] = None
@@ -18,13 +19,16 @@ class Settings(BaseSettings):
     database_dir: str = "./data"
     projects_dir: str = "./projects"
     jwt_secret: str
-    admin_username: str = "admin"
-    admin_password: str = "changeme"
+    admin_username: str
+    admin_password: str
     tavily_api_key: Optional[str] = None
     n8n_webhook_url: Optional[str] = None
     frontend_url: str = "http://localhost:3000"
+    public_url: str = "http://localhost:3000"
     elevenlabs_api_key: str = ""
     deepgram_api_key: str = ""
+    resend_api_key: str = ""
+    from_email: str = "FutureMomentum <noreply@futuremomentum.ai>"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

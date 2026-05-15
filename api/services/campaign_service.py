@@ -5,6 +5,9 @@ import io
 import json as _json
 from datetime import datetime, timezone
 
+from api.config import get_settings
+import httpx
+
 from api.database import (
     get_connection,
     get_db_path,
@@ -21,6 +24,9 @@ from api.database import (
     insert_reminder_email,
     fetch_reminder_emails,
     update_reminder_email,
+    fetch_session_token_for_stakeholder,
+    fetch_approved_reminder_emails,
+    mark_reminder_email_sent,
 )
 
 # ── Reminder templates ─────────────────────────────────────────────────────────
@@ -34,7 +40,8 @@ REMINDER_TEMPLATES = {
             "{campaign_name} initiative. Your perspective is genuinely valuable to us "
             "and will directly shape the recommendations we make.\n\n"
             "The interview takes around 10–15 minutes and can be completed at a time "
-            "that suits you. Please follow the link below to get started.\n\n"
+            "that suits you. Please follow the link below to get started:\n\n"
+            "{interview_url}\n\n"
             "Thank you for your time.\n\n"
             "Best regards,\nThe Project Team"
         ),
@@ -45,7 +52,8 @@ REMINDER_TEMPLATES = {
             "Hi {name},\n\n"
             "We're still hoping to capture your perspective as part of the "
             "{campaign_name} stakeholder engagement. We'd really appreciate "
-            "you completing the short interview when you get a chance.\n\n"
+            "you completing the short interview when you get a chance:\n\n"
+            "{interview_url}\n\n"
             "Your input helps us ensure the recommendations we make reflect "
             "the full range of stakeholder views.\n\n"
             "Best regards,\nThe Project Team"
@@ -58,7 +66,8 @@ REMINDER_TEMPLATES = {
             "This is a final reminder that the stakeholder interview window for "
             "{campaign_name} is closing very soon. After this date we will not "
             "be able to include your input in the analysis.\n\n"
-            "Please take 10 minutes to complete the interview — your voice matters.\n\n"
+            "Please take 10 minutes to complete the interview — your voice matters:\n\n"
+            "{interview_url}\n\n"
             "Best regards,\nThe Project Team"
         ),
     },
@@ -348,6 +357,7 @@ async def generate_reminders_svc(slug: str, campaign_id: int) -> dict | None:
             exclude_completed=True,
         )
 
+        public_url = get_settings().public_url.rstrip("/")
         count = 0
         for s in stakeholders:
             invited_at = s.get("interview_invited_at")
@@ -356,9 +366,15 @@ async def generate_reminders_svc(slug: str, campaign_id: int) -> dict | None:
             level = _escalation_level(invited_at)
             template = REMINDER_TEMPLATES[level]
             subject = template["subject"]
+            session_token = await fetch_session_token_for_stakeholder(conn, s["id"])
+            if session_token:
+                interview_url = f"{public_url}/dashboard/interview/{session_token}"
+            else:
+                interview_url = f"{public_url}/dashboard/interview"
             body = template["body"].format(
                 name=s["name"],
                 campaign_name=camp["campaign_name"] or camp["value_stream_name"],
+                interview_url=interview_url,
             )
             await insert_reminder_email(
                 conn,
@@ -450,3 +466,54 @@ async def update_reminder_email_svc(
             subject=subject,
             body=body,
         )
+
+
+async def send_reminder_emails_svc(slug: str) -> dict | None:
+    """Send all approved reminder emails via Resend and update their status.
+
+    Returns {"sent": N, "failed": M, "skipped": K} or None if project not found.
+    Skips dispatch if RESEND_API_KEY is not configured (returns skipped count).
+    """
+    if not get_db_path(slug).exists():
+        return None
+
+    settings = get_settings()
+    api_key = settings.resend_api_key
+    from_email = settings.from_email
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return None
+
+        emails = await fetch_approved_reminder_emails(conn, project_id=project["id"])
+
+        if not api_key:
+            return {"sent": 0, "failed": 0, "skipped": len(emails), "error": "RESEND_API_KEY not configured"}
+
+        sent = failed = 0
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for email in emails:
+                payload = {
+                    "from": from_email,
+                    "to": [email["stakeholder_email"]],
+                    "subject": email["subject"],
+                    "text": email["body"],
+                }
+                try:
+                    resp = await client.post(
+                        "https://api.resend.com/emails",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    )
+                    if resp.status_code in (200, 201):
+                        await mark_reminder_email_sent(conn, email_id=email["id"], status="sent")
+                        sent += 1
+                    else:
+                        await mark_reminder_email_sent(conn, email_id=email["id"], status="failed")
+                        failed += 1
+                except Exception:
+                    await mark_reminder_email_sent(conn, email_id=email["id"], status="failed")
+                    failed += 1
+
+        return {"sent": sent, "failed": failed, "skipped": 0}

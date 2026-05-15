@@ -1,13 +1,47 @@
-.superpowers/
+# ── Secrets & credentials ───────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+.cloudflared/
+
+# ── Data volumes (databases, vector store) ──────────────────────
 data/chroma/*
 !data/chroma/.gitkeep
 data/n8n/*
 !data/n8n/.gitkeep
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Project data (client-specific) ──────────────────────────────
 models/
 projects/*
 !projects/example/
 !projects/example/**
+
+# ── Python ──────────────────────────────────────────────────────
 __pycache__/
-.env
-.worktrees/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+
+# ── Node ────────────────────────────────────────────────────────
+ui/node_modules/
+ui/dist/
+
+# ── Runtime / tooling ───────────────────────────────────────────
 .pids/
+.worktrees/
+.superpowers/
+.DS_Store
+*.log

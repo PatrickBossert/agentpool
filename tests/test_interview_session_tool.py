@@ -51,6 +51,7 @@ async def db(tmp_path):
                 session_token TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL DEFAULT 'pending',
                 transcript_json TEXT,
+                ratings_json TEXT,
                 started_at TEXT,
                 completed_at TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP

@@ -34,7 +34,7 @@ async def test_arun_creates_crew_run_record(monkeypatch, tmp_path):
         await tool._arun("discovery")
 
     mock_insert.assert_awaited_once_with(
-        mock_conn, project_id=1, crew_name="discovery", status="running"
+        mock_conn, project_id=1, crew_name="discovery", status="running", orchestration_run_id=99
     )
 
 

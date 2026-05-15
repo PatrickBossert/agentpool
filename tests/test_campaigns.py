@@ -361,3 +361,32 @@ async def test_approve_reminder_email(client):
     emails2 = (await client.get(f"/projects/{SLUG}/reminder-emails")).json()
     # Approved items no longer appear in pending list
     assert len(emails2) == 0
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_emails_no_key(client):
+    """Without RESEND_API_KEY, send returns skipped count and does not crash."""
+    _, sid = await _setup_project_and_stakeholder(client)
+    r = await client.post(
+        f"/projects/{SLUG}/campaigns",
+        json={"value_stream_name": "Digital Transformation", "campaign_name": "DT Survey"},
+    )
+    cid = r.json()["id"]
+
+    # Insert an approved reminder email directly
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        await conn.execute(
+            """INSERT INTO reminder_emails
+               (project_id, campaign_id, stakeholder_id, subject, body, escalation_level, status)
+               VALUES (?,?,?,?,?,?,?)""",
+            (project["id"], cid, sid, "Reminder", "Please complete the interview.", "gentle", "approved"),
+        )
+        await conn.commit()
+
+    # RESEND_API_KEY is empty in test env — expect skipped response
+    r2 = await client.post(f"/projects/{SLUG}/reminder-emails/send")
+    assert r2.status_code == 200
+    data = r2.json()
+    assert data["sent"] == 0
+    assert "skipped" in data or "error" in data

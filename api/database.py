@@ -886,6 +886,31 @@ async def update_reminder_email(
     return cur.rowcount > 0
 
 
+async def fetch_approved_reminder_emails(
+    conn: aiosqlite.Connection, *, project_id: int
+) -> list[dict]:
+    """Return all approved (ready-to-send) reminder emails with stakeholder email address."""
+    async with conn.execute(
+        """SELECT re.*, s.email AS stakeholder_email, s.name AS stakeholder_name
+           FROM reminder_emails re
+           JOIN stakeholders s ON s.id = re.stakeholder_id
+           WHERE re.project_id = ? AND re.status = 'approved'
+           ORDER BY re.created_at""",
+        (project_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def mark_reminder_email_sent(
+    conn: aiosqlite.Connection, *, email_id: int, status: str
+) -> None:
+    """Set status to 'sent' or 'failed' — no project_id check needed (internal)."""
+    await conn.execute(
+        "UPDATE reminder_emails SET status=? WHERE id=?", (status, email_id)
+    )
+    await conn.commit()
+
+
 # ── System DB (users + templates) ────────────────────────────────────────────
 
 def get_system_db_path() -> Path:
@@ -1011,6 +1036,20 @@ async def insert_interview_session(
     )
     await conn.commit()
     return cur.lastrowid
+
+
+async def fetch_session_token_for_stakeholder(
+    conn: aiosqlite.Connection, stakeholder_id: int
+) -> str | None:
+    """Return the most recent active/pending session token for a stakeholder, or None."""
+    async with conn.execute(
+        "SELECT session_token FROM interview_sessions "
+        "WHERE stakeholder_id=? AND status != 'abandoned' "
+        "ORDER BY id DESC LIMIT 1",
+        (stakeholder_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    return row["session_token"] if row else None
 
 
 async def fetch_interview_session(
