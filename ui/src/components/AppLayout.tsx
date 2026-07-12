@@ -51,41 +51,41 @@ export default function AppLayout() {
     : [{ to: '/', label: 'Dashboard', end: true }]
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Top nav */}
-      <header className="bg-surface-raised border-b border-slate-800 px-4 h-12 flex items-center gap-6">
-        <span className="font-bold text-brand-light text-sm tracking-wide">FutureMomentum</span>
-        <nav className="flex gap-4">
+      <header className="bg-white border-b border-gray-200 px-4 h-12 flex items-center gap-6">
+        <span className="font-bold text-brand text-sm tracking-wide">FutureMomentum</span>
+        <nav className="flex gap-4 overflow-x-auto">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `text-sm pb-0.5 border-b-2 transition-colors flex items-center gap-1.5 ${
+                `text-sm pb-0.5 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
                   isActive
                     ? 'text-brand border-brand'
-                    : 'text-slate-400 border-transparent hover:text-slate-200'
+                    : 'text-gray-500 border-transparent hover:text-gray-800'
                 }`
               }
             >
               {item.label}
               {item.badge !== undefined && (
-                <span className="bg-amber-500 text-slate-900 text-xs font-bold rounded-full px-1.5 leading-4 min-w-[18px] text-center">
+                <span className="bg-amber-500 text-white text-xs font-bold rounded-full px-1.5 leading-4 min-w-[18px] text-center">
                   {item.badge}
                 </span>
               )}
             </NavLink>
           ))}
         </nav>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-3 flex-shrink-0">
           {slug && (
             <>
               <a
                 href="http://localhost:8001"
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs text-slate-500 hover:text-slate-300"
+                className="text-xs text-gray-400 hover:text-gray-600"
               >
                 Chainlit ↗
               </a>
@@ -93,14 +93,14 @@ export default function AppLayout() {
                 href="http://localhost:5678"
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs text-slate-500 hover:text-slate-300"
+                className="text-xs text-gray-400 hover:text-gray-600"
               >
                 n8n ↗
               </a>
             </>
           )}
-          <span className="text-xs text-slate-500">{user?.sub}</span>
-          <button onClick={handleLogout} className="text-xs text-slate-500 hover:text-slate-300">
+          <span className="text-xs text-gray-400">{user?.sub}</span>
+          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600">
             Sign out
           </button>
         </div>
@@ -108,18 +108,18 @@ export default function AppLayout() {
 
       <div className="flex flex-1">
         {/* Sidebar */}
-        <aside className="w-44 bg-surface-raised border-r border-slate-800 p-3 flex flex-col gap-1">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
+        <aside className="w-44 bg-white border-r border-gray-200 p-3 flex flex-col gap-1 flex-shrink-0">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">
             Projects
           </p>
           {projects.map((p) => (
             <div key={p.slug} className="flex items-center gap-1">
               <button
                 onClick={() => navigate(`/${p.slug}`)}
-                className={`flex-1 text-left text-sm px-2 py-1.5 rounded transition-colors ${
+                className={`flex-1 text-left text-sm px-2 py-1.5 rounded-lg transition-colors ${
                   slug === p.slug
-                    ? 'bg-brand/10 text-brand'
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                    ? 'bg-teal-50 text-teal-700 font-medium'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                 }`}
               >
                 {p.slug}
@@ -127,7 +127,7 @@ export default function AppLayout() {
               {slug === p.slug && (
                 <button
                   onClick={() => navigate(`/${p.slug}/settings`)}
-                  className="text-slate-500 hover:text-slate-300 text-sm px-1 flex-shrink-0"
+                  className="text-gray-400 hover:text-gray-600 text-sm px-1 flex-shrink-0"
                   title="Settings"
                 >
                   ⚙
@@ -136,18 +136,19 @@ export default function AppLayout() {
             </div>
           ))}
           {projects.length === 0 && (
-            <p className="text-xs text-slate-600 px-2">No projects yet</p>
+            <p className="text-xs text-gray-400 px-2">No projects yet</p>
           )}
-          {/* Admin nav — role-gated */}
+
+          {/* Admin nav */}
           {(user?.role === 'sysadmin' || user?.role === 'org_admin') && (
-            <div className="mt-auto pt-3 border-t border-slate-800">
-              <p className="text-xs font-bold text-slate-600 uppercase tracking-widest mb-2 px-2">
+            <div className="mt-auto pt-3 border-t border-gray-200">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 px-2">
                 Admin
               </p>
               {user.role === 'sysadmin' && (
                 <button
                   onClick={() => navigate('/admin')}
-                  className="w-full text-left text-sm px-2 py-1.5 rounded transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                  className="w-full text-left text-sm px-2 py-1.5 rounded-lg transition-colors text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 >
                   Admin Panel
                 </button>
@@ -155,25 +156,25 @@ export default function AppLayout() {
               {user.role === 'org_admin' && (
                 <button
                   onClick={() => navigate('/org')}
-                  className="w-full text-left text-sm px-2 py-1.5 rounded transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                  className="w-full text-left text-sm px-2 py-1.5 rounded-lg transition-colors text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 >
                   Team
                 </button>
               )}
               <button
                 onClick={() => navigate('/admin/users')}
-                className="w-full text-left text-sm px-2 py-1.5 rounded transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                className="w-full text-left text-sm px-2 py-1.5 rounded-lg transition-colors text-gray-600 hover:bg-gray-100 hover:text-gray-900"
               >
                 Users
               </button>
             </div>
           )}
 
-          {/* New Project button — pinned to bottom of sidebar */}
+          {/* New Project button */}
           <div className={user?.role === 'sysadmin' || user?.role === 'org_admin' ? 'pt-3' : 'mt-auto pt-3'}>
             <button
               onClick={() => setShowModal(true)}
-              className="w-full text-xs text-slate-500 hover:text-slate-200 border border-slate-700 hover:border-slate-500 rounded px-2 py-1.5 transition-colors text-left"
+              className="w-full text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-400 rounded-lg px-2 py-1.5 transition-colors text-left"
             >
               + New Project
             </button>
@@ -181,7 +182,7 @@ export default function AppLayout() {
         </aside>
 
         {/* Main content */}
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto bg-gray-50">
           <Outlet />
         </main>
       </div>

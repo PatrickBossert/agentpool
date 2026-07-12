@@ -11,9 +11,9 @@ export default {
           green: '#47c247',
         },
         surface: {
-          DEFAULT: '#1a1825',
-          raised: '#221f33',
-          card: '#2a2640',
+          DEFAULT: '#f9fafb',
+          raised: '#ffffff',
+          card: '#ffffff',
         },
       },
       keyframes: {
