@@ -1,10 +1,11 @@
 // ui/src/pages/Dashboard.tsx
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
-import { campaignsApi } from '../api/campaigns'
 import ReviewQueue from '../components/ReviewQueue'
-import OrgChart, { type CrewName } from '../components/OrgChart'
+import AgentGrid from '../components/AgentGrid'
+import AgentChatDrawer from '../components/AgentChatDrawer'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { CrewRun } from '../types'
 
@@ -12,6 +13,7 @@ export default function Dashboard() {
   const { slug } = useParams<{ slug?: string }>()
   const navigate = useNavigate()
   const logs = useWebSocket(slug)
+  const [activeAgent, setActiveAgent] = useState<string | null>(null)
 
   const { data: status } = useQuery({
     queryKey: ['status', slug],
@@ -25,19 +27,6 @@ export default function Dashboard() {
     queryFn: () => projectsApi.outputs(slug!),
     enabled: !!slug,
     refetchInterval: 5_000,
-  })
-
-  const { data: runs = [] } = useQuery({
-    queryKey: ['runs', slug],
-    queryFn: () => projectsApi.listRuns(slug!),
-    enabled: !!slug,
-  })
-
-  const { data: interviewSummary } = useQuery({
-    queryKey: ['interview-summary', slug],
-    queryFn: () => campaignsApi.interviewSummary(slug!),
-    enabled: !!slug,
-    refetchInterval: 30_000,
   })
 
   const runMutation = useMutation({
@@ -58,52 +47,48 @@ export default function Dashboard() {
   const crewRuns: CrewRun[] = status?.crew_runs ?? []
   const orch = status?.latest_orchestration_run
   const isPipelineActive = orch?.status === 'running'
-  const lastRun = runs[0] ?? null
-
-  const interviewBadge: string | null = (() => {
-    if (!interviewSummary || interviewSummary.total_stakeholders === 0) return null
-    return `${interviewSummary.total_completed} / ${interviewSummary.total_stakeholders} ✓`
-  })()
-
-  function handleCrewClick(name: CrewName) {
-    if (name === 'discovery') navigate(`/${slug}/discovery`)
-  }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-8">
       {/* Project header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <h2 className="text-lg font-semibold text-gray-900">{slug}</h2>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={() => window.open(`/dashboard/${slug}/report`, '_blank')}
-            className="text-xs px-3 py-1.5 rounded bg-surface-card border border-gray-200 text-gray-600 hover:text-gray-900 hover:border-gray-400"
+            className="text-xs px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:text-gray-900 hover:border-gray-400 transition-colors"
           >
             Export Report
           </button>
           {(orch?.status === 'completed' || orch?.status === 'failed') && (
             <button
               onClick={() => navigate(`/${slug}/runs/${orch.id}`)}
-              className="text-xs text-brand hover:text-brand-light"
+              className="text-xs text-teal-600 hover:text-teal-700"
             >
               View Last Run →
+            </button>
+          )}
+          {isPipelineActive ? (
+            <span className="text-xs font-medium text-teal-600 animate-pulse">● Pipeline running</span>
+          ) : (
+            <button
+              onClick={() => runMutation.mutate()}
+              disabled={runMutation.isPending}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white transition-colors"
+            >
+              {runMutation.isPending ? 'Starting…' : '▶ Run Pipeline'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Org chart */}
+      {/* Agent grid */}
       <section>
-        <OrgChart
+        <AgentGrid
           crewRuns={crewRuns}
           isPipelineActive={isPipelineActive}
           logs={logs}
-          interviewBadge={interviewBadge}
-          onCrewClick={handleCrewClick}
-          onRun={() => runMutation.mutate()}
-          isRunPending={runMutation.isPending}
-          lastRun={lastRun}
-          orch={orch}
+          onAgentChat={setActiveAgent}
         />
       </section>
 
@@ -114,6 +99,13 @@ export default function Dashboard() {
         </h3>
         <ReviewQueue slug={slug} outputs={outputs} />
       </section>
+
+      {/* Agent chat drawer */}
+      <AgentChatDrawer
+        slug={slug}
+        agentName={activeAgent}
+        onClose={() => setActiveAgent(null)}
+      />
     </div>
   )
 }
