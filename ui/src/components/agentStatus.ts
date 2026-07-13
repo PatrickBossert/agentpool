@@ -50,12 +50,12 @@ export const CREW_ICONS: Record<string, string> = {
 
 export const AGENT_AVATAR: Record<string, { emoji: string; gradient: string }> = {
   'Value Chain Mapper':          { emoji: '🗺️', gradient: 'from-teal-400 to-cyan-600' },
-  'Requirements Capture':        { emoji: '📋', gradient: 'from-indigo-400 to-blue-600' },
+  'Requirements Capture':        { emoji: '📋', gradient: 'from-indigo-400 to-indigo-700' },
   'Requirements Analyst':        { emoji: '🔍', gradient: 'from-violet-400 to-purple-600' },
   'Value Lever Analyst':         { emoji: '⚖️', gradient: 'from-amber-400 to-orange-500' },
   'Interview Script Designer':   { emoji: '✍️', gradient: 'from-rose-400 to-pink-600' },
   'Interview Coordinator':       { emoji: '📅', gradient: 'from-emerald-400 to-teal-600' },
-  'Stakeholder Interviewer':     { emoji: '🎙️', gradient: 'from-sky-400 to-blue-600' },
+  'Stakeholder Interviewer':     { emoji: '🎙️', gradient: 'from-cyan-400 to-indigo-600' },
   'Synthesis Analyst':           { emoji: '🧩', gradient: 'from-purple-400 to-indigo-600' },
   'Value Proposition Generator': { emoji: '💡', gradient: 'from-yellow-400 to-amber-500' },
   'Portfolio Manager':           { emoji: '📊', gradient: 'from-green-400 to-emerald-600' },
