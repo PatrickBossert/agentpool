@@ -1,7 +1,7 @@
 // ui/src/pages/Documents.tsx
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useRef, ChangeEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { projectsApi } from '../api/endpoints'
 import type { ClientDocument, AgentOutput } from '../types'
 import { useAuth } from '../context/AuthContext'
@@ -18,6 +18,8 @@ export default function Documents() {
   const qc = useQueryClient()
   const { token } = useAuth()
   const inputRef = useRef<HTMLInputElement>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [uploading, setUploading] = useState(false)
 
   const { data: clientDocs = [] } = useQuery<ClientDocument[]>({
     queryKey: ['documents', slug],
@@ -31,12 +33,40 @@ export default function Documents() {
     enabled: !!slug,
   })
 
+  async function uploadFile(file: File) {
+    if (!slug) return
+    setUploading(true)
+    try {
+      await projectsApi.uploadDocument(slug, file)
+      qc.invalidateQueries({ queryKey: ['documents', slug] })
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
   async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file || !slug) return
-    await projectsApi.uploadDocument(slug, file)
-    qc.invalidateQueries({ queryKey: ['documents', slug] })
-    if (inputRef.current) inputRef.current.value = ''
+    if (file) await uploadFile(file)
+  }
+
+  function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setIsDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) uploadFile(file)
+  }
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
+    // only clear when leaving the zone itself, not a child element
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false)
+    }
   }
 
   if (!slug) return null
@@ -48,12 +78,50 @@ export default function Documents() {
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
           Upload Document
         </h3>
-        <label
-          htmlFor="file-upload"
-          className="cursor-pointer inline-flex items-center gap-2 bg-brand hover:bg-brand-dark text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+
+        <div
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onClick={() => !uploading && inputRef.current?.click()}
+          className={`cursor-pointer rounded-xl border-2 border-dashed px-8 py-10 flex flex-col items-center gap-3 transition-colors select-none ${
+            isDragging
+              ? 'border-brand bg-teal-50'
+              : uploading
+              ? 'border-gray-200 bg-gray-50 cursor-default'
+              : 'border-gray-200 bg-gray-50 hover:border-brand/50 hover:bg-teal-50/30'
+          }`}
         >
-          Upload file
-        </label>
+          <div className="text-4xl leading-none">
+            {uploading ? '⏳' : isDragging ? '📂' : '📁'}
+          </div>
+
+          <div className="text-center">
+            <p className="text-sm font-medium text-gray-700">
+              {uploading
+                ? 'Uploading…'
+                : isDragging
+                ? 'Drop to upload'
+                : 'Drag & drop a file here'}
+            </p>
+            {!uploading && !isDragging && (
+              <p className="text-xs text-gray-400 mt-0.5">or click to browse</p>
+            )}
+          </div>
+
+          {!uploading && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}
+              className="text-xs font-semibold text-white bg-brand hover:bg-brand-dark px-4 py-1.5 rounded-lg transition-colors"
+            >
+              Browse files
+            </button>
+          )}
+
+          <p className="text-xs text-gray-400">PDF · DOCX · XLSX · CSV · TXT</p>
+        </div>
+
         <input
           id="file-upload"
           ref={inputRef}
@@ -77,14 +145,14 @@ export default function Documents() {
             {clientDocs.map((doc) => (
               <div
                 key={doc.id}
-                className="flex items-center justify-between bg-surface-card rounded-lg px-4 py-3"
+                className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-4 py-3"
               >
                 <div>
                   <p className="text-sm font-medium text-gray-900">{doc.original_name}</p>
                   <p className="text-xs text-gray-400">
                     {formatBytes(doc.size_bytes)} · {doc.content_type}
                     {doc.ingested ? (
-                      <span className="ml-2 text-emerald-400">✓ ingested</span>
+                      <span className="ml-2 text-emerald-600">✓ ingested</span>
                     ) : (
                       <span className="ml-2 text-gray-400">pending ingestion</span>
                     )}
@@ -108,7 +176,7 @@ export default function Documents() {
             {agentOutputs.map((o) => (
               <div
                 key={o.id}
-                className="flex items-center justify-between bg-surface-card rounded-lg px-4 py-3"
+                className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-4 py-3"
               >
                 <div>
                   <p className="text-sm font-medium text-gray-900">{o.agent_name}</p>
