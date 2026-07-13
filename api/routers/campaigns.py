@@ -30,7 +30,6 @@ def _404(detail: str = "Not found"):
 
 class CampaignIn(BaseModel):
     value_stream_name: str = ""
-    listenlabs_campaign_id: str = ""
     campaign_name: str = ""
     interview_start: str | None = None
     interview_close: str | None = None
@@ -38,7 +37,6 @@ class CampaignIn(BaseModel):
 
 class CampaignPatch(BaseModel):
     value_stream_name: str | None = None
-    listenlabs_campaign_id: str | None = None
     campaign_name: str | None = None
     interview_start: str | None = None
     interview_close: str | None = None

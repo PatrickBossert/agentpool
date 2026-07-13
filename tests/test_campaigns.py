@@ -70,7 +70,6 @@ async def test_create_and_list_campaigns(client):
     await client.post("/projects", json=PROJECT)
     body = {
         "value_stream_name": "Digital Transformation",
-        "listenlabs_campaign_id": "camp_abc",
         "campaign_name": "DT Stakeholder Survey",
         "interview_start": "2026-05-01",
         "interview_close": "2026-05-31",
@@ -79,7 +78,6 @@ async def test_create_and_list_campaigns(client):
     assert r.status_code == 201
     data = r.json()
     assert data["campaign_name"] == "DT Stakeholder Survey"
-    assert data["listenlabs_campaign_id"] == "camp_abc"
 
     r2 = await client.get(f"/projects/{SLUG}/campaigns")
     assert r2.status_code == 200
@@ -94,11 +92,10 @@ async def test_update_campaign(client):
 
     r2 = await client.patch(
         f"/projects/{SLUG}/campaigns/{cid}",
-        json={"campaign_name": "New Name", "listenlabs_campaign_id": "camp_xyz"},
+        json={"campaign_name": "New Name"},
     )
     assert r2.status_code == 200
     assert r2.json()["campaign_name"] == "New Name"
-    assert r2.json()["listenlabs_campaign_id"] == "camp_xyz"
 
 
 @pytest.mark.asyncio
@@ -119,7 +116,7 @@ async def test_export_targets_csv(client):
     await _setup_project_and_stakeholder(client)
     r = await client.post(
         f"/projects/{SLUG}/campaigns",
-        json={"value_stream_name": "Digital Transformation", "listenlabs_campaign_id": "c1"},
+        json={"value_stream_name": "Digital Transformation"},
     )
     cid = r.json()["id"]
 
@@ -133,7 +130,7 @@ async def test_export_targets_csv(client):
     assert rows[0]["email"] == "alice@corp.com"
     assert rows[0]["country_code"] == "GB"
     assert rows[0]["value_stream"] == "Digital Transformation"
-    assert rows[0]["campaign_id"] == "c1"
+    assert rows[0]["campaign_id"] == str(cid)
 
 
 @pytest.mark.asyncio

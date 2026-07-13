@@ -1,9 +1,8 @@
 // ui/src/pages/Discovery.tsx
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { campaignsApi } from '../api/campaigns'
-import type { Campaign, ProjectSettings, InterviewSessionsResponse, InterviewSessionStatus } from '../types'
+import type { ProjectSettings, InterviewSessionsResponse, InterviewSessionStatus } from '../types'
 
 // ── InterviewSessionsPanel ────────────────────────────────────────────────────
 
@@ -80,21 +79,26 @@ function InterviewSessionsPanel({ slug }: { slug: string }) {
                       {s.status}
                     </span>
                   </td>
-                  <td className="py-2 pr-4">
+                  <td className="py-2 pr-4 max-w-[200px] truncate">
                     <button
                       onClick={() => copyUrl(s)}
-                      className="text-xs px-2 py-0.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded"
+                      className="text-brand hover:underline"
+                      title={s.interview_url}
                     >
-                      {copiedToken === s.session_token ? 'Copied!' : 'Copy'}
+                      {copiedToken === s.session_token ? 'Copied!' : 'Copy URL'}
                     </button>
                   </td>
-                  <td className="py-2 pr-4 text-gray-400">{s.started_at ? new Date(s.started_at).toLocaleString() : '—'}</td>
-                  <td className="py-2 pr-4 text-gray-400">{s.completed_at ? new Date(s.completed_at).toLocaleString() : '—'}</td>
+                  <td className="py-2 pr-4 text-gray-500">
+                    {s.started_at ? new Date(s.started_at).toLocaleDateString() : '—'}
+                  </td>
+                  <td className="py-2 pr-4 text-gray-500">
+                    {s.completed_at ? new Date(s.completed_at).toLocaleDateString() : '—'}
+                  </td>
                   <td className="py-2">
-                    {(s.status === 'pending' || s.status === 'active') && (
+                    {s.status !== 'completed' && s.status !== 'abandoned' && (
                       <button
                         onClick={() => abandon(s.session_token)}
-                        className="text-xs px-2 py-0.5 text-red-400 hover:text-red-300 border border-red-800 hover:border-red-600 rounded"
+                        className="text-gray-400 hover:text-red-500 text-xs"
                       >
                         Abandon
                       </button>
@@ -119,65 +123,6 @@ export default function Discovery() {
     queryFn: () => fetch(`/api/projects/${slug}/settings`).then(r => r.json()),
     enabled: !!slug,
   })
-
-  const { data: campaigns = [], refetch: refetchCampaigns } = useQuery<Campaign[]>({
-    queryKey: ['campaigns', slug],
-    queryFn: () => campaignsApi.list(slug!),
-    enabled: !!slug,
-  })
-
-  const [campaignMsg, setCampaignMsg] = useState<Record<number, string>>({})
-  const progressInputRef = useRef<Record<number, HTMLInputElement | null>>({})
-  const resultsInputRef = useRef<Record<number, HTMLInputElement | null>>({})
-  const summaryInputRef = useRef<Record<number, HTMLInputElement | null>>({})
-
-  async function createCampaign() {
-    await campaignsApi.create(slug!, { value_stream_name: '', campaign_name: 'New Campaign' })
-    refetchCampaigns()
-  }
-
-  async function updateCampaignField(id: number, data: Partial<Campaign>) {
-    await campaignsApi.update(slug!, id, data)
-    refetchCampaigns()
-  }
-
-  async function deleteCampaign(id: number) {
-    await campaignsApi.delete(slug!, id)
-    refetchCampaigns()
-  }
-
-  async function markInvited(id: number) {
-    const r = await campaignsApi.markInvited(slug!, id)
-    setCampaignMsg((prev) => ({ ...prev, [id]: `${r.marked} stakeholders marked as invited.` }))
-    setTimeout(() => setCampaignMsg((prev) => ({ ...prev, [id]: '' })), 4000)
-  }
-
-  async function generateReminders(id: number) {
-    const r = await campaignsApi.generateReminders(slug!, id)
-    setCampaignMsg((prev) => ({ ...prev, [id]: `${r.created} reminder email(s) added to review queue.` }))
-    setTimeout(() => setCampaignMsg((prev) => ({ ...prev, [id]: '' })), 4000)
-  }
-
-  async function handleFileImport(
-    id: number,
-    kind: 'progress' | 'results' | 'summary',
-    file: File,
-  ) {
-    let msg = ''
-    if (kind === 'progress') {
-      const r = await campaignsApi.importProgress(slug!, id, file)
-      msg = `Progress imported: ${r.updated} updated, ${r.skipped} skipped.`
-    } else if (kind === 'results') {
-      const r = await campaignsApi.importResults(slug!, id, file)
-      msg = `Results imported: ${r.imported} imported, ${r.unmatched} unmatched.`
-    } else {
-      await campaignsApi.importSummary(slug!, id, file)
-      msg = 'Findings summary imported.'
-      refetchCampaigns()
-    }
-    setCampaignMsg((prev) => ({ ...prev, [id]: msg }))
-    setTimeout(() => setCampaignMsg((prev) => ({ ...prev, [id]: '' })), 5000)
-  }
 
   return (
     <div className="p-6">
@@ -206,176 +151,21 @@ export default function Discovery() {
           {settings?.interview_method === 'agent' ? (
             <InterviewSessionsPanel slug={slug!} />
           ) : (
-          <>
-          <p className="text-gray-500 text-sm mb-6">
-            Link a ListenLabs campaign to each value stream. Export interview targets, import
-            results, and generate reminders.
-          </p>
-
-          {campaigns.length === 0 && (
-            <p className="text-gray-400 text-sm italic mb-3">No campaigns linked yet.</p>
-          )}
-
-          <div className="space-y-4">
-            {campaigns.map((camp) => (
-              <div key={camp.id} className="border border-gray-200 rounded-lg p-4 space-y-3">
-                {/* Campaign header row */}
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 grid grid-cols-2 gap-2">
-                    <input
-                      defaultValue={camp.campaign_name}
-                      onBlur={(e) => updateCampaignField(camp.id, { campaign_name: e.target.value })}
-                      placeholder="Campaign name"
-                      className="bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
-                    />
-                    <input
-                      defaultValue={camp.listenlabs_campaign_id}
-                      onBlur={(e) =>
-                        updateCampaignField(camp.id, { listenlabs_campaign_id: e.target.value })
-                      }
-                      placeholder="ListenLabs campaign ID"
-                      className="bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 font-mono outline-none focus:border-brand"
-                    />
-                    <input
-                      defaultValue={camp.value_stream_name}
-                      onBlur={(e) =>
-                        updateCampaignField(camp.id, { value_stream_name: e.target.value })
-                      }
-                      placeholder="Value stream name (must match discovery output)"
-                      className="col-span-2 bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
-                    />
-                    <input
-                      type="date"
-                      defaultValue={camp.interview_start ?? ''}
-                      onBlur={(e) =>
-                        updateCampaignField(camp.id, { interview_start: e.target.value || null })
-                      }
-                      className="bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
-                    />
-                    <input
-                      type="date"
-                      defaultValue={camp.interview_close ?? ''}
-                      onBlur={(e) =>
-                        updateCampaignField(camp.id, { interview_close: e.target.value || null })
-                      }
-                      className="bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
-                    />
-                  </div>
-                  <button
-                    onClick={() => deleteCampaign(camp.id)}
-                    className="text-gray-400 hover:text-red-400 text-xs px-2 py-1 flex-shrink-0"
-                  >
-                    Remove
-                  </button>
-                </div>
-
-                {/* Action buttons */}
-                <div className="flex flex-wrap gap-2">
-                  <a
-                    href={campaignsApi.exportTargets(slug!, camp.id)}
-                    download
-                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
-                  >
-                    Download Targets
-                  </a>
-                  <button
-                    onClick={() => markInvited(camp.id)}
-                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
-                  >
-                    Mark as Invited
-                  </button>
-
-                  {/* Hidden file inputs */}
-                  <input
-                    type="file"
-                    accept=".csv"
-                    className="hidden"
-                    ref={(el) => { progressInputRef.current[camp.id] = el }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0]
-                      if (f) handleFileImport(camp.id, 'progress', f)
-                      e.target.value = ''
-                    }}
-                  />
-                  <input
-                    type="file"
-                    accept=".csv,.json"
-                    className="hidden"
-                    ref={(el) => { resultsInputRef.current[camp.id] = el }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0]
-                      if (f) handleFileImport(camp.id, 'results', f)
-                      e.target.value = ''
-                    }}
-                  />
-                  <input
-                    type="file"
-                    accept=".txt,.json"
-                    className="hidden"
-                    ref={(el) => { summaryInputRef.current[camp.id] = el }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0]
-                      if (f) handleFileImport(camp.id, 'summary', f)
-                      e.target.value = ''
-                    }}
-                  />
-
-                  <button
-                    onClick={() => progressInputRef.current[camp.id]?.click()}
-                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
-                  >
-                    Import Progress
-                  </button>
-                  <button
-                    onClick={() => resultsInputRef.current[camp.id]?.click()}
-                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
-                  >
-                    Import Results
-                  </button>
-                  <button
-                    onClick={() => summaryInputRef.current[camp.id]?.click()}
-                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
-                  >
-                    Import Summary
-                  </button>
-                  <button
-                    onClick={() => generateReminders(camp.id)}
-                    className="text-xs px-3 py-1.5 bg-brand/10 hover:bg-brand/20 text-brand rounded border border-brand/30"
-                  >
-                    Generate Reminders
-                  </button>
-                </div>
-
-                {campaignMsg[camp.id] && (
-                  <p className="text-xs text-emerald-400">{campaignMsg[camp.id]}</p>
-                )}
-
-                {camp.findings_summary && (
-                  <div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">
-                      Findings Summary
-                    </p>
-                    <pre className="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-3 whitespace-pre-wrap max-h-40 overflow-y-auto">
-                      {camp.findings_summary}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          <button
-            onClick={createCampaign}
-            className="mt-3 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-400 rounded px-3 py-1.5"
-          >
-            + Link Campaign
-          </button>
-          </>
+            <div className="border border-gray-200 rounded-lg p-8 text-center">
+              <p className="text-sm font-semibold text-gray-700 mb-2">Interview phase not enabled</p>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Set <strong>Interview Method</strong> to <em>Agent interviews</em> in{' '}
+                <a href={`/dashboard/${slug}/settings`} className="text-brand hover:underline">
+                  Settings
+                </a>{' '}
+                to activate voice interviews for this project.
+              </p>
+            </div>
           )}
         </div>
       )}
 
-      {/* ── Layer Map tab (stub) ──────────────────────────────── */}
+      {/* ── Layer Map tab ──────────────────────────────────────── */}
       {activeTab === 'layer-map' && (
         <div className="max-w-3xl">
           <div className="border border-gray-200 rounded-lg p-8 text-center">

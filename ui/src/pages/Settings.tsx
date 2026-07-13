@@ -258,8 +258,7 @@ export default function Settings() {
             {(
               [
                 ['none', 'None — skip interview phase'],
-                ['agent', 'Agent interviews (platform conducts text-based interviews)'],
-                ['listenlabs', 'ListenLabs (external campaign via ListenLabs API)'],
+                ['agent', 'Agent interviews (platform conducts voice interviews)'],
               ] as [ProjectSettings['interview_method'], string][]
             ).map(([value, label]) => (
               <label key={value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">

@@ -170,7 +170,7 @@ async def export_targets_csv(slug: str, campaign_id: int) -> str | None:
             "email": s["email"],
             "country_code": s.get("country_code") or "",
             "value_stream": camp["value_stream_name"],
-            "campaign_id": camp["listenlabs_campaign_id"],
+            "campaign_id": str(camp["id"]),
         })
     return output.getvalue()
 

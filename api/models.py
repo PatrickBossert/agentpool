@@ -31,7 +31,7 @@ class ProjectSettings(BaseModel):
     discovery_brief: str = ""
     discovery_links: list[dict] = []
     discovery_document_ids: list[int] = []
-    interview_method: Literal["agent", "listenlabs", "none"] = "none"
+    interview_method: Literal["agent", "none"] = "none"
     brand_header_image_url: str = ""
     brand_primary_color: str = Field(default="#0d9488", pattern=r"^#[0-9a-fA-F]{3,8}$")
     brand_text_color: str = Field(default="#1f2937", pattern=r"^#[0-9a-fA-F]{3,8}$")

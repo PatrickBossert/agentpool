@@ -79,7 +79,7 @@ export interface ProjectSettings {
   discovery_brief: string
   discovery_links: DiscoveryLink[]
   discovery_document_ids: number[]
-  interview_method: 'agent' | 'listenlabs' | 'none'
+  interview_method: 'agent' | 'none'
   brand_header_image_url?: string
   brand_primary_color?: string
   brand_text_color?: string
@@ -212,7 +212,6 @@ export interface Campaign {
   id: number
   project_id: number
   value_stream_name: string
-  listenlabs_campaign_id: string
   campaign_name: string
   interview_start: string | null
   interview_close: string | null
@@ -358,7 +357,7 @@ export interface InterviewSession {
   node_label: string
   session_token: string
   status: string
-  voice_config: VoiceConfig
+  voice_config: VoiceConfig | null
 }
 
 export interface SessionSummary {
