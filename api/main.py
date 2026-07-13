@@ -16,6 +16,7 @@ from api.routers import assignment as assignment_router
 from api.routers import interviews as interviews_router
 from api.routers import templates as templates_router
 from api.routers import admin as admin_router
+from api.routers import agent_chat as agent_chat_router
 
 
 @asynccontextmanager
@@ -51,3 +52,4 @@ app.include_router(assignment_router.router)
 app.include_router(interviews_router.router)
 app.include_router(templates_router.router)
 app.include_router(admin_router.router)
+app.include_router(agent_chat_router.router)
