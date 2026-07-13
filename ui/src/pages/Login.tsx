@@ -40,7 +40,7 @@ export default function Login() {
         <h1 className="text-2xl font-bold text-brand-light mb-6">FutureMomentum</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="username" className="block text-sm font-medium text-slate-300 mb-1">
+            <label htmlFor="username" className="block text-sm font-medium text-gray-600 mb-1">
               Username
             </label>
             <input
@@ -48,12 +48,12 @@ export default function Login() {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-surface-raised border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-brand"
+              className="w-full bg-surface-raised border border-gray-200 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:border-brand"
               required
             />
           </div>
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-1">
+            <label htmlFor="password" className="block text-sm font-medium text-gray-600 mb-1">
               Password
             </label>
             <input
@@ -61,7 +61,7 @@ export default function Login() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-surface-raised border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-brand"
+              className="w-full bg-surface-raised border border-gray-200 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:border-brand"
               required
             />
           </div>

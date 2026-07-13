@@ -194,10 +194,10 @@ export default function ValueChain() {
 
   return (
     <div className="p-6">
-      <h2 className="text-lg font-semibold text-slate-100 mb-4">Value Chain</h2>
+      <h2 className="text-lg font-semibold text-gray-900 mb-4">Value Chain</h2>
 
       {/* Tab strip */}
-      <div className="flex border-b border-slate-700 mb-6">
+      <div className="flex border-b border-gray-200 mb-6">
         {(['setup', 'diagram', 'templates'] as const).map((tab) => (
           <button
             key={tab}
@@ -205,7 +205,7 @@ export default function ValueChain() {
             className={`px-4 py-2 text-sm capitalize border-b-2 transition-colors ${
               activeTab === tab
                 ? 'text-brand border-brand'
-                : 'text-slate-400 border-transparent hover:text-slate-200'
+                : 'text-gray-400 border-transparent hover:text-gray-700'
             }`}
           >
             {tab === 'setup' ? 'Setup' : tab === 'diagram' ? 'Diagram' : 'Templates'}
@@ -216,14 +216,14 @@ export default function ValueChain() {
       {/* ── Setup tab ─────────────────────────────────────────── */}
       {activeTab === 'setup' && (
         <div className="max-w-3xl">
-          <p className="text-slate-400 text-sm mb-8">
+          <p className="text-gray-500 text-sm mb-8">
             Configure what the Value Chain Mapper uses before it starts. Changes take effect on the next crew run.
           </p>
 
           {/* Research Brief */}
           <section className="mb-8">
-            <h3 className="text-sm font-medium text-slate-300 uppercase tracking-wide mb-2">Research Brief</h3>
-            <p className="text-slate-500 text-xs mb-3">
+            <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">Research Brief</h3>
+            <p className="text-gray-400 text-xs mb-3">
               Any context the crew should know before it starts — strategic priorities, scope constraints, what the client has flagged.
             </p>
             <textarea
@@ -231,26 +231,26 @@ export default function ValueChain() {
               onChange={(e) => setBrief(e.target.value)}
               rows={5}
               placeholder="e.g. The client operates primarily in passenger rail in the UK. Focus on operational efficiency and safety compliance themes."
-              className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-brand resize-y"
+              className="w-full bg-white border border-gray-200 rounded p-3 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-brand resize-y"
             />
           </section>
 
           {/* Research Links */}
           <section className="mb-8">
-            <h3 className="text-sm font-medium text-slate-300 uppercase tracking-wide mb-2">Research Links</h3>
-            <p className="text-slate-500 text-xs mb-3">
+            <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">Research Links</h3>
+            <p className="text-gray-400 text-xs mb-3">
               URLs the crew will fetch and read before analysis. Add industry bodies, regulatory sites, company pages, or reports.
             </p>
             {links.length > 0 && (
               <ul className="mb-3 space-y-1">
                 {links.map((link, i) => (
-                  <li key={i} className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-3 py-2">
+                  <li key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded px-3 py-2">
                     <span className="text-brand text-xs font-mono flex-1 truncate">{link.url}</span>
-                    {link.label && <span className="text-slate-400 text-xs">{link.label}</span>}
+                    {link.label && <span className="text-gray-500 text-xs">{link.label}</span>}
                     <button
                       type="button"
                       onClick={() => removeLink(i)}
-                      className="text-slate-500 hover:text-red-400 text-xs ml-2"
+                      className="text-gray-400 hover:text-red-400 text-xs ml-2"
                     >
                       Remove
                     </button>
@@ -264,14 +264,14 @@ export default function ValueChain() {
                 onChange={(e) => setNewUrl(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addLink()}
                 placeholder="https://..."
-                className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-brand"
+                className="flex-1 bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-brand"
               />
               <input
                 value={newLabel}
                 onChange={(e) => setNewLabel(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addLink()}
                 placeholder="Label (optional)"
-                className="w-40 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-brand"
+                className="w-40 bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-brand"
               />
               <button
                 type="button"
@@ -286,12 +286,12 @@ export default function ValueChain() {
 
           {/* Source Documents */}
           <section className="mb-8">
-            <h3 className="text-sm font-medium text-slate-300 uppercase tracking-wide mb-2">Source Documents</h3>
-            <p className="text-slate-500 text-xs mb-3">
+            <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">Source Documents</h3>
+            <p className="text-gray-400 text-xs mb-3">
               Select documents to prioritise. The crew will focus ChromaDB queries on these files.
             </p>
             {documents.length === 0 ? (
-              <p className="text-slate-500 text-sm italic">No documents uploaded yet. Upload documents on the Documents page.</p>
+              <p className="text-gray-400 text-sm italic">No documents uploaded yet. Upload documents on the Documents page.</p>
             ) : (
               <ul className="space-y-1">
                 {documents.map((doc) => (
@@ -303,9 +303,9 @@ export default function ValueChain() {
                       onChange={() => toggleDoc(doc.id)}
                       className="accent-brand"
                     />
-                    <label htmlFor={`doc-${doc.id}`} className="text-sm text-slate-300 cursor-pointer">
+                    <label htmlFor={`doc-${doc.id}`} className="text-sm text-gray-700 cursor-pointer">
                       {doc.original_name}
-                      <span className="text-slate-500 text-xs ml-2">
+                      <span className="text-gray-400 text-xs ml-2">
                         ({(doc.size_bytes / 1024).toFixed(0)} KB)
                       </span>
                     </label>
@@ -333,29 +333,29 @@ export default function ValueChain() {
       {/* ── Templates tab ─────────────────────────────────────── */}
       {activeTab === 'templates' && (
         <div>
-          <p className="text-slate-400 text-sm mb-6">
+          <p className="text-gray-500 text-sm mb-6">
             Assign interview and questionnaire templates to each value chain node. Changes save automatically.
           </p>
 
           {nodeAssignments.length === 0 ? (
             <div className="bg-surface-card rounded-xl p-8 text-center">
-              <p className="text-slate-400 text-sm">Run the Value Chain crew first to generate nodes.</p>
+              <p className="text-gray-400 text-sm">Run the Value Chain crew first to generate nodes.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700 text-left">
-                    <th className="pb-2 pr-4 text-slate-400 font-medium">Node</th>
-                    <th className="pb-2 pr-4 text-slate-400 font-medium">Interview Template</th>
-                    <th className="pb-2 pr-4 text-slate-400 font-medium">Questionnaire Template</th>
-                    <th className="pb-2 text-slate-400 font-medium">Publish</th>
+                  <tr className="border-b border-gray-200 text-left">
+                    <th className="pb-2 pr-4 text-gray-500 font-medium">Node</th>
+                    <th className="pb-2 pr-4 text-gray-500 font-medium">Interview Template</th>
+                    <th className="pb-2 pr-4 text-gray-500 font-medium">Questionnaire Template</th>
+                    <th className="pb-2 text-gray-500 font-medium">Publish</th>
                   </tr>
                 </thead>
                 <tbody>
                   {nodeAssignments.map((assignment) => (
-                    <tr key={assignment.node_label} className="border-b border-slate-800">
-                      <td className="py-3 pr-4 text-slate-200 font-medium">{assignment.node_label}</td>
+                    <tr key={assignment.node_label} className="border-b border-gray-200">
+                      <td className="py-3 pr-4 text-gray-900 font-medium">{assignment.node_label}</td>
                       <td className="py-3 pr-4">
                         <select
                           value={assignment.interview_template_id ?? ''}
@@ -366,7 +366,7 @@ export default function ValueChain() {
                               e.target.value ? Number(e.target.value) : null,
                             )
                           }
-                          className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 outline-none focus:border-brand w-full max-w-xs"
+                          className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900 outline-none focus:border-brand w-full max-w-xs"
                         >
                           <option value="">— None —</option>
                           {interviewTemplates.map((t) => (
@@ -386,7 +386,7 @@ export default function ValueChain() {
                               e.target.value ? Number(e.target.value) : null,
                             )
                           }
-                          className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 outline-none focus:border-brand w-full max-w-xs"
+                          className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900 outline-none focus:border-brand w-full max-w-xs"
                         >
                           <option value="">— None —</option>
                           {questionnaireTemplates.map((t) => (
@@ -400,7 +400,7 @@ export default function ValueChain() {
                         <button
                           type="button"
                           onClick={() => handlePublish(assignment.node_label)}
-                          className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded transition-colors"
+                          className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded transition-colors"
                         >
                           Publish
                         </button>
@@ -417,12 +417,12 @@ export default function ValueChain() {
       {/* ── Diagram tab ───────────────────────────────────────── */}
       {activeTab === 'diagram' && (
         <>
-          {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
+          {isLoading && <p className="text-sm text-gray-400">Loading…</p>}
 
           {!isLoading && outputs.length === 0 && (
             <div className="bg-surface-card rounded-xl p-8 text-center">
-              <p className="text-slate-400 text-sm">Awaiting Value Chain Mapper output.</p>
-              <p className="text-slate-600 text-xs mt-2">
+              <p className="text-gray-400 text-sm">Awaiting Value Chain Mapper output.</p>
+              <p className="text-gray-400 text-xs mt-2">
                 Run the Discovery crew to generate the value chain analysis.
               </p>
             </div>
@@ -431,9 +431,9 @@ export default function ValueChain() {
           {latest && (
             <div className="bg-surface-card rounded-xl p-4">
               <div className="flex justify-between items-center mb-4">
-                <span className="text-sm text-slate-200">{latest.agent_name}</span>
+                <span className="text-sm text-gray-900">{latest.agent_name}</span>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-gray-400">
                     v{latest.version} · {latest.review_status}
                   </span>
                   <button
@@ -445,13 +445,13 @@ export default function ValueChain() {
                         token!,
                       ).catch(console.error)
                     }
-                    className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+                    className="text-xs text-brand hover:text-brand-dark transition-colors"
                   >
                     ↓ Download
                   </button>
                 </div>
               </div>
-              {contentLoading && <p className="text-sm text-slate-500">Rendering diagram…</p>}
+              {contentLoading && <p className="text-sm text-gray-400">Rendering diagram…</p>}
               {contentError && !contentLoading && (
                 <p className="text-sm text-red-400">Failed to load diagram.</p>
               )}

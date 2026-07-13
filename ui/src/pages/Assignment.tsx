@@ -35,19 +35,19 @@ function TreeNode({
       <button
         onClick={() => { onSelect(key); if (hasChildren) setOpen((o) => !o) }}
         className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center gap-2 transition-colors ${
-          isSelected ? 'bg-teal-900/50 text-teal-200' : 'hover:bg-white/5 text-slate-300'
+          isSelected ? 'bg-brand/10 text-teal-700' : 'hover:bg-gray-50 text-gray-700'
         } ${count === 0 ? 'border-l-2 border-amber-500' : 'border-l-2 border-transparent'}`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
       >
-        <span className="w-3 text-slate-500 text-xs flex-shrink-0">
+        <span className="w-3 text-gray-400 text-xs flex-shrink-0">
           {hasChildren ? (open ? '▼' : '▶') : ''}
         </span>
         <span className="flex-1 text-left truncate">{node.label}</span>
         <span
           className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${
             count === 0
-              ? 'bg-amber-900/50 text-amber-400'
-              : 'bg-teal-900/50 text-teal-400'
+              ? 'bg-amber-100 text-amber-700'
+              : 'bg-brand/10 text-teal-700'
           }`}
         >
           {count}
@@ -177,14 +177,14 @@ export default function Assignment() {
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-100">Stakeholder Assignment</h2>
-        <span className="text-sm text-slate-400">
+        <h2 className="text-lg font-semibold text-gray-900">Stakeholder Assignment</h2>
+        <span className="text-sm text-gray-500">
           {assignedNodes} of {totalNodes} nodes assigned · {totalStakeholders} stakeholder
           {totalStakeholders !== 1 ? 's' : ''} assigned
         </span>
       </div>
 
-      {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
+      {isLoading && <p className="text-sm text-gray-400">Loading…</p>}
 
       {!isLoading && data && (
         <>
@@ -198,7 +198,7 @@ export default function Assignment() {
           <div className="flex gap-4 h-[calc(100vh-220px)]">
             {/* Left panel — value chain tree */}
             <div className="w-1/2 bg-surface-card rounded-xl overflow-y-auto p-3">
-              <p className="text-xs text-slate-500 uppercase tracking-wide mb-2 px-2">
+              <p className="text-xs text-gray-400 uppercase tracking-wide mb-2 px-2">
                 Value Chain
               </p>
               {data.value_chain_tree.map((node) => (
@@ -215,10 +215,10 @@ export default function Assignment() {
 
             {/* Right panel — stakeholder roster */}
             <div className="w-1/2 bg-surface-card rounded-xl overflow-y-auto p-3 flex flex-col gap-3">
-              <p className="text-xs text-slate-500 uppercase tracking-wide">
+              <p className="text-xs text-gray-400 uppercase tracking-wide">
                 Stakeholders
                 {selectedNode && (
-                  <span className="ml-2 text-teal-400 normal-case">
+                  <span className="ml-2 text-brand normal-case">
                     — assigning to: {selectedNode.split(':').slice(1).join(':')}
                   </span>
                 )}
@@ -228,7 +228,7 @@ export default function Assignment() {
                 placeholder="Search name, title, org…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-slate-800 text-slate-200 text-sm rounded-lg px-3 py-2 border border-slate-700 focus:outline-none focus:border-teal-500"
+                className="w-full bg-white text-gray-900 text-sm rounded-lg px-3 py-2 border border-gray-200 focus:outline-none focus:border-brand"
               />
               <div className="flex-1 overflow-y-auto space-y-1">
                 {filteredStakeholders.map((s) => {
@@ -241,19 +241,19 @@ export default function Assignment() {
                       disabled={!selectedNode}
                       className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-3 transition-colors ${
                         assigned
-                          ? 'bg-teal-900/40 text-teal-200'
+                          ? 'bg-brand/10 text-teal-700'
                           : selectedNode
-                          ? 'hover:bg-white/5 text-slate-300'
-                          : 'text-slate-500 cursor-default'
+                          ? 'hover:bg-gray-50 text-gray-700'
+                          : 'text-gray-400 cursor-default'
                       }`}
                     >
                       <span className="w-4 text-teal-400">{assigned ? '✓' : ''}</span>
                       <span className="flex-1 truncate font-medium">{s.name}</span>
-                      <span className="text-xs text-slate-500 truncate">
+                      <span className="text-xs text-gray-400 truncate">
                         {s.job_title} · {s.organisation}
                       </span>
                       {totalAssignments > 0 && (
-                        <span className="text-xs bg-teal-900/50 text-teal-400 px-1.5 py-0.5 rounded-full">
+                        <span className="text-xs bg-brand/10 text-teal-700 px-1.5 py-0.5 rounded-full">
                           {totalAssignments}
                         </span>
                       )}
@@ -261,7 +261,7 @@ export default function Assignment() {
                   )
                 })}
                 {filteredStakeholders.length === 0 && (
-                  <p className="text-sm text-slate-500 px-2">No stakeholders match.</p>
+                  <p className="text-sm text-gray-400 px-2">No stakeholders match.</p>
                 )}
               </div>
             </div>

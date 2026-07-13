@@ -25,7 +25,7 @@ function fmtPercent(v: number | null): string {
 function MetricCard({ label, value, colour }: { label: string; value: string; colour: string }) {
   return (
     <div className="bg-surface rounded-lg p-3">
-      <p className="text-xs text-slate-500 uppercase tracking-widest mb-1">{label}</p>
+      <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">{label}</p>
       <p className="text-xl font-bold" style={{ color: colour }}>
         {value}
       </p>
@@ -53,15 +53,15 @@ function OutputCard({ output, slug, token }: { output: AgentOutput; slug: string
           {ext}
         </span>
         <div>
-          <p className="text-sm text-slate-200 font-medium">{meta.label}</p>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-sm text-gray-900 font-medium">{meta.label}</p>
+          <p className="text-xs text-gray-400 mt-0.5">
             {output.agent_name} · v{output.version} · {output.review_status}
           </p>
         </div>
       </div>
       <button
         onClick={() => downloadOutput(slug, output.id, filename, token).catch(console.error)}
-        className="text-xs text-sky-400 hover:text-sky-300 border border-sky-900/40 rounded px-2.5 py-1.5 transition-colors"
+        className="text-xs text-brand hover:text-brand-dark border border-brand/20 rounded px-2.5 py-1.5 transition-colors"
       >
         ↓ Download
       </button>
@@ -95,11 +95,11 @@ export default function BusinessPlan() {
 
   return (
     <div className="p-6 space-y-6">
-      <h2 className="text-lg font-semibold text-slate-100">Business Plan</h2>
+      <h2 className="text-lg font-semibold text-gray-900">Business Plan</h2>
 
       {summary && (
         <section>
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
             Financial Summary
           </h3>
           <div className="grid grid-cols-3 gap-3">
@@ -130,11 +130,11 @@ export default function BusinessPlan() {
       )}
 
       <section>
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
           Outputs
         </h3>
         {!hasOutputs && (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-gray-400">
             Business plan outputs will appear here once the Business Plan Generator has run.
           </p>
         )}

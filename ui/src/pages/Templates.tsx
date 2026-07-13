@@ -19,7 +19,7 @@ function fmtDate(iso: string) {
 }
 
 const INPUT_CLS =
-  'w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-sky-600 placeholder:text-slate-600'
+  'w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand placeholder:text-gray-400'
 
 const BTN_SM = 'text-xs px-3 py-1.5 rounded transition-colors'
 
@@ -117,7 +117,7 @@ function InterviewSchemaBuilder({
       {/* welcome / closing */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-slate-400 block mb-1">Welcome Message</label>
+          <label className="text-xs text-gray-600 block mb-1">Welcome Message</label>
           <textarea
             value={schema.welcome_message}
             onChange={(e) => setField('welcome_message', e.target.value)}
@@ -126,7 +126,7 @@ function InterviewSchemaBuilder({
           />
         </div>
         <div>
-          <label className="text-xs text-slate-400 block mb-1">Closing Message</label>
+          <label className="text-xs text-gray-600 block mb-1">Closing Message</label>
           <textarea
             value={schema.closing_message}
             onChange={(e) => setField('closing_message', e.target.value)}
@@ -139,7 +139,7 @@ function InterviewSchemaBuilder({
       {/* sections */}
       <div className="space-y-4">
         {schema.sections.map((sec, si) => (
-          <div key={si} className="border border-slate-700 rounded p-3 space-y-3">
+          <div key={si} className="border border-gray-200 rounded p-3 space-y-3">
             <div className="flex items-center gap-2">
               <input
                 value={sec.title}
@@ -157,9 +157,9 @@ function InterviewSchemaBuilder({
             </div>
 
             {/* questions */}
-            <div className="space-y-3 pl-3 border-l border-slate-700">
+            <div className="space-y-3 pl-3 border-l border-gray-200">
               {sec.questions.map((q, qi) => (
-                <div key={qi} className="space-y-2 bg-slate-900/40 rounded p-2">
+                <div key={qi} className="space-y-2 bg-gray-50 rounded p-2">
                   <div className="flex items-start gap-2">
                     <div className="flex-1 space-y-2">
                       <input
@@ -203,14 +203,14 @@ function InterviewSchemaBuilder({
                         />
                       </div>
                       <div className="flex items-center gap-2">
-                        <label className="text-xs text-slate-400 shrink-0">Follow-up count</label>
+                        <label className="text-xs text-gray-600 shrink-0">Follow-up count</label>
                         <input
                           type="number"
                           min={0}
                           max={10}
                           value={q.follow_up_count}
                           onChange={(e) => updateQuestion(si, qi, 'follow_up_count', Number(e.target.value))}
-                          className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 outline-none focus:border-sky-600"
+                          className="w-20 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900 outline-none focus:border-brand"
                         />
                       </div>
                     </div>
@@ -227,7 +227,7 @@ function InterviewSchemaBuilder({
               <button
                 type="button"
                 onClick={() => addQuestion(si)}
-                className={`${BTN_SM} border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500`}
+                className={`${BTN_SM} border border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-400`}
               >
                 + Add Question
               </button>
@@ -237,7 +237,7 @@ function InterviewSchemaBuilder({
         <button
           type="button"
           onClick={addSection}
-          className={`${BTN_SM} border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500`}
+          className={`${BTN_SM} border border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-400`}
         >
           + Add Section
         </button>
@@ -301,10 +301,10 @@ function QuestionnaireSchemaBuilder({
     <div className="space-y-4">
       {/* Scale (read-only) */}
       <div>
-        <label className="text-xs text-slate-400 block mb-1">Scale (read-only)</label>
+        <label className="text-xs text-gray-600 block mb-1">Scale (read-only)</label>
         <div className="flex flex-wrap gap-2">
           {scaleEntries.map(([k, v]) => (
-            <span key={k} className="text-xs bg-slate-800 text-slate-300 rounded px-2 py-0.5">
+            <span key={k} className="text-xs bg-gray-100 text-gray-700 rounded px-2 py-0.5">
               {k} = {v}
             </span>
           ))}
@@ -314,13 +314,13 @@ function QuestionnaireSchemaBuilder({
       {/* sections */}
       <div className="space-y-4">
         {schema.sections.map((sec, si) => (
-          <div key={si} className="border border-slate-700 rounded p-3 space-y-3">
+          <div key={si} className="border border-gray-200 rounded p-3 space-y-3">
             <div className="flex items-center gap-2">
               <input
                 value={sec.id}
                 onChange={(e) => updateSectionField(si, 'id', e.target.value)}
                 placeholder="Section ID"
-                className="w-32 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-sky-600 font-mono"
+                className="w-32 bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand font-mono"
               />
               <input
                 value={sec.title}
@@ -344,14 +344,14 @@ function QuestionnaireSchemaBuilder({
             />
 
             {/* questions */}
-            <div className="space-y-2 pl-3 border-l border-slate-700">
+            <div className="space-y-2 pl-3 border-l border-gray-200">
               {sec.questions.map((q, qi) => (
                 <div key={qi} className="flex items-center gap-2">
                   <input
                     value={q.id}
                     onChange={(e) => updateQuestion(si, qi, 'id', e.target.value)}
                     placeholder="Q ID"
-                    className="w-24 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 outline-none focus:border-sky-600 font-mono"
+                    className="w-24 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900 outline-none focus:border-brand font-mono"
                   />
                   <input
                     value={q.text}
@@ -371,7 +371,7 @@ function QuestionnaireSchemaBuilder({
               <button
                 type="button"
                 onClick={() => addQuestion(si)}
-                className={`${BTN_SM} border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500`}
+                className={`${BTN_SM} border border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-400`}
               >
                 + Add Question
               </button>
@@ -381,7 +381,7 @@ function QuestionnaireSchemaBuilder({
         <button
           type="button"
           onClick={addSection}
-          className={`${BTN_SM} border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500`}
+          className={`${BTN_SM} border border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-400`}
         >
           + Add Section
         </button>
@@ -439,14 +439,14 @@ function TemplateModal({ type, initial, onClose, onSaved }: ModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-slate-850 bg-slate-900 border border-slate-700 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+      <div className="bg-white border border-gray-200 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
         {/* header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700 shrink-0">
-          <h3 className="text-sm font-semibold text-slate-100">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 shrink-0">
+          <h3 className="text-sm font-semibold text-gray-900">
             {initial ? 'Edit' : 'New'}{' '}
             {type === 'interview' ? 'Interview' : 'Questionnaire'} Template
           </h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-lg leading-none">
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg leading-none">
             ×
           </button>
         </div>
@@ -455,7 +455,7 @@ function TemplateModal({ type, initial, onClose, onSaved }: ModalProps) {
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Name *</label>
+              <label className="text-xs text-gray-600 block mb-1">Name *</label>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -464,7 +464,7 @@ function TemplateModal({ type, initial, onClose, onSaved }: ModalProps) {
               />
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Description</label>
+              <label className="text-xs text-gray-600 block mb-1">Description</label>
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -474,7 +474,7 @@ function TemplateModal({ type, initial, onClose, onSaved }: ModalProps) {
             </div>
           </div>
 
-          <div className="border-t border-slate-800 pt-4">
+          <div className="border-t border-gray-200 pt-4">
             {type === 'interview' ? (
               <InterviewSchemaBuilder schema={interviewSchema} onChange={setInterviewSchema} />
             ) : (
@@ -487,16 +487,16 @@ function TemplateModal({ type, initial, onClose, onSaved }: ModalProps) {
         </div>
 
         {/* footer */}
-        <div className="flex items-center justify-between px-5 py-3 border-t border-slate-700 shrink-0">
+        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 shrink-0">
           {error ? <p className="text-xs text-red-400">{error}</p> : <span />}
           <div className="flex gap-2">
-            <button onClick={onClose} className={`${BTN_SM} text-slate-400 hover:text-slate-200`}>
+            <button onClick={onClose} className={`${BTN_SM} text-gray-400 hover:text-gray-700`}>
               Cancel
             </button>
             <button
               onClick={handleSave}
               disabled={saving}
-              className={`${BTN_SM} bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white`}
+              className={`${BTN_SM} bg-brand hover:bg-brand-dark disabled:opacity-50 text-white`}
             >
               {saving ? 'Saving…' : 'Save Template'}
             </button>
@@ -520,16 +520,16 @@ function TemplateRow({
 }) {
   // question count based on list item — we don't have schema_json here so show —
   return (
-    <tr className="border-t border-slate-800 hover:bg-white/[0.02]">
+    <tr className="border-t border-gray-200 hover:bg-gray-50">
       <td className="px-4 py-2.5">
-        <p className="text-slate-200 text-sm font-medium">{item.name}</p>
-        {item.description && <p className="text-slate-500 text-xs mt-0.5">{item.description}</p>}
+        <p className="text-gray-900 text-sm font-medium">{item.name}</p>
+        {item.description && <p className="text-gray-400 text-xs mt-0.5">{item.description}</p>}
       </td>
-      <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDate(item.created_at)}</td>
-      <td className="px-3 py-2.5 text-xs text-slate-400 text-center">—</td>
+      <td className="px-3 py-2.5 text-xs text-gray-500">{fmtDate(item.created_at)}</td>
+      <td className="px-3 py-2.5 text-xs text-gray-500 text-center">—</td>
       <td className="px-3 py-2.5 text-right">
         <div className="flex items-center justify-end gap-3">
-          <button onClick={onEdit} className="text-xs text-sky-400 hover:text-sky-300 transition-colors">
+          <button onClick={onEdit} className="text-xs text-brand hover:text-brand-dark transition-colors">
             Edit
           </button>
           <button
@@ -566,22 +566,22 @@ function TemplateTab({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-gray-400">
           {items.length} template{items.length !== 1 ? 's' : ''}
         </p>
         <button
           onClick={onNew}
-          className="text-xs bg-sky-600 hover:bg-sky-500 text-white rounded px-3 py-1.5 transition-colors"
+          className="text-xs bg-brand hover:bg-brand-dark text-white rounded px-3 py-1.5 transition-colors"
         >
           + New Template
         </button>
       </div>
 
-      {loading && <p className="text-sm text-slate-500">Loading…</p>}
+      {loading && <p className="text-sm text-gray-400">Loading…</p>}
       {error && <p className="text-sm text-red-400">{error}</p>}
 
       {!loading && items.length === 0 && (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-gray-400">
           No {type === 'interview' ? 'interview' : 'questionnaire'} templates yet.
         </p>
       )}
@@ -590,10 +590,10 @@ function TemplateTab({
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
-              <tr className="bg-slate-900">
-                <th className="px-4 py-2 text-left text-xs text-slate-500 font-medium">Name</th>
-                <th className="px-3 py-2 text-left text-xs text-slate-500 font-medium">Created</th>
-                <th className="px-3 py-2 text-center text-xs text-slate-500 font-medium">Questions</th>
+              <tr className="bg-gray-50">
+                <th className="px-4 py-2 text-left text-xs text-gray-500 font-medium">Name</th>
+                <th className="px-3 py-2 text-left text-xs text-gray-500 font-medium">Created</th>
+                <th className="px-3 py-2 text-center text-xs text-gray-500 font-medium">Questions</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -688,18 +688,18 @@ export default function Templates() {
 
   return (
     <div className="p-6 space-y-6">
-      <h2 className="text-lg font-semibold text-slate-100">Templates</h2>
+      <h2 className="text-lg font-semibold text-gray-900">Templates</h2>
 
       {/* Tabs */}
-      <div className="flex gap-0 border-b border-slate-800">
+      <div className="flex gap-0 border-b border-gray-200">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={`text-sm px-4 py-2 border-b-2 transition-colors -mb-px ${
               activeTab === tab.key
-                ? 'border-sky-500 text-sky-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-brand text-brand'
+                : 'border-transparent text-gray-400 hover:text-gray-700'
             }`}
           >
             {tab.label}

@@ -42,8 +42,8 @@ export default function AdminDashboard() {
       <h1 className="text-xl font-bold text-primary mb-6">Admin Dashboard</h1>
 
       {/* Organisations panel */}
-      <div className="bg-surface-card rounded-lg border border-slate-800 mb-6">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+      <div className="bg-surface-card rounded-lg border border-gray-200 mb-6">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-primary">Organisations</h2>
           <button
             onClick={() => setShowOrgForm((v) => !v)}
@@ -54,15 +54,15 @@ export default function AdminDashboard() {
         </div>
 
         {showOrgForm && (
-          <div className="flex gap-2 px-4 py-3 border-b border-slate-800">
+          <div className="flex gap-2 px-4 py-3 border-b border-gray-200">
             <input
-              className="flex-1 bg-surface-raised border border-slate-700 rounded px-2 py-1 text-sm text-primary"
+              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
               placeholder="slug (e.g. acme)"
               value={newOrgSlug}
               onChange={(e) => setNewOrgSlug(e.target.value)}
             />
             <input
-              className="flex-1 bg-surface-raised border border-slate-700 rounded px-2 py-1 text-sm text-primary"
+              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
               placeholder="Name"
               value={newOrgName}
               onChange={(e) => setNewOrgName(e.target.value)}
@@ -82,7 +82,7 @@ export default function AdminDashboard() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-slate-800">
+              <tr className="text-xs text-muted border-b border-gray-200">
                 <th className="text-left px-4 py-2">Slug</th>
                 <th className="text-left px-4 py-2">Name</th>
                 <th className="text-left px-4 py-2">Created</th>
@@ -91,7 +91,7 @@ export default function AdminDashboard() {
             </thead>
             <tbody>
               {orgs.map((org) => (
-                <tr key={org.id} className="border-b border-slate-800 hover:bg-surface-raised">
+                <tr key={org.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 text-brand font-mono text-xs">{org.slug}</td>
                   <td className="px-4 py-2 text-primary">{org.name}</td>
                   <td className="px-4 py-2 text-muted text-xs">
@@ -121,8 +121,8 @@ export default function AdminDashboard() {
       </div>
 
       {/* Users panel */}
-      <div className="bg-surface-card rounded-lg border border-slate-800">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+      <div className="bg-surface-card rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-primary">Users</h2>
           <button
             onClick={() => navigate('/admin/users/new')}
@@ -137,7 +137,7 @@ export default function AdminDashboard() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-slate-800">
+              <tr className="text-xs text-muted border-b border-gray-200">
                 <th className="text-left px-4 py-2">Username</th>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Role</th>
@@ -147,7 +147,7 @@ export default function AdminDashboard() {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-b border-slate-800 hover:bg-surface-raised">
+                <tr key={u.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-primary">{u.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{u.email}</td>
                   <td className="px-4 py-2">
@@ -174,9 +174,9 @@ export default function AdminDashboard() {
 
 function RoleBadge({ role }: { role: string }) {
   const colours: Record<string, string> = {
-    sysadmin: 'bg-violet-900/50 text-violet-300',
-    org_admin: 'bg-teal-900/50 text-teal-300',
-    reviewer: 'bg-slate-800 text-slate-300',
+    sysadmin: 'bg-violet-100 text-violet-700',
+    org_admin: 'bg-brand/10 text-teal-700',
+    reviewer: 'bg-gray-100 text-gray-600',
   }
   return (
     <span className={`text-xs px-2 py-0.5 rounded-full ${colours[role] ?? colours.reviewer}`}>

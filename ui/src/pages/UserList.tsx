@@ -20,9 +20,9 @@ export default function UserList() {
 
   const roleBadge = (role: string) => {
     const colours: Record<string, string> = {
-      sysadmin: 'bg-violet-900/50 text-violet-300',
-      org_admin: 'bg-teal-900/50 text-teal-300',
-      reviewer: 'bg-slate-800 text-slate-300',
+      sysadmin: 'bg-violet-100 text-violet-700',
+      org_admin: 'bg-brand/10 text-teal-700',
+      reviewer: 'bg-gray-100 text-gray-600',
     }
     return (
       <span className={`text-xs px-2 py-0.5 rounded-full ${colours[role] ?? colours.reviewer}`}>
@@ -43,7 +43,7 @@ export default function UserList() {
         </button>
       </div>
 
-      <div className="bg-surface-card rounded-lg border border-slate-800">
+      <div className="bg-surface-card rounded-lg border border-gray-200">
         {isLoading ? (
           <p className="px-4 py-6 text-sm text-muted">Loading…</p>
         ) : users.length === 0 ? (
@@ -51,7 +51,7 @@ export default function UserList() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-slate-800">
+              <tr className="text-xs text-muted border-b border-gray-200">
                 <th className="text-left px-4 py-2">Username</th>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Role</th>
@@ -61,7 +61,7 @@ export default function UserList() {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-b border-slate-800 hover:bg-surface-raised">
+                <tr key={u.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-primary">{u.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{u.email || '—'}</td>
                   <td className="px-4 py-2">{roleBadge(u.role)}</td>

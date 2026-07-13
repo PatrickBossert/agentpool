@@ -28,21 +28,21 @@ export default function RunDetail() {
       <div className="flex items-center gap-3">
         <button
           onClick={() => navigate(`/${slug}`)}
-          className="text-sm text-slate-400 hover:text-slate-200"
+          className="text-sm text-gray-400 hover:text-gray-700"
         >
           ← Back to Dashboard
         </button>
-        <h2 className="text-lg font-semibold text-slate-100">Pipeline Run</h2>
+        <h2 className="text-lg font-semibold text-gray-900">Pipeline Run</h2>
         {orch && <StatusBadge status={orch.status} />}
       </div>
 
       {/* Crew progress */}
       <section>
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
           Crew Progress
         </h3>
         {!status?.crew_runs.length && (
-          <p className="text-sm text-slate-500">Waiting for crews to start…</p>
+          <p className="text-sm text-gray-400">Waiting for crews to start…</p>
         )}
         <div className="space-y-2">
           {status?.crew_runs.map((run) => (
@@ -50,7 +50,7 @@ export default function RunDetail() {
               key={run.id}
               className="flex items-center justify-between bg-surface-card rounded-lg px-4 py-3"
             >
-              <span className="text-sm text-slate-200">{run.crew_name}</span>
+              <span className="text-sm text-gray-700">{run.crew_name}</span>
               <StatusBadge status={run.status} />
             </div>
           ))}
@@ -60,7 +60,7 @@ export default function RunDetail() {
       {/* Live agent log */}
       {logs.length > 0 && (
         <section>
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
             Agent Log
           </h3>
           <div className="bg-black/40 rounded-lg p-4 font-mono text-xs text-emerald-400 space-y-0.5 max-h-64 overflow-y-auto">
@@ -76,8 +76,8 @@ export default function RunDetail() {
         <div
           className={`rounded-lg px-4 py-3 text-sm ${
             orch.status === 'completed'
-              ? 'bg-emerald-900/30 text-emerald-300'
-              : 'bg-red-900/30 text-red-300'
+              ? 'bg-emerald-50 text-emerald-700'
+              : 'bg-red-50 text-red-700'
           }`}
         >
           {orch.status === 'completed'

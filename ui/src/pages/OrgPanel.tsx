@@ -7,14 +7,14 @@ import type { OrgMember, ProjectRegistryEntry } from '../types'
 
 function RoleBadge({ role }: { role: string }) {
   const colours: Record<string, string> = {
-    sysadmin: 'bg-red-900/40 text-red-300',
-    org_admin: 'bg-amber-900/40 text-amber-300',
-    reviewer: 'bg-slate-700 text-slate-300',
-    member: 'bg-slate-700 text-slate-300',
+    sysadmin: 'bg-red-100 text-red-700',
+    org_admin: 'bg-amber-100 text-amber-700',
+    reviewer: 'bg-gray-100 text-gray-600',
+    member: 'bg-gray-100 text-gray-600',
   }
   return (
     <span
-      className={`inline-block text-xs font-mono px-1.5 py-0.5 rounded ${colours[role] ?? 'bg-slate-700 text-slate-300'}`}
+      className={`inline-block text-xs font-mono px-1.5 py-0.5 rounded ${colours[role] ?? 'bg-gray-100 text-gray-600'}`}
     >
       {role}
     </span>
@@ -70,7 +70,7 @@ export default function OrgPanel() {
           </button>
           <button
             onClick={() => navigate('/admin/users')}
-            className="text-xs border border-slate-700 text-secondary px-3 py-1.5 rounded hover:border-slate-500"
+            className="text-xs border border-gray-200 text-secondary px-3 py-1.5 rounded hover:border-gray-400"
           >
             Manage Users
           </button>
@@ -78,8 +78,8 @@ export default function OrgPanel() {
       </div>
 
       {/* Members */}
-      <div className="bg-surface-card rounded-lg border border-slate-800 mb-6">
-        <div className="px-4 py-3 border-b border-slate-800">
+      <div className="bg-surface-card rounded-lg border border-gray-200 mb-6">
+        <div className="px-4 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-primary">Members</h2>
         </div>
         {membersLoading ? (
@@ -89,7 +89,7 @@ export default function OrgPanel() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-slate-800">
+              <tr className="text-xs text-muted border-b border-gray-200">
                 <th className="text-left px-4 py-2">Username</th>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Role</th>
@@ -98,7 +98,7 @@ export default function OrgPanel() {
             </thead>
             <tbody>
               {members.map((m) => (
-                <tr key={m.id} className="border-b border-slate-800 hover:bg-surface-raised">
+                <tr key={m.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-primary">{m.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{m.email}</td>
                   <td className="px-4 py-2">
@@ -120,8 +120,8 @@ export default function OrgPanel() {
       </div>
 
       {/* Projects */}
-      <div className="bg-surface-card rounded-lg border border-slate-800">
-        <div className="px-4 py-3 border-b border-slate-800">
+      <div className="bg-surface-card rounded-lg border border-gray-200">
+        <div className="px-4 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-primary">Projects</h2>
         </div>
         {projectsLoading ? (
@@ -131,14 +131,14 @@ export default function OrgPanel() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-slate-800">
+              <tr className="text-xs text-muted border-b border-gray-200">
                 <th className="text-left px-4 py-2">Slug</th>
                 <th className="text-left px-4 py-2">Display Name</th>
               </tr>
             </thead>
             <tbody>
               {projects.map((p) => (
-                <tr key={p.id} className="border-b border-slate-800 hover:bg-surface-raised">
+                <tr key={p.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-brand">{p.slug}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{p.display_name}</td>
                 </tr>

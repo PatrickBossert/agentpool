@@ -45,7 +45,7 @@ export default function Documents() {
     <div className="p-6 space-y-8">
       {/* Upload */}
       <section>
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
           Upload Document
         </h3>
         <label
@@ -67,11 +67,11 @@ export default function Documents() {
 
       {/* Client docs */}
       <section>
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
           Source Documents
         </h3>
         {clientDocs.length === 0 ? (
-          <p className="text-sm text-slate-500">No documents uploaded yet.</p>
+          <p className="text-sm text-gray-400">No documents uploaded yet.</p>
         ) : (
           <div className="space-y-2">
             {clientDocs.map((doc) => (
@@ -80,13 +80,13 @@ export default function Documents() {
                 className="flex items-center justify-between bg-surface-card rounded-lg px-4 py-3"
               >
                 <div>
-                  <p className="text-sm font-medium text-slate-200">{doc.original_name}</p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-sm font-medium text-gray-900">{doc.original_name}</p>
+                  <p className="text-xs text-gray-400">
                     {formatBytes(doc.size_bytes)} · {doc.content_type}
                     {doc.ingested ? (
                       <span className="ml-2 text-emerald-400">✓ ingested</span>
                     ) : (
-                      <span className="ml-2 text-slate-600">pending ingestion</span>
+                      <span className="ml-2 text-gray-400">pending ingestion</span>
                     )}
                   </p>
                 </div>
@@ -98,11 +98,11 @@ export default function Documents() {
 
       {/* Agent outputs */}
       <section>
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
           Agent Outputs
         </h3>
         {agentOutputs.length === 0 ? (
-          <p className="text-sm text-slate-500">No agent outputs yet.</p>
+          <p className="text-sm text-gray-400">No agent outputs yet.</p>
         ) : (
           <div className="space-y-2">
             {agentOutputs.map((o) => (
@@ -111,12 +111,12 @@ export default function Documents() {
                 className="flex items-center justify-between bg-surface-card rounded-lg px-4 py-3"
               >
                 <div>
-                  <p className="text-sm font-medium text-slate-200">{o.agent_name}</p>
-                  <p className="text-xs text-slate-500">{o.output_type} · v{o.version} · {o.review_status}</p>
+                  <p className="text-sm font-medium text-gray-900">{o.agent_name}</p>
+                  <p className="text-xs text-gray-400">{o.output_type} · v{o.version} · {o.review_status}</p>
                 </div>
                 <button
                   onClick={() => downloadOutput(slug, o.id, o.file_path.split('/').pop() ?? o.output_type, token!).catch(console.error)}
-                  className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+                  className="text-xs text-brand hover:text-brand-dark transition-colors"
                 >
                   ↓ Download
                 </button>

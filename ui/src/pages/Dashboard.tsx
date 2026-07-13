@@ -49,7 +49,7 @@ export default function Dashboard() {
 
   if (!slug) {
     return (
-      <div className="p-8 text-slate-400">
+      <div className="p-8 text-gray-400">
         <p>Select a project from the sidebar to begin.</p>
       </div>
     )
@@ -73,11 +73,11 @@ export default function Dashboard() {
     <div className="p-6 space-y-6">
       {/* Project header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-100">{slug}</h2>
+        <h2 className="text-lg font-semibold text-gray-900">{slug}</h2>
         <div className="flex items-center gap-3">
           <button
             onClick={() => window.open(`/dashboard/${slug}/report`, '_blank')}
-            className="text-xs px-3 py-1.5 rounded bg-surface-card border border-slate-700 text-slate-300 hover:text-slate-100 hover:border-slate-500"
+            className="text-xs px-3 py-1.5 rounded bg-surface-card border border-gray-200 text-gray-600 hover:text-gray-900 hover:border-gray-400"
           >
             Export Report
           </button>
@@ -109,7 +109,7 @@ export default function Dashboard() {
 
       {/* Review queue */}
       <section>
-        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
           Review Queue
         </h3>
         <ReviewQueue slug={slug} outputs={outputs} />

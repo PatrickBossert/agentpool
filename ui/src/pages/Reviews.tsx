@@ -27,10 +27,10 @@ function ReviewCard({ review, slug }: { review: HumanReview; slug: string }) {
         <span className="rounded px-2 py-0.5 text-xs font-bold tracking-wide bg-amber-500/10 text-amber-400 uppercase">
           Pending
         </span>
-        <p className="text-xs text-slate-500 mt-1.5">Run #{review.crew_run_id}</p>
+        <p className="text-xs text-gray-400 mt-1.5">Run #{review.crew_run_id}</p>
       </div>
       <div className="px-4 pb-3">
-        <p className="text-sm text-slate-200 leading-relaxed bg-[#0f172a] rounded-md px-3 py-2.5 border border-slate-800 whitespace-pre-wrap">
+        <p className="text-sm text-gray-700 leading-relaxed bg-gray-50 rounded-md px-3 py-2.5 border border-gray-200 whitespace-pre-wrap">
           {review.prompt}
         </p>
       </div>
@@ -39,20 +39,20 @@ function ReviewCard({ review, slug }: { review: HumanReview; slug: string }) {
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Notes for the crew (optional) — your text is returned verbatim as the crew's input"
-          className="w-full bg-[#0f172a] border border-slate-700 rounded-md text-slate-300 text-sm px-3 py-2 resize-y min-h-[72px] placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+          className="w-full bg-white border border-gray-200 rounded-md text-gray-700 text-sm px-3 py-2 resize-y min-h-[72px] placeholder:text-gray-400 focus:outline-none focus:border-brand"
         />
         <div className="flex gap-2 justify-end">
           <button
             disabled={submitting}
             onClick={() => resolve('changes_requested')}
-            className="text-xs px-4 py-1.5 rounded-md bg-red-900/60 text-red-300 hover:bg-red-900 disabled:opacity-50 transition-colors"
+            className="text-xs px-4 py-1.5 rounded-md bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors"
           >
             Request Changes
           </button>
           <button
             disabled={submitting}
             onClick={() => resolve('approved')}
-            className="text-xs px-4 py-1.5 rounded-md bg-emerald-900/60 text-emerald-300 hover:bg-emerald-900 disabled:opacity-50 transition-colors"
+            className="text-xs px-4 py-1.5 rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors"
           >
             Approve
           </button>
@@ -92,20 +92,20 @@ function ReminderEmailCard({ item, slug }: { item: ReminderEmail; slug: string }
       </div>
       <div className="px-4 pb-2 space-y-2">
         <div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Subject</p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Subject</p>
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            className="w-full bg-[#0f172a] border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-slate-600"
+            className="w-full bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
           />
         </div>
         <div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Body</p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Body</p>
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={6}
-            className="w-full bg-[#0f172a] border border-slate-700 rounded-md text-slate-300 text-sm px-3 py-2 resize-y placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+            className="w-full bg-white border border-gray-200 rounded-md text-gray-700 text-sm px-3 py-2 resize-y placeholder:text-gray-400 focus:outline-none focus:border-brand"
           />
         </div>
       </div>
@@ -113,7 +113,7 @@ function ReminderEmailCard({ item, slug }: { item: ReminderEmail; slug: string }
         <button
           disabled={submitting}
           onClick={() => resolve('dismissed')}
-          className="text-xs px-4 py-1.5 rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 disabled:opacity-50 transition-colors"
+          className="text-xs px-4 py-1.5 rounded-md bg-gray-100 text-gray-500 hover:bg-gray-200 disabled:opacity-50 transition-colors"
         >
           Dismiss
         </button>
@@ -148,10 +148,10 @@ export default function Reviews() {
 
   return (
     <div className="p-6 space-y-6">
-      <h2 className="text-lg font-semibold text-slate-100">Reviews</h2>
-      {isLoading && <p className="text-sm text-slate-500">Loading...</p>}
+      <h2 className="text-lg font-semibold text-gray-900">Reviews</h2>
+      {isLoading && <p className="text-sm text-gray-400">Loading...</p>}
       {!isLoading && reviews.length === 0 && (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-gray-400">
           No pending reviews — the crew is running autonomously.
         </p>
       )}
@@ -162,7 +162,7 @@ export default function Reviews() {
       </div>
       {reminderEmails.length > 0 && (
         <>
-          <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-3">Reminder Emails</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mt-6 mb-3">Reminder Emails</h3>
           <div className="space-y-4">
             {reminderEmails.map((item) => (
               <ReminderEmailCard key={item.id} item={item} slug={slug!} />

@@ -50,13 +50,13 @@ export default function NewProjectModal({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-surface-raised border border-slate-700 rounded-xl p-6 w-80 space-y-4">
-        <h2 className="text-slate-100 font-semibold">New Project</h2>
+      <div className="bg-white border border-gray-200 rounded-xl p-6 w-80 space-y-4">
+        <h2 className="text-gray-900 font-semibold">New Project</h2>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Slug</label>
+            <label className="block text-xs text-gray-600 mb-1">Slug</label>
             <input
-              className="w-full bg-surface border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+              className="w-full bg-surface border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:border-brand"
               placeholder="acme-rail"
               value={slug}
               onChange={(e) => setSlug(e.target.value)}
@@ -64,9 +64,9 @@ export default function NewProjectModal({ onClose }: Props) {
             {errors.slug && <p className="text-xs text-red-400 mt-1">{errors.slug}</p>}
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Sector</label>
+            <label className="block text-xs text-gray-600 mb-1">Sector</label>
             <input
-              className="w-full bg-surface border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+              className="w-full bg-surface border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:border-brand"
               placeholder="logistics"
               value={sector}
               onChange={(e) => setSector(e.target.value)}
@@ -74,9 +74,9 @@ export default function NewProjectModal({ onClose }: Props) {
             {errors.sector && <p className="text-xs text-red-400 mt-1">{errors.sector}</p>}
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">LLM Mode</label>
+            <label className="block text-xs text-gray-600 mb-1">LLM Mode</label>
             <select
-              className="w-full bg-surface border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+              className="w-full bg-surface border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:border-brand"
               value={llmMode}
               onChange={(e) =>
                 setLlmMode(e.target.value as 'standard' | 'sensitive' | 'fallback')
@@ -92,14 +92,14 @@ export default function NewProjectModal({ onClose }: Props) {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 text-sm text-slate-400 hover:text-slate-200 py-1.5"
+              className="flex-1 text-sm text-gray-400 hover:text-gray-700 py-1.5"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="flex-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm rounded py-1.5"
+              className="flex-1 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm rounded py-1.5"
             >
               {submitting ? 'Creating…' : 'Create'}
             </button>

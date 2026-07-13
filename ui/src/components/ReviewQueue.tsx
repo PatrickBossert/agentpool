@@ -13,7 +13,7 @@ export default function ReviewQueue({ slug, outputs }: Props) {
   const pending = outputs.filter((o) => o.review_status === 'pending')
 
   if (pending.length === 0) {
-    return <p className="text-sm text-slate-500">No items pending review.</p>
+    return <p className="text-sm text-gray-400">No items pending review.</p>
   }
 
   async function decide(outputId: number, decision: string) {
@@ -29,8 +29,8 @@ export default function ReviewQueue({ slug, outputs }: Props) {
           className="flex items-center justify-between bg-surface-card rounded-lg px-4 py-3"
         >
           <div>
-            <p className="text-sm font-medium text-slate-200">{o.agent_name}</p>
-            <p className="text-xs text-slate-500">{o.output_type} · v{o.version}</p>
+            <p className="text-sm font-medium text-gray-900">{o.agent_name}</p>
+            <p className="text-xs text-gray-400">{o.output_type} · v{o.version}</p>
           </div>
           <div className="flex gap-2">
             <button

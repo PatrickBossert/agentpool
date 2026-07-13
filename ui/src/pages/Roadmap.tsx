@@ -54,8 +54,8 @@ export default function Roadmap() {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-slate-100">Roadmap</h2>
-        <div className="flex rounded-lg overflow-hidden border border-slate-700" role="tablist">
+        <h2 className="text-lg font-semibold text-gray-900">Roadmap</h2>
+        <div className="flex rounded-lg overflow-hidden border border-gray-200" role="tablist">
           {(['visual', 'gantt', 'register'] as Tab[]).map((t) => (
             <button
               key={t}
@@ -65,7 +65,7 @@ export default function Roadmap() {
               className={`px-4 py-1.5 text-sm capitalize transition-colors ${
                 tab === t
                   ? 'bg-brand text-white'
-                  : 'text-slate-400 hover:bg-slate-800'
+                  : 'text-gray-500 hover:bg-gray-100'
               }`}
             >
               {t}
@@ -74,14 +74,14 @@ export default function Roadmap() {
         </div>
       </div>
 
-      {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
+      {isLoading && <p className="text-sm text-gray-400">Loading…</p>}
 
       {!isLoading && outputs.length === 0 && tab === 'visual' && (
         <div className="bg-surface-card rounded-xl p-8 text-center">
-          <p className="text-slate-400 text-sm">
+          <p className="text-gray-500 text-sm">
             Awaiting Roadmap Generator output — visual timeline will appear here.
           </p>
-          <p className="text-slate-600 text-xs mt-2">
+          <p className="text-gray-400 text-xs mt-2">
             Run all Discovery, Value Design, and Architecture crews to generate roadmap data.
           </p>
         </div>
@@ -89,20 +89,20 @@ export default function Roadmap() {
 
       {latest && tab === 'visual' && (
         <div className="bg-surface-card rounded-xl overflow-hidden">
-          <div className="flex justify-between items-center px-4 py-3 border-b border-slate-800">
-            <span className="text-sm text-slate-200">{latest.agent_name}</span>
+          <div className="flex justify-between items-center px-4 py-3 border-b border-gray-200">
+            <span className="text-sm text-gray-900">{latest.agent_name}</span>
             <div className="flex items-center gap-3">
-              <span className="text-xs text-slate-500">v{latest.version} · {latest.review_status}</span>
+              <span className="text-xs text-gray-400">v{latest.version} · {latest.review_status}</span>
               <button
                 onClick={() => downloadOutput(slug!, latest.id, latest.file_path.split('/').pop() ?? latest.output_type, token!).catch(console.error)}
-                className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+                className="text-xs text-brand hover:text-brand-dark transition-colors"
               >
                 ↓ Download
               </button>
             </div>
           </div>
           {contentLoading && (
-            <p className="text-sm text-slate-500 p-4">Loading roadmap…</p>
+            <p className="text-sm text-gray-400 p-4">Loading roadmap…</p>
           )}
           {contentError && !contentLoading && (
             <p className="text-sm text-red-400 p-4">Failed to load roadmap.</p>
@@ -121,16 +121,16 @@ export default function Roadmap() {
       {tab === 'gantt' && (
         <div className="bg-surface-card rounded-xl overflow-hidden">
           {/* Controls row */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
             <div className="flex items-center gap-3">
-              <span className="text-xs text-slate-500 uppercase tracking-widest">Group by</span>
-              <div className="flex rounded-lg overflow-hidden border border-slate-700">
+              <span className="text-xs text-gray-400 uppercase tracking-widest">Group by</span>
+              <div className="flex rounded-lg overflow-hidden border border-gray-200">
                 {(['category', 'value_stream'] as GroupBy[]).map((g) => (
                   <button
                     key={g}
                     onClick={() => setGroupBy(g)}
                     className={`px-3 py-1 text-xs capitalize transition-colors ${
-                      groupBy === g ? 'bg-brand text-white' : 'text-slate-400 hover:bg-slate-800'
+                      groupBy === g ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
                     }`}
                   >
                     {g === 'value_stream' ? 'Value Stream' : 'Category'}
@@ -140,7 +140,7 @@ export default function Roadmap() {
             </div>
             {roadmapDataOutput && (
               <div className="flex items-center gap-3">
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-gray-400">
                   {roadmapDataOutput.agent_name} · v{roadmapDataOutput.version}
                 </span>
                 <button
@@ -152,7 +152,7 @@ export default function Roadmap() {
                       token!,
                     ).catch(console.error)
                   }
-                  className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+                  className="text-xs text-brand hover:text-brand-dark transition-colors"
                 >
                   ↓ Download JSON
                 </button>
@@ -162,7 +162,7 @@ export default function Roadmap() {
 
           {/* Empty state */}
           {!roadmapData && (
-            <p className="text-sm text-slate-500 p-4">
+            <p className="text-sm text-gray-400 p-4">
               Gantt chart will appear here once initiatives are identified.
             </p>
           )}
@@ -175,15 +175,15 @@ export default function Roadmap() {
       {tab === 'register' && (
         <div className="bg-surface-card rounded-xl overflow-hidden">
           {/* Controls row — same Group By toggle as Gantt */}
-          <div className="flex items-center px-4 py-3 border-b border-slate-800">
-            <span className="text-xs text-slate-500 uppercase tracking-widest">Group by</span>
-            <div className="flex rounded-lg overflow-hidden border border-slate-700 ml-3">
+          <div className="flex items-center px-4 py-3 border-b border-gray-200">
+            <span className="text-xs text-gray-400 uppercase tracking-widest">Group by</span>
+            <div className="flex rounded-lg overflow-hidden border border-gray-200 ml-3">
               {(['category', 'value_stream'] as GroupBy[]).map((g) => (
                 <button
                   key={g}
                   onClick={() => setGroupBy(g)}
                   className={`px-3 py-1 text-xs capitalize transition-colors ${
-                    groupBy === g ? 'bg-brand text-white' : 'text-slate-400 hover:bg-slate-800'
+                    groupBy === g ? 'bg-brand text-white' : 'text-gray-500 hover:bg-gray-100'
                   }`}
                 >
                   {g === 'value_stream' ? 'Value Stream' : 'Category'}
@@ -194,7 +194,7 @@ export default function Roadmap() {
 
           {/* Empty state */}
           {!roadmapData && (
-            <p className="text-sm text-slate-500 p-4">
+            <p className="text-sm text-gray-400 p-4">
               Initiative register will appear here once initiatives are identified.
             </p>
           )}
@@ -217,12 +217,12 @@ function GanttTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) 
     <div className="overflow-x-auto">
       <table className="w-full text-xs border-collapse">
         <thead>
-          <tr className="bg-slate-900">
-            <th className="px-4 py-2 text-left text-slate-500 font-medium min-w-[180px]">
+          <tr className="bg-gray-50">
+            <th className="px-4 py-2 text-left text-gray-500 font-medium min-w-[180px]">
               Initiative
             </th>
             {data.periods.map((p) => (
-              <th key={p} className="px-3 py-2 text-center text-slate-500 font-medium min-w-[90px]">
+              <th key={p} className="px-3 py-2 text-center text-gray-500 font-medium min-w-[90px]">
                 {p}
               </th>
             ))}
@@ -238,7 +238,7 @@ function GanttTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) 
               groupBy === 'category' ? (CATEGORY_COLOURS[group] ?? '#9ca3af') : '#6366f1'
             return (
               <Fragment key={group}>
-                <tr className="bg-slate-900/60 border-t-2 border-slate-800">
+                <tr className="bg-gray-50 border-t-2 border-gray-200">
                   <td
                     colSpan={data.periods.length + 1}
                     className="px-4 py-1.5 text-xs font-semibold uppercase tracking-widest"
@@ -248,14 +248,14 @@ function GanttTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) 
                   </td>
                 </tr>
                 {members.map((initiative: Initiative) => (
-                  <tr key={initiative.title} className="border-t border-slate-800">
-                    <td className="px-4 py-2 text-slate-300">{initiative.title}</td>
+                  <tr key={initiative.title} className="border-t border-gray-200">
+                    <td className="px-4 py-2 text-gray-700">{initiative.title}</td>
                     {data.periods.map((p) => {
                       const active = initiative.period === p
                       return (
                         <td
                           key={p}
-                          className="px-1.5 py-1 border-l border-slate-800 text-center"
+                          className="px-1.5 py-1 border-l border-gray-200 text-center"
                           style={{ background: active ? `${colour}10` : undefined }}
                         >
                           {active && (
@@ -294,18 +294,18 @@ function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy 
     <div className="overflow-x-auto">
       <table className="w-full text-xs border-collapse">
         <thead>
-          <tr className="bg-slate-900">
-            <th className="px-4 py-2 text-left text-slate-500 font-medium min-w-[200px]">
+          <tr className="bg-gray-50">
+            <th className="px-4 py-2 text-left text-gray-500 font-medium min-w-[200px]">
               Initiative
             </th>
             {groupBy === 'value_stream' && (
-              <th className="px-3 py-2 text-left text-slate-500 font-medium">Category</th>
+              <th className="px-3 py-2 text-left text-gray-500 font-medium">Category</th>
             )}
-            <th className="px-3 py-2 text-left text-slate-500 font-medium">Value Streams</th>
-            <th className="px-3 py-2 text-center text-slate-500 font-medium min-w-[90px]">
+            <th className="px-3 py-2 text-left text-gray-500 font-medium">Value Streams</th>
+            <th className="px-3 py-2 text-center text-gray-500 font-medium min-w-[90px]">
               Period
             </th>
-            <th className="px-3 py-2 text-center text-slate-500 font-medium min-w-[80px]">
+            <th className="px-3 py-2 text-center text-gray-500 font-medium min-w-[80px]">
               Complexity
             </th>
           </tr>
@@ -324,7 +324,7 @@ function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy 
 
             return (
               <Fragment key={group}>
-                <tr className="bg-slate-900/60 border-t-2 border-slate-800">
+                <tr className="bg-gray-50 border-t-2 border-gray-200">
                   <td
                     colSpan={columnCount}
                     className="px-4 py-1.5 text-xs font-semibold uppercase tracking-widest"
@@ -336,9 +336,9 @@ function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy 
                 {members.map((initiative: Initiative) => (
                   <tr
                     key={`${group}-${initiative.title}`}
-                    className="border-t border-slate-800"
+                    className="border-t border-gray-200"
                   >
-                    <td className="px-4 py-2 text-slate-300">{initiative.title}</td>
+                    <td className="px-4 py-2 text-gray-700">{initiative.title}</td>
                     {groupBy === 'value_stream' && (
                       <td className="px-3 py-2">
                         <span
@@ -352,10 +352,10 @@ function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy 
                         </span>
                       </td>
                     )}
-                    <td className="px-3 py-2 text-slate-400">
+                    <td className="px-3 py-2 text-gray-500">
                       {(initiative.value_streams ?? []).join(', ')}
                     </td>
-                    <td className="px-3 py-2 text-center text-slate-400">{initiative.period}</td>
+                    <td className="px-3 py-2 text-center text-gray-500">{initiative.period}</td>
                     <td className="px-3 py-2 text-center">
                       <span
                         className="rounded px-2 py-0.5 text-xs font-bold text-white"

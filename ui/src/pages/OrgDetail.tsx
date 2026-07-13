@@ -103,7 +103,7 @@ export default function OrgDetail() {
       {showEditOrg && (
         <div className="flex gap-2 mb-6">
           <input
-            className="flex-1 bg-surface-raised border border-slate-700 rounded px-2 py-1 text-sm text-primary"
+            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
             value={editName}
             onChange={(e) => setEditName(e.target.value)}
           />
@@ -118,14 +118,14 @@ export default function OrgDetail() {
       )}
 
       {/* Members */}
-      <div className="bg-surface-card rounded-lg border border-slate-800 mb-6">
-        <div className="px-4 py-3 border-b border-slate-800">
+      <div className="bg-surface-card rounded-lg border border-gray-200 mb-6">
+        <div className="px-4 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-primary">Members</h2>
         </div>
 
-        <div className="flex gap-2 px-4 py-3 border-b border-slate-800">
+        <div className="flex gap-2 px-4 py-3 border-b border-gray-200">
           <select
-            className="flex-1 bg-surface-raised border border-slate-700 rounded px-2 py-1 text-sm text-primary"
+            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
             value={addUserId}
             onChange={(e) => setAddUserId(e.target.value)}
           >
@@ -135,7 +135,7 @@ export default function OrgDetail() {
             ))}
           </select>
           <select
-            className="bg-surface-raised border border-slate-700 rounded px-2 py-1 text-sm text-primary"
+            className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
             value={addRole}
             onChange={(e) => setAddRole(e.target.value)}
           >
@@ -156,7 +156,7 @@ export default function OrgDetail() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-slate-800">
+              <tr className="text-xs text-muted border-b border-gray-200">
                 <th className="text-left px-4 py-2">Username</th>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Org Role</th>
@@ -165,12 +165,12 @@ export default function OrgDetail() {
             </thead>
             <tbody>
               {members.map((m) => (
-                <tr key={m.id} className="border-b border-slate-800 hover:bg-surface-raised">
+                <tr key={m.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-primary">{m.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{m.email}</td>
                   <td className="px-4 py-2">
                     <select
-                      className="bg-transparent text-xs text-secondary border border-slate-700 rounded px-1"
+                      className="bg-transparent text-xs text-secondary border border-gray-200 rounded px-1"
                       value={m.org_role}
                       onChange={(e) =>
                         updateRoleMut.mutate({ userId: m.id, role: e.target.value })
@@ -199,19 +199,19 @@ export default function OrgDetail() {
       </div>
 
       {/* Linked projects */}
-      <div className="bg-surface-card rounded-lg border border-slate-800">
-        <div className="px-4 py-3 border-b border-slate-800">
+      <div className="bg-surface-card rounded-lg border border-gray-200">
+        <div className="px-4 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-primary">Linked Projects</h2>
         </div>
-        <div className="flex gap-2 px-4 py-3 border-b border-slate-800">
+        <div className="flex gap-2 px-4 py-3 border-b border-gray-200">
           <input
-            className="flex-1 bg-surface-raised border border-slate-700 rounded px-2 py-1 text-sm text-primary"
+            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
             placeholder="project-slug"
             value={regSlug}
             onChange={(e) => setRegSlug(e.target.value)}
           />
           <input
-            className="flex-1 bg-surface-raised border border-slate-700 rounded px-2 py-1 text-sm text-primary"
+            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
             placeholder="Display name (optional)"
             value={regName}
             onChange={(e) => setRegName(e.target.value)}
@@ -229,7 +229,7 @@ export default function OrgDetail() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-slate-800">
+              <tr className="text-xs text-muted border-b border-gray-200">
                 <th className="text-left px-4 py-2">Slug</th>
                 <th className="text-left px-4 py-2">Display Name</th>
                 <th className="px-4 py-2" />
@@ -237,7 +237,7 @@ export default function OrgDetail() {
             </thead>
             <tbody>
               {projects.map((p) => (
-                <tr key={p.id} className="border-b border-slate-800 hover:bg-surface-raised">
+                <tr key={p.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-brand">{p.slug}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{p.display_name}</td>
                   <td className="px-4 py-2 text-right">

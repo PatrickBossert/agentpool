@@ -113,7 +113,7 @@ export default function UserForm() {
         <div>
           <label className="text-xs text-muted block mb-1">Username</label>
           <input
-            className="w-full bg-surface-raised border border-slate-700 rounded px-3 py-2 text-sm text-primary"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             disabled={isEdit}
@@ -125,7 +125,7 @@ export default function UserForm() {
           <label className="text-xs text-muted block mb-1">Email</label>
           <input
             type="email"
-            className="w-full bg-surface-raised border border-slate-700 rounded px-3 py-2 text-sm text-primary"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -138,7 +138,7 @@ export default function UserForm() {
           </label>
           <input
             type="password"
-            className="w-full bg-surface-raised border border-slate-700 rounded px-3 py-2 text-sm text-primary"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required={!isEdit}
@@ -148,7 +148,7 @@ export default function UserForm() {
         <div>
           <label className="text-xs text-muted block mb-1">Role</label>
           <select
-            className="w-full bg-surface-raised border border-slate-700 rounded px-3 py-2 text-sm text-primary"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
             value={role}
             onChange={(e) => setRole(e.target.value)}
           >
@@ -162,7 +162,7 @@ export default function UserForm() {
           <div>
             <label className="text-xs text-muted block mb-1">Organisation (optional)</label>
             <select
-              className="w-full bg-surface-raised border border-slate-700 rounded px-3 py-2 text-sm text-primary"
+              className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
               value={orgId}
               onChange={(e) => setOrgId(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
             >
@@ -189,7 +189,7 @@ export default function UserForm() {
           <h2 className="text-sm font-semibold text-primary mb-3">Project Access</h2>
           <div className="flex gap-2 mb-3">
             <input
-              className="flex-1 bg-surface-raised border border-slate-700 rounded px-2 py-1 text-sm text-primary"
+              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
               placeholder="project-slug"
               value={grantSlug}
               onChange={(e) => setGrantSlug(e.target.value)}

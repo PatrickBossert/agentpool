@@ -118,7 +118,7 @@ export default function AppLayout() {
                 onClick={() => navigate(`/${p.slug}`)}
                 className={`flex-1 text-left text-sm px-2 py-1.5 rounded-lg transition-colors ${
                   slug === p.slug
-                    ? 'bg-teal-50 text-teal-700 font-medium'
+                    ? 'bg-brand/10 text-teal-700 font-medium'
                     : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                 }`}
               >

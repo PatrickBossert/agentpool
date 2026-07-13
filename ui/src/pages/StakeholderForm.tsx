@@ -32,7 +32,7 @@ const EMPTY: FormData = {
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4 mt-6 first:mt-0">
+    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 mt-6 first:mt-0">
       {children}
     </h3>
   )
@@ -41,13 +41,13 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-xs text-slate-400 block mb-1">{label}</label>
+      <label className="text-xs text-gray-500 block mb-1">{label}</label>
       {children}
     </div>
   )
 }
 
-const INPUT = 'w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-sky-600'
+const INPUT = 'w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand'
 const SELECT = `${INPUT} cursor-pointer`
 
 function MultiCheckbox({
@@ -66,20 +66,20 @@ function MultiCheckbox({
   }
   return (
     <div>
-      <label className="text-xs text-slate-400 block mb-2">{label}</label>
+      <label className="text-xs text-gray-500 block mb-2">{label}</label>
       {options.length === 0 ? (
-        <p className="text-xs text-slate-600">
+        <p className="text-xs text-gray-400">
           None configured — add them in Settings first.
         </p>
       ) : (
         <div className="flex flex-wrap gap-x-6 gap-y-1.5">
           {options.map((opt) => (
-            <label key={opt} className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+            <label key={opt} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
               <input
                 type="checkbox"
                 checked={value.includes(opt)}
                 onChange={() => toggle(opt)}
-                className="accent-sky-500"
+                className="accent-brand"
               />
               {opt}
             </label>
@@ -166,11 +166,11 @@ export default function StakeholderForm() {
       <div className="mb-6">
         <button
           onClick={() => navigate(`/${slug}/stakeholders`)}
-          className="text-sm text-slate-400 hover:text-slate-200 mb-2 block"
+          className="text-sm text-gray-400 hover:text-gray-700 mb-2 block"
         >
           ← Back to Stakeholders
         </button>
-        <h2 className="text-lg font-semibold text-slate-100">
+        <h2 className="text-lg font-semibold text-gray-900">
           {isEdit ? 'Edit Stakeholder' : 'Add Stakeholder'}
         </h2>
       </div>
@@ -273,16 +273,16 @@ export default function StakeholderForm() {
       </div>
 
       {/* Footer */}
-      <div className="mt-8 border-t border-slate-800 pt-4 flex items-center justify-between">
+      <div className="mt-8 border-t border-gray-200 pt-4 flex items-center justify-between">
         {error ? <p className="text-sm text-red-400">{error}</p> : <span />}
         <div className="flex gap-3">
-          <button onClick={() => navigate(`/${slug}/stakeholders`)} className="text-sm text-slate-400 hover:text-slate-200 px-3 py-1.5">
+          <button onClick={() => navigate(`/${slug}/stakeholders`)} className="text-sm text-gray-400 hover:text-gray-700 px-3 py-1.5">
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm rounded"
+            className="px-4 py-1.5 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm rounded"
           >
             {saving ? 'Saving…' : 'Save Stakeholder'}
           </button>

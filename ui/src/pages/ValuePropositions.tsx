@@ -78,7 +78,7 @@ function radarData(item: PortfolioItem) {
 function valueEstimateColour(v: string) {
   if (v === 'High') return 'text-brand-green'
   if (v === 'Medium') return 'text-amber-400'
-  return 'text-slate-400'
+  return 'text-gray-400'
 }
 
 export default function ValuePropositions() {
@@ -99,20 +99,20 @@ export default function ValuePropositions() {
   if (isLoading) {
     return (
       <div className="p-6">
-        <p className="text-sm text-slate-500">Loading…</p>
+        <p className="text-sm text-gray-400">Loading…</p>
       </div>
     )
   }
 
   return (
     <div className="p-6">
-      <h2 className="text-lg font-semibold text-slate-100 mb-1">Value Propositions</h2>
-      <p className="text-slate-400 text-sm mb-6">Scored and ranked by the Portfolio Manager agent.</p>
+      <h2 className="text-lg font-semibold text-gray-900 mb-1">Value Propositions</h2>
+      <p className="text-gray-500 text-sm mb-6">Scored and ranked by the Portfolio Manager agent.</p>
 
       {items.length === 0 ? (
         <div className="bg-surface-card rounded-xl p-8 text-center max-w-lg">
-          <p className="text-slate-300 text-sm font-medium mb-2">No value propositions yet</p>
-          <p className="text-slate-500 text-xs leading-relaxed mb-4">
+          <p className="text-gray-700 text-sm font-medium mb-2">No value propositions yet</p>
+          <p className="text-gray-400 text-xs leading-relaxed mb-4">
             The Portfolio Manager agent scores and ranks propositions after the Value Design crew
             completes. Run the pipeline from the Dashboard.
           </p>
@@ -127,7 +127,7 @@ export default function ValuePropositions() {
         <div className="bg-surface-card rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-700 text-xs text-slate-500 uppercase tracking-wide">
+              <tr className="border-b border-gray-200 text-xs text-gray-500 uppercase tracking-wide">
                 <th className="text-left px-4 py-3 w-10">#</th>
                 <th className="text-left px-4 py-3 w-16">ID</th>
                 <th className="text-left px-4 py-3">Title</th>
@@ -140,11 +140,11 @@ export default function ValuePropositions() {
                 <Fragment key={item.id}>
                   <tr
                     onClick={() => toggleRow(item.id)}
-                    className="border-b border-slate-800 hover:bg-slate-800/40 cursor-pointer transition-colors"
+                    className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
                   >
-                    <td className="px-4 py-3 text-slate-500">{item.rank}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-400">{item.id}</td>
-                    <td className="px-4 py-3 text-slate-200 font-medium">{item.title}</td>
+                    <td className="px-4 py-3 text-gray-400">{item.rank}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{item.id}</td>
+                    <td className="px-4 py-3 text-gray-900 font-medium">{item.title}</td>
                     <td className={`px-4 py-3 text-xs font-semibold ${valueEstimateColour(item.value_estimate)}`}>
                       {item.value_estimate}
                     </td>
@@ -153,13 +153,13 @@ export default function ValuePropositions() {
                     </td>
                   </tr>
                   {expandedId === item.id && (
-                    <tr key={`${item.id}-detail`} className="border-b border-slate-800 bg-slate-900/40">
+                    <tr key={`${item.id}-detail`} className="border-b border-gray-200 bg-gray-50">
                       <td colSpan={5} className="px-6 py-4">
-                        <p className="text-sm text-slate-300 leading-relaxed mb-4">
+                        <p className="text-sm text-gray-700 leading-relaxed mb-4">
                           {item.change_articulation}
                         </p>
-                        <p className="text-xs text-slate-500 mb-4">
-                          <span className="font-semibold text-slate-400">Stakeholders: </span>
+                        <p className="text-xs text-gray-500 mb-4">
+                          <span className="font-semibold text-gray-600">Stakeholders: </span>
                           {item.impacted_stakeholder_groups.join(', ')}
                         </p>
                         <div className="flex gap-6">
@@ -193,20 +193,20 @@ export default function ValuePropositions() {
                           <div className="flex-1 space-y-2">
                             {DIMENSIONS.map(({ key, label }) => (
                               <div key={key} className="flex gap-2 text-xs">
-                                <span className="w-24 shrink-0 font-semibold text-slate-400">
+                                <span className="w-24 shrink-0 font-semibold text-gray-600">
                                   {label}
                                 </span>
                                 <span className="w-8 shrink-0 text-center font-mono text-brand">
                                   {getScore(item, key).toFixed(1)}
                                 </span>
-                                <span className="text-slate-500 leading-relaxed">
+                                <span className="text-gray-500 leading-relaxed">
                                   ({getUnit(item, key)}) — {getRationale(item, key)}
                                 </span>
                               </div>
                             ))}
                           </div>
                         </div>
-                        <p className="text-xs text-slate-600 mt-4">
+                        <p className="text-xs text-gray-400 mt-4">
                           Weights — Financial ×{item.weights_used.financial}, Natural ×{item.weights_used.natural}, Safety ×{item.weights_used.safety}, Performance ×{item.weights_used.performance}, Manufactured ×{item.weights_used.manufactured}, Intellectual ×{item.weights_used.intellectual}, Human ×{item.weights_used.human}, Social ×{item.weights_used.social_relationship}
                         </p>
                       </td>

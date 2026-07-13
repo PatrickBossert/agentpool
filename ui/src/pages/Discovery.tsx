@@ -11,7 +11,7 @@ const STATUS_CLASSES: Record<InterviewSessionStatus['status'], string> = {
   pending:   'bg-gray-100 text-gray-700',
   active:    'bg-amber-100 text-amber-700',
   completed: 'bg-teal-100 text-teal-700',
-  abandoned: 'bg-slate-100 text-slate-500',
+  abandoned: 'bg-gray-100 text-gray-400',
 }
 
 function InterviewSessionsPanel({ slug }: { slug: string }) {
@@ -40,7 +40,7 @@ function InterviewSessionsPanel({ slug }: { slug: string }) {
     setTimeout(() => setCopiedToken(null), 1500)
   }
 
-  if (isLoading) return <p className="text-sm text-slate-400 py-4">Loading sessions…</p>
+  if (isLoading) return <p className="text-sm text-gray-400 py-4">Loading sessions…</p>
 
   const sessions = data?.sessions ?? []
   const summary = data?.summary
@@ -62,19 +62,19 @@ function InterviewSessionsPanel({ slug }: { slug: string }) {
         <p className="text-sm text-gray-500 py-4">No interview sessions found for the latest pipeline run.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-slate-300">
+          <table className="w-full text-xs text-gray-700">
             <thead>
-              <tr className="border-b border-slate-700 text-left text-slate-500 uppercase tracking-wider">
+              <tr className="border-b border-gray-200 text-left text-gray-500 uppercase tracking-wider">
                 {['Name', 'Node', 'Status', 'Interview URL', 'Started', 'Completed', 'Actions'].map(h => (
                   <th key={h} className="pb-2 pr-4 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-gray-100">
               {sessions.map(s => (
                 <tr key={s.id} className="py-2">
                   <td className="py-2 pr-4">{s.name}</td>
-                  <td className="py-2 pr-4 text-slate-400">{s.node_label}</td>
+                  <td className="py-2 pr-4 text-gray-500">{s.node_label}</td>
                   <td className="py-2 pr-4">
                     <span className={`px-2 py-0.5 rounded-full capitalize ${STATUS_CLASSES[s.status]}`}>
                       {s.status}
@@ -83,13 +83,13 @@ function InterviewSessionsPanel({ slug }: { slug: string }) {
                   <td className="py-2 pr-4">
                     <button
                       onClick={() => copyUrl(s)}
-                      className="text-xs px-2 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded"
+                      className="text-xs px-2 py-0.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded"
                     >
                       {copiedToken === s.session_token ? 'Copied!' : 'Copy'}
                     </button>
                   </td>
-                  <td className="py-2 pr-4 text-slate-500">{s.started_at ? new Date(s.started_at).toLocaleString() : '—'}</td>
-                  <td className="py-2 pr-4 text-slate-500">{s.completed_at ? new Date(s.completed_at).toLocaleString() : '—'}</td>
+                  <td className="py-2 pr-4 text-gray-400">{s.started_at ? new Date(s.started_at).toLocaleString() : '—'}</td>
+                  <td className="py-2 pr-4 text-gray-400">{s.completed_at ? new Date(s.completed_at).toLocaleString() : '—'}</td>
                   <td className="py-2">
                     {(s.status === 'pending' || s.status === 'active') && (
                       <button
@@ -181,10 +181,10 @@ export default function Discovery() {
 
   return (
     <div className="p-6">
-      <h1 className="text-xl font-semibold text-slate-100 mb-4">Discovery</h1>
+      <h1 className="text-xl font-semibold text-gray-900 mb-4">Discovery</h1>
 
       {/* Tab strip */}
-      <div className="flex border-b border-slate-700 mb-6">
+      <div className="flex border-b border-gray-200 mb-6">
         {([['interviews', 'Interviews'], ['layer-map', 'Layer Map']] as const).map(([tab, label]) => (
           <button
             key={tab}
@@ -192,7 +192,7 @@ export default function Discovery() {
             className={`px-4 py-2 text-sm border-b-2 transition-colors ${
               activeTab === tab
                 ? 'text-brand border-brand'
-                : 'text-slate-400 border-transparent hover:text-slate-200'
+                : 'text-gray-400 border-transparent hover:text-gray-700'
             }`}
           >
             {label}
@@ -207,18 +207,18 @@ export default function Discovery() {
             <InterviewSessionsPanel slug={slug!} />
           ) : (
           <>
-          <p className="text-slate-400 text-sm mb-6">
+          <p className="text-gray-500 text-sm mb-6">
             Link a ListenLabs campaign to each value stream. Export interview targets, import
             results, and generate reminders.
           </p>
 
           {campaigns.length === 0 && (
-            <p className="text-slate-500 text-sm italic mb-3">No campaigns linked yet.</p>
+            <p className="text-gray-400 text-sm italic mb-3">No campaigns linked yet.</p>
           )}
 
           <div className="space-y-4">
             {campaigns.map((camp) => (
-              <div key={camp.id} className="border border-slate-700 rounded-lg p-4 space-y-3">
+              <div key={camp.id} className="border border-gray-200 rounded-lg p-4 space-y-3">
                 {/* Campaign header row */}
                 <div className="flex items-start gap-3">
                   <div className="flex-1 grid grid-cols-2 gap-2">
@@ -226,7 +226,7 @@ export default function Discovery() {
                       defaultValue={camp.campaign_name}
                       onBlur={(e) => updateCampaignField(camp.id, { campaign_name: e.target.value })}
                       placeholder="Campaign name"
-                      className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-brand"
+                      className="bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
                     />
                     <input
                       defaultValue={camp.listenlabs_campaign_id}
@@ -234,7 +234,7 @@ export default function Discovery() {
                         updateCampaignField(camp.id, { listenlabs_campaign_id: e.target.value })
                       }
                       placeholder="ListenLabs campaign ID"
-                      className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 font-mono outline-none focus:border-brand"
+                      className="bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 font-mono outline-none focus:border-brand"
                     />
                     <input
                       defaultValue={camp.value_stream_name}
@@ -242,7 +242,7 @@ export default function Discovery() {
                         updateCampaignField(camp.id, { value_stream_name: e.target.value })
                       }
                       placeholder="Value stream name (must match discovery output)"
-                      className="col-span-2 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-brand"
+                      className="col-span-2 bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
                     />
                     <input
                       type="date"
@@ -250,7 +250,7 @@ export default function Discovery() {
                       onBlur={(e) =>
                         updateCampaignField(camp.id, { interview_start: e.target.value || null })
                       }
-                      className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-brand"
+                      className="bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
                     />
                     <input
                       type="date"
@@ -258,12 +258,12 @@ export default function Discovery() {
                       onBlur={(e) =>
                         updateCampaignField(camp.id, { interview_close: e.target.value || null })
                       }
-                      className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-brand"
+                      className="bg-white border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
                     />
                   </div>
                   <button
                     onClick={() => deleteCampaign(camp.id)}
-                    className="text-slate-500 hover:text-red-400 text-xs px-2 py-1 flex-shrink-0"
+                    className="text-gray-400 hover:text-red-400 text-xs px-2 py-1 flex-shrink-0"
                   >
                     Remove
                   </button>
@@ -274,13 +274,13 @@ export default function Discovery() {
                   <a
                     href={campaignsApi.exportTargets(slug!, camp.id)}
                     download
-                    className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-600"
+                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
                   >
                     Download Targets
                   </a>
                   <button
                     onClick={() => markInvited(camp.id)}
-                    className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-600"
+                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
                   >
                     Mark as Invited
                   </button>
@@ -322,19 +322,19 @@ export default function Discovery() {
 
                   <button
                     onClick={() => progressInputRef.current[camp.id]?.click()}
-                    className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-600"
+                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
                   >
                     Import Progress
                   </button>
                   <button
                     onClick={() => resultsInputRef.current[camp.id]?.click()}
-                    className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-600"
+                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
                   >
                     Import Results
                   </button>
                   <button
                     onClick={() => summaryInputRef.current[camp.id]?.click()}
-                    className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-600"
+                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-300"
                   >
                     Import Summary
                   </button>
@@ -352,10 +352,10 @@ export default function Discovery() {
 
                 {camp.findings_summary && (
                   <div>
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">
                       Findings Summary
                     </p>
-                    <pre className="text-xs text-slate-300 bg-slate-900 border border-slate-700 rounded p-3 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                    <pre className="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-3 whitespace-pre-wrap max-h-40 overflow-y-auto">
                       {camp.findings_summary}
                     </pre>
                   </div>
@@ -366,7 +366,7 @@ export default function Discovery() {
 
           <button
             onClick={createCampaign}
-            className="mt-3 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 rounded px-3 py-1.5"
+            className="mt-3 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-400 rounded px-3 py-1.5"
           >
             + Link Campaign
           </button>
@@ -378,9 +378,9 @@ export default function Discovery() {
       {/* ── Layer Map tab (stub) ──────────────────────────────── */}
       {activeTab === 'layer-map' && (
         <div className="max-w-3xl">
-          <div className="border border-slate-700 rounded-lg p-8 text-center">
-            <p className="text-sm font-semibold text-slate-300 mb-2">Stakeholder Layer Assignment</p>
-            <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
+          <div className="border border-gray-200 rounded-lg p-8 text-center">
+            <p className="text-sm font-semibold text-gray-700 mb-2">Stakeholder Layer Assignment</p>
+            <p className="text-xs text-gray-400 leading-relaxed max-w-md mx-auto">
               Stakeholders will be mapped to model layers here —
               investor → organisation → value stream → value chain → activity → customer.
               Interview findings will be displayed against each layer.
