@@ -37,7 +37,7 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center">
       <div className="bg-surface-card rounded-xl p-8 w-full max-w-sm shadow-xl">
-        <h1 className="text-2xl font-bold text-brand-light mb-6">FutureMomentum</h1>
+        <h1 className="text-2xl font-bold text-brand mb-6">FutureMomentum</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-gray-600 mb-1">

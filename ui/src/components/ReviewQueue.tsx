@@ -26,7 +26,7 @@ export default function ReviewQueue({ slug, outputs }: Props) {
       {pending.map((o) => (
         <div
           key={o.id}
-          className="flex items-center justify-between bg-surface-card rounded-lg px-4 py-3"
+          className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-4 py-3"
         >
           <div>
             <p className="text-sm font-medium text-gray-900">{o.agent_name}</p>
@@ -35,13 +35,13 @@ export default function ReviewQueue({ slug, outputs }: Props) {
           <div className="flex gap-2">
             <button
               onClick={() => decide(o.id, 'approved')}
-              className="text-xs bg-emerald-800 hover:bg-emerald-700 text-emerald-200 px-3 py-1 rounded transition-colors"
+              className="text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-200 px-3 py-1 rounded transition-colors"
             >
               Approve
             </button>
             <button
               onClick={() => decide(o.id, 'changes_requested')}
-              className="text-xs bg-red-900 hover:bg-red-800 text-red-200 px-3 py-1 rounded transition-colors"
+              className="text-xs bg-red-100 hover:bg-red-200 text-red-800 border border-red-200 px-3 py-1 rounded transition-colors"
             >
               Request changes
             </button>
