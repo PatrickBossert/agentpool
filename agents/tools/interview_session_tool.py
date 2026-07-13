@@ -102,16 +102,19 @@ class InterviewSessionTool(BaseTool):
                 session_token = s["session_token"]
             except KeyError as e:
                 return f"Error: session dict missing required key {e}"
+            voice_config = s.get("voice_config")
+            voice_config_json = json.dumps(voice_config) if voice_config else None
             conn.execute(
                 "INSERT OR IGNORE INTO interview_sessions "
-                "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token) "
-                "VALUES (?,?,?,?,?)",
+                "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token, voice_config) "
+                "VALUES (?,?,?,?,?,?)",
                 (
                     project_id,
                     orchestration_run_id,
                     stakeholder_id,
                     node_label,
                     session_token,
+                    voice_config_json,
                 ),
             )
             url = f"{base_url}/interview/{session_token}"

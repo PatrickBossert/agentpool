@@ -8,7 +8,8 @@ declare const webkitSpeechRecognition: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const SpeechRecognitionEvent: any
 
-type Phase = 'loading' | 'ready' | 'interviewing' | 'assessing' | 'complete' | 'error'
+type Phase = 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'assessing' | 'complete' | 'error'
+type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'testing' | 'ready'
 
 const BASE = '/api'
 
@@ -26,14 +27,116 @@ export default function VoiceInterview() {
   const [, setSectionRatings] = useState<SectionRatings[]>([])
   const [currentAssessSection, setCurrentAssessSection] = useState(0)
   const [pendingRatings, setPendingRatings] = useState<Record<string, number>>({})
+  const [micStatus, setMicStatus] = useState<MicStatus>('no_device')
+  const [audioLevel, setAudioLevel] = useState(0)
+  const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
+  const [isMicTesting, setIsMicTesting] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null)
   const qaRef = useRef<{ question: string; answer: string }[]>([])
   const sectionRatingsRef = useRef<SectionRatings[]>([])
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     fetchSession()
   }, [sessionToken])
+
+  // Stop mic test stream when leaving mic_setup or ready phase
+  useEffect(() => {
+    if (phase !== 'mic_setup' && phase !== 'ready') stopMicTest()
+  }, [phase])
+
+  // Load audio input devices when entering the ready phase
+  useEffect(() => {
+    if (phase === 'ready') loadAudioDevices()
+  }, [phase])
+
+  async function checkMicDevices(): Promise<boolean> {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setMicStatus('no_device')
+      return false
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = devices.filter(d => d.kind === 'audioinput')
+      if (inputs.length === 0) {
+        setMicStatus('no_device')
+        return false
+      }
+      // No labels → browser hasn't been granted permission yet
+      if (!inputs.some(d => d.label !== '')) {
+        setMicStatus('permission_needed')
+        return false
+      }
+      // Labels are present (permission was granted), but the device might still be
+      // physically missing (disconnected headset, virtual device, etc.). Probe with
+      // getUserMedia — this is silent when permission was already granted.
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        stream.getTracks().forEach(t => t.stop())
+        return true
+      } catch {
+        setMicStatus('no_device')
+        return false
+      }
+    } catch {
+      setMicStatus('no_device')
+      return false
+    }
+  }
+
+  async function loadAudioDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = devices.filter(d => d.kind === 'audioinput')
+      setAvailableDevices(inputs)
+      // Only set a default if nothing is selected yet
+      if (inputs.length > 0) setSelectedDeviceId(prev => prev || inputs[0].deviceId)
+    } catch { /* ignore */ }
+  }
+
+  async function testMicrophone(deviceId?: string) {
+    setMicStatus('testing')
+    setIsMicTesting(false)
+    stopMicTest()
+    try {
+      const audioConstraints: MediaTrackConstraints | boolean = deviceId
+        ? { deviceId: { exact: deviceId } }
+        : true
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false })
+      micStreamRef.current = stream
+
+      // Live audio-level meter via Web Audio API
+      const ctx = new AudioContext()
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 256
+      ctx.createMediaStreamSource(stream).connect(analyser)
+      const buf = new Uint8Array(analyser.frequencyBinCount)
+      micLevelTimerRef.current = setInterval(() => {
+        analyser.getByteFrequencyData(buf)
+        const avg = buf.reduce((a, b) => a + b, 0) / buf.length
+        setAudioLevel(avg / 255)
+      }, 50)
+
+      setMicStatus('ready')
+      setIsMicTesting(true)
+    } catch (err: unknown) {
+      const name = err instanceof Error ? err.name : ''
+      setMicStatus(name === 'NotAllowedError' || name === 'SecurityError' ? 'permission_denied' : 'no_device')
+      setIsMicTesting(false)
+    }
+  }
+
+  function stopMicTest() {
+    if (micLevelTimerRef.current) { clearInterval(micLevelTimerRef.current); micLevelTimerRef.current = null }
+    micStreamRef.current?.getTracks().forEach(t => t.stop())
+    micStreamRef.current = null
+    setAudioLevel(0)
+    setIsMicTesting(false)
+  }
 
   async function fetchSession() {
     try {
@@ -48,7 +151,9 @@ export default function VoiceInterview() {
       setSessionData(data)
       setBranding(data.branding ?? null)
       if (data.questionnaire) setQuestionnaire(data.questionnaire)
-      setPhase('ready')
+
+      const micOk = await checkMicDevices()
+      setPhase(micOk ? 'ready' : 'mic_setup')
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Unknown error')
       setPhase('error')
@@ -103,6 +208,16 @@ export default function VoiceInterview() {
       recognitionRef.current = recognition
 
       const parts: string[] = []
+      let resolved = false
+
+      function finish() {
+        if (resolved) return
+        resolved = true
+        recognitionRef.current = null
+        setIsListening(false)
+        setStatusMessage('')
+        resolve(parts.join(' ').trim())
+      }
 
       setStatusMessage('Listening…')
       setIsListening(true)
@@ -111,8 +226,10 @@ export default function VoiceInterview() {
 
       function resetSilenceTimer() {
         if (silenceTimer) clearTimeout(silenceTimer)
+        // Clear ref first so onend knows this stop is intentional (not a Chrome timeout)
         silenceTimer = setTimeout(() => {
-          try { recognition.stop() } catch { /* already stopped */ }
+          recognitionRef.current = null
+          try { recognition.stop() } catch { finish() }
         }, 3000)
       }
 
@@ -125,20 +242,33 @@ export default function VoiceInterview() {
         }
       }
 
+      // onend fires after every stop — including Chrome's internal timeouts.
+      // Only finish if the ref was cleared (user/silence-timer initiated stop).
+      // Otherwise restart to keep listening.
       recognition.onend = () => {
         if (silenceTimer) clearTimeout(silenceTimer)
-        recognitionRef.current = null
-        setIsListening(false)
-        setStatusMessage('')
-        resolve(parts.join(' ').trim())
+        if (recognitionRef.current === recognition) {
+          // Chrome stopped us internally — restart to keep listening
+          try {
+            recognition.start()
+            return
+          } catch {
+            // Can't restart (e.g., permission revoked mid-session)
+          }
+        }
+        finish()
       }
 
-      recognition.onerror = () => {
+      recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
         if (silenceTimer) clearTimeout(silenceTimer)
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          // Microphone permission denied — show message, block auto-advance
+          setStatusMessage('⚠️ Microphone access denied. Allow microphone access in your browser, then click ✓ Done to continue.')
+          recognitionRef.current = null  // prevent onend from restarting
+          return
+        }
+        // For no-speech, network, etc. — clear ref so onend won't restart
         recognitionRef.current = null
-        setIsListening(false)
-        setStatusMessage('')
-        resolve(parts.join(' ').trim())
       }
 
       recognition.start()
@@ -146,7 +276,10 @@ export default function VoiceInterview() {
   }
 
   function submitAnswer() {
-    try { recognitionRef.current?.stop() } catch { /* already stopped */ }
+    // Clear ref BEFORE stopping so onend knows this was user-initiated (not a Chrome restart)
+    const r = recognitionRef.current
+    recognitionRef.current = null
+    try { r?.stop() } catch { /* already stopped */ }
   }
 
   async function getElaborationPress(
@@ -188,11 +321,14 @@ export default function VoiceInterview() {
     setCurrentQuestion('')
   }
 
+  const DEFAULT_VOICE_CONFIG = { elevenlabs_voice_id: '21m00Tcm4TlvDq8ikWAM', language: 'en', country_code: 'GB' }
+
   async function runInterview() {
     if (!sessionData) return
     const { session, script } = sessionData
-    const voiceId = session.voice_config.elevenlabs_voice_id
-    const lang = `${session.voice_config.language}-${session.voice_config.country_code}`
+    const voiceConfig = session.voice_config ?? DEFAULT_VOICE_CONFIG
+    const voiceId = voiceConfig.elevenlabs_voice_id
+    const lang = `${voiceConfig.language}-${voiceConfig.country_code}`
 
     setPhase('interviewing')
 
@@ -271,7 +407,7 @@ export default function VoiceInterview() {
   async function startCommentary() {
     if (sessionData && questionnaire) {
       const { session } = sessionData
-      const voiceId = session.voice_config.elevenlabs_voice_id
+      const voiceId = (session.voice_config ?? DEFAULT_VOICE_CONFIG).elevenlabs_voice_id
       const section = questionnaire.sections[currentAssessSection]
       await speakText(`Any additional commentary on ${section.title}?`, voiceId)
     }
@@ -303,7 +439,7 @@ export default function VoiceInterview() {
 
   if (phase === 'loading') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
         {branding?.header_image_url && (
           <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
         )}
@@ -314,7 +450,7 @@ export default function VoiceInterview() {
 
   if (phase === 'error') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
         <div className="text-center">
           {branding?.header_image_url && (
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
@@ -328,7 +464,7 @@ export default function VoiceInterview() {
 
   if (phase === 'complete') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
         <div className="text-center max-w-md">
           {branding?.header_image_url && (
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
@@ -346,7 +482,7 @@ export default function VoiceInterview() {
     const allRated = section.questions.every(q => pendingRatings[q.id] !== undefined)
 
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
         <div className="max-w-2xl w-full">
           {branding?.header_image_url && (
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
@@ -434,19 +570,138 @@ export default function VoiceInterview() {
     )
   }
 
+  if (phase === 'mic_setup') {
+    const statusMessages: Record<MicStatus, { color: string; title: string; body: string }> = {
+      no_device:          { color: 'amber',  title: 'No microphone detected',   body: 'Connect a microphone and click Retry.' },
+      permission_needed:  { color: 'blue',   title: 'Microphone access needed',  body: 'Click "Test Microphone" and allow access when prompted.' },
+      permission_denied:  { color: 'red',    title: 'Microphone access denied',  body: 'Open your browser settings, allow microphone access for this page, then click Retry.' },
+      testing:            { color: 'teal',   title: 'Requesting access…',        body: 'Allow microphone access in the browser prompt.' },
+      ready:              { color: 'green',  title: 'Microphone ready',          body: 'Speak to see the level indicator below.' },
+    }
+    const { color, title, body } = statusMessages[micStatus]
+    const colorMap: Record<string, string> = {
+      amber: 'bg-amber-50 border-amber-200 text-amber-800',
+      blue:  'bg-blue-50 border-blue-200 text-blue-800',
+      red:   'bg-red-50 border-red-200 text-red-800',
+      teal:  'bg-teal-50 border-teal-200 text-teal-800',
+      green: 'bg-green-50 border-green-200 text-green-800',
+    }
+
+    return (
+      <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
+        <div className="text-center max-w-md w-full">
+          {branding?.header_image_url && (
+            <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+          )}
+          <div className="text-4xl mb-4">🎤</div>
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Microphone Setup</h1>
+          <p className="text-gray-500 text-sm mb-6">
+            This interview records your spoken answers. Please connect a microphone and confirm it is working before starting.
+          </p>
+
+          <div className={`border rounded-lg p-4 mb-6 text-left ${colorMap[color]}`}>
+            <p className="text-sm font-semibold mb-1">{title}</p>
+            <p className="text-sm opacity-80">{body}</p>
+          </div>
+
+          {micStatus === 'ready' && (
+            <div className="mb-6">
+              <p className="text-xs text-gray-400 mb-2">Audio level — speak to check</p>
+              <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                <div
+                  className="h-4 rounded-full transition-all duration-75"
+                  style={{ width: `${Math.round(audioLevel * 100)}%`, backgroundColor: branding?.primary_color ?? '#0d9488' }}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3">
+            {micStatus !== 'ready' ? (
+              <button
+                onClick={() => testMicrophone()}
+                disabled={micStatus === 'testing'}
+                className="bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
+                style={{ backgroundColor: branding?.primary_color }}
+              >
+                {micStatus === 'no_device' || micStatus === 'permission_denied' ? 'Retry' : 'Test Microphone'}
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => setPhase('ready')}
+                  className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
+                  style={{ backgroundColor: branding?.primary_color }}
+                >
+                  Continue to Interview →
+                </button>
+                <button
+                  onClick={() => testMicrophone()}
+                  className="text-sm text-gray-400 hover:text-gray-600 py-2"
+                >
+                  Retry with a different microphone
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (phase === 'ready' && sessionData) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-        <div className="text-center max-w-lg">
+      <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
+        <div className="text-center max-w-lg w-full">
           {branding?.header_image_url && (
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
           )}
           <h1 className="text-2xl font-bold text-gray-800 mb-2" style={{ color: branding?.text_color }}>
             {sessionData.script.node_label} Interview
           </h1>
-          <p className="text-gray-500 mb-8 text-sm">
+          <p className="text-gray-500 mb-6 text-sm">
             {sessionData.script.study_objectives.join(' · ')}
           </p>
+
+          {/* Microphone selector + inline test */}
+          <div className="bg-white rounded-xl shadow-sm p-5 mb-6 text-left">
+            <p className="text-sm font-medium text-gray-700 mb-3">🎤 Microphone</p>
+            <select
+              value={selectedDeviceId}
+              onChange={e => { setSelectedDeviceId(e.target.value); stopMicTest() }}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:outline-none focus:ring-2 focus:ring-teal-500"
+            >
+              {availableDevices.length === 0 ? (
+                <option value="">No microphones found</option>
+              ) : (
+                availableDevices.map(d => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Microphone ${d.deviceId.slice(0, 8)}`}
+                  </option>
+                ))
+              )}
+            </select>
+
+            {isMicTesting && (
+              <div className="mb-3">
+                <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                  <div
+                    className="h-3 rounded-full transition-all duration-75"
+                    style={{ width: `${Math.round(audioLevel * 100)}%`, backgroundColor: branding?.primary_color ?? '#0d9488' }}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Speak to check audio level</p>
+              </div>
+            )}
+
+            <button
+              onClick={isMicTesting ? stopMicTest : () => testMicrophone(selectedDeviceId || undefined)}
+              className="text-sm font-medium text-teal-600 hover:text-teal-700 transition-colors"
+            >
+              {isMicTesting ? 'Stop test' : 'Test microphone'}
+            </button>
+          </div>
+
           <button
             onClick={runInterview}
             className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
@@ -454,9 +709,6 @@ export default function VoiceInterview() {
           >
             Start Interview
           </button>
-          <p className="text-xs text-gray-400 mt-4">
-            Ensure your microphone is enabled before starting.
-          </p>
         </div>
       </div>
     )
@@ -464,7 +716,7 @@ export default function VoiceInterview() {
 
   // interviewing
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+    <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
       <div className="max-w-2xl w-full">
         {branding?.header_image_url && (
           <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />

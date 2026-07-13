@@ -2,6 +2,7 @@
 import type { CrewRun } from '../types'
 
 export const CREW_ORDER = [
+  'discovery_mapping',
   'discovery',
   'value_design',
   'architecture',
@@ -12,6 +13,7 @@ export const CREW_ORDER = [
 export type CrewName = (typeof CREW_ORDER)[number] | 'discovery_interviews'
 
 export const CREW_LABELS: Record<string, string> = {
+  discovery_mapping:    'Value Chain Mapping',
   discovery:            'Discovery',
   discovery_interviews: 'Discovery Interviews',
   value_design:         'Value Design',
@@ -21,6 +23,7 @@ export const CREW_LABELS: Record<string, string> = {
 }
 
 export const CREW_AGENTS: Record<string, string[]> = {
+  discovery_mapping: ['Value Chain Mapper'],
   discovery: [
     'Value Chain Mapper',
     'Requirements Capture',
@@ -40,6 +43,7 @@ export const CREW_AGENTS: Record<string, string[]> = {
 }
 
 export const CREW_ICONS: Record<string, string> = {
+  discovery_mapping:    '🗺️',
   discovery:            '🔍',
   discovery_interviews: '🎙️',
   value_design:         '⭐',

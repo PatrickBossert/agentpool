@@ -70,6 +70,9 @@ export const projectsApi = {
   orchestrate: (slug: string): Promise<{ orchestration_run_id: number; status: string }> =>
     apiClient.post(`/projects/${slug}/orchestrate`).then((r) => r.data),
 
+  runCrew: (slug: string, crew: string): Promise<{ run_id: number; project_slug: string; crew: string; status: string }> =>
+    apiClient.post(`/projects/${slug}/run`, { crew }).then((r) => r.data),
+
   getSettings: (slug: string): Promise<ProjectSettings> =>
     apiClient.get<ProjectSettings>(`/projects/${slug}/settings`).then((r) => r.data),
 

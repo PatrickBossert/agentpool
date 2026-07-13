@@ -238,6 +238,7 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
             node_label            TEXT NOT NULL,
             session_token         TEXT NOT NULL UNIQUE,
             status                TEXT NOT NULL DEFAULT 'pending',
+            voice_config          TEXT,
             transcript_json       TEXT,
             started_at            TEXT,
             completed_at          TEXT,
@@ -248,12 +249,14 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
 
 
 async def _migrate_interview_sessions_ratings(conn: aiosqlite.Connection) -> None:
-    """Add ratings_json column to interview_sessions if missing."""
+    """Add ratings_json and voice_config columns to interview_sessions if missing."""
     async with conn.execute("PRAGMA table_info(interview_sessions)") as cur:
         cols = {row["name"] async for row in cur}
     if "ratings_json" not in cols:
         await conn.execute("ALTER TABLE interview_sessions ADD COLUMN ratings_json TEXT")
-        await conn.commit()
+    if "voice_config" not in cols:
+        await conn.execute("ALTER TABLE interview_sessions ADD COLUMN voice_config TEXT")
+    await conn.commit()
 
 
 async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None:
@@ -1076,12 +1079,13 @@ async def insert_interview_session(
     stakeholder_id: int,
     node_label: str,
     session_token: str,
+    voice_config: str | None = None,
 ) -> int:
     cur = await conn.execute(
         "INSERT INTO interview_sessions "
-        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token) "
-        "VALUES (?,?,?,?,?)",
-        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token),
+        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token, voice_config) "
+        "VALUES (?,?,?,?,?,?)",
+        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token, voice_config),
     )
     await conn.commit()
     return cur.lastrowid
@@ -1145,10 +1149,16 @@ async def fetch_interview_transcripts(
 async def update_interview_session_status(
     conn: aiosqlite.Connection, session_token: str, status: str
 ) -> None:
-    await conn.execute(
-        "UPDATE interview_sessions SET status=? WHERE session_token=?",
-        (status, session_token),
-    )
+    if status == "active":
+        await conn.execute(
+            "UPDATE interview_sessions SET status=?, started_at=datetime('now') WHERE session_token=?",
+            (status, session_token),
+        )
+    else:
+        await conn.execute(
+            "UPDATE interview_sessions SET status=? WHERE session_token=?",
+            (status, session_token),
+        )
     await conn.commit()
 
 

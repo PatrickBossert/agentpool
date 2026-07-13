@@ -7,7 +7,8 @@ class RunCrewTool(BaseTool):
     name: str = "RunCrewTool"
     description: str = (
         "Run a named crew for the current project and wait for it to complete. "
-        "crew_name must be one of: discovery, value_design, architecture, delivery, business_plan"
+        "crew_name must be one of: discovery_mapping, discovery, discovery_interviews, "
+        "value_design, architecture, delivery, business_plan"
     )
     slug: str
     orchestration_run_id: int

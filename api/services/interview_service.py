@@ -109,6 +109,11 @@ async def get_session_with_script(session_token: str) -> dict | None:
     }
 
     session_dict = dict(session_row)
+    if session_dict.get("voice_config"):
+        try:
+            session_dict["voice_config"] = json.loads(session_dict["voice_config"])
+        except (json.JSONDecodeError, TypeError):
+            session_dict["voice_config"] = None
 
     # Fetch questionnaire template for this node if assigned
     questionnaire = None

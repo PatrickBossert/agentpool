@@ -85,11 +85,16 @@ export interface AgentGridProps {
   isPipelineActive: boolean
   logs: string[]
   onAgentChat: (agentName: string) => void
+  onRunCrew?: (crewName: string) => void
+  runningCrew?: string | null
 }
 
 const ALL_CREWS = [...CREW_ORDER, 'discovery_interviews' as const]
 
-export default function AgentGrid({ crewRuns, isPipelineActive, logs, onAgentChat }: AgentGridProps) {
+// crews that can be dispatched standalone (discovery_interviews requires PAM context)
+const STANDALONE_CREWS = new Set(CREW_ORDER)
+
+export default function AgentGrid({ crewRuns, isPipelineActive, logs, onAgentChat, onRunCrew, runningCrew }: AgentGridProps) {
   const runMap = useMemo(() => new Map(crewRuns.map(r => [r.crew_name, r])), [crewRuns])
   const activeCrewName = useMemo(() => crewRuns.find(r => r.status === 'running')?.crew_name, [crewRuns])
   const showDiscoveryInterviews = runMap.has('discovery_interviews') || activeCrewName === 'discovery_interviews'
@@ -109,6 +114,10 @@ export default function AgentGrid({ crewRuns, isPipelineActive, logs, onAgentCha
             ? agents.map(() => 'completed' as AgentStatus)
             : agents.map(() => (isPipelineActive ? 'queued' : 'idle') as AgentStatus)
 
+        const canRun = STANDALONE_CREWS.has(crewKey as typeof CREW_ORDER[number])
+        const isDispatchingThis = runningCrew === crewKey
+        const runDisabled = isPipelineActive || crewStatus === 'running' || !!runningCrew
+
         return (
           <div key={crewKey}>
             <div className="flex items-center gap-2 mb-4">
@@ -117,6 +126,15 @@ export default function AgentGrid({ crewRuns, isPipelineActive, logs, onAgentCha
                 {CREW_LABELS[crewKey]}
               </h3>
               <CrewStatusBadge status={crewStatus} />
+              {canRun && onRunCrew && (
+                <button
+                  onClick={() => onRunCrew(crewKey)}
+                  disabled={runDisabled}
+                  className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isDispatchingThis ? '…' : '▶ Run'}
+                </button>
+              )}
             </div>
             <div
               className="grid gap-3"

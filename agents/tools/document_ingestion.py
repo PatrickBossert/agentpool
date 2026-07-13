@@ -1,10 +1,19 @@
 # agents/tools/document_ingestion.py
+import socket
 from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 import chromadb
 from api.config import get_settings
+
+
+def _chroma_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
+    try:
+        socket.create_connection((host, port), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
 
 
 def _chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
@@ -68,6 +77,8 @@ class DocumentIngestionTool(BaseTool):
                     api_key=settings.chroma_api_key,
                 )
             else:
+                if not _chroma_reachable(settings.chroma_host, settings.chroma_port):
+                    return "ChromaDB is not reachable. Start Docker (docker compose up -d) and retry."
                 client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
             collection = client.get_or_create_collection(name=f"{self.slug}_docs")
         except Exception as e:

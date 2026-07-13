@@ -9,7 +9,7 @@ def get_crew_llm(llm_mode: str) -> LLM:
     settings = get_settings()
     if llm_mode == "sensitive":
         return LLM(
-            model="openai/local-model",
+            model=f"openai/{settings.local_llm_model}",
             base_url=settings.llamacpp_base_url,
             api_key="not-needed",
         )

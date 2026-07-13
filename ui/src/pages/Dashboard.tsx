@@ -36,6 +36,16 @@ export default function Dashboard() {
     },
   })
 
+  const [runningCrew, setRunningCrew] = useState<string | null>(null)
+  async function handleRunCrew(crewName: string) {
+    setRunningCrew(crewName)
+    try {
+      await projectsApi.runCrew(slug!, crewName)
+    } finally {
+      setRunningCrew(null)
+    }
+  }
+
   if (!slug) {
     return (
       <div className="p-8 text-gray-400">
@@ -89,6 +99,8 @@ export default function Dashboard() {
           isPipelineActive={isPipelineActive}
           logs={logs}
           onAgentChat={setActiveAgent}
+          onRunCrew={handleRunCrew}
+          runningCrew={runningCrew}
         />
       </section>
 
