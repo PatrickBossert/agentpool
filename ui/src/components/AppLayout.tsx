@@ -39,7 +39,7 @@ export default function AppLayout() {
   const navItems: NavItem[] = slug
     ? [
         { to: `/${slug}`, label: 'Dashboard', end: true },
-        { to: `/${slug}/schedule`, label: 'Schedule' },
+        { to: `/${slug}/team`, label: 'Team' },
         { to: `/${slug}/reviews`, label: 'Reviews', badge: pendingReviewCount > 0 ? pendingReviewCount : undefined },
         { to: `/${slug}/documents`, label: 'Documents' },
         { to: `/${slug}/runs`, label: 'Runs' },

@@ -28,6 +28,7 @@ import TaylorSetupTab from './tabs/TaylorSetupTab'
 import AverySetupTab from './tabs/AverySetupTab'
 import AveryOutputExtra from './tabs/AveryOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
+import PamSetupTab from './tabs/PamSetupTab'
 
 // ── Per-crew slot injection ────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ type SlotFC = FC<{ slug: string }>
 
 // Replaces the default Setup tab reads/produces panel for these crews
 const CREW_SETUP_OVERRIDE: Partial<Record<string, SlotFC>> = {
+  PAM:                    PamSetupTab,
   discovery_mapping:      AlexSetupTab,
   assessment_design:      MayaSetupTab,
   stakeholder_management: TaylorSetupTab,
