@@ -287,6 +287,8 @@ _SLUG_RE = _re.compile(r'^[a-z0-9][a-z0-9_-]*$')
 @router.get("/{slug}/output-files/{filename}")
 async def serve_output_file(slug: str, filename: str, payload: dict = Depends(require_any_auth)):
     """Serve a static image file from the project outputs directory."""
+    # Verify the authenticated user has access to this project
+    await check_project_access(slug, payload)
     # Validate slug to prevent path traversal via URL segment
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="Invalid project slug.")
