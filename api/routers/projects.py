@@ -277,23 +277,37 @@ async def get_branding_image(slug: str):
     raise HTTPException(status_code=404, detail="No branding image found for this project.")
 
 
-SAFE_OUTPUT_EXTENSIONS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
+import re as _re
+
+# SVG excluded: same-origin SVG can execute embedded scripts (XSS)
+SAFE_OUTPUT_EXTENSIONS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+_SLUG_RE = _re.compile(r'^[a-z0-9][a-z0-9_-]*$')
 
 
 @router.get("/{slug}/output-files/{filename}")
 async def serve_output_file(slug: str, filename: str, payload: dict = Depends(require_any_auth)):
-    """Serve a static file from the project outputs directory (images, generated assets)."""
+    """Serve a static image file from the project outputs directory."""
+    # Validate slug to prevent path traversal via URL segment
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(status_code=400, detail="Invalid project slug.")
     suffix = Path(filename).suffix.lower()
     if suffix not in SAFE_OUTPUT_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Only image files can be served via this endpoint.")
-    # Prevent path traversal
+        raise HTTPException(status_code=400, detail="Only raster image files (.png, .jpg, .webp) can be served here.")
+    # Reject any path separators or traversal sequences in the bare filename
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename.")
-    outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
-    candidate = outputs_dir / filename
+    outputs_root = Path(get_settings().projects_dir).resolve() / slug / "outputs"
+    candidate = (outputs_root / filename).resolve()
+    # Containment check: resolved candidate must remain inside outputs_root
+    if not str(candidate).startswith(str(outputs_root) + "/"):
+        raise HTTPException(status_code=400, detail="Invalid path.")
     if not candidate.exists():
         raise HTTPException(status_code=404, detail=f"Output file '{filename}' not found.")
-    return FileResponse(path=candidate, media_type=SAFE_OUTPUT_EXTENSIONS[suffix])
+    return FileResponse(
+        path=candidate,
+        media_type=SAFE_OUTPUT_EXTENSIONS[suffix],
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 # ── Node Template Assignment endpoints ────────────────────────────────────────
