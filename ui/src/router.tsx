@@ -22,6 +22,7 @@ import VoiceInterview from './pages/VoiceInterview'
 import Templates from './pages/Templates'
 import Report from './pages/Report'
 import Architecture from './pages/Architecture'
+import PitchDeck from './pages/PitchDeck'
 import AdminDashboard from './pages/AdminDashboard'
 import OrgDetail from './pages/OrgDetail'
 import UserList from './pages/UserList'
@@ -64,6 +65,14 @@ export const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <Architecture />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/pitch',
+    element: (
+      <ProtectedRoute>
+        <PitchDeck />
       </ProtectedRoute>
     ),
   },

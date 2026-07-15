@@ -181,8 +181,13 @@ async def speak(text: str, voice_id: str) -> bytes:
             },
             json={
                 "text": text,
-                "model_id": "eleven_monolingual_v1",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+                "model_id": "eleven_turbo_v2",
+                "voice_settings": {
+                    "stability": 0.40,
+                    "similarity_boost": 0.75,
+                    "style": 0.25,
+                    "use_speaker_boost": True,
+                },
             },
             timeout=30.0,
         )

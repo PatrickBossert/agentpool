@@ -1,6 +1,6 @@
 // ui/src/components/AppLayout.tsx
 import { useState } from 'react'
-import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate, useParams, Link } from 'react-router-dom'
 import { Settings } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
@@ -98,6 +98,12 @@ export default function AppLayout() {
             </>
           )}
           <span className="text-xs text-gray-400">{user?.sub}</span>
+          <Link
+            to="/pitch"
+            className="text-xs text-gray-400 hover:text-gray-600"
+          >
+            Pitch Deck
+          </Link>
           <a
             href="/dashboard/data-architecture"
             target="_blank"

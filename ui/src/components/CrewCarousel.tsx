@@ -31,8 +31,8 @@ function AgentFace({ name, status, size = 'md' }: { name: string; status: AgentS
   const firstName = humanName.split(' ')[0]
   const imageSrc  = AGENT_AVATAR_IMAGE[name]
 
-  const dim = size === 'lg' ? 'w-14 h-14' : size === 'md' ? 'w-9 h-9' : 'w-6 h-6'
-  const textDim = size === 'lg' ? 'text-xl' : size === 'md' ? 'text-sm' : 'text-[10px]'
+  const dim = size === 'lg' ? 'w-16 h-16' : size === 'md' ? 'w-10 h-10' : 'w-[26px] h-[26px]'
+  const textDim = size === 'lg' ? 'text-2xl' : size === 'md' ? 'text-base' : 'text-[10px]'
 
   const ringClass =
     status === 'running'   ? 'ring-2 ring-teal-400 ring-offset-1' :
@@ -72,7 +72,7 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
   const imageSrc = AGENT_AVATAR_IMAGE['PAM']
 
   const borderClass = isSelected
-    ? 'border-teal-500 ring-2 ring-teal-400/40 shadow-md shadow-teal-100'
+    ? 'border-teal-500 ring-2 ring-teal-400/40 animate-crewGlow'
     : isPipelineActive
       ? 'border-teal-400 shadow-md shadow-teal-100'
       : orchestrationStatus === 'failed'
@@ -113,7 +113,7 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
         {/* PAM face + name */}
         <div className="flex-1 flex flex-col items-center justify-center gap-1 py-1">
           <AgentHoverCard agentName="PAM">
-            <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-teal-200 shadow-sm flex-shrink-0 cursor-default">
+            <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-teal-200 shadow-sm flex-shrink-0 cursor-default">
               {imageSrc ? (
                 <img src={imageSrc} alt="Pamela" className="w-full h-full object-cover" />
               ) : (
@@ -189,7 +189,7 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
   }
 
   const borderClass = isSelected
-    ? 'border-teal-400 shadow-md shadow-teal-100'
+    ? 'border-teal-400 ring-1 ring-teal-400/40 animate-crewGlow'
     : status === 'running'
       ? 'border-teal-300'
       : status === 'waiting'
@@ -325,6 +325,46 @@ export default function CrewCarousel({
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
 
+  // ── Click-drag state ──────────────────────────────────────────────────────
+  const dragState = useRef<{ startX: number; scrollLeft: number; dragging: boolean } | null>(null)
+  const didDrag = useRef(false)
+  const [isDragging, setIsDragging] = useState(false)
+  const [isHovering, setIsHovering] = useState(false)
+
+  function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    const el = scrollRef.current
+    if (!el) return
+    didDrag.current = false
+    dragState.current = { startX: e.pageX, scrollLeft: el.scrollLeft, dragging: true }
+  }
+
+  function onMouseLeaveCarousel() {
+    setIsHovering(false)
+    if (dragState.current) dragState.current.dragging = false
+    setIsDragging(false)
+  }
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      const ds = dragState.current
+      if (!ds?.dragging || !scrollRef.current) return
+      const dx = e.pageX - ds.startX
+      if (!isDragging && Math.abs(dx) > 5) setIsDragging(true)
+      if (Math.abs(dx) > 5) didDrag.current = true
+      scrollRef.current.scrollLeft = ds.scrollLeft - dx
+    }
+    function onMouseUp() {
+      if (dragState.current) dragState.current.dragging = false
+      setIsDragging(false)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [isDragging])
+
   const checkScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
@@ -380,7 +420,12 @@ export default function CrewCarousel({
 
       <div
         ref={scrollRef}
-        className="flex gap-3 overflow-x-auto pb-2 px-1 items-stretch"
+        onMouseDown={onMouseDown}
+        onMouseEnter={() => setIsHovering(true)}
+        onMouseLeave={onMouseLeaveCarousel}
+        className={`flex gap-3 overflow-x-auto pb-2 px-1 items-stretch select-none ${
+          isDragging ? 'cursor-grabbing' : isHovering ? 'cursor-pointer' : ''
+        }`}
         style={{ scrollbarWidth: 'none' }}
       >
         {/* PAM - pipeline orchestrator */}
@@ -391,12 +436,12 @@ export default function CrewCarousel({
           hitlReviewCount={hitlReviews.length}
           runCount={crewRuns.length}
           isSelected={selectedCrew === 'PAM'}
-          onSelect={() => onSelectCrew('PAM')}
+          onSelect={() => { if (!didDrag.current) onSelectCrew('PAM') }}
           onRunPipeline={onRunPipeline}
         />
 
         {/* Visual separator */}
-        <div className="flex-shrink-0 w-px bg-gray-200 self-stretch my-1" />
+        <div className="flex-shrink-0 w-px bg-gray-300 self-stretch my-1" />
 
         {/* Crew cards */}
         {CREW_ORDER.map(crewKey => (
@@ -411,7 +456,7 @@ export default function CrewCarousel({
             isSelected={selectedCrew === crewKey}
             logs={logs}
             anyBusy={anyBusy}
-            onSelect={() => onSelectCrew(crewKey)}
+            onSelect={() => { if (!didDrag.current) onSelectCrew(crewKey) }}
             onRun={onRunCrew}
             onRerun={onRerunCrew}
           />

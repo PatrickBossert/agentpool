@@ -1,6 +1,8 @@
 // ui/src/components/tabs/AverySetupTab.tsx
 // Avery's Setup tab: voice interviewer configuration (localStorage-backed preferences)
 import { useState } from 'react'
+import { FlaskConical } from 'lucide-react'
+import TestInterviewDialog from './TestInterviewDialog'
 
 const AVERY_CONFIG_KEY = 'agentpool-avery-voice-config'
 
@@ -31,6 +33,7 @@ function loadConfig(slug: string): AveryConfig {
 export default function AverySetupTab({ slug }: { slug: string }) {
   const [config, setConfig] = useState<AveryConfig>(() => loadConfig(slug))
   const [saved, setSaved] = useState(false)
+  const [showTest, setShowTest] = useState(false)
 
   function save() {
     try {
@@ -137,6 +140,27 @@ export default function AverySetupTab({ slug }: { slug: string }) {
         </button>
         {saved && <span className="text-emerald-500 text-xs">Saved.</span>}
       </div>
+
+      {/* ── Test Interview ─────────────────────────────────────────────── */}
+      <div className="border-t border-gray-100 pt-5 mt-2">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Test Interview</p>
+            <p className="text-[11px] text-gray-500 leading-relaxed max-w-sm">
+              Run a smoke-test interview using the sample script. Avery will ask real questions via voice and you respond — useful for testing ElevenLabs connectivity and interview flow before going live.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowTest(true)}
+            className="flex items-center gap-1.5 flex-shrink-0 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-teal-300 text-xs font-medium rounded transition-colors"
+          >
+            <FlaskConical size={13} />
+            Test Interview
+          </button>
+        </div>
+      </div>
+
+      {showTest && <TestInterviewDialog slug={slug} onClose={() => setShowTest(false)} />}
     </div>
   )
 }

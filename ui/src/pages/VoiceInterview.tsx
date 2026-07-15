@@ -733,56 +733,76 @@ export default function VoiceInterview() {
   }
 
   // interviewing
+  const interviewerImg = branding?.interviewer_image_url ?? '/agents/avery-singh-hires.jpg'
+  const interviewerName = branding?.interviewer_name ?? 'Avery Singh'
+
   return (
-    <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
-      <div className="max-w-2xl w-full">
+    <div className="h-screen bg-gray-50 flex flex-col">
+      {/* Header strip */}
+      <div className="bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-4 flex-shrink-0">
         {branding?.header_image_url && (
-          <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+          <img src={branding.header_image_url} alt="" className="h-8 object-contain" />
         )}
-        {/* Progress */}
-        <div className="flex justify-between text-sm text-gray-400 mb-2">
-          <span>Question {progress.current} of {progress.total}</span>
-          <span>{Math.round((progress.current / Math.max(progress.total, 1)) * 100)}%</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex justify-between text-xs text-gray-400 mb-1">
+            <span>Question {progress.current} of {progress.total}</span>
+            <span>{Math.round((progress.current / Math.max(progress.total, 1)) * 100)}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-1">
+            <div
+              className="bg-teal-500 h-1 rounded-full transition-all"
+              style={{ width: `${(progress.current / Math.max(progress.total, 1)) * 100}%`, backgroundColor: branding?.primary_color }}
+            />
+          </div>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-1.5 mb-8">
-          <div
-            className="bg-teal-500 h-1.5 rounded-full transition-all"
-            style={{ width: `${(progress.current / Math.max(progress.total, 1)) * 100}%`, backgroundColor: branding?.primary_color }}
-          />
+      </div>
+
+      {/* Main: two-column — photo left, question right */}
+      <div className="flex flex-1 min-h-0">
+        {/* Interviewer panel */}
+        <div className="w-56 flex-shrink-0 bg-slate-900 flex flex-col items-center justify-center gap-5 p-6 border-r border-slate-800">
+          <div className="relative">
+            <img
+              src={interviewerImg}
+              alt={interviewerName}
+              className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
+            />
+            {(statusMessage || isListening) && (
+              <span
+                className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 animate-pulse"
+                style={{ backgroundColor: branding?.primary_color ?? '#14b8a6' }}
+              />
+            )}
+          </div>
+          <div className="text-center">
+            <p className="text-white text-sm font-semibold">{interviewerName}</p>
+            <p className="text-slate-500 text-[11px] mt-0.5">AI Interviewer</p>
+          </div>
         </div>
 
-        {/* Current question — with optional interviewer avatar */}
-        <div className="bg-white rounded-xl shadow-sm p-8 mb-6">
-          {branding?.interviewer_image_url && (
-            <div className="flex items-center gap-3 mb-5 pb-5 border-b border-gray-100">
-              <img
-                src={branding.interviewer_image_url}
-                alt={branding.interviewer_name ?? 'Interviewer'}
-                className="w-10 h-10 rounded-full object-cover flex-shrink-0"
-              />
-              <span className="text-sm font-medium text-gray-600">
-                {branding.interviewer_name ?? 'Avery Singh'}
-              </span>
+        {/* Question + controls */}
+        <div className="flex-1 flex flex-col items-center justify-center px-10 py-10 gap-8 overflow-y-auto">
+          {currentQuestion && (
+            <div className="bg-white rounded-2xl shadow-sm px-8 py-7 w-full max-w-xl border border-gray-100">
+              <p className="text-gray-800 text-xl leading-relaxed">{currentQuestion}</p>
             </div>
           )}
-          <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
-        </div>
 
-        {/* Status + Done button */}
-        <div className="text-center">
-          {statusMessage && (
-            <p className="text-teal-600 font-medium animate-pulse mb-4">{statusMessage}</p>
-          )}
-          {isListening && (
-            <button
-              onClick={submitAnswer}
-              style={{ backgroundColor: branding?.primary_color }}
-              className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-8 rounded-full text-lg transition-colors shadow-md"
-              aria-label="Done speaking"
-            >
-              ✓ Done
-            </button>
-          )}
+          <div className="flex flex-col items-center gap-3">
+            {statusMessage && (
+              <p className="text-teal-600 font-medium animate-pulse text-sm">{statusMessage}</p>
+            )}
+            {isListening && (
+              <button
+                onClick={submitAnswer}
+                style={{ backgroundColor: branding?.primary_color }}
+                className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-10 rounded-full text-lg transition-colors shadow-md"
+                aria-label="Done speaking"
+              >
+                ✓ Done
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

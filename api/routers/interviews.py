@@ -5,10 +5,14 @@ Session tokens (UUID4) serve as the access credential.
 """
 from __future__ import annotations
 
+import json
+
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pathlib import Path
 from pydantic import BaseModel
 
+from api.auth import require_any_auth
 from api.config import get_settings
 from api.database import (
     fetch_interview_sessions_for_run,
@@ -92,6 +96,67 @@ async def get_sessions_for_project(slug: str):
         "sessions": sessions,
         "summary": summary,
     }
+
+
+# ---------------------------------------------------------------------------
+# Test interview endpoints (JWT auth — no session required)
+# ---------------------------------------------------------------------------
+
+@router.get("/test/script")
+async def get_test_interview_script(payload: dict = Depends(require_any_auth)):
+    """Return the smoke-test interview script for the built-in test interview."""
+    scripts_path = (
+        Path(get_settings().projects_dir) / "smoke-test" / "outputs" / "interview_scripts.json"
+    )
+    if not scripts_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Smoke-test script not found — run discovery_mapping on the smoke-test project first.",
+        )
+    try:
+        data = json.loads(scripts_path.read_text())
+        first_key = next(iter(data))
+        return data[first_key]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class TestSpeakRequest(BaseModel):
+    text: str
+    voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+
+
+@router.post("/test/speak")
+async def test_speak_text(body: TestSpeakRequest, payload: dict = Depends(require_any_auth)):
+    """TTS for the built-in test interview — no session token required."""
+    try:
+        audio_bytes = await speak(body.text, body.voice_id)
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+class TestElaborationRequest(BaseModel):
+    question_text: str
+    response_text: str
+    probing_instructions: str
+
+
+@router.post("/test/elaboration-press")
+async def test_elaboration_press(
+    body: TestElaborationRequest, payload: dict = Depends(require_any_auth)
+):
+    """Elaboration press for the built-in test interview — no session token required."""
+    try:
+        press_text = await elaboration_press(
+            body.question_text,
+            body.response_text,
+            body.probing_instructions,
+            "test interviewee",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return {"press_text": press_text}
 
 
 # ---------------------------------------------------------------------------
