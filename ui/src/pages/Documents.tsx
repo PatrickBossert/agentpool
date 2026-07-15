@@ -2,6 +2,7 @@
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { Upload, FolderOpen, Folder, CheckCircle2, AlertCircle, RotateCcw, X, Download, Loader2 } from 'lucide-react'
 import { projectsApi } from '../api/endpoints'
 import type { ClientDocument, AgentOutput } from '../types'
 import { useAuth } from '../context/AuthContext'
@@ -20,6 +21,8 @@ export default function Documents() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [reingestingId, setReingestingId] = useState<number | null>(null)
 
   const { data: clientDocs = [] } = useQuery<ClientDocument[]>({
     queryKey: ['documents', slug],
@@ -32,6 +35,28 @@ export default function Documents() {
     queryFn: () => projectsApi.outputs(slug!),
     enabled: !!slug,
   })
+
+  async function reingestDoc(docId: number) {
+    if (!slug) return
+    setReingestingId(docId)
+    try {
+      await projectsApi.reingestDocument(slug, docId)
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['documents', slug] }), 2000)
+    } finally {
+      setReingestingId(null)
+    }
+  }
+
+  async function deleteDoc(docId: number) {
+    if (!slug) return
+    setDeletingId(docId)
+    try {
+      await projectsApi.deleteDocument(slug, docId)
+      qc.invalidateQueries({ queryKey: ['documents', slug] })
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   async function uploadFile(file: File) {
     if (!slug) return
@@ -92,8 +117,8 @@ export default function Documents() {
               : 'border-gray-200 bg-gray-50 hover:border-brand/50 hover:bg-teal-50/30'
           }`}
         >
-          <div className="text-4xl leading-none">
-            {uploading ? '⏳' : isDragging ? '📂' : '📁'}
+          <div className="leading-none">
+            {uploading ? <Upload size={32} className="text-gray-300 animate-pulse" /> : isDragging ? <FolderOpen size={32} className="text-teal-400" /> : <Folder size={32} className="text-gray-300" />}
           </div>
 
           <div className="text-center">
@@ -152,11 +177,31 @@ export default function Documents() {
                   <p className="text-xs text-gray-400">
                     {formatBytes(doc.size_bytes)} · {doc.content_type}
                     {doc.ingested ? (
-                      <span className="ml-2 text-emerald-600">✓ ingested</span>
+                      <span className="ml-2 text-emerald-600 flex items-center gap-1"><CheckCircle2 size={12} />ingested</span>
                     ) : (
-                      <span className="ml-2 text-gray-400">pending ingestion</span>
+                      <span className="ml-2 text-amber-500 flex items-center gap-1"><AlertCircle size={12} />pending ingestion</span>
                     )}
                   </p>
+                </div>
+                <div className="flex items-center gap-3 ml-4 flex-shrink-0">
+                  {!doc.ingested && (
+                    <button
+                      onClick={() => reingestDoc(doc.id)}
+                      disabled={reingestingId === doc.id}
+                      className="text-xs text-amber-600 hover:text-amber-800 disabled:opacity-40 transition-colors"
+                      title="Retry ingestion into ChromaDB"
+                    >
+                      {reingestingId === doc.id ? <Loader2 size={12} className="animate-spin" /> : <span className="flex items-center gap-1"><RotateCcw size={12} />Ingest</span>}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => deleteDoc(doc.id)}
+                    disabled={deletingId === doc.id}
+                    className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-40 transition-colors"
+                    title="Delete document"
+                  >
+                    {deletingId === doc.id ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                  </button>
                 </div>
               </div>
             ))}
@@ -186,7 +231,7 @@ export default function Documents() {
                   onClick={() => downloadOutput(slug, o.id, o.file_path.split('/').pop() ?? o.output_type, token!).catch(console.error)}
                   className="text-xs text-brand hover:text-brand-dark transition-colors"
                 >
-                  ↓ Download
+                  <span className="flex items-center gap-1"><Download size={12} />Download</span>
                 </button>
               </div>
             ))}

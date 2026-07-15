@@ -86,12 +86,12 @@ interface InfoCardIdleProps {
 
 function IdleState({ lastRun, onRun, isRunning }: InfoCardIdleProps) {
   function fmtDate(s: string | null) {
-    if (!s) return '—'
+    if (!s) return '-'
     return new Date(s).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   }
 
   function duration(started: string | null, completed: string | null): string {
-    if (!started || !completed) return '—'
+    if (!started || !completed) return '-'
     const ms = new Date(completed).getTime() - new Date(started).getTime()
     const mins = Math.round(ms / 60000)
     return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`

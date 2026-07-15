@@ -200,14 +200,14 @@ export default function ValuePropositions() {
                                   {getScore(item, key).toFixed(1)}
                                 </span>
                                 <span className="text-gray-500 leading-relaxed">
-                                  ({getUnit(item, key)}) — {getRationale(item, key)}
+                                  ({getUnit(item, key)}) - {getRationale(item, key)}
                                 </span>
                               </div>
                             ))}
                           </div>
                         </div>
                         <p className="text-xs text-gray-400 mt-4">
-                          Weights — Financial ×{item.weights_used.financial}, Natural ×{item.weights_used.natural}, Safety ×{item.weights_used.safety}, Performance ×{item.weights_used.performance}, Manufactured ×{item.weights_used.manufactured}, Intellectual ×{item.weights_used.intellectual}, Human ×{item.weights_used.human}, Social ×{item.weights_used.social_relationship}
+                          Weights - Financial ×{item.weights_used.financial}, Natural ×{item.weights_used.natural}, Safety ×{item.weights_used.safety}, Performance ×{item.weights_used.performance}, Manufactured ×{item.weights_used.manufactured}, Intellectual ×{item.weights_used.intellectual}, Human ×{item.weights_used.human}, Social ×{item.weights_used.social_relationship}
                         </p>
                       </td>
                     </tr>

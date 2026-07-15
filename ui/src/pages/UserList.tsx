@@ -63,7 +63,7 @@ export default function UserList() {
               {users.map((u) => (
                 <tr key={u.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-primary">{u.username}</td>
-                  <td className="px-4 py-2 text-secondary text-xs">{u.email || '—'}</td>
+                  <td className="px-4 py-2 text-secondary text-xs">{u.email || '-'}</td>
                   <td className="px-4 py-2">{roleBadge(u.role)}</td>
                   <td className="px-4 py-2 text-muted text-xs">{u.created_at.slice(0, 10)}</td>
                   <td className="px-4 py-2 text-right space-x-3">

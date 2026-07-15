@@ -37,7 +37,7 @@ const DELIVERABLE_TYPES: Record<string, string> = {
 // ── Formatters ────────────────────────────────────────────────────────────────
 
 function fmtCurrency(v: number | null): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return '-'
   const abs = Math.abs(v)
   if (abs >= 1_000_000) return `£${(v / 1_000_000).toFixed(1)}M`
   if (abs >= 1_000) return `£${(v / 1_000).toFixed(0)}k`
@@ -45,7 +45,7 @@ function fmtCurrency(v: number | null): string {
 }
 
 function fmtPercent(v: number | null): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return '-'
   return `${(v * 100).toFixed(1)}%`
 }
 
@@ -101,7 +101,7 @@ function CoverPage({ slug, sector }: { slug: string; sector: string }) {
       <p className="text-sm text-slate-500 mt-8 print:text-slate-500">
         Generated {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
       </p>
-      <p className="text-xs text-slate-600 mt-2 print:text-slate-400">Prepared by FutureMomentum</p>
+      <p className="text-xs text-slate-600 mt-2 print:text-slate-400">Prepared by TaskReimagination.ai</p>
     </div>
   )
 }
@@ -193,7 +193,7 @@ function InitiativeRegisterSection({ initiatives }: { initiatives: Initiative[] 
                     <span className="capitalize">{init.initiative_type.replace('_', ' ')}</span>
                   </td>
                   <td>{fmtCostRange(init.cost_estimate)}</td>
-                  <td>{init.period ?? '—'}</td>
+                  <td>{init.period ?? '-'}</td>
                 </tr>
               ))}
             </React.Fragment>
@@ -208,7 +208,7 @@ function FinancialSummarySection({ summary }: { summary: { npv: number | null; i
   const metrics = [
     { label: 'NPV', value: fmtCurrency(summary?.npv ?? null), colour: '#19d4e8' },
     { label: 'IRR', value: fmtPercent(summary?.irr ?? null), colour: '#19d4e8' },
-    { label: 'Payback Period', value: summary?.payback_period ?? '—', colour: '#94a3b8' },
+    { label: 'Payback Period', value: summary?.payback_period ?? '-', colour: '#94a3b8' },
     { label: 'Total Investment', value: fmtCurrency(summary?.total_investment ?? null), colour: '#f87171' },
     { label: 'Total Benefits', value: fmtCurrency(summary?.total_benefits ?? null), colour: '#47c247' },
     { label: 'Max Borrowing', value: fmtCurrency(summary?.max_borrowing ?? null), colour: '#f59e0b' },
@@ -260,7 +260,7 @@ function DeliverablesSection({ outputs }: { outputs: AgentOutput[] }) {
         </table>
       )}
       <p className="text-xs text-slate-600 mt-4 print:text-slate-400">
-        Full documents available in the FutureMomentum Documents tab for this project.
+        Full documents available in the TaskReimagination.ai Documents tab for this project.
       </p>
     </div>
   )

@@ -2,26 +2,51 @@
 import { useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { MessageSquare, UserCheck, CheckSquare, Mail, MessageCircle, Smartphone } from 'lucide-react'
 import { stakeholdersApi } from '../api/endpoints'
 import type { Stakeholder, StakeholderImportResult } from '../types'
 
-const ROLE_COLOURS: Record<string, string> = {
-  actor: 'bg-brand/10 text-teal-700',
-  governing: 'bg-amber-100 text-amber-700',
-  recipient: 'bg-gray-100 text-gray-600',
+const LEVEL_STYLE: Record<string, string> = {
+  L0: 'bg-purple-100 text-purple-700',
+  L1: 'bg-brand/10 text-teal-700',
+  L2: 'bg-gray-100 text-gray-600',
+  L3: 'bg-gray-50 text-gray-500',
 }
 
-const DISPOSITION_COLOURS: Record<string, string> = {
-  champion: 'bg-emerald-100 text-emerald-700',
-  supporter: 'bg-teal-100 text-teal-700',
-  neutral: 'bg-gray-100 text-gray-600',
-  skeptic: 'bg-orange-100 text-orange-700',
-  blocker: 'bg-red-100 text-red-700',
+const COMMS_ICON: Record<string, React.ReactNode> = {
+  email: <Mail size={11} />,
+  slack: <MessageCircle size={11} />,
+  sms:   <Smartphone size={11} />,
 }
 
-function Badge({ text, colours }: { text: string; colours: string }) {
+function LevelBadge({ level }: { level: string }) {
+  if (!level) return null
   return (
-    <span className={`rounded px-2 py-0.5 text-xs font-medium ${colours}`}>{text}</span>
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${LEVEL_STYLE[level] ?? 'bg-gray-100 text-gray-500'}`}>
+      {level}
+    </span>
+  )
+}
+
+function RoleDots({ s }: { s: Stakeholder }) {
+  return (
+    <span className="flex items-center gap-1">
+      {s.is_participant && (
+        <span title="Participant" className="text-brand">
+          <MessageSquare size={11} />
+        </span>
+      )}
+      {s.is_reviewer && (
+        <span title="Reviewer" className="text-amber-500">
+          <UserCheck size={11} />
+        </span>
+      )}
+      {s.is_approver && (
+        <span title="Approver" className="text-emerald-600">
+          <CheckSquare size={11} />
+        </span>
+      )}
+    </span>
   )
 }
 
@@ -44,7 +69,8 @@ export default function Stakeholders() {
     return (
       s.name.toLowerCase().includes(q) ||
       s.organisation.toLowerCase().includes(q) ||
-      s.email.toLowerCase().includes(q)
+      s.email.toLowerCase().includes(q) ||
+      s.entity.toLowerCase().includes(q)
     )
   })
 
@@ -94,11 +120,10 @@ export default function Stakeholders() {
         </div>
       </div>
 
-      {/* Search */}
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by name, organisation, or email…"
+        placeholder="Search by name, entity, organisation, or email…"
         className="w-full max-w-sm bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-brand"
       />
 
@@ -116,10 +141,11 @@ export default function Stakeholders() {
             <thead>
               <tr className="bg-gray-50">
                 <th className="px-4 py-2 text-left text-gray-500 font-medium">Name / Title</th>
-                <th className="px-3 py-2 text-left text-gray-500 font-medium">Organisation</th>
-                <th className="px-3 py-2 text-left text-gray-500 font-medium">Role</th>
+                <th className="px-3 py-2 text-left text-gray-500 font-medium">Level</th>
+                <th className="px-3 py-2 text-left text-gray-500 font-medium">Entity</th>
+                <th className="px-3 py-2 text-left text-gray-500 font-medium">Roles</th>
+                <th className="px-3 py-2 text-left text-gray-500 font-medium">Comms</th>
                 <th className="px-3 py-2 text-left text-gray-500 font-medium">Disposition</th>
-                <th className="px-3 py-2 text-left text-gray-500 font-medium">Value Streams</th>
                 <th className="px-3 py-2 text-left text-gray-500 font-medium">Email</th>
                 <th className="px-3 py-2 text-left text-gray-500 font-medium"></th>
               </tr>
@@ -131,17 +157,31 @@ export default function Stakeholders() {
                     <p className="text-gray-900 font-medium">{s.name}</p>
                     {s.job_title && <p className="text-gray-400 mt-0.5">{s.job_title}</p>}
                   </td>
-                  <td className="px-3 py-2.5 text-gray-600">{s.organisation}</td>
                   <td className="px-3 py-2.5">
-                    <Badge text={s.project_role} colours={ROLE_COLOURS[s.project_role] ?? ROLE_COLOURS.recipient} />
+                    <LevelBadge level={s.level} />
+                  </td>
+                  <td className="px-3 py-2.5 text-gray-600 max-w-[140px] truncate">{s.entity || '-'}</td>
+                  <td className="px-3 py-2.5">
+                    <RoleDots s={s} />
                   </td>
                   <td className="px-3 py-2.5">
-                    <Badge text={s.disposition} colours={DISPOSITION_COLOURS[s.disposition] ?? DISPOSITION_COLOURS.neutral} />
+                    <span className="flex items-center gap-1 text-gray-500">
+                      {COMMS_ICON[s.comms_channel]}
+                      <span className="capitalize">{s.comms_channel}</span>
+                    </span>
                   </td>
-                  <td className="px-3 py-2.5 text-gray-600 max-w-[180px] truncate">
-                    {s.value_streams.join(', ') || '—'}
+                  <td className="px-3 py-2.5">
+                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${
+                      s.disposition === 'champion' ? 'bg-emerald-100 text-emerald-700' :
+                      s.disposition === 'supporter' ? 'bg-teal-100 text-teal-700' :
+                      s.disposition === 'neutral' ? 'bg-gray-100 text-gray-600' :
+                      s.disposition === 'skeptic' ? 'bg-orange-100 text-orange-700' :
+                      'bg-red-100 text-red-700'
+                    }`}>
+                      {s.disposition}
+                    </span>
                   </td>
-                  <td className="px-3 py-2.5 text-gray-600">{s.email || '—'}</td>
+                  <td className="px-3 py-2.5 text-gray-600">{s.email || '-'}</td>
                   <td className="px-3 py-2.5">
                     <button
                       onClick={() => navigate(`/${slug}/stakeholders/${s.id}/edit`)}
@@ -156,6 +196,13 @@ export default function Stakeholders() {
           </table>
         </div>
       )}
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 text-[10px] text-gray-400 border-t border-gray-100 pt-3">
+        <span className="flex items-center gap-1"><MessageSquare size={10} className="text-brand" /> Participant</span>
+        <span className="flex items-center gap-1"><UserCheck size={10} className="text-amber-500" /> Reviewer</span>
+        <span className="flex items-center gap-1"><CheckSquare size={10} className="text-emerald-600" /> Approver</span>
+      </div>
     </div>
   )
 }

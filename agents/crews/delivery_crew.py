@@ -6,6 +6,10 @@ from agents.delivery.roadmap_generator import (
     create_roadmap_generator,
     create_roadmap_generator_task,
 )
+from agents.delivery.visual_illustrator import (
+    create_visual_illustrator,
+    create_visual_illustrator_task,
+)
 
 
 def create_delivery_crew(
@@ -16,6 +20,7 @@ def create_delivery_crew(
     value_stream_labels: list[str],
     stakeholder_groups: list[str],
     roadmap_time_axis: str,
+    client_name: str = "",
     llm: LLM | None = None,
     hitl_tool=None,
 ) -> Crew:
@@ -43,6 +48,14 @@ def create_delivery_crew(
         ),
     )
 
+    vi = create_visual_illustrator(
+        slug=slug,
+        llm=llm,
+        tools=get_tools_for_agent(
+            "visual_illustrator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
+        ),
+    )
+
     rg_task = create_roadmap_generator_task(
         agent=rg,
         value_stream_labels=value_stream_labels,
@@ -50,9 +63,15 @@ def create_delivery_crew(
         roadmap_time_axis=roadmap_time_axis,
     )
 
+    vi_task = create_visual_illustrator_task(
+        agent=vi,
+        sector=sector,
+        client_name=client_name,
+    )
+
     return Crew(
-        agents=[rg],
-        tasks=[rg_task],
+        agents=[rg, vi],
+        tasks=[rg_task, vi_task],
         process=Process.sequential,
         verbose=True,
     )

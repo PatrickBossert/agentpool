@@ -26,6 +26,10 @@ from api.services.project_service import (
     get_financial_summary,
     get_portfolio_register,
 )
+from api.services.auto_assign_service import (
+    auto_assign_interview_scripts,
+    auto_assign_questionnaire_scripts,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -285,9 +289,50 @@ class PublishNodeTemplateBody(BaseModel):
     description: str = ""
 
 
+def _load_tree_nodes(slug: str) -> list[dict]:
+    """Return ordered L1+L2 nodes with id+label from registry (preferred) or tree fallback.
+
+    L1 nodes are included so senior leaders can be assigned a strategic questionnaire.
+    L3 activity nodes are excluded — they are traceable via IDs but have no own templates yet.
+    """
+    outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
+
+    # Prefer the registry — it is the source of truth for stable IDs.
+    registry_path = outputs_dir / "value_chain_registry.json"
+    if registry_path.exists():
+        try:
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            return [
+                {"activity_id": a["id"], "label": a["label"], "level": a.get("level", "L2")}
+                for a in registry.get("activities", [])
+                if a.get("level") in ("L1", "L2") and a.get("active", True)
+            ]
+        except Exception:
+            pass
+
+    # Fall back to tree file (pre-registry projects have no activity_id).
+    tree_path = outputs_dir / "value_chain_tree.json"
+    if not tree_path.exists():
+        return []
+    try:
+        tree = json.loads(tree_path.read_text(encoding="utf-8"))
+        nodes: list[dict] = []
+        for chain in tree:
+            nodes.append({"activity_id": chain.get("id"), "label": chain["label"], "level": "L1"})
+            for node in chain.get("children", []):
+                nodes.append({"activity_id": node.get("id"), "label": node["label"], "level": "L2"})
+        return nodes
+    except Exception:
+        return []
+
+
 @router.get("/{slug}/node-templates")
 async def list_node_templates(slug: str, payload: dict = Depends(require_any_auth)):
-    """Return all node→template assignments for a project."""
+    """Return all node→template assignments for a project.
+
+    If no assignments exist yet but value_chain_tree.json is present, auto-seeds
+    rows for each L2 node so the Templates tab shows all nodes immediately.
+    """
     await check_project_access(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -295,7 +340,35 @@ async def list_node_templates(slug: str, payload: dict = Depends(require_any_aut
         project = await fetch_project(conn, slug=slug)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
-        return await fetch_node_template_assignments(conn, project["id"])
+        assignments = await fetch_node_template_assignments(conn, project["id"])
+        if not assignments:
+            for node in _load_tree_nodes(slug):
+                await upsert_node_template_assignment(
+                    conn, project["id"],
+                    node["label"], None, None,
+                    activity_id=node.get("activity_id"),
+                    level=node.get("level", "L2"),
+                )
+            assignments = await fetch_node_template_assignments(conn, project["id"])
+        else:
+            # Backfill activity_id / level for rows that predate these columns.
+            needs_backfill = any(
+                a.get("activity_id") is None or a.get("level") is None
+                for a in assignments
+            )
+            if needs_backfill:
+                for node in _load_tree_nodes(slug):
+                    if node.get("activity_id") or node.get("level"):
+                        await conn.execute(
+                            "UPDATE node_template_assignments "
+                            "SET activity_id=COALESCE(activity_id, ?), level=COALESCE(level, ?) "
+                            "WHERE project_id=? AND node_label=?",
+                            (node.get("activity_id"), node.get("level", "L2"),
+                             project["id"], node["label"]),
+                        )
+                await conn.commit()
+                assignments = await fetch_node_template_assignments(conn, project["id"])
+        return assignments
 
 
 @router.put("/{slug}/node-templates/{node_label}")
@@ -315,6 +388,16 @@ async def upsert_node_template(slug: str, node_label: str, body: NodeTemplateAss
             body.questionnaire_template_id,
         )
     return {"ok": True}
+
+
+@router.get("/{slug}/value-chain-registry")
+async def get_value_chain_registry(slug: str, payload: dict = Depends(require_any_auth)):
+    """Return the stable activity ID registry for this project."""
+    await check_project_access(slug, payload)
+    registry_path = Path(get_settings().projects_dir) / slug / "outputs" / "value_chain_registry.json"
+    if not registry_path.exists():
+        raise HTTPException(status_code=404, detail="No activity registry found for this project")
+    return json.loads(registry_path.read_text(encoding="utf-8"))
 
 
 @router.post("/{slug}/node-templates/{node_label}/publish")
@@ -343,3 +426,61 @@ async def publish_node_template(slug: str, node_label: str, body: PublishNodeTem
         template_id = await insert_template(sys_conn, body.name, body.description, "interview", schema_json)
 
     return {"template_id": template_id}
+
+
+# ── Interview & Questionnaire Scripts ─────────────────────────────────────────
+
+class InterviewScriptPatch(BaseModel):
+    script: dict
+
+
+def _scripts_path(slug: str, kind: str) -> Path:
+    return Path(get_settings().projects_dir) / slug / "outputs" / f"{kind}_scripts.json"
+
+
+@router.get("/{slug}/interview-scripts")
+async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_auth)):
+    """Return all interview scripts keyed by node_label."""
+    await check_project_access(slug, payload)
+    p = _scripts_path(slug, "interview")
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+@router.get("/{slug}/interview-scripts/{node_label}")
+async def get_interview_script(slug: str, node_label: str, payload: dict = Depends(require_any_auth)):
+    """Return the interview script for a single node."""
+    await check_project_access(slug, payload)
+    p = _scripts_path(slug, "interview")
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="No interview scripts found")
+    scripts = json.loads(p.read_text(encoding="utf-8"))
+    if node_label not in scripts:
+        raise HTTPException(status_code=404, detail=f"No script for node '{node_label}'")
+    return scripts[node_label]
+
+
+@router.patch("/{slug}/interview-scripts/{node_label}")
+async def patch_interview_script(
+    slug: str, node_label: str, body: InterviewScriptPatch,
+    payload: dict = Depends(require_org_admin_or_above),
+):
+    """Update the interview script for a node and sync to the system template."""
+    await check_project_access(slug, payload)
+    p = _scripts_path(slug, "interview")
+    scripts = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    scripts[node_label] = {**body.script, "node_label": node_label}
+    p.write_text(json.dumps(scripts, ensure_ascii=False, indent=2), encoding="utf-8")
+    updated = await auto_assign_interview_scripts(slug)
+    return {"ok": True, "templates_updated": updated}
+
+
+@router.get("/{slug}/questionnaire-scripts")
+async def list_questionnaire_scripts(slug: str, payload: dict = Depends(require_any_auth)):
+    """Return all questionnaire scripts keyed by node_label."""
+    await check_project_access(slug, payload)
+    p = _scripts_path(slug, "questionnaire")
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))

@@ -39,7 +39,7 @@ function defaultQuestionnaireSchema(): QuestionnaireTemplateSchema {
         '1': 'Initial',
         '2': 'Developing',
         '3': 'Managed',
-        '4': 'Optimized',
+        '4': 'Optimised',
       },
     },
     sections: [],
@@ -518,7 +518,7 @@ function TemplateRow({
   onEdit: () => void
   onDelete: () => void
 }) {
-  // question count based on list item — we don't have schema_json here so show —
+  // question count based on list item - we don't have schema_json here so show -
   return (
     <tr className="border-t border-gray-200 hover:bg-gray-50">
       <td className="px-4 py-2.5">
@@ -526,7 +526,7 @@ function TemplateRow({
         {item.description && <p className="text-gray-400 text-xs mt-0.5">{item.description}</p>}
       </td>
       <td className="px-3 py-2.5 text-xs text-gray-500">{fmtDate(item.created_at)}</td>
-      <td className="px-3 py-2.5 text-xs text-gray-500 text-center">—</td>
+      <td className="px-3 py-2.5 text-xs text-gray-500 text-center">-</td>
       <td className="px-3 py-2.5 text-right">
         <div className="flex items-center justify-end gap-3">
           <button onClick={onEdit} className="text-xs text-brand hover:text-brand-dark transition-colors">

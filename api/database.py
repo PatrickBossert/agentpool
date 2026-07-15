@@ -5,6 +5,25 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from api.config import get_settings
 
+# Maps snake_case agent_name → crew_name so revert can clear pending HITL reviews
+_AGENT_TO_CREW: dict[str, str] = {
+    "value_chain_mapper":          "discovery_mapping",
+    "interaction_designer":        "assessment_design",
+    "requirements_capture":        "discovery",
+    "requirements_analyst":        "discovery",
+    "value_lever_analyst":         "discovery",
+    "stakeholder_manager":         "stakeholder_management",
+    "interview_coordinator":       "discovery_interviews",
+    "stakeholder_interviewer":     "discovery_interviews",
+    "synthesis_analyst":           "discovery_interviews",
+    "value_proposition_generator": "value_design",
+    "portfolio_manager":           "value_design",
+    "enterprise_architect":        "architecture",
+    "initiative_identifier":       "architecture",
+    "roadmap_generator":           "delivery",
+    "business_plan_generator":     "business_plan",
+}
+
 
 def get_db_path(slug: str) -> Path:
     return Path(get_settings().database_dir) / f"{slug}.db"
@@ -35,14 +54,15 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         );
 
         CREATE TABLE IF NOT EXISTS agent_outputs (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id  INTEGER NOT NULL REFERENCES projects(id),
-            agent_name  TEXT NOT NULL,
-            output_type TEXT NOT NULL,
-            file_path   TEXT NOT NULL,
-            version     INTEGER NOT NULL DEFAULT 1,
-            review_status TEXT NOT NULL DEFAULT 'pending',
-            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id     INTEGER NOT NULL REFERENCES projects(id),
+            agent_name     TEXT NOT NULL,
+            output_type    TEXT NOT NULL,
+            file_path      TEXT NOT NULL,
+            version        INTEGER NOT NULL DEFAULT 1,
+            review_status  TEXT NOT NULL DEFAULT 'pending',
+            revision_notes TEXT,
+            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS human_reviews (
@@ -73,12 +93,65 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             project_id   INTEGER NOT NULL REFERENCES projects(id),
             status       TEXT NOT NULL DEFAULT 'running',
             started_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-            completed_at DATETIME
+            completed_at DATETIME,
+            error_detail TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS project_milestones (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug           TEXT NOT NULL,
+            milestone_key  TEXT NOT NULL,
+            title          TEXT NOT NULL,
+            description    TEXT NOT NULL DEFAULT '',
+            due_date       TEXT,
+            status         TEXT NOT NULL DEFAULT 'pending',
+            notes          TEXT NOT NULL DEFAULT '',
+            sort_order     INTEGER NOT NULL DEFAULT 0,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
     # executescript issues an implicit COMMIT before running; the call below
     # is a safety flush but the schema is already committed.
     await conn.commit()
+
+
+async def _migrate_orchestration_runs_error(conn: aiosqlite.Connection) -> None:
+    """Add error_detail column to orchestration_runs if missing."""
+    async with conn.execute("PRAGMA table_info(orchestration_runs)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "error_detail" not in cols:
+        await conn.execute("ALTER TABLE orchestration_runs ADD COLUMN error_detail TEXT")
+        await conn.commit()
+
+
+async def _migrate_agent_outputs_is_current(conn: aiosqlite.Connection) -> None:
+    """Add is_current column to agent_outputs; back-fill so only the highest
+    version per (project_id, agent_name, output_type) tuple is current."""
+    async with conn.execute("PRAGMA table_info(agent_outputs)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "is_current" in cols:
+        return
+    await conn.execute("ALTER TABLE agent_outputs ADD COLUMN is_current INTEGER NOT NULL DEFAULT 1")
+    # Mark older versions as not current (keep only the max version per group)
+    await conn.execute("""
+        UPDATE agent_outputs SET is_current=0
+        WHERE version < (
+            SELECT MAX(ao2.version) FROM agent_outputs ao2
+            WHERE ao2.project_id = agent_outputs.project_id
+              AND ao2.agent_name = agent_outputs.agent_name
+              AND ao2.output_type = agent_outputs.output_type
+        )
+    """)
+    await conn.commit()
+
+
+async def _migrate_agent_outputs_revision_notes(conn: aiosqlite.Connection) -> None:
+    """Add revision_notes column to agent_outputs if missing."""
+    async with conn.execute("PRAGMA table_info(agent_outputs)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "revision_notes" not in cols:
+        await conn.execute("ALTER TABLE agent_outputs ADD COLUMN revision_notes TEXT")
+        await conn.commit()
 
 
 async def _migrate_human_reviews(conn: aiosqlite.Connection) -> None:
@@ -131,7 +204,7 @@ async def _migrate_crew_runs(conn: aiosqlite.Connection) -> None:
 
 
 async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
-    """Create stakeholders table if it doesn't exist."""
+    """Create stakeholders table if it doesn't exist, and add new columns on existing DBs."""
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS stakeholders (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,9 +225,34 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
             timezone            TEXT NOT NULL DEFAULT '',
             preferred_language  TEXT NOT NULL DEFAULT '',
             currency            TEXT NOT NULL DEFAULT '',
+            level               TEXT NOT NULL DEFAULT '',
+            entity              TEXT NOT NULL DEFAULT '',
+            mobile              TEXT NOT NULL DEFAULT '',
+            comms_channel       TEXT NOT NULL DEFAULT 'email',
+            is_participant      INTEGER NOT NULL DEFAULT 0,
+            is_reviewer         INTEGER NOT NULL DEFAULT 0,
+            is_approver         INTEGER NOT NULL DEFAULT 0,
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    await conn.commit()
+
+    # Add new columns to existing DBs that were created before this migration
+    async with conn.execute("PRAGMA table_info(stakeholders)") as cur:
+        cols = {row["name"] async for row in cur}
+
+    for col, defn in [
+        ("level",          "TEXT NOT NULL DEFAULT ''"),
+        ("entity",         "TEXT NOT NULL DEFAULT ''"),
+        ("mobile",         "TEXT NOT NULL DEFAULT ''"),
+        ("comms_channel",  "TEXT NOT NULL DEFAULT 'email'"),
+        ("is_participant", "INTEGER NOT NULL DEFAULT 0"),
+        ("is_reviewer",    "INTEGER NOT NULL DEFAULT 0"),
+        ("is_approver",    "INTEGER NOT NULL DEFAULT 0"),
+    ]:
+        if col not in cols:
+            await conn.execute(f"ALTER TABLE stakeholders ADD COLUMN {col} {defn}")
+
     await conn.commit()
 
 
@@ -240,6 +338,8 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
             status                TEXT NOT NULL DEFAULT 'pending',
             voice_config          TEXT,
             transcript_json       TEXT,
+            ratings_json          TEXT,
+            checkpoint_json       TEXT,
             started_at            TEXT,
             completed_at          TEXT,
             created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -259,6 +359,15 @@ async def _migrate_interview_sessions_ratings(conn: aiosqlite.Connection) -> Non
     await conn.commit()
 
 
+async def _migrate_interview_sessions_checkpoint(conn: aiosqlite.Connection) -> None:
+    """Add checkpoint_json column to interview_sessions if missing."""
+    async with conn.execute("PRAGMA table_info(interview_sessions)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "checkpoint_json" not in cols:
+        await conn.execute("ALTER TABLE interview_sessions ADD COLUMN checkpoint_json TEXT")
+    await conn.commit()
+
+
 async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None:
     """Create node_template_assignments table if it doesn't exist."""
     await conn.execute("""
@@ -266,6 +375,8 @@ async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None
             id                        INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id                INTEGER NOT NULL REFERENCES projects(id),
             node_label                TEXT    NOT NULL,
+            activity_id               TEXT,
+            level                     TEXT    DEFAULT 'L2',
             interview_template_id     INTEGER,
             questionnaire_template_id INTEGER,
             created_at                TEXT NOT NULL DEFAULT (datetime('now')),
@@ -273,7 +384,247 @@ async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None
             UNIQUE(project_id, node_label)
         )
     """)
+    async with conn.execute("PRAGMA table_info(node_template_assignments)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "activity_id" not in cols:
+        await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN activity_id TEXT")
+    if "level" not in cols:
+        await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN level TEXT DEFAULT 'L2'")
     await conn.commit()
+
+
+async def _migrate_project_milestones(conn: aiosqlite.Connection) -> None:
+    """Create project_milestones table if missing (handles existing DBs pre-schema update)."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS project_milestones (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug           TEXT NOT NULL,
+            milestone_key  TEXT NOT NULL,
+            title          TEXT NOT NULL,
+            description    TEXT NOT NULL DEFAULT '',
+            due_date       TEXT,
+            status         TEXT NOT NULL DEFAULT 'pending',
+            notes          TEXT NOT NULL DEFAULT '',
+            sort_order     INTEGER NOT NULL DEFAULT 0,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    await conn.commit()
+
+
+async def _migrate_nonworking_ranges(conn: aiosqlite.Connection) -> None:
+    """Create nonworking_ranges table for custom non-working date ranges."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS nonworking_ranges (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug        TEXT NOT NULL,
+            label       TEXT NOT NULL,
+            start_date  TEXT NOT NULL,
+            end_date    TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    await conn.commit()
+
+
+async def _migrate_stakeholder_node_assignments(conn: aiosqlite.Connection) -> None:
+    """Create stakeholder_node_assignments table if it doesn't exist.
+
+    Each row maps a stakeholder to a value chain node for a project.
+    node_key is a string such as 'L0:Governance' or 'L2:Strategic Planning'.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS stakeholder_node_assignments (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            stakeholder_id  INTEGER NOT NULL REFERENCES stakeholders(id) ON DELETE CASCADE,
+            node_key        TEXT NOT NULL,
+            UNIQUE(project_id, stakeholder_id, node_key)
+        )
+    """)
+    await conn.commit()
+
+
+async def get_stakeholder_node_assignments(
+    conn: aiosqlite.Connection, project_id: int
+) -> list[dict]:
+    """Return all stakeholder-node assignments for a project."""
+    async with conn.execute(
+        "SELECT id, stakeholder_id, node_key FROM stakeholder_node_assignments WHERE project_id=? ORDER BY id ASC",
+        (project_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def upsert_stakeholder_node_assignments(
+    conn: aiosqlite.Connection, project_id: int, assignments: list[dict]
+) -> None:
+    """Replace all stakeholder-node assignments for a project with the given list.
+
+    Each dict must contain: stakeholder_id (int), node_key (str).
+    Deletes all existing assignments for the project, then inserts the new ones.
+    """
+    await conn.execute(
+        "DELETE FROM stakeholder_node_assignments WHERE project_id=?", (project_id,)
+    )
+    for a in assignments:
+        await conn.execute(
+            "INSERT INTO stakeholder_node_assignments (project_id, stakeholder_id, node_key) VALUES (?,?,?)",
+            (project_id, a["stakeholder_id"], a["node_key"]),
+        )
+    await conn.commit()
+
+
+async def list_nonworking_ranges(conn: aiosqlite.Connection, slug: str) -> list[dict]:
+    async with conn.execute(
+        "SELECT * FROM nonworking_ranges WHERE slug=? ORDER BY start_date", (slug,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def insert_nonworking_range(
+    conn: aiosqlite.Connection, *, slug: str, label: str, start_date: str, end_date: str,
+) -> int:
+    cur = await conn.execute(
+        "INSERT INTO nonworking_ranges (slug, label, start_date, end_date) VALUES (?,?,?,?)",
+        (slug, label, start_date, end_date),
+    )
+    await conn.commit()
+    return cur.lastrowid  # type: ignore[return-value]
+
+
+async def update_nonworking_range(
+    conn: aiosqlite.Connection, *, slug: str, range_id: int,
+    label: str, start_date: str, end_date: str,
+) -> bool:
+    cur = await conn.execute(
+        "UPDATE nonworking_ranges SET label=?, start_date=?, end_date=? WHERE id=? AND slug=?",
+        (label, start_date, end_date, range_id, slug),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def delete_nonworking_range(
+    conn: aiosqlite.Connection, *, slug: str, range_id: int,
+) -> bool:
+    cur = await conn.execute(
+        "DELETE FROM nonworking_ranges WHERE id=? AND slug=?", (range_id, slug)
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+_DEFAULT_MILESTONES = [
+    ("project_initiation",      "Project initiation",                           "Engagement formally kicked off. Project charter signed, team onboarding complete, and tooling access confirmed.",                                       0),
+    ("discovery_docs",          "Discovery documents uploaded",                 "Source documents, strategy papers, and reference materials uploaded and indexed for the Value Chain Mapper (Alex Chen).",                              1),
+    ("value_chain_approved",    "Value chain mapping approved",                 "L1, L2, and L3 value chain structure reviewed and signed off by the project team before assessment instrument design begins.",                         2),
+    ("stakeholders_assigned",   "Stakeholders configured and assigned",         "All stakeholder contacts entered and assigned to value chain nodes. Coverage reviewed across L1 and L2 before interview scheduling.",                  3),
+    ("scripts_approved",        "Interview scripts and questionnaires approved","Assessment instruments designed by Maya Patel, reviewed, and signed off by the project team before deployment to stakeholders.",                        4),
+    ("interviews_launched",     "Interview campaign launched",                  "Interview links generated and sent to all assigned stakeholders. Sessions are active and accessible.",                                                  5),
+    ("interviews_complete",     "Interview responses complete",                 "All assigned stakeholders have completed their interview session. Track daily until this milestone closes.",                                            6),
+    ("propositions_approved",   "Value propositions approved",                  "Portfolio of value propositions reviewed, refined, and approved by the project team before architecture and delivery planning.",                        7),
+    ("portfolio_approved",      "Portfolio scoring approved",                   "Initiative register scored and prioritised using the IIRC Six Capitals framework. Signed off before roadmap sequencing.",                              8),
+    ("roadmap_approved",        "Delivery roadmap approved",                    "Phased delivery roadmap reviewed and confirmed by the project team before business case compilation.",                                                 9),
+    ("business_case_draft",     "Draft business case prepared",                 "Draft business case, financial model, and executive slide deck prepared and shared with the project team for review. Allow at least one week before final delivery.", 10),
+    ("business_plan_delivered", "Business case delivered",                      "Final business case, financial model, and executive slide deck approved and delivered to the client.",                                                 11),
+    ("project_closeout",        "Project closeout",                             "Engagement formally closed. Final deliverables accepted, lessons learnt captured, and project archived.",                                              12),
+]
+
+
+async def seed_default_milestones(conn: aiosqlite.Connection, slug: str) -> int:
+    """Insert default milestones for a project. Skips keys that already exist. Returns count inserted."""
+    async with conn.execute(
+        "SELECT milestone_key FROM project_milestones WHERE slug=?", (slug,)
+    ) as cur:
+        existing = {row["milestone_key"] async for row in cur}
+    inserted = 0
+    for key, title, description, order in _DEFAULT_MILESTONES:
+        if key not in existing:
+            await conn.execute(
+                "INSERT INTO project_milestones (slug, milestone_key, title, description, sort_order) VALUES (?,?,?,?,?)",
+                (slug, key, title, description, order),
+            )
+            inserted += 1
+    # Rename milestones whose terminology has been updated
+    await conn.execute(
+        "UPDATE project_milestones SET title='Business case delivered', "
+        "description='Final business case, financial model, and executive slide deck approved and delivered to the client.' "
+        "WHERE slug=? AND milestone_key='business_plan_delivered' AND title='Business plan delivered'",
+        (slug,),
+    )
+    await conn.execute(
+        "UPDATE project_milestones SET description='Phased delivery roadmap reviewed and confirmed by the project team before business case compilation.' "
+        "WHERE slug=? AND milestone_key='roadmap_approved' AND description LIKE '%business plan compilation%'",
+        (slug,),
+    )
+    await conn.commit()
+    return inserted
+
+
+async def list_milestones(conn: aiosqlite.Connection, slug: str) -> list[dict]:
+    # Auto-migrate renamed milestone titles on every list call (no-op once done)
+    await conn.execute(
+        "UPDATE project_milestones SET title='Business case delivered' "
+        "WHERE slug=? AND milestone_key='business_plan_delivered' AND title='Business plan delivered'",
+        (slug,),
+    )
+    # Fix sort_order for milestones whose position changed when new milestones were inserted
+    await conn.execute(
+        "UPDATE project_milestones SET sort_order=10 WHERE slug=? AND milestone_key='business_case_draft' AND sort_order!=10",
+        (slug,),
+    )
+    await conn.execute(
+        "UPDATE project_milestones SET sort_order=11 WHERE slug=? AND milestone_key='business_plan_delivered' AND sort_order<11",
+        (slug,),
+    )
+    await conn.commit()
+    async with conn.execute(
+        "SELECT * FROM project_milestones WHERE slug=? ORDER BY sort_order, id", (slug,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def insert_milestone(
+    conn: aiosqlite.Connection, *, slug: str, milestone_key: str, title: str,
+    description: str, due_date: str | None, notes: str, sort_order: int,
+) -> int:
+    cur = await conn.execute(
+        "INSERT INTO project_milestones (slug, milestone_key, title, description, due_date, notes, sort_order) VALUES (?,?,?,?,?,?,?)",
+        (slug, milestone_key, title, description, due_date, notes, sort_order),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def update_milestone(
+    conn: aiosqlite.Connection, *, milestone_id: int, slug: str,
+    title: str | None, description: str | None, due_date: str | None,
+    status: str | None, notes: str | None, sort_order: int | None,
+) -> bool:
+    fields, vals = [], []
+    if title       is not None: fields.append("title=?");       vals.append(title)
+    if description is not None: fields.append("description=?"); vals.append(description)
+    if due_date    is not None: fields.append("due_date=?");    vals.append(due_date if due_date != "" else None)
+    if status      is not None: fields.append("status=?");      vals.append(status)
+    if notes       is not None: fields.append("notes=?");       vals.append(notes)
+    if sort_order  is not None: fields.append("sort_order=?");  vals.append(sort_order)
+    if not fields:
+        return False
+    vals.extend([milestone_id, slug])
+    await conn.execute(
+        f"UPDATE project_milestones SET {', '.join(fields)} WHERE id=? AND slug=?", vals
+    )
+    await conn.commit()
+    return True
+
+
+async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slug: str) -> bool:
+    cur = await conn.execute(
+        "DELETE FROM project_milestones WHERE id=? AND slug=?", (milestone_id, slug)
+    )
+    await conn.commit()
+    return cur.rowcount > 0
 
 
 @asynccontextmanager
@@ -284,6 +635,9 @@ async def get_connection(slug: str):
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA foreign_keys = ON")
         await init_db(conn)
+        await _migrate_orchestration_runs_error(conn)
+        await _migrate_agent_outputs_is_current(conn)
+        await _migrate_agent_outputs_revision_notes(conn)
         await _migrate_human_reviews(conn)
         await _migrate_crew_runs(conn)
         await _migrate_stakeholders(conn)
@@ -292,6 +646,10 @@ async def get_connection(slug: str):
         await _migrate_interview_sessions(conn)
         await _migrate_node_template_assignments(conn)
         await _migrate_interview_sessions_ratings(conn)
+        await _migrate_interview_sessions_checkpoint(conn)
+        await _migrate_project_milestones(conn)
+        await _migrate_nonworking_ranges(conn)
+        await _migrate_stakeholder_node_assignments(conn)
         yield conn
 
 
@@ -368,7 +726,17 @@ async def insert_agent_output(conn: aiosqlite.Connection, *, project_id: int, ag
 
 async def fetch_agent_outputs(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
     async with conn.execute(
-        "SELECT * FROM agent_outputs WHERE project_id=? ORDER BY created_at DESC", (project_id,)
+        """
+        SELECT ao.*,
+               -- Latest reviewer notes on THIS version (for revision dialog pre-population)
+               (SELECT hr.notes FROM human_reviews hr
+                WHERE hr.output_id = ao.id
+                ORDER BY hr.reviewed_at DESC LIMIT 1) AS reviewer_notes
+        FROM agent_outputs ao
+        WHERE ao.project_id=?
+        ORDER BY ao.created_at DESC
+        """,
+        (project_id,),
     ) as cur:
         return [dict(r) async for r in cur]
 
@@ -398,6 +766,20 @@ async def fetch_documents(conn: aiosqlite.Connection, *, project_id: int) -> lis
         (project_id,),
     ) as cur:
         return [dict(r) async for r in cur]
+
+
+async def fetch_document(conn: aiosqlite.Connection, *, doc_id: int) -> dict | None:
+    async with conn.execute(
+        "SELECT * FROM client_documents WHERE id=?", (doc_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def delete_document(conn: aiosqlite.Connection, *, doc_id: int) -> bool:
+    cur = await conn.execute("DELETE FROM client_documents WHERE id=?", (doc_id,))
+    await conn.commit()
+    return cur.rowcount > 0
 
 
 async def update_project_config(
@@ -436,8 +818,79 @@ async def insert_review(
         "INSERT INTO human_reviews (output_id, reviewer, decision, notes) VALUES (?,?,?,?)",
         (output_id, reviewer, decision, notes),
     )
+    await conn.execute(
+        "UPDATE agent_outputs SET review_status=? WHERE id=?",
+        (decision, output_id),
+    )
     await conn.commit()
     return cur.lastrowid
+
+
+async def revert_to_version(
+    conn: aiosqlite.Connection, *, project_id: int, output_id: int
+) -> tuple[dict | None, list[str]]:
+    """Hard-delete all versions newer than output_id for the same (agent_name, output_type).
+    Sets the target version as is_current=1.
+    Returns (target_row, list_of_file_paths_that_were_deleted).
+    The caller is responsible for deleting the returned files from disk."""
+    async with conn.execute(
+        "SELECT agent_name, output_type, version FROM agent_outputs WHERE id=? AND project_id=?",
+        (output_id, project_id),
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        return None, []
+    agent_name = row["agent_name"]
+    output_type = row["output_type"]
+    target_version = row["version"]
+    # Collect file paths of newer versions so the caller can delete them from disk
+    async with conn.execute(
+        """SELECT file_path FROM agent_outputs
+           WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?""",
+        (project_id, agent_name, output_type, target_version),
+    ) as cur:
+        deleted_paths = [r["file_path"] for r in await cur.fetchall()]
+    # Delete human_reviews referencing the newer outputs first to satisfy the FK constraint,
+    # then hard-delete the agent_outputs rows themselves.
+    await conn.execute(
+        """DELETE FROM human_reviews WHERE output_id IN (
+               SELECT id FROM agent_outputs
+               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+           )""",
+        (project_id, agent_name, output_type, target_version),
+    )
+    await conn.execute(
+        """DELETE FROM agent_outputs
+           WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?""",
+        (project_id, agent_name, output_type, target_version),
+    )
+    # Set the target as the sole current version
+    await conn.execute(
+        """UPDATE agent_outputs SET is_current=0
+           WHERE project_id=? AND agent_name=? AND output_type=?""",
+        (project_id, agent_name, output_type),
+    )
+    await conn.execute(
+        "UPDATE agent_outputs SET is_current=1 WHERE id=?",
+        (output_id,),
+    )
+    # Auto-dismiss any pending HITL reviews for this crew so the waiting state clears.
+    # HITL reviews link via crew_run_id (not output_id), so they survive output deletion
+    # unless explicitly cleared here.
+    crew_name = _AGENT_TO_CREW.get(agent_name)
+    if crew_name:
+        await conn.execute(
+            """UPDATE human_reviews
+               SET decision='dismissed', reviewed_at=CURRENT_TIMESTAMP
+               WHERE decision='pending' AND crew_run_id IN (
+                   SELECT id FROM crew_runs WHERE project_id=? AND crew_name=?
+               )""",
+            (project_id, crew_name),
+        )
+    await conn.commit()
+    async with conn.execute("SELECT * FROM agent_outputs WHERE id=?", (output_id,)) as cur:
+        r = await cur.fetchone()
+    return (dict(r) if r else None), deleted_paths
 
 
 async def update_review(
@@ -448,6 +901,23 @@ async def update_review(
         "UPDATE human_reviews SET decision=?, notes=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?",
         (decision, notes, review_id),
     )
+    await conn.execute(
+        "UPDATE agent_outputs SET review_status=? WHERE id=(SELECT output_id FROM human_reviews WHERE id=?)",
+        (decision, review_id),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def delete_hitl_review(
+    conn: aiosqlite.Connection, *, review_id: int
+) -> bool:
+    """Hard-delete a human_review row. Returns True if the record existed."""
+    await conn.execute(
+        "UPDATE agent_outputs SET review_status='pending' WHERE id=(SELECT output_id FROM human_reviews WHERE id=?)",
+        (review_id,),
+    )
+    cur = await conn.execute("DELETE FROM human_reviews WHERE id=?", (review_id,))
     await conn.commit()
     return cur.rowcount > 0
 
@@ -462,7 +932,7 @@ async def fetch_pending_reviews(
     """
     async with conn.execute(
         """
-        SELECT hr.id, hr.prompt, hr.crew_run_id, hr.decision, hr.reviewed_at
+        SELECT hr.id, hr.prompt, hr.crew_run_id, hr.decision, hr.reviewed_at, cr.crew_name
         FROM human_reviews hr
         JOIN crew_runs cr ON cr.id = hr.crew_run_id
         WHERE cr.project_id = ? AND hr.decision = 'pending'
@@ -508,12 +978,12 @@ async def insert_orchestration_run(conn: aiosqlite.Connection, *, project_id: in
 
 
 async def update_orchestration_run_status(
-    conn: aiosqlite.Connection, *, run_id: int, status: str
+    conn: aiosqlite.Connection, *, run_id: int, status: str, error_detail: str | None = None
 ) -> None:
     if status in ("completed", "failed"):
         await conn.execute(
-            "UPDATE orchestration_runs SET status=?, completed_at=CURRENT_TIMESTAMP WHERE id=?",
-            (status, run_id),
+            "UPDATE orchestration_runs SET status=?, completed_at=CURRENT_TIMESTAMP, error_detail=? WHERE id=?",
+            (status, error_detail, run_id),
         )
     else:
         await conn.execute(
@@ -597,6 +1067,13 @@ async def insert_stakeholder(
     timezone: str = '',
     preferred_language: str = '',
     currency: str = '',
+    level: str = '',
+    entity: str = '',
+    mobile: str = '',
+    comms_channel: str = 'email',
+    is_participant: bool = False,
+    is_reviewer: bool = False,
+    is_approver: bool = False,
 ) -> int:
     """Insert a stakeholder row. Returns new id."""
     cur = await conn.execute(
@@ -604,8 +1081,10 @@ async def insert_stakeholder(
            (project_id, name, job_title, organisation, email, slack_handle,
             stakeholder_groups, project_role, value_streams, value_chain_stage,
             activity, disposition, location, country_code, timezone,
-            preferred_language, currency)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            preferred_language, currency,
+            level, entity, mobile, comms_channel,
+            is_participant, is_reviewer, is_approver)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             project_id, name, job_title, organisation, email, slack_handle,
             _json.dumps(stakeholder_groups or []),
@@ -613,6 +1092,8 @@ async def insert_stakeholder(
             _json.dumps(value_streams or []),
             value_chain_stage, activity, disposition,
             location, country_code, timezone, preferred_language, currency,
+            level, entity, mobile, comms_channel,
+            int(is_participant), int(is_reviewer), int(is_approver),
         ),
     )
     await conn.commit()
@@ -620,9 +1101,12 @@ async def insert_stakeholder(
 
 
 def _deserialize_stakeholder(row: dict) -> dict:
-    """Convert JSON text columns back to Python lists."""
+    """Convert JSON text columns to Python types and cast integer booleans."""
     row["stakeholder_groups"] = _json.loads(row.get("stakeholder_groups") or "[]")
     row["value_streams"] = _json.loads(row.get("value_streams") or "[]")
+    row["is_participant"] = bool(row.get("is_participant", 0))
+    row["is_reviewer"] = bool(row.get("is_reviewer", 0))
+    row["is_approver"] = bool(row.get("is_approver", 0))
     return row
 
 
@@ -654,6 +1138,8 @@ _STAKEHOLDER_UPDATABLE_FIELDS = frozenset({
     "stakeholder_groups", "project_role", "value_streams", "value_chain_stage",
     "activity", "disposition", "location", "country_code", "timezone",
     "preferred_language", "currency",
+    "level", "entity", "mobile", "comms_channel",
+    "is_participant", "is_reviewer", "is_approver",
 })
 
 
@@ -672,6 +1158,9 @@ async def update_stakeholder(
     for key in ("stakeholder_groups", "value_streams"):
         if key in fields and isinstance(fields[key], list):
             fields[key] = _json.dumps(fields[key])
+    for key in ("is_participant", "is_reviewer", "is_approver"):
+        if key in fields:
+            fields[key] = int(bool(fields[key]))
 
     if not fields:
         return False
@@ -975,6 +1464,14 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, project_slug)
         );
+
+        CREATE TABLE IF NOT EXISTS agent_skill_notes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name TEXT NOT NULL,
+            note       TEXT NOT NULL,
+            raw_input  TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     await conn.commit()
 
@@ -1006,6 +1503,28 @@ async def get_system_db():
         conn.row_factory = aiosqlite.Row
         await init_system_db(conn)
         yield conn
+
+
+async def insert_skill_note(conn: aiosqlite.Connection, *, agent_name: str, note: str, raw_input: str) -> int:
+    cur = await conn.execute(
+        "INSERT INTO agent_skill_notes (agent_name, note, raw_input) VALUES (?,?,?)",
+        (agent_name, note, raw_input),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_skill_notes(conn: aiosqlite.Connection, *, agent_name: str | None = None) -> list[dict]:
+    if agent_name:
+        async with conn.execute(
+            "SELECT * FROM agent_skill_notes WHERE agent_name=? ORDER BY created_at DESC",
+            (agent_name,),
+        ) as cur:
+            return [dict(r) async for r in cur]
+    async with conn.execute(
+        "SELECT * FROM agent_skill_notes ORDER BY agent_name, created_at DESC"
+    ) as cur:
+        return [dict(r) async for r in cur]
 
 
 async def fetch_user(conn: aiosqlite.Connection, *, username: str) -> dict | None:
@@ -1175,6 +1694,19 @@ async def complete_interview_session(
     await conn.commit()
 
 
+async def save_interview_checkpoint(
+    conn: aiosqlite.Connection, session_token: str, checkpoint: dict | None
+) -> None:
+    """Persist a mid-session checkpoint. Pass None to clear (e.g. on completion)."""
+    import json
+    value = json.dumps(checkpoint) if checkpoint is not None else None
+    await conn.execute(
+        "UPDATE interview_sessions SET checkpoint_json=? WHERE session_token=?",
+        (value, session_token),
+    )
+    await conn.commit()
+
+
 # ── Interview Templates ───────────────────────────────────────────────────────
 
 async def fetch_all_templates(conn, type_filter=None) -> list:
@@ -1233,7 +1765,7 @@ async def delete_template(conn, template_id: int) -> bool:
 
 async def fetch_node_template_assignments(conn, project_id: int) -> list:
     async with conn.execute(
-        "SELECT node_label, interview_template_id, questionnaire_template_id "
+        "SELECT node_label, activity_id, level, interview_template_id, questionnaire_template_id "
         "FROM node_template_assignments WHERE project_id=? ORDER BY node_label",
         (project_id,),
     ) as cur:
@@ -1243,16 +1775,20 @@ async def fetch_node_template_assignments(conn, project_id: int) -> list:
 async def upsert_node_template_assignment(
     conn, project_id: int, node_label: str,
     interview_template_id, questionnaire_template_id,
+    activity_id: str | None = None,
+    level: str | None = None,
 ) -> None:
     await conn.execute("""
         INSERT INTO node_template_assignments
-            (project_id, node_label, interview_template_id, questionnaire_template_id)
-        VALUES (?, ?, ?, ?)
+            (project_id, node_label, activity_id, level, interview_template_id, questionnaire_template_id)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(project_id, node_label) DO UPDATE SET
+            activity_id=COALESCE(excluded.activity_id, activity_id),
+            level=COALESCE(excluded.level, level),
             interview_template_id=excluded.interview_template_id,
             questionnaire_template_id=excluded.questionnaire_template_id,
             updated_at=datetime('now')
-    """, (project_id, node_label, interview_template_id, questionnaire_template_id))
+    """, (project_id, node_label, activity_id, level or "L2", interview_template_id, questionnaire_template_id))
     await conn.commit()
 
 

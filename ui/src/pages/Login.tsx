@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { authApi } from '../api/endpoints'
 import { useAuth } from '../context/AuthContext'
 import type { UserPayload } from '../types'
+import logoUrl from '../assets/TR_Logo_strapiline.png'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -37,7 +38,9 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center">
       <div className="bg-surface-card rounded-xl p-8 w-full max-w-sm shadow-xl">
-        <h1 className="text-2xl font-bold text-brand mb-6">FutureMomentum</h1>
+        <div className="flex flex-col items-center mb-8">
+          <img src={logoUrl} alt="TaskReimagination.ai" className="h-16 w-auto" />
+        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-gray-600 mb-1">

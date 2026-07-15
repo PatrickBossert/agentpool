@@ -134,9 +134,70 @@ def test_rg_task_embeds_config_values(mock_llm):
     assert "horizons" in task.description
 
 
+# ── Visual Illustrator ────────────────────────────────────────────────────────
+
+def test_vi_agent_role(mock_llm):
+    from agents.delivery.visual_illustrator import create_visual_illustrator
+    agent = create_visual_illustrator(slug="test", llm=mock_llm, tools=[])
+    assert agent.role == "Visual Illustrator"
+
+
+def test_vi_task_reads_value_chain_registry(mock_llm):
+    from agents.delivery.visual_illustrator import (
+        create_visual_illustrator,
+        create_visual_illustrator_task,
+    )
+    agent = create_visual_illustrator(slug="test", llm=mock_llm, tools=[])
+    task = create_visual_illustrator_task(agent=agent, sector="energy", client_name="Acme")
+    assert "key='value_chain_registry'" in task.description
+
+
+def test_vi_task_reads_propositions(mock_llm):
+    from agents.delivery.visual_illustrator import (
+        create_visual_illustrator,
+        create_visual_illustrator_task,
+    )
+    agent = create_visual_illustrator(slug="test", llm=mock_llm, tools=[])
+    task = create_visual_illustrator_task(agent=agent, sector="energy", client_name="Acme")
+    assert "key='propositions'" in task.description
+
+
+def test_vi_task_writes_illustration_briefs(mock_llm):
+    from agents.delivery.visual_illustrator import (
+        create_visual_illustrator,
+        create_visual_illustrator_task,
+    )
+    agent = create_visual_illustrator(slug="test", llm=mock_llm, tools=[])
+    task = create_visual_illustrator_task(agent=agent, sector="energy", client_name="Acme")
+    assert "key='illustration_briefs'" in task.description
+    assert "operation='write'" in task.description
+
+
+def test_vi_task_embeds_client_and_sector(mock_llm):
+    from agents.delivery.visual_illustrator import (
+        create_visual_illustrator,
+        create_visual_illustrator_task,
+    )
+    agent = create_visual_illustrator(slug="test", llm=mock_llm, tools=[])
+    task = create_visual_illustrator_task(agent=agent, sector="utilities", client_name="ScottishPower")
+    assert "ScottishPower" in task.description
+    assert "utilities" in task.description
+
+
+def test_vi_task_has_hitl(mock_llm):
+    from agents.delivery.visual_illustrator import (
+        create_visual_illustrator,
+        create_visual_illustrator_task,
+    )
+    agent = create_visual_illustrator(slug="test", llm=mock_llm, tools=[])
+    task = create_visual_illustrator_task(agent=agent, sector="energy", client_name="Acme")
+    assert "HumanInputTool" in task.description
+    assert "approved" in task.description
+
+
 # ── Crew wiring ───────────────────────────────────────────────────────────────
 
-def test_delivery_crew_has_one_agent(mock_llm):
+def test_delivery_crew_has_two_agents(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.delivery_crew import create_delivery_crew
         crew = create_delivery_crew(
@@ -144,10 +205,10 @@ def test_delivery_crew_has_one_agent(mock_llm):
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
         )
-    assert len(crew.agents) == 1
+    assert len(crew.agents) == 2
 
 
-def test_delivery_crew_agent_role(mock_llm):
+def test_delivery_crew_agent_roles(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.delivery_crew import create_delivery_crew
         crew = create_delivery_crew(
@@ -155,7 +216,9 @@ def test_delivery_crew_agent_role(mock_llm):
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
         )
-    assert crew.agents[0].role == "Roadmap Generator"
+    roles = [a.role for a in crew.agents]
+    assert "Roadmap Generator" in roles
+    assert "Visual Illustrator" in roles
 
 
 def test_delivery_crew_sequential_process(mock_llm):

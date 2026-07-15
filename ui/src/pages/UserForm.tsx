@@ -1,6 +1,7 @@
 // ui/src/pages/UserForm.tsx
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../api/admin'
 import { useAuth } from '../context/AuthContext'
@@ -63,7 +64,7 @@ export default function UserForm() {
       qc.invalidateQueries({ queryKey: ['admin', 'users'] })
       navigate('/admin/users')
     },
-    onError: () => setError('Failed to create user — username may already exist.'),
+    onError: () => setError('Failed to create user - username may already exist.'),
   })
 
   const updateMut = useMutation({
@@ -102,7 +103,7 @@ export default function UserForm() {
   return (
     <div className="p-6 max-w-xl mx-auto">
       <button onClick={() => navigate('/admin/users')} className="text-xs text-muted hover:text-primary mb-4 block">
-        ← Back to Users
+        <span className="flex items-center gap-1"><ArrowLeft size={14} />Back to Users</span>
       </button>
 
       <h1 className="text-xl font-bold text-primary mb-6">

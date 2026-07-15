@@ -14,9 +14,13 @@ import type {
   OrchestrationRunHistory,
   Stakeholder,
   StakeholderImportResult,
+  StakeholderNodeAssignment,
+  ValueChainRegistry,
   PortfolioItem,
   AssignmentData,
   StakeholderAssignment,
+  Milestone,
+  PamReport,
 } from '../types'
 
 export const authApi = {
@@ -56,6 +60,12 @@ export const projectsApi = {
       .then((r) => r.data)
   },
 
+  deleteDocument: (slug: string, docId: number): Promise<void> =>
+    apiClient.delete(`/projects/${slug}/documents/${docId}`).then(() => undefined),
+
+  reingestDocument: (slug: string, docId: number): Promise<void> =>
+    apiClient.post(`/projects/${slug}/documents/${docId}/reingest`).then(() => undefined),
+
   valueChain: (slug: string): Promise<AgentOutput[]> =>
     apiClient.get<AgentOutput[]>(`/projects/${slug}/value-chain`).then((r) => r.data),
 
@@ -73,6 +83,9 @@ export const projectsApi = {
   runCrew: (slug: string, crew: string): Promise<{ run_id: number; project_slug: string; crew: string; status: string }> =>
     apiClient.post(`/projects/${slug}/run`, { crew }).then((r) => r.data),
 
+  runAgent: (slug: string, agent: string): Promise<{ run_id: number; project_slug: string; crew: string; status: string }> =>
+    apiClient.post(`/projects/${slug}/run`, { agent }).then((r) => r.data),
+
   getSettings: (slug: string): Promise<ProjectSettings> =>
     apiClient.get<ProjectSettings>(`/projects/${slug}/settings`).then((r) => r.data),
 
@@ -81,6 +94,9 @@ export const projectsApi = {
 
   getOutputContent: (slug: string, outputId: number): Promise<OutputContent> =>
     apiClient.get<OutputContent>(`/projects/${slug}/outputs/${outputId}/content`).then((r) => r.data),
+
+  revertOutput: (slug: string, outputId: number): Promise<AgentOutput> =>
+    apiClient.post<AgentOutput>(`/projects/${slug}/outputs/${outputId}/revert`).then((r) => r.data),
 
   roadmapData: (slug: string): Promise<RoadmapData> =>
     apiClient.get<RoadmapData>(`/projects/${slug}/roadmap-data`).then((r) => r.data),
@@ -98,6 +114,9 @@ export const projectsApi = {
     apiClient
       .patch(`/projects/${slug}/reviews/${reviewId}`, { decision, notes })
       .then(() => undefined),
+
+  deleteReview: (slug: string, reviewId: number): Promise<void> =>
+    apiClient.delete(`/projects/${slug}/reviews/${reviewId}`).then(() => undefined),
 
   listRuns: (slug: string): Promise<OrchestrationRunHistory[]> =>
     apiClient.get<OrchestrationRunHistory[]>(`/projects/${slug}/runs`).then((r) => r.data),
@@ -124,11 +143,24 @@ export const projectsApi = {
       .patch<{ status: string }>(`/projects/${slug}/orchestration-runs/${orchestrationRunId}/advance`)
       .then((r) => r.data),
 
+  getValueChainRegistry: (slug: string): Promise<ValueChainRegistry> =>
+    apiClient.get<ValueChainRegistry>(`/projects/${slug}/value-chain-registry`).then((r) => r.data),
+
   uploadBrandingImage: (slug: string, file: File): Promise<{ url: string }> => {
     const form = new FormData()
     form.append('file', file)
     return apiClient.post<{ url: string }>(`/projects/${slug}/branding/image`, form).then((r) => r.data)
   },
+}
+
+export const skillNotesApi = {
+  create: (agentName: string, rawInput: string) =>
+    apiClient.post('/agent-skill-notes', { agent_name: agentName, raw_input: rawInput })
+      .then(r => r.data as { id: number; agent_name: string; note: string }),
+
+  list: (agentName?: string) =>
+    apiClient.get('/agent-skill-notes', { params: agentName ? { agent_name: agentName } : {} })
+      .then(r => r.data as Array<{ id: number; agent_name: string; note: string; raw_input: string; created_at: string }>),
 }
 
 export const stakeholdersApi = {
@@ -155,4 +187,47 @@ export const stakeholdersApi = {
       .post<StakeholderImportResult>(`/projects/${slug}/stakeholders/import`, form)
       .then((r) => r.data)
   },
+}
+
+export const stakeholderNodeAssignmentsApi = {
+  list: (slug: string): Promise<StakeholderNodeAssignment[]> =>
+    apiClient.get<StakeholderNodeAssignment[]>(`/projects/${slug}/stakeholder-assignments`).then((r) => r.data),
+
+  save: (slug: string, assignments: { stakeholder_id: number; node_key: string }[]): Promise<{ count: number }> =>
+    apiClient
+      .put<{ count: number }>(`/projects/${slug}/stakeholder-assignments`, { assignments })
+      .then((r) => r.data),
+}
+
+export const nonworkingApi = {
+  list: (slug: string) =>
+    apiClient.get(`/projects/${slug}/nonworking`).then(r => r.data as import('../types').NonWorkingRange[]),
+  create: (slug: string, body: { label: string; start_date: string; end_date: string }) =>
+    apiClient.post(`/projects/${slug}/nonworking`, body).then(r => r.data as import('../types').NonWorkingRange),
+  update: (slug: string, id: number, body: { label: string; start_date: string; end_date: string }) =>
+    apiClient.patch(`/projects/${slug}/nonworking/${id}`, body).then(r => r.data as import('../types').NonWorkingRange),
+  remove: (slug: string, id: number) =>
+    apiClient.delete(`/projects/${slug}/nonworking/${id}`).then(() => undefined),
+}
+
+export const pamReportApi = {
+  get: (slug: string): Promise<PamReport> =>
+    apiClient.get<PamReport>(`/projects/${slug}/pam-report`).then((r) => r.data),
+}
+
+export const milestonesApi = {
+  list: (slug: string): Promise<Milestone[]> =>
+    apiClient.get<Milestone[]>(`/projects/${slug}/milestones`).then((r) => r.data),
+
+  seed: (slug: string): Promise<Milestone[]> =>
+    apiClient.post<Milestone[]>(`/projects/${slug}/milestones/seed`).then((r) => r.data),
+
+  create: (slug: string, data: { title: string; description?: string; due_date?: string | null; notes?: string }): Promise<Milestone> =>
+    apiClient.post<Milestone>(`/projects/${slug}/milestones`, data).then((r) => r.data),
+
+  update: (slug: string, id: number, data: Partial<{ title: string; description: string; due_date: string | null; status: string; notes: string; sort_order: number }>): Promise<Milestone> =>
+    apiClient.patch<Milestone>(`/projects/${slug}/milestones/${id}`, data).then((r) => r.data),
+
+  remove: (slug: string, id: number): Promise<void> =>
+    apiClient.delete(`/projects/${slug}/milestones/${id}`).then(() => undefined),
 }

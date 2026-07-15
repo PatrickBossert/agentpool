@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import type { ProjectSettings } from '../types'
+import { SUPPORTED_LOCALES } from '../utils/holidays'
 
 const DEFAULT_PRIMARY_COLOR = '#0d9488'  // must match api/models.py default
 const DEFAULT_TEXT_COLOR = '#1f2937'
@@ -12,6 +13,7 @@ const KNOWN_CREWS = ['discovery', 'value_design', 'architecture', 'delivery', 'b
 
 const DEFAULTS: ProjectSettings = {
   llm_mode: 'standard',
+  locale: 'GB',
   sector: '',
   stakeholder_groups: [],
   value_stream_labels: [],
@@ -135,7 +137,7 @@ export default function Settings() {
 
   return (
     <div className="p-6 max-w-2xl space-y-6">
-      <h2 className="text-lg font-semibold text-gray-900">Settings — {slug}</h2>
+      <h2 className="text-lg font-semibold text-gray-900">Settings - {slug}</h2>
 
       {/* General */}
       <section className="space-y-4">
@@ -161,6 +163,18 @@ export default function Settings() {
               <option value="standard">standard</option>
               <option value="sensitive">sensitive</option>
               <option value="fallback">fallback</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Project locale</label>
+            <select
+              value={form.locale ?? 'GB'}
+              onChange={(e) => setForm({ ...form, locale: e.target.value })}
+              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+            >
+              {SUPPORTED_LOCALES.map(l => (
+                <option key={l.code} value={l.code}>{l.label}</option>
+              ))}
             </select>
           </div>
           <div>
@@ -257,7 +271,7 @@ export default function Settings() {
           <div className="flex flex-col gap-2">
             {(
               [
-                ['none', 'None — skip interview phase'],
+                ['none', 'None - skip interview phase'],
                 ['agent', 'Agent interviews (platform conducts voice interviews)'],
               ] as [ProjectSettings['interview_method'], string][]
             ).map(([value, label]) => (

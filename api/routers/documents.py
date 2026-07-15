@@ -1,11 +1,11 @@
 # api/routers/documents.py
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, UploadFile, File
 from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.services.ingest_service import ingest_document
 from api.config import get_settings
-from api.database import get_connection, get_db_path, fetch_project, insert_document, fetch_documents
+from api.database import get_connection, get_db_path, fetch_project, insert_document, fetch_documents, fetch_document, delete_document
 
 router = APIRouter(prefix="/projects", tags=["documents"])
 
@@ -73,3 +73,65 @@ async def upload_document(
         docs = await fetch_documents(conn, project_id=project["id"])
         background_tasks.add_task(ingest_document, slug, doc_id, str(dest))
         return _coerce_doc(next(d for d in docs if d["id"] == doc_id))
+
+
+@router.post("/{slug}/documents/{doc_id}/reingest", status_code=202)
+async def reingest_document(
+    slug: str,
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    payload: dict = Depends(require_org_admin_or_above),
+):
+    await check_project_access(slug, payload)
+    if not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    async with get_connection(slug) as conn:
+        doc = await fetch_document(conn, doc_id=doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    background_tasks.add_task(ingest_document, slug, doc_id, doc["file_path"])
+    return {"queued": True}
+
+
+@router.delete("/{slug}/documents/{doc_id}", status_code=204)
+async def delete_document_endpoint(
+    slug: str,
+    doc_id: int,
+    payload: dict = Depends(require_org_admin_or_above),
+):
+    await check_project_access(slug, payload)
+    if not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+
+    async with get_connection(slug) as conn:
+        doc = await fetch_document(conn, doc_id=doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        deleted = await delete_document(conn, doc_id=doc_id)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Remove file from disk
+    Path(doc["file_path"]).unlink(missing_ok=True)
+
+    # Remove from ChromaDB if it was ingested
+    if doc["ingested"]:
+        try:
+            from api.config import get_settings
+            import chromadb
+            settings = get_settings()
+            if settings.chroma_api_key:
+                client = chromadb.CloudClient(
+                    tenant=settings.chroma_tenant,
+                    database=settings.chroma_database,
+                    api_key=settings.chroma_api_key,
+                )
+            else:
+                client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+            collection = client.get_or_create_collection(name=f"{slug}_docs")
+            collection.delete(where={"doc_id": doc_id})
+        except Exception:
+            pass  # ChromaDB cleanup is best-effort
+
+    return Response(status_code=204)

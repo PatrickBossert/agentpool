@@ -38,7 +38,7 @@ function ReviewCard({ review, slug }: { review: HumanReview; slug: string }) {
         <textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          placeholder="Notes for the crew (optional) — your text is returned verbatim as the crew's input"
+          placeholder="Notes for the crew (optional) - your text is returned verbatim as the crew's input"
           className="w-full bg-white border border-gray-200 rounded-md text-gray-700 text-sm px-3 py-2 resize-y min-h-[72px] placeholder:text-gray-400 focus:outline-none focus:border-brand"
         />
         <div className="flex gap-2 justify-end">
@@ -87,7 +87,7 @@ function ReminderEmailCard({ item, slug }: { item: ReminderEmail; slug: string }
     <div className={`bg-surface rounded-xl border-l-4 ${levelColour} overflow-hidden`}>
       <div className="px-4 pt-3 pb-2 flex items-center gap-2">
         <span className="rounded px-2 py-0.5 text-xs font-bold tracking-wide bg-brand/10 text-brand uppercase">
-          Reminder — {item.escalation_level}
+          Reminder - {item.escalation_level}
         </span>
       </div>
       <div className="px-4 pb-2 space-y-2">
@@ -152,7 +152,7 @@ export default function Reviews() {
       {isLoading && <p className="text-sm text-gray-400">Loading...</p>}
       {!isLoading && reviews.length === 0 && (
         <p className="text-sm text-gray-400">
-          No pending reviews — the crew is running autonomously.
+          No pending reviews - the crew is running autonomously.
         </p>
       )}
       <div className="space-y-4">

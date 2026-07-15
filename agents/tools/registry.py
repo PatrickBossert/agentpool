@@ -36,6 +36,7 @@ def get_tools_for_agent(
     from agents.tools.financial_model import FinancialModelTool
     from agents.tools.web_fetch_tool import WebFetchTool
     from agents.tools.interview_session_tool import InterviewSessionTool
+    from agents.tools.derive_registry import DeriveRegistryTool
 
     if not sector:
         settings = get_settings()
@@ -54,6 +55,7 @@ def get_tools_for_agent(
             ChromaQueryTool(slug=slug, sector=sector),
             MermaidRenderTool(slug=slug),
             SQLiteStateTool(slug=slug),
+            DeriveRegistryTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "requirements_capture": [
@@ -125,6 +127,20 @@ def get_tools_for_agent(
         "synthesis_analyst": [
             SQLiteStateTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
+        ],
+        "questionnaire_builder": [
+            SQLiteStateTool(slug=slug),
+            ChromaQueryTool(slug=slug, sector=sector),
+        ],
+        "interaction_designer": [
+            SQLiteStateTool(slug=slug),
+            ChromaQueryTool(slug=slug, sector=sector),
+            HumanInputTool(slug=slug, run_id=run_id),
+        ],
+        "stakeholder_manager": [
+            SQLiteStateTool(slug=slug),
+            InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
+            SlackNotifyTool(slug=slug),
         ],
     }
 

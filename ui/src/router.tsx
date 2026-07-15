@@ -27,6 +27,9 @@ import OrgDetail from './pages/OrgDetail'
 import UserList from './pages/UserList'
 import UserForm from './pages/UserForm'
 import OrgPanel from './pages/OrgPanel'
+import Team from './pages/Team'
+import Schedule from './pages/Schedule'
+import DataArchitecture from './pages/DataArchitecture'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { token } = useAuth()
@@ -51,6 +54,10 @@ export const router = createBrowserRouter([
   {
     path: '/interview/:sessionToken',
     element: <VoiceInterview />,
+  },
+  {
+    path: '/data-architecture',
+    element: <DataArchitecture />,
   },
   {
     path: '/architecture',
@@ -93,6 +100,8 @@ export const router = createBrowserRouter([
       { path: ':slug/assignment', element: <Assignment /> },
       { path: ':slug/templates', element: <Templates /> },
       { path: ':slug/settings', element: <Settings /> },
+      { path: ':slug/schedule', element: <Schedule /> },
+      { path: ':slug/team', element: <Team /> },
       {
         path: 'admin',
         element: (

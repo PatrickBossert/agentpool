@@ -81,5 +81,10 @@ class HumanInputTool(BaseTool):
                 if consecutive_errors >= 5:
                     return f"Error: could not read review decision after 5 attempts — {e}"
                 continue
+            if decision == "rejected":
+                raise RuntimeError(
+                    f"Output rejected by reviewer{': ' + notes if notes else ''}. "
+                    "Crew run terminated."
+                )
             if decision != "pending":
                 return notes if notes else decision

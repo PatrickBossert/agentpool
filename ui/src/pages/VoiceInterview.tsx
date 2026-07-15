@@ -72,7 +72,7 @@ export default function VoiceInterview() {
       }
       // Labels are present (permission was granted), but the device might still be
       // physically missing (disconnected headset, virtual device, etc.). Probe with
-      // getUserMedia — this is silent when permission was already granted.
+      // getUserMedia - this is silent when permission was already granted.
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         stream.getTracks().forEach(t => t.stop())
@@ -242,13 +242,13 @@ export default function VoiceInterview() {
         }
       }
 
-      // onend fires after every stop — including Chrome's internal timeouts.
+      // onend fires after every stop - including Chrome's internal timeouts.
       // Only finish if the ref was cleared (user/silence-timer initiated stop).
       // Otherwise restart to keep listening.
       recognition.onend = () => {
         if (silenceTimer) clearTimeout(silenceTimer)
         if (recognitionRef.current === recognition) {
-          // Chrome stopped us internally — restart to keep listening
+          // Chrome stopped us internally - restart to keep listening
           try {
             recognition.start()
             return
@@ -262,12 +262,12 @@ export default function VoiceInterview() {
       recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
         if (silenceTimer) clearTimeout(silenceTimer)
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          // Microphone permission denied — show message, block auto-advance
+          // Microphone permission denied - show message, block auto-advance
           setStatusMessage('⚠️ Microphone access denied. Allow microphone access in your browser, then click ✓ Done to continue.')
           recognitionRef.current = null  // prevent onend from restarting
           return
         }
-        // For no-speech, network, etc. — clear ref so onend won't restart
+        // For no-speech, network, etc. - clear ref so onend won't restart
         recognitionRef.current = null
       }
 
@@ -519,7 +519,7 @@ export default function VoiceInterview() {
                 </div>
                 <div className="flex justify-between text-xs text-gray-400 mt-1 px-1">
                   <span>Not Accounted For</span>
-                  <span>Optimized</span>
+                  <span>Optimised</span>
                 </div>
               </div>
             ))}
@@ -606,7 +606,7 @@ export default function VoiceInterview() {
 
           {micStatus === 'ready' && (
             <div className="mb-6">
-              <p className="text-xs text-gray-400 mb-2">Audio level — speak to check</p>
+              <p className="text-xs text-gray-400 mb-2">Audio level - speak to check</p>
               <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
                 <div
                   className="h-4 rounded-full transition-all duration-75"
@@ -656,6 +656,24 @@ export default function VoiceInterview() {
           {branding?.header_image_url && (
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
           )}
+
+          {/* Interviewer persona */}
+          {branding?.interviewer_image_url && (
+            <div className="flex flex-col items-center mb-6">
+              <img
+                src={branding.interviewer_image_url}
+                alt={branding.interviewer_name ?? 'Your interviewer'}
+                className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
+              />
+              <p className="font-semibold text-gray-800" style={{ color: branding.text_color }}>
+                {branding.interviewer_name ?? 'Avery Singh'}
+              </p>
+              {branding.interviewer_tagline && (
+                <p className="text-sm text-gray-500 mt-0.5">{branding.interviewer_tagline}</p>
+              )}
+            </div>
+          )}
+
           <h1 className="text-2xl font-bold text-gray-800 mb-2" style={{ color: branding?.text_color }}>
             {sessionData.script.node_label} Interview
           </h1>
@@ -733,8 +751,20 @@ export default function VoiceInterview() {
           />
         </div>
 
-        {/* Current question */}
+        {/* Current question — with optional interviewer avatar */}
         <div className="bg-white rounded-xl shadow-sm p-8 mb-6">
+          {branding?.interviewer_image_url && (
+            <div className="flex items-center gap-3 mb-5 pb-5 border-b border-gray-100">
+              <img
+                src={branding.interviewer_image_url}
+                alt={branding.interviewer_name ?? 'Interviewer'}
+                className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+              />
+              <span className="text-sm font-medium text-gray-600">
+                {branding.interviewer_name ?? 'Avery Singh'}
+              </span>
+            </div>
+          )}
           <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
         </div>
 

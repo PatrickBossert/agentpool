@@ -24,6 +24,7 @@ export interface OrchestrationRun {
   status: string  // 'running' | 'completed' | 'failed'
   started_at: string | null
   completed_at: string | null
+  error_detail: string | null
 }
 
 export interface ProjectStatus {
@@ -40,6 +41,9 @@ export interface AgentOutput {
   file_path: string
   version: number
   review_status: string
+  is_current: boolean
+  reviewer_notes?: string | null
+  revision_notes?: string | null
   created_at: string
 }
 
@@ -65,6 +69,18 @@ export interface InterviewBranding {
   header_image_url: string
   primary_color: string
   text_color: string
+  interviewer_image_url?: string
+  interviewer_name?: string
+  interviewer_tagline?: string
+}
+
+export interface NonWorkingRange {
+  id: number
+  slug: string
+  label: string
+  start_date: string
+  end_date: string
+  created_at: string
 }
 
 export interface ProjectSettings {
@@ -83,6 +99,12 @@ export interface ProjectSettings {
   brand_header_image_url?: string
   brand_primary_color?: string
   brand_text_color?: string
+  standards_references?: string
+  preferred_questionnaire_sections?: number
+  preferred_questions_per_section?: number
+  locale?: string
+  sched_start?: string | null
+  sched_duration_weeks?: number | null
 }
 
 export interface OutputContent {
@@ -101,6 +123,7 @@ export interface HumanReview {
   id: number
   prompt: string
   crew_run_id: number
+  crew_name?: string
   decision: string
   reviewed_at: string
 }
@@ -185,6 +208,7 @@ export interface Stakeholder {
   organisation: string
   email: string
   slack_handle: string
+  mobile: string
   stakeholder_groups: string[]
   project_role: 'recipient' | 'governing' | 'actor'
   value_streams: string[]
@@ -196,10 +220,37 @@ export interface Stakeholder {
   timezone: string
   preferred_language: string
   currency: string
+  // Engagement fields
+  level: '' | 'L0' | 'L1' | 'L2' | 'L3'
+  entity: string
+  comms_channel: 'email' | 'slack' | 'sms'
+  // Role flags (a stakeholder can hold all three simultaneously)
+  is_participant: boolean
+  is_reviewer: boolean
+  is_approver: boolean
   interview_status: string | null
   interview_invited_at: string | null
   interview_completed_at: string | null
   created_at: string
+}
+
+export interface StakeholderNodeAssignment {
+  id: number
+  stakeholder_id: number
+  node_key: string
+}
+
+export interface ValueChainRegistryActivity {
+  id: string
+  label: string
+  level: 'L1' | 'L2' | 'L3'
+  active: boolean
+  parent_id: string | null
+}
+
+export interface ValueChainRegistry {
+  schema_version: number
+  activities: ValueChainRegistryActivity[]
 }
 
 export interface StakeholderImportResult {
@@ -388,6 +439,8 @@ export interface InterviewSessionsResponse {
 
 export interface NodeTemplateAssignment {
   node_label: string
+  activity_id: string | null
+  level?: 'L1' | 'L2' | 'L3'
   interview_template_id: number | null
   questionnaire_template_id: number | null
 }
@@ -483,5 +536,85 @@ export interface ProjectMembership {
   id: number
   user_id: number
   project_slug: string
+  created_at: string
+}
+
+// ── PAM status report ─────────────────────────────────────────────────────────
+
+export interface PamReportCrewStatus {
+  crew_key: string
+  crew_label: string
+  status: 'completed' | 'failed' | 'running' | 'not_started'
+  last_run_at: string | null
+  finished_at: string | null
+  run_count: number
+  outputs_count: number
+  output_types: string[]
+  pending_reviews: number
+  error_detail: string | null
+}
+
+export interface PamReportRisk {
+  severity: 'high' | 'medium' | 'low'
+  title: string
+  description: string
+  mitigation: string
+}
+
+export interface PamReportIssue {
+  severity: 'critical' | 'high' | 'medium'
+  title: string
+  description: string
+  recommended_action: string
+  crew: string | null
+}
+
+export interface PamReportMilestone {
+  id: number
+  milestone_key: string
+  title: string
+  due_date: string | null
+  status: 'pending' | 'complete'
+  rag: 'complete' | 'overdue' | 'due_soon' | 'on_track' | 'unscheduled'
+  days_delta: number | null
+  sort_order: number
+}
+
+export interface PamReport {
+  generated_at: string
+  project_slug: string
+  client_name: string
+  sector: string
+  overall_health: 'red' | 'amber' | 'green'
+  health_summary: string
+  milestones: PamReportMilestone[]
+  milestones_complete: number
+  milestones_total: number
+  crews: PamReportCrewStatus[]
+  risks: PamReportRisk[]
+  issues: PamReportIssue[]
+  interview_tracker: {
+    total: number
+    complete: number
+    active: number
+    pending: number
+    abandoned: number
+    pct: number
+  }
+  pending_reviews: number
+  stakeholder_count: number
+  doc_count: number
+}
+
+export interface Milestone {
+  id: number
+  slug: string
+  milestone_key: string
+  title: string
+  description: string
+  due_date: string | null
+  status: 'pending' | 'complete'
+  notes: string
+  sort_order: number
   created_at: string
 }

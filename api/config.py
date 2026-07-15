@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
     deepgram_api_key: str = ""
     resend_api_key: str = ""
-    from_email: str = "FutureMomentum <noreply@futuremomentum.ai>"
+    from_email: str = "TaskReimagination.ai <noreply@taskreimagination.ai>"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

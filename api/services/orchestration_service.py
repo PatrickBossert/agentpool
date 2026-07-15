@@ -46,7 +46,7 @@ async def run_pam_phase1(slug: str, orchestration_run_id: int) -> None:
             await update_orchestration_run_status(
                 conn, run_id=orchestration_run_id, status="awaiting_assignment"
             )
-    except Exception:
+    except Exception as exc:
         _log.exception(
             "PAM phase1 failed for slug=%s orchestration_run_id=%d",
             slug,
@@ -54,7 +54,8 @@ async def run_pam_phase1(slug: str, orchestration_run_id: int) -> None:
         )
         async with get_connection(slug) as conn:
             await update_orchestration_run_status(
-                conn, run_id=orchestration_run_id, status="failed"
+                conn, run_id=orchestration_run_id, status="failed",
+                error_detail=f"{type(exc).__name__}: {exc}"
             )
 
 
@@ -84,7 +85,7 @@ async def run_pam_phase2(slug: str, orchestration_run_id: int) -> None:
             await update_orchestration_run_status(
                 conn, run_id=orchestration_run_id, status="completed"
             )
-    except Exception:
+    except Exception as exc:
         _log.exception(
             "PAM phase2 failed for slug=%s orchestration_run_id=%d",
             slug,
@@ -92,5 +93,6 @@ async def run_pam_phase2(slug: str, orchestration_run_id: int) -> None:
         )
         async with get_connection(slug) as conn:
             await update_orchestration_run_status(
-                conn, run_id=orchestration_run_id, status="failed"
+                conn, run_id=orchestration_run_id, status="failed",
+                error_detail=f"{type(exc).__name__}: {exc}"
             )

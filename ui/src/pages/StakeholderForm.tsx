@@ -14,6 +14,7 @@ const EMPTY: FormData = {
   organisation: '',
   email: '',
   slack_handle: '',
+  mobile: '',
   stakeholder_groups: [],
   project_role: 'recipient',
   value_streams: [],
@@ -25,10 +26,26 @@ const EMPTY: FormData = {
   timezone: '',
   preferred_language: '',
   currency: '',
+  level: '',
+  entity: '',
+  comms_channel: 'email',
+  is_participant: false,
+  is_reviewer: false,
+  is_approver: false,
   interview_status: null,
   interview_invited_at: null,
   interview_completed_at: null,
 }
+
+const LEVEL_OPTIONS = [
+  { value: '',   label: '- Select level -' },
+  { value: 'L0', label: 'L0 - Executive / Board' },
+  { value: 'L1', label: 'L1 - General Manager / VP' },
+  { value: 'L2', label: 'L2 - Manager / Senior' },
+  { value: 'L3', label: 'L3 - Operational / Analyst' },
+]
+
+const FIXED_ENTITIES = ['Advisor', 'Auditor', 'Other']
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -50,6 +67,33 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const INPUT = 'w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand'
 const SELECT = `${INPUT} cursor-pointer`
 
+function RoleCheckbox({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string
+  hint: string
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-gray-100 hover:border-brand/40 hover:bg-gray-50 transition-colors">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 accent-brand"
+      />
+      <span>
+        <span className="text-sm font-medium text-gray-800 block">{label}</span>
+        <span className="text-xs text-gray-400">{hint}</span>
+      </span>
+    </label>
+  )
+}
+
 function MultiCheckbox({
   label,
   options,
@@ -68,9 +112,7 @@ function MultiCheckbox({
     <div>
       <label className="text-xs text-gray-500 block mb-2">{label}</label>
       {options.length === 0 ? (
-        <p className="text-xs text-gray-400">
-          None configured — add them in Settings first.
-        </p>
+        <p className="text-xs text-gray-400">None configured - add them in Settings first.</p>
       ) : (
         <div className="flex flex-wrap gap-x-6 gap-y-1.5">
           {options.map((opt) => (
@@ -98,14 +140,19 @@ export default function StakeholderForm() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Fetch settings to populate multi-select options
   const { data: settings } = useQuery({
     queryKey: ['settings', slug],
     queryFn: () => projectsApi.getSettings(slug!),
     enabled: !!slug,
   })
 
-  // Fetch existing stakeholder when editing
+  const { data: registry, isError: registryMissing } = useQuery({
+    queryKey: ['value-chain-registry', slug],
+    queryFn: () => projectsApi.getValueChainRegistry(slug!),
+    enabled: !!slug,
+    retry: false,
+  })
+
   const { data: existing } = useQuery<Stakeholder[]>({
     queryKey: ['stakeholders', slug],
     queryFn: () => stakeholdersApi.list(slug!),
@@ -161,6 +208,12 @@ export default function StakeholderForm() {
   const groupOptions = settings?.stakeholder_groups ?? []
   const vsOptions = settings?.value_stream_labels ?? []
 
+  // Entity options: L1 labels from registry + fixed entries
+  const entityOptions = [
+    ...(registry?.activities.filter(a => a.level === 'L1' && a.active).map(a => a.label) ?? []),
+    ...FIXED_ENTITIES,
+  ]
+
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-6">
@@ -179,25 +232,118 @@ export default function StakeholderForm() {
         {/* Identity */}
         <SectionHeading>Identity</SectionHeading>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Name *">
+          <Field label="Full Name *">
             <input value={form.name} onChange={(e) => set('name', e.target.value)} className={INPUT} />
           </Field>
-          <Field label="Job Title">
+          <Field label="Title / Job Title">
             <input value={form.job_title} onChange={(e) => set('job_title', e.target.value)} className={INPUT} />
           </Field>
           <Field label="Organisation">
             <input value={form.organisation} onChange={(e) => set('organisation', e.target.value)} className={INPUT} />
           </Field>
+          <Field label="Level">
+            <select
+              value={form.level}
+              onChange={(e) => set('level', e.target.value as FormData['level'])}
+              className={SELECT}
+            >
+              {LEVEL_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="col-span-2">
+            <Field label="Entity">
+              {registryMissing ? (
+                <input
+                  value={form.entity}
+                  onChange={(e) => set('entity', e.target.value)}
+                  className={INPUT}
+                  placeholder="e.g. Advisor, Auditor, or value chain entity"
+                />
+              ) : (
+                <select
+                  value={form.entity}
+                  onChange={(e) => set('entity', e.target.value)}
+                  className={SELECT}
+                >
+                  <option value="">- Select entity -</option>
+                  {entityOptions.length > 0 && (
+                    <>
+                      {registry && <optgroup label="Value Chain Entities">
+                        {registry.activities.filter(a => a.level === 'L1' && a.active).map(a => (
+                          <option key={a.id} value={a.label}>{a.label}</option>
+                        ))}
+                      </optgroup>}
+                      <optgroup label="Consultants / Third Parties">
+                        {FIXED_ENTITIES.map(e => (
+                          <option key={e} value={e}>{e}</option>
+                        ))}
+                      </optgroup>
+                    </>
+                  )}
+                  {entityOptions.length === 0 && FIXED_ENTITIES.map(e => (
+                    <option key={e} value={e}>{e}</option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          </div>
+        </div>
+
+        {/* Engagement Roles */}
+        <SectionHeading>Engagement Roles</SectionHeading>
+        <p className="text-xs text-gray-400 -mt-2">
+          A stakeholder may hold all three roles simultaneously. The PMO uses these to route review requests and approval gates.
+        </p>
+        <div className="grid grid-cols-1 gap-2 mt-2">
+          <RoleCheckbox
+            label="Participant"
+            hint="Attends workshops, completes surveys, or takes part in discovery interviews"
+            checked={form.is_participant}
+            onChange={(v) => set('is_participant', v)}
+          />
+          <RoleCheckbox
+            label="Reviewer"
+            hint="Reviews deliverables and provides sign-off comments before a gate can close"
+            checked={form.is_reviewer}
+            onChange={(v) => set('is_reviewer', v)}
+          />
+          <RoleCheckbox
+            label="Milestone Approver"
+            hint="Has authority to formally approve milestone completion and unblock the next phase"
+            checked={form.is_approver}
+            onChange={(v) => set('is_approver', v)}
+          />
         </div>
 
         {/* Contact */}
         <SectionHeading>Contact</SectionHeading>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Email">
-            <input value={form.email} onChange={(e) => set('email', e.target.value)} className={INPUT} />
+            <input value={form.email} onChange={(e) => set('email', e.target.value)} className={INPUT} type="email" />
+          </Field>
+          <Field label="Mobile (include country prefix)">
+            <input
+              value={form.mobile}
+              onChange={(e) => set('mobile', e.target.value)}
+              className={INPUT}
+              placeholder="+44 7700 000000"
+            />
           </Field>
           <Field label="Slack Handle">
             <input value={form.slack_handle} onChange={(e) => set('slack_handle', e.target.value)} className={INPUT} placeholder="@handle" />
+          </Field>
+          <Field label="Preferred Comms Channel">
+            <select
+              value={form.comms_channel}
+              onChange={(e) => set('comms_channel', e.target.value as FormData['comms_channel'])}
+              className={SELECT}
+            >
+              <option value="email">Email</option>
+              <option value="slack">Slack</option>
+              <option value="sms">SMS</option>
+            </select>
           </Field>
           <Field label="Preferred Language">
             <input value={form.preferred_language} onChange={(e) => set('preferred_language', e.target.value)} className={INPUT} />
@@ -207,7 +353,7 @@ export default function StakeholderForm() {
         {/* Project Role */}
         <SectionHeading>Project Role</SectionHeading>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Role">
+          <Field label="Stakeholder Category">
             <select value={form.project_role} onChange={(e) => set('project_role', e.target.value as FormData['project_role'])} className={SELECT}>
               <option value="recipient">Recipient</option>
               <option value="governing">Governing</option>
@@ -257,7 +403,7 @@ export default function StakeholderForm() {
               onChange={(e) => handleCountryChange(e.target.value)}
               className={SELECT}
             >
-              <option value="">— Select country —</option>
+              <option value="">- Select country -</option>
               {COUNTRY_OPTIONS.map(({ code, name }) => (
                 <option key={code} value={code}>{name}</option>
               ))}

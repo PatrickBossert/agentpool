@@ -4,6 +4,23 @@ This file is loaded automatically by Claude Code. It captures conventions, key f
 
 ---
 
+## Style guide
+
+These rules apply to all content produced for this project — UI labels, copy, comments, agent backstories, error messages, and documentation.
+
+| Rule | Detail |
+|------|--------|
+| **English** | British English (UK) spellings throughout |
+| **-ise / -ize** | Always `-ise` — e.g. *organise*, *prioritise*, *humanise*, *recognise* |
+| **-our / -or** | Always `-our` — e.g. *behaviour*, *colour*, *favour*, *labour* |
+| **-re / -er** | Always `-re` — e.g. *centre*, *fibre*, *theatre* |
+| **-ogue / -og** | Always `-ogue` — e.g. *catalogue*, *dialogue* |
+| **Dashes** | Short (en) dash ` - ` with spaces, not em dash (`—`) in web content |
+| **Icons** | Stylised SVG icons (Lucide React) in all UI — no emoji in rendered web content |
+| **Punctuation** | Oxford comma in lists of three or more items |
+
+---
+
 ## Tech stack
 
 | Layer | Technology |

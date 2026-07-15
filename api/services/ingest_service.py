@@ -68,7 +68,7 @@ async def ingest_document(slug: str, doc_id: int, file_path: str) -> None:
             client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
         collection = client.get_or_create_collection(f"{slug}_docs")
         ids = [f"{path.name}::{i}" for i in range(len(chunks))]
-        metadatas = [{"filename": path.name, "chunk": i} for i in range(len(chunks))]
+        metadatas = [{"filename": path.name, "chunk": i, "doc_id": doc_id} for i in range(len(chunks))]
         collection.upsert(documents=chunks, ids=ids, metadatas=metadatas)
     except Exception as exc:
         logger.warning("ingest_document: ChromaDB upsert failed for %s: %s", path.name, exc)

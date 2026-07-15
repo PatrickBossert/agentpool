@@ -2,6 +2,7 @@
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useState, Fragment } from 'react'
+import { Download, Disc } from 'lucide-react'
 import { projectsApi } from '../api/endpoints'
 import { useAuth } from '../context/AuthContext'
 import { downloadOutput } from '../utils/download'
@@ -79,7 +80,7 @@ export default function Roadmap() {
       {!isLoading && outputs.length === 0 && tab === 'visual' && (
         <div className="bg-surface-card rounded-xl p-8 text-center">
           <p className="text-gray-500 text-sm">
-            Awaiting Roadmap Generator output — visual timeline will appear here.
+            Awaiting Roadmap Generator output - visual timeline will appear here.
           </p>
           <p className="text-gray-400 text-xs mt-2">
             Run all Discovery, Value Design, and Architecture crews to generate roadmap data.
@@ -97,7 +98,7 @@ export default function Roadmap() {
                 onClick={() => downloadOutput(slug!, latest.id, latest.file_path.split('/').pop() ?? latest.output_type, token!).catch(console.error)}
                 className="text-xs text-brand hover:text-brand-dark transition-colors"
               >
-                ↓ Download
+                <span className="flex items-center gap-1"><Download size={12} />Download</span>
               </button>
             </div>
           </div>
@@ -154,7 +155,7 @@ export default function Roadmap() {
                   }
                   className="text-xs text-brand hover:text-brand-dark transition-colors"
                 >
-                  ↓ Download JSON
+                  <span className="flex items-center gap-1"><Download size={12} />Download JSON</span>
                 </button>
               </div>
             )}
@@ -174,7 +175,7 @@ export default function Roadmap() {
 
       {tab === 'register' && (
         <div className="bg-surface-card rounded-xl overflow-hidden">
-          {/* Controls row — same Group By toggle as Gantt */}
+          {/* Controls row - same Group By toggle as Gantt */}
           <div className="flex items-center px-4 py-3 border-b border-gray-200">
             <span className="text-xs text-gray-400 uppercase tracking-widest">Group by</span>
             <div className="flex rounded-lg overflow-hidden border border-gray-200 ml-3">
@@ -244,7 +245,7 @@ function GanttTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy }) 
                     className="px-4 py-1.5 text-xs font-semibold uppercase tracking-widest"
                     style={{ color: colour }}
                   >
-                    ● {group.replace(/_/g, ' ')}
+                    <span className="flex items-center gap-1.5"><Disc size={8} className="fill-current flex-shrink-0" />{group.replace(/_/g, ' ')}</span>
                   </td>
                 </tr>
                 {members.map((initiative: Initiative) => (
@@ -330,7 +331,7 @@ function RegisterTable({ data, groupBy }: { data: RoadmapData; groupBy: GroupBy 
                     className="px-4 py-1.5 text-xs font-semibold uppercase tracking-widest"
                     style={{ color: colour }}
                   >
-                    ● {group.replace(/_/g, ' ')}
+                    <span className="flex items-center gap-1.5"><Disc size={8} className="fill-current flex-shrink-0" />{group.replace(/_/g, ' ')}</span>
                   </td>
                 </tr>
                 {members.map((initiative: Initiative) => (

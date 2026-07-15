@@ -31,7 +31,6 @@ export const CREW_AGENTS: Record<string, string[]> = {
     'Value Lever Analyst',
   ],
   discovery_interviews: [
-    'Interview Script Designer',
     'Interview Coordinator',
     'Stakeholder Interviewer',
     'Synthesis Analyst',
@@ -51,7 +50,7 @@ const CREW_ICONS: Record<string, string> = {
   business_plan:        '📊',
 }
 
-// Heights (px) for EKG bars — 7 bars, varying heights for waveform look
+// Heights (px) for EKG bars - 7 bars, varying heights for waveform look
 const EKG_HEIGHTS = [3, 9, 5, 13, 4, 7, 3]
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -167,7 +166,7 @@ function CrewNode({
       className={`relative border rounded-lg overflow-hidden ${borderClass} ${bgClass} ${onClick ? 'cursor-pointer' : ''}`}
       onClick={onClick}
     >
-      {/* Scanline sweep — only on running crew */}
+      {/* Scanline sweep - only on running crew */}
       {status === 'running' && (
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-brand to-transparent animate-scanline pointer-events-none" />
       )}
@@ -181,7 +180,7 @@ function CrewNode({
         {statusBadge}
       </div>
 
-      {/* Agent list — always rendered */}
+      {/* Agent list - always rendered */}
       <div className="flex flex-col gap-1.5 px-2.5 py-2">
         {agents.map((agent, idx) => (
           <AgentRow key={agent} name={agent} status={agentStatuses[idx]} />
@@ -256,10 +255,10 @@ export default function OrgChart({
       <div className="flex items-center gap-3 px-4 py-2.5 bg-surface-raised border-b border-slate-700">
         <span className="text-brand animate-pamPulse text-sm font-mono leading-none">◈</span>
         <span className="text-[11px] font-mono font-bold tracking-[0.18em] text-brand">
-          PAM · ORCHESTRATOR
+          PMO · ORCHESTRATOR
         </span>
 
-        {/* EKG waveform — always animating */}
+        {/* EKG waveform - always animating */}
         <div className="flex items-end gap-px ml-3">
           {EKG_HEIGHTS.map((h, i) => (
             <div
@@ -319,7 +318,7 @@ export default function OrgChart({
           ))}
         </div>
 
-        {/* Right column: Value Design · Delivery — offset to interleave */}
+        {/* Right column: Value Design · Delivery - offset to interleave */}
         <div className="flex-1 flex flex-col gap-3 pt-28">
           {renderCrew('value_design', true)}
           {renderCrew('delivery')}

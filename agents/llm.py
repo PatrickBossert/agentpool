@@ -14,9 +14,12 @@ def get_crew_llm(llm_mode: str) -> LLM:
             api_key="not-needed",
         )
     # standard or fallback: use Anthropic directly
+    # max_tokens=16384: the default 4096 clips large tool-call JSON outputs
+    # (e.g. questionnaire scripts ~8K tokens, value chain tree ~2.5K tokens)
     return LLM(
         model="anthropic/claude-sonnet-4-6",
         api_key=settings.anthropic_api_key,
+        max_tokens=16384,
     )
 
 

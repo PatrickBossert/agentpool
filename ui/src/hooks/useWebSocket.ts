@@ -11,7 +11,7 @@ export function useWebSocket(slug: string | undefined, maxLines = 100) {
     wsRef.current = ws
 
     ws.onmessage = (e) => {
-      if (e.data === 'ping') return  // keepalive — ignore
+      if (e.data === 'ping') return  // keepalive - ignore
       setLogs((prev) => [...prev.slice(-(maxLines - 1)), e.data])
     }
 

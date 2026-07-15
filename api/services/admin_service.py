@@ -25,12 +25,12 @@ async def _send_welcome_email(email: str, username: str, password: str) -> None:
     login_url = f"{settings.public_url}/dashboard/login"
     body = (
         f"Hello,\n\n"
-        f"Your FutureMomentum account has been created.\n\n"
+        f"Your TaskReimagination.ai account has been created.\n\n"
         f"Username: {username}\n"
         f"Temporary password: {password}\n"
         f"Login: {login_url}\n\n"
         f"Please change your password after first login.\n\n"
-        f"FutureMomentum"
+        f"TaskReimagination.ai"
     )
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -39,7 +39,7 @@ async def _send_welcome_email(email: str, username: str, password: str) -> None:
                 json={
                     "from": settings.from_email,
                     "to": [email],
-                    "subject": "Your FutureMomentum account has been created",
+                    "subject": "Your TaskReimagination.ai account has been created",
                     "text": body,
                 },
                 headers={"Authorization": f"Bearer {settings.resend_api_key}"},

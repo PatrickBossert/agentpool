@@ -8,9 +8,26 @@ import { listTemplates } from '../api/templates'
 import { listNodeTemplates, putNodeTemplate, publishNodeTemplate } from '../api/nodeTemplates'
 import { useAuth } from '../context/AuthContext'
 import { downloadOutput } from '../utils/download'
+import InterviewTemplateEditor from '../components/InterviewTemplateEditor'
 import type { ProjectSettings, DiscoveryLink, ClientDocument, NodeTemplateAssignment, TemplateListItem } from '../types'
 
-mermaid.initialize({ startOnLoad: false, theme: 'dark' })
+mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict' })
+
+function sortByActivityId(assignments: NodeTemplateAssignment[]): NodeTemplateAssignment[] {
+  return [...assignments].sort((a, b) => {
+    if (!a.activity_id && !b.activity_id) return a.node_label.localeCompare(b.node_label)
+    if (!a.activity_id) return 1
+    if (!b.activity_id) return -1
+    const aParts = a.activity_id.split('.').map(Number)
+    const bParts = b.activity_id.split('.').map(Number)
+    const len = Math.max(aParts.length, bParts.length)
+    for (let i = 0; i < len; i++) {
+      const diff = (aParts[i] ?? 0) - (bParts[i] ?? 0)
+      if (diff !== 0) return diff
+    }
+    return 0
+  })
+}
 
 export default function ValueChain() {
   const { slug } = useParams<{ slug: string }>()
@@ -23,8 +40,14 @@ export default function ValueChain() {
   const [selectedDocIds, setSelectedDocIds] = useState<number[]>([])
   const [newUrl, setNewUrl] = useState('')
   const [newLabel, setNewLabel] = useState('')
+  const [standardsRefs, setStandardsRefs] = useState('')
+  const [prefSections, setPrefSections] = useState(4)
+  const [prefQuestionsPerSection, setPrefQuestionsPerSection] = useState(3)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // ── Template editor modal state ──────────────────────────────
+  const [editingNode, setEditingNode] = useState<NodeTemplateAssignment | null>(null)
 
   const { data: settings } = useQuery({
     queryKey: ['settings', slug],
@@ -43,6 +66,9 @@ export default function ValueChain() {
       setBrief(settings.discovery_brief ?? '')
       setLinks(settings.discovery_links ?? [])
       setSelectedDocIds(settings.discovery_document_ids ?? [])
+      setStandardsRefs(settings.standards_references ?? '')
+      setPrefSections(settings.preferred_questionnaire_sections ?? 4)
+      setPrefQuestionsPerSection(settings.preferred_questions_per_section ?? 3)
     }
   }, [settings])
 
@@ -64,6 +90,9 @@ export default function ValueChain() {
       discovery_brief: brief,
       discovery_links: links,
       discovery_document_ids: selectedDocIds,
+      standards_references: standardsRefs,
+      preferred_questionnaire_sections: prefSections,
+      preferred_questions_per_section: prefQuestionsPerSection,
     })
   }
 
@@ -111,12 +140,16 @@ export default function ValueChain() {
     setRenderError(false)
     ;(async () => {
       try {
-        const renderId = 'vc-' + mountKey.current + '-' + (latest?.id ?? 0)
-        const { svg } = await mermaid.render(renderId, contentData.content)
+        const renderId = 'vc-' + mountKey.current + '-' + (latest?.id ?? 0) + '-' + Date.now()
+        const raw = contentData.content
+        const fenceMatch = raw.match(/```(?:mermaid)?\s*([\s\S]+?)```/)
+        const diagram = fenceMatch ? fenceMatch[1].trim() : raw.trim()
+        const { svg } = await mermaid.render(renderId, diagram)
         if (cancelled) return
-        const parser = new DOMParser()
-        const svgDoc = parser.parseFromString(svg, 'image/svg+xml')
-        const svgEl = svgDoc.documentElement
+        // text/html handles <br> inside <foreignObject> (strict mode); image/svg+xml rejects it
+        const htmlDoc = new DOMParser().parseFromString(svg, 'text/html')
+        const svgEl = htmlDoc.querySelector('svg')
+        if (!svgEl) throw new Error('No SVG element in Mermaid output')
         container.replaceChildren(svgEl)
       } catch {
         if (!cancelled) setRenderError(true)
@@ -149,7 +182,7 @@ export default function ValueChain() {
       listTemplates('interview'),
       listTemplates('questionnaire'),
     ]).then(([assignments, interviewTpls, questionnaireTpls]) => {
-      setNodeAssignments(assignments)
+      setNodeAssignments(sortByActivityId(assignments))
       setInterviewTemplates(interviewTpls)
       setQuestionnaireTemplates(questionnaireTpls)
     }).catch(console.error)
@@ -163,7 +196,7 @@ export default function ValueChain() {
     const current = nodeAssignments.find((a) => a.node_label === nodeLabel)
     const updated: NodeTemplateAssignment = current
       ? { ...current, [field]: value }
-      : { node_label: nodeLabel, interview_template_id: null, questionnaire_template_id: null, [field]: value }
+      : { node_label: nodeLabel, activity_id: null, interview_template_id: null, questionnaire_template_id: null, [field]: value }
 
     setNodeAssignments((prev) =>
       prev.some((a) => a.node_label === nodeLabel)
@@ -188,7 +221,7 @@ export default function ValueChain() {
       await publishNodeTemplate(slug!, nodeLabel, { name: name.trim(), description: '' })
     } catch (e) {
       console.error('Publish failed', e)
-      alert('Publish failed — check that the interview script has been generated for this node.')
+      alert('Publish failed - check that the interview script has been generated for this node.')
     }
   }
 
@@ -224,7 +257,7 @@ export default function ValueChain() {
           <section className="mb-8">
             <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">Research Brief</h3>
             <p className="text-gray-400 text-xs mb-3">
-              Any context the crew should know before it starts — strategic priorities, scope constraints, what the client has flagged.
+              Any context the crew should know before it starts - strategic priorities, scope constraints, what the client has flagged.
             </p>
             <textarea
               value={brief}
@@ -315,6 +348,45 @@ export default function ValueChain() {
             )}
           </section>
 
+          {/* Standards & Questionnaire Preferences */}
+          <section className="mb-8">
+            <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-2">Standards &amp; Questionnaire Build</h3>
+            <p className="text-gray-400 text-xs mb-3">
+              Standards, frameworks, or references the Questionnaire Builder should use when designing maturity assessment questionnaires for each value chain node.
+            </p>
+            <textarea
+              value={standardsRefs}
+              onChange={(e) => setStandardsRefs(e.target.value)}
+              rows={4}
+              placeholder="e.g. ISO 55001 (Asset Management), IIMM, PAS 55, IIRC Six Capitals, ISO 9001, local regulatory frameworks…"
+              className="w-full bg-white border border-gray-200 rounded p-3 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-brand resize-y mb-4"
+            />
+            <div className="flex gap-6">
+              <div className="flex-1">
+                <label className="block text-xs text-gray-600 mb-1">Preferred sections per questionnaire</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={prefSections}
+                  onChange={(e) => setPrefSections(Math.max(1, Number(e.target.value)))}
+                  className="w-24 bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs text-gray-600 mb-1">Preferred questions per section</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={prefQuestionsPerSection}
+                  onChange={(e) => setPrefQuestionsPerSection(Math.max(1, Number(e.target.value)))}
+                  className="w-24 bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+                />
+              </div>
+            </div>
+          </section>
+
           {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
           <div className="flex items-center gap-4">
             <button
@@ -346,16 +418,30 @@ export default function ValueChain() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 text-left">
+                    <th className="pb-2 pr-4 text-gray-500 font-medium w-8">#</th>
                     <th className="pb-2 pr-4 text-gray-500 font-medium">Node</th>
                     <th className="pb-2 pr-4 text-gray-500 font-medium">Interview Template</th>
                     <th className="pb-2 pr-4 text-gray-500 font-medium">Questionnaire Template</th>
-                    <th className="pb-2 text-gray-500 font-medium">Publish</th>
+                    <th className="pb-2 pr-4 text-gray-500 font-medium">Publish</th>
+                    <th className="pb-2 text-gray-500 font-medium">Script</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {nodeAssignments.map((assignment) => (
-                    <tr key={assignment.node_label} className="border-b border-gray-200">
-                      <td className="py-3 pr-4 text-gray-900 font-medium">{assignment.node_label}</td>
+                  {nodeAssignments.map((assignment) => {
+                    const isL1 = assignment.level === 'L1'
+                    return (
+                    <tr key={assignment.node_label} className={`border-b border-gray-200 ${isL1 ? 'bg-gray-50' : ''}`}>
+                      <td className="py-3 pr-3 font-mono text-xs text-gray-400 whitespace-nowrap">
+                        {assignment.activity_id ?? '-'}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <div className={isL1 ? 'font-semibold text-gray-900 text-sm' : 'font-medium text-gray-900 text-sm'}>
+                          {assignment.node_label}
+                        </div>
+                        {isL1 && (
+                          <span className="text-xs text-brand bg-brand/10 px-1.5 py-0.5 rounded font-medium">L1 Leadership</span>
+                        )}
+                      </td>
                       <td className="py-3 pr-4">
                         <select
                           value={assignment.interview_template_id ?? ''}
@@ -368,7 +454,7 @@ export default function ValueChain() {
                           }
                           className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900 outline-none focus:border-brand w-full max-w-xs"
                         >
-                          <option value="">— None —</option>
+                          <option value="">- None -</option>
                           {interviewTemplates.map((t) => (
                             <option key={t.id} value={t.id}>
                               {t.name}
@@ -388,7 +474,7 @@ export default function ValueChain() {
                           }
                           className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900 outline-none focus:border-brand w-full max-w-xs"
                         >
-                          <option value="">— None —</option>
+                          <option value="">- None -</option>
                           {questionnaireTemplates.map((t) => (
                             <option key={t.id} value={t.id}>
                               {t.name}
@@ -396,7 +482,7 @@ export default function ValueChain() {
                           ))}
                         </select>
                       </td>
-                      <td className="py-3">
+                      <td className="py-3 pr-4">
                         <button
                           type="button"
                           onClick={() => handlePublish(assignment.node_label)}
@@ -405,13 +491,35 @@ export default function ValueChain() {
                           Publish
                         </button>
                       </td>
+                      <td className="py-3">
+                        {!isL1 && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingNode(assignment)}
+                            className="px-3 py-1 border border-gray-200 hover:border-brand hover:text-brand text-gray-500 text-xs rounded transition-colors"
+                          >
+                            Edit Script
+                          </button>
+                        )}
+                      </td>
                     </tr>
-                  ))}
+                  )})}
+
                 </tbody>
               </table>
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Interview Script Editor modal ────────────────────── */}
+      {editingNode && slug && (
+        <InterviewTemplateEditor
+          slug={slug}
+          nodeLabel={editingNode.node_label}
+          activityId={editingNode.activity_id}
+          onClose={() => setEditingNode(null)}
+        />
       )}
 
       {/* ── Diagram tab ───────────────────────────────────────── */}

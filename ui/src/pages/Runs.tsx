@@ -6,7 +6,7 @@ import StatusBadge from '../components/StatusBadge'
 import type { OrchestrationRunHistory } from '../types'
 
 function formatDuration(started: string | null, completed: string | null): string {
-  if (!started || !completed) return '—'
+  if (!started || !completed) return '-'
   const ms = new Date(completed).getTime() - new Date(started).getTime()
   const mins = Math.floor(ms / 60000)
   const secs = Math.floor((ms % 60000) / 1000)
@@ -42,7 +42,7 @@ function RunRow({ run, slug }: { run: OrchestrationRunHistory; slug: string }) {
         </div>
         <div className="flex items-center gap-4">
           <span className="text-xs text-gray-400">
-            {run.started_at ? new Date(run.started_at).toLocaleString() : '—'}
+            {run.started_at ? new Date(run.started_at).toLocaleString() : '-'}
           </span>
           <span className="text-xs text-gray-400">
             {formatDuration(run.started_at, run.completed_at)}

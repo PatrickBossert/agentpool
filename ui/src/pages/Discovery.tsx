@@ -89,10 +89,10 @@ function InterviewSessionsPanel({ slug }: { slug: string }) {
                     </button>
                   </td>
                   <td className="py-2 pr-4 text-gray-500">
-                    {s.started_at ? new Date(s.started_at).toLocaleDateString() : '—'}
+                    {s.started_at ? new Date(s.started_at).toLocaleDateString() : '-'}
                   </td>
                   <td className="py-2 pr-4 text-gray-500">
-                    {s.completed_at ? new Date(s.completed_at).toLocaleDateString() : '—'}
+                    {s.completed_at ? new Date(s.completed_at).toLocaleDateString() : '-'}
                   </td>
                   <td className="py-2">
                     {s.status !== 'completed' && s.status !== 'abandoned' && (
@@ -171,7 +171,7 @@ export default function Discovery() {
           <div className="border border-gray-200 rounded-lg p-8 text-center">
             <p className="text-sm font-semibold text-gray-700 mb-2">Stakeholder Layer Assignment</p>
             <p className="text-xs text-gray-400 leading-relaxed max-w-md mx-auto">
-              Stakeholders will be mapped to model layers here —
+              Stakeholders will be mapped to model layers here -
               investor → organisation → value stream → value chain → activity → customer.
               Interview findings will be displayed against each layer.
             </p>

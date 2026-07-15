@@ -10,6 +10,12 @@ from api.services.stakeholder_service import (
     delete_stakeholder_svc,
     import_csv,
 )
+from api.database import (
+    get_connection,
+    fetch_project,
+    get_stakeholder_node_assignments,
+    upsert_stakeholder_node_assignments,
+)
 
 router = APIRouter(prefix="/projects", tags=["stakeholders"])
 
@@ -31,6 +37,22 @@ class StakeholderIn(BaseModel):
     timezone: str = ""
     preferred_language: str = ""
     currency: str = ""
+    level: str = ""
+    entity: str = ""
+    mobile: str = ""
+    comms_channel: str = "email"
+    is_participant: bool = False
+    is_reviewer: bool = False
+    is_approver: bool = False
+
+
+class NodeAssignmentItem(BaseModel):
+    stakeholder_id: int
+    node_key: str
+
+
+class NodeAssignmentsIn(BaseModel):
+    assignments: list[NodeAssignmentItem] = []
 
 
 def _404(slug: str):
@@ -83,3 +105,31 @@ async def delete_stakeholder_endpoint(slug: str, stakeholder_id: int, payload: d
         _404(slug)
     if result is False:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
+
+
+@router.get("/{slug}/stakeholder-assignments")
+async def get_stakeholder_assignments_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    """Return all stakeholder-node assignments for a project."""
+    await check_project_access(slug, payload)
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            _404(slug)
+        return await get_stakeholder_node_assignments(conn, project["id"])
+
+
+@router.put("/{slug}/stakeholder-assignments")
+async def put_stakeholder_assignments_endpoint(
+    slug: str,
+    body: NodeAssignmentsIn,
+    payload: dict = Depends(require_org_admin_or_above),
+):
+    """Replace all stakeholder-node assignments for a project."""
+    await check_project_access(slug, payload)
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            _404(slug)
+        assignments = [a.model_dump() for a in body.assignments]
+        await upsert_stakeholder_node_assignments(conn, project["id"], assignments)
+        return {"count": len(assignments)}

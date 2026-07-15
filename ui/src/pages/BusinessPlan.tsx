@@ -1,5 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { Download } from 'lucide-react'
 import { projectsApi } from '../api/endpoints'
 import { useAuth } from '../context/AuthContext'
 import { downloadOutput } from '../utils/download'
@@ -8,7 +9,7 @@ import type { FinancialSummary, AgentOutput } from '../types'
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
 function fmtCurrency(v: number | null): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return '-'
   const abs = Math.abs(v)
   if (abs >= 1_000_000) return `£${(v / 1_000_000).toFixed(1)}M`
   if (abs >= 1_000) return `£${(v / 1_000).toFixed(0)}k`
@@ -16,7 +17,7 @@ function fmtCurrency(v: number | null): string {
 }
 
 function fmtPercent(v: number | null): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return '-'
   return `${(v * 100).toFixed(1)}%`
 }
 
@@ -63,7 +64,7 @@ function OutputCard({ output, slug, token }: { output: AgentOutput; slug: string
         onClick={() => downloadOutput(slug, output.id, filename, token).catch(console.error)}
         className="text-xs text-brand hover:text-brand-dark border border-brand/20 rounded px-2.5 py-1.5 transition-colors"
       >
-        ↓ Download
+        <span className="flex items-center gap-1"><Download size={12} />Download</span>
       </button>
     </div>
   )
@@ -107,7 +108,7 @@ export default function BusinessPlan() {
             <MetricCard label="IRR" value={fmtPercent(summary.irr)} colour="#22c55e" />
             <MetricCard
               label="Payback Period"
-              value={summary.payback_period ?? '—'}
+              value={summary.payback_period ?? '-'}
               colour="#f1f5f9"
             />
             <MetricCard

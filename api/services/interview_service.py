@@ -14,12 +14,13 @@ import httpx
 
 from api.config import get_settings
 from api.database import (
-    fetch_interview_session,
     complete_interview_session,
+    fetch_interview_session,
     fetch_node_template_assignments,
+    fetch_template,
     get_system_db_path,
     init_system_db,
-    fetch_template,
+    save_interview_checkpoint,
 )
 
 
@@ -106,6 +107,9 @@ async def get_session_with_script(session_token: str) -> dict | None:
         "header_image_url": config.get("brand_header_image_url", ""),
         "primary_color": config.get("brand_primary_color", "#0d9488"),
         "text_color": config.get("brand_text_color", "#1f2937"),
+        "interviewer_image_url": config.get("brand_interviewer_image_url", ""),
+        "interviewer_name": config.get("brand_interviewer_name", "Avery Singh"),
+        "interviewer_tagline": config.get("brand_interviewer_tagline", "I'll be guiding our conversation today"),
     }
 
     session_dict = dict(session_row)
@@ -230,4 +234,5 @@ async def complete_session(
         transcript_json = json.dumps(qa_pairs)
         ratings_json = json.dumps(ratings) if ratings is not None else None
         await complete_interview_session(conn, session_token, transcript_json, ratings_json)
+        await save_interview_checkpoint(conn, session_token, None)
     return True

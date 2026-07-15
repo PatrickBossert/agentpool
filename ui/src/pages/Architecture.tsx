@@ -1,5 +1,5 @@
 // ui/src/pages/Architecture.tsx
-// Hidden internal reference page — not linked in nav.
+// Hidden internal reference page - not linked in nav.
 // Access at /dashboard/architecture
 
 const Section = ({ id, title, children }: { id: string; title: string; children: React.ReactNode }) => (
@@ -61,7 +61,7 @@ export default function Architecture() {
           <span className="ml-2 text-xs bg-amber-900/50 text-amber-300 border border-amber-700 px-2 py-0.5 rounded">internal</span>
         </div>
         <p className="text-slate-400 text-sm">
-          FutureMomentum — application architecture, agent inventory, data model, and tool access reference.
+          FutureMomentum - application architecture, agent inventory, data model, and tool access reference.
           Not linked from nav. Access at <code className="text-brand">/dashboard/architecture</code>.
         </p>
       </div>
@@ -100,8 +100,8 @@ export default function Architecture() {
               <TableRow cells={['FastAPI backend', ':8000', 'Python / FastAPI / uvicorn', 'REST API, crew dispatch, DB management, auth']} />
               <TableRow cells={['Chainlit app', ':8001', 'Python / Chainlit', 'Streaming crew execution UI']} />
               <TableRow cells={['React dashboard', ':3000', 'React / Vite / Tailwind', 'Main consultant UI (served under /dashboard)']} />
-              <TableRow cells={['LiteLLM proxy', ':4000', 'LiteLLM', 'LLM routing — Claude Opus/Sonnet/Haiku + local qwen3']} />
-              <TableRow cells={['ChromaDB', ':8002', 'ChromaDB (Docker)', 'Vector store — project docs + sector knowledge']} />
+              <TableRow cells={['LiteLLM proxy', ':4000', 'LiteLLM', 'LLM routing - Claude Opus/Sonnet/Haiku + local qwen3']} />
+              <TableRow cells={['ChromaDB', ':8002', 'ChromaDB (Docker)', 'Vector store - project docs + sector knowledge']} />
               <TableRow cells={['n8n', ':5678', 'n8n (Docker)', 'Webhook relay, HITL review events, Slack notifications']} />
               <TableRow cells={['Cloudflare Tunnel', '(managed)', 'cloudflared', 'Exposes :80 publicly at https://futuremomentum.ai']} />
               <TableRow cells={['llama.cpp', ':10000', 'llama.cpp / Unsloth', 'Local LLM endpoint (sensitive mode, Qwen3-4B)']} />
@@ -126,7 +126,7 @@ export default function Architecture() {
 
           {/* Phase 1 */}
           <div className="bg-surface-card rounded-lg border border-teal-700/50 p-4">
-            <div className="text-xs text-teal-400 mb-1 uppercase tracking-wide">Phase 1 — Mapping</div>
+            <div className="text-xs text-teal-400 mb-1 uppercase tracking-wide">Phase 1 - Mapping</div>
             <ol className="text-sm text-slate-300 space-y-1 list-decimal ml-4">
               <li>Create <code>orchestration_runs</code> record (status: <Tag color="amber">running</Tag>)</li>
               <li>PAM dispatches <strong>Discovery Mapping Crew</strong> (Value Chain Mapper only)</li>
@@ -137,7 +137,7 @@ export default function Architecture() {
 
           {/* Human gate */}
           <div className="bg-surface-card rounded-lg border border-amber-700/50 p-4">
-            <div className="text-xs text-amber-400 mb-1 uppercase tracking-wide">Human Gate — Stakeholder Assignment</div>
+            <div className="text-xs text-amber-400 mb-1 uppercase tracking-wide">Human Gate - Stakeholder Assignment</div>
             <p className="text-sm text-slate-300">
               Consultant reviews the value chain, assigns stakeholders to value chain nodes via the
               Assignment page. <code className="text-slate-300">POST /projects/{'{slug}'}/assignment/{'{run_id}'}</code> stores assignments
@@ -147,13 +147,13 @@ export default function Architecture() {
 
           {/* Phase 2 */}
           <div className="bg-surface-card rounded-lg border border-teal-700/50 p-4">
-            <div className="text-xs text-teal-400 mb-1 uppercase tracking-wide">Phase 2 — Delivery (PAM-orchestrated)</div>
+            <div className="text-xs text-teal-400 mb-1 uppercase tracking-wide">Phase 2 - Delivery (PAM-orchestrated)</div>
             <ol className="text-sm text-slate-300 space-y-1 list-decimal ml-4">
               <li><em>If interview_method='agent':</em> <strong>Discovery Interviews Crew</strong> (voice/agent interviews → synthesis)</li>
-              <li><strong>Value Design Crew</strong> — value propositions + portfolio scoring</li>
-              <li><strong>Architecture Crew</strong> — current-state architecture + initiatives</li>
-              <li><strong>Delivery Crew</strong> — phased roadmap HTML</li>
-              <li><strong>Business Plan Crew</strong> — Word doc, PowerPoint deck, financial model</li>
+              <li><strong>Value Design Crew</strong> - value propositions + portfolio scoring</li>
+              <li><strong>Architecture Crew</strong> - current-state architecture + initiatives</li>
+              <li><strong>Delivery Crew</strong> - phased roadmap HTML</li>
+              <li><strong>Business Plan Crew</strong> - Word doc, PowerPoint deck, financial model</li>
             </ol>
             <p className="text-sm text-slate-400 mt-2">PAM uses <code className="text-slate-300">RunCrewTool</code> to dispatch each sub-crew sequentially. Slack notifications fire at each stage.</p>
           </div>
@@ -182,7 +182,7 @@ export default function Architecture() {
           {
             name: 'Discovery Interviews Crew',
             file: 'agents/crews/discovery_interviews_crew.py',
-            agents: ['Interview Script Designer', 'Interview Coordinator', 'Stakeholder Interviewer', 'Synthesis Analyst'],
+            agents: ['Interview Coordinator', 'Stakeholder Interviewer', 'Synthesis Analyst'],
             produces: 'interview_sessions, interview_transcripts, activity_insights, requirements, value_levers',
             trigger: 'PAM Phase 2 (if interview_method=agent)',
           },
@@ -291,13 +291,6 @@ export default function Architecture() {
             color: 'border-cyan-700/40',
             agents: [
               {
-                name: 'Interview Script Designer',
-                file: 'agents/discovery/interview_script_designer.py',
-                role: 'Produce one structured interview script per value chain node with pre-scripted branches and evasion signals.',
-                tools: ['SQLiteStateTool', 'HumanInputTool'],
-                output: 'interview_scripts (JSON keyed by node_label; 4–6 sections, 8–14 questions each)',
-              },
-              {
                 name: 'Interview Coordinator',
                 file: 'agents/discovery/interview_coordinator.py',
                 role: 'Plan stakeholder interview programme; configure voice settings per locale using ElevenLabs voice IDs.',
@@ -391,7 +384,7 @@ export default function Architecture() {
             color: 'border-brand/40',
             agents: [
               {
-                name: 'PAM — Programme Architecture Manager',
+                name: 'PAM - Programme Architecture Manager',
                 file: 'agents/pam/pam_agent.py',
                 role: 'Top-level orchestrator. Dispatches and sequences all specialist crews across Phase 1 and Phase 2.',
                 tools: ['RunCrewTool', 'SlackNotifyTool', 'SQLiteStateTool'],
@@ -457,7 +450,7 @@ export default function Architecture() {
       <Section id="data" title="Data Model">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <h3 className="text-sm font-semibold text-slate-300 mb-2">Per-project SQLite — <code className="text-slate-400">./data/{'{'}{'{slug}'}{'}'}.db</code></h3>
+            <h3 className="text-sm font-semibold text-slate-300 mb-2">Per-project SQLite - <code className="text-slate-400">./data/{'{'}{'{slug}'}{'}'}.db</code></h3>
             {[
               { table: 'projects', desc: 'Project metadata', cols: 'id, slug, llm_mode, sector, config_json, status' },
               { table: 'orchestration_runs', desc: 'PAM pipeline executions', cols: 'id, project_id, status, started_at, completed_at' },
@@ -484,7 +477,7 @@ export default function Architecture() {
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold text-slate-300 mb-2">System SQLite — <code className="text-slate-400">./data/system.db</code></h3>
+            <h3 className="text-sm font-semibold text-slate-300 mb-2">System SQLite - <code className="text-slate-400">./data/system.db</code></h3>
             {[
               { table: 'users', desc: 'System user accounts', cols: 'id, username, hashed_pw, role, project_slug' },
               { table: 'interview_templates', desc: 'Reusable interview/questionnaire templates', cols: 'id, name, description, type, schema_json' },
@@ -498,7 +491,7 @@ export default function Architecture() {
               </div>
             ))}
 
-            <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-2">ChromaDB — <code className="text-slate-400">localhost:8002</code></h3>
+            <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-2">ChromaDB - <code className="text-slate-400">localhost:8002</code></h3>
             {[
               { coll: '{slug}_docs', desc: 'Project-scoped ingested documents (per project)' },
               { coll: 'sector_{sector}', desc: 'Shared sector knowledge base (pre-loaded)' },
@@ -511,7 +504,7 @@ export default function Architecture() {
               </div>
             ))}
 
-            <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-2">Per-project config — <code className="text-slate-400">projects/{'{slug}'}/config.yaml</code></h3>
+            <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-2">Per-project config - <code className="text-slate-400">projects/{'{slug}'}/config.yaml</code></h3>
             <div className="text-xs text-slate-500 space-y-0.5 font-mono">
               {['llm_mode (standard|sensitive|fallback)', 'sector', 'stakeholder_groups []', 'value_stream_labels []', 'roadmap_time_axis', 'crews_enabled []', 'review_gates (bool)', 'slack_channel', 'discovery_brief', 'discovery_links []', 'interview_method (none|agent|manual)'].map((f) => (
                 <div key={f} className="text-slate-500">{f}</div>
@@ -580,7 +573,7 @@ export default function Architecture() {
                 ['GET', '/projects/{slug}/financial-summary', 'Business plan financial metrics'],
                 ['GET', '/projects/{slug}/portfolio-register', 'Portfolio register (Value Propositions page)'],
                 ['GET', '/projects/{slug}/roadmap-data', 'Roadmap JSON for Gantt chart'],
-                ['WS', '/ws/{slug}', 'WebSocket — real-time crew log streaming'],
+                ['WS', '/ws/{slug}', 'WebSocket - real-time crew log streaming'],
               ].map((row) => <TableRow key={row[0] + row[1]} cells={row} />)}
             </tbody>
           </table>
@@ -634,8 +627,8 @@ export default function Architecture() {
           <div className="mt-3 text-sm text-slate-300">
             <p className="text-slate-400 text-xs mb-1">Workflows:</p>
             <div className="space-y-1">
-              <div><Tag color="amber">FutureMomentum Notifications</Tag> <span className="text-slate-400 text-xs">— Webhook → Switch on event_type → Slack HITL DM or Slack Channel Notify</span></div>
-              <div><Tag color="amber">FutureMomentum Slack Run Command</Tag> <span className="text-slate-400 text-xs">— Slack /run slash command → POST /orchestrate → Slack confirm</span></div>
+              <div><Tag color="amber">FutureMomentum Notifications</Tag> <span className="text-slate-400 text-xs">- Webhook → Switch on event_type → Slack HITL DM or Slack Channel Notify</span></div>
+              <div><Tag color="amber">FutureMomentum Slack Run Command</Tag> <span className="text-slate-400 text-xs">- Slack /run slash command → POST /orchestrate → Slack confirm</span></div>
             </div>
           </div>
         </Card>
@@ -675,26 +668,26 @@ export default function Architecture() {
         <Card title="Tavily Search" accent="border-slate-600">
           <KV k="API endpoint" v="Tavily Search API (managed by tavily-python SDK)" />
           <KV k="Auth method" v="TAVILY_API_KEY env var" />
-          <KV k="Used by" v="TavilySearchTool — sector research during Discovery and Value Lever analysis" />
+          <KV k="Used by" v="TavilySearchTool - sector research during Discovery and Value Lever analysis" />
         </Card>
 
         <Card title="ElevenLabs (TTS)" accent="border-yellow-700/50">
           <KV k="Access method" v="ElevenLabs REST API, proxied through FastAPI /api/interviews/{token}/speak" />
           <KV k="Auth method" v="ELEVENLABS_API_KEY env var" />
-          <KV k="Used by" v="VoiceInterview page — agent speech synthesis during voice interviews" />
+          <KV k="Used by" v="VoiceInterview page - agent speech synthesis during voice interviews" />
         </Card>
 
         <Card title="Deepgram (STT)" accent="border-blue-700/50">
           <KV k="Access method" v="Deepgram WebSocket API (temporary token fetched from /api/interviews/{token}/deepgram-token)" />
           <KV k="Auth method" v="DEEPGRAM_API_KEY env var (used server-side to issue short-lived tokens)" />
-          <KV k="Used by" v="VoiceInterview page — stakeholder speech-to-text during voice interviews" />
+          <KV k="Used by" v="VoiceInterview page - stakeholder speech-to-text during voice interviews" />
         </Card>
 
         <Card title="Cloudflare Tunnel" accent="border-slate-600">
           <KV k="Public URL" v="https://futuremomentum.ai" />
           <KV k="Auth method" v="CLOUDFLARE_TUNNEL_TOKEN env var (outbound-only, no inbound ports needed)" />
           <KV k="Dashboard URL" v="Cloudflare Zero Trust dashboard" />
-          <KV k="Access policy" v="Cloudflare Access — email OTP protects /dashboard/*; bypass for /api/* and /dashboard/interview/*" />
+          <KV k="Access policy" v="Cloudflare Access - email OTP protects /dashboard/*; bypass for /api/* and /dashboard/interview/*" />
         </Card>
 
         <Card title="LiteLLM Proxy" accent="border-slate-600">
@@ -706,7 +699,7 @@ export default function Architecture() {
       </Section>
 
       <div className="text-center text-slate-600 text-xs py-8 border-t border-slate-800">
-        FutureMomentum internal architecture reference — not for distribution
+        FutureMomentum internal architecture reference - not for distribution
       </div>
     </div>
   )

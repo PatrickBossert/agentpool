@@ -13,6 +13,7 @@ from api.config import get_settings
 from api.database import (
     fetch_interview_sessions_for_run,
     get_connection,
+    save_interview_checkpoint,
     update_interview_session_status,
 )
 from api.services.interview_service import (
@@ -186,6 +187,25 @@ async def update_session_status(session_token: str, body: StatusUpdateRequest):
     async with aiosqlite.connect(db_path) as conn:
         await update_interview_session_status(conn, session_token, body.status)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 5b: PATCH /{session_token}/checkpoint
+# ---------------------------------------------------------------------------
+
+class CheckpointBody(BaseModel):
+    checkpoint: dict  # arbitrary JSON — stored as-is
+
+
+@router.patch("/{session_token}/checkpoint")
+async def save_checkpoint(session_token: str, body: CheckpointBody):
+    """Persist mid-session progress so reconnecting users can resume."""
+    db_path = await _find_session_db(session_token)
+    if not db_path:
+        raise HTTPException(status_code=404, detail="Session not found")
+    async with aiosqlite.connect(db_path) as conn:
+        await save_interview_checkpoint(conn, session_token, body.checkpoint)
+    return {"saved": True}
 
 
 # ---------------------------------------------------------------------------
