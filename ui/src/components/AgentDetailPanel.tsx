@@ -1,5 +1,5 @@
 // ui/src/components/AgentDetailPanel.tsx
-import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react'
+import { useState, useEffect, useRef, useMemo, type ReactNode, type FC } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { marked } from 'marked'
@@ -22,6 +22,30 @@ import { CREW_ICON_COMPONENT } from './crewIcons'
 import AgentHoverCard from './AgentHoverCard'
 import PamReportView, { PamCrewStatusDetail } from './PamReportView'
 import type { CrewRun, AgentOutput, HumanReview } from '../types'
+import AlexSetupTab from './tabs/AlexSetupTab'
+import MayaSetupTab from './tabs/MayaSetupTab'
+import TaylorSetupTab from './tabs/TaylorSetupTab'
+import AverySetupTab from './tabs/AverySetupTab'
+import AveryOutputExtra from './tabs/AveryOutputExtra'
+import LucaOutputExtra from './tabs/LucaOutputExtra'
+
+// ── Per-crew slot injection ────────────────────────────────────────────────────
+
+type SlotFC = FC<{ slug: string }>
+
+// Replaces the default Setup tab reads/produces panel for these crews
+const CREW_SETUP_OVERRIDE: Partial<Record<string, SlotFC>> = {
+  discovery_mapping:      AlexSetupTab,
+  assessment_design:      MayaSetupTab,
+  stakeholder_management: TaylorSetupTab,
+  discovery_interviews:   AverySetupTab,
+}
+
+// Rendered after the DB output list in the Output tab
+const CREW_OUTPUT_EXTRA: Partial<Record<string, SlotFC>> = {
+  discovery_interviews: AveryOutputExtra,
+  delivery:             LucaOutputExtra,
+}
 
 marked.use({ async: false, gfm: true, breaks: true })
 
@@ -848,6 +872,16 @@ export default function AgentDetailPanel({
               ))}
             </>
           )}
+          {/* Crew-specific extra output content (interview sessions, visual artefacts, etc.) */}
+          {(() => {
+            const OutputExtra = CREW_OUTPUT_EXTRA[crewKey]
+            if (!OutputExtra) return null
+            return (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <OutputExtra slug={slug} />
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -996,50 +1030,56 @@ export default function AgentDetailPanel({
       {/* ── SETUP TAB ──────────────────────────────────────────────────────────── */}
       {tab === 'setup' && (
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {crewMeta ? (
-            <>
-              {crewMeta.note && (
-                <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
-                  <p className="text-[11px] text-blue-700 leading-relaxed">{crewMeta.note}</p>
+          {(() => {
+            const SetupOverride = CREW_SETUP_OVERRIDE[crewKey]
+            if (SetupOverride) return <SetupOverride slug={slug} />
+
+            // Default: reads/produces metadata
+            return crewMeta ? (
+              <>
+                {crewMeta.note && (
+                  <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
+                    <p className="text-[11px] text-blue-700 leading-relaxed">{crewMeta.note}</p>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Reads</p>
+                  <ul className="space-y-1">
+                    {crewMeta.reads.map((item, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
+                        <ArrowRight size={11} className="text-gray-300 mt-0.5 flex-shrink-0" />
+                        <span className="font-mono text-[11px]">{item}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-              )}
 
-              <div className="space-y-1">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Reads</p>
-                <ul className="space-y-1">
-                  {crewMeta.reads.map((item, i) => (
-                    <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
-                      <ArrowRight size={11} className="text-gray-300 mt-0.5 flex-shrink-0" />
-                      <span className="font-mono text-[11px]">{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Produces</p>
+                  <ul className="space-y-1">
+                    {crewMeta.produces.map((item, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
+                        <ArrowLeft size={11} className="text-teal-400 mt-0.5 flex-shrink-0" />
+                        <span className="font-mono text-[11px]">{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
 
-              <div className="space-y-1">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Produces</p>
-                <ul className="space-y-1">
-                  {crewMeta.produces.map((item, i) => (
-                    <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
-                      <ArrowLeft size={11} className="text-teal-400 mt-0.5 flex-shrink-0" />
-                      <span className="font-mono text-[11px]">{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {crewMeta.configPage && (
-                <button
-                  onClick={() => navigate(`/${slug}/${crewMeta!.configPage}`)}
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-teal-600 hover:text-teal-700 border border-teal-200 rounded-lg px-3 py-1.5 hover:bg-teal-50 transition-colors"
-                >
-                  <><Settings size={13} /> {crewMeta.configLabel}</>
-                </button>
-              )}
-            </>
-          ) : (
-            <p className="text-xs text-gray-400 text-center py-12">No setup information available.</p>
-          )}
+                {crewMeta.configPage && (
+                  <button
+                    onClick={() => navigate(`/${slug}/${crewMeta!.configPage}`)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-teal-600 hover:text-teal-700 border border-teal-200 rounded-lg px-3 py-1.5 hover:bg-teal-50 transition-colors"
+                  >
+                    <><Settings size={13} /> {crewMeta.configLabel}</>
+                  </button>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-gray-400 text-center py-12">No setup information available.</p>
+            )
+          })()}
         </div>
       )}
 

@@ -39,16 +39,8 @@ export default function AppLayout() {
   const navItems: NavItem[] = slug
     ? [
         { to: `/${slug}`, label: 'Dashboard', end: true },
-        { to: `/${slug}/team`, label: 'Team' },
-        { to: `/${slug}/value-chain`, label: 'Value Chain' },
-        { to: `/${slug}/stakeholders`, label: 'Stakeholders' },
-        { to: `/${slug}/discovery`, label: 'Discovery' },
-        { to: `/${slug}/value-propositions`, label: 'Value Propositions' },
-        { to: `/${slug}/roadmap`, label: 'Roadmap' },
-        { to: `/${slug}/business-plan`, label: 'Business Plan' },
         { to: `/${slug}/schedule`, label: 'Schedule' },
         { to: `/${slug}/reviews`, label: 'Reviews', badge: pendingReviewCount > 0 ? pendingReviewCount : undefined },
-        { to: `/${slug}/templates`, label: 'Templates' },
         { to: `/${slug}/documents`, label: 'Documents' },
         { to: `/${slug}/runs`, label: 'Runs' },
       ]
@@ -57,7 +49,7 @@ export default function AppLayout() {
       ]
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-gray-200 flex flex-col">
       {/* Top nav */}
       <header className="bg-white border-b border-gray-200 px-4 h-12 flex items-center gap-6">
         <img src={logoUrl} alt="TaskReimagination.ai" className="h-7 w-auto flex-shrink-0" />
@@ -196,7 +188,7 @@ export default function AppLayout() {
         </aside>
 
         {/* Main content */}
-        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-gray-50 flex flex-col">
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-gray-200 flex flex-col">
           <Outlet />
         </main>
       </div>

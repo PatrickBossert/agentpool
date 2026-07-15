@@ -277,6 +277,25 @@ async def get_branding_image(slug: str):
     raise HTTPException(status_code=404, detail="No branding image found for this project.")
 
 
+SAFE_OUTPUT_EXTENSIONS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
+
+
+@router.get("/{slug}/output-files/{filename}")
+async def serve_output_file(slug: str, filename: str, payload: dict = Depends(require_any_auth)):
+    """Serve a static file from the project outputs directory (images, generated assets)."""
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SAFE_OUTPUT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only image files can be served via this endpoint.")
+    # Prevent path traversal
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
+    candidate = outputs_dir / filename
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail=f"Output file '{filename}' not found.")
+    return FileResponse(path=candidate, media_type=SAFE_OUTPUT_EXTENSIONS[suffix])
+
+
 # ── Node Template Assignment endpoints ────────────────────────────────────────
 
 class NodeTemplateAssignmentBody(BaseModel):
