@@ -120,6 +120,22 @@ export default function AdminDashboard() {
         )}
       </div>
 
+      {/* Skills panel */}
+      <div className="bg-surface-card rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+          <h2 className="text-sm font-semibold text-primary">Agent Skills Library</h2>
+          <button
+            onClick={() => navigate('/admin/skills')}
+            className="text-xs text-brand hover:text-brand-light"
+          >
+            Manage skills →
+          </button>
+        </div>
+        <p className="px-4 py-3 text-xs text-muted leading-relaxed">
+          Review suggested skills, manage the global library, and export / import skills bundles for new instances.
+        </p>
+      </div>
+
       {/* Users panel */}
       <div className="bg-surface-card rounded-lg border border-gray-200">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">

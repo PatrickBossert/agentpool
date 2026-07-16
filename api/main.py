@@ -18,6 +18,7 @@ from api.routers import templates as templates_router
 from api.routers import admin as admin_router
 from api.routers import agent_chat as agent_chat_router
 from api.routers import skill_notes as skill_notes_router
+from api.routers import skills as skills_router
 from api.routers import milestones as milestones_router
 from api.routers import pam_report as pam_report_router
 from api.routers import nonworking as nonworking_router
@@ -87,6 +88,7 @@ app.include_router(templates_router.router)
 app.include_router(admin_router.router)
 app.include_router(agent_chat_router.router)
 app.include_router(skill_notes_router.router)
+app.include_router(skills_router.router)
 app.include_router(milestones_router.router)
 app.include_router(pam_report_router.router)
 app.include_router(nonworking_router.router)

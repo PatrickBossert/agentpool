@@ -24,6 +24,7 @@ import Report from './pages/Report'
 import Architecture from './pages/Architecture'
 import PitchDeck from './pages/PitchDeck'
 import AdminDashboard from './pages/AdminDashboard'
+import AdminSkills from './pages/AdminSkills'
 import OrgDetail from './pages/OrgDetail'
 import UserList from './pages/UserList'
 import UserForm from './pages/UserForm'
@@ -124,6 +125,14 @@ export const router = createBrowserRouter([
         element: (
           <AdminRoute allow={['sysadmin']}>
             <OrgDetail />
+          </AdminRoute>
+        ),
+      },
+      {
+        path: 'admin/skills',
+        element: (
+          <AdminRoute allow={['sysadmin']}>
+            <AdminSkills />
           </AdminRoute>
         ),
       },

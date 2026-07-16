@@ -1,10 +1,11 @@
 // ui/src/components/RerunDialog.tsx
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { X, Play, RotateCcw, AlertTriangle, MessageSquare, Check, ArrowLeft } from 'lucide-react'
+import { X, Play, RotateCcw, AlertTriangle, MessageSquare, Check, ArrowLeft, Sparkles, ChevronDown, ChevronUp, Loader } from 'lucide-react'
 import { projectsApi } from '../api/endpoints'
 import { OutputPreview } from './ReviewDialog'
-import { CREW_LABELS } from './agentStatus'
+import { CREW_LABELS, CREW_AGENTS } from './agentStatus'
+import { skillsApi } from '../api/skills'
 import type { AgentOutput } from '../types'
 
 type Step = 'choice' | 'fresh-confirm' | 'revision' | 'revision-done'
@@ -51,6 +52,29 @@ export default function RerunDialog({
   const [submitting, setSubmitting] = useState(false)
 
   const crewLabel = CREW_LABELS[crewKey] ?? crewKey
+  const primaryAgent = CREW_AGENTS[crewKey]?.[0] ?? ''
+  const agentFirst = primaryAgent.split(' ')[0]
+
+  // Skill extraction state
+  const [learnOpen, setLearnOpen] = useState(false)
+  const [learnLoading, setLearnLoading] = useState(false)
+  const [learnName, setLearnName] = useState('')
+  const [learnDesc, setLearnDesc] = useState('')
+  const [learnSubmit, setLearnSubmit] = useState(false)
+
+  async function openLearnCard() {
+    setLearnOpen(o => {
+      if (!o && notes.trim() && !learnName) {
+        // trigger extraction
+        setLearnLoading(true)
+        skillsApi.extract(notes.trim()).then(r => {
+          setLearnName(r.name)
+          setLearnDesc(r.description)
+        }).finally(() => setLearnLoading(false))
+      }
+      return !o
+    })
+  }
 
   async function saveRevision() {
     if (!notes.trim() || outputs.length === 0) return
@@ -59,6 +83,15 @@ export default function RerunDialog({
       await Promise.all(
         outputs.map(o => projectsApi.review(slug, o.id, 'changes_requested', notes.trim()))
       )
+      if (learnOpen && learnSubmit && learnName.trim() && primaryAgent) {
+        await skillsApi.create({
+          agent_name: primaryAgent,
+          name: learnName.trim(),
+          description: learnDesc.trim(),
+          source: 'review',
+          source_project: slug,
+        })
+      }
       qc.invalidateQueries({ queryKey: ['outputs', slug] })
       setStep('revision-done')
     } catch {
@@ -208,6 +241,60 @@ export default function RerunDialog({
                     These notes will replace any previous revision request. Re-run the crew to apply them.
                   </p>
                 </div>
+
+                {/* ── What can they learn? ── */}
+                {primaryAgent && notes.trim().length > 10 && (
+                  <div className="rounded-xl border border-gray-200 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={openLearnCard}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                    >
+                      <Sparkles size={12} className="text-teal-500 flex-shrink-0" />
+                      <span className="text-xs font-medium text-gray-600 flex-1">
+                        What can {agentFirst} learn from this?
+                      </span>
+                      {learnOpen ? <ChevronUp size={12} className="text-gray-400" /> : <ChevronDown size={12} className="text-gray-400" />}
+                    </button>
+                    {learnOpen && (
+                      <div className="px-3 pb-3 pt-2 space-y-2">
+                        {learnLoading ? (
+                          <div className="flex items-center gap-2 py-3">
+                            <Loader size={12} className="text-teal-500 animate-spin" />
+                            <span className="text-xs text-gray-400">Extracting lesson…</span>
+                          </div>
+                        ) : (
+                          <>
+                            <input
+                              className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
+                              placeholder="Skill name"
+                              value={learnName}
+                              onChange={e => setLearnName(e.target.value)}
+                            />
+                            <textarea
+                              className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-teal-400"
+                              placeholder="Skill description"
+                              rows={2}
+                              value={learnDesc}
+                              onChange={e => setLearnDesc(e.target.value)}
+                            />
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={learnSubmit}
+                                onChange={e => setLearnSubmit(e.target.checked)}
+                                className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                              />
+                              <span className="text-xs text-gray-500">
+                                Submit this for {agentFirst}'s skills review
+                              </span>
+                            </label>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

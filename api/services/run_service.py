@@ -27,6 +27,25 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
     "business_plan":          ["business_plan_generator"],
 }
 
+# Maps snake_case agent names (used in DB crew runs) to display names (used in agent_skills).
+_SNAKE_TO_DISPLAY: dict[str, str] = {
+    "value_chain_mapper":          "Value Chain Mapper",
+    "interaction_designer":        "Interaction Designer",
+    "requirements_capture":        "Requirements Capture",
+    "requirements_analyst":        "Requirements Analyst",
+    "value_lever_analyst":         "Value Lever Analyst",
+    "stakeholder_manager":         "Stakeholder Manager",
+    "interview_coordinator":       "Interview Coordinator",
+    "stakeholder_interviewer":     "Stakeholder Interviewer",
+    "synthesis_analyst":           "Synthesis Analyst",
+    "value_proposition_generator": "Value Proposition Generator",
+    "portfolio_manager":           "Portfolio Manager",
+    "enterprise_architect":        "Enterprise Architect",
+    "initiative_identifier":       "Initiative Identifier",
+    "roadmap_generator":           "Roadmap Generator",
+    "business_plan_generator":     "Business Plan Generator",
+}
+
 
 async def _fetch_revision_notes(slug: str, crew_name: str) -> str:
     """Return any pending revision notes for the crew's current outputs, or ''."""
@@ -50,20 +69,29 @@ async def _fetch_revision_notes(slug: str, crew_name: str) -> str:
 
 
 async def _fetch_skill_notes(crew_name: str) -> str:
-    """Return any stored skill improvement notes for this crew's agents, or ''."""
-    from api.database import get_system_connection, fetch_skill_notes as _fetch
+    """Return stored skill notes and approved library skills for this crew's agents."""
+    from api.database import get_system_connection, fetch_skill_notes as _fetch, fetch_agent_skills
     agent_names = _CREW_AGENT_NAMES.get(crew_name, [])
     if not agent_names:
         return ""
     async with get_system_connection() as conn:
-        notes = []
+        notes: list[str] = []
+        skills: list[str] = []
         for a in agent_names:
             rows = await _fetch(conn, agent_name=a)
             for r in rows:
                 notes.append(f"- {r['note']}")
-    if not notes:
-        return ""
-    return "SKILL IMPROVEMENT NOTES (apply these in your output):\n" + "\n".join(notes)
+            display = _SNAKE_TO_DISPLAY.get(a)
+            if display:
+                skill_rows = await fetch_agent_skills(conn, agent_name=display, status="approved")
+                for s in skill_rows:
+                    skills.append(f"- {s['name']}: {s['description']}")
+    sections: list[str] = []
+    if notes:
+        sections.append("SKILL IMPROVEMENT NOTES (apply these in your output):\n" + "\n".join(notes))
+    if skills:
+        sections.append("AGENT SKILLS (apply these capabilities in your work):\n" + "\n".join(skills))
+    return "\n\n".join(sections)
 
 
 def make_step_callback(slug: str, crew_name: str):

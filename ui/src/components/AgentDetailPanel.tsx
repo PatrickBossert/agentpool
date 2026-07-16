@@ -8,11 +8,12 @@ import {
   Play, RotateCcw, History, CheckCircle2, XCircle,
   PauseCircle, Check, X, AlertTriangle, Settings,
   ChevronDown, ChevronRight, ArrowRight, ArrowLeft,
-  Wrench, MessageSquare, Ban, Trash2,
+  Wrench, MessageSquare, Ban, Trash2, Sparkles, Loader,
 } from 'lucide-react'
 import { projectsApi } from '../api/endpoints'
 import { MermaidThumbnail, DiagramLightbox } from './ReviewDialog'
 import { agentChatApi } from '../api/agentChat'
+import { skillsApi } from '../api/skills'
 import { useAuth } from '../context/AuthContext'
 import {
   CREW_LABELS, CREW_AGENTS,
@@ -263,11 +264,58 @@ function parseDbDate(ts: string | undefined | null): Date {
 
 // ── Markdown bubble ────────────────────────────────────────────────────────────
 
-function MessageBubble({ role, content }: { role: 'user' | 'agent'; content: string }) {
+function MessageBubble({
+  role,
+  content,
+  agentName,
+  slug,
+}: {
+  role: 'user' | 'agent'
+  content: string
+  agentName?: string
+  slug?: string
+}) {
   const html = useMemo(() => {
     if (role !== 'agent') return null
     return DOMPurify.sanitize(marked.parse(content) as string)
   }, [role, content])
+
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [saveLoading, setSaveLoading] = useState(false)
+  const [saveName, setSaveName] = useState('')
+  const [saveDesc, setSaveDesc] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  async function openSaveSkill() {
+    if (saveOpen) { setSaveOpen(false); return }
+    setSaveOpen(true)
+    if (!saveName && content.length > 20) {
+      setSaveLoading(true)
+      skillsApi.extract(content.slice(0, 800)).then(r => {
+        setSaveName(r.name)
+        setSaveDesc(r.description)
+      }).finally(() => setSaveLoading(false))
+    }
+  }
+
+  async function submitSkill() {
+    if (!agentName || !saveName.trim()) return
+    setSaveLoading(true)
+    try {
+      await skillsApi.create({
+        agent_name: agentName,
+        name: saveName.trim(),
+        description: saveDesc.trim(),
+        source: 'chat',
+        source_project: slug,
+      })
+      setSaved(true)
+      setSaveOpen(false)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
   if (role === 'user') {
     return (
       <div className="flex justify-end">
@@ -277,12 +325,72 @@ function MessageBubble({ role, content }: { role: 'user' | 'agent'; content: str
       </div>
     )
   }
+
+  const firstName = agentName?.split(' ')[0] ?? 'agent'
+
   return (
-    <div className="flex justify-start">
+    <div className="flex justify-start flex-col gap-1">
       <div
         className="max-w-[85%] rounded-2xl rounded-bl-sm px-3 py-2 text-sm bg-gray-100 text-gray-800 prose prose-sm prose-gray max-w-none"
         dangerouslySetInnerHTML={{ __html: html! }}
       />
+      {agentName && (
+        <div className="pl-1">
+          {saved ? (
+            <span className="text-[10px] text-green-600 flex items-center gap-1">
+              <Check size={9} /> Submitted for skills review
+            </span>
+          ) : (
+            <button
+              onClick={openSaveSkill}
+              className="text-[10px] text-gray-300 hover:text-teal-500 transition-colors flex items-center gap-0.5"
+            >
+              <Sparkles size={9} /> Teach {firstName}
+            </button>
+          )}
+          {saveOpen && !saved && (
+            <div className="mt-1.5 p-2.5 rounded-xl border border-gray-200 bg-white space-y-2 max-w-[85%]">
+              {saveLoading && !saveName ? (
+                <div className="flex items-center gap-1.5 py-2">
+                  <Loader size={11} className="text-teal-500 animate-spin" />
+                  <span className="text-xs text-gray-400">Extracting lesson…</span>
+                </div>
+              ) : (
+                <>
+                  <input
+                    className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
+                    placeholder="Skill name"
+                    value={saveName}
+                    onChange={e => setSaveName(e.target.value)}
+                  />
+                  <textarea
+                    className="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-600 resize-none focus:outline-none focus:ring-2 focus:ring-teal-400"
+                    placeholder="Description"
+                    rows={2}
+                    value={saveDesc}
+                    onChange={e => setSaveDesc(e.target.value)}
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => setSaveOpen(false)}
+                      className="text-[10px] text-gray-400 hover:text-gray-600"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={submitSkill}
+                      disabled={!saveName.trim() || saveLoading}
+                      className="text-[10px] text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-40 px-2 py-1 rounded font-semibold"
+                    >
+                      {saveLoading ? 'Saving…' : `Submit for review`}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -686,6 +794,99 @@ function OutputItem({ slug, output, crewKey, allCrewOutputs }: {
   )
 }
 
+// ── Skills Tab ────────────────────────────────────────────────────────────────
+
+function SkillsTabContent({ agents }: { agents: string[] }) {
+  const { data: learnedSkills = [] } = useQuery({
+    queryKey: ['skills', 'approved'],
+    queryFn: () => skillsApi.list({ status: 'approved' }),
+  })
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-5">
+      {agents.map(agentName => {
+        const avatar     = AGENT_AVATAR[agentName] ?? { gradient: 'from-gray-400 to-gray-600' }
+        const humanName  = AGENT_HUMAN_NAME[agentName] ?? agentName
+        const agentFirst = humanName.split(' ')[0]
+        const imageSrc   = AGENT_AVATAR_IMAGE[agentName]
+        const role       = AGENT_ROLE[agentName] ?? ''
+        const baseline   = AGENT_SKILLS[agentName] ?? []
+        const learned    = learnedSkills.filter(s => s.agent_name === agentName)
+
+        return (
+          <div key={agentName} className="space-y-2">
+            {/* Agent header */}
+            <div className="flex items-center gap-2.5">
+              <AgentHoverCard agentName={agentName}>
+                <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0 cursor-default">
+                  {imageSrc ? (
+                    <img src={imageSrc} alt={agentFirst} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className={`w-full h-full bg-gradient-to-br ${avatar.gradient} flex items-center justify-center text-sm font-bold text-white`}>
+                      {humanName.split(' ').map((w: string) => w[0]).join('').slice(0, 2)}
+                    </div>
+                  )}
+                </div>
+              </AgentHoverCard>
+              <div>
+                <p className="text-xs font-bold text-gray-800">{agentFirst}</p>
+                <p className="text-[10px] text-gray-400">{agentName}</p>
+              </div>
+            </div>
+
+            {/* Role */}
+            {role && (
+              <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Role</p>
+                <p className="text-xs text-gray-600 leading-relaxed">{role}</p>
+              </div>
+            )}
+
+            {/* Baseline skills */}
+            {baseline.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{baseline.length} Built-in skills</p>
+                {baseline.map((skill, i) => (
+                  <div key={i} className="flex gap-2.5 items-start rounded-lg border border-gray-100 bg-white px-3 py-2">
+                    <skill.icon size={14} className="flex-shrink-0 mt-0.5 text-gray-400" />
+                    <div>
+                      <p className="text-xs font-semibold text-gray-800">{skill.name}</p>
+                      <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{skill.description}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Learned skills from library */}
+            {learned.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-bold text-teal-600 uppercase tracking-widest flex items-center gap-1">
+                  <Sparkles size={9} /> {learned.length} Learnt skill{learned.length > 1 ? 's' : ''}
+                </p>
+                {learned.map(s => (
+                  <div key={s.id} className="flex gap-2.5 items-start rounded-lg border border-teal-100 bg-teal-50/40 px-3 py-2">
+                    <Sparkles size={12} className="flex-shrink-0 mt-0.5 text-teal-400" />
+                    <div>
+                      <p className="text-xs font-semibold text-gray-800">{s.name}</p>
+                      <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{s.description}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Divider between agents */}
+            {agents.indexOf(agentName) < agents.length - 1 && (
+              <div className="border-t border-gray-100 pt-2" />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── AgentDetailPanel ───────────────────────────────────────────────────────────
 
 export interface AgentDetailPanelProps {
@@ -995,7 +1196,13 @@ export default function AgentDetailPanel({
               </div>
             )}
             {messages.map((msg, i) => (
-              <MessageBubble key={i} role={msg.role} content={msg.content} />
+              <MessageBubble
+                key={i}
+                role={msg.role}
+                content={msg.content}
+                agentName={msg.role === 'agent' ? primaryAgent : undefined}
+                slug={slug}
+              />
             ))}
             {chatLoading && (
               <div className="flex justify-start">
@@ -1096,68 +1303,7 @@ export default function AgentDetailPanel({
 
       {/* ── ROLE & SKILLS TAB ──────────────────────────────────────────────────── */}
       {tab === 'skills' && (
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          {agents.map(agentName => {
-            const avatar    = AGENT_AVATAR[agentName] ?? { gradient: 'from-gray-400 to-gray-600' }
-            const humanName = AGENT_HUMAN_NAME[agentName] ?? agentName
-            const agentFirst = humanName.split(' ')[0]
-            const imageSrc  = AGENT_AVATAR_IMAGE[agentName]
-            const role   = AGENT_ROLE[agentName] ?? ''
-            const skills = AGENT_SKILLS[agentName] ?? []
-
-            return (
-              <div key={agentName} className="space-y-2">
-                {/* Agent header */}
-                <div className="flex items-center gap-2.5">
-                  <AgentHoverCard agentName={agentName}>
-                    <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0 cursor-default">
-                      {imageSrc ? (
-                        <img src={imageSrc} alt={agentFirst} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className={`w-full h-full bg-gradient-to-br ${avatar.gradient} flex items-center justify-center text-sm font-bold text-white`}>
-                          {humanName.split(' ').map((w: string) => w[0]).join('').slice(0, 2)}
-                        </div>
-                      )}
-                    </div>
-                  </AgentHoverCard>
-                  <div>
-                    <p className="text-xs font-bold text-gray-800">{agentFirst}</p>
-                    <p className="text-[10px] text-gray-400">{agentName}</p>
-                  </div>
-                </div>
-
-                {/* Role */}
-                {role && (
-                  <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Role</p>
-                    <p className="text-xs text-gray-600 leading-relaxed">{role}</p>
-                  </div>
-                )}
-
-                {/* Skills */}
-                {skills.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{skills.length} Skills</p>
-                    {skills.map((skill, i) => (
-                      <div key={i} className="flex gap-2.5 items-start rounded-lg border border-gray-100 bg-white px-3 py-2">
-                        <skill.icon size={14} className="flex-shrink-0 mt-0.5 text-gray-400" />
-                        <div>
-                          <p className="text-xs font-semibold text-gray-800">{skill.name}</p>
-                          <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{skill.description}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Divider between agents */}
-                {agents.indexOf(agentName) < agents.length - 1 && (
-                  <div className="border-t border-gray-100 pt-2" />
-                )}
-              </div>
-            )
-          })}
-        </div>
+        <SkillsTabContent agents={agents} />
       )}
     </div>
   )
