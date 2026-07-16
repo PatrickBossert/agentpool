@@ -64,11 +64,16 @@ interface PamCardProps {
   hitlReviewCount: number
   runCount: number
   isSelected: boolean
+  isHovered: boolean
+  anotherCardHovered: boolean
+  carouselDragging: boolean
   onSelect: () => void
   onRunPipeline: () => void
+  onMouseEnter: () => void
+  onMouseLeave: () => void
 }
 
-function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReviewCount, runCount, isSelected, onSelect, onRunPipeline }: PamCardProps) {
+function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReviewCount, runCount, isSelected, isHovered, anotherCardHovered, carouselDragging, onSelect, onRunPipeline, onMouseEnter, onMouseLeave }: PamCardProps) {
   const imageSrc = AGENT_AVATAR_IMAGE['PAM']
 
   const borderClass = isSelected
@@ -89,8 +94,10 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
 
   return (
     <div
-      className={`relative flex-shrink-0 w-48 rounded-xl border bg-white flex flex-col ${borderClass} transition-all cursor-pointer`}
+      className={`relative flex-shrink-0 w-48 rounded-xl border bg-white flex flex-col ${borderClass} transition-all duration-150 ease-out cursor-pointer ${!carouselDragging && (isHovered || (isSelected && !anotherCardHovered)) ? 'scale-[1.06] z-10' : 'scale-100'}`}
       onClick={onSelect}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       {/* Running scanline */}
       {isPipelineActive && (
@@ -158,14 +165,19 @@ interface CrewCardProps {
   isWaiting: boolean
   isRejected: boolean
   isSelected: boolean
+  isHovered: boolean
+  anotherCardHovered: boolean
+  carouselDragging: boolean
   logs: string[]
   anyBusy: boolean
   onSelect: () => void
   onRun: (crewKey: string) => void
   onRerun: (crewKey: string) => void
+  onMouseEnter: () => void
+  onMouseLeave: () => void
 }
 
-function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, logs, anyBusy, onSelect, onRun, onRerun }: CrewCardProps) {
+function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, isHovered, anotherCardHovered, carouselDragging, logs, anyBusy, onSelect, onRun, onRerun, onMouseEnter, onMouseLeave }: CrewCardProps) {
   const status = getCrewStatus(crewRun, isActive, isPipelineActive, isWaiting, isRejected)
   const agents = CREW_AGENTS[crewKey] ?? []
 
@@ -220,7 +232,9 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
   return (
     <div
       onClick={onSelect}
-      className={`relative flex-shrink-0 w-48 rounded-xl border cursor-pointer transition-all select-none flex flex-col ${borderClass} ${bgClass}`}
+      className={`relative flex-shrink-0 w-48 rounded-xl border cursor-pointer transition-all duration-150 ease-out select-none flex flex-col ${borderClass} ${bgClass} ${!carouselDragging && (isHovered || (isSelected && !anotherCardHovered)) ? 'scale-[1.06] z-10' : 'scale-100'}`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       {/* Running scanline */}
       {status === 'running' && (
@@ -328,20 +342,25 @@ export default function CrewCarousel({
   // ── Click-drag state ──────────────────────────────────────────────────────
   const dragState = useRef<{ startX: number; scrollLeft: number; dragging: boolean } | null>(null)
   const didDrag = useRef(false)
-  const [isDragging, setIsDragging] = useState(false)
-  const [isHovering, setIsHovering] = useState(false)
+  const [isDragging, setIsDragging]     = useState(false)
+  const [isMouseDown, setIsMouseDown]   = useState(false)
+  const [isHovering, setIsHovering]     = useState(false)
+  const [hoveredCrew, setHoveredCrew]   = useState<string | null>(null)
 
   function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     const el = scrollRef.current
     if (!el) return
     didDrag.current = false
     dragState.current = { startX: e.pageX, scrollLeft: el.scrollLeft, dragging: true }
+    setIsMouseDown(true)
   }
 
   function onMouseLeaveCarousel() {
     setIsHovering(false)
+    setHoveredCrew(null)
     if (dragState.current) dragState.current.dragging = false
     setIsDragging(false)
+    setIsMouseDown(false)
   }
 
   useEffect(() => {
@@ -356,6 +375,7 @@ export default function CrewCarousel({
     function onMouseUp() {
       if (dragState.current) dragState.current.dragging = false
       setIsDragging(false)
+      setIsMouseDown(false)
     }
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
@@ -423,8 +443,8 @@ export default function CrewCarousel({
         onMouseDown={onMouseDown}
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={onMouseLeaveCarousel}
-        className={`flex gap-3 overflow-x-auto pb-2 px-1 items-stretch select-none ${
-          isDragging ? 'cursor-grabbing' : isHovering ? 'cursor-pointer' : ''
+        className={`flex gap-3 overflow-x-auto pt-2 pb-2 px-1 items-stretch select-none ${
+          (isMouseDown || isDragging) ? 'cursor-grabbing [&_*]:cursor-grabbing' : isHovering ? 'cursor-pointer' : ''
         }`}
         style={{ scrollbarWidth: 'none' }}
       >
@@ -436,8 +456,13 @@ export default function CrewCarousel({
           hitlReviewCount={hitlReviews.length}
           runCount={crewRuns.length}
           isSelected={selectedCrew === 'PAM'}
+          isHovered={hoveredCrew === 'PAM'}
+          anotherCardHovered={hoveredCrew !== null && hoveredCrew !== 'PAM'}
+          carouselDragging={isDragging}
           onSelect={() => { if (!didDrag.current) onSelectCrew('PAM') }}
           onRunPipeline={onRunPipeline}
+          onMouseEnter={() => setHoveredCrew('PAM')}
+          onMouseLeave={() => setHoveredCrew(null)}
         />
 
         {/* Visual separator */}
@@ -454,11 +479,16 @@ export default function CrewCarousel({
             isWaiting={waitingCrews.has(crewKey)}
             isRejected={rejectedCrews.has(crewKey)}
             isSelected={selectedCrew === crewKey}
+            isHovered={hoveredCrew === crewKey}
+            anotherCardHovered={hoveredCrew !== null && hoveredCrew !== crewKey}
+            carouselDragging={isDragging}
             logs={logs}
             anyBusy={anyBusy}
             onSelect={() => { if (!didDrag.current) onSelectCrew(crewKey) }}
             onRun={onRunCrew}
             onRerun={onRerunCrew}
+            onMouseEnter={() => setHoveredCrew(crewKey)}
+            onMouseLeave={() => setHoveredCrew(null)}
           />
         ))}
       </div>

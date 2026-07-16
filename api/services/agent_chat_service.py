@@ -206,10 +206,14 @@ async def run_agent_chat(
     agent_name: str,
     message: str,
     history: list[dict],
+    injected_docs: list[dict] | None = None,
+    injected_links: list[dict] | None = None,
 ) -> str | None:
     """
     Returns the agent's reply string, or None if the project DB doesn't exist.
     Raises KeyError if agent_name is unknown (caller converts to 404).
+    injected_docs / injected_links carry immediately-uploaded file content and
+    fetched web page text that get prepended to the system prompt for this turn.
     """
     persona = AGENT_PERSONAS[agent_name]  # KeyError → router returns 404
 
@@ -234,6 +238,19 @@ async def run_agent_chat(
         "Use bullet points for lists. "
         "If you don't have the data to answer, say so — don't invent details."
     )
+
+    if injected_docs:
+        for doc in injected_docs:
+            system_prompt += f"\n\n--- Shared file: {doc['original_name']} ---\n"
+            if doc.get("is_image"):
+                system_prompt += "[Image file — the user has shared this for context.]\n"
+            else:
+                system_prompt += doc.get("preview_text", "") or "[No text extracted]"
+
+    if injected_links:
+        for lnk in injected_links:
+            system_prompt += f"\n\n--- Web page: {lnk['label']} ({lnk['url']}) ---\n"
+            system_prompt += lnk.get("content_preview", "") or "[No content retrieved]"
 
     # Convert history: frontend uses 'agent', Anthropic API requires 'assistant'
     messages = [
