@@ -14,9 +14,9 @@ import AgentHoverCard from './AgentHoverCard'
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 // card inner width = 192px (w-48) − 24px padding = 168px, gap-1.5 = 6px
-// lg(56px): 2×56+6 = 118  ≤ 168  ✓
-// md(36px): 4×36+18 = 162 ≤ 168  ✓
-// sm(24px): 5×24+24 = 144 ≤ 168  ✓ (6+ wraps)
+// lg(80px): 2×80+6  = 166 ≤ 168  ✓
+// md(48px): 3×48+12 = 156 ≤ 168  ✓
+// sm(36px): 4×36+18 = 162 ≤ 168  ✓  (5+ wraps)
 function computeFaceSize(n: number): 'sm' | 'md' | 'lg' {
   if (n <= 2) return 'lg'
   if (n <= 4) return 'md'
@@ -31,8 +31,8 @@ function AgentFace({ name, status, size = 'md' }: { name: string; status: AgentS
   const firstName = humanName.split(' ')[0]
   const imageSrc  = AGENT_AVATAR_IMAGE[name]
 
-  const dim = size === 'lg' ? 'w-16 h-16' : size === 'md' ? 'w-10 h-10' : 'w-[26px] h-[26px]'
-  const textDim = size === 'lg' ? 'text-2xl' : size === 'md' ? 'text-base' : 'text-[10px]'
+  const dim = size === 'lg' ? 'w-20 h-20' : size === 'md' ? 'w-12 h-12' : 'w-9 h-9'
+  const textDim = size === 'lg' ? 'text-2xl' : size === 'md' ? 'text-lg' : 'text-sm'
 
   const ringClass =
     status === 'running'   ? 'ring-2 ring-teal-400 ring-offset-1' :
@@ -94,7 +94,7 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
 
   return (
     <div
-      className={`relative flex-shrink-0 w-48 rounded-xl border bg-white flex flex-col ${borderClass} transition-all duration-150 ease-out cursor-pointer ${!carouselDragging && (isHovered || (isSelected && !anotherCardHovered)) ? 'scale-[1.06] z-10' : 'scale-100'}`}
+      className={`relative flex-shrink-0 w-48 rounded-xl border bg-white flex flex-col ${borderClass} transition-transform duration-300 ease-in-out cursor-pointer ${!carouselDragging && (isHovered || (isSelected && !anotherCardHovered)) ? 'scale-[1.06] z-10' : 'scale-100'}`}
       onClick={onSelect}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -120,15 +120,15 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
         {/* PAM face + name */}
         <div className="flex-1 flex flex-col items-center justify-center gap-1 py-1">
           <AgentHoverCard agentName="PAM">
-            <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-teal-200 shadow-sm flex-shrink-0 cursor-default">
+            <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-teal-200 shadow-sm flex-shrink-0 cursor-default">
               {imageSrc ? (
                 <img src={imageSrc} alt="Pamela" className="w-full h-full object-cover" />
               ) : (
-                <div className="w-full h-full bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center text-xl font-bold text-white">P</div>
+                <div className="w-full h-full bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center text-2xl font-bold text-white">P</div>
               )}
             </div>
           </AgentHoverCard>
-          <span className="text-[10px] text-gray-500 font-medium">Pam</span>
+          <span className="text-xs text-gray-500 font-medium">Pam</span>
           {hitlReviewCount > 0 && (
             <span className="text-[9px] text-amber-600 font-medium flex items-center gap-0.5">
               <PauseCircle size={9} />{hitlReviewCount} awaiting review
@@ -232,7 +232,7 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
   return (
     <div
       onClick={onSelect}
-      className={`relative flex-shrink-0 w-48 rounded-xl border cursor-pointer transition-all duration-150 ease-out select-none flex flex-col ${borderClass} ${bgClass} ${!carouselDragging && (isHovered || (isSelected && !anotherCardHovered)) ? 'scale-[1.06] z-10' : 'scale-100'}`}
+      className={`relative flex-shrink-0 w-48 rounded-xl border cursor-pointer transition-transform duration-300 ease-in-out select-none flex flex-col ${borderClass} ${bgClass} ${!carouselDragging && (isHovered || (isSelected && !anotherCardHovered)) ? 'scale-[1.06] z-10' : 'scale-100'}`}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
@@ -247,9 +247,9 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
       )}
 
       <div className="p-3 flex flex-col gap-2.5 flex-1">
-        {/* Header */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {(() => { const CrewIcon = CREW_ICON_COMPONENT[crewKey]; return CrewIcon ? <CrewIcon size={15} className="text-gray-500 flex-shrink-0" /> : null })()}
+        {/* Header — min-h normalises 1-line vs 2-line labels so avatar centres align across all cards */}
+        <div className="flex items-start gap-1.5 flex-shrink-0 min-h-[34px]">
+          {(() => { const CrewIcon = CREW_ICON_COMPONENT[crewKey]; return CrewIcon ? <CrewIcon size={13} className="text-gray-400 flex-shrink-0 mt-0.5" /> : null })()}
           <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide leading-tight">
             {CREW_LABELS[crewKey]}
           </span>
@@ -258,22 +258,20 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
         {/* Agent faces - flex-1 keeps footer pinned to bottom */}
         <div className="flex-1 flex items-center">
           {isSingleAgent ? (
-            <div className="flex flex-col items-center gap-1 w-full justify-center">
+            <div className="flex flex-col items-center gap-1.5 w-full justify-center">
               <AgentFace name={agents[0]} status={agentStatuses[0]} size="lg" />
-              <span className="text-[10px] text-gray-500 font-medium">
+              <span className="text-xs text-gray-500 font-medium">
                 {(AGENT_HUMAN_NAME[agents[0]] ?? agents[0]).split(' ')[0]}
               </span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 flex-wrap justify-center w-full">
               {agents.map((agent, idx) => (
-                <div key={agent} className="flex flex-col items-center gap-0.5">
+                <div key={agent} className="flex flex-col items-center gap-1">
                   <AgentFace name={agent} status={agentStatuses[idx]} size={faceSize} />
-                  {faceSize !== 'sm' && (
-                    <span className="text-[9px] text-gray-400 font-medium leading-none">
-                      {(AGENT_HUMAN_NAME[agent] ?? agent).split(' ')[0]}
-                    </span>
-                  )}
+                  <span className="text-[10px] text-gray-400 font-medium leading-none">
+                    {(AGENT_HUMAN_NAME[agent] ?? agent).split(' ')[0]}
+                  </span>
                 </div>
               ))}
             </div>
@@ -443,7 +441,7 @@ export default function CrewCarousel({
         onMouseDown={onMouseDown}
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={onMouseLeaveCarousel}
-        className={`flex gap-3 overflow-x-auto pt-2 pb-2 px-1 items-stretch select-none ${
+        className={`flex gap-3 overflow-x-auto py-10 px-6 items-stretch select-none ${
           (isMouseDown || isDragging) ? 'cursor-grabbing [&_*]:cursor-grabbing' : isHovering ? 'cursor-pointer' : ''
         }`}
         style={{ scrollbarWidth: 'none' }}

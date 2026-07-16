@@ -164,4 +164,29 @@
     background: #f8fafc;
     color: #64748b;
   }
+
+  /* Gantt calendar: override dark theme for print */
+  .report-gantt .bg-slate-800 {
+    background: #f1f5f9 !important;
+  }
+  .report-gantt .text-slate-200,
+  .report-gantt .text-slate-400,
+  .report-gantt .text-slate-500 {
+    color: #334155 !important;
+  }
+  .report-gantt .bg-slate-500 {
+    background: #94a3b8 !important;
+  }
+  .report-gantt .bg-slate-700 {
+    background: #e2e8f0 !important;
+  }
+  .report-gantt .text-gray-400 {
+    color: #64748b !important;
+  }
+  .report-gantt .text-teal-300 {
+    color: #0f766e !important;
+  }
+  .report-gantt .bg-slate-800\/70 {
+    background: rgba(241,245,249,0.9) !important;
+  }
 }

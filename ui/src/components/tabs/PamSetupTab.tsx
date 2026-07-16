@@ -244,7 +244,7 @@ function GanttChart({
     dragRef.current = {
       fromIdx,
       startX:    e.clientX,
-      totalPx:   containerRef.current.getBoundingClientRect().width,
+      totalPx:   containerRef.current.getBoundingClientRect().width - 80,
       snapshots: ms.slice(fromIdx).filter(sm => sm.due_date).map(sm => ({ id: sm.id, date: sm.due_date! })),
     }
 
@@ -299,152 +299,155 @@ function GanttChart({
         className="relative bg-slate-800 rounded-2xl overflow-hidden shadow-md"
         style={{ height: GANTT_H }}
       >
-        {/* Week grid */}
-        {Array.from({ length: durationWeeks + 1 }, (_, i) => (
-          <div
-            key={i}
-            className="absolute top-0 bottom-0 border-l border-white/[0.07] pointer-events-none"
-            style={{ left: `${(i / durationWeeks) * 100}%` }}
-          >
-            {i > 0 && i < durationWeeks && (
-              <span className="absolute text-[9px] text-slate-500" style={{ bottom: LABEL_H - 10, left: 3 }}>
-                W{i}
-              </span>
-            )}
-          </div>
-        ))}
-
-        {/* Non-working range bands */}
-        {nonWorkingRanges.map(r => {
-          if (r.end_date < startDate || r.start_date > endDate) return null
-          const effStart = r.start_date < startDate ? startDate : r.start_date
-          const effEnd   = r.end_date   > endDate   ? endDate   : r.end_date
-          const l  = daysBetween(startDate, effStart) / totalDays * 100
-          const ri = Math.max(0, 100 - (daysBetween(startDate, effEnd) + 1) / totalDays * 100)
-          return (
+        {/* Inner chart area — 40px side margins mirror GanttReadOnly, keeping labels in-bounds */}
+        <div className="absolute inset-y-0 left-10 right-10">
+          {/* Week grid */}
+          {Array.from({ length: durationWeeks + 1 }, (_, i) => (
             <div
-              key={r.id}
-              className="absolute bg-orange-400/20 border-x border-orange-400/40 pointer-events-none"
-              style={{ top: 0, bottom: 0, left: `${l}%`, right: `${ri}%` }}
-              title={`Non-working: ${r.label}`}
-            />
-          )
-        })}
-
-        {/* Interview window band */}
-        {lDate && cDate && (
-          <>
-            <div
-              className="absolute bg-teal-400/20 border-x border-teal-400/50 pointer-events-none"
-              style={{ top: LABEL_H + 4, bottom: LABEL_H + 4, left: `${toPct(lDate)}%`, right: `${100 - toPct(cDate)}%` }}
-            />
-            <div
-              className="absolute pointer-events-none flex items-center justify-center"
-              style={{ top: '50%', transform: 'translateY(-50%)', left: `${toPct(lDate)}%`, right: `${100 - toPct(cDate)}%`, zIndex: 8 }}
+              key={i}
+              className="absolute top-0 bottom-0 border-l border-white/[0.07] pointer-events-none"
+              style={{ left: `${(i / durationWeeks) * 100}%` }}
             >
-              <span className="text-[8px] text-teal-300 font-bold tracking-widest uppercase whitespace-nowrap bg-slate-800/70 px-1.5 rounded-sm backdrop-blur-sm">
-                INTERVIEWS
-              </span>
+              {i > 0 && i < durationWeeks && (
+                <span className="absolute text-[9px] text-slate-500" style={{ bottom: LABEL_H - 10, left: 3 }}>
+                  W{i}
+                </span>
+              )}
             </div>
-          </>
-        )}
+          ))}
 
-        {/* Today line */}
-        {todayInRange && (
-          <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${todayPct}%` }}>
-            <div className="h-full border-l-2 border-dashed border-rose-400" />
-            <span className="absolute text-[9px] text-rose-300 font-semibold whitespace-nowrap"
-              style={{ bottom: LABEL_H - 10, left: 4 }}>Today</span>
-          </div>
-        )}
+          {/* Non-working range bands */}
+          {nonWorkingRanges.map(r => {
+            if (r.end_date < startDate || r.start_date > endDate) return null
+            const effStart = r.start_date < startDate ? startDate : r.start_date
+            const effEnd   = r.end_date   > endDate   ? endDate   : r.end_date
+            const l  = daysBetween(startDate, effStart) / totalDays * 100
+            const ri = Math.max(0, 100 - (daysBetween(startDate, effEnd) + 1) / totalDays * 100)
+            return (
+              <div
+                key={r.id}
+                className="absolute bg-orange-400/20 border-x border-orange-400/40 pointer-events-none"
+                style={{ top: 0, bottom: 0, left: `${l}%`, right: `${ri}%` }}
+                title={`Non-working: ${r.label}`}
+              />
+            )
+          })}
 
-        {/* Holiday bands */}
-        {visibleHolidays.map(h => {
-          const l  = daysBetween(startDate, h.date) / totalDays * 100
-          const ri = 100 - (daysBetween(startDate, h.date) + 1) / totalDays * 100
-          return (
-            <div
-              key={'hol-' + h.date}
-              className="absolute bg-orange-400/20 border-x border-orange-400/40 pointer-events-none"
-              style={{ top: 0, bottom: 0, left: `${l}%`, right: `${Math.max(0, ri)}%` }}
-              title={h.name}
-            />
-          )
-        })}
-
-        {/* Spine */}
-        <div className="absolute left-0 right-0 border-t border-white/15 pointer-events-none" style={{ top: '50%' }} />
-
-        {/* Milestone markers */}
-        {sorted.map((m, idx) => {
-          const date = effDate(m, idx)
-          if (!date) return null
-
-          const xPct       = toPct(date)
-          const state      = milestoneState({ status: m.status, due_date: date })
-          const { border, bg, text } = GANTT_STYLE[state]
-          const isAbove    = idx % 2 === 0
-          const isCascaded = !!(preview && idx > preview.fromIdx && m.due_date)
-          const isDragging = !!(preview && idx === preview.fromIdx)
-          const canDrag    = !!m.due_date
-
-          const shortDate = formatDateShort(date, locale)
-
-          return (
-            <div
-              key={m.id}
-              className="absolute"
-              style={{
-                left: `${xPct}%`,
-                top: 0, bottom: 0, width: 80,
-                transform: 'translateX(-50%)',
-                pointerEvents: 'none',
-                zIndex: isDragging ? 30 : isCascaded ? 20 : 10,
-              }}
-            >
-              {isAbove && (
-                <div className="absolute text-center" style={{ top: 8, left: 0, right: 0 }}>
-                  <p className="text-[9px] font-semibold text-slate-200 leading-tight">
-                    {m.title.length > 20 ? m.title.slice(0, 19) + '…' : m.title}
-                  </p>
-                  <p className="text-[8px] text-slate-400 mt-0.5">{shortDate}</p>
-                </div>
-              )}
-
-              {isAbove && (
-                <div className="absolute bg-slate-500"
-                  style={{ width: 1, left: '50%', top: LABEL_H - 2, bottom: 'calc(50% + 14px)' }} />
-              )}
-
-              <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', pointerEvents: 'auto', zIndex: 2 }}>
-                <button
-                  onMouseDown={e => handleMouseDown(e, idx)}
-                  className={`w-7 h-7 rounded-full border-2 flex items-center justify-center text-[9px] font-bold transition-transform
-                    ${border} ${bg} ${text}
-                    ${canDrag ? 'cursor-grab hover:scale-110 active:cursor-grabbing' : 'cursor-default opacity-50'}
-                    ${isDragging ? 'scale-125 shadow-lg shadow-teal-100' : isCascaded ? 'scale-110 opacity-70' : ''}`}
-                  title={canDrag ? `Drag to shift this and all later milestones — ${date}` : m.title}
-                >
-                  {idx + 1}
-                </button>
+          {/* Interview window band */}
+          {lDate && cDate && (
+            <>
+              <div
+                className="absolute bg-teal-400/20 border-x border-teal-400/50 pointer-events-none"
+                style={{ top: LABEL_H + 4, bottom: LABEL_H + 4, left: `${toPct(lDate)}%`, right: `${100 - toPct(cDate)}%` }}
+              />
+              <div
+                className="absolute pointer-events-none flex items-center justify-center"
+                style={{ top: '50%', transform: 'translateY(-50%)', left: `${toPct(lDate)}%`, right: `${100 - toPct(cDate)}%`, zIndex: 8 }}
+              >
+                <span className="text-[8px] text-teal-300 font-bold tracking-widest uppercase whitespace-nowrap bg-slate-800/70 px-1.5 rounded-sm backdrop-blur-sm">
+                  INTERVIEWS
+                </span>
               </div>
+            </>
+          )}
 
-              {!isAbove && (
-                <div className="absolute bg-slate-500"
-                  style={{ width: 1, left: '50%', top: 'calc(50% + 14px)', bottom: LABEL_H - 2 }} />
-              )}
-
-              {!isAbove && (
-                <div className="absolute text-center" style={{ bottom: 8, left: 0, right: 0 }}>
-                  <p className="text-[9px] font-semibold text-slate-200 leading-tight">
-                    {m.title.length > 20 ? m.title.slice(0, 19) + '…' : m.title}
-                  </p>
-                  <p className="text-[8px] text-slate-400 mt-0.5">{shortDate}</p>
-                </div>
-              )}
+          {/* Today line */}
+          {todayInRange && (
+            <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${todayPct}%` }}>
+              <div className="h-full border-l-2 border-dashed border-rose-400" />
+              <span className="absolute text-[9px] text-rose-300 font-semibold whitespace-nowrap"
+                style={{ bottom: LABEL_H - 10, left: 4 }}>Today</span>
             </div>
-          )
-        })}
+          )}
+
+          {/* Holiday bands */}
+          {visibleHolidays.map(h => {
+            const l  = daysBetween(startDate, h.date) / totalDays * 100
+            const ri = 100 - (daysBetween(startDate, h.date) + 1) / totalDays * 100
+            return (
+              <div
+                key={'hol-' + h.date}
+                className="absolute bg-orange-400/20 border-x border-orange-400/40 pointer-events-none"
+                style={{ top: 0, bottom: 0, left: `${l}%`, right: `${Math.max(0, ri)}%` }}
+                title={h.name}
+              />
+            )
+          })}
+
+          {/* Spine */}
+          <div className="absolute left-0 right-0 border-t border-white/15 pointer-events-none" style={{ top: '50%' }} />
+
+          {/* Milestone markers */}
+          {sorted.map((m, idx) => {
+            const date = effDate(m, idx)
+            if (!date) return null
+
+            const xPct       = toPct(date)
+            const state      = milestoneState({ status: m.status, due_date: date })
+            const { border, bg, text } = GANTT_STYLE[state]
+            const isAbove    = idx % 2 === 0
+            const isCascaded = !!(preview && idx > preview.fromIdx && m.due_date)
+            const isDragging = !!(preview && idx === preview.fromIdx)
+            const canDrag    = !!m.due_date
+
+            const shortDate = formatDateShort(date, locale)
+
+            return (
+              <div
+                key={m.id}
+                className="absolute"
+                style={{
+                  left: `${xPct}%`,
+                  top: 0, bottom: 0, width: 80,
+                  transform: 'translateX(-50%)',
+                  pointerEvents: 'none',
+                  zIndex: isDragging ? 30 : isCascaded ? 20 : 10,
+                }}
+              >
+                {isAbove && (
+                  <div className="absolute text-center" style={{ top: 8, left: 0, right: 0 }}>
+                    <p className="text-[9px] font-semibold text-slate-200 leading-tight">
+                      {m.title.length > 20 ? m.title.slice(0, 19) + '…' : m.title}
+                    </p>
+                    <p className="text-[8px] text-slate-400 mt-0.5">{shortDate}</p>
+                  </div>
+                )}
+
+                {isAbove && (
+                  <div className="absolute bg-slate-500"
+                    style={{ width: 1, left: '50%', top: LABEL_H - 2, bottom: 'calc(50% + 14px)' }} />
+                )}
+
+                <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', pointerEvents: 'auto', zIndex: 2 }}>
+                  <button
+                    onMouseDown={e => handleMouseDown(e, idx)}
+                    className={`w-7 h-7 rounded-full border-2 flex items-center justify-center text-[9px] font-bold transition-transform
+                      ${border} ${bg} ${text}
+                      ${canDrag ? 'cursor-grab hover:scale-110 active:cursor-grabbing' : 'cursor-default opacity-50'}
+                      ${isDragging ? 'scale-125 shadow-lg shadow-teal-100' : isCascaded ? 'scale-110 opacity-70' : ''}`}
+                    title={canDrag ? `Drag to shift this and all later milestones — ${date}` : m.title}
+                  >
+                    {idx + 1}
+                  </button>
+                </div>
+
+                {!isAbove && (
+                  <div className="absolute bg-slate-500"
+                    style={{ width: 1, left: '50%', top: 'calc(50% + 14px)', bottom: LABEL_H - 2 }} />
+                )}
+
+                {!isAbove && (
+                  <div className="absolute text-center" style={{ bottom: 8, left: 0, right: 0 }}>
+                    <p className="text-[9px] font-semibold text-slate-200 leading-tight">
+                      {m.title.length > 20 ? m.title.slice(0, 19) + '…' : m.title}
+                    </p>
+                    <p className="text-[8px] text-slate-400 mt-0.5">{shortDate}</p>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {/* Footer */}
@@ -660,24 +663,24 @@ function DateControls({
   const iw = interviewWindowDays(durationWeeks)
   return (
     <div className="flex items-end gap-4 flex-wrap bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 mb-4">
-      <div>
-        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Project start</p>
+      <div className="flex flex-col gap-1.5">
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Project start</p>
         <input type="date" value={startDate}
           onChange={e => onStart(e.target.value)}
-          className="text-sm text-gray-900 border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400"
+          className="h-9 text-sm text-gray-900 border border-gray-200 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400"
           style={{ colorScheme: 'light' }} />
       </div>
-      <div>
-        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Duration</p>
+      <div className="flex flex-col gap-1.5">
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Duration</p>
         <select value={durationWeeks} onChange={e => onDuration(Number(e.target.value))}
-          className="text-sm text-gray-900 border border-gray-200 rounded-lg px-3 py-2 pr-8 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400">
+          className="h-9 text-sm text-gray-900 border border-gray-200 rounded-lg px-3 pr-8 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400">
           {[4, 6, 8, 10, 12, 14, 16, 20].map(w => (
             <option key={w} value={w}>{w} weeks</option>
           ))}
         </select>
       </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs text-gray-500 mb-2">
+      <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+        <p className="text-[10px] text-gray-500">
           Interview window:{' '}
           <span className="font-semibold text-teal-600">{iw / 7} weeks ({iw} days)</span>
           <span className="text-gray-400 ml-1">
@@ -685,7 +688,7 @@ function DateControls({
           </span>
         </p>
         <button onClick={onAssign} disabled={busy}
-          className="flex items-center gap-2 text-xs px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-40 transition-colors">
+          className="h-9 flex items-center gap-2 text-sm px-4 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-40 transition-colors">
           <Wand2 size={12} className={busy ? 'animate-pulse' : ''} />
           Auto-assign milestone dates
         </button>

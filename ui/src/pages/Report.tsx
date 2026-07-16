@@ -9,8 +9,10 @@ import {
   Radar,
   ResponsiveContainer,
 } from 'recharts'
-import { projectsApi } from '../api/endpoints'
-import type { PortfolioItem, Initiative, CostEstimate, AgentOutput } from '../types'
+import { projectsApi, milestonesApi, nonworkingApi } from '../api/endpoints'
+import type { PortfolioItem, Initiative, CostEstimate, AgentOutput, Milestone, NonWorkingRange } from '../types'
+import GanttReadOnly, { inferSchedule } from '../components/GanttReadOnly'
+import { getPublicHolidays } from '../utils/holidays'
 import './Report.css'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -266,6 +268,41 @@ function DeliverablesSection({ outputs }: { outputs: AgentOutput[] }) {
   )
 }
 
+function DeliveryCalendarSection({
+  milestones,
+  nonWorkingRanges,
+  locale,
+  schedStart,
+  durationWeeks,
+}: {
+  milestones: Milestone[]
+  nonWorkingRanges: NonWorkingRange[]
+  locale: string
+  schedStart: string
+  durationWeeks: number
+}) {
+  const endDate = new Date(schedStart + 'T00:00:00')
+  endDate.setDate(endDate.getDate() + durationWeeks * 7)
+  const endStr = endDate.toISOString().slice(0, 10)
+  const holidays = getPublicHolidays(locale, schedStart, endStr)
+
+  return (
+    <div className="report-section">
+      <h2 className="report-section-title">Delivery Calendar</h2>
+      <div className="report-gantt">
+        <GanttReadOnly
+          milestones={milestones}
+          startDate={schedStart}
+          durationWeeks={durationWeeks}
+          holidays={holidays}
+          nonWorkingRanges={nonWorkingRanges}
+          locale={locale}
+        />
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Report() {
@@ -301,7 +338,19 @@ export default function Report() {
     enabled: !!slug,
   })
 
-  const allLoaded = settings !== undefined && financialSummary !== undefined && roadmapData !== undefined
+  const { data: milestones } = useQuery({
+    queryKey: ['milestones', slug],
+    queryFn: () => milestonesApi.list(slug!),
+    enabled: !!slug,
+  })
+
+  const { data: nonWorkingRanges = [] } = useQuery({
+    queryKey: ['nonworking', slug],
+    queryFn: () => nonworkingApi.list(slug!),
+    enabled: !!slug,
+  })
+
+  const allLoaded = settings !== undefined && financialSummary !== undefined && roadmapData !== undefined && milestones !== undefined
 
   // Auto-trigger print dialog once all data has loaded
   useEffect(() => {
@@ -321,6 +370,23 @@ export default function Report() {
       <CoverPage slug={slug ?? ''} sector={settings?.sector ?? ''} />
       <ValuePropositionsSection items={propositions} />
       <InitiativeRegisterSection initiatives={initiatives} />
+      {(milestones ?? []).filter(m => m.due_date).length >= 2 && (() => {
+        const ms = milestones!
+        const locale = settings?.locale ?? 'GB'
+        const stored = settings?.sched_start && settings?.sched_duration_weeks
+        const { schedStart, durationWeeks } = stored
+          ? { schedStart: settings!.sched_start!, durationWeeks: settings!.sched_duration_weeks! }
+          : inferSchedule(ms.map(m => m.due_date).filter(Boolean) as string[])
+        return (
+          <DeliveryCalendarSection
+            milestones={ms}
+            nonWorkingRanges={nonWorkingRanges}
+            locale={locale}
+            schedStart={schedStart}
+            durationWeeks={durationWeeks}
+          />
+        )
+      })()}
       <FinancialSummarySection summary={financialSummary ?? null} />
       <DeliverablesSection outputs={outputs} />
     </div>
