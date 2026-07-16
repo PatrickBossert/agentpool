@@ -13,6 +13,7 @@ import {
 import { projectsApi } from '../api/endpoints'
 import { MermaidThumbnail, DiagramLightbox } from './ReviewDialog'
 import { agentChatApi } from '../api/agentChat'
+import { useAuth } from '../context/AuthContext'
 import {
   CREW_LABELS, CREW_AGENTS,
   AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME, AGENT_ROLE, AGENT_SKILLS,
@@ -701,6 +702,7 @@ export default function AgentDetailPanel({
   slug, crewKey, crewRun, outputs, logs, isPipelineActive, hitlReviews = [],
 }: AgentDetailPanelProps) {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [tab, setTab] = useState<Tab>('output')
   const [messages, setMessages] = useState<{ role: 'user' | 'agent'; content: string }[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -718,9 +720,14 @@ export default function AgentDetailPanel({
 
   const agents = CREW_AGENTS[crewKey] ?? []
   const primaryAgent = agents[0] ?? ''
-  const chatStorageKey = `agentchat-${slug}-${primaryAgent}`
+  // Key scoped by user and crew — each user gets separate history per crew
+  const chatStorageKey = `agentchat-${slug}-${user?.sub ?? 'anon'}-${crewKey}`
+  // Ref keeps the current key synchronously up-to-date so the save effect
+  // never writes old messages into the newly-loaded crew's storage slot.
+  const chatKeyRef = useRef(chatStorageKey)
+  chatKeyRef.current = chatStorageKey
 
-  // Load persisted history when the active agent changes
+  // Load persisted history when the crew changes
   useEffect(() => {
     try {
       const stored = localStorage.getItem(chatStorageKey)
@@ -731,12 +738,14 @@ export default function AgentDetailPanel({
     setChatInput('')
   }, [chatStorageKey])
 
-  // Persist messages whenever they change — skip empty to avoid racing the load on first render
+  // Persist messages when they change. Intentionally NOT listing chatStorageKey
+  // as a dependency — the ref gives us the current key without triggering this
+  // effect on crew switch (which would write the old messages into the new slot).
   useEffect(() => {
     if (messages.length > 0) {
-      try { localStorage.setItem(chatStorageKey, JSON.stringify(messages)) } catch { /* storage quota */ }
+      try { localStorage.setItem(chatKeyRef.current, JSON.stringify(messages)) } catch { /* storage quota */ }
     }
-  }, [messages, chatStorageKey])
+  }, [messages])
 
   function clearChat() {
     localStorage.removeItem(chatStorageKey)
