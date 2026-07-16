@@ -1,7 +1,7 @@
 // ui/src/components/AgentDetailPanel.tsx
 import { useState, useEffect, useRef, useMemo, type ReactNode, type FC } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
@@ -796,11 +796,184 @@ function OutputItem({ slug, output, crewKey, allCrewOutputs }: {
 
 // ── Skills Tab ────────────────────────────────────────────────────────────────
 
+/** Inline card for a pending skill — admin can approve, edit, or reject. */
+function PendingSkillCard({
+  skill,
+  onApprove,
+  onReject,
+}: {
+  skill: import('../api/skills').AgentSkill
+  onApprove: (id: number, name: string, description: string) => void
+  onReject: (id: number) => void
+}) {
+  const [name, setName] = useState(skill.name)
+  const [desc, setDesc] = useState(skill.description)
+  const [editing, setEditing] = useState(false)
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 space-y-2">
+      {skill.flag_reason && (
+        <div className="flex items-start gap-1.5 text-amber-700">
+          <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
+          <p className="text-[10px] leading-snug">
+            Client-specific content detected: {skill.flag_reason}
+            {skill.flag_suggestion && (
+              <> — suggested reword: <em>{skill.flag_suggestion}</em></>
+            )}
+          </p>
+        </div>
+      )}
+      {editing ? (
+        <>
+          <input
+            className="w-full border border-amber-300 rounded px-2 py-1 text-xs font-semibold text-gray-800 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
+          <textarea
+            className="w-full border border-amber-300 rounded px-2 py-1 text-[11px] text-gray-700 leading-snug bg-white resize-none focus:outline-none focus:ring-1 focus:ring-amber-400"
+            rows={2}
+            value={desc}
+            onChange={e => setDesc(e.target.value)}
+          />
+        </>
+      ) : (
+        <>
+          <p className="text-xs font-semibold text-gray-800">{name}</p>
+          <p className="text-[11px] text-gray-600 leading-snug">{desc}</p>
+        </>
+      )}
+      <p className="text-[10px] text-amber-600">
+        Source: {skill.source}{skill.source_project ? ` · ${skill.source_project}` : ''}
+      </p>
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          onClick={() => setEditing(e => !e)}
+          className="text-[10px] text-gray-400 hover:text-gray-600 px-1.5 py-0.5 rounded"
+        >
+          {editing ? 'Cancel' : 'Edit'}
+        </button>
+        <button
+          onClick={() => onReject(skill.id)}
+          className="text-[10px] text-red-400 hover:text-red-600 border border-red-200 px-2 py-0.5 rounded flex items-center gap-0.5"
+        >
+          <X size={9} /> Reject
+        </button>
+        <button
+          onClick={() => onApprove(skill.id, name, desc)}
+          className="text-[10px] text-white bg-teal-600 hover:bg-teal-700 px-2 py-0.5 rounded font-semibold flex items-center gap-0.5"
+        >
+          <Check size={9} /> Approve
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Inline form to add a new skill directly for an agent. */
+function AddSkillForm({
+  agentName,
+  onAdded,
+}: {
+  agentName: string
+  onAdded: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [desc, setDesc] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function submit() {
+    if (!name.trim()) return
+    setSaving(true)
+    try {
+      await skillsApi.create({ agent_name: agentName, name: name.trim(), description: desc.trim(), source: 'manual' })
+      setName('')
+      setDesc('')
+      setOpen(false)
+      onAdded()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full text-[10px] text-gray-400 hover:text-teal-600 border border-dashed border-gray-200 hover:border-teal-300 rounded-lg py-1.5 transition-colors flex items-center justify-center gap-1"
+      >
+        + Add skill
+      </button>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-teal-200 bg-teal-50/40 px-3 py-2.5 space-y-2">
+      <p className="text-[10px] font-bold text-teal-700 uppercase tracking-widest">New skill</p>
+      <input
+        autoFocus
+        className="w-full border border-gray-200 rounded px-2 py-1 text-xs font-semibold text-gray-800 bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"
+        placeholder="Skill name"
+        value={name}
+        onChange={e => setName(e.target.value)}
+      />
+      <textarea
+        className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] text-gray-700 leading-snug bg-white resize-none focus:outline-none focus:ring-1 focus:ring-teal-400"
+        placeholder="What the agent should do or know…"
+        rows={2}
+        value={desc}
+        onChange={e => setDesc(e.target.value)}
+      />
+      <div className="flex items-center justify-end gap-2">
+        <button onClick={() => setOpen(false)} className="text-[10px] text-gray-400 hover:text-gray-600">Cancel</button>
+        <button
+          onClick={submit}
+          disabled={!name.trim() || saving}
+          className="text-[10px] text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-40 px-2.5 py-1 rounded font-semibold"
+        >
+          {saving ? 'Adding…' : 'Add skill'}
+        </button>
+      </div>
+      <p className="text-[10px] text-gray-400">Added as pending — approve it to activate.</p>
+    </div>
+  )
+}
+
 function SkillsTabContent({ agents }: { agents: string[] }) {
-  const { data: learnedSkills = [] } = useQuery({
+  const { user } = useAuth()
+  const qc = useQueryClient()
+  const isAdmin = user?.role === 'sysadmin'
+
+  const { data: approvedSkills = [] } = useQuery({
     queryKey: ['skills', 'approved'],
     queryFn: () => skillsApi.list({ status: 'approved' }),
   })
+
+  const { data: pendingSkills = [] } = useQuery({
+    queryKey: ['skills', 'pending'],
+    queryFn: () => skillsApi.list({ status: 'pending' }),
+    enabled: isAdmin,
+  })
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Parameters<typeof skillsApi.update>[1] }) =>
+      skillsApi.update(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => skillsApi.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
+  })
+
+  function approve(id: number, name: string, description: string) {
+    updateMut.mutate({ id, data: { status: 'approved', name, description } })
+  }
+
+  function reject(id: number) {
+    updateMut.mutate({ id, data: { status: 'rejected' } })
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-5">
@@ -811,7 +984,8 @@ function SkillsTabContent({ agents }: { agents: string[] }) {
         const imageSrc   = AGENT_AVATAR_IMAGE[agentName]
         const role       = AGENT_ROLE[agentName] ?? ''
         const baseline   = AGENT_SKILLS[agentName] ?? []
-        const learned    = learnedSkills.filter(s => s.agent_name === agentName)
+        const learned    = approvedSkills.filter(s => s.agent_name === agentName)
+        const pending    = pendingSkills.filter(s => s.agent_name === agentName)
 
         return (
           <div key={agentName} className="space-y-2">
@@ -828,10 +1002,15 @@ function SkillsTabContent({ agents }: { agents: string[] }) {
                   )}
                 </div>
               </AgentHoverCard>
-              <div>
+              <div className="flex-1">
                 <p className="text-xs font-bold text-gray-800">{agentFirst}</p>
                 <p className="text-[10px] text-gray-400">{agentName}</p>
               </div>
+              {isAdmin && pending.length > 0 && (
+                <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                  {pending.length} pending
+                </span>
+              )}
             </div>
 
             {/* Role */}
@@ -842,7 +1021,51 @@ function SkillsTabContent({ agents }: { agents: string[] }) {
               </div>
             )}
 
-            {/* Baseline skills */}
+            {/* Pending review (admin only) */}
+            {isAdmin && pending.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">
+                  Awaiting review
+                </p>
+                {pending.map(s => (
+                  <PendingSkillCard
+                    key={s.id}
+                    skill={s}
+                    onApprove={approve}
+                    onReject={reject}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Learned skills (approved from library) */}
+            {learned.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-bold text-teal-600 uppercase tracking-widest flex items-center gap-1">
+                  <Sparkles size={9} /> {learned.length} Learnt skill{learned.length > 1 ? 's' : ''}
+                </p>
+                {learned.map(s => (
+                  <div key={s.id} className="flex gap-2.5 items-start rounded-lg border border-teal-100 bg-teal-50/40 px-3 py-2 group">
+                    <Sparkles size={12} className="flex-shrink-0 mt-0.5 text-teal-400" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-gray-800">{s.name}</p>
+                      <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{s.description}</p>
+                    </div>
+                    {isAdmin && (
+                      <button
+                        onClick={() => { if (confirm(`Remove skill "${s.name}"?`)) deleteMut.mutate(s.id) }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-400 flex-shrink-0 mt-0.5"
+                        aria-label="Remove skill"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Built-in skills */}
             {baseline.length > 0 && (
               <div className="space-y-1.5">
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{baseline.length} Built-in skills</p>
@@ -858,22 +1081,12 @@ function SkillsTabContent({ agents }: { agents: string[] }) {
               </div>
             )}
 
-            {/* Learned skills from library */}
-            {learned.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-bold text-teal-600 uppercase tracking-widest flex items-center gap-1">
-                  <Sparkles size={9} /> {learned.length} Learnt skill{learned.length > 1 ? 's' : ''}
-                </p>
-                {learned.map(s => (
-                  <div key={s.id} className="flex gap-2.5 items-start rounded-lg border border-teal-100 bg-teal-50/40 px-3 py-2">
-                    <Sparkles size={12} className="flex-shrink-0 mt-0.5 text-teal-400" />
-                    <div>
-                      <p className="text-xs font-semibold text-gray-800">{s.name}</p>
-                      <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{s.description}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {/* Add skill (admin only) */}
+            {isAdmin && (
+              <AddSkillForm
+                agentName={agentName}
+                onAdded={() => qc.invalidateQueries({ queryKey: ['skills'] })}
+              />
             )}
 
             {/* Divider between agents */}
