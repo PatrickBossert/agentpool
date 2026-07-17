@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import type { InterviewSession, InterviewScript, InterviewBranding, QuestionnaireTemplateSchema, SectionRatings } from '../types'
+import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
 
 // webkit speech recognition types (Chrome/Safari vendor prefix)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -8,7 +8,7 @@ declare const webkitSpeechRecognition: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const SpeechRecognitionEvent: any
 
-type Phase = 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'assessing' | 'complete' | 'error'
+type Phase = 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'rating' | 'complete' | 'error'
 type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'testing' | 'ready'
 
 const BASE = '/api'
@@ -23,19 +23,20 @@ export default function VoiceInterview() {
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [branding, setBranding] = useState<InterviewBranding | null>(null)
   const [isListening, setIsListening] = useState(false)
-  const [questionnaire, setQuestionnaire] = useState<QuestionnaireTemplateSchema | null>(null)
-  const [, setSectionRatings] = useState<SectionRatings[]>([])
-  const [currentAssessSection, setCurrentAssessSection] = useState(0)
-  const [pendingRatings, setPendingRatings] = useState<Record<string, number>>({})
+  const [pendingRating, setPendingRating] = useState<MaturityRating | null>(null)
   const [micStatus, setMicStatus] = useState<MicStatus>('no_device')
   const [audioLevel, setAudioLevel] = useState(0)
   const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
   const [isMicTesting, setIsMicTesting] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [interimText, setInterimText] = useState('')
   const recognitionRef = useRef<any>(null)
+  const restartAnswerRef = useRef(false)
   const qaRef = useRef<{ question: string; answer: string }[]>([])
-  const sectionRatingsRef = useRef<SectionRatings[]>([])
+  const sectionRatingsRef = useRef<SectionMaturityRating[]>([])
+  const ratingResolveRef = useRef<((rating: number) => void) | null>(null)
+  const interviewLangRef = useRef<string>('en-GB')
   const micStreamRef = useRef<MediaStream | null>(null)
   const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -150,7 +151,7 @@ export default function VoiceInterview() {
       setProgress({ current: 0, total })
       setSessionData(data)
       setBranding(data.branding ?? null)
-      if (data.questionnaire) setQuestionnaire(data.questionnaire)
+      // Inline maturity ratings are embedded in section.maturity_rating — no separate questionnaire
 
       const micOk = await checkMicDevices()
       setPhase(micOk ? 'ready' : 'mic_setup')
@@ -216,6 +217,7 @@ export default function VoiceInterview() {
         recognitionRef.current = null
         setIsListening(false)
         setStatusMessage('')
+        setInterimText('')
         resolve(parts.join(' ').trim())
       }
 
@@ -240,6 +242,15 @@ export default function VoiceInterview() {
             parts.push(event.results[i][0].transcript)
           }
         }
+        // Show live transcript to user
+        const interim = Array.from(event.results as unknown[])
+          .slice(event.resultIndex)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .filter((r: any) => !r.isFinal)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((r: any) => r[0].transcript)
+          .join(' ')
+        setInterimText([...parts, interim].join(' ').trim())
       }
 
       // onend fires after every stop - including Chrome's internal timeouts.
@@ -282,6 +293,25 @@ export default function VoiceInterview() {
     try { r?.stop() } catch { /* already stopped */ }
   }
 
+  function restartAnswer() {
+    restartAnswerRef.current = true
+    submitAnswer()
+  }
+
+  async function listenWithRestart(lang: string = 'en-GB'): Promise<string> {
+    restartAnswerRef.current = false
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      setInterimText('')
+      const answer = await listenForAnswer(lang)
+      if (!restartAnswerRef.current) return answer
+      restartAnswerRef.current = false
+      setStatusMessage('Restarting…')
+      await new Promise(r => setTimeout(r, 300))
+      setStatusMessage('')
+    }
+  }
+
   async function getElaborationPress(
     questionText: string,
     responseText: string,
@@ -301,7 +331,7 @@ export default function VoiceInterview() {
     }
   }
 
-  async function submitResponses(ratings: SectionRatings[]) {
+  async function submitResponses(ratings: SectionMaturityRating[]) {
     setStatusMessage('Saving your responses…')
     try {
       const res = await fetch(`${BASE}/interviews/${sessionToken}/complete`, {
@@ -329,6 +359,7 @@ export default function VoiceInterview() {
     const voiceConfig = session.voice_config ?? DEFAULT_VOICE_CONFIG
     const voiceId = voiceConfig.elevenlabs_voice_id
     const lang = `${voiceConfig.language}-${voiceConfig.country_code}`
+    interviewLangRef.current = lang
 
     setPhase('interviewing')
 
@@ -345,6 +376,8 @@ export default function VoiceInterview() {
 
     let questionNumber = 0
 
+    sectionRatingsRef.current = []
+
     for (const section of script.sections) {
       for (const question of section.questions) {
         questionNumber++
@@ -355,7 +388,7 @@ export default function VoiceInterview() {
         await speakText(question.text, voiceId)
 
         // Record primary answer
-        let answer = await listenForAnswer(lang)
+        let answer = await listenWithRestart(lang)
 
         const needsElaboration =
           answer.trim().length > 0 &&
@@ -368,7 +401,7 @@ export default function VoiceInterview() {
           const pressText = await getElaborationPress(question.text, answer, question.probing_instructions)
           setCurrentQuestion(pressText)
           await speakText(pressText, voiceId)
-          const followUpAnswer = await listenForAnswer(lang)
+          const followUpAnswer = await listenWithRestart(lang)
           qaRef.current.push({ question: pressText, answer: followUpAnswer })
           answer = `${answer} ${followUpAnswer}`.trim()
           followUpCount++
@@ -382,10 +415,19 @@ export default function VoiceInterview() {
           const branch = question.follow_up_branches[followUpCount]
           setCurrentQuestion(branch)
           await speakText(branch, voiceId)
-          const branchAnswer = await listenForAnswer(lang)
+          const branchAnswer = await listenWithRestart(lang)
           qaRef.current.push({ question: branch, answer: branchAnswer })
           followUpCount++
         }
+      }
+
+      // After all questions in a section, capture inline maturity rating if present (L1/L2 only)
+      if (section.maturity_rating) {
+        const mr = section.maturity_rating
+        await speakText(mr.prompt, voiceId)
+        const rating = await collectInlineRating(mr)
+        sectionRatingsRef.current.push({ section_title: section.title, dimension: mr.dimension, rating })
+        setPhase('interviewing')
       }
     }
 
@@ -393,46 +435,63 @@ export default function VoiceInterview() {
     setCurrentQuestion(script.closing_message)
     await speakText(script.closing_message, voiceId)
 
-    if (questionnaire) {
-      setPhase('assessing')
-      setCurrentAssessSection(0)
-      setPendingRatings({})
-      sectionRatingsRef.current = []
-      return  // assessment phase will call submitResponses when done
-    }
-    // else submit directly with no ratings
-    await submitResponses([])
+    await submitResponses(sectionRatingsRef.current)
   }
 
-  async function startCommentary() {
-    if (sessionData && questionnaire) {
-      const { session } = sessionData
-      const voiceId = (session.voice_config ?? DEFAULT_VOICE_CONFIG).elevenlabs_voice_id
-      const section = questionnaire.sections[currentAssessSection]
-      await speakText(`Any additional commentary on ${section.title}?`, voiceId)
+  function parseRatingFromVoice(text: string): number | null {
+    const t = text.toLowerCase().trim()
+    const words: Record<string, number> = {
+      zero: 0, nought: 0, naught: 0,
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
     }
-    const commentary = await listenForAnswer()
-    advanceSection(commentary)
+    const digit = t.match(/\b([0-4])\b/)
+    if (digit) return parseInt(digit[1])
+    for (const [word, val] of Object.entries(words)) {
+      if (t.includes(word)) return val
+    }
+    return null
   }
 
-  function advanceSection(commentary: string) {
-    if (!questionnaire) return
-    const section = questionnaire.sections[currentAssessSection]
-    const completed: SectionRatings = {
-      section_id: section.id,
-      section_title: section.title,
-      ratings: { ...pendingRatings },
-      commentary,
-    }
-    sectionRatingsRef.current = [...sectionRatingsRef.current, completed]
-    setSectionRatings(sectionRatingsRef.current)
+  // Pauses the interview loop, shows the rating picker, and auto-listens for a spoken number.
+  // Resolves when the user either speaks a valid rating or taps one.
+  function collectInlineRating(mr: MaturityRating): Promise<number> {
+    setPendingRating(mr)
+    setPhase('rating')
+    const promise = new Promise<number>(resolve => { ratingResolveRef.current = resolve })
+    // Kick off voice listen — two attempts before falling back to tap-only
+    void attemptVoiceRating(2)
+    return promise
+  }
 
-    if (currentAssessSection + 1 < questionnaire.sections.length) {
-      setCurrentAssessSection(i => i + 1)
-      setPendingRatings({})
+  async function attemptVoiceRating(attemptsLeft: number) {
+    if (attemptsLeft <= 0) {
+      setStatusMessage('Please tap a rating below.')
+      return
+    }
+    const lang = interviewLangRef.current
+    setStatusMessage('Listening for your rating…')
+    const spoken = await listenForAnswer(lang)
+    // Guard: if user already tapped while we were listening, the resolve has fired — bail out
+    if (!ratingResolveRef.current) return
+    const parsed = parseRatingFromVoice(spoken)
+    if (parsed !== null) {
+      selectRating(parsed)
     } else {
-      submitResponses(sectionRatingsRef.current)
+      setStatusMessage('I didn\'t catch that — please say a number from 0 to 4, or tap below.')
+      await attemptVoiceRating(attemptsLeft - 1)
     }
+  }
+
+  function selectRating(value: number) {
+    if (!ratingResolveRef.current) return  // already resolved by voice
+    ratingResolveRef.current(value)
+    ratingResolveRef.current = null
+    setPendingRating(null)
+    setStatusMessage('')
+    // phase reverts to 'interviewing' in the loop after collectInlineRating resolves
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -477,94 +536,49 @@ export default function VoiceInterview() {
     )
   }
 
-  if (phase === 'assessing' && questionnaire) {
-    const section = questionnaire.sections[currentAssessSection]
-    const allRated = section.questions.every(q => pendingRatings[q.id] !== undefined)
-
+  if (phase === 'rating' && pendingRating) {
+    const mr = pendingRating
+    const primaryColor = branding?.primary_color ?? '#0d9488'
     return (
       <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
-        <div className="max-w-2xl w-full">
+        <div className="max-w-xl w-full">
           {branding?.header_image_url && (
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
           )}
-          <div className="mb-6">
-            <p className="text-xs text-teal-600 font-medium uppercase tracking-wide mb-1">
-              Assessment · Section {currentAssessSection + 1} of {questionnaire.sections.length}
-            </p>
-            <h2 className="text-xl font-bold text-gray-800">{section.title}</h2>
-            {section.description && (
-              <p className="text-sm text-gray-500 mt-1">{section.description}</p>
-            )}
-          </div>
-
-          <div className="space-y-6 mb-8">
-            {section.questions.map(q => (
-              <div key={q.id} className="bg-white rounded-xl shadow-sm p-5">
-                <p className="text-gray-800 mb-3">{q.text}</p>
-                <div className="flex gap-2">
-                  {[0, 1, 2, 3, 4].map(score => (
-                    <button
-                      key={score}
-                      onClick={() => setPendingRatings(r => ({ ...r, [q.id]: score }))}
-                      aria-label={`Score ${score} for: ${q.text}`}
-                      className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
-                        pendingRatings[q.id] === score
-                          ? 'bg-teal-600 text-white border-teal-600'
-                          : 'bg-white text-gray-600 border-gray-200 hover:border-teal-400'
-                      }`}
-                    >
-                      {score}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex justify-between text-xs text-gray-400 mt-1 px-1">
-                  <span>Not Accounted For</span>
-                  <span>Optimised</span>
-                </div>
-              </div>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: primaryColor }}>
+            Quick rating — {mr.dimension}
+          </p>
+          <p className="text-gray-800 font-medium mb-6">{mr.prompt}</p>
+          <div className="space-y-3">
+            {([0, 1, 2, 3, 4] as const).map(score => (
+              <button
+                key={score}
+                onClick={() => selectRating(score)}
+                className="w-full text-left bg-white rounded-xl shadow-sm border border-gray-100 px-4 py-3 hover:border-teal-400 hover:shadow transition-all"
+              >
+                <span
+                  className="inline-flex items-center justify-center w-7 h-7 rounded-full text-white text-sm font-bold mr-3"
+                  style={{ backgroundColor: primaryColor }}
+                >
+                  {score}
+                </span>
+                <span className="text-sm text-gray-700">{mr.scale[String(score)]}</span>
+              </button>
             ))}
           </div>
-
-          {allRated ? (
-            <div className="bg-white rounded-xl shadow-sm p-5 mb-6">
-              <p className="text-sm font-medium text-gray-700 mb-3">
-                Any additional commentary for this section? (speak or skip)
+          <div className="mt-6 text-center">
+            {isListening ? (
+              <p className="text-sm animate-pulse" style={{ color: primaryColor }}>
+                Listening… say a number from 0 to 4
               </p>
-              {statusMessage && (
-                <p className="text-teal-600 text-sm animate-pulse mb-2">{statusMessage}</p>
-              )}
-              <div className="flex gap-3">
-                {!isListening ? (
-                  <button
-                    onClick={startCommentary}
-                    className="bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
-                    style={{ backgroundColor: branding?.primary_color }}
-                  >
-                    Speak
-                  </button>
-                ) : (
-                  <button
-                    onClick={submitAnswer}
-                    className="bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium py-2 px-4 rounded-full transition-colors"
-                    style={{ backgroundColor: branding?.primary_color }}
-                  >
-                    ✓ Done
-                  </button>
-                )}
-                <button
-                  onClick={() => advanceSection('')}
-                  disabled={isListening}
-                  className="text-sm text-gray-400 hover:text-gray-600 py-2 px-4 disabled:opacity-40"
-                >
-                  Skip
-                </button>
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-gray-400 text-center mb-6">
-              Please rate all statements above to continue.
-            </p>
-          )}
+            ) : statusMessage ? (
+              <p className="text-sm text-gray-500">{statusMessage}</p>
+            ) : (
+              <p className="text-xs text-gray-400">
+                Say a number or tap a level — the interview resumes immediately.
+              </p>
+            )}
+          </div>
         </div>
       </div>
     )
@@ -674,12 +688,30 @@ export default function VoiceInterview() {
             </div>
           )}
 
-          <h1 className="text-2xl font-bold text-gray-800 mb-2" style={{ color: branding?.text_color }}>
+          <h1 className="text-2xl font-bold text-gray-800 mb-6" style={{ color: branding?.text_color }}>
             {sessionData.script.node_label} Interview
           </h1>
-          <p className="text-gray-500 mb-6 text-sm">
-            {sessionData.script.study_objectives.join(' · ')}
-          </p>
+
+          {/* Interviewee instructions */}
+          <div className="bg-white rounded-xl shadow-sm p-5 mb-5 text-left border border-gray-100">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">How it works</p>
+            <ul className="space-y-2.5">
+              {[
+                'This is a verbal interview — speak naturally and in your own words.',
+                'A pause of a few seconds, or tapping “✓ Done”, will move to the next question.',
+                'Tap “Restart answer” at any time to re-record your response.',
+                'Take your time — there are no right or wrong answers.',
+              ].map((tip, i) => (
+                <li key={i} className="flex items-start gap-2.5 text-sm text-gray-600">
+                  <span
+                    className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-semibold mt-0.5 text-white"
+                    style={{ backgroundColor: branding?.primary_color ?? '#0d9488' }}
+                  >{i + 1}</span>
+                  {tip}
+                </li>
+              ))}
+            </ul>
+          </div>
 
           {/* Microphone selector + inline test */}
           <div className="bg-white rounded-xl shadow-sm p-5 mb-6 text-left">
@@ -788,19 +820,33 @@ export default function VoiceInterview() {
             </div>
           )}
 
-          <div className="flex flex-col items-center gap-3">
+          <div className="flex flex-col items-center gap-3 w-full max-w-xl">
             {statusMessage && (
               <p className="text-teal-600 font-medium animate-pulse text-sm">{statusMessage}</p>
             )}
+            {interimText && (
+              <p className="text-sm text-slate-500 italic text-center leading-relaxed px-4">
+                &ldquo;{interimText}&rdquo;
+              </p>
+            )}
             {isListening && (
-              <button
-                onClick={submitAnswer}
-                style={{ backgroundColor: branding?.primary_color }}
-                className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-10 rounded-full text-lg transition-colors shadow-md"
-                aria-label="Done speaking"
-              >
-                ✓ Done
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={submitAnswer}
+                  style={{ backgroundColor: branding?.primary_color }}
+                  className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-10 rounded-full text-lg transition-colors shadow-md"
+                  aria-label="Done speaking"
+                >
+                  ✓ Done
+                </button>
+                <button
+                  onClick={restartAnswer}
+                  className="text-sm text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors"
+                  aria-label="Restart answer"
+                >
+                  Restart answer
+                </button>
+              </div>
             )}
           </div>
         </div>

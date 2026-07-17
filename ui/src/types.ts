@@ -387,9 +387,26 @@ export interface InterviewQuestion {
   evasion_signals: string[]
 }
 
+export interface MaturityRating {
+  dimension: string
+  prompt: string
+  scale: Record<string, string>       // "0"–"4" → descriptor label
+  capture_after: string
+  probe_on_mismatch: string
+}
+
 export interface InterviewSection {
   title: string
+  target_minutes?: number
   questions: InterviewQuestion[]
+  maturity_rating?: MaturityRating    // present for L1/L2 sections; absent for L3
+}
+
+export interface SectionMaturityRating {
+  section_title: string
+  dimension: string
+  rating: number                      // 0–4
+  commentary?: string
 }
 
 export interface InterviewScript {
