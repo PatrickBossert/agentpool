@@ -15,6 +15,9 @@ export default {
           raised: '#ffffff',
           card: '#ffffff',
         },
+        primary:   '#111827',
+        secondary: '#374151',
+        muted:     '#4b5563',
       },
       keyframes: {
         blink: {

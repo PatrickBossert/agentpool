@@ -37,6 +37,49 @@ async def check_specificity(description: str) -> dict:
         return {"is_specific": False, "reason": None, "suggestion": None}
 
 
+async def extract_skills_many(raw_input: str) -> list[dict]:
+    """Return [{name, description}] — one entry per distinct skill identified in raw_input."""
+    client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
+    resp = await client.messages.create(
+        model=_MODEL,
+        max_tokens=1024,
+        system=(
+            "You analyse free-form text submitted by a user who wants to teach an AI agent new skills. "
+            "The text may be a mix of feature requests, observations, outputs, and process descriptions. "
+            "Extract the distinct, reusable, transferable skills embedded in the text.\n\n"
+            "NAMING RULES — the name must:\n"
+            "- Be 3–5 words, title-cased\n"
+            "- Capture the specific capability (e.g. 'Governance Layer Interview Design', 'Data Maturity Probing', 'Authority Boundary Flagging')\n"
+            "- Never be generic ('Skill from input', 'New skill', 'Agent skill')\n\n"
+            "DESCRIPTION RULES — each description must:\n"
+            "- Be 1–3 sentences in imperative voice ('Do X. Never Y. Before Z, check W.')\n"
+            "- Be generic — remove all client names, project names, and specific organisations\n"
+            "- Be self-contained and actionable\n\n"
+            "Extract between 1 and 5 distinct skills. "
+            "Return valid JSON only — no markdown, no commentary, no code fences:\n"
+            '[{"name": "Specific Capability Name", "description": "Imperative instruction."}, ...]'
+        ),
+        messages=[{"role": "user", "content": f"Extract skills from this input:\n\n{raw_input}"}],
+    )
+    raw_text = resp.content[0].text.strip()
+    # Strip markdown code fences if the model wraps the JSON
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("```")[1]
+        if raw_text.startswith("json"):
+            raw_text = raw_text[4:]
+        raw_text = raw_text.strip()
+    try:
+        result = json.loads(raw_text)
+        if isinstance(result, list):
+            return result
+        return [result]
+    except Exception:
+        # Last-resort fallback: derive a name from the first meaningful phrase
+        first_line = raw_input.strip().split("\n")[0][:60].strip()
+        name = " ".join(first_line.split()[:5]).rstrip(".,;:-")
+        return [{"name": name or "New Agent Skill", "description": raw_input[:300]}]
+
+
 async def extract_skill(raw_input: str) -> dict:
     """Return {name, description} extracted from reviewer feedback text."""
     client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
@@ -59,81 +102,73 @@ async def extract_skill(raw_input: str) -> dict:
 
 
 # Baseline skills seeded from the hardcoded AGENT_SKILLS in agentStatus.ts.
-# Only agent_name + name + description — no icons (those are UI-only).
+# agents is a list — a skill can be shared across multiple agents.
+# No icons (those are UI-only).
 BASELINE_SKILLS: list[dict] = [
     # PAM
-    {"agent_name": "PAM", "name": "Pipeline Orchestration", "description": "Sequences the full engagement pipeline — from Value Chain Mapping through to Business Plan — dispatching each crew in the correct order, respecting dependencies, and ensuring no phase begins before its prerequisites are satisfied."},
-    {"agent_name": "PAM", "name": "Phase Gating", "description": "Holds the gate between phases, preventing downstream crews from running until human review has been confirmed. Ensures the project team has an opportunity to validate outputs at every critical transition."},
-    {"agent_name": "PAM", "name": "Schedule Management", "description": "Maintains the project schedule — critical milestones, due dates, and completion tracking. Monitors progress against plan, identifies slippage early, and recommends corrective actions before schedule risk becomes schedule fact."},
-    {"agent_name": "PAM", "name": "Status Reporting", "description": "Produces a live status report at any point in the engagement: overall RAG health, progress against plan, per-crew output summary, active risks with mitigations, and issues with escalation recommendations."},
-    {"agent_name": "PAM", "name": "Risk Management", "description": "Continuously evaluates engagement risk from project state — knowledge base gaps, stakeholder coverage, schedule slippage, review backlogs, and interview completion. Derives risk severity and recommended mitigations algorithmically from live data."},
-    {"agent_name": "PAM", "name": "Issue Management & Escalation", "description": "Identifies active issues — failed crew runs, overdue milestones, stalled phase gates, low interview completion — and generates specific, actionable escalation recommendations for each."},
-    {"agent_name": "PAM", "name": "State Awareness", "description": "Reads the full project state — crew run history, output versions, review status, stakeholder data, milestones, and interview sessions — before any decision, ensuring recommendations are grounded in the current picture of the engagement."},
-    {"agent_name": "PAM", "name": "Decision Intelligence", "description": "Applies engagement-level judgement to determine when revision cycles are exhausted, when a crew output is sufficient to proceed, and when human input is genuinely required versus when it can be inferred from project context."},
+    {"agents": ["PAM"], "name": "Pipeline Orchestration", "description": "Dispatch crews in strict dependency order: Discovery → Value Chain → Interaction Design → Stakeholder Management → Interview Coordination → Synthesis → Value Propositions → Portfolio → Architecture → Initiatives → Roadmap → Business Plan. Never start a phase until all its upstream prerequisites have been reviewed and approved."},
+    {"agents": ["PAM"], "name": "Phase Gating", "description": "Block every downstream dispatch until the project team explicitly confirms human review. If review is pending, output the review request and halt — never proceed without confirmation."},
+    {"agents": ["PAM"], "name": "Schedule Management", "description": "At every orchestration step, compare current progress against the milestone plan. If slippage exceeds one day, flag it with a specific corrective action and a named owner before continuing."},
+    {"agents": ["PAM"], "name": "Status Reporting", "description": "When producing a status report, cover all six dimensions in order: RAG health, schedule, per-crew progress, risks, issues, and next actions. Never omit a dimension — an incomplete status report is worse than no report."},
+    {"agents": ["PAM"], "name": "Risk Management", "description": "Before each crew dispatch, scan for engagement risks across five areas: knowledge gaps, stakeholder coverage, schedule slippage, review backlogs, and interview completion. Rate every risk and provide a mitigation before continuing."},
+    {"agents": ["PAM"], "name": "Issue Management & Escalation", "description": "For each active issue, generate a specific escalation recommendation that names an owner, an action, and a deadline. Never report an issue without a resolution path — an issue without a recommendation is noise, not an escalation."},
+    {"agents": ["PAM"], "name": "State Awareness", "description": "Before any orchestration decision, read the full project state — run history, review statuses, stakeholder counts, milestone dates, and interview completions. Never act on assumptions or knowledge from a previous run."},
+    {"agents": ["PAM"], "name": "Decision Intelligence", "description": "Apply this rule when deciding whether to proceed: if the output is approved, proceed; if it is pending review, hold; if review is overdue by more than 24 hours, escalate. Never infer approval from silence."},
     # Value Chain Mapper
-    {"agent_name": "Value Chain Mapper", "name": "Value Chain Analysis", "description": "Applies Porter's Value Chain framework to decompose the organisation into L1 value streams, L2 process stages, and L3 activities. Produces a structured n.n.n numbered activity tree and a summary narrative for downstream agents."},
-    {"agent_name": "Value Chain Mapper", "name": "Stable ID Registry", "description": "Maintains a permanent value_chain_registry.json with n.n.n IDs. IDs are assigned once and never reassigned — new activities extend the sequence, removed activities are marked inactive."},
-    {"agent_name": "Value Chain Mapper", "name": "Document Ingestion", "description": "Reads and parses uploaded client documents — strategy papers, annual reports, operational procedures — into structured content that informs the value chain decomposition."},
-    {"agent_name": "Value Chain Mapper", "name": "Web Search", "description": "Searches the internet for current sector intelligence, comparable value chains, and industry benchmarks to validate the decomposition against peer organisations."},
-    {"agent_name": "Value Chain Mapper", "name": "Semantic Search", "description": "Queries the project vector knowledge base for relevant corporate context — prior outputs, ingested documents, and historical assessments — to ground the value chain in organisational reality."},
-    {"agent_name": "Value Chain Mapper", "name": "Diagram Rendering", "description": "Creates and renders Mermaid diagrams as visual outputs, producing the authoritative value chain tree diagram alongside the JSON registry."},
-    {"agent_name": "Value Chain Mapper", "name": "Human Review", "description": "Pauses for human approval after completing the value chain draft, allowing the project team to validate decomposition boundaries and naming before assessment instruments are designed."},
+    {"agents": ["Value Chain Mapper"], "name": "Value Chain Analysis", "description": "Decompose the organisation using Porter's Value Chain: map L1 value streams first, then L2 process stages within each stream, then L3 activities. Assign n.n.n IDs immediately on creation — never produce an unnumbered activity."},
+    {"agents": ["Value Chain Mapper"], "name": "Stable ID Registry", "description": "Write every ID assignment to value_chain_registry.json before producing any other output. If removing an activity, mark it inactive rather than deleting it — IDs must never be reassigned or reused."},
+    {"agents": ["Value Chain Mapper", "Requirements Analyst"], "name": "Document Ingestion", "description": "Before producing any output, read all uploaded client documents in full. Capture exact terminology the client uses — do not paraphrase. Flag every named system, process, or entity for inclusion in the analysis."},
+    {"agents": ["Value Chain Mapper", "Value Lever Analyst", "Requirements Analyst", "Enterprise Architect"], "name": "Web Search", "description": "Validate your outputs against peer organisations and published benchmarks. Cite the source and date for every external data point — never assert a benchmark without attribution."},
+    {"agents": ["Value Chain Mapper", "Value Lever Analyst", "Requirements Analyst", "Enterprise Architect"], "name": "Semantic Search", "description": "Query the vector knowledge base before making any claim about the organisation. If relevant prior outputs exist, ground your work in them rather than starting from first principles."},
+    {"agents": ["Value Chain Mapper", "Enterprise Architect"], "name": "Diagram Rendering", "description": "Produce a valid Mermaid diagram alongside every JSON output. Validate the syntax before writing the file — a diagram with syntax errors must not be included in the output."},
+    # Human Review Gate — shared across all agents that gate on human approval
+    {"agents": [
+        "Value Chain Mapper", "Interaction Designer", "Stakeholder Manager",
+        "Requirements Capture", "Requirements Analyst", "Value Lever Analyst",
+        "Interview Coordinator", "Stakeholder Interviewer", "Synthesis Analyst",
+        "Value Proposition Generator", "Portfolio Manager", "Enterprise Architect",
+        "Initiative Identifier", "Roadmap Generator", "Business Plan Generator",
+    ], "name": "Human Review Gate", "description": "At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed."},
     # Interaction Designer
-    {"agent_name": "Interaction Designer", "name": "Interview Script Design", "description": "Creates tailored interview scripts for every active L1 and L2 value chain node, following n.n.n numbering. L1 scripts target GMs with strategic questions; L2 scripts target process managers with operational questions."},
-    {"agent_name": "Interaction Designer", "name": "Maturity Questionnaire Design", "description": "Develops maturity assessment questionnaires for all active L1 and L2 nodes, using a 1–5 maturity scale aligned with configured frameworks (ISO 55001, IIMM, PAS 55, IIRC Six Capitals)."},
-    {"agent_name": "Interaction Designer", "name": "Coherent Instrument Design", "description": "Designs interview scripts and maturity questionnaires together as a unified assessment set, ensuring the two instruments reinforce each other rather than duplicating or contradicting."},
-    {"agent_name": "Interaction Designer", "name": "Standards Grounding", "description": "Grounds all instrument content in the standards and references configured in the Value Chain Setup. Queries the project knowledge base for corporate context relevant to each node."},
-    {"agent_name": "Interaction Designer", "name": "Template Auto-Assignment", "description": "On completion, automatically publishes each script and questionnaire as a named template in the system library and assigns it to the corresponding value chain node by n.n.n activity ID."},
-    {"agent_name": "Interaction Designer", "name": "Human Review", "description": "Requests approval of the completed instrument set (both scripts and questionnaires) before deployment to stakeholders, allowing the project team to validate coverage, tone, and alignment with assessment objectives."},
+    {"agents": ["Interaction Designer"], "name": "Interview Script Design", "description": "Write one interview script per active L1 and L2 node. L1 scripts must ask strategic 'why' questions aimed at GMs; L2 scripts must ask operational 'how' questions aimed at process managers. Number all questions with n.n.n IDs — never produce an unnumbered question."},
+    {"agents": ["Interaction Designer"], "name": "Maturity Questionnaire Design", "description": "For each node, write a five-point maturity questionnaire where level 1 is ad hoc and level 5 is optimised and continuously improving. Align every level descriptor to the configured framework — no descriptor may be written without a traceable standard clause."},
+    {"agents": ["Interaction Designer"], "name": "Coherent Instrument Design", "description": "Design scripts and questionnaires as a paired set for each node. Before finalising, confirm the interview questions and maturity descriptors cover the same capability dimensions — never submit a set where a topic appears in one instrument but not the other."},
+    {"agents": ["Interaction Designer"], "name": "Standards Grounding", "description": "Before writing any instrument content, retrieve the configured framework standards from the project setup. Every question and maturity descriptor must be traceable to a specific standard clause or principle — reject content that cannot be traced."},
+    {"agents": ["Interaction Designer"], "name": "Template Auto-Assignment", "description": "On completing the instrument set, publish each script and questionnaire as a named template and assign it to its value chain node by n.n.n ID. Confirm the assignment in the output before ending the run — unassigned templates are incomplete."},
     # Stakeholder Manager
-    {"agent_name": "Stakeholder Manager", "name": "Coverage Analysis", "description": "Monitors stakeholder-to-node assignments across L1, L2, and L3 value chain levels. Calculates coverage ratios per level and per value stream, identifies nodes with no assigned stakeholders."},
-    {"agent_name": "Stakeholder Manager", "name": "Communication Management", "description": "Drafts and tracks a progressive sequence of stakeholder communications calibrated to urgency and seniority — from initial invitation through to re-engagement escalation."},
-    {"agent_name": "Stakeholder Manager", "name": "Engagement Planning", "description": "Writes a structured stakeholder_engagement_plan.json documenting current coverage status, communication history, session completion rates, and recommended next actions per stakeholder."},
-    {"agent_name": "Stakeholder Manager", "name": "Interview Session Tracking", "description": "Queries interview session status for every assigned stakeholder and uses completion data to prioritise follow-up communications, avoiding reminders to stakeholders who have already participated."},
-    {"agent_name": "Stakeholder Manager", "name": "Slack Notifications", "description": "Sends actionable summary notifications to the project team Slack channel when coverage gaps are identified, communications are dispatched, and the engagement plan is updated."},
+    {"agents": ["Stakeholder Manager"], "name": "Coverage Analysis", "description": "Calculate stakeholder coverage at L1, L2, and L3 separately. List every node with zero assigned stakeholders explicitly — never aggregate gaps or describe them vaguely. A coverage report without a node-level breakdown is incomplete."},
+    {"agents": ["Stakeholder Manager"], "name": "Communication Management", "description": "Draft communications in escalating urgency: invitation, then first reminder, then second reminder, then re-engagement escalation. Match the tone to the stakeholder's level — never send an escalation tone to a first-time contact."},
+    {"agents": ["Stakeholder Manager"], "name": "Engagement Planning", "description": "Write the engagement plan to stakeholder_engagement_plan.json with a specific next action for every stakeholder. A plan entry without a named next action is incomplete — every stakeholder must have a clear instruction."},
+    {"agents": ["Stakeholder Manager"], "name": "Interview Session Tracking", "description": "Before sending any communication, check interview session status. Never send a reminder to a stakeholder who has already completed their session — check completion status every time, without exception."},
+    {"agents": ["Stakeholder Manager"], "name": "Slack Notifications", "description": "Send a Slack notification when coverage gaps are identified, communications are dispatched, or the engagement plan is updated. Include the specific gap or action in every notification — never send a generic status message."},
     # Requirements Capture
-    {"agent_name": "Requirements Capture", "name": "Human Review", "description": "Engages directly with the project team to capture requirements, constraints, and priorities through structured conversation — ensuring the discovery phase is grounded in what the client has explicitly articulated."},
-    {"agent_name": "Requirements Capture", "name": "State Management", "description": "Persists captured requirements to the project state store in structured form, making them available to the Requirements Analyst and downstream agents without loss of fidelity."},
+    {"agents": ["Requirements Capture"], "name": "Requirements Elicitation", "description": "Ask the project team structured questions to surface requirements, constraints, and priorities. Record only what the team explicitly states, using their exact wording — never infer requirements or paraphrase what was said."},
+    {"agents": ["Requirements Capture"], "name": "State Management", "description": "Write all captured requirements to the project state store in structured JSON before ending the session. Do not rely on conversation history — write every requirement out explicitly and confirm the write before finishing."},
     # Requirements Analyst
-    {"agent_name": "Requirements Analyst", "name": "Document Ingestion", "description": "Reads and parses uploaded client documents to surface implicit requirements, constraints, and strategic intent that may not have been captured in the direct requirements session."},
-    {"agent_name": "Requirements Analyst", "name": "Semantic Search", "description": "Finds related requirements, precedents, and context in the project knowledge base to identify gaps, conflicts, and hidden dependencies in the captured requirement set."},
-    {"agent_name": "Requirements Analyst", "name": "Human Review", "description": "Validates the analysed requirement set with the project team before value lever identification, ensuring no material requirements are misread or mis-prioritised."},
+    {"agents": ["Requirements Analyst"], "name": "Requirements Analysis", "description": "Read all captured requirements and all uploaded documents before identifying any gap or conflict. Ground every finding in evidence — never assert a gap without citing what is missing and why it matters."},
     # Value Lever Analyst
-    {"agent_name": "Value Lever Analyst", "name": "Semantic Search", "description": "Queries the project knowledge base for value-driving patterns, prior initiative outcomes, and corporate context relevant to the identified value levers."},
-    {"agent_name": "Value Lever Analyst", "name": "Web Search", "description": "Benchmarks identified value levers against published industry data, analyst reports, and peer organisation case studies to validate expected impact ranges."},
-    {"agent_name": "Value Lever Analyst", "name": "Human Review", "description": "Confirms the prioritised lever set with the project team before value proposition generation, ensuring commercial judgement is applied to analytical output."},
+    {"agents": ["Value Lever Analyst"], "name": "Value Lever Identification", "description": "Validate every identified value lever against at least one published benchmark or industry dataset before submitting it. Cite the source and date — never assert an impact estimate without external evidence."},
     # Interview Coordinator
-    {"agent_name": "Interview Coordinator", "name": "Interview Management", "description": "Creates, tracks, and closes interview sessions for each assigned stakeholder. Generates unique interview links, monitors session state, and produces a scheduling plan that sequences interviews efficiently."},
-    {"agent_name": "Interview Coordinator", "name": "Human Review", "description": "Confirms the interview scheduling plan with the project team before sessions are activated, allowing adjustments for stakeholder availability and sequencing preferences."},
+    {"agents": ["Interview Coordinator"], "name": "Interview Session Management", "description": "Create a session for each assigned stakeholder and generate a unique interview link. Produce a scheduling plan that groups sessions by value stream and staggers timing to avoid conflicting demands on the same stakeholder group."},
     # Stakeholder Interviewer
-    {"agent_name": "Stakeholder Interviewer", "name": "Interview Management", "description": "Manages interview session state throughout the lifecycle — launching sessions, recording responses, tracking progress through script sections, and marking completion. Ensures each session produces a complete, structured transcript."},
-    {"agent_name": "Stakeholder Interviewer", "name": "Human Review", "description": "Requests clarification from stakeholders during live interview flows when responses are ambiguous or incomplete, ensuring the transcript is actionable for synthesis."},
+    {"agents": ["Stakeholder Interviewer"], "name": "Live Interview Facilitation", "description": "Follow the interview script in sequence. If a response is ambiguous, ask one clarifying question before moving on. Mark a section complete only when a substantive answer has been recorded — never mark a section complete with a blank or single-word response."},
     # Synthesis Analyst
-    {"agent_name": "Synthesis Analyst", "name": "Theme Extraction", "description": "Reads all completed interview transcripts across L1 and L2 stakeholder groups and extracts cross-cutting themes — maturity gaps, capability strengths, strategic tensions, and consensus priorities — that transcend individual responses."},
-    {"agent_name": "Synthesis Analyst", "name": "Human Review", "description": "Validates synthesised themes and key findings with the project team before value proposition generation, ensuring interpretive judgements are grounded in stakeholder intent."},
+    {"agents": ["Synthesis Analyst"], "name": "Theme Extraction", "description": "Read all completed transcripts before identifying any theme. Only flag a theme if it appears across multiple transcripts — single-respondent observations belong in 'individual perspectives', not in cross-cutting themes. Never extrapolate a theme from one voice."},
     # Value Proposition Generator
-    {"agent_name": "Value Proposition Generator", "name": "Proposition Structuring", "description": "Translates synthesised interview findings and identified value levers into a structured set of value propositions — each with a clear problem statement, proposed intervention, and expected benefit — mapped to the relevant value chain area."},
-    {"agent_name": "Value Proposition Generator", "name": "Human Review", "description": "Requests review of the proposition set before portfolio scoring, allowing the project team to refine framing, merge duplicates, and validate strategic alignment."},
+    {"agents": ["Value Proposition Generator"], "name": "Proposition Structuring", "description": "Structure every proposition with three mandatory components: problem statement, proposed intervention, and expected benefit. Map each to the specific value chain node it addresses. A proposition missing any component must not be submitted."},
     # Portfolio Manager
-    {"agent_name": "Portfolio Manager", "name": "IIRC Six Capitals Scoring", "description": "Scores each initiative across eight dimensions derived from the IIRC Integrated Reporting framework — financial, manufactured, intellectual, human, social/relationship, and natural capitals. Applies configured weights to produce a composite portfolio score."},
-    {"agent_name": "Portfolio Manager", "name": "Portfolio Ranking", "description": "Produces a ranked, prioritised initiative register with composite scores, individual capital ratings, cost estimates, and initiative type classifications — providing a defensible, evidence-based basis for investment decisions."},
-    {"agent_name": "Portfolio Manager", "name": "Human Review", "description": "Requests approval of the portfolio prioritisation before architecture design, ensuring commercial and strategic judgement is applied to the quantitative scoring."},
+    {"agents": ["Portfolio Manager"], "name": "IIRC Six Capitals Scoring", "description": "Score every initiative across all eight capital dimensions before ranking anything. Never skip a dimension — if data is insufficient, assign a score of 0 and note the gap explicitly in the output."},
+    {"agents": ["Portfolio Manager"], "name": "Portfolio Ranking", "description": "Rank initiatives by composite score. Where two initiatives share the same composite score, use lower implementation complexity as the tiebreaker — prefer the simpler initiative."},
     # Enterprise Architect
-    {"agent_name": "Enterprise Architect", "name": "Architecture Design", "description": "Designs the enterprise architecture required to deliver the prioritised initiative portfolio — covering capability gaps, technology enablers, integration patterns, and organisational design implications."},
-    {"agent_name": "Enterprise Architect", "name": "Semantic Search", "description": "Queries the project knowledge base for existing architecture context — current-state capabilities, adopted standards, prior design decisions — to ensure the target architecture is grounded in organisational reality."},
-    {"agent_name": "Enterprise Architect", "name": "Diagram Rendering", "description": "Produces architecture diagrams as Mermaid visuals — capability maps, integration diagrams, and solution blueprints — for inclusion in the business plan and stakeholder presentations."},
-    {"agent_name": "Enterprise Architect", "name": "Human Review", "description": "Validates the architecture blueprint with the project team before initiative decomposition, ensuring technical assumptions are confirmed and design constraints are acknowledged."},
+    {"agents": ["Enterprise Architect"], "name": "Architecture Design", "description": "Design the target architecture from the initiative portfolio, not from first principles. Map every architectural component to at least one initiative it enables — never include an element that cannot be linked to a portfolio initiative."},
     # Initiative Identifier
-    {"agent_name": "Initiative Identifier", "name": "Initiative Decomposition", "description": "Reads the architecture blueprint and decomposes it into a discrete set of initiatives — each with a defined scope, expected outputs, dependencies, value stream alignment, and indicative cost band."},
-    {"agent_name": "Initiative Identifier", "name": "Human Review", "description": "Validates initiative scope, boundaries, and dependencies with the project team, ensuring the decomposition reflects delivery realities rather than architectural ideals."},
+    {"agents": ["Initiative Identifier"], "name": "Initiative Decomposition", "description": "Decompose the architecture into initiatives with defined scope, outputs, and dependencies. Every initiative must either name its dependencies explicitly or state that it is independent — no initiative may have an undefined dependency status."},
     # Roadmap Generator
-    {"agent_name": "Roadmap Generator", "name": "Roadmap Sequencing", "description": "Sequences initiatives across value streams and time horizons — short, medium, and long — taking into account dependencies, resource constraints, quick-win opportunities, and strategic priority scores from the portfolio."},
-    {"agent_name": "Roadmap Generator", "name": "Roadmap Rendering", "description": "Generates an interactive HTML roadmap for client presentation — with swim-lane layout by value stream, hover detail per initiative, and print-ready formatting. Also writes roadmap_data.json for the Gantt chart view."},
-    {"agent_name": "Roadmap Generator", "name": "Human Review", "description": "Confirms roadmap timing, value stream allocation, and phasing with the project team before business plan finalisation."},
+    {"agents": ["Roadmap Generator"], "name": "Roadmap Sequencing", "description": "Sequence initiatives so all dependencies are resolved before each initiative begins. If circular dependencies exist, flag them immediately and halt — never silently reorder to avoid a dependency conflict."},
+    {"agents": ["Roadmap Generator"], "name": "Roadmap Rendering", "description": "Generate the HTML roadmap and roadmap_data.json in the same run. A roadmap HTML file without a corresponding JSON data file is an incomplete output — both are required."},
     # Business Plan Generator
-    {"agent_name": "Business Plan Generator", "name": "Financial Modelling", "description": "Calculates NPV, IRR, payback period, and maximum borrowing capacity based on initiative costs, benefit profiles, and configured financial assumptions. Produces a rigorous investment case grounded in the initiative portfolio."},
-    {"agent_name": "Business Plan Generator", "name": "Business Plan Narrative", "description": "Compiles the full business plan narrative — executive summary, strategic context, value chain assessment findings, initiative portfolio, financial model, and delivery roadmap — drawing on all prior crew outputs."},
-    {"agent_name": "Business Plan Generator", "name": "Word Export", "description": "Generates a formatted Word document business plan suitable for board and executive distribution — with structured headings, embedded tables, and branded section formatting."},
-    {"agent_name": "Business Plan Generator", "name": "PowerPoint Export", "description": "Generates an executive summary slide deck — condensing key findings, portfolio priorities, financial headline, and roadmap into presentation-ready slides."},
-    {"agent_name": "Business Plan Generator", "name": "Human Review", "description": "Requests sign-off on financial assumptions before modelling, ensuring the business case reflects commercially agreed parameters rather than analytical defaults."},
+    {"agents": ["Business Plan Generator"], "name": "Financial Modelling", "description": "Calculate NPV, IRR, and payback period using the configured financial assumptions. If any required assumption is missing, stop and request it from the project team — never substitute a default value for a client engagement."},
+    {"agents": ["Business Plan Generator"], "name": "Business Plan Narrative", "description": "Write the narrative in this order: executive summary, strategic context, value chain findings, initiative portfolio, financial model, roadmap. Never reorder sections or combine them — section order is mandated by the output standard."},
+    {"agents": ["Business Plan Generator"], "name": "Word Export", "description": "Generate the Word document and confirm its file path in the output. If generation fails, report the error explicitly — never report success without verifying the file exists on disk."},
+    {"agents": ["Business Plan Generator"], "name": "PowerPoint Export", "description": "Condense the business plan to executive decision points only. Never include raw data tables in the slide deck — summarise everything to headline numbers and key insights at board level."},
 ]

@@ -85,7 +85,7 @@ export default function RerunDialog({
       )
       if (learnOpen && learnSubmit && learnName.trim() && primaryAgent) {
         await skillsApi.create({
-          agent_name: primaryAgent,
+          agents: [primaryAgent],
           name: learnName.trim(),
           description: learnDesc.trim(),
           source: 'review',

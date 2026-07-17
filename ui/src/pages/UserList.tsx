@@ -34,7 +34,7 @@ export default function UserList() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold text-primary">Users</h1>
+        <h1 className="text-xl font-bold text-gray-900">Users</h1>
         <button
           onClick={() => navigate('/admin/users/new')}
           className="text-xs bg-brand text-white px-3 py-1.5 rounded"
@@ -45,13 +45,13 @@ export default function UserList() {
 
       <div className="bg-surface-card rounded-lg border border-gray-200">
         {isLoading ? (
-          <p className="px-4 py-6 text-sm text-muted">Loading…</p>
+          <p className="px-4 py-6 text-sm text-gray-600">Loading…</p>
         ) : users.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted">No users yet.</p>
+          <p className="px-4 py-6 text-sm text-gray-600">No users yet.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-gray-200">
+              <tr className="text-xs text-gray-600 border-b border-gray-200">
                 <th className="text-left px-4 py-2">Username</th>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Role</th>
@@ -62,10 +62,10 @@ export default function UserList() {
             <tbody>
               {users.map((u) => (
                 <tr key={u.id} className="border-b border-gray-200 hover:bg-surface-raised">
-                  <td className="px-4 py-2 font-mono text-xs text-primary">{u.username}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-900">{u.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{u.email || '-'}</td>
                   <td className="px-4 py-2">{roleBadge(u.role)}</td>
-                  <td className="px-4 py-2 text-muted text-xs">{u.created_at.slice(0, 10)}</td>
+                  <td className="px-4 py-2 text-gray-600 text-xs">{u.created_at.slice(0, 10)}</td>
                   <td className="px-4 py-2 text-right space-x-3">
                     <button
                       onClick={() => navigate(`/admin/users/${u.id}/edit`)}

@@ -102,19 +102,19 @@ export default function UserForm() {
 
   return (
     <div className="p-6 max-w-xl mx-auto">
-      <button onClick={() => navigate('/admin/users')} className="text-xs text-muted hover:text-primary mb-4 block">
+      <button onClick={() => navigate('/admin/users')} className="text-xs text-gray-600 hover:text-gray-900 mb-4 block">
         <span className="flex items-center gap-1"><ArrowLeft size={14} />Back to Users</span>
       </button>
 
-      <h1 className="text-xl font-bold text-primary mb-6">
+      <h1 className="text-xl font-bold text-gray-900 mb-6">
         {isEdit ? 'Edit User' : 'New User'}
       </h1>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="text-xs text-muted block mb-1">Username</label>
+          <label className="text-xs text-gray-600 block mb-1">Username</label>
           <input
-            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-900"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             disabled={isEdit}
@@ -123,10 +123,10 @@ export default function UserForm() {
         </div>
 
         <div>
-          <label className="text-xs text-muted block mb-1">Email</label>
+          <label className="text-xs text-gray-600 block mb-1">Email</label>
           <input
             type="email"
-            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-900"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -134,12 +134,12 @@ export default function UserForm() {
         </div>
 
         <div>
-          <label className="text-xs text-muted block mb-1">
+          <label className="text-xs text-gray-600 block mb-1">
             {isEdit ? 'New Password (leave blank to keep current)' : 'Password'}
           </label>
           <input
             type="password"
-            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-900"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required={!isEdit}
@@ -147,9 +147,9 @@ export default function UserForm() {
         </div>
 
         <div>
-          <label className="text-xs text-muted block mb-1">Role</label>
+          <label className="text-xs text-gray-600 block mb-1">Role</label>
           <select
-            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-900"
             value={role}
             onChange={(e) => setRole(e.target.value)}
           >
@@ -161,9 +161,9 @@ export default function UserForm() {
 
         {!isEdit && isSysadmin && (
           <div>
-            <label className="text-xs text-muted block mb-1">Organisation (optional)</label>
+            <label className="text-xs text-gray-600 block mb-1">Organisation (optional)</label>
             <select
-              className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-primary"
+              className="w-full bg-white border border-gray-200 rounded px-3 py-2 text-sm text-gray-900"
               value={orgId}
               onChange={(e) => setOrgId(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
             >
@@ -187,10 +187,10 @@ export default function UserForm() {
 
       {isEdit && role === 'reviewer' && (
         <div className="mt-8">
-          <h2 className="text-sm font-semibold text-primary mb-3">Project Access</h2>
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Project Access</h2>
           <div className="flex gap-2 mb-3">
             <input
-              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
+              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
               placeholder="project-slug"
               value={grantSlug}
               onChange={(e) => setGrantSlug(e.target.value)}
@@ -203,7 +203,7 @@ export default function UserForm() {
             </button>
           </div>
           {userProjects.length === 0 ? (
-            <p className="text-xs text-muted">No project access granted.</p>
+            <p className="text-xs text-gray-600">No project access granted.</p>
           ) : (
             <ul className="space-y-1">
               {userProjects.map((p) => (

@@ -34,22 +34,35 @@ export interface LinkResult {
 }
 
 export const agentChatApi = {
+  getHistory: async (slug: string, crewKey: string): Promise<{ role: 'user' | 'assistant'; content: string }[]> => {
+    const res = await apiClient.get(`/projects/${slug}/agent-chat/history`, { params: { crew_key: crewKey } })
+    return (res.data.messages ?? []) as { role: 'user' | 'assistant'; content: string }[]
+  },
+
+  clearHistory: async (slug: string, crewKey: string): Promise<void> => {
+    await apiClient.delete(`/projects/${slug}/agent-chat/history`, { params: { crew_key: crewKey } })
+  },
+
   send: async (
     slug: string,
     agentName: string,
+    crewKey: string,
+    crewAgents: string[],
     message: string,
     history: { role: string; content: string }[],
     injectedDocs: InjectedDoc[] = [],
     injectedLinks: InjectedLink[] = [],
-  ): Promise<string> => {
+  ): Promise<{ response: string; agent_name: string }> => {
     const res = await apiClient.post(`/projects/${slug}/agent-chat`, {
       agent_name: agentName,
+      crew_key: crewKey,
+      crew_agents: crewAgents,
       message,
       history,
       injected_docs: injectedDocs,
       injected_links: injectedLinks,
     })
-    return res.data.response as string
+    return res.data as { response: string; agent_name: string }
   },
 
   uploadFile: async (

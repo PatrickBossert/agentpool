@@ -1,7 +1,7 @@
 // ui/src/pages/AdminSkills.tsx
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Check, X, Download, Upload, BookOpen, Clock, Sprout } from 'lucide-react'
+import { AlertTriangle, Check, X, Download, Upload, BookOpen, Clock, Sprout, RotateCcw } from 'lucide-react'
 import { skillsApi, type AgentSkill } from '../api/skills'
 import { CREW_AGENTS } from '../components/agentStatus'
 
@@ -22,6 +22,37 @@ function AgentPill({ name }: { name: string }) {
     <span className="inline-block px-2 py-0.5 rounded-full bg-teal-50 border border-teal-200 text-teal-700 text-[10px] font-semibold">
       {name}
     </span>
+  )
+}
+
+function AgentSelector({
+  value,
+  onChange,
+}: {
+  value: string[]
+  onChange: (agents: string[]) => void
+}) {
+  function toggle(agent: string) {
+    onChange(
+      value.includes(agent)
+        ? value.filter(a => a !== agent)
+        : [...value, agent],
+    )
+  }
+  return (
+    <div className="border border-gray-200 rounded-lg p-2 max-h-40 overflow-y-auto space-y-0.5">
+      {ALL_AGENTS.map(a => (
+        <label key={a} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+          <input
+            type="checkbox"
+            checked={value.includes(a)}
+            onChange={() => toggle(a)}
+            className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+          />
+          <span className="text-xs text-gray-700">{a}</span>
+        </label>
+      ))}
+    </div>
   )
 }
 
@@ -48,18 +79,24 @@ function EditableSkillCard({
   onReject,
 }: {
   skill: AgentSkill
-  onApprove: (id: number, name: string, description: string) => void
+  onApprove: (id: number, name: string, description: string, agents: string[]) => void
   onReject: (id: number) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(skill.name)
   const [description, setDescription] = useState(skill.description)
+  const [agents, setAgents] = useState(skill.agents)
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 space-y-1">
-          <AgentPill name={skill.agent_name} />
+        <div className="flex-1 space-y-1.5">
+          <div className="flex flex-wrap gap-1">
+            {(editing ? agents : skill.agents).map(a => <AgentPill key={a} name={a} />)}
+            {(editing ? agents : skill.agents).length === 0 && (
+              <span className="text-[10px] text-gray-500 italic">No agents assigned</span>
+            )}
+          </div>
           {editing ? (
             <input
               className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold text-gray-800 mt-1 focus:outline-none focus:ring-2 focus:ring-teal-400"
@@ -70,7 +107,7 @@ function EditableSkillCard({
             <p className="text-sm font-semibold text-gray-800">{name}</p>
           )}
         </div>
-        <span className="text-[10px] text-gray-400 whitespace-nowrap flex-shrink-0">
+        <span className="text-[10px] text-gray-500 whitespace-nowrap flex-shrink-0">
           {skill.created_at.slice(0, 10)}
         </span>
       </div>
@@ -86,19 +123,26 @@ function EditableSkillCard({
         <p className="text-xs text-gray-600 leading-relaxed">{description}</p>
       )}
 
+      {editing && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-semibold text-gray-700 uppercase tracking-widest">Assign to agents</p>
+          <AgentSelector value={agents} onChange={setAgents} />
+        </div>
+      )}
+
       {skill.flag_reason && !editing && (
         <FlagCard reason={skill.flag_reason} suggestion={skill.flag_suggestion} />
       )}
 
       <div className="flex items-center gap-2 justify-between">
-        <span className="text-[10px] text-gray-400">
+        <span className="text-[10px] text-gray-500">
           {SOURCE_LABEL[skill.source] ?? skill.source}
           {skill.source_project && ` · ${skill.source_project}`}
         </span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setEditing(e => !e)}
-            className="text-xs text-gray-400 hover:text-gray-600 transition-colors px-2 py-1 rounded"
+            className="text-xs text-gray-600 hover:text-gray-800 transition-colors px-2 py-1 rounded"
           >
             {editing ? 'Cancel edit' : 'Edit'}
           </button>
@@ -109,7 +153,7 @@ function EditableSkillCard({
             <X size={11} /> Reject
           </button>
           <button
-            onClick={() => onApprove(skill.id, name, description)}
+            onClick={() => onApprove(skill.id, name, description, agents)}
             className="flex items-center gap-1 text-xs text-white bg-teal-600 hover:bg-teal-700 transition-colors px-3 py-1 rounded font-semibold"
           >
             <Check size={11} /> Approve
@@ -126,18 +170,24 @@ function LibrarySkillCard({
   onDelete,
 }: {
   skill: AgentSkill
-  onEdit: (id: number, name: string, description: string) => void
+  onEdit: (id: number, name: string, description: string, agents: string[]) => void
   onDelete: (id: number) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(skill.name)
   const [description, setDescription] = useState(skill.description)
+  const [agents, setAgents] = useState(skill.agents)
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-2.5">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 space-y-1">
-          <AgentPill name={skill.agent_name} />
+        <div className="flex-1 space-y-1.5">
+          <div className="flex flex-wrap gap-1">
+            {(editing ? agents : skill.agents).map(a => <AgentPill key={a} name={a} />)}
+            {(editing ? agents : skill.agents).length === 0 && (
+              <span className="text-[10px] text-gray-500 italic">Unassigned</span>
+            )}
+          </div>
           {editing ? (
             <input
               className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm font-semibold text-gray-800 mt-1 focus:outline-none focus:ring-2 focus:ring-teal-400"
@@ -148,33 +198,41 @@ function LibrarySkillCard({
             <p className="text-sm font-semibold text-gray-800">{name}</p>
           )}
         </div>
-        {skill.source === 'baseline' && (
-          <span className="text-[10px] text-gray-400 whitespace-nowrap flex-shrink-0 mt-0.5">
+        {!editing && skill.source === 'baseline' && (
+          <span className="text-[10px] text-gray-500 whitespace-nowrap flex-shrink-0 mt-0.5">
             Factory default
           </span>
         )}
       </div>
+
       {editing ? (
-        <textarea
-          className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-gray-700 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-teal-400"
-          value={description}
-          onChange={e => setDescription(e.target.value)}
-          rows={3}
-        />
+        <>
+          <textarea
+            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-gray-700 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-teal-400"
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            rows={3}
+          />
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold text-gray-700 uppercase tracking-widest">Assign to agents</p>
+            <AgentSelector value={agents} onChange={setAgents} />
+          </div>
+        </>
       ) : (
         <p className="text-xs text-gray-600 leading-relaxed">{description}</p>
       )}
+
       <div className="flex items-center gap-2 justify-end">
         {editing ? (
           <>
             <button
-              onClick={() => { setEditing(false); setName(skill.name); setDescription(skill.description) }}
-              className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded"
+              onClick={() => { setEditing(false); setName(skill.name); setDescription(skill.description); setAgents(skill.agents) }}
+              className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded"
             >
               Cancel
             </button>
             <button
-              onClick={() => { onEdit(skill.id, name, description); setEditing(false) }}
+              onClick={() => { onEdit(skill.id, name, description, agents); setEditing(false) }}
               className="text-xs text-white bg-teal-600 hover:bg-teal-700 px-3 py-1 rounded font-semibold"
             >
               Save
@@ -184,13 +242,13 @@ function LibrarySkillCard({
           <>
             <button
               onClick={() => setEditing(true)}
-              className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded transition-colors"
+              className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded transition-colors"
             >
               Edit
             </button>
             <button
               onClick={() => { if (confirm(`Delete skill "${skill.name}"?`)) onDelete(skill.id) }}
-              className="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded transition-colors"
+              className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded transition-colors"
             >
               Delete
             </button>
@@ -220,9 +278,7 @@ export default function AdminSkills() {
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Parameters<typeof skillsApi.update>[1] }) =>
       skillsApi.update(id, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['skills'] })
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   })
 
   const deleteMut = useMutation({
@@ -231,23 +287,25 @@ export default function AdminSkills() {
   })
 
   const seedMut = useMutation({
-    mutationFn: skillsApi.seed,
-    onSuccess: (data) => {
+    mutationFn: (force: boolean) => skillsApi.seed(force),
+    onSuccess: (data, force) => {
       qc.invalidateQueries({ queryKey: ['skills'] })
-      alert(`Seeded ${data.seeded} factory default skills.`)
+      alert(force
+        ? `Force-reseeded baseline skills. ${data.seeded} skills written.`
+        : `Seeded ${data.seeded} new factory default skills.`)
     },
   })
 
-  function handleApprove(id: number, name: string, description: string) {
-    updateMut.mutate({ id, data: { status: 'approved', name, description } })
+  function handleApprove(id: number, name: string, description: string, agents: string[]) {
+    updateMut.mutate({ id, data: { status: 'approved', name, description, agents } })
   }
 
   function handleReject(id: number) {
     updateMut.mutate({ id, data: { status: 'rejected' } })
   }
 
-  function handleEdit(id: number, name: string, description: string) {
-    updateMut.mutate({ id, data: { name, description } })
+  function handleEdit(id: number, name: string, description: string, agents: string[]) {
+    updateMut.mutate({ id, data: { name, description, agents } })
   }
 
   async function handleExport() {
@@ -280,7 +338,7 @@ export default function AdminSkills() {
   }
 
   const filteredApproved = libraryAgent
-    ? approved.filter(s => s.agent_name === libraryAgent)
+    ? approved.filter(s => s.agents.includes(libraryAgent))
     : approved
 
   return (
@@ -289,26 +347,36 @@ export default function AdminSkills() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-primary">Agent Skills Library</h1>
-          <p className="text-sm text-muted mt-0.5">
-            Review suggested skills, manage the library, and export for new instances.
+          <p className="text-sm text-gray-600 mt-0.5">
+            Review suggested skills, manage agent assignments, and export for new instances.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => seedMut.mutate()}
+            onClick={() => seedMut.mutate(false)}
             disabled={seedMut.isPending}
-            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 text-xs text-gray-700 hover:text-gray-900 border border-gray-300 hover:border-gray-400 px-3 py-1.5 rounded-lg transition-colors"
           >
             <Sprout size={13} />
             {seedMut.isPending ? 'Seeding…' : 'Seed defaults'}
           </button>
           <button
+            onClick={() => {
+              if (confirm('This will replace all baseline skills with the current factory defaults. Continue?'))
+                seedMut.mutate(true)
+            }}
+            disabled={seedMut.isPending}
+            className="flex items-center gap-1.5 text-xs text-gray-700 hover:text-gray-900 border border-gray-300 hover:border-gray-400 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <RotateCcw size={13} /> Reseed baseline
+          </button>
+          <button
             onClick={handleExport}
-            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 text-xs text-gray-700 hover:text-gray-900 border border-gray-300 hover:border-gray-400 px-3 py-1.5 rounded-lg transition-colors"
           >
             <Download size={13} /> Export JSON
           </button>
-          <label className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">
+          <label className="flex items-center gap-1.5 text-xs text-gray-700 hover:text-gray-900 border border-gray-300 hover:border-gray-400 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">
             <Upload size={13} /> Import JSON
             <input
               ref={fileInputRef}
@@ -328,7 +396,7 @@ export default function AdminSkills() {
           className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors ${
             activeTab === 'queue'
               ? 'text-teal-700 border-b-2 border-teal-600 -mb-px'
-              : 'text-gray-400 hover:text-gray-600'
+              : 'text-gray-600 hover:text-gray-800'
           }`}
         >
           <Clock size={14} />
@@ -344,12 +412,12 @@ export default function AdminSkills() {
           className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors ${
             activeTab === 'library'
               ? 'text-teal-700 border-b-2 border-teal-600 -mb-px'
-              : 'text-gray-400 hover:text-gray-600'
+              : 'text-gray-600 hover:text-gray-800'
           }`}
         >
           <BookOpen size={14} />
           Library
-          <span className="ml-1 text-[10px] text-gray-400">{approved.length}</span>
+          <span className="ml-1 text-[10px] text-gray-500">{approved.length}</span>
         </button>
       </div>
 
@@ -357,13 +425,13 @@ export default function AdminSkills() {
       {activeTab === 'queue' && (
         <div className="space-y-3">
           {loadingQueue ? (
-            <p className="text-sm text-muted text-center py-8">Loading…</p>
+            <p className="text-sm text-gray-600 text-center py-8">Loading…</p>
           ) : pending.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-12 text-center">
               <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center">
                 <Check size={18} className="text-green-600" />
               </div>
-              <p className="text-sm text-muted">No skills awaiting review.</p>
+              <p className="text-sm text-gray-600">No skills awaiting review.</p>
             </div>
           ) : (
             pending.map(skill => (
@@ -383,7 +451,7 @@ export default function AdminSkills() {
         <div className="space-y-4">
           {/* Filter */}
           <div className="flex items-center gap-2">
-            <label className="text-xs text-muted font-medium">Filter by agent:</label>
+            <label className="text-xs text-gray-700 font-medium">Filter by agent:</label>
             <select
               value={libraryAgent}
               onChange={e => setLibraryAgent(e.target.value)}
@@ -397,10 +465,10 @@ export default function AdminSkills() {
           </div>
 
           {loadingLibrary ? (
-            <p className="text-sm text-muted text-center py-8">Loading…</p>
+            <p className="text-sm text-gray-600 text-center py-8">Loading…</p>
           ) : filteredApproved.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-12 text-center">
-              <p className="text-sm text-muted">No approved skills yet. Seed the defaults or approve queue items.</p>
+              <p className="text-sm text-gray-600">No approved skills yet. Seed the defaults or approve queue items.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3">

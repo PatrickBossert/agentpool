@@ -445,6 +445,26 @@ async def _migrate_stakeholder_node_assignments(conn: aiosqlite.Connection) -> N
     await conn.commit()
 
 
+async def _migrate_agent_chat_history(conn: aiosqlite.Connection) -> None:
+    """Create agent_chat_history table for server-side chat persistence."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_chat_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            username    TEXT NOT NULL,
+            crew_key    TEXT NOT NULL,
+            role        TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+            content     TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_history_lookup "
+        "ON agent_chat_history(project_id, username, crew_key, created_at)"
+    )
+    await conn.commit()
+
+
 async def get_stakeholder_node_assignments(
     conn: aiosqlite.Connection, project_id: int
 ) -> list[dict]:
@@ -650,6 +670,7 @@ async def get_connection(slug: str):
         await _migrate_project_milestones(conn)
         await _migrate_nonworking_ranges(conn)
         await _migrate_stakeholder_node_assignments(conn)
+        await _migrate_agent_chat_history(conn)
         yield conn
 
 
@@ -1473,9 +1494,8 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
-        CREATE TABLE IF NOT EXISTS agent_skills (
+        CREATE TABLE IF NOT EXISTS skills (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent_name      TEXT NOT NULL,
             name            TEXT NOT NULL,
             description     TEXT NOT NULL,
             source          TEXT NOT NULL DEFAULT 'manual',
@@ -1488,8 +1508,35 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             reviewed_at     DATETIME,
             reviewed_by     TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS agent_skill_assignments (
+            skill_id    INTEGER NOT NULL,
+            agent_name  TEXT NOT NULL,
+            PRIMARY KEY (skill_id, agent_name)
+        );
     """)
     await conn.commit()
+
+    # Migrate old agent_skills table (pre-relational schema) if it still exists
+    async with conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_skills'"
+    ) as cur:
+        has_old = await cur.fetchone() is not None
+    if has_old:
+        await conn.execute(
+            """INSERT OR IGNORE INTO skills
+               (id, name, description, source, source_project, status,
+                flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by)
+               SELECT id, name, description, source, source_project, status,
+                      flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by
+               FROM agent_skills"""
+        )
+        await conn.execute(
+            """INSERT OR IGNORE INTO agent_skill_assignments (skill_id, agent_name)
+               SELECT id, agent_name FROM agent_skills"""
+        )
+        await conn.execute("DROP TABLE agent_skills")
+        await conn.commit()
 
     # Idempotent migrations on existing DBs
     async with conn.execute("PRAGMA table_info(users)") as cur:
@@ -1543,52 +1590,68 @@ async def fetch_skill_notes(conn: aiosqlite.Connection, *, agent_name: str | Non
         return [dict(r) async for r in cur]
 
 
-# ── agent_skills ───────────────────────────────────────────────────────────────
+# ── skills library ─────────────────────────────────────────────────────────────
 
-async def insert_agent_skill(
+async def insert_skill(
     conn: aiosqlite.Connection,
     *,
-    agent_name: str,
     name: str,
     description: str,
     source: str = "manual",
     source_project: str | None = None,
+    agents: list[str] | None = None,
     flag_reason: str | None = None,
     flag_suggestion: str | None = None,
 ) -> int:
     cur = await conn.execute(
-        """INSERT INTO agent_skills
-           (agent_name, name, description, source, source_project, flag_reason, flag_suggestion)
-           VALUES (?,?,?,?,?,?,?)""",
-        (agent_name, name, description, source, source_project, flag_reason, flag_suggestion),
+        """INSERT INTO skills (name, description, source, source_project, flag_reason, flag_suggestion)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (name, description, source, source_project, flag_reason, flag_suggestion),
     )
+    skill_id = cur.lastrowid
+    if agents:
+        await conn.executemany(
+            "INSERT OR IGNORE INTO agent_skill_assignments (skill_id, agent_name) VALUES (?, ?)",
+            [(skill_id, a) for a in agents],
+        )
     await conn.commit()
-    return cur.lastrowid
+    return skill_id
 
 
-async def fetch_agent_skills(
+async def fetch_skills(
     conn: aiosqlite.Connection,
     *,
     agent_name: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
-    parts = ["SELECT * FROM agent_skills"]
-    params: list = []
     where: list[str] = []
-    if agent_name is not None:
-        where.append("agent_name = ?")
-        params.append(agent_name)
+    params: list = []
     if status is not None:
-        where.append("status = ?")
+        where.append("s.status = ?")
         params.append(status)
-    if where:
-        parts.append("WHERE " + " AND ".join(where))
-    parts.append("ORDER BY created_at DESC")
-    async with conn.execute(" ".join(parts), params) as cur:
-        return [dict(r) async for r in cur]
+    if agent_name is not None:
+        where.append("s.id IN (SELECT skill_id FROM agent_skill_assignments WHERE agent_name = ?)")
+        params.append(agent_name)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    query = f"""
+        SELECT s.*, GROUP_CONCAT(asa.agent_name, '|') AS agents_csv
+        FROM skills s
+        LEFT JOIN agent_skill_assignments asa ON asa.skill_id = s.id
+        {where_sql}
+        GROUP BY s.id
+        ORDER BY s.created_at DESC
+    """
+    rows: list[dict] = []
+    async with conn.execute(query, params) as cur:
+        async for row in cur:
+            d = dict(row)
+            csv = d.pop("agents_csv", None) or ""
+            d["agents"] = [a for a in csv.split("|") if a]
+            rows.append(d)
+    return rows
 
 
-async def update_agent_skill(
+async def update_skill(
     conn: aiosqlite.Connection,
     *,
     skill_id: int,
@@ -1596,35 +1659,39 @@ async def update_agent_skill(
     name: str | None = None,
     description: str | None = None,
     reviewed_by: str | None = None,
+    agents: list[str] | None = None,
 ) -> bool:
     updates: list[str] = []
     params: list = []
-    if status is not None:
-        updates.append("status = ?")
-        params.append(status)
-        updates.append("reviewed_at = CURRENT_TIMESTAMP")
     if name is not None:
-        updates.append("name = ?")
-        params.append(name)
+        updates.append("name = ?"); params.append(name)
     if description is not None:
-        updates.append("description = ?")
-        params.append(description)
+        updates.append("description = ?"); params.append(description)
+    if status is not None:
+        updates.append("status = ?"); params.append(status)
+        updates.append("reviewed_at = CURRENT_TIMESTAMP")
     if reviewed_by is not None:
-        updates.append("reviewed_by = ?")
-        params.append(reviewed_by)
-    if not updates:
-        return False
-    params.append(skill_id)
-    cur = await conn.execute(
-        f"UPDATE agent_skills SET {', '.join(updates)} WHERE id = ?",
-        params,
-    )
+        updates.append("reviewed_by = ?"); params.append(reviewed_by)
+    changed = False
+    if updates:
+        params.append(skill_id)
+        cur = await conn.execute(f"UPDATE skills SET {', '.join(updates)} WHERE id = ?", params)
+        changed = cur.rowcount > 0
+    if agents is not None:
+        await conn.execute("DELETE FROM agent_skill_assignments WHERE skill_id = ?", (skill_id,))
+        if agents:
+            await conn.executemany(
+                "INSERT OR IGNORE INTO agent_skill_assignments (skill_id, agent_name) VALUES (?, ?)",
+                [(skill_id, a) for a in agents],
+            )
+        changed = True
     await conn.commit()
-    return cur.rowcount > 0
+    return changed
 
 
-async def delete_agent_skill(conn: aiosqlite.Connection, *, skill_id: int) -> bool:
-    cur = await conn.execute("DELETE FROM agent_skills WHERE id = ?", (skill_id,))
+async def delete_skill(conn: aiosqlite.Connection, *, skill_id: int) -> bool:
+    await conn.execute("DELETE FROM agent_skill_assignments WHERE skill_id = ?", (skill_id,))
+    cur = await conn.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
     await conn.commit()
     return cur.rowcount > 0
 

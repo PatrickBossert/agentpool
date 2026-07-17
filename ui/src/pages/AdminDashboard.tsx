@@ -39,12 +39,12 @@ export default function AdminDashboard() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-xl font-bold text-primary mb-6">Admin Dashboard</h1>
+      <h1 className="text-xl font-bold text-gray-900 mb-6">Admin Dashboard</h1>
 
       {/* Organisations panel */}
       <div className="bg-surface-card rounded-lg border border-gray-200 mb-6">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-primary">Organisations</h2>
+          <h2 className="text-sm font-semibold text-gray-900">Organisations</h2>
           <button
             onClick={() => setShowOrgForm((v) => !v)}
             className="text-xs text-brand hover:text-brand-light"
@@ -56,13 +56,13 @@ export default function AdminDashboard() {
         {showOrgForm && (
           <div className="flex gap-2 px-4 py-3 border-b border-gray-200">
             <input
-              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
+              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
               placeholder="slug (e.g. acme)"
               value={newOrgSlug}
               onChange={(e) => setNewOrgSlug(e.target.value)}
             />
             <input
-              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
+              className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
               placeholder="Name"
               value={newOrgName}
               onChange={(e) => setNewOrgName(e.target.value)}
@@ -78,11 +78,11 @@ export default function AdminDashboard() {
         )}
 
         {orgs.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted">No organisations yet.</p>
+          <p className="px-4 py-3 text-sm text-gray-600">No organisations yet.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-gray-200">
+              <tr className="text-xs text-gray-600 border-b border-gray-200">
                 <th className="text-left px-4 py-2">Slug</th>
                 <th className="text-left px-4 py-2">Name</th>
                 <th className="text-left px-4 py-2">Created</th>
@@ -93,8 +93,8 @@ export default function AdminDashboard() {
               {orgs.map((org) => (
                 <tr key={org.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 text-brand font-mono text-xs">{org.slug}</td>
-                  <td className="px-4 py-2 text-primary">{org.name}</td>
-                  <td className="px-4 py-2 text-muted text-xs">
+                  <td className="px-4 py-2 text-gray-900">{org.name}</td>
+                  <td className="px-4 py-2 text-gray-600 text-xs">
                     {org.created_at.slice(0, 10)}
                   </td>
                   <td className="px-4 py-2 text-right">
@@ -123,7 +123,7 @@ export default function AdminDashboard() {
       {/* Skills panel */}
       <div className="bg-surface-card rounded-lg border border-gray-200">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-primary">Agent Skills Library</h2>
+          <h2 className="text-sm font-semibold text-gray-900">Agent Skills Library</h2>
           <button
             onClick={() => navigate('/admin/skills')}
             className="text-xs text-brand hover:text-brand-light"
@@ -131,7 +131,7 @@ export default function AdminDashboard() {
             Manage skills →
           </button>
         </div>
-        <p className="px-4 py-3 text-xs text-muted leading-relaxed">
+        <p className="px-4 py-3 text-xs text-gray-600 leading-relaxed">
           Review suggested skills, manage the global library, and export / import skills bundles for new instances.
         </p>
       </div>
@@ -139,7 +139,7 @@ export default function AdminDashboard() {
       {/* Users panel */}
       <div className="bg-surface-card rounded-lg border border-gray-200">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-primary">Users</h2>
+          <h2 className="text-sm font-semibold text-gray-900">Users</h2>
           <button
             onClick={() => navigate('/admin/users/new')}
             className="text-xs text-brand hover:text-brand-light"
@@ -149,11 +149,11 @@ export default function AdminDashboard() {
         </div>
 
         {users.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted">No users yet.</p>
+          <p className="px-4 py-3 text-sm text-gray-600">No users yet.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-gray-200">
+              <tr className="text-xs text-gray-600 border-b border-gray-200">
                 <th className="text-left px-4 py-2">Username</th>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Role</th>
@@ -164,12 +164,12 @@ export default function AdminDashboard() {
             <tbody>
               {users.map((u) => (
                 <tr key={u.id} className="border-b border-gray-200 hover:bg-surface-raised">
-                  <td className="px-4 py-2 font-mono text-xs text-primary">{u.username}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-900">{u.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{u.email}</td>
                   <td className="px-4 py-2">
                     <RoleBadge role={u.role} />
                   </td>
-                  <td className="px-4 py-2 text-muted text-xs">{u.created_at.slice(0, 10)}</td>
+                  <td className="px-4 py-2 text-gray-600 text-xs">{u.created_at.slice(0, 10)}</td>
                   <td className="px-4 py-2 text-right">
                     <button
                       onClick={() => navigate(`/admin/users/${u.id}/edit`)}

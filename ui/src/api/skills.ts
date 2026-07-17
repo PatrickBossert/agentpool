@@ -3,7 +3,7 @@ import { apiClient } from './client'
 
 export interface AgentSkill {
   id: number
-  agent_name: string
+  agents: string[]
   name: string
   description: string
   source: string
@@ -36,7 +36,7 @@ export const skillsApi = {
   },
 
   create: async (data: {
-    agent_name: string
+    agents: string[]
     name: string
     description: string
     source?: string
@@ -48,7 +48,7 @@ export const skillsApi = {
 
   update: async (
     id: number,
-    data: { status?: string; name?: string; description?: string },
+    data: { status?: string; name?: string; description?: string; agents?: string[] },
   ): Promise<AgentSkill> => {
     const res = await apiClient.patch(`/admin/skills/${id}`, data)
     return res.data
@@ -63,20 +63,25 @@ export const skillsApi = {
     return res.data
   },
 
+  extractMany: async (raw_input: string): Promise<SkillExtract[]> => {
+    const res = await apiClient.post('/admin/skills/extract-many', { raw_input })
+    return res.data
+  },
+
   exportSkills: async (): Promise<AgentSkill[]> => {
     const res = await apiClient.get('/admin/skills/export')
     return res.data
   },
 
   importSkills: async (
-    items: { agent_name: string; name: string; description: string }[],
+    items: { agents: string[]; name: string; description: string }[],
   ): Promise<ImportResult> => {
     const res = await apiClient.post('/admin/skills/import', items)
     return res.data
   },
 
-  seed: async (): Promise<{ seeded: number }> => {
-    const res = await apiClient.post('/admin/skills/seed')
+  seed: async (force = false): Promise<{ seeded: number }> => {
+    const res = await apiClient.post(`/admin/skills/seed?force=${force}`)
     return res.data
   },
 }

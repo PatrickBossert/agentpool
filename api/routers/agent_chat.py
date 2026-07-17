@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from api.auth import check_project_access, require_any_auth
@@ -49,6 +49,8 @@ class InjectedLink(BaseModel):
 
 class ChatRequest(BaseModel):
     agent_name: str
+    crew_key: str = ""          # used as the history storage key
+    crew_agents: list[str] = [] # full roster for routing; empty = single-agent
     message: str
     history: list[dict] = []
     injected_docs: list[InjectedDoc] = []
@@ -117,6 +119,51 @@ async def _patch_config(conn, project: dict, key: str, value) -> None:
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
+@router.get("/{slug}/agent-chat/history")
+async def get_chat_history(
+    slug: str,
+    crew_key: str = Query(...),
+    payload: dict = Depends(require_any_auth),
+):
+    await check_project_access(slug, payload)
+    username = payload["sub"]
+    if not get_db_path(slug).exists():
+        return {"messages": []}
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return {"messages": []}
+        async with conn.execute(
+            "SELECT role, content FROM agent_chat_history "
+            "WHERE project_id=? AND username=? AND crew_key=? "
+            "ORDER BY created_at ASC",
+            (project["id"], username, crew_key),
+        ) as cur:
+            rows = await cur.fetchall()
+    return {"messages": [{"role": r[0], "content": r[1]} for r in rows]}
+
+
+@router.delete("/{slug}/agent-chat/history", status_code=204)
+async def delete_chat_history(
+    slug: str,
+    crew_key: str = Query(...),
+    payload: dict = Depends(require_any_auth),
+):
+    await check_project_access(slug, payload)
+    username = payload["sub"]
+    if not get_db_path(slug).exists():
+        return
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return
+        await conn.execute(
+            "DELETE FROM agent_chat_history WHERE project_id=? AND username=? AND crew_key=?",
+            (project["id"], username, crew_key),
+        )
+        await conn.commit()
+
+
 @router.post("/{slug}/agent-chat")
 async def agent_chat(
     slug: str,
@@ -124,22 +171,39 @@ async def agent_chat(
     payload: dict = Depends(require_any_auth),
 ):
     await check_project_access(slug, payload)
+    username = payload["sub"]
 
     if body.agent_name not in AGENT_PERSONAS:
         raise HTTPException(status_code=404, detail=f"Unknown agent: {body.agent_name!r}")
 
-    result = await run_agent_chat(
+    outcome = await run_agent_chat(
         slug,
         body.agent_name,
         body.message,
         body.history,
         injected_docs=[d.model_dump() for d in body.injected_docs],
         injected_links=[lnk.model_dump() for lnk in body.injected_links],
+        crew_agents=body.crew_agents or None,
     )
-    if result is None:
+    if outcome is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
-    return {"response": result}
+    resolved_agent, result = outcome
+
+    crew_key = body.crew_key or body.agent_name
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if project:
+            await conn.executemany(
+                "INSERT INTO agent_chat_history (project_id, username, crew_key, role, content) VALUES (?,?,?,?,?)",
+                [
+                    (project["id"], username, crew_key, "user", body.message),
+                    (project["id"], username, crew_key, "assistant", result),
+                ],
+            )
+            await conn.commit()
+
+    return {"response": result, "agent_name": resolved_agent}
 
 
 @router.post("/{slug}/agent-chat/upload", status_code=201)

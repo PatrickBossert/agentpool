@@ -182,7 +182,7 @@ export default function AgentChatDrawer({
       const injectedLinks = currentAttachments
         .filter((a): a is LinkAttachment => a.type === 'link')
         .map(({ url, label, content_preview }) => ({ url, label, content_preview }))
-      const response = await agentChatApi.send(slug, agentName!, userMessage, history, injectedDocs, injectedLinks)
+      const { response } = await agentChatApi.send(slug, agentName!, agentName!, [agentName!], userMessage, history, injectedDocs, injectedLinks)
       setMessages(prev => [...prev, { role: 'agent', content: response }])
     } catch {
       setMessages(prev => [...prev, { role: 'agent', content: 'Sorry, I could not process that request. Please try again.' }])

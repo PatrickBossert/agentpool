@@ -85,13 +85,13 @@ export default function OrgDetail() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <button onClick={() => navigate('/admin')} className="text-xs text-muted hover:text-primary mb-4 block">
+      <button onClick={() => navigate('/admin')} className="text-xs text-gray-600 hover:text-gray-900 mb-4 block">
         ← Back to Admin
       </button>
 
       <div className="flex items-center gap-3 mb-6">
-        <h1 className="text-xl font-bold text-primary">{org?.name ?? 'Organisation'}</h1>
-        <span className="text-xs text-muted font-mono">{org?.slug}</span>
+        <h1 className="text-xl font-bold text-gray-900">{org?.name ?? 'Organisation'}</h1>
+        <span className="text-xs text-gray-600 font-mono">{org?.slug}</span>
         <button
           onClick={() => { setEditName(org?.name ?? ''); setShowEditOrg(true) }}
           className="text-xs text-brand hover:text-brand-light ml-auto"
@@ -103,7 +103,7 @@ export default function OrgDetail() {
       {showEditOrg && (
         <div className="flex gap-2 mb-6">
           <input
-            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
+            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
             value={editName}
             onChange={(e) => setEditName(e.target.value)}
           />
@@ -113,19 +113,19 @@ export default function OrgDetail() {
           >
             Save
           </button>
-          <button onClick={() => setShowEditOrg(false)} className="text-xs text-muted">Cancel</button>
+          <button onClick={() => setShowEditOrg(false)} className="text-xs text-gray-600">Cancel</button>
         </div>
       )}
 
       {/* Members */}
       <div className="bg-surface-card rounded-lg border border-gray-200 mb-6">
         <div className="px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-primary">Members</h2>
+          <h2 className="text-sm font-semibold text-gray-900">Members</h2>
         </div>
 
         <div className="flex gap-2 px-4 py-3 border-b border-gray-200">
           <select
-            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
+            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
             value={addUserId}
             onChange={(e) => setAddUserId(e.target.value)}
           >
@@ -135,7 +135,7 @@ export default function OrgDetail() {
             ))}
           </select>
           <select
-            className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
+            className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
             value={addRole}
             onChange={(e) => setAddRole(e.target.value)}
           >
@@ -152,11 +152,11 @@ export default function OrgDetail() {
         </div>
 
         {members.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted">No members yet.</p>
+          <p className="px-4 py-3 text-sm text-gray-600">No members yet.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-gray-200">
+              <tr className="text-xs text-gray-600 border-b border-gray-200">
                 <th className="text-left px-4 py-2">Username</th>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Org Role</th>
@@ -166,7 +166,7 @@ export default function OrgDetail() {
             <tbody>
               {members.map((m) => (
                 <tr key={m.id} className="border-b border-gray-200 hover:bg-surface-raised">
-                  <td className="px-4 py-2 font-mono text-xs text-primary">{m.username}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-900">{m.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{m.email}</td>
                   <td className="px-4 py-2">
                     <select
@@ -201,17 +201,17 @@ export default function OrgDetail() {
       {/* Linked projects */}
       <div className="bg-surface-card rounded-lg border border-gray-200">
         <div className="px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-primary">Linked Projects</h2>
+          <h2 className="text-sm font-semibold text-gray-900">Linked Projects</h2>
         </div>
         <div className="flex gap-2 px-4 py-3 border-b border-gray-200">
           <input
-            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
+            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
             placeholder="project-slug"
             value={regSlug}
             onChange={(e) => setRegSlug(e.target.value)}
           />
           <input
-            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-primary"
+            className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
             placeholder="Display name (optional)"
             value={regName}
             onChange={(e) => setRegName(e.target.value)}
@@ -225,11 +225,11 @@ export default function OrgDetail() {
           </button>
         </div>
         {projects.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted">No projects linked.</p>
+          <p className="px-4 py-3 text-sm text-gray-600">No projects linked.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-gray-200">
+              <tr className="text-xs text-gray-600 border-b border-gray-200">
                 <th className="text-left px-4 py-2">Slug</th>
                 <th className="text-left px-4 py-2">Display Name</th>
                 <th className="px-4 py-2" />

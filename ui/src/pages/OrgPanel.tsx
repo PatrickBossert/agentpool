@@ -49,7 +49,7 @@ export default function OrgPanel() {
   if (!orgId) {
     return (
       <div className="p-6">
-        <p className="text-sm text-muted">You are not assigned to an organisation.</p>
+        <p className="text-sm text-gray-600">You are not assigned to an organisation.</p>
       </div>
     )
   }
@@ -57,9 +57,9 @@ export default function OrgPanel() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
-        <h1 className="text-xl font-bold text-primary">Team</h1>
+        <h1 className="text-xl font-bold text-gray-900">Team</h1>
         {org && (
-          <span className="text-xs text-muted font-mono">{org.name}</span>
+          <span className="text-xs text-gray-600 font-mono">{org.name}</span>
         )}
         <div className="ml-auto flex gap-2">
           <button
@@ -80,16 +80,16 @@ export default function OrgPanel() {
       {/* Members */}
       <div className="bg-surface-card rounded-lg border border-gray-200 mb-6">
         <div className="px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-primary">Members</h2>
+          <h2 className="text-sm font-semibold text-gray-900">Members</h2>
         </div>
         {membersLoading ? (
-          <p className="px-4 py-3 text-sm text-muted">Loading…</p>
+          <p className="px-4 py-3 text-sm text-gray-600">Loading…</p>
         ) : members.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted">No members yet.</p>
+          <p className="px-4 py-3 text-sm text-gray-600">No members yet.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-gray-200">
+              <tr className="text-xs text-gray-600 border-b border-gray-200">
                 <th className="text-left px-4 py-2">Username</th>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Role</th>
@@ -99,7 +99,7 @@ export default function OrgPanel() {
             <tbody>
               {members.map((m) => (
                 <tr key={m.id} className="border-b border-gray-200 hover:bg-surface-raised">
-                  <td className="px-4 py-2 font-mono text-xs text-primary">{m.username}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-900">{m.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{m.email}</td>
                   <td className="px-4 py-2">
                     <RoleBadge role={m.org_role} />
@@ -122,16 +122,16 @@ export default function OrgPanel() {
       {/* Projects */}
       <div className="bg-surface-card rounded-lg border border-gray-200">
         <div className="px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-primary">Projects</h2>
+          <h2 className="text-sm font-semibold text-gray-900">Projects</h2>
         </div>
         {projectsLoading ? (
-          <p className="px-4 py-3 text-sm text-muted">Loading…</p>
+          <p className="px-4 py-3 text-sm text-gray-600">Loading…</p>
         ) : projects.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted">No projects linked to this organisation.</p>
+          <p className="px-4 py-3 text-sm text-gray-600">No projects linked to this organisation.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-gray-200">
+              <tr className="text-xs text-gray-600 border-b border-gray-200">
                 <th className="text-left px-4 py-2">Slug</th>
                 <th className="text-left px-4 py-2">Display Name</th>
               </tr>

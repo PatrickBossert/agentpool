@@ -70,22 +70,25 @@ async def _fetch_revision_notes(slug: str, crew_name: str) -> str:
 
 async def _fetch_skill_notes(crew_name: str) -> str:
     """Return stored skill notes and approved library skills for this crew's agents."""
-    from api.database import get_system_connection, fetch_skill_notes as _fetch, fetch_agent_skills
+    from api.database import get_system_connection, fetch_skill_notes as _fetch, fetch_skills
     agent_names = _CREW_AGENT_NAMES.get(crew_name, [])
     if not agent_names:
         return ""
     async with get_system_connection() as conn:
         notes: list[str] = []
         skills: list[str] = []
+        seen_skill_ids: set[int] = set()
         for a in agent_names:
             rows = await _fetch(conn, agent_name=a)
             for r in rows:
                 notes.append(f"- {r['note']}")
             display = _SNAKE_TO_DISPLAY.get(a)
             if display:
-                skill_rows = await fetch_agent_skills(conn, agent_name=display, status="approved")
+                skill_rows = await fetch_skills(conn, agent_name=display, status="approved")
                 for s in skill_rows:
-                    skills.append(f"- {s['name']}: {s['description']}")
+                    if s["id"] not in seen_skill_ids:
+                        seen_skill_ids.add(s["id"])
+                        skills.append(f"- {s['name']}: {s['description']}")
     sections: list[str] = []
     if notes:
         sections.append("SKILL IMPROVEMENT NOTES (apply these in your output):\n" + "\n".join(notes))
