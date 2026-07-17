@@ -429,6 +429,474 @@ Produce one summary per L2 node in this structure. This is the deliverable, not 
 """
 
 
+_L1_PRINCIPLES = """\
+L1 INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
+──────────────────────────────────────────────────────
+Apply these throughout every L1 interview design and execution. They are not steps —
+they are persistent lenses to hold across the entire conversation.
+
+1. FRAME AS CAPABILITY ASSESSMENT, NOT PROCESS AUDIT
+   L3 asks: "How do you execute this task?" L2 asks: "How do you make this decision?"
+   L1 asks: "Does this capability deliver the value we need, and what would unlock more?"
+   Reframe every question away from operational process toward strategic asset.
+   ✗ "Walk me through how you manage property maintenance."
+   ✓ "How does Property Management create strategic value — and where is it falling short
+      of its potential?"
+
+2. SURFACE STRATEGIC CLARITY BEFORE OPERATIONS
+   Most L1 interviews drift to operational detail within 5 minutes. Hold the strategic frame.
+   If the interviewee starts describing process, acknowledge and pivot: "That's useful context
+   — let me stay at the strategic level. What is this capability FOR?"
+   Test: can the interviewee state the strategic mandate in one sentence? If not, that is
+   a finding in itself — misaligned leadership, not just an interview technique problem.
+
+3. PROBE COMPETITIVE CONTEXT EXPLICITLY
+   L1 leaders tend to think inward. Benchmarking questions surface assumptions they have
+   never tested: "How do peers manage this?" "Where are you ahead? Behind?"
+   "What would a best-in-class operator do differently?" Most will say "I don't know" —
+   which is itself a finding: inward focus, no competitive intelligence practice.
+
+4. MONETISE THE VALUE OPPORTUNITY (TOTAL ADDRESSABLE VALUE)
+   Never accept "significant" or "substantial" as a value estimate. Use the TAV formula:
+   "If you optimised this capability — better decisions, less rework, faster cycle times —
+   what's the total annual value? Cost reduction? Revenue protection? Risk avoided?"
+   Then: "What percentage of that are you realising today?" The gap IS the opportunity.
+   Prepare 2–3 monetisation narratives before each interview.
+
+5. ASSESS MATURITY HOLISTICALLY ACROSS FIVE DIMENSIONS
+   L1 maturity is never uniform. A capability can have mature processes but ad-hoc data.
+   Assess all five: Data, Decision Architecture, Process, Technology, Organisation.
+   Ask the interviewee to self-rate each (0–4), then form your own assessment from the
+   evidence. Discrepancies reveal either genuine blind spots or unexamined assumptions.
+   The binding constraint — the dimension holding back all others — drives sequencing.
+
+6. MAP TRANSFORMATION READINESS, NOT JUST ASPIRATION
+   "What would you like AI to do?" reveals aspiration. "What would it take?" reveals
+   readiness. Probe both: technical readiness (data, systems), organisational readiness
+   (change appetite, capacity, skills), and strategic readiness (mandate, sponsorship, budget).
+   High aspiration with low readiness is a risk to name, not an opportunity to celebrate.
+
+7. TEST LEADERSHIP ALIGNMENT DIRECTLY
+   Misalignment at L1 kills transformation. Ask: "How aligned is your leadership team
+   on the strategy for this capability?" Then test it: "If I asked your CFO / CTO /
+   Operations VP the same question, would they give the same answer?"
+   Leaders who are genuinely aligned welcome the test. Those who qualify ("mostly aligned")
+   or deflect ("hard to say") are flagging a change management risk that must be surfaced.
+
+8. DISTINGUISH HORIZON 1 / 2 / 3 EXPLICITLY
+   Most L1 leaders conflate quick wins with transformation. Distinguish clearly:
+   H1 (0–12 months): Foundation — data governance, process clarity, decision architecture.
+   H2 (12–24 months): Capability build — system integration, analytics, automation pilots.
+   H3 (24+ months): Optimisation — AI-driven decisions, competitive advantage.
+   Quick wins build momentum but do not move decision quality. Foundations unlock everything.
+   Do not let the interviewee skip H1 in pursuit of H3 aspirations.
+
+9. IDENTIFY THE BINDING CONSTRAINT AND ITS REMOVAL SEQUENCE
+   Find the constraint across the five maturity dimensions: Data → Decision → Process →
+   Technology → Organisation (typical sequence, but not always). Probe: "Which dimension,
+   if improved, would unlock the most in the others?" This answer determines the improvement
+   priority that downstream initiative design must respect.
+
+10. TEST CSF CONFIDENCE AND RISK APPETITE BEFORE CLOSING
+    Probe the five Critical Success Factors: executive sponsorship, data governance,
+    organisational alignment, technology integration, benefit realisation.
+    For each: "Green / Yellow / Red?" Then: "What's your mitigation for the Yellows and Reds?"
+    Leaders who cannot answer the mitigation question have not stress-tested their plan.
+    This is the most important closing test — do not skip it in the interest of time.
+"""
+
+_L1_FRAMING_TEMPLATE = """\
+L1 FRAMING BLOCK — MANDATORY OPENING STRUCTURE
+────────────────────────────────────────────────
+Every L1 script must begin with a framing_block that orients the interviewee to the
+capability assessment frame BEFORE any questions are asked. This is separate from the
+welcome_message (personal and warm) and from Section 1 (which probes strategy).
+
+The framing_block uses the same schema fields as L2 but carries L1-specific content.
+Customise each part to the specific L1 capability area and client context:
+
+POSITIONING (framing_block.positioning — 1–2 sentences)
+   Template: "We're assessing [L1 capability area] as a strategic asset for [organisation].
+   We want to understand: how you currently create value from this capability, what
+   strategic constraints you face, where digital and AI could unlock competitive advantage,
+   and how to prioritise transformation for maximum ROI."
+
+   The framing must signal IMMEDIATELY that this is a capability strategy conversation,
+   not an operational process review.
+   ✗ "We're mapping the Property Management value chain to understand your processes."
+   ✓ "We're assessing Property Management as a strategic asset — how it creates value
+      today, where it faces constraints, and what transformation could unlock."
+
+CONTEXT SETTING (framing_block.context_setting — 4–5 bullets)
+   The capability health check agenda. These bullets tell the interviewee exactly what
+   the conversation will cover, and prime them to think at the right level.
+   Template bullets (customise language to the client and capability):
+   • "Strategic clarity: are we aligned on what this capability is for — and what
+      'excellent' would look like in your specific context?"
+   • "Competitive position: how does this capability compare to industry peers, and
+      where are the gaps that matter most?"
+   • "Maturity trajectory: where is this capability today, where should it be in 3 years,
+      and what is blocking the journey?"
+   • "Digital readiness: what data, decisions, or workflows would most benefit from
+      AI or automation — and what foundation is needed first?"
+   • "Transformation roadmap: how do we sequence improvement for maximum ROI, and
+      what are the critical success factors?"
+
+DUAL LENSES (framing_block.dual_lenses — L1 variant)
+   For L1, the "efficiency" field carries the CAPABILITY HEALTH lens and the
+   "effectiveness" field carries the TRANSFORMATION POTENTIAL lens. The field names
+   are schema artefacts — the spoken content is what matters.
+
+   dual_lenses.efficiency (capability health):
+   "First, I want to understand how this capability creates value today — where
+   investment is working, where constraints limit returns, and what the true cost
+   of the current maturity ceiling is."
+
+   dual_lenses.effectiveness (transformation potential):
+   "Second, I want to understand what is possible — where digital and AI could
+   unlock the next level of capability, how to sequence that journey, and what
+   ROI is realistic."
+
+   These two lenses prevent the conversation from drifting into pure problem-listing
+   (no vision) or pure aspiration (no grounding in reality).
+
+TONE NOTE: The framing_block is spoken by the interviewer, not read from a screen.
+Write it in natural spoken English — shorter sentences, no jargon, no bullet structure.
+The context_setting bullets become a spoken list: "Five things I want to explore with you..."
+"""
+
+_L1_SECTION_LIBRARY = """\
+L1 SECTION LIBRARY — SELECT 4–5 SECTIONS FOR EACH NODE
+────────────────────────────────────────────────────────
+The following 8 thematic sections form a reference library. Maya selects the most
+relevant sections for each L1 node based on its strategic context and available
+interview time. Sections S1, S2, and S3 are mandatory for every L1 interview.
+
+Target durations: Standard L1 (45–55 min); Deep-dive L1 (60–75 min for senior
+stakeholders or transformationally critical capabilities).
+
+MANDATORY ─────────────────────────────────────────────────────────────────────────
+
+S1. Strategic Intent & Competitive Position (~12 min)
+   Core themes:
+   - Strategic mandate: What is the #1 strategic objective for this capability?
+     Explicit vs. implicit; conflicting objectives across leaders; parent company framing.
+   - KPIs and measurement: How is performance measured? What is board-reported?
+     Are incentives tied to these metrics? Are there conflicting KPIs?
+   - Winning definition: What would "winning" look like in 2026? 2030?
+     Quantified / vague / aspirational but uncertain / missing entirely.
+   - Strategic constraints: Capex limit, carbon target, resource shortage, technology
+     immaturity, organisational readiness. Which one, if removed, has the biggest impact?
+   - Competitive benchmarking: How does this capability compare to peers?
+     Where ahead? Behind? What is the "moat"? What threatens position or could disrupt?
+   - Leadership alignment: How aligned is the leadership team? Where is the biggest
+     disagreement? How are disagreements resolved? Metacognitive test: "Would your
+     CFO / CTO give me the same answer?"
+   Maturity anchor: Strategic Clarity & Alignment
+   Maturity narrative signals:
+     0: "No clear strategic mandate; each leader has their own agenda."
+     1: "Strategy exists on paper but is not driving decisions or investment."
+     2: "Clear mandate; most leaders aligned; some KPI misalignment persists."
+     3: "Fully aligned; KPIs linked to mandate; board-level visibility; reviewed quarterly."
+     4: "Real-time alignment; mandate adapts to market signals; competitive intelligence embedded."
+
+S2. Value Creation & Business Model (~10 min)
+   Core themes:
+   - Value streams: How does this capability create value — cost avoidance, revenue
+     protection, strategic enablement, risk reduction, capital efficiency? Quantify each.
+   - TAV (Total Addressable Value): If fully optimised, what is the annual value potential?
+     What % is being realised today? The gap is the transformation opportunity.
+   - Value tracking: Is value realisation tracked? Are there KPIs? Is realised vs.
+     forecast formally monitored? If not — why not?
+   - Strategic initiatives: What initiatives are funded? ROI for each? Sequencing logic?
+     Biggest barrier to accelerating?
+   - Capability investment: People, tools, process, organisational design, external
+     partners. Biggest capability gap? Cost of inaction if the gap is not closed?
+   Maturity anchor: Value Architecture & ROI Clarity
+   Maturity narrative signals:
+     0: "We cannot quantify the value this function creates — it just keeps the lights on."
+     1: "Some value tracked — mostly cost. Revenue protection and risk reduction unmeasured."
+     2: "Multiple value streams identified and roughly quantified. No formal realisation tracking."
+     3: "Value tracked quarterly; gap vs. potential monitored; investment linked to ROI forecast."
+     4: "Real-time value dashboard; TAV vs. realised reported to board; investment rebalanced dynamically."
+
+S3. Current State Capability Maturity (~12 min)
+   Core themes:
+   - Five-dimension self-assessment — probe all five; capture interviewee ratings per dimension:
+     • DATA: completeness, quality, integration, governance, trust. Self-rate 0–4.
+     • DECISION ARCHITECTURE: clarity, rigor, traceability, adaptation. Self-rate 0–4.
+     • PROCESS: standardisation, discipline, control, continuous improvement. Self-rate 0–4.
+     • TECHNOLOGY: system integration, automation %, analytics capability, real-time lag. 0–4.
+     • ORGANISATION: alignment, capability, culture, incentive design. Self-rate 0–4.
+   - Narrative diagnostic (never use maturity jargon; use these questions):
+     "How much of your decision-making is reactive vs. proactive?"
+     "How well integrated is your data across systems?"
+     "How data-driven are your decisions — gut feel, data-informed, or AI-optimised?"
+     "How fast do you learn from outcomes — annual reviews, or real-time?"
+     "What % of your team's effort goes to heroics vs. systematic execution?"
+   - Binding constraint: "Of these five dimensions, which is holding back capability growth?"
+     Probe the root cause. Identify the constraint removal sequence.
+   - Maturity gap: Current composite → target composite → prerequisites to unlock next level.
+   Overall maturity anchor: Composite across all five dimensions (single 0–4 rating)
+   Maturity narrative signals:
+     0: "Ad-hoc across all — reactive, siloed data, gut-feel decisions, heroic daily effort."
+     1: "Basic discipline emerging; some processes documented; data captured but not integrated."
+     2: "Managed in most dimensions; data integrated in main systems; decisions informed not optimised."
+     3: "All five performing well; real-time visibility; systematic learning; competitive benchmark met."
+     4: "AI-optimised; real-time adaptive planning; significant competitive advantage established."
+
+RECOMMENDED — INCLUDE 2–3 BASED ON NODE CONTEXT ──────────────────────────────────
+
+S4. Digital & AI Transformation Readiness (~10 min)
+   Core themes:
+   - Track record: What digital/technology initiatives ran in the last 3–5 years?
+     Outcome per initiative — successful / partial / failed. Lessons learned.
+     "How will this transformation be different?" (Reveals whether they have reflected on past.)
+   - Change appetite: How does the organisation feel about AI, automation, data-driven
+     decisions? Specific concerns: job displacement, trust in AI recommendations, control,
+     change capacity, execution risk. Each concern signals a specific change management need.
+   - Aspiration (magic wand): If no constraints, what would this capability look like in 5 years?
+     Value that unlocks? Gap between vision and today? Cost of NOT pursuing the vision?
+   - Absorption capacity: Dedicated transformation team / absorbed into BAU / external support?
+   - Prioritisation stance: "Would you prioritise automation (faster execution) or decision
+     optimisation (better decisions)?" Reveals the dominant constraint in their mental model.
+   Maturity anchor: Digital Maturity & Transformation Readiness
+   Maturity narrative signals:
+     0: "We have failed digital initiatives; low confidence in technology change delivery."
+     1: "Some tools deployed; appetite varies; no clear digital strategy or investment thesis."
+     2: "Clear digital strategy; some analytics in use; cautiously positive appetite."
+     3: "Track record of successful digital change; AI actively explored; dedicated capacity."
+     4: "Digital-first mindset; AI embedded in key decisions; clear investment thesis and roadmap."
+
+S5. Strategic Roadmap & Transformation Priorities (~10 min)
+   Core themes:
+   - Three-horizon sequencing:
+     H1 Foundation (0–12m): data governance, process clarity, quick wins, decision architecture.
+     H2 Capability Build (12–24m): system integration, analytics, automation pilots, change mgmt.
+     H3 Optimisation (24–36m+): AI-driven decisions, competitive advantage, autonomous execution.
+     "Where should we focus first?" If they skip H1: "What does H1 look like for you?"
+   - Initiative sequencing: Which initiatives are critical path? What runs in parallel?
+     What blocks progress if delayed? Have dependencies been mapped?
+   - Investment profile: Total budget; H1/H2/H3 distribution; ROI forecast; stress-tested
+     scenarios (50% timeline overrun, slower adoption, budget cuts mid-programme).
+     Tolerance for variance?
+   - Critical Success Factors: 3–5 non-negotiables. Confidence level each (Green/Yellow/Red)?
+     Mitigation for each Red/Yellow?
+   - Risks: Technical, organisational, execution, strategic, financial. Probability,
+     monetised impact, mitigation plan for each.
+   Maturity anchor: Planning & Sequencing Maturity
+   Maturity narrative signals:
+     0: "No roadmap; initiatives run opportunistically; no sequencing logic."
+     1: "Annual planning cycle; some initiatives; no formal horizon framework."
+     2: "Multi-year roadmap exists; dependencies partially mapped; CSFs identified but not RAG-rated."
+     3: "Full H1/H2/H3 roadmap; critical path validated; CSFs and mitigations defined; board-approved."
+     4: "Adaptive roadmap; reprioritised mid-cycle on evidence; continuous investment rebalancing."
+
+S6. Organisational Capability & Change Readiness (~8 min)
+   Core themes:
+   - Change readiness self-assessment: 1–10 rating; history with large transformations;
+     % excited vs. resistant; what scares people most; what would move resistant to supportive?
+   - Skills & talent: New skills needed? Sources — hire / train / partner? Retention risk?
+     Retention strategy for key people during the transformation programme?
+   - Governance & sponsorship: Who is the executive sponsor? Board commitment confirmed?
+     What would cause this to be deprioritised? How is it protected from competing priorities?
+   - Incentive alignment: Do KPIs align with the transformation strategy? Conflicting incentives
+     between functions (Finance: cost; Operations: quality; IT: control)?
+   Maturity anchor: Organisational Readiness & Change Capability
+   Maturity narrative signals:
+     0: "No change management history; significant resistance; no executive sponsorship."
+     1: "Some change experience; sponsor identified; majority neutral to sceptical."
+     2: "Positive track record; clear sponsor; majority supportive; pockets of resistance remain."
+     3: "Strong change management function; systematic engagement; aligned incentives; board oversight."
+     4: "Change-as-usual culture; distributed ownership; rapid adoption; self-reinforcing learning."
+
+OPTIONAL — INCLUDE FOR SENIOR STAKEHOLDERS OR HIGH-PRIORITY NODES ──────────────────
+
+S7. Value Realisation & Success Metrics (~8 min)
+   Core themes:
+   - Value category mix: cost reduction, revenue protection, risk reduction, strategic
+     enablement, organisational capability. Which categories matter most? Rough % split?
+   - KPI design: For each value stream — KPI name, baseline, target, measurement frequency,
+     data source, owner, monetisation formula. Cap at 5–10 KPIs.
+   - Accountability: Who is accountable for value realisation? What happens if value lags?
+     Are quarterly reviews built in? Is causality formally isolated or estimated?
+   - Quick wins: 5–10 wins in H1, aggregate target £3–5M. Visible, credible, meaningful,
+     low-risk. How will they be communicated? What could block them?
+   Maturity anchor: Value Realisation & Accountability
+   Maturity narrative signals:
+     0: "No formal value tracking; success is 'it feels better'."
+     1: "Some KPIs exist; no formal realisation tracking; Finance not engaged."
+     2: "KPIs defined; quarterly tracking; Finance-owned; causality not formally isolated."
+     3: "Full realisation framework; accountability assigned; monthly review; scenario-modelled."
+     4: "Real-time value dashboard; dynamic reforecast; causal attribution modelled; board-reported."
+
+S8. Peer Contextualisation & Portfolio Fit (~6 min)
+   Core themes:
+   - Cross-capability comparison: How does this L1 compare to other L1 capabilities in
+     digital maturity? Which needs transformation more urgently? Can lessons transfer?
+   - Industry positioning: Ahead / on par / behind peers? Competitive moat? Vulnerability
+     to disruption (technology, business model, talent, regulatory, economic pressure)?
+   - Portfolio interdependencies: What else is happening across the organisation (capex
+     cycles, restructures, other digital programmes)? Shared platforms / learning possible?
+     Could this transformation block or enable other strategic initiatives?
+   - Corporate strategy alignment: How does this connect to corporate-level programmes
+     (net-zero, digital, M&A, regulatory)? Missing alignment = siloed solutions.
+   Maturity anchor: Strategic Integration & Portfolio Coherence
+   Maturity narrative signals:
+     0: "This capability is managed in isolation; no visibility of peers or industry."
+     1: "Some awareness of peer capabilities; ad-hoc sharing; no systematic benchmarking."
+     2: "Periodic benchmarking; some cross-capability learning; limited portfolio coordination."
+     3: "Systematic benchmarking; cross-capability learning loops; portfolio roadmap coordinated."
+     4: "Continuous competitive intelligence; portfolio optimisation; integrated transformation governance."
+
+NOTE: S8 involves questions the interviewee may not be positioned to answer if they govern
+only one L1 capability. Calibrate depth to their cross-portfolio visibility.
+
+SECTION SELECTION RULES
+   Standard L1 (45–55 min): S1 + S2 + S3 + select 1–2 from {S4, S5, S6} + closing
+   Deep-dive L1 (60–75 min): S1 + S2 + S3 + S4 + select 2–3 from {S5, S6, S7, S8} + closing
+   Priority signals for selection:
+   - Digital transformation is the primary agenda → include S4
+   - Roadmap or sequencing clarity needed → include S5
+   - Change readiness or sponsorship risk identified → include S6
+   - Value case rigour needed for board approval → include S7
+   - Interviewee has cross-L1 or cross-organisation visibility → add S8
+"""
+
+_L1_SYNTHESIS_TEMPLATE = """\
+L1 SYNTHESIS CHECK — MANDATORY CLOSING ELEMENT
+────────────────────────────────────────────────
+Before closing_message, every L1 script must include a synthesis_check that validates
+the interviewer's strategic picture with the interviewee. This is a collegial debrief
+— the interviewer offers their emerging synthesis for correction and endorsement.
+
+The synthesis_check has four elements:
+
+1. SYNTHESIS PROMPT (interviewer speaks this)
+   Template: "Based on what you've told me, here's how I see the strategic picture for
+   [L1 capability area]: the mandate is [strategic objective]; current maturity sits at
+   [overall level] — constrained mainly by [binding dimension]; the value opportunity
+   is in the range of [£estimate]; the critical path runs [H1 priority → H2 goal]; and
+   the biggest transformation risk is [key CSF Red/Yellow]. Does that match your assessment?"
+
+   This MUST be customised to the specific L1 node. Draft it using evidence gathered in
+   the interview. Do not leave placeholders — write a plausible synthesis the interviewee
+   will confirm or correct.
+
+2. RESPONSE PROBES (use one based on the interviewee's reply)
+   - If validation: "Good — what would you emphasise differently, or what did I miss?"
+     (Even positive responses often surface useful nuance or priority corrections.)
+   - If qualified or defensive: "Where does my picture differ from yours — and why?"
+     (The most valuable response: reveals blind spots or undisclosed constraints.)
+   - If uncertain or deflecting: "What would you want me to verify with other stakeholders
+     before I rely on this summary?"
+     (Signals where this view may be incomplete or politically sensitive.)
+
+3. PEER REFERRAL (executive stakeholder mapping)
+   "To validate this strategic picture, I need to speak with a few more people. I'm thinking
+   [CFO or Finance VP] for ROI and investment rigour, [CTO or IT lead] for digital architecture
+   readiness, [HR or OD lead] for change readiness and talent, and [COO or Operations VP] for
+   execution capacity and risk. Who would you add? And is there anyone whose perspective I
+   should be especially careful to get?"
+   Customise the role list to the organisation's structure. Add partner or supplier stakeholders
+   where the L1 involves significant external dependency.
+
+4. FORWARD ROADMAP & COMMITMENT CHECK
+   "If you were shaping the first 90 days of this transformation — what would you start with?
+   And are you personally committed to making this happen?"
+   Listen for:
+   - H1 thinking (data, governance, quick wins) → sequencing maturity
+   - Direct personal commitment → sponsorship confidence
+   - Conditional commitment ("if the business case stacks up") → conditional support only
+   - Weak commitment ("I support it in principle") → change management risk
+
+TONE NOTE: Offer the synthesis with curiosity, not authority.
+"Here's how I see it — tell me where I'm wrong" is more productive than "here's the summary."
+An interviewee correcting you is a better outcome than nodding agreement.
+"""
+
+_L1_OUTPUT_TEMPLATE = """\
+L1 INTERVIEW SUMMARY TEMPLATE — OUTPUT FORMAT PER NODE
+────────────────────────────────────────────────────────
+Produce one summary per L1 node in this structure.
+
+## Strategic Mandate
+- Primary objective:        [What is this capability FOR — one sentence]
+- Parent company framing:   [Strategic enabler / Operational necessity / Cost centre]
+- KPIs and board reporting: [What gets measured and reported at board level]
+- "Winning" definition:     [2026 and 2030 targets — quantified, vague, or missing]
+- Strategic constraints:    [Binding constraint and "most impactful to relax" answer]
+- Leadership alignment:     [Fully / Mostly / Partially / Not aligned — evidence]
+
+## Competitive Position
+- vs. peers:                [Ahead / On par / Behind — evidence and key dimensions]
+- Competitive moat:         [What would be hard to replicate]
+- Threats:                  [Technology / Regulatory / Competitive / Talent / Inertia]
+- Missing capability:       [What they would acquire from a best-in-class peer]
+
+## Current Maturity (0–4)
+- Data:                     [0–4 + one-sentence rationale from interview evidence]
+- Decision architecture:    [0–4 + one-sentence rationale]
+- Process:                  [0–4 + one-sentence rationale]
+- Technology:               [0–4 + one-sentence rationale]
+- Organisation:             [0–4 + one-sentence rationale]
+- Composite:                [0–4 + binding constraint dimension]
+- Binding constraint:       [Which dimension holds back the others, and why]
+
+## Value Architecture
+- Value streams (quantified):
+  | Stream               | Current £ value | TAV potential | Realisation % |
+  |----------------------|-----------------|---------------|---------------|
+  | Cost avoidance       | [£]             | [£]           | [%]           |
+  | Revenue protection   | [£]             | [£]           | [%]           |
+  | Risk reduction       | [£]             | [£]           | [%]           |
+  | Strategic enablement | [qualitative]   | [qualitative] | n/a           |
+- Total TAV:              [£Xm–£Ym annual estimate]
+- Realised today:         [% of TAV]
+- Value gap (opportunity): [£ estimate driving transformation urgency]
+
+## Digital Transformation Readiness
+- Digital track record:    [Successful / Mixed / Poor — key examples and lessons]
+- Change appetite:         [High / Medium / Low — tone and specific concerns named]
+- Aspiration (magic wand): [5-year capability description + value unlocked]
+- Absorption capacity:     [Dedicated team / BAU / External support required]
+- Prioritisation stance:   [Automation / Decision optimisation / Both]
+
+## Three-Horizon Roadmap
+- H1 (0–12m):   [Priority initiatives + expected value + key risk]
+- H2 (12–24m):  [Priority initiatives + expected value + key risk]
+- H3 (24–36m+): [Optimisation goal + competitive advantage description]
+- Critical path: [Sequence logic — what must happen first, what can parallel]
+- Budget:        [Total + H1/H2/H3 distribution if stated]
+- ROI estimate:  [Payback period / benefit multiple / risk-adjusted range]
+
+## Critical Success Factors
+| CSF                         | Status        | Mitigation                       | Owner   |
+|-----------------------------|---------------|----------------------------------|---------|
+| Executive sponsorship       | Green/Amber/Red | [Action]                        | [Role]  |
+| Data governance foundation  | Green/Amber/Red | [Action]                        | [Role]  |
+| Organisational alignment    | Green/Amber/Red | [Action]                        | [Role]  |
+| Technology integration      | Green/Amber/Red | [Action]                        | [Role]  |
+| Benefit realisation         | Green/Amber/Red | [Action]                        | [Role]  |
+
+## Commitment Assessment
+- Personal commitment level: [Strong / Conditional / Weak — evidence from interview]
+- Deprioritisation triggers: [Events that would cause this to be cut or paused]
+- Board-level protection:    [Yes / No / Unknown]
+
+## Peer Interview Priorities
+Executive stakeholders:
+- [ ] [CFO / Finance VP — ROI and investment rigour]
+- [ ] [CTO / IT lead — digital architecture readiness]
+- [ ] [HR / OD lead — change readiness and talent gaps]
+- [ ] [COO / Operations VP — execution capacity and risk]
+Functional L2 leaders:
+- [ ] [Key L2 node leads sitting under this L1 — by node label]
+Partner stakeholders:
+- [ ] [Major external partners or suppliers where applicable]
+"""
+
+
 def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
     return Agent(
         role="Interaction Designer",
@@ -447,6 +915,7 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
             "data sources can be compared and synthesised.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _L1_PRINCIPLES + "\n"
             + _L2_PRINCIPLES +
             "\nYou never flatten these distinctions. A script written at the wrong level — "
             "asking a practitioner about strategy, or asking a GM about daily execution steps "
@@ -475,12 +944,15 @@ def create_interaction_designer_task(
 
     return Task(
         description=(
-            "Design interview scripts AND maturity questionnaires for every active L1, L2, and "
-            "L3 value chain node. L1 and L2 nodes require both an interview script and a maturity "
-            "questionnaire. L3 nodes require an interview script only — the interview captures the "
-            "qualitative, execution-level evidence that L2 questionnaires cannot reach.\n\n"
+            "Design integrated interview scripts for every active L1, L2, and L3 value chain node. "
+            "All levels use a single script artefact — maturity ratings are embedded within each "
+            "section as maturity_rating blocks, captured after the narrative discussion. There is "
+            "no separate questionnaire artefact. L3 nodes do not include maturity_rating blocks.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _L1_FRAMING_TEMPLATE + "\n"
+            + _L1_SECTION_LIBRARY + "\n"
+            + _L1_SYNTHESIS_TEMPLATE + "\n"
             + _L2_FRAMING_TEMPLATE + "\n"
             + _L2_SECTION_LIBRARY + "\n"
             + _L2_SYNTHESIS_TEMPLATE + "\n"
@@ -495,22 +967,84 @@ def create_interaction_designer_task(
             "(governance posture, known capability gaps, adopted standards, language used).\n\n"
 
             "── L1 NODES (strategic / portfolio level — GMs and value-stream owners) ────────\n"
-            "4. For each L1 node:\n"
-            "   a) Identify 3–4 strategic assessment dimensions focusing on strategic alignment, "
-            "capability roadmaps, and value realisation "
-            "(e.g. Vision & Strategy, Portfolio Governance, Capability Investment, "
-            "Value Realisation).\n"
-            "   b) Design an INTEGRATED INTERVIEW SCRIPT where each section covers one dimension "
-            "with both narrative questions AND an embedded maturity rating at the end:\n"
-            "      - 3–4 sections, one per strategic dimension\n"
-            f"      - {preferred_questions} narrative questions per section (open, exploratory)\n"
-            "      - Each section ends with a maturity_rating block (see schema below) — the "
-            "rating is captured AFTER the narrative discussion, not before\n"
-            "      - welcome_message and closing_message (warm, senior-level tone)\n"
-            "      - research_brief and study_objectives framed at portfolio level\n"
-            "      - follow_up_branches and evasion_signals per question\n"
-            "      - target duration: 20–25 minutes\n"
-            "   No separate questionnaire. The maturity ratings are embedded in the script.\n\n"
+            "4. For each L1 node, apply all 10 L1 Interview Principles from your backstory. "
+            "Core question: 'Does this capability deliver the value we need?' "
+            "Time horizon: 3–5 years. "
+            "AI opportunity: decision optimisation, competitive advantage, strategic enablement. "
+            "Success metric: TAV realised, maturity trajectory, transformation ROI.\n\n"
+            "   PREPARATION (before designing any section):\n"
+            "   - Review which L2 nodes and activities sit beneath this L1 (from value_chain_registry)\n"
+            "   - Draft a TAV narrative: cost avoidance + revenue protection + risk reduction + strategic value\n"
+            "   - Assess node strategic priority: standard (45–55 min) or senior deep-dive (60–75 min)\n"
+            "   - Identify triangulation stakeholders: which executive peers should be interviewed after\n\n"
+            "   a) FRAMING BLOCK — mandatory, written before sections.\n"
+            "   Using the L1 Framing Block guide from your task context, write a framing_block\n"
+            "   object customised to this specific L1 capability area:\n"
+            "   - positioning: 1–2 sentences framing the capability as a strategic asset,\n"
+            "     naming the four things the assessment will explore (value creation, strategic\n"
+            "     constraints, digital opportunity, ROI). Do NOT say 'we're mapping the value chain'.\n"
+            "   - context_setting: 4–5 bullets naming the capability health check dimensions —\n"
+            "     strategic clarity, competitive position, maturity trajectory, digital readiness,\n"
+            "     transformation roadmap — customised with the client's language and context\n"
+            "   - dual_lenses.efficiency: capability health lens — 'First, I want to understand\n"
+            "     how this capability creates value today — constraints, ROI, and the cost of\n"
+            "     the current maturity ceiling'\n"
+            "   - dual_lenses.effectiveness: transformation lens — 'Second, what's possible —\n"
+            "     where digital and AI could unlock the next level, and how to sequence for ROI'\n"
+            "   The framing_block is spoken before Section 1. It ensures the interviewee thinks\n"
+            "   strategically, not operationally, from the first question.\n\n"
+            "   b) SECTION SELECTION — select 4–5 sections from the L1 Section Library.\n"
+            "   Sections S1, S2, and S3 are mandatory for every L1 interview.\n"
+            "   Select 1–2 additional sections based on:\n"
+            "   - Digital transformation is the primary agenda → include S4\n"
+            "   - Roadmap or sequencing clarity needed → include S5\n"
+            "   - Change readiness or sponsorship risk identified → include S6\n"
+            "   - Value case rigour needed for board approval → include S7\n"
+            "   - Interviewee has cross-L1 or cross-organisation visibility → add S8\n"
+            "   Standard L1 (45–55 min): S1 + S2 + S3 + select 1 from {S4, S5, S6} + closing\n"
+            "   Deep-dive L1 (60–75 min): S1 + S2 + S3 + S4 + select 2 from {S5, S6, S7, S8} + closing\n\n"
+            "   c) SECTION DESIGN — for each selected section, design specific questions from its\n"
+            "   themes (defined in the L1 Section Library). For every section:\n"
+            f"      - {preferred_questions} narrative questions per section, probing the section themes\n"
+            "      - follow_up_branches: 2 probing follow-ups per question\n"
+            "      - evasion_signals: phrases signalling the interview has drifted to the wrong level —\n"
+            "        watch for operational drift ('it depends on the team', 'the process varies by site')\n"
+            "        and strategic deflection ('we're well aligned', 'finance drives that')\n"
+            "      - Listen patterns to embed as probing_instructions for critical L1 signals:\n"
+            "        Strategic clarity: explicit / implicit / conflicting / missing mandate\n"
+            "        Value framing: 'strategic enabler' / 'operational necessity' / 'cost centre'\n"
+            "        Alignment test: 'would peers give the same answer?' — confident / qualified / deflecting\n"
+            "        Maturity signals: reactive/proactive ratio, data integration, decision confidence,\n"
+            "        feedback loop speed, heroics vs. routine effort ratio\n"
+            "      - target_minutes per section aligned to the library guidance\n\n"
+            "   d) MATURITY RATINGS — each section ends with a maturity_rating block.\n"
+            "   Rating is ALWAYS captured after the narrative, never before.\n"
+            "   Use the maturity narrative signals from the L1 Section Library for the selected section.\n"
+            "   Labels must use 0–4 notation and echo the narrative language — not generic terms.\n"
+            "   For S3 (Current State Capability Maturity): the maturity_rating captures the COMPOSITE\n"
+            "   maturity across all five dimensions. Phrase the prompt so the interviewee gives an\n"
+            "   overall 0–4 that reflects all dimensions together. The binding constraint dimension\n"
+            "   is captured in the narrative questions, not the rating.\n\n"
+            "   e) SYNTHESIS CHECK — mandatory closing element, written after sections.\n"
+            "   Using the L1 Synthesis Check guide from your task context, write a synthesis_check\n"
+            "   object with:\n"
+            "   - synthesis_prompt: a draft synthesis of the L1's strategic mandate, composite\n"
+            "     maturity, binding constraint, value opportunity (£ estimate), critical path,\n"
+            "     and biggest transformation risk — written as the interviewer would speak it,\n"
+            "     ending with 'Does that match your assessment?' Customise to the node.\n"
+            "   - response_probes: three probe phrases covering positive / defensive / uncertain replies\n"
+            "   - peer_referral: stakeholder mapping question naming CFO, CTO, HR/OD, COO, and any\n"
+            "     major external partners relevant to this L1 node\n"
+            "   - forward_roadmap: 90-day question ('What would you start with?') plus commitment\n"
+            "     check ('Are you personally committed to making this happen?')\n\n"
+            "   f) Complete script fields:\n"
+            "      - research_brief and study_objectives framed at strategic / portfolio level\n"
+            "      - welcome_message: warm, senior-appropriate, frames this as a strategic dialogue\n"
+            "        about capability and transformation — not about operational processes\n"
+            "      - closing_message: follows synthesis_check; thanks, confirms stakeholder\n"
+            "        interviews to follow and when findings will be shared\n\n"
+            "   g) After drafting, produce one L1 Interview Summary using this template:\n"
+            + _L1_OUTPUT_TEMPLATE + "\n"
 
             "── L2 NODES (operational / process-stage level — process managers) ─────────────\n"
             "5. For each L2 node, apply all 10 L2 Interview Principles from your backstory. "
@@ -663,8 +1197,8 @@ def create_interaction_designer_task(
             "       \"research_brief\": \"...\",\n"
             "       \"study_objectives\": [\"...\"],\n"
             "       \"welcome_message\": \"...\",\n"
-            "       // L2 ONLY — framing block spoken before any questions:\n"
-            "       \"framing_block\": {   // PRESENT for L2 only; OMIT for L1 and L3\n"
+            "       // L1 and L2 — framing block spoken before any questions:\n"
+            "       \"framing_block\": {   // PRESENT for L1 and L2; OMIT for L3\n"
             "         \"positioning\": \"We're mapping [L2 cluster] — the strategic layer "
             "that coordinates [L3 names] and feeds [key decisions].\",\n"
             "         \"context_setting\": [\n"
@@ -714,8 +1248,8 @@ def create_interaction_designer_task(
             "           }\n"
             "         }\n"
             "       ],\n"
-            "       // L2 ONLY — synthesis check spoken after all sections, before closing:\n"
-            "       \"synthesis_check\": {   // PRESENT for L2 only; OMIT for L1 and L3\n"
+            "       // L1 and L2 — synthesis check spoken after all sections, before closing:\n"
+            "       \"synthesis_check\": {   // PRESENT for L1 and L2; OMIT for L3\n"
             "         \"synthesis_prompt\": \"Before I let you go — based on what you've "
             "told me, here's how I see this cluster: [customised synthesis of intent, "
             "maturity, constraint, data gap, opportunity]. Does that match your assessment?\",\n"
@@ -741,13 +1275,34 @@ def create_interaction_designer_task(
             "in the client's operational context.\n"
             "   Use SQLiteStateTool with operation='write', key='interview_scripts', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "8. Save L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 5e) as a "
-            "JSON object keyed by node_label:\n"
-            "   { \"<node_label>\": { <fields from L2 Interview Summary Template> } }\n"
-            "   Use SQLiteStateTool with operation='write', key='l2_interview_summaries', "
+            "8. Save INTERVIEW SUMMARIES as two separate artefacts:\n"
+            "   a) L1 INTERVIEW SUMMARIES (one per L1 node, produced in step 4g):\n"
+            "      { \"<node_label>\": { <fields from L1 Interview Summary Template> } }\n"
+            "      Use SQLiteStateTool with operation='write', key='l1_interview_summaries', "
+            "agent_name='interaction_designer' to save this.\n"
+            "   b) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 5g):\n"
+            "      { \"<node_label>\": { <fields from L2 Interview Summary Template> } }\n"
+            "      Use SQLiteStateTool with operation='write', key='l2_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n\n"
             "9. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
             "   • outputs/interview_scripts.json — integrated scripts for all L1, L2, and L3 nodes.\n"
+            "   For L1 scripts, check:\n"
+            "     FRAMING BLOCK\n"
+            "     - Does the positioning frame the capability as a STRATEGIC ASSET (not a process map)?\n"
+            "     - Are the context_setting bullets the capability health check agenda (strategic clarity,\n"
+            "       competitive position, maturity trajectory, digital readiness, transformation roadmap)?\n"
+            "     - Do the dual_lenses cover capability health AND transformation potential?\n"
+            "     SECTIONS\n"
+            "     - Are S1, S2, and S3 present and mandatory?\n"
+            "     - Are the right optional sections selected for this node's strategic context?\n"
+            "     - Do questions probe at strategic level (mandate, value, maturity) not operational?\n"
+            "     - Does S3 cover all five maturity dimensions (Data, Decision, Process, Tech, Org)?\n"
+            "     - Do scale labels echo the narrative language (not generic CMMI terms)?\n"
+            "     SYNTHESIS CHECK\n"
+            "     - Does synthesis_prompt cover mandate + composite maturity + binding constraint\n"
+            "       + value opportunity + critical path + biggest risk? Is it customised, not templated?\n"
+            "     - Does peer_referral name CFO, CTO, HR/OD, COO, and relevant external partners?\n"
+            "     - Does forward_roadmap ask both the 90-day question AND the commitment check?\n"
             "   For L2 scripts, check:\n"
             "     FRAMING BLOCK\n"
             "     - Does the positioning sentence correctly name the L2 cluster, its L3 inputs,\n"
@@ -767,20 +1322,24 @@ def create_interaction_designer_task(
             "   For L3 scripts, check:\n"
             "     - No framing_block, no synthesis_check, no maturity_rating blocks\n"
             "     - Exactly 8 sections in prescribed order with correct target_minutes\n"
+            "   • outputs/l1_interview_summaries.json — capability strategy prep per L1 node\n"
             "   • outputs/l2_interview_summaries.json — decision architecture prep per L2 node\n"
             "   Reply \"approved\" to proceed, or provide revision notes.'\n"
             "10. If revision notes received, revise and call HumanInputTool again. "
             "Repeat at most 3 times total.\n"
         ),
         expected_output=(
-            "Two artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
-            "integrated script per L1, L2, and L3 node; L1 and L2 sections each contain a "
-            "maturity_rating block with dimension-specific scale labels captured after the "
-            "narrative discussion; L3 scripts have exactly 8 sections with no maturity_rating; "
-            "(2) l2_interview_summaries.json — one L2 Interview Summary per L2 node containing "
-            "decision architecture, data landscape, orchestration friction, monetised opportunity, "
-            "and peer interview priorities. No separate questionnaire artefact. "
-            "All approved by human reviewer."
+            "Three artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
+            "integrated script per L1, L2, and L3 node; L1 and L2 scripts include framing_block "
+            "and synthesis_check; L1, L2 sections include maturity_rating blocks with "
+            "dimension-specific scale labels captured after narrative; L3 scripts have exactly "
+            "8 sections with no framing_block, no synthesis_check, no maturity_rating; "
+            "(2) l1_interview_summaries.json — one L1 Interview Summary per L1 node covering "
+            "strategic mandate, competitive position, five-dimension maturity, value architecture, "
+            "digital readiness, three-horizon roadmap, CSFs, and peer interview priorities; "
+            "(3) l2_interview_summaries.json — one L2 Interview Summary per L2 node covering "
+            "decision architecture, data landscape, orchestration friction, and monetised opportunity. "
+            "No separate questionnaire artefact. All approved by human reviewer."
         ),
         agent=agent,
     )

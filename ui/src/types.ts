@@ -435,9 +435,9 @@ export interface InterviewScript {
   research_brief: string
   study_objectives: string[]
   welcome_message: string
-  framing_block?: FramingBlock      // L2 only — spoken before sections
+  framing_block?: FramingBlock      // L1 and L2 — spoken before sections
   sections: InterviewSection[]
-  synthesis_check?: SynthesisCheck  // L2 only — spoken after sections, before closing
+  synthesis_check?: SynthesisCheck  // L1 and L2 — spoken after sections, before closing
   closing_message: string
 }
 
