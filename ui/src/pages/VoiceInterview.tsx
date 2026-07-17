@@ -374,6 +374,19 @@ export default function VoiceInterview() {
     setCurrentQuestion(script.welcome_message)
     await speakText(script.welcome_message, voiceId)
 
+    // Framing block (L2 only) — spoken after welcome, before first question
+    if (script.framing_block) {
+      const fb = script.framing_block
+      const framingText = [
+        fb.positioning,
+        ...fb.context_setting,
+        fb.dual_lenses.efficiency,
+        fb.dual_lenses.effectiveness,
+      ].join(' ')
+      setCurrentQuestion(fb.positioning)
+      await speakText(framingText, voiceId)
+    }
+
     let questionNumber = 0
 
     sectionRatingsRef.current = []
@@ -429,6 +442,26 @@ export default function VoiceInterview() {
         sectionRatingsRef.current.push({ section_title: section.title, dimension: mr.dimension, rating })
         setPhase('interviewing')
       }
+    }
+
+    // Synthesis check (L2 only) — spoken after all sections, before closing
+    if (script.synthesis_check) {
+      const sc = script.synthesis_check
+      setCurrentQuestion(sc.synthesis_prompt)
+      await speakText(sc.synthesis_prompt, voiceId)
+      // Listen for the interviewee's confirmation or correction
+      const synthesisResponse = await listenWithRestart(lang)
+      qaRef.current.push({ question: sc.synthesis_prompt, answer: synthesisResponse })
+      // Peer referral
+      setCurrentQuestion(sc.peer_referral)
+      await speakText(sc.peer_referral, voiceId)
+      const referralResponse = await listenWithRestart(lang)
+      qaRef.current.push({ question: sc.peer_referral, answer: referralResponse })
+      // Forward roadmap
+      setCurrentQuestion(sc.forward_roadmap)
+      await speakText(sc.forward_roadmap, voiceId)
+      const roadmapResponse = await listenWithRestart(lang)
+      qaRef.current.push({ question: sc.forward_roadmap, answer: roadmapResponse })
     }
 
     // Closing

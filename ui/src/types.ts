@@ -402,6 +402,26 @@ export interface InterviewSection {
   maturity_rating?: MaturityRating    // present for L1/L2 sections; absent for L3
 }
 
+export interface FramingBlock {
+  positioning: string
+  context_setting: string[]
+  dual_lenses: {
+    efficiency: string
+    effectiveness: string
+  }
+}
+
+export interface SynthesisCheck {
+  synthesis_prompt: string
+  response_probes: {
+    if_positive: string
+    if_defensive: string
+    if_uncertain: string
+  }
+  peer_referral: string
+  forward_roadmap: string
+}
+
 export interface SectionMaturityRating {
   section_title: string
   dimension: string
@@ -415,8 +435,10 @@ export interface InterviewScript {
   research_brief: string
   study_objectives: string[]
   welcome_message: string
-  closing_message: string
+  framing_block?: FramingBlock      // L2 only — spoken before sections
   sections: InterviewSection[]
+  synthesis_check?: SynthesisCheck  // L2 only — spoken after sections, before closing
+  closing_message: string
 }
 
 export interface InterviewSession {

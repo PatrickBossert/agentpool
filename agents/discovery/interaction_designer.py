@@ -137,6 +137,221 @@ they are persistent lenses to hold across the entire conversation.
     Maya's role: not to resolve politics, but to name them — this defines change management scope.
 """
 
+_L2_FRAMING_TEMPLATE = """\
+L2 FRAMING BLOCK — MANDATORY OPENING STRUCTURE
+────────────────────────────────────────────────
+Every L2 script must begin with a framing_block that orients the interviewee to the
+decision-cluster model BEFORE any questions are asked. This is separate from the
+welcome_message (which is personal and warm) and from Section 1 (which probes).
+
+The framing_block has three fixed parts. Customise each to the specific node:
+
+POSITIONING (1–2 sentences)
+   Template: "We're mapping [L2 cluster name] — the strategic layer that coordinates
+   [list of L3 activity names] and feeds [key decisions, e.g. capex prioritisation,
+   fleet strategy, works programming]."
+   Purpose: Signals immediately that this is not an operational interview; it is
+   a decision architecture conversation. Sets the cognitive frame before Q1.
+
+CONTEXT SETTING (2–3 bullets)
+   Template:
+   • "This cluster sits between [upstream governance / L1 node name] and
+      [downstream execution teams / L3 node names]."
+   • "We want to understand how decisions *flow* through this cluster — not just
+      what happens, but where decision quality is built in or lost."
+   • "And where better data, clearer governance, or smarter analysis could unlock
+      more value for [strategic objective, e.g. the net-zero programme / capex ROI]."
+   Purpose: Establishes the L2's position in the value chain so the interviewee can
+   speak to upstream/downstream relationships without prompting.
+
+DUAL LENSES (2 framing statements)
+   Efficiency lens (fixed): "First, I want to understand coordination friction —
+   what slows decisions down, creates rework, or blocks alignment."
+   Effectiveness lens (fixed): "And second, I want to understand decision quality —
+   what decisions are being made here, how confident you are in them, and what
+   decisions you *should* be making but currently can't."
+   Purpose: Names both lenses explicitly so the interviewee knows you are interested
+   in more than operational speed. The effectiveness lens often unlocks disclosures
+   that a pure efficiency frame would never surface.
+
+TONE NOTE: The framing_block is spoken by the interviewer, not read from a screen.
+Write it in natural spoken English — shorter sentences, no jargon, no bullet structure.
+"""
+
+_L2_SECTION_LIBRARY = """\
+L2 SECTION LIBRARY — SELECT 4–5 SECTIONS FOR EACH NODE
+────────────────────────────────────────────────────────
+The following 8 thematic sections form a reference library. Maya selects the most
+relevant 4–5 sections for each node based on its strategic priority and available
+interview time (target: 25–30 minutes standard; 45–60 minutes for senior stakeholders
+or high-priority nodes). Sections S1 and S2 are mandatory for every L2.
+
+Each section maps to a theme — design specific questions from these themes, informed
+by the node's L3 inputs, downstream consumers, and corporate context.
+
+MANDATORY ─────────────────────────────────────────────────────────────────────────
+
+S1. Strategic Intent & Decision Architecture (~8 min standard, ~12 min deep-dive)
+   Core themes:
+   - Decision mapping: what strategic or operational decisions does this L2 exist to support?
+   - Decision dependency: who makes each decision, at what cadence, based on what inputs?
+   - Unmade decisions: what decision would be *better* if you had perfect information?
+   - Decision quality: confidence levels, how errors surface, how often decisions are reversed
+   - Strategic alignment: which corporate KPI does this L2's output directly trace to?
+   Maturity anchor: Decision Clarity
+   Maturity narrative signals:
+     0 (Ad-hoc): "It depends who's in the room." / "The boss decides."
+     1 (Initial): "We have a process but people don't always follow it."
+     2 (Developing): "We have documented criteria; we use them most of the time."
+     3 (Managed): "We measure decision inputs and track outcomes quarterly."
+     4 (Predictive): "We model scenarios and forecast impacts before deciding."
+
+S2. Decision Maturity & Governance (~10 min)
+   Core themes:
+   - Maturity assessment: how structured, documented, and evidence-based are decisions?
+     (Use narrative diagnostic questions from S1 maturity signals — do NOT use jargon)
+   - Decision rights: who decides at each step? Is it clear, documented, and stable?
+   - Evidence & discipline: what data is used? Are assumptions documented? Can decisions
+     be defended if challenged?
+   - Red flag signals: "It depends who's in the room" → governance gap; "gut feel mostly"
+     → ad-hoc; "we have a template but skip steps" → developing
+   Maturity anchor: Evidence-base & Governance
+   Maturity narrative signals:
+     0: "No one asks us to justify decisions — we just make them."
+     1: "We collect some data but it's not integrated into the decision."
+     2: "We have a template for documenting our assumptions."
+     3: "We document assumptions and revisit them at quarterly reviews."
+     4: "We track decision outcomes and update our models from results."
+
+RECOMMENDED — INCLUDE 2–3 BASED ON NODE CONTEXT ──────────────────────────────────
+
+S3. Data Landscape & Decision Enablement (~8 min)
+   Core themes:
+   - Input data inventory: for each key decision, what data feeds it? Name systems.
+   - Integration maturity: is data manual-combined, partially automated, or real-time?
+     (Siloed / Partially integrated / Integrated / Real-time intelligent)
+   - Data trust: do decision-makers trust the data? What would need to be true to trust
+     it fully? Who is accountable if data is wrong?
+   - Hidden opportunities: what data exists in adjacent systems that isn't used?
+     What's stopping integration? (Technical / Ownership / Governance / Friction)
+   - Hidden cost: how many hours per week does the team spend extracting or combining
+     data manually? (Often 20–50 hrs/week — translate to £ per year)
+   Best for: nodes where data governance is a known pain, or where integration is fragmented
+
+S4. Decision Velocity & Orchestration Friction (~8 min)
+   Core themes:
+   - Cycle time: how long from "we need to make this decision" to "decision communicated"?
+     Break down into active work / wait time / rework time
+   - Bottleneck: of that time, what's unavoidable? What's friction? If you had to cut it
+     in half, where would you start?
+   - L3 handoffs: which L3 outputs does this L2 depend on? Are they reliable, timely,
+     fit for purpose? What are the workarounds when they're not?
+   - Cross-L2 dependencies: does this L2 depend on outputs from another L2? How are
+     changes in that upstream L2 handled?
+   Best for: nodes where decision cycle time is a known pain, or where cross-L2 misalignment
+   is visible in the project context
+
+S5. Decision Quality Gaps & Maturity Opportunities (~8 min)
+   Core themes:
+   - Scenario planning: do decision-makers consider multiple scenarios, or make a best guess?
+     (Ad-hoc / Structured upside-downside / 3–5 weighted scenarios / Adaptive forecasting)
+   - Learning loops: after a major decision, is outcome tracked? How long until you find out
+     if it was right? What prevents learning faster?
+   - Hidden opportunity ceiling: what decision *would you like* to make in this L2 but can't?
+     What would it take? (Data? Analysis? Governance? Tools?)
+   - Aspiration monetisation: how much value would that new capability unlock?
+   Best for: high-priority nodes where aspiration and value opportunity need to be quantified
+
+S6. Orchestration Effectiveness & Downstream Impact (~8 min)
+   Core themes:
+   - Execution fidelity: what % of this L2's decisions/plans are executed as intended at L3?
+     What causes deviation? (Unrealistic plan / conditions changed / communication unclear /
+     resources unavailable / L3 has better local information)
+   - Value realisation: can you trace a decision in this L2 to a specific business outcome?
+     Do you measure the value your decisions create?
+   - Feedback from L3 executors: "I'm going to ask your downstream teams the same questions —
+     what should I expect to hear?" (Confident positive = alignment; defensive/qualified =
+     friction; "I'm not sure" = transparency gap)
+   Best for: nodes where L3 execution fidelity is a concern, or where value realisation
+   is not being tracked
+
+OPTIONAL — INCLUDE FOR SENIOR STAKEHOLDERS OR HIGH-PRIORITY NODES ──────────────────
+
+S7. Hidden Orchestration Opportunities (~6 min)
+   Core themes:
+   - Cross-L3 optimisation: are there decisions within individual L3s that, if coordinated
+     at this L2, could produce better outcomes? What's blocking that coordination?
+   - New decision opportunities: are there decisions that *should* live in this L2 but
+     currently don't? Why not? (Too complex / No authority / Data unavailable /
+     Too many stakeholders)
+   - Feedback loop redesign: what would happen if you had real-time feedback on L3 outcomes?
+     What is the latency cost of the current feedback loop?
+   Best for: strategically critical nodes, or where the interviewee is a senior decision-maker
+   with cross-portfolio visibility
+
+NOTE ON SECTION 7 (Comparative Assessment from 9-section reference):
+   Do NOT include cross-L2 comparative ranking questions in the interview script.
+   Asking interviewees to rank this L2 against others they may not govern produces
+   unreliable answers. Comparative assessment is Maya's analyst synthesis task,
+   done after all interviews, not an interview question.
+
+CLOSING (ALWAYS INCLUDE — see synthesis_check schema) ──────────────────────────────
+   After all sections: synthesis_check (described in schema below), then peer referral
+   ("Who else should I speak to?"), then closing_message.
+   Target: 5 minutes.
+
+SECTION SELECTION RULES
+   Standard L2 (25–30 min):  S1 + S2 + select 2 from {S3, S4, S5, S6} + closing
+   Deep-dive L2 (45–60 min): S1 + S2 + S3 + S4 + select 1–2 from {S5, S6, S7} + closing
+   Priority signals for selection:
+   - Known data governance pain → include S3
+   - Decision cycle time > 4 weeks → include S4
+   - High-value strategic node → include S5
+   - L3 execution complaints → include S6
+   - Senior interviewee with cross-portfolio view → add S7
+"""
+
+_L2_SYNTHESIS_TEMPLATE = """\
+L2 SYNTHESIS CHECK — MANDATORY CLOSING ELEMENT
+────────────────────────────────────────────────
+Before closing_message, every L2 script must include a synthesis_check that validates
+the interviewer's emerging picture with the interviewee. This is not a question — it
+is a reflective summary offered to the interviewee for correction and endorsement.
+
+The synthesis_check has four elements:
+
+1. SYNTHESIS PROMPT (interviewer speaks this)
+   Template: "Before I let you go — based on what you've told me, here's how I see
+   this cluster: [brief synthesis of strategic intent], [current maturity level and
+   why], [the biggest constraint on decision quality], [the key data gap], [the value
+   opportunity]. Does that match your assessment?"
+   This must be customised to the node in the script. Do not leave it as a template —
+   Maya should draft a plausible synthesis based on the node's known context, which the
+   interviewee will then confirm or correct.
+
+2. RESPONSE PROBES (interviewer uses one based on the reply)
+   - If positive confirmation: "Good — what would you add or emphasise differently?"
+   - If qualified or defensive: "Where does my picture differ from yours?"
+     (This is the most valuable response — it surfaces blind spots or political sensitivities
+     that the interviewee would not have volunteered as an answer to a direct question.)
+   - If uncertain or deflecting: "What would you want me to verify with others?"
+     (Flags where this interviewee's view may be incomplete or isolated.)
+
+3. PEER REFERRAL
+   "Who else should I speak to in order to get a full picture of this cluster?
+   I'm looking for [upstream input providers / downstream executors /
+   governance stakeholders / data and IT owners]."
+
+4. FORWARD ROADMAP
+   "If you were shaping how we improve this cluster, where would you start —
+   quick wins in the next 6 months, or building the foundations for the next 2 years?
+   And what's your biggest concern about making that change?"
+
+TONE NOTE: The synthesis should feel like a collegial debrief, not a report-back.
+The interviewer is checking understanding and inviting correction — not presenting
+conclusions. Language: "Here's how I see it — tell me where I'm wrong."
+"""
+
 _L2_MATURITY_TEMPLATE = """\
 MATURITY ASSESSMENT TEMPLATE — PER L2 NODE
 ────────────────────────────────────────────
@@ -162,11 +377,11 @@ Produce one summary per L2 node in this structure. This is the deliverable, not 
 - Strategic priority: [Net-zero / Cost control / Risk / Service / other]
 
 ## Current Maturity
-- Decision clarity:  [L1–L5 + one-sentence rationale]
-- Evidence-base:     [L1–L5 + key gaps identified]
-- Data integration:  [Siloed / Partial / Integrated / Real-time]
+- Decision clarity:  [0–4 rating: 0=Ad-hoc, 1=Initial, 2=Developing, 3=Managed, 4=Predictive + rationale]
+- Evidence-base:     [0–4 rating + key gaps identified]
+- Data integration:  [Siloed / Partially integrated / Integrated / Real-time]
 - Feedback loops:    [None / Annual / Quarterly / Monthly / Real-time]
-- Overall maturity:  [L1–L5]
+- Overall maturity:  [0–4 composite + one-sentence justification]
 
 ## Key Decision Quality Gaps
 1. [Gap and monetised impact — e.g. "Risk prioritisation is gut-feel: est. £5M annual overrun"]
@@ -185,8 +400,8 @@ Produce one summary per L2 node in this structure. This is the deliverable, not 
 - Downstream misalignment: [How well do L3s execute against this L2's decisions?]
 
 ## Maturity Trajectory & Prerequisites
-- Current state: [e.g. L2–L3 analytical, annual review cycle, siloed data]
-- Aspiration:    [e.g. L4 real-time, continuous learning, integrated data]
+- Current state: [e.g. 2 (Developing) — analytical but annual cycle, siloed data]
+- Aspiration:    [e.g. 4 (Predictive) — real-time, continuous learning, integrated data]
 - Prerequisites to unlock:
   - [Data integration (6–9 months)]
   - [Decision governance review (2–3 months)]
@@ -266,6 +481,9 @@ def create_interaction_designer_task(
             "qualitative, execution-level evidence that L2 questionnaires cannot reach.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _L2_FRAMING_TEMPLATE + "\n"
+            + _L2_SECTION_LIBRARY + "\n"
+            + _L2_SYNTHESIS_TEMPLATE + "\n"
             + standards_block +
             "Steps:\n"
             "1. Use SQLiteStateTool with operation='read', key='value_chain_registry', "
@@ -298,59 +516,78 @@ def create_interaction_designer_task(
             "5. For each L2 node, apply all 10 L2 Interview Principles from your backstory. "
             "Core question: 'How do we orchestrate & decide better?' Time horizon: next quarter/year. "
             "AI opportunity: decision support. Success metric: decision quality / value realisation.\n\n"
-            "   BEFORE designing the script, complete this preparation:\n"
+            "   PREPARATION (before designing any section):\n"
             "   - Identify all L3 nodes that feed this L2 (from value_chain_registry)\n"
             "   - Identify the downstream consumers of this L2's decisions\n"
-            "   - Draft a monetisation narrative: what is the £ impact of poor decisions here?\n"
-            "     Apply the formula: Frequency × Impact = Cost OR Decision quality × Volume = Value\n"
-            "   - Sketch the decision architecture: what decisions are made, who makes them, "
-            "what data flows in?\n"
-            "   - Identify 3–5 peer interviewee perspectives to triangulate: owner, consumer, "
-            "governance, support\n\n"
-            "   a) Frame the L2 as a DECISION CLUSTER, not a sequence. The sections of the "
-            "interview script should map to the orchestration logic across the L3s, not to "
-            "the execution steps of any single L3. Ask: what decision do these L3s collectively "
-            "enable?\n\n"
-            "   b) Identify 3–5 assessment dimensions rooted in the L2 maturity anchors: "
-            "evidence-base, rigor, learning loops, governance "
-            "(e.g. Decision Evidence, Process Governance, Cross-functional Coordination, "
-            "Outcome Tracking, Improvement Rigour).\n\n"
-            "   c) Design an INTERVIEW SCRIPT with:\n"
-            "      - 4–5 sections aligned to the L2 orchestration dimensions\n"
-            f"      - {preferred_questions} questions per section, probing orchestration "
-            "friction: misalignment, siloed decisions, slow feedback loops\n"
-            "      - Opening framing: anchor on 'How do we orchestrate & decide better?' — "
-            "use portfolio-level language (quarters, capex, strategic feasibility)\n"
-            "      - Root constraint probe per section: after each stated pain, include a "
-            "follow-up that separates the stated problem from the root constraint "
-            "(e.g. 'What's actually stopping a faster decision here?')\n"
-            "      - Feedback loop probe: 'After this decision was made, did you track "
-            "whether it delivered the expected value?'\n"
-            "      - Governance probe: 'Who makes this decision? Is that clear to everyone?'\n"
-            "      - Data mapping probe: for each decision, ask which data sources feed it "
-            "and rate their integration (Siloed / Partially integrated / Integrated / Real-time)\n"
-            "      - Aspiration section: ask about DECISION SUPPORT — what would help them "
-            "decide better or faster; do NOT ask about automation (that is L3)\n"
-            "      - Impact section: frame around cost of poor DECISIONS — misallocated "
-            "investment, missed signals, delayed pivots. Monetise with Frequency × Impact "
-            "or Decision quality × Volume formulae. Not operational rework/downtime (L3).\n"
-            "      - welcome_message and closing_message (professional, strategic tone)\n"
-            "      - research_brief and study_objectives framed at process orchestration level\n"
-            "      - follow_up_branches (2 per question) and evasion_signals per question\n"
-            "      - target duration: 25–30 minutes\n\n"
-            "   d) Each section of the L2 script must end with a maturity_rating block "
-            "(see schema below). The rating is always captured AFTER the narrative questions "
-            "in that section — never before. The interviewer should say something like: "
-            "'Based on what you've just described, how would you rate [dimension] for this "
-            "decision? Let me read you the levels.' Then read the scale and record the response.\n"
-            "   The five levels for L2 ratings (use these labels verbatim in the scale object):\n"
+            "   - Draft a monetisation narrative: Frequency × Impact = Cost, or "
+            "Decision quality × Volume = Value\n"
+            "   - Assess node strategic priority: standard (25–30 min) or high-priority (45–60 min)\n"
+            "   - Identify peer interviewees for triangulation: owner, consumer, governance, support\n\n"
+
+            "   a) FRAMING BLOCK — mandatory, written before sections.\n"
+            "   Using the L2 Framing Block guide from your task context, write a framing_block\n"
+            "   object with three parts customised to this specific node:\n"
+            "   - positioning: one sentence naming the cluster, its L3 inputs, and the decisions it feeds\n"
+            "   - context_setting: 2–3 bullets placing the L2 between upstream governance and "
+            "downstream L3 execution, naming both by label\n"
+            "   - dual_lenses: efficiency frame ('coordination friction') and effectiveness frame "
+            "('decision quality — what you make and what you can't yet make')\n"
+            "   The framing_block is spoken before the first question. It sets the cognitive frame "
+            "so the interviewee knows this is a decision architecture conversation, not an "
+            "operational audit.\n\n"
+
+            "   b) SECTION SELECTION — select 4–5 sections from the L2 Section Library.\n"
+            "   Sections S1 and S2 are mandatory. Select 2–3 additional sections based on:\n"
+            "   - Known data governance pain → include S3\n"
+            "   - Decision cycle time > 4 weeks or cross-L2 misalignment → include S4\n"
+            "   - High-value strategic node or aspiration quantification needed → include S5\n"
+            "   - L3 execution fidelity is a concern → include S6\n"
+            "   - Senior interviewee with cross-portfolio view → add S7\n"
+            "   Standard L2 (25–30 min): S1 + S2 + 2 from {S3, S4, S5, S6} + closing\n"
+            "   Deep-dive L2 (45–60 min): S1 + S2 + S3 + S4 + 1–2 from {S5, S6, S7} + closing\n\n"
+
+            "   c) SECTION DESIGN — for each selected section, design specific questions from "
+            "its themes (defined in the Section Library). For every section:\n"
+            f"      - {preferred_questions} narrative questions per section, probing the section theme\n"
+            "      - follow_up_branches: 2 probing follow-ups per question\n"
+            "      - evasion_signals: phrases that indicate vagueness (e.g. 'it depends', "
+            "'we do our best', 'the system handles it')\n"
+            "      - root_constraint_probe in each section: one question that separates the "
+            "stated problem from the underlying constraint "
+            "('What's actually stopping a faster decision here?')\n"
+            "      - target_minutes per section: keep each section to 6–10 minutes\n\n"
+
+            "   d) MATURITY RATINGS — each section ends with a maturity_rating block.\n"
+            "   The rating is ALWAYS captured after the narrative, never before.\n"
+            "   Use the maturity narrative signals from the Section Library for the selected\n"
+            "   section to anchor the scale labels. Labels must use 0–4 notation and must\n"
+            "   echo the narrative language just used — not generic CMMI/COBIT terms.\n"
+            "   The five levels:\n"
             "      0 — Ad-hoc: no structured approach; decisions are informal and undocumented\n"
             "      1 — Initial: some attempts at structure, but inconsistent and unverified\n"
             "      2 — Developing: documented process but not consistently applied or reviewed\n"
             "      3 — Managed: systematic approach with regular review and outcome tracking\n"
             "      4 — Predictive: real-time evidence, continuous learning, anticipates outcomes\n"
-            "   No separate questionnaire. The ratings are fully embedded in the script.\n\n"
-            "   e) After drafting, produce one L2 Interview Summary using this template:\n"
+            "   Each scale label must be SPECIFIC to the dimension and client context.\n\n"
+
+            "   e) SYNTHESIS CHECK — mandatory closing element, written after sections.\n"
+            "   Using the L2 Synthesis Check guide from your task context, write a synthesis_check\n"
+            "   object with:\n"
+            "   - synthesis_prompt: a draft synthesis of the node's strategic intent, current\n"
+            "     maturity, biggest constraint, key data gap, and value opportunity — written\n"
+            "     as the interviewer would speak it, ending with 'Does that match your assessment?'\n"
+            "     Customise this to the node; do not leave it as a template.\n"
+            "   - response_probes: three probe phrases for positive / defensive / uncertain replies\n"
+            "   - peer_referral: a referral question naming the four triangulation perspectives\n"
+            "   - forward_roadmap: a roadmap question asking where to start and what risks concern them\n\n"
+
+            "   f) Complete script fields:\n"
+            "      - research_brief and study_objectives framed at decision orchestration level\n"
+            "      - welcome_message: warm, professional, invites the interviewee to think in\n"
+            "        quarters and portfolios — 'your perspective on how decisions are made here'\n"
+            "      - closing_message: follows synthesis_check; brief thanks and next steps\n\n"
+
+            "   g) After drafting, produce one L2 Interview Summary using this template:\n"
             + _L2_OUTPUT_TEMPLATE + "\n"
 
             "── L3 NODES (activity level — practitioners and operational staff) ──────────────\n"
@@ -416,8 +653,9 @@ def create_interaction_designer_task(
 
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
             "7. Output ALL INTERVIEW SCRIPTS (L1, L2, and L3) as a single JSON object keyed "
-            "by node_label. L1 and L2 sections include a maturity_rating block; L3 sections "
-            "do not. This is the ONLY script artefact — there is no separate questionnaire.\n"
+            "by node_label. L2 scripts include framing_block and synthesis_check fields. "
+            "L1 and L2 sections include a maturity_rating block. L3 sections do not. "
+            "This is the ONLY script artefact — there is no separate questionnaire.\n"
             "   {\n"
             "     \"<node_label>\": {\n"
             "       \"node_label\": \"<node_label>\",\n"
@@ -425,7 +663,26 @@ def create_interaction_designer_task(
             "       \"research_brief\": \"...\",\n"
             "       \"study_objectives\": [\"...\"],\n"
             "       \"welcome_message\": \"...\",\n"
-            "       \"closing_message\": \"...\",\n"
+            "       // L2 ONLY — framing block spoken before any questions:\n"
+            "       \"framing_block\": {   // PRESENT for L2 only; OMIT for L1 and L3\n"
+            "         \"positioning\": \"We're mapping [L2 cluster] — the strategic layer "
+            "that coordinates [L3 names] and feeds [key decisions].\",\n"
+            "         \"context_setting\": [\n"
+            "           \"This cluster sits between [upstream L1/governance] and "
+            "[downstream L3 execution teams].\",\n"
+            "           \"We want to understand how decisions flow through this cluster — "
+            "where decision quality is built in or lost.\",\n"
+            "           \"And where better data, clearer governance, or smarter analysis "
+            "could unlock value for [strategic objective].\"\n"
+            "         ],\n"
+            "         \"dual_lenses\": {\n"
+            "           \"efficiency\": \"First, I want to understand coordination friction — "
+            "what slows decisions down, creates rework, or blocks alignment.\",\n"
+            "           \"effectiveness\": \"And second, decision quality — what decisions "
+            "are being made, how confident you are in them, and what decisions you should "
+            "be making but currently can't.\"\n"
+            "         }\n"
+            "       },\n"
             "       \"sections\": [\n"
             "         {\n"
             "           \"title\": \"...\",\n"
@@ -456,7 +713,25 @@ def create_interaction_designer_task(
             "what would a [N+1] look like for you?\"\n"
             "           }\n"
             "         }\n"
-            "       ]\n"
+            "       ],\n"
+            "       // L2 ONLY — synthesis check spoken after all sections, before closing:\n"
+            "       \"synthesis_check\": {   // PRESENT for L2 only; OMIT for L1 and L3\n"
+            "         \"synthesis_prompt\": \"Before I let you go — based on what you've "
+            "told me, here's how I see this cluster: [customised synthesis of intent, "
+            "maturity, constraint, data gap, opportunity]. Does that match your assessment?\",\n"
+            "         \"response_probes\": {\n"
+            "           \"if_positive\": \"Good — what would you add or emphasise differently?\",\n"
+            "           \"if_defensive\": \"Where does my picture differ from yours?\",\n"
+            "           \"if_uncertain\": \"What would you want me to verify with others?\"\n"
+            "         },\n"
+            "         \"peer_referral\": \"Who else should I speak to for a full picture? "
+            "I'm looking for upstream input providers, downstream executors, governance "
+            "stakeholders, and data or IT owners.\",\n"
+            "         \"forward_roadmap\": \"If you were shaping the improvement roadmap "
+            "for this cluster, where would you start — quick wins in 6 months, or building "
+            "foundations for 2 years? And what's your biggest concern?\"\n"
+            "       },\n"
+            "       \"closing_message\": \"...\"\n"
             "     }\n"
             "   }\n"
             "   The scale labels must be SPECIFIC to the dimension — not generic. "
@@ -472,12 +747,26 @@ def create_interaction_designer_task(
             "   Use SQLiteStateTool with operation='write', key='l2_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n\n"
             "9. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
-            "   • outputs/interview_scripts.json — integrated scripts for all L1, L2, and L3 "
-            "nodes. L1 and L2 sections each end with an embedded maturity rating. Check that:\n"
+            "   • outputs/interview_scripts.json — integrated scripts for all L1, L2, and L3 nodes.\n"
+            "   For L2 scripts, check:\n"
+            "     FRAMING BLOCK\n"
+            "     - Does the positioning sentence correctly name the L2 cluster, its L3 inputs,\n"
+            "       and the decisions it feeds?\n"
+            "     - Are the context_setting bullets specific to this node's upstream/downstream\n"
+            "       relationships (not generic)?\n"
+            "     - Do the dual_lenses statements feel natural for an interviewer to speak aloud?\n"
+            "     SECTIONS\n"
+            "     - Are the right sections selected for this node's priority and context?\n"
             "     - Each rating prompt reads naturally after the section's narrative questions\n"
-            "     - Scale labels are specific to the dimension and client context (not generic)\n"
+            "     - Scale labels echo the narrative language (not CMMI/COBIT jargon)\n"
             "     - The probe_on_mismatch phrase is usable by the interviewer in conversation\n"
-            "     - L3 sections have no maturity_rating block\n"
+            "     SYNTHESIS CHECK\n"
+            "     - Is the synthesis_prompt customised (not a template) and plausible for this node?\n"
+            "     - Do the response_probes cover the three reply types (positive, defensive, uncertain)?\n"
+            "     - Is the peer_referral question specific about the four triangulation perspectives?\n"
+            "   For L3 scripts, check:\n"
+            "     - No framing_block, no synthesis_check, no maturity_rating blocks\n"
+            "     - Exactly 8 sections in prescribed order with correct target_minutes\n"
             "   • outputs/l2_interview_summaries.json — decision architecture prep per L2 node\n"
             "   Reply \"approved\" to proceed, or provide revision notes.'\n"
             "10. If revision notes received, revise and call HumanInputTool again. "
