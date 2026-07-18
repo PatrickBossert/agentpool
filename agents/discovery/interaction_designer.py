@@ -23,14 +23,24 @@ L3 interviews:  Focus on execution fidelity, data freshness, bottleneck removal.
                 Talk to practitioners. Uncover where effort is wasted, where data
                 is missing or stale, and where a smarter tool would change behaviour.
 
-C  interviews:  OUTSIDE-IN — focus on service quality, reliability, and partnership
-                experience as perceived by customers whose operations depend on managed
-                assets. Talk to Regional Operations Leaders, Field Teams, Network Planners,
-                and customer-facing functions. Reveal what actually matters to customers
-                (vs. what we think matters), expose gaps between internal narrative and
-                external reality, identify unmet needs, and validate the ROI narrative
-                ("will transformation improve customer experience?"). Customer voice is
-                the most credible external evidence for the change business case.
+C  interviews:  OUTSIDE-IN (SERVICE) — focus on service quality, reliability, and
+                partnership experience as perceived by customers whose operations depend
+                on managed assets. Talk to Regional Operations Leaders, Field Teams,
+                Network Planners, and customer-facing functions. Reveal what actually
+                matters to customers (vs. what we think matters), expose gaps between
+                internal narrative and external reality, identify unmet needs, and
+                validate the ROI narrative ("will transformation improve customer
+                experience?"). Customer voice is the most credible external evidence
+                for the change business case.
+
+A  interviews:  OUTSIDE-IN (GOVERNANCE) — focus on whether controls are working,
+                promises are being kept, risks are managed, and the organisation is
+                delivering what it committed to. Talk to internal and external auditors,
+                compliance officers, and regulators (e.g. Ofgem, ORR). Provide
+                independent assessment of governance maturity, compliance status,
+                financial controls, KPI data integrity, third-party management, and
+                transformation readiness. Audit voice is the most credible evidence
+                for governance credibility and remediation priorities.
 
 Instruments must reflect these shifts:
   L3 scripts probe the texture of daily work;
@@ -38,8 +48,10 @@ Instruments must reflect these shifts:
   L1 scripts probe strategy and capability maturity;
   L0 scripts probe portfolio logic and capital allocation;
   C  scripts probe service quality, friction, and transformation readiness from
-     the customer's operational lens — not the organisation's internal perspective.
-All five instrument types contribute different data that the Synthesis Analyst will
+     the customer's operational lens — not the organisation's internal perspective;
+  A  scripts probe governance maturity, control effectiveness, compliance status,
+     and transformation risk from an independent assurance perspective.
+All six instrument types contribute different data that the Synthesis Analyst will
 triangulate into a unified set of findings.
 """
 
@@ -1078,6 +1090,456 @@ Produce one customer persona summary per customer interview.
 """
 
 
+_AUDIT_PRINCIPLES = """\
+AUDIT / ASSURANCE / REGULATOR INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
+──────────────────────────────────────────────────────────────────────────────────
+These eight principles govern every audit and regulator interview design and execution.
+Audit interviews are fundamentally different from all other levels: the interviewee has
+independent authority to find fault, and the organisation has no right to push back on
+their assessment during the interview. Never seek validation — seek truth.
+
+1. INDEPENDENT PERSPECTIVE — LISTEN WITHOUT DEFENDING
+   The auditor/regulator has no stake in the outcome. Their observations may be
+   uncomfortable. Never use the interview to explain, justify, or contextualise
+   findings. The moment Maya defends, the auditor stops being candid.
+   ✗ "We understand that, but we have a plan to fix it"
+   ✓ "That's helpful — can you tell me more about where you see that gap?"
+
+2. CONTROLS BEFORE STRATEGY — DON'T OVERSELL TRANSFORMATION
+   Auditors don't assess whether strategy is smart. They assess whether controls
+   are working, whether promises are being kept, and whether risks are managed.
+   Ask "are controls working?" before asking "what do you think of the strategy?"
+   A brilliant strategy with broken controls is a governance failure.
+
+3. DATA INTEGRITY IS THE FOUNDATION
+   All governance, KPI reporting, compliance evidence, and financial controls rest
+   on trustworthy data. If data cannot be trusted, no finding can be trusted.
+   Always probe: "How confident are you in the data behind that?" "Has data ever
+   been restated?" "Is there independent verification?" Low data integrity is a
+   material finding regardless of what the numbers say.
+
+4. PROBE HISTORY — PAST ISSUES PREDICT FUTURE RISK
+   Repeat findings, recurring control gaps, and unresolved audit observations are
+   the single strongest predictor of future governance failure. Always ask: "Has GS UK
+   addressed prior audit findings?" "Do you see recurring issues?" Patterns matter
+   more than any single incident.
+
+5. THIRD-PARTY RISK — VENDOR PERFORMANCE IS GOVERNANCE PERFORMANCE
+   ISS (Property) and DXI (Fleet) performance directly impacts GS UK's governance
+   health. If ISS/DXI SLA compliance is unmonitored, GS UK's compliance is unknowable.
+   If audit does not independently test vendor performance, vendor reporting cannot
+   be trusted. Ask whether there is independent vendor audit — "we rely on their
+   reporting" is not a control.
+
+6. TRANSFORMATION AMPLIFIES RISK — CONTROLS BREAK DURING CHANGE
+   Major transformation programmes are when control failures are most likely. Budget
+   overruns, compliance slippage, accountability diffusion, and data integrity failures
+   all cluster around major change. Always ask: "How will controls be maintained during
+   transformation?" "Who is accountable if controls weaken?" "What triggers escalation?"
+
+7. BOARD NEEDS TRUTH — THE AUDITOR'S ROLE IS INDEPENDENT REPORTING
+   Auditors report to the board and audit committee, not to management. Their
+   observations belong in the boardroom, not filtered through management narrative.
+   Always probe board oversight: "Does the board see enough detail on material risks?"
+   "Are material findings reported without dilution?"
+
+8. THREE-TIER FINDING FRAMEWORK — MATERIAL / SIGNIFICANT / ADVISORY
+   Not all gaps are equal. Probe for materiality explicitly: "Is this a material
+   finding that affects the integrity of governance, or is it advisory?"
+   Material findings require board-level remediation. Significant findings require
+   management action plan. Advisory findings are improvement opportunities.
+   Conflating these obscures where urgent action is needed.
+"""
+
+_AUDIT_FRAMING_TEMPLATE = """\
+AUDIT INTERVIEW FRAMING — MANDATORY OPENING STRUCTURE
+───────────────────────────────────────────────────────
+Audit interviews begin with a framing_block that positions the conversation as a
+governance assessment exercise — not a process improvement exercise or a performance
+review. The auditor/regulator must feel that their independent observations are being
+genuinely sought, not screened or filtered through management's lens.
+
+POSITIONING (framing_block.positioning — 1–2 sentences)
+   Template: "We are not looking to defend our current position. We want your honest,
+   independent assessment of governance, controls, and compliance — so we can address
+   gaps with the right priority. This informs our transformation strategy directly."
+   Frame as: independent, non-defensive, seeking truth over validation.
+   NEVER frame as: "Here's what we're planning — does that address your concerns?"
+   or "We believe our governance is strong — does that match your view?" These frames
+   invite diplomatic agreement rather than independent assessment.
+
+CONTEXT SETTING (framing_block.context_setting — 5 bullets)
+   Template bullets — customise with client's specific regulatory and audit context:
+   • "We want to know: are we doing what we say we'll do — governance, compliance, controls?"
+   • "Are controls adequate for the risks we're taking with [property/fleet capex]?"
+   • "What are your observations about accountability and decision-making quality?"
+   • "Where are the material gaps or risks we may not be seeing clearly ourselves?"
+   • "What areas concern you most about our asset management programme?"
+
+DUAL LENSES (framing_block.dual_lenses — audit variant)
+   dual_lenses.efficiency (controls lens):
+   "First, I want to understand whether controls are working as intended — governance,
+   compliance, financial discipline, data integrity, vendor management. Are the
+   mechanisms we have in place actually catching failures before they cascade?"
+
+   dual_lenses.effectiveness (gap lens):
+   "Second, where the material gaps are — the things that, if they remain unaddressed,
+   represent genuine risk to the organisation, to delivered outcomes, or to its
+   obligations to regulators and stakeholders."
+"""
+
+_AUDIT_SECTION_GUIDE = """\
+AUDIT INTERVIEW SECTION GUIDE — FIXED 9-SECTION STRUCTURE
+───────────────────────────────────────────────────────────
+Audit interviews use a FIXED 10-section structure — all sections are always included.
+Unlike L1 and L2, there is no section selection logic. The 68-minute total allows
+thorough governance coverage. Follow the auditor's thread — if a section yields
+material findings, let it run over and compress advisory sections.
+
+DO NOT include maturity_rating blocks in any audit interview section.
+Auditors give qualitative maturity assessments (Ad-hoc / Repeatable / Managed / etc.)
+conversationally within sections — these are captured as narrative, not structured
+0–4 per-section ratings. The overall governance maturity rating goes in the synthesis.
+
+S1. Governance & Accountability Framework (~8 min)
+   Core themes:
+   - Decision authority: Is it documented? Who decides what? Are authorities clear
+     and enforced, or informal and assumed?
+   - Accountability clarity: Who is accountable for what outcomes? Is accountability
+     single-threaded (named owner) or diffused (committee)?
+   - Escalation paths: How do material issues surface to board level? Is the
+     mechanism defined, tested, and used — or theoretical?
+   - Board oversight adequacy: Does the board see enough detail on material risks?
+     Do they understand the risks they're approving?
+   - Conflicts of interest: procurement separation of duties, vendor management
+     independence, incentive alignment checks.
+   - Historical responsiveness: has GS UK addressed prior audit findings, or do
+     recurring issues indicate a pattern of non-remediation?
+   - Ultimate accountability test: "If a major capex overrun or safety incident
+     occurred, would it be caught? Who is accountable?" (Tests control effectiveness.)
+
+S2. Contract & Compliance Management (~8 min)
+   Core themes:
+   - Material obligations: SLAs, KPIs, performance standards, capex responsibilities,
+     change control process, performance incentives, exit clauses with ISS (Property)
+     and DXI (Fleet).
+   - Compliance status: are obligations being met? Listen for: fully compliant
+     (ask for evidence) / mostly (which exceptions? how managed?) / not consistently
+     (recurring breaches: red flag) / uncertain or not tracked (bigger red flag).
+   - Regulatory obligations scope: Health & Safety (RIDDOR), Environmental (asbestos,
+     waste, emissions), Energy efficiency (MEES for property, DVSA for fleet),
+     Financial (capex reporting, depreciation), Accessibility, Net-zero / carbon
+     (increasingly material).
+   - Regulatory compliance status: any violations, fines, or enforcement actions?
+     Is there a compliance calendar with monitored deadlines?
+   - Systematic vs. ad-hoc compliance: "We're compliant but don't have a systematic
+     process" is a control gap, not a clean bill of health.
+
+S3. Financial Controls & Capex Discipline (~8 min)
+   Core themes:
+   - Budget control dimensions: annual forecast vs. actuals variance; approval
+     process at each spend level (enforced vs. nominal); monthly tracking against
+     approved budget; change control for overruns; complete audit trail to decisions;
+     benefits tracked against spend.
+   - Variance assessment: tight (within 5%) / reasonable (10–15%) / loose (20%+) /
+     poor (surprised by overruns).
+   - Contingency transparency: Are risk reserves explicit and disclosed, or hidden
+     in optimistic best-case budgets?
+   - Major overrun history: "Has there been a material capex overrun in the last
+     3–5 years? How was it managed? What did you learn?" Reveals organisational
+     maturity — whether it learns from failures.
+   - Accounting integrity: depreciation/amortisation treatment for major assets,
+     especially property revaluations.
+   - Separation of duties: who can approve spend? Who can modify the approval
+     framework? Are those functions independent?
+   - Financial data confidence: 1–10 confidence in integrity of financial data for
+     property and fleet. Press for what drives any confidence below 8.
+
+S4. Performance Tracking & KPI Integrity (~8 min)
+   Core themes:
+   - KPI coverage: should include availability/uptime, cost (capex + opex per
+     asset), quality/defects, safety incidents, compliance, customer satisfaction,
+     sustainability/carbon.
+   - Tracking discipline: monthly dashboards trended and reported to board vs.
+     partial/manual/ad-hoc vs. targets set but actuals not tracked.
+   - Data integrity concerns: multiple systems requiring manual reconciliation;
+     frequently changing definitions; data errors found in prior audits; KPI owners
+     with incentive to inflate; no independent verification.
+   - Independent verification: annual audit of key KPIs vs. internal review only
+     vs. management-certified with no external check.
+   - Restatement history: have KPIs ever been restated due to data errors?
+     Transparent correction = mature governance; denial = risk signal.
+   - Incentive alignment: KPIs tied to management compensation? If yes, verify
+     the metrics are robust — compensation linkage creates measurement gaming risk.
+   - Trend reliability: "If I looked at the last 12 months of KPI reports, what
+     would I find?" Are trends real or artefacts of measurement changes?
+
+S5. Risk Identification & Mitigation (~8 min)
+   Core themes:
+   - Material risk scope: operational (asset failure, downtime, safety); financial
+     (capex overrun, benefit shortfall, vendor cost escalation); regulatory
+     (non-compliance, violations, environmental liability); strategic (market
+     disruption, technology obsolescence, talent loss); organisational (key person
+     dependency, change capacity); partnership (ISS/DXI underperformance, vendor
+     failure); reputational (public safety incident, environmental issue).
+   - Risk register: maintained quarterly and reported to Audit Committee vs.
+     partially documented vs. managed ad-hoc vs. no systematic process.
+   - Mitigation strategy types: preventive controls (design out), detective controls
+     (catch early), corrective controls (fix fast), insurance (transfer), acceptance
+     (knowingly taking).
+   - Mitigation effectiveness: monitored with evidence vs. assumed without testing
+     vs. past instances of mitigation failure.
+   - Emerging risks: EV transition complexity and technology readiness; talent
+     shortage in skilled trades; regulatory tightening (environmental, safety);
+     supply chain disruption; cybersecurity for connected assets and operational data.
+   - Control gap evidence: near-miss incidents or past control failures that revealed
+     gaps — and whether the organisation learned from them.
+   - Overall risk rating: 1–10 auditor assessment of property/fleet risk profile.
+     Press for what would change the rating in either direction.
+
+S6. Data & Information Quality (~7 min)
+   Core themes:
+   - Asset data quality dimensions: completeness (% of assets in system, historical
+     data present?); accuracy (conflicts between systems, age of records?);
+     consistency (definitions aligned across property and fleet?); timeliness
+     (real-time feeds or batch-updated?); security (access controlled?);
+     auditability (can you trace data lineage to the source decision?).
+   - Data governance controls: formal data governance office with policies and
+     standards vs. partial/ad-hoc controls vs. no formal governance at all.
+   - Data quality issues found in prior audits: significant cross-system
+     inconsistencies; incomplete or inaccurate asset register; data integrity not
+     verified before use in decisions; historical data lost or unreliable.
+   - Data ownership: is there a named data owner accountable for quality and
+     completeness? "Everyone owns it" = no one owns it.
+   - Systems integration: how integrated is asset data across platforms (Tririga,
+     SAP, Primavera, BI tools)? Fully automated feeds vs. manual reconciliation
+     vs. siloed systems with significant manual effort.
+   - Strategic decision trust: "Would you trust this data for a £100M capex
+     allocation decision?" If not — what specifically prevents that trust?
+
+S7. Third-Party Management — ISS & DXI (~8 min)
+   Core themes:
+   - SLA and KPI monitoring rigor: is compliance data generated independently (GS UK
+     systems) or self-reported by ISS/DXI? Are there penalties for SLA breach and
+     are they enforced?
+   - Performance reporting independence: "We rely on their reporting" is not a control.
+     Is there any independent verification of ISS/DXI performance claims?
+   - Conflict of interest checks: same person negotiating contract and managing
+     performance (conflict); procurement with adequate separation of duties (good);
+     ISS/DXI incentives to inflate scope or costs (monitor).
+   - Audit frequency: quarterly compliance audits + annual detailed audit vs.
+     annual audit + ad-hoc vs. relying solely on vendor reporting.
+   - Compliance/performance gap findings: have prior audits found gaps with ISS or
+     DXI? Were they remediated? Do they recur?
+   - Transformation capability: confidence in ISS/DXI ability to support major
+     transformation (EV transition, digital capability) — high/medium/low/uncertain.
+   - Vendor lock-in risk: if GS UK needed to exit ISS or DXI contracts, what is
+     the risk? What alternative sourcing options exist?
+
+S8. Transformation & Change Governance (~6 min)
+   Core themes:
+   - Organisational readiness signals: change history (successful past
+     transformations?); programme governance (formal PMO?); executive sponsorship
+     (named owner with authority?); capacity (bandwidth to execute alongside BAU?);
+     culture (openness to failure as learning, not blame?).
+   - Transformation risk concerns: over-ambition (scope/timeline mismatch);
+     resource constraints; historical overrun patterns; benefit realisation
+     measurement gaps; change capacity (org already stressed); accountability
+     diffusion (who is really accountable?).
+   - Governance structure for the programme: steering committee mandate, board
+     oversight triggers, programme controls. Red flags: "not yet defined" /
+     "committee-based with diffused accountability" / "PMO will handle it" with no
+     named executive sponsor.
+   - Control continuity during change: parallel controls (maintain old while building
+     new); enhanced monitoring during transition; internal audit embedded in programme.
+     Red flag: "we haven't thought about that."
+   - High-risk escalation triggers: what would cause the auditor to flag the
+     transformation programme as requiring enhanced oversight or board intervention?
+
+S9. Comparative & Peer Assessment (~5 min)
+   Core themes:
+   - Governance benchmarking vs. peers (other UK utilities, rail, similar
+     organisations): ahead / in line / behind / not benchmarked.
+   - Best-practice opportunities: specific practices from other organisations that
+     should be adopted.
+   - Regulatory trend horizon: carbon reporting / net-zero accountability;
+     cybersecurity for connected assets; stricter environmental compliance;
+     workforce skills and apprenticeship requirements; financial reporting changes.
+   - Overall capability confidence vs. peers: 1–10 comparative assessment.
+     Press for what evidence supports the rating.
+
+S10. Wrap-Up & Critical Observations (~5 min — this IS the synthesis_check)
+   This section maps directly to the synthesis_check fields:
+   - SUMMARISE → synthesis_prompt: multi-dimensional summary covering governance
+     maturity, material control gaps, compliance status, data integrity, vendor
+     management quality, transformation readiness, overall risk rating, and top
+     priorities for remediation.
+   - VALIDATE → response_probes: "Do these observations align with your team's
+     assessment? What am I missing or mischaracterising?"
+   - FUTURE ENGAGEMENT → peer_referral: ongoing involvement during transformation
+     ("I'd recommend periodic check-ins to ensure controls are maintained").
+   - NEXT STEPS → forward_roadmap: key findings for board/management/regulatory
+     body, recommendations, follow-up actions, timeline for re-assessment.
+"""
+
+_AUDIT_SYNTHESIS_TEMPLATE = """\
+AUDIT INTERVIEW SYNTHESIS CHECK — SECTION 10 WRAP-UP
+─────────────────────────────────────────────────────
+Audit synthesis is multi-dimensional and evidence-anchored. Unlike the relational
+synthesis in customer interviews, audit synthesis is an independent assessment
+summary — findings, ratings, gaps, and recommendations. Present with confidence;
+the auditor should recognise their own observations in the synthesis.
+
+SYNTHESIS PROMPT (synthesis_check.synthesis_prompt — interviewer speaks this)
+   Template: "Based on our discussion, here is my summary of your assessment:
+   Governance maturity: [Ad-hoc / Repeatable / Managed — evidence];
+   material control gaps: [1–3 named gaps];
+   compliance status: [on track / at risk / issues found];
+   data integrity: [high confidence / adequate / concerns — what drives this];
+   vendor management: [strong / adequate / gaps with ISS/DXI];
+   transformation readiness: [ready / adequate / concerns — named risks];
+   overall risk rating: [X/10 — your assessment];
+   and the top priorities you would recommend addressing: [1–3].
+   Do those observations align with your assessment? What am I missing or
+   mischaracterising?"
+   MUST be customised to what was actually said. Material findings stated directly.
+   Do not soften or qualify the auditor's observations in the synthesis — state
+   them as they gave them. This is the auditor's independent view, not management's.
+
+RESPONSE PROBES (synthesis_check.response_probes)
+   - if_positive: "Good — what would you emphasise differently, or what's the
+     single most urgent thing we should act on first?"
+   - if_defensive: "Where does my characterisation differ from yours? I want to
+     make sure I take back an accurate picture." (Auditors may have been diplomatic
+     mid-interview — the synthesis is often where the real view surfaces.)
+   - if_uncertain: "What would you want verified independently before you'd be
+     confident in that assessment? What data would change your view?"
+
+FUTURE ENGAGEMENT (synthesis_check.peer_referral)
+   Template: "I'd recommend periodic check-ins during the transformation programme
+   to ensure controls are maintained and risks are proactively managed. Would you
+   or your team be available for that? And is there a colleague — perhaps in a
+   different assurance function or a regulatory contact — whose independent view
+   I should also capture?"
+   Purpose: establish ongoing audit engagement as a programme governance mechanism,
+   not just a point-in-time assessment. Also surface additional assurance contacts.
+
+NEXT STEPS (synthesis_check.forward_roadmap)
+   Template: "I'll compile your observations into the governance assessment.
+   Key outputs will include: the material findings for board and audit committee;
+   specific control improvement recommendations with priority and timeline; suggested
+   follow-up actions for the transformation programme governance; and a proposed
+   schedule for re-assessment at key programme milestones. Do the areas I've mentioned
+   cover what's most important from your perspective?"
+   Listen for: gaps in coverage (areas the auditor expected to be assessed but
+   weren't), urgency signals (something that needs to go to board immediately),
+   or scope expansion (areas outside the original brief that should be included).
+"""
+
+_AUDIT_OUTPUT_TEMPLATE = """\
+AUDIT INTERVIEW SUMMARY TEMPLATE — OUTPUT FORMAT
+──────────────────────────────────────────────────
+Produce one audit summary per interviewee / assurance function.
+
+## Auditor / Regulator Profile
+- Name / organisation:         [Name, audit function, and mandate]
+- Audit scope:                 [What they cover: enterprise risk / external / regulatory]
+- Prior engagement with GS UK: [Audit history; prior findings and remediation status]
+
+## Governance Assessment
+- Decision authority clarity:  [Clear / Adequate / Gaps / Unclear — evidence]
+- Accountability framework:    [Documented / Partially / Ad-hoc — evidence]
+- Escalation process:          [Defined / Informal / Missing — tested or theoretical?]
+- Board oversight adequacy:    [Adequate / Needs strengthening — evidence]
+- Conflicts of interest managed: [Yes / Partially / Gap found — evidence]
+- Governance maturity rating:  [Ad-hoc / Repeatable / Managed / Optimised — justification]
+- Prior audit findings addressed: [Yes / Partially / Recurring issues — detail]
+
+## Compliance & Regulatory Status
+- ISS / DXI obligations:       [Compliant / Minor breaches / Recurrent / Untracked]
+- Regulatory obligations:      [Compliant / At risk / Violations found — by category]
+- Documentation & audit trail: [Strong / Adequate / Gaps]
+- Compliance calendar:         [Systematic / Ad-hoc / None]
+- Material compliance risks:   [List named gaps with severity — Material / Significant / Advisory]
+
+## Financial Controls Assessment
+- Capex discipline:            [Tight (±5%) / Reasonable (±15%) / Loose (±20%+)]
+- Budget variance pattern:     [Evidence from last 3–5 years]
+- Change control:              [Enforced / Partially / Weak]
+- Contingency / risk reserves: [Explicit & disclosed / Hidden / Absent]
+- Separation of duties:        [Adequate / Partial / Gap found]
+- Financial data confidence:   [X/10 — what drives any score below 8]
+- Major overrun history:       [Incidents named; how managed; what was learnt]
+
+## KPI & Performance Tracking
+- KPI coverage:                [Comprehensive / Adequate / Material gaps — what's missing]
+- Tracking discipline:         [Monthly trended to board / Partial / Ad-hoc / Missing]
+- Data integrity concerns:     [None / Minor / Material — specifics]
+- Independent verification:    [Annual external / Internal review / None]
+- Restatement history:         [Clean / One-off corrected / Pattern]
+- Incentive alignment risk:    [KPIs tied to comp — robust metrics / gaming risk]
+- Trend reliability:           [Trust trends / Question assumptions — reason]
+
+## Risk Management
+- Risk register status:        [Maintained quarterly / Partial / None]
+- Material risks identified:   [Comprehensive / Adequate / Material omissions — what's missing]
+- Mitigation effectiveness:    [Monitored with evidence / Assumed / Past failures found]
+- Emerging risks flagged:      [EV / Talent / Regulatory / Cyber / Supply chain — detail]
+- Near-miss / gap revelations: [Any incidents that exposed control gaps]
+- Overall risk rating:         [X/10 — what would move it in either direction]
+
+## Data & Information Quality
+- Asset data completeness:     [% assets in system; historical data present]
+- Accuracy & consistency:      [Cross-system conflicts; definition alignment]
+- Timeliness:                  [Real-time / Batch / Unreliable]
+- Data governance controls:    [Formal governance / Partial / None]
+- Data issues in prior audits: [Named issues; remediated / open]
+- Data ownership:              [Named owner / Shared / None]
+- Systems integration:         [Automated feeds / Manual reconciliation / Siloed]
+- Strategic decision trust:    [Would trust for £100M decision? Evidence]
+
+## Third-Party Management (ISS / DXI)
+- SLA monitoring rigor:        [Independent / Self-reported / Not monitored]
+- Independent vendor audit:    [Quarterly / Annual / Ad-hoc / None]
+- Prior compliance gaps:       [Found and remediated / Found and open / None found]
+- Conflict of interest:        [Well managed / Partial / Gap found]
+- Transformation capability:   [Confident / Medium / Low / Unassessed]
+- Vendor lock-in risk:         [Low / Medium / High — exit options available?]
+
+## Transformation Readiness
+- Governance capability:       [Ready / Adequate / Concerns — evidence]
+- Programme governance:        [PMO + sponsor / Partial / Not yet defined]
+- Control continuity plan:     [Parallel controls planned / Ad-hoc / Not addressed]
+- Execution risk level:        [Low / Moderate / High]
+- Escalation triggers:         [What would prompt board-level intervention]
+
+## Comparative & Peer Assessment
+- Governance vs. peers:        [Ahead / In line / Behind / Not benchmarked]
+- Best-practice opportunities: [Named practices from other organisations]
+- Regulatory trend horizon:    [Named upcoming requirements that need preparation]
+- Capability confidence vs. peers: [X/10 — evidence basis]
+
+## Overall Audit Assessment
+- Governance maturity:         [Ad-hoc / Repeatable / Managed / Optimised]
+- Material control gaps:       [1–3 most urgent findings — material only]
+- Compliance status:           [On track / At risk / Issues requiring board reporting]
+- Data integrity:              [High / Medium / Concerns]
+- Overall risk rating:         [X/10]
+
+## Key Recommendations (Priority-ordered)
+1. [Material finding — action required, owner, timeline]
+2. [Significant finding — action plan, deadline]
+3. [Advisory improvement opportunity]
+
+## Follow-Up Actions
+- [ ] Board / Audit Committee reporting for material findings
+- [ ] Management response and remediation plan
+- [ ] Transformation programme governance alignment
+- [ ] Enhanced monitoring schedule during change
+- [ ] Re-assessment date at programme milestones
+"""
+
+
 _L1_PRINCIPLES = """\
 L1 INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
 ──────────────────────────────────────────────────────
@@ -1567,6 +2029,7 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
             "data sources can be compared and synthesised.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _AUDIT_PRINCIPLES + "\n"
             + _CUSTOMER_PRINCIPLES + "\n"
             + _L0_PRINCIPLES + "\n"
             + _L1_PRINCIPLES + "\n"
@@ -1599,13 +2062,18 @@ def create_interaction_designer_task(
     return Task(
         description=(
             "Design integrated interview scripts for every active L0, L1, L2, and L3 value chain "
-            "node, PLUS one customer interview script per identified customer segment. "
+            "node, PLUS one customer interview script per identified customer segment (level='C'), "
+            "PLUS one audit/assurance interview script per identified auditor or regulator contact "
+            "(level='A'). "
             "All instruments use a single script artefact per node/segment. Maturity ratings "
             "(maturity_rating blocks) appear in L1 and L2 sections only — captured after narrative "
             "discussion. L0, L3, and C (customer) nodes have no maturity_rating blocks. "
             "There is no separate questionnaire artefact.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _AUDIT_FRAMING_TEMPLATE + "\n"
+            + _AUDIT_SECTION_GUIDE + "\n"
+            + _AUDIT_SYNTHESIS_TEMPLATE + "\n"
             + _CUSTOMER_FRAMING_TEMPLATE + "\n"
             + _CUSTOMER_SECTION_GUIDE + "\n"
             + _CUSTOMER_SYNTHESIS_TEMPLATE + "\n"
@@ -1951,21 +2419,78 @@ def create_interaction_designer_task(
             "   e) After drafting, produce one Customer Interview Summary using this template:\n"
             + _CUSTOMER_OUTPUT_TEMPLATE + "\n"
 
+            "── AUDIT / ASSURANCE / REGULATOR INTERVIEWS (outside-in — governance) ──────────\n"
+            "9. Design audit interview scripts for each auditor or regulator identified in the\n"
+            "discovery context. Apply all 8 Audit Interview Principles from your backstory.\n"
+            "Core question: 'Are controls working? Are promises being kept?' "
+            "Focus: governance maturity, compliance status, financial discipline, KPI data "
+            "integrity, risk management, third-party management, and transformation readiness — "
+            "all assessed from an independent assurance perspective.\n\n"
+            "   PREPARATION (before designing):\n"
+            "   - Review the discovery_brief and ChromaDB context to identify audit/assurance\n"
+            "     contacts: internal audit (enterprise risk, finance, compliance), external\n"
+            "     auditors (EY, KPMG, etc.), and relevant regulatory bodies (Ofgem, ORR, etc.)\n"
+            "   - Review any available prior audit findings or regulatory reports to understand\n"
+            "     existing observations and remediation status\n"
+            "   - Identify applicable regulations (Health & Safety, Environmental, Energy\n"
+            "     efficiency, Financial, Net-zero) for the client's sector\n\n"
+            "   a) FRAMING BLOCK — mandatory, written before sections.\n"
+            "   Using the Audit Framing guide from your task context, write a framing_block:\n"
+            "   - positioning: 1–2 sentences: non-defensive, seeking independent assessment;\n"
+            "     'we want to address gaps, not defend our position'\n"
+            "   - context_setting: 5 bullets: doing what we say, controls adequate, governance\n"
+            "     observations, material gaps/risks, biggest concerns — customised to client\n"
+            "   - dual_lenses.efficiency: controls lens — are mechanisms catching failures?\n"
+            "   - dual_lenses.effectiveness: gap lens — what material risks remain unaddressed?\n\n"
+            "   b) SECTION DESIGN — all 10 sections are mandatory. Design questions from the\n"
+            "   themes in the Audit Section Guide. For every section:\n"
+            f"      - {preferred_questions} narrative questions per section, probing the section themes\n"
+            "      - follow_up_branches: 2 probing follow-ups per question\n"
+            "      - evasion_signals: phrases signalling the auditor is being diplomatic rather\n"
+            "        than direct (e.g. 'generally adequate', 'no major concerns', 'we monitor it')\n"
+            "      - probing_instructions: embed evidence-seeking reminders ('ask for evidence,\n"
+            "        not assertion' / 'probe whether control has been tested, not just designed')\n"
+            "      - NO maturity_rating block in any section (auditors give narrative assessments\n"
+            "        and 1–10 confidence ratings, not structured 0–4 per-section ratings)\n\n"
+            "   c) SYNTHESIS CHECK — maps to Section 10 (Wrap-Up). Using the Audit Synthesis guide:\n"
+            "   - synthesis_prompt: multi-dimensional summary covering governance maturity, material\n"
+            "     control gaps, compliance status, data integrity, vendor management, transformation\n"
+            "     readiness, overall risk rating, and top priorities. MUST be customised — no\n"
+            "     placeholders. State findings directly as the auditor gave them.\n"
+            "   - response_probes: three probes for aligned / diplomatic (hedged) / uncertain\n"
+            "   - peer_referral: ongoing engagement invitation during transformation + additional\n"
+            "     assurance contacts (other audit functions or regulatory bodies)\n"
+            "   - forward_roadmap: next steps — key findings for board/audit committee,\n"
+            "     recommendations, remediation plan, re-assessment schedule\n\n"
+            "   d) Complete script fields:\n"
+            "      - node_label: '[Auditor/Regulator name] Audit Interview' or '[Function] Assessment'\n"
+            "      - level: 'A'\n"
+            "      - research_brief and study_objectives framed at governance/assurance level:\n"
+            "        'Assess governance maturity, control effectiveness, and transformation readiness\n"
+            "        from the perspective of [auditor/regulatory function]'\n"
+            "      - welcome_message: professional, grateful, non-defensive. Acknowledge their\n"
+            "        independent mandate. State the purpose: 'We want your honest, unfiltered\n"
+            "        assessment to inform our transformation priorities.'\n"
+            "      - closing_message: thank them for their independent perspective, confirm\n"
+            "        how findings will feed into the governance assessment and board reporting\n\n"
+            "   e) After drafting, produce one Audit Interview Summary using this template:\n"
+            + _AUDIT_OUTPUT_TEMPLATE + "\n"
+
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
-            "9. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, L3, and C) as a single JSON object keyed "
-            "by node_label. L0, L1, L2, and C scripts include framing_block and synthesis_check fields. "
-            "L1 and L2 sections include a maturity_rating block; L0, L3, and C sections do not. "
+            "10. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, L3, C, and A) as a single JSON object keyed "
+            "by node_label. L0, L1, L2, C, and A scripts include framing_block and synthesis_check. "
+            "L1 and L2 sections include a maturity_rating block; L0, L3, C, and A sections do not. "
             "L0 synthesis_check includes the additional portfolio_options and sponsorship_check fields. "
             "This is the ONLY script artefact — there is no separate questionnaire.\n"
             "   {\n"
             "     \"<node_label>\": {\n"
             "       \"node_label\": \"<node_label>\",\n"
-            "       \"level\": \"L0\" | \"L1\" | \"L2\" | \"L3\" | \"C\",\n"
+            "       \"level\": \"L0\" | \"L1\" | \"L2\" | \"L3\" | \"C\" | \"A\",\n"
             "       \"research_brief\": \"...\",\n"
             "       \"study_objectives\": [\"...\"],\n"
             "       \"welcome_message\": \"...\",\n"
-            "       // L0, L1, and L2 — framing block spoken before any questions:\n"
-            "       \"framing_block\": {   // PRESENT for L0, L1, and L2; OMIT for L3\n"
+            "       // L0, L1, L2, C, and A — framing block spoken before any questions:\n"
+            "       \"framing_block\": {   // PRESENT for L0, L1, L2, C, and A; OMIT for L3\n"
             "         \"positioning\": \"We're mapping [L2 cluster] — the strategic layer "
             "that coordinates [L3 names] and feeds [key decisions].\",\n"
             "         \"context_setting\": [\n"
@@ -1998,7 +2523,7 @@ def create_interaction_designer_task(
             "               \"evasion_signals\": [\"not sure\", \"it varies\"]\n"
             "             }\n"
             "           ],\n"
-            "           \"maturity_rating\": {   // PRESENT for L1 and L2 sections; OMIT for L0, L3, and C\n"
+            "           \"maturity_rating\": {   // PRESENT for L1 and L2 sections only; OMIT for L0, L3, C, and A\n"
             "             \"dimension\": \"<assessment dimension name>\",\n"
             "             \"prompt\": \"Based on what you've just shared, how would you rate "
             "[dimension] here? Let me read you the levels.\",\n"
@@ -2015,8 +2540,8 @@ def create_interaction_designer_task(
             "           }\n"
             "         }\n"
             "       ],\n"
-            "       // L0, L1, and L2 — synthesis check spoken after all sections, before closing:\n"
-            "       \"synthesis_check\": {   // PRESENT for L0, L1, and L2; OMIT for L3\n"
+            "       // L0, L1, L2, C, and A — synthesis check spoken after sections, before closing:\n"
+            "       \"synthesis_check\": {   // PRESENT for L0, L1, L2, C, and A; OMIT for L3\n"
             "         \"synthesis_prompt\": \"Before I let you go — based on what you've "
             "told me, here's how I see this cluster: [customised synthesis of intent, "
             "maturity, constraint, data gap, opportunity]. Does that match your assessment?\",\n"
@@ -2050,25 +2575,53 @@ def create_interaction_designer_task(
             "in the client's operational context.\n"
             "   Use SQLiteStateTool with operation='write', key='interview_scripts', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "10. Save INTERVIEW SUMMARIES as four separate artefacts:\n"
-            "   a) CUSTOMER INTERVIEW SUMMARIES (one per segment, produced in step 8e):\n"
+            "11. Save INTERVIEW SUMMARIES as five separate artefacts:\n"
+            "   a) AUDIT INTERVIEW SUMMARIES (one per auditor/regulator, produced in step 9e):\n"
+            "      { \"<node_label>\": { <fields from Audit Interview Summary Template> } }\n"
+            "      Use SQLiteStateTool with operation='write', key='audit_interview_summaries', "
+            "agent_name='interaction_designer' to save this.\n"
+            "   b) CUSTOMER INTERVIEW SUMMARIES (one per segment, produced in step 8e):\n"
             "      { \"<node_label>\": { <fields from Customer Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='customer_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n"
-            "   b) L0 INTERVIEW SUMMARIES (one per L0 node, produced in step 4e):\n"
+            "   c) L0 INTERVIEW SUMMARIES (one per L0 node, produced in step 4e):\n"
             "      { \"<node_label>\": { <fields from L0 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l0_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n"
-            "   c) L1 INTERVIEW SUMMARIES (one per L1 node, produced in step 5g):\n"
+            "   d) L1 INTERVIEW SUMMARIES (one per L1 node, produced in step 5g):\n"
             "      { \"<node_label>\": { <fields from L1 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l1_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n"
-            "   d) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 6g):\n"
+            "   e) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 6g):\n"
             "      { \"<node_label>\": { <fields from L2 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l2_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "11. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
-            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, L3, and C nodes.\n"
+            "12. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
+            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, L3, C, and A nodes.\n"
+            "   For Audit (A) scripts, check:\n"
+            "     FRAMING BLOCK\n"
+            "     - Does positioning explicitly state this is NOT a defensive exercise —\n"
+            "       that we want the independent assessment, not validation of our narrative?\n"
+            "     - Do context_setting bullets cover all 5 dimensions: doing what we say,\n"
+            "       controls adequacy, governance observations, material gaps, biggest concerns?\n"
+            "     - Do dual_lenses cover controls effectiveness AND material gap identification?\n"
+            "     SECTIONS\n"
+            "     - Are all 10 sections present in order with appropriate target_minutes?\n"
+            "     - Do questions probe from the AUDITOR'S independent stance (controls, evidence,\n"
+            "       patterns) not from management's framing (strategy, plans, intentions)?\n"
+            "     - Does S3 probe budget variance history, separation of duties, and overrun cases?\n"
+            "     - Does S4 probe data integrity concerns AND independent verification?\n"
+            "     - Does S6 probe data completeness, governance controls, and strategic trust?\n"
+            "     - Does S7 probe whether ISS/DXI performance is independently verified?\n"
+            "     - Are there NO maturity_rating blocks in any audit section?\n"
+            "     - Do evasion_signals flag diplomatic non-answers ('generally adequate',\n"
+            "       'we monitor it', 'no major concerns')?\n"
+            "     SYNTHESIS CHECK\n"
+            "     - Does synthesis_prompt cover governance maturity + material control gaps +\n"
+            "       compliance status + data integrity + vendor management + transformation\n"
+            "       readiness + risk rating? Is it customised, not a template?\n"
+            "     - Does forward_roadmap cover: key findings for board, recommendations,\n"
+            "       remediation plan, and re-assessment timeline?\n"
             "   For Customer (C) scripts, check:\n"
             "     FRAMING BLOCK\n"
             "     - Does positioning make it explicit this is NOT a complaint session or performance review?\n"
@@ -2140,33 +2693,39 @@ def create_interaction_designer_task(
             "   For L3 scripts, check:\n"
             "     - No framing_block, no synthesis_check, no maturity_rating blocks\n"
             "     - Exactly 8 sections in prescribed order with correct target_minutes\n"
+            "   • outputs/audit_interview_summaries.json — governance assessment per auditor/regulator\n"
             "   • outputs/customer_interview_summaries.json — customer persona per segment\n"
             "   • outputs/l0_interview_summaries.json — portfolio logic prep per L0 node\n"
             "   • outputs/l1_interview_summaries.json — capability strategy prep per L1 node\n"
             "   • outputs/l2_interview_summaries.json — decision architecture prep per L2 node\n"
             "   Reply \"approved\" to proceed, or provide revision notes.'\n"
-            "12. If revision notes received, revise and call HumanInputTool again. "
+            "13. If revision notes received, revise and call HumanInputTool again. "
             "Repeat at most 3 times total.\n"
         ),
         expected_output=(
-            "Five artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
-            "integrated script per L0, L1, L2, L3, and C (customer) node; L0, L1, L2, and C "
-            "scripts include framing_block and synthesis_check; L0 synthesis_check also includes "
-            "portfolio_options and sponsorship_check; L1 and L2 sections include maturity_rating "
-            "blocks with dimension-specific scale labels; L0, L3, and C sections have no "
-            "maturity_rating blocks; L3 scripts have exactly 8 fixed sections with no framing_block "
-            "or synthesis_check; C scripts have exactly 8 fixed sections with framing_block and "
-            "synthesis_check but no maturity_rating; (2) customer_interview_summaries.json — one "
-            "customer persona per segment covering friction points, satisfaction (1–10 Property and "
-            "Fleet), unmet needs, data/partnership quality, change readiness, competitive context, "
-            "champion/detractor classification, and key quotes for the business case; "
-            "(3) l0_interview_summaries.json — one L0 Interview Summary per L0 node covering "
+            "Six artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
+            "integrated script per L0, L1, L2, L3, C (customer), and A (audit) node; L0, L1, L2, "
+            "C, and A scripts include framing_block and synthesis_check; L0 synthesis_check also "
+            "includes portfolio_options and sponsorship_check; L1 and L2 sections include "
+            "maturity_rating blocks; L0, L3, C, and A sections have no maturity_rating blocks; "
+            "L3 scripts have exactly 8 fixed sections with no framing_block or synthesis_check; "
+            "C scripts have exactly 8 fixed sections with framing_block and synthesis_check; "
+            "A scripts have exactly 10 fixed sections with framing_block and synthesis_check; "
+            "(2) audit_interview_summaries.json — one governance assessment per auditor/regulator "
+            "covering governance maturity, compliance status, financial controls, KPI integrity, "
+            "risk management, data quality, third-party management, transformation readiness, "
+            "overall risk rating, and prioritised recommendations; "
+            "(3) customer_interview_summaries.json — one customer persona per segment covering "
+            "friction points, satisfaction (1–10 Property and Fleet), unmet needs, data/partnership "
+            "quality, change readiness, competitive context, champion/detractor classification, and "
+            "key quotes for the business case; "
+            "(4) l0_interview_summaries.json — one L0 Interview Summary per L0 node covering "
             "portfolio logic, competitive context, capital allocation & ROI, execution risk, "
             "governance, board alignment, cross-level misalignments, portfolio option resonance, "
-            "and sponsorship assessment; (4) l1_interview_summaries.json — one L1 Interview Summary "
+            "and sponsorship assessment; (5) l1_interview_summaries.json — one L1 Interview Summary "
             "per L1 node covering strategic mandate, competitive position, five-dimension maturity, "
             "value architecture, digital readiness, three-horizon roadmap, CSFs, and peer interview "
-            "priorities; (5) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
+            "priorities; (6) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
             "covering decision architecture, data landscape, orchestration friction, and monetised "
             "opportunity. No separate questionnaire artefact. All approved by human reviewer."
         ),

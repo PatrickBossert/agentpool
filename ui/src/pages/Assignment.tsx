@@ -340,7 +340,7 @@ export default function Assignment() {
   const filteredStakeholders = useMemo(() => {
     const q = search.toLowerCase()
     const sorted = [...stakeholders].sort((a, b) => {
-      const order = { L0: 0, L1: 1, L2: 2, L3: 3, C: 4, '': 5 }
+      const order = { L0: 0, L1: 1, L2: 2, L3: 3, C: 4, A: 5, '': 6 }
       return (order[a.level] ?? 4) - (order[b.level] ?? 4)
     })
     return q
