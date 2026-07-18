@@ -221,7 +221,7 @@ export interface Stakeholder {
   preferred_language: string
   currency: string
   // Engagement fields
-  level: '' | 'L0' | 'L1' | 'L2' | 'L3' | 'C' | 'A'
+  level: '' | 'L0' | 'L1' | 'L2' | 'L3' | 'C' | 'A' | 'F'
   entity: string
   comms_channel: 'email' | 'slack' | 'sms'
   // Role flags (a stakeholder can hold all three simultaneously)

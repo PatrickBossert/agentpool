@@ -42,6 +42,15 @@ A  interviews:  OUTSIDE-IN (GOVERNANCE) — focus on whether controls are workin
                 transformation readiness. Audit voice is the most credible evidence
                 for governance credibility and remediation priorities.
 
+F  interviews:  GROUND TRUTH (FRONTLINE) — focus on what ACTUALLY happens at the
+                point of execution: where plans hit reality, where processes break,
+                where data is trusted or ignored, and where safety risks go unreported.
+                Talk to property FM technicians (ISS), fleet mechanics and drivers (DXI),
+                and planning/dispatch coordinators (GS UK or contractor). Frontline
+                voice reveals workarounds, morale, retention risk, change readiness,
+                and the innovations that never reach management — data no executive
+                can see from their desk.
+
 Instruments must reflect these shifts:
   L3 scripts probe the texture of daily work;
   L2 scripts probe decision quality and orchestration;
@@ -50,8 +59,11 @@ Instruments must reflect these shifts:
   C  scripts probe service quality, friction, and transformation readiness from
      the customer's operational lens — not the organisation's internal perspective;
   A  scripts probe governance maturity, control effectiveness, compliance status,
-     and transformation risk from an independent assurance perspective.
-All six instrument types contribute different data that the Synthesis Analyst will
+     and transformation risk from an independent assurance perspective;
+  F  scripts probe execution reality, system friction, workarounds, safety culture,
+     morale, and change readiness from the ground-truth perspective of operational
+     workers executing asset management tasks daily.
+All seven instrument types contribute different data that the Synthesis Analyst will
 triangulate into a unified set of findings.
 """
 
@@ -1540,6 +1552,317 @@ Produce one audit summary per interviewee / assurance function.
 """
 
 
+_FRONTLINE_PRINCIPLES = """\
+FRONTLINE INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
+─────────────────────────────────────────────────────────────
+Apply these throughout every Frontline interview design and execution. They are not
+steps — they are persistent lenses that determine whether the interview surfaces
+ground truth or polished narrative.
+
+1. FRONTLINE SEES THE TRUTH
+   The gap between plan and reality only exists at the point of execution.
+   Frontline workers know which work orders are clear, which processes break,
+   which data is wrong, and which safety risks go unreported. Your job is to
+   create the conditions where they will tell you. Listen for the difference
+   between "the process" and "what we actually do."
+
+2. LISTEN WITHOUT DEFENSIVENESS
+   When a frontline worker criticises the system, the tools, or management, they
+   are giving you the most valuable data in the programme. Do not explain, justify,
+   or redirect. Acknowledge and probe deeper: "That sounds frustrating — how often
+   does that happen? What does it cost you per day?" Defensiveness closes the
+   conversation; curiosity opens it.
+
+3. PSYCHOLOGICAL SAFETY IS A PREREQUISITE
+   Frontline workers have been blamed for things outside their control. They have
+   learned that honesty can backfire. Before they will tell you the truth, they need
+   to believe: (a) their name will not be attached to what they say, (b) this is not
+   a performance review, (c) you are not reporting back to their supervisor.
+   Establish this explicitly in the opening — and reinforce it if the conversation stalls.
+
+4. WORKAROUNDS = SYSTEM FRICTION
+   Every workaround a frontline worker describes is a gap in a process, a system,
+   or a resource that has never been addressed. "I keep my own spreadsheet because
+   the system doesn't help" means: there is a critical system failure and we have
+   institutionalised a workaround instead of fixing it. Catalogue every workaround;
+   they are the highest-signal data for transformation design.
+
+5. SAFETY CONCERNS OVERRIDE EVERYTHING
+   If a frontline worker raises a safety concern — unreported near-miss, pressure
+   to skip a safety step, expired equipment, inadequate training for the task — this
+   takes priority over the interview agenda. Do not normalise it or leave it for later.
+   Address it: clarify the concern, understand its scope, and escalate appropriately.
+   If there is a legal duty to report, tell the interviewee before acting.
+
+6. MORALE = RETENTION = EXECUTION
+   A frontline worker who is burned out, under-recognised, or afraid to report
+   problems is a retention risk — and a safety risk. Transformation programmes that
+   ignore frontline morale discover it in attrition during implementation. Probe
+   morale directly: "How likely are you to still be in this role in 18 months? What
+   would change that?" The answers inform both the business case and the change plan.
+
+7. CO-DESIGN BUILDS ADOPTION
+   Frontline workers who helped design a new system or process will explain it to
+   colleagues and defend it when challenged. Those who had it imposed on them will
+   find its failure points and share them freely. Where genuine co-design is possible
+   — piloting, testing, input to requirements — involve frontline workers early. Ask:
+   "Would you want to be involved in designing the solution?"
+
+8. CLOSE THE LOOP
+   The most powerful trust-building action after a frontline interview is to tell
+   the interviewee — weeks or months later — "We changed [X] because of what you
+   told us." Design the debrief and action plan with this in mind: identify at least
+   one quick win per frontline cohort that can be implemented and communicated back
+   before the main transformation programme begins.
+"""
+
+_FRONTLINE_FRAMING_TEMPLATE = """\
+FRONTLINE FRAMING BLOCK — DESIGN GUIDE
+───────────────────────────────────────
+The framing_block is spoken before any questions begin. It establishes psychological
+safety, sets the register (honest, not polished), and signals that management genuinely
+wants ground-truth — not the version people think they want to hear.
+
+POSITIONING (1–2 sentences):
+  NOT a performance review; NOT a complaint session; NOT a process audit.
+  Frame it as: "We're trying to understand what it's ACTUALLY like to do your job —
+  what works well, what's frustrating, what you wish you could tell management,
+  and what might go wrong that no one talks about in meetings."
+  Make clear this is confidential and their name will not be attached to feedback.
+
+CONTEXT SETTING (5 bullets — speak these naturally):
+  • This stays confidential — you won't be quoted by name
+  • This is not a review of your performance — we want the real story, not the
+    polished version
+  • Your insight directly shapes the improvement plan
+  • Speak freely — if something is broken, we need to hear it
+  • If you raise a safety concern, we handle it separately and sensitively
+
+DUAL LENSES:
+  Efficiency lens (friction): "First, I want to understand what's getting in your way —
+    where time is wasted, where processes break, where the system makes things harder
+    instead of easier."
+  Effectiveness lens (aspiration): "And second, what would make you significantly more
+    effective — what would you change if you could, and what's standing in the way?"
+"""
+
+_FRONTLINE_SECTION_GUIDE = """\
+FRONTLINE SECTION GUIDE — 9 FIXED SECTIONS (57 MINUTES)
+─────────────────────────────────────────────────────────
+All 9 sections are mandatory — there is NO section selection for Frontline interviews.
+Design questions for each section from the themes below.
+NO maturity_rating blocks in any Frontline section.
+
+SECTION 1 — Day-in-the-Life & Actual Work (target_minutes: 8)
+  Core question: What ACTUALLY happens vs. what is planned?
+  Key themes:
+    • Walk-through of a recent day/week — get them talking; observe natural friction
+    • Planned vs. reactive split (% planned — listen for firefighting signals)
+    • Work order quality: clarity, completeness, achievability, resource adequacy
+    • First-attempt job completion rate (%) and the most common reasons for failure
+    • Time spent on admin/data entry (% of day — high % = systemic friction)
+    • Workarounds: duplicate entry, parallel spreadsheets, phone calls replacing systems
+    • The ONE thing that would save the most time (highest-impact inefficiency)
+
+SECTION 2 — Constraints, Friction & Pain Points (target_minutes: 8)
+  Core question: Where does the system break, and who pays the price?
+  Key themes:
+    • Most frustrating aspect of the job (intensity reveals real pain; note the category)
+    • Whether the frustration is individual or systemic across the team
+    • What happens when a job fails or overruns (blame culture vs. learning culture)
+    • Tasks being done that shouldn't be (dangerous, inefficient, or out of role)
+    • Safety pressure signals: asked to skip steps? Working unfit? Covering for shortages?
+    • The single highest-impact change to one policy, process, or system
+
+SECTION 3 — Data, Systems & Technology (target_minutes: 7)
+  Core question: Are systems designed for the frontline, or do frontline workers design
+  around them?
+  Key themes:
+    • Systems and tools used: which ones, how often, helpful or a pain?
+    • Data quality received: accurate, complete, timely — or full of errors?
+    • Data errors encountered but NOT reported to management (asset location, maintenance
+      history, drawings, safety info, priority flags)
+    • What happens when an error is found (feedback loop vs. ignored workaround)
+    • Whether systems are designed for the frontline or for management reporting
+    • Speed and reliability of systems in the field (crashes, offline, too slow)
+    • The ideal system: what would it do that current systems don't?
+    • Change readiness for new digital tools (if it helps, would they use it?)
+
+SECTION 4 — Knowledge, Training & Capability (target_minutes: 6)
+  Core question: Do frontline workers have what they need to do their job well?
+  Key themes:
+    • Confidence and adequacy of current training (well-prepared vs. learning on the job)
+    • Training received in the past year: technical, compliance, soft skills, advancement
+    • Training wanted but not received (capability gaps, ambition, and retention risk)
+    • How they learn when they don't know something (ask colleague, look up, trial-and-error)
+    • Key person dependencies: who would be hardest to replace and why?
+    • Critical knowledge that would leave if this person left tomorrow
+
+SECTION 5 — Safety, Health & Wellbeing (target_minutes: 7)
+  Core question: Are safety risks being reported, and is the culture safe enough to do so?
+  Key themes:
+    • Confidence that safety processes are adequate and actually followed
+    • Near-miss reporting culture: are incidents reported, and what happens when they are?
+    • Pressure to prioritise targets over safety (cut corners, skip steps, work when unfit)
+    • Unreported safety concerns the interviewee is aware of
+    • Burnout signals: workload manageability, stress, hours worked, work-life balance
+    • Morale as safety indicator — low morale = less likely to report concerns
+    • Confidentiality reminder: if there is a legal duty to report, tell the worker first
+
+SECTION 6 — Team Dynamics & Culture (target_minutes: 6)
+  Core question: Does the organisation support frontline workers, or does it extract
+  from them?
+  Key themes:
+    • Direct supervisor: supportive advocate vs. disconnected or blame-shifting
+    • Company engagement: proud, neutral, frustrated, or considering leaving
+    • Understanding of strategy: do they know WHY they're doing what they're doing?
+    • Cross-organisation coordination (GS UK, ISS, DXI): clear, fragmented, or conflicting?
+    • Unjust accountability: blamed for things clearly outside their control?
+    • What would make them MORE likely to stay and do excellent work
+
+SECTION 7 — Change & Transformation Appetite (target_minutes: 6)
+  Core question: Will frontline workers embrace improvement — and what would make it fail?
+  Key themes:
+    • Readiness for change: excited, cautious, sceptical, or experiencing change fatigue?
+    • Specific changes that would actually help (process, tools, resources, autonomy)
+    • Changes that would make things WORSE (fears: more complexity, job loss, no training,
+      disruption without clear benefit, no involvement)
+    • Appetite to co-design improvements (the most reliable predictor of adoption)
+    • Track record of past improvements — were previous promises kept?
+    • What would convince them THIS transformation is different from the ones that weren't
+
+SECTION 8 — Feedback Loop & Voice (target_minutes: 5)
+  Core question: Do frontline workers feel heard — and if not, why not?
+  Key themes:
+    • What happens when they have an idea or concern (who do they tell, what happens next?)
+    • Whether any of their ideas have ever been implemented (and how it felt)
+    • Things they've wanted to tell management but haven't (suppressed voice — why?)
+    • What would make them trust that management genuinely wants to hear from them
+    • Open-ended close: anything they want us to know that we haven't asked?
+
+SECTION 9 — Wrap-Up & Confidentiality (target_minutes: 4)
+  This section maps to the synthesis_check object — it is NOT a separate narrative section.
+  The interviewer summarises what they heard, validates it, makes a commitment to act,
+  and reinforces confidentiality. See _FRONTLINE_SYNTHESIS_TEMPLATE for the design guide.
+"""
+
+_FRONTLINE_SYNTHESIS_TEMPLATE = """\
+FRONTLINE SYNTHESIS CHECK — DESIGN GUIDE
+─────────────────────────────────────────
+The synthesis_check maps to Section 9 (Wrap-Up). It is the conversational close,
+not an analytical debrief. The register must stay warm, grateful, and human — the
+interviewee has shared something honest and personal.
+
+SYNTHESIS PROMPT:
+  Summarise what you heard across: what's working well; what's most frustrating;
+  what would help most; their confidence in management and in safety; morale and
+  likelihood to stay. Phrase it as: "To recap what I heard..." followed by 4–5 specific
+  points drawn from THIS interview — not a generic template. End with: "Did I capture
+  that accurately? Anything I missed?"
+  The synthesis must be SPECIFIC — name their role, top frustrations, and the
+  improvements they called out. Generic summaries break trust.
+
+RESPONSE PROBES:
+  if_positive (they agree): "Is there anything else — something we haven't covered
+    that's on your mind?"
+  if_defensive (they correct you): "Where did I get the picture wrong? I want to make
+    sure I carry the right story back."
+  if_uncertain (they hesitate): "What's hard to summarise? What else should I know
+    before I leave?"
+
+PEER REFERRAL:
+  "Are there colleagues who would benefit from having this same conversation? We want
+  to hear from as many people as possible — especially people with different roles or
+  different experiences from yours."
+  Invite voluntary referral — never instruct them to send colleagues.
+
+FORWARD ROADMAP:
+  "We're going to include your feedback — anonymised — in the improvement plan. Your
+  name won't appear anywhere. We may follow up if we need to explore specific areas
+  further. Before the main changes happen, we'll let you know what's been acted on.
+  Does that sound okay?"
+  This closes the psychological contract: they gave honest feedback; we commit to act
+  on it and communicate back what changed.
+"""
+
+_FRONTLINE_OUTPUT_TEMPLATE = """\
+FRONTLINE WORKER INTERVIEW SUMMARY — TEMPLATE
+──────────────────────────────────────────────
+Produce one summary per frontline worker cohort interviewed. This summary is
+CONFIDENTIAL: do not include any individual's name in shared artefacts — use
+role/function/cohort identifiers only (e.g. "ISS Site Technician — Property FM").
+
+## Worker Profile
+- Role/Title:            [Technician / Driver / Coordinator / Inspector / etc.]
+- Function:              [Property FM / Fleet / Planning / Other]
+- Organisation:          [GS UK / ISS / DXI]
+- Years in role:         [X]
+- Feedback confidence:   [High / Medium / Low — did they speak openly?]
+
+## Day-to-Day Reality
+- Planned vs. reactive split: [X% planned, Y% reactive]
+- Job completion rate:        [% first attempt]
+- Top completion blockers:    [1–3 most common reasons jobs don't complete]
+- Admin/data entry time:      [X% of working day]
+- Key workarounds:            [Describe the duplicate processes or system bypasses]
+
+## Pain Points & Friction (Ranked)
+1. Top frustration: [Description]
+   - Type:      [Process / Tools / Resourcing / Safety / Leadership / External]
+   - Frequency: [Daily / Weekly / Chronic]
+   - Fix:       [What would resolve it?]
+2. Second frustration: [...]
+3. Third frustration:  [...]
+
+## Data & Systems Reality
+- System quality:      [Working well / Adequate / Problematic / Broken]
+- Data accuracy:       [Trust it fully / Mostly / Sceptical / Don't trust it]
+- Data completeness:   [Complete / Gaps / Major gaps]
+- Active workarounds:  [Systems being replaced or bypassed by manual alternatives]
+
+## Safety & Wellbeing
+- Safety confidence:       [1–10]
+- Unreported concerns:     [Yes — describe / No known concerns]
+- Pressure to cut corners: [Yes / No / Sometimes — describe context]
+- Burnout risk:            [Low / Medium / High — evidence]
+- Morale:                  [Good / Neutral / Low]
+
+## Team & Leadership
+- Direct supervisor:   [Supportive advocate / Transactional / Disconnected / Source of tension]
+- Company engagement:  [Proud / Neutral / Frustrated / Considering leaving]
+- Unheard concerns:    [What do they want management to know that they haven't said?]
+
+## Capability & Development
+- Training adequacy:     [Sufficient / Gaps in: [areas]]
+- Career growth:         [Possible / Stalled / No visible path]
+- Key person dependency: [Is this worker a critical knowledge holder?]
+- Succession risk:       [Knowledge that would leave if they left]
+
+## Change Readiness
+- Openness to improvement: [Excited / Cautious / Sceptical / Resistant]
+- Change fatigue:          [Fresh / Moderate / Exhausted]
+- Co-design appetite:      [Would participate / Maybe / No thanks]
+- Changes they want:       [Specific improvements they named]
+- Changes to avoid:        [What would make things worse]
+
+## Retention & Flight Risk
+- Likelihood to stay (1–10): [X]
+- Key retention factors:     [What keeps them; what would make them leave]
+- Risk indicators:           [Burnout / Unsafe conditions / Poor management / No growth]
+
+## Voice & Quotes
+- "[Paraphrased insight that should inform strategy — using their language]"
+- "[Another key observation]"
+- "[A safety or morale signal that management should see]"
+
+## Recommended Actions
+- [ ] [Quick win this cohort would notice — implement before the main programme]
+- [ ] [Safety concern to escalate or monitor]
+- [ ] [Retention risk to address]
+- [ ] [System or process improvement to include in transformation scope]
+"""
+
+
 _L1_PRINCIPLES = """\
 L1 INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
 ──────────────────────────────────────────────────────
@@ -2029,6 +2352,7 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
             "data sources can be compared and synthesised.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _FRONTLINE_PRINCIPLES + "\n"
             + _AUDIT_PRINCIPLES + "\n"
             + _CUSTOMER_PRINCIPLES + "\n"
             + _L0_PRINCIPLES + "\n"
@@ -2064,10 +2388,12 @@ def create_interaction_designer_task(
             "Design integrated interview scripts for every active L0, L1, L2, and L3 value chain "
             "node, PLUS one customer interview script per identified customer segment (level='C'), "
             "PLUS one audit/assurance interview script per identified auditor or regulator contact "
-            "(level='A'). "
+            "(level='A'), PLUS one frontline worker interview script per identified frontline worker "
+            "cohort (level='F'). "
             "All instruments use a single script artefact per node/segment. Maturity ratings "
             "(maturity_rating blocks) appear in L1 and L2 sections only — captured after narrative "
-            "discussion. L0, L3, and C (customer) nodes have no maturity_rating blocks. "
+            "discussion. L0, L3, C (customer), A (audit), and F (frontline) nodes have no "
+            "maturity_rating blocks. "
             "There is no separate questionnaire artefact.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
@@ -2086,6 +2412,9 @@ def create_interaction_designer_task(
             + _L2_FRAMING_TEMPLATE + "\n"
             + _L2_SECTION_LIBRARY + "\n"
             + _L2_SYNTHESIS_TEMPLATE + "\n"
+            + _FRONTLINE_FRAMING_TEMPLATE + "\n"
+            + _FRONTLINE_SECTION_GUIDE + "\n"
+            + _FRONTLINE_SYNTHESIS_TEMPLATE + "\n"
             + standards_block +
             "Steps:\n"
             "1. Use SQLiteStateTool with operation='read', key='value_chain_registry', "
@@ -2476,21 +2805,83 @@ def create_interaction_designer_task(
             "   e) After drafting, produce one Audit Interview Summary using this template:\n"
             + _AUDIT_OUTPUT_TEMPLATE + "\n"
 
+            "── FRONTLINE INTERVIEWS (ground-truth — operational workers) ─────────────────────\n"
+            "10. Design frontline worker interview scripts for each frontline worker cohort\n"
+            "identified in the discovery context. Apply all 8 Frontline Interview Principles\n"
+            "from your backstory.\n"
+            "Core question: 'What ACTUALLY happens on the ground — where do plans hit reality?'\n"
+            "Focus: day-to-day execution reality, workarounds, system friction, safety culture,\n"
+            "morale, retention risk, change readiness, and the voice of workers executing asset\n"
+            "management tasks daily.\n\n"
+            "   PREPARATION (before designing):\n"
+            "   - Review the discovery_brief and ChromaDB context to identify frontline cohorts:\n"
+            "     Property FM: site technicians, maintenance workers, inspectors (ISS employees)\n"
+            "     Fleet: vehicle mechanics, drivers, charging station technicians (DXI employees)\n"
+            "     Planning: dispatch coordinators, schedulers (GS UK or contractor)\n"
+            "   - Identify 1–3 distinct cohorts (different roles have different friction profiles;\n"
+            "     a site technician and a dispatch coordinator have very different pain points)\n"
+            "   - Note known operational friction from discovery documents\n\n"
+            "   a) FRAMING BLOCK — mandatory, written before sections.\n"
+            "   Using the Frontline Framing guide from your task context, write a framing_block\n"
+            "   customised to this cohort and asset context:\n"
+            "   - positioning: 1–2 sentences: NOT a performance review; want the real story;\n"
+            "     confidential — their name will not appear anywhere\n"
+            "   - context_setting: 5 bullets covering confidentiality, honest feedback,\n"
+            "     direct impact on the improvement plan, freedom to speak, and safety handling\n"
+            "     — using language this cohort will understand and trust\n"
+            "   - dual_lenses.efficiency: friction lens (what wastes time, creates friction,\n"
+            "     breaks down in daily execution)\n"
+            "   - dual_lenses.effectiveness: aspiration lens (what would make them significantly\n"
+            "     more effective — and what's currently standing in the way)\n\n"
+            "   b) SECTION DESIGN — all 9 sections are mandatory. Design questions from the\n"
+            "   themes in the Frontline Section Guide. For every section:\n"
+            f"      - {preferred_questions} narrative questions per section, probing the section themes\n"
+            "      - follow_up_branches: 2 probing follow-ups per question — push for ground-truth\n"
+            "        ('how often?', 'what does that cost you per day?', 'how many people does this\n"
+            "        affect?')\n"
+            "      - evasion_signals: phrases signalling the worker is being diplomatic rather\n"
+            "        than candid (e.g. 'it's fine', 'nothing to complain about', 'could be worse')\n"
+            "      - probing_instructions: embed ground-truth probes ('ask for the ACTUAL last day,\n"
+            "        not the typical day' / 'push for numbers: % planned vs. reactive, first-attempt\n"
+            "        completion rate, % time on admin' / 'name specific systems, not categories')\n"
+            "      - NO maturity_rating block in any section\n\n"
+            "   c) SYNTHESIS CHECK — maps to Section 9 (Wrap-Up). Using the Frontline Synthesis guide:\n"
+            "   - synthesis_prompt: specific summary of what worked, top frustrations, what would\n"
+            "     help most, management confidence, and morale — named from this interview, not\n"
+            "     generic. End with: 'Did I capture that accurately? Anything I missed?'\n"
+            "   - response_probes: three probes for agreement / correction / hesitation\n"
+            "   - peer_referral: voluntary invitation to refer colleagues — never instruct them\n"
+            "   - forward_roadmap: explicit commitment — anonymised, acted on, communicated back\n\n"
+            "   d) Complete script fields:\n"
+            "      - node_label: '[Cohort name] Frontline Interview'\n"
+            "        (e.g. 'ISS Site Technician Frontline Interview')\n"
+            "      - level: 'F'\n"
+            "      - research_brief and study_objectives framed at execution reality level:\n"
+            "        'Surface ground-truth constraints, workarounds, safety culture, and change\n"
+            "        readiness from the perspective of [cohort]'\n"
+            "      - welcome_message: warm, informal, peer-to-peer register. Emphasise:\n"
+            "        confidential; no right/wrong answers; honest feedback changes real things\n"
+            "      - closing_message: thank them sincerely; state when they will hear about\n"
+            "        what was acted on because of their input\n\n"
+            "   e) After drafting, produce one Frontline Worker Interview Summary per cohort\n"
+            "   using this template:\n"
+            + _FRONTLINE_OUTPUT_TEMPLATE + "\n"
+
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
-            "10. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, L3, C, and A) as a single JSON object keyed "
-            "by node_label. L0, L1, L2, C, and A scripts include framing_block and synthesis_check. "
-            "L1 and L2 sections include a maturity_rating block; L0, L3, C, and A sections do not. "
+            "11. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, L3, C, A, and F) as a single JSON object keyed "
+            "by node_label. L0, L1, L2, C, A, and F scripts include framing_block and synthesis_check. "
+            "L1 and L2 sections include a maturity_rating block; L0, L3, C, A, and F sections do not. "
             "L0 synthesis_check includes the additional portfolio_options and sponsorship_check fields. "
             "This is the ONLY script artefact — there is no separate questionnaire.\n"
             "   {\n"
             "     \"<node_label>\": {\n"
             "       \"node_label\": \"<node_label>\",\n"
-            "       \"level\": \"L0\" | \"L1\" | \"L2\" | \"L3\" | \"C\" | \"A\",\n"
+            "       \"level\": \"L0\" | \"L1\" | \"L2\" | \"L3\" | \"C\" | \"A\" | \"F\",\n"
             "       \"research_brief\": \"...\",\n"
             "       \"study_objectives\": [\"...\"],\n"
             "       \"welcome_message\": \"...\",\n"
-            "       // L0, L1, L2, C, and A — framing block spoken before any questions:\n"
-            "       \"framing_block\": {   // PRESENT for L0, L1, L2, C, and A; OMIT for L3\n"
+            "       // L0, L1, L2, C, A, and F — framing block spoken before any questions:\n"
+            "       \"framing_block\": {   // PRESENT for L0, L1, L2, C, A, and F; OMIT for L3\n"
             "         \"positioning\": \"We're mapping [L2 cluster] — the strategic layer "
             "that coordinates [L3 names] and feeds [key decisions].\",\n"
             "         \"context_setting\": [\n"
@@ -2540,8 +2931,8 @@ def create_interaction_designer_task(
             "           }\n"
             "         }\n"
             "       ],\n"
-            "       // L0, L1, L2, C, and A — synthesis check spoken after sections, before closing:\n"
-            "       \"synthesis_check\": {   // PRESENT for L0, L1, L2, C, and A; OMIT for L3\n"
+            "       // L0, L1, L2, C, A, and F — synthesis check spoken after sections, before closing:\n"
+            "       \"synthesis_check\": {   // PRESENT for L0, L1, L2, C, A, and F; OMIT for L3\n"
             "         \"synthesis_prompt\": \"Before I let you go — based on what you've "
             "told me, here's how I see this cluster: [customised synthesis of intent, "
             "maturity, constraint, data gap, opportunity]. Does that match your assessment?\",\n"
@@ -2575,7 +2966,7 @@ def create_interaction_designer_task(
             "in the client's operational context.\n"
             "   Use SQLiteStateTool with operation='write', key='interview_scripts', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "11. Save INTERVIEW SUMMARIES as five separate artefacts:\n"
+            "12. Save INTERVIEW SUMMARIES as six separate artefacts:\n"
             "   a) AUDIT INTERVIEW SUMMARIES (one per auditor/regulator, produced in step 9e):\n"
             "      { \"<node_label>\": { <fields from Audit Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='audit_interview_summaries', "
@@ -2595,9 +2986,13 @@ def create_interaction_designer_task(
             "   e) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 6g):\n"
             "      { \"<node_label>\": { <fields from L2 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l2_interview_summaries', "
+            "agent_name='interaction_designer' to save this.\n"
+            "   f) FRONTLINE INTERVIEW SUMMARIES (one per cohort, produced in step 10e):\n"
+            "      { \"<node_label>\": { <fields from Frontline Worker Interview Summary Template> } }\n"
+            "      Use SQLiteStateTool with operation='write', key='frontline_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "12. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
-            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, L3, C, and A nodes.\n"
+            "13. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
+            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, L3, C, A, and F nodes.\n"
             "   For Audit (A) scripts, check:\n"
             "     FRAMING BLOCK\n"
             "     - Does positioning explicitly state this is NOT a defensive exercise —\n"
@@ -2693,24 +3088,48 @@ def create_interaction_designer_task(
             "   For L3 scripts, check:\n"
             "     - No framing_block, no synthesis_check, no maturity_rating blocks\n"
             "     - Exactly 8 sections in prescribed order with correct target_minutes\n"
+            "   For Frontline (F) scripts, check:\n"
+            "     FRAMING BLOCK\n"
+            "     - Does positioning establish psychological safety explicitly (NOT a performance\n"
+            "       review; their name will not appear anywhere)?\n"
+            "     - Do context_setting bullets cover confidentiality, honest feedback, direct impact\n"
+            "       on the improvement plan, freedom to speak, and safety handling?\n"
+            "     - Do dual_lenses cover friction (what gets in the way) AND aspiration (what would\n"
+            "       make them significantly more effective)?\n"
+            "     SECTIONS\n"
+            "     - Are all 9 sections present in order with appropriate target_minutes (total 57 min)?\n"
+            "     - Does S1 ask for the walk-through of an ACTUAL recent day (not a process description)?\n"
+            "     - Does S2 probe for workarounds AND safety pressure indicators?\n"
+            "     - Does S3 probe for data errors that go UNREPORTED to management?\n"
+            "     - Does S5 cover unreported safety concerns with an explicit confidentiality note?\n"
+            "     - Are there NO maturity_rating blocks in any frontline section?\n"
+            "     - Do evasion_signals flag diplomatic non-answers ('it's fine', 'could be worse')?\n"
+            "     SYNTHESIS CHECK\n"
+            "     - Does synthesis_prompt summarise what's working, frustrations, what would help,\n"
+            "       management confidence, and morale — SPECIFIC to this cohort (no placeholders)?\n"
+            "     - Does forward_roadmap make a concrete commitment: anonymised, actioned, fed back?\n"
+            "     - Does peer_referral invite voluntary referral of colleagues (not instruct it)?\n"
             "   • outputs/audit_interview_summaries.json — governance assessment per auditor/regulator\n"
             "   • outputs/customer_interview_summaries.json — customer persona per segment\n"
+            "   • outputs/frontline_interview_summaries.json — worker reality summary per cohort\n"
             "   • outputs/l0_interview_summaries.json — portfolio logic prep per L0 node\n"
             "   • outputs/l1_interview_summaries.json — capability strategy prep per L1 node\n"
             "   • outputs/l2_interview_summaries.json — decision architecture prep per L2 node\n"
             "   Reply \"approved\" to proceed, or provide revision notes.'\n"
-            "13. If revision notes received, revise and call HumanInputTool again. "
+            "14. If revision notes received, revise and call HumanInputTool again. "
             "Repeat at most 3 times total.\n"
         ),
         expected_output=(
-            "Six artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
-            "integrated script per L0, L1, L2, L3, C (customer), and A (audit) node; L0, L1, L2, "
-            "C, and A scripts include framing_block and synthesis_check; L0 synthesis_check also "
-            "includes portfolio_options and sponsorship_check; L1 and L2 sections include "
-            "maturity_rating blocks; L0, L3, C, and A sections have no maturity_rating blocks; "
-            "L3 scripts have exactly 8 fixed sections with no framing_block or synthesis_check; "
-            "C scripts have exactly 8 fixed sections with framing_block and synthesis_check; "
-            "A scripts have exactly 10 fixed sections with framing_block and synthesis_check; "
+            "Seven artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
+            "integrated script per L0, L1, L2, L3, C (customer), A (audit), and F (frontline) node; "
+            "L0, L1, L2, C, A, and F scripts include framing_block and synthesis_check; L0 "
+            "synthesis_check also includes portfolio_options and sponsorship_check; L1 and L2 "
+            "sections include maturity_rating blocks; L0, L3, C, A, and F sections have no "
+            "maturity_rating blocks; L3 scripts have exactly 8 fixed sections with no framing_block "
+            "or synthesis_check; C scripts have exactly 8 fixed sections with framing_block and "
+            "synthesis_check; A scripts have exactly 10 fixed sections with framing_block and "
+            "synthesis_check; F scripts have exactly 9 fixed sections with framing_block and "
+            "synthesis_check; "
             "(2) audit_interview_summaries.json — one governance assessment per auditor/regulator "
             "covering governance maturity, compliance status, financial controls, KPI integrity, "
             "risk management, data quality, third-party management, transformation readiness, "
@@ -2719,13 +3138,17 @@ def create_interaction_designer_task(
             "friction points, satisfaction (1–10 Property and Fleet), unmet needs, data/partnership "
             "quality, change readiness, competitive context, champion/detractor classification, and "
             "key quotes for the business case; "
-            "(4) l0_interview_summaries.json — one L0 Interview Summary per L0 node covering "
+            "(4) frontline_interview_summaries.json — one worker reality summary per frontline cohort "
+            "covering day-to-day planned vs. reactive split, job completion rate, workarounds, pain "
+            "points, data and systems quality, safety confidence, morale, team dynamics, change "
+            "readiness, retention and flight risk, voice quotes, and recommended quick wins; "
+            "(5) l0_interview_summaries.json — one L0 Interview Summary per L0 node covering "
             "portfolio logic, competitive context, capital allocation & ROI, execution risk, "
             "governance, board alignment, cross-level misalignments, portfolio option resonance, "
-            "and sponsorship assessment; (5) l1_interview_summaries.json — one L1 Interview Summary "
+            "and sponsorship assessment; (6) l1_interview_summaries.json — one L1 Interview Summary "
             "per L1 node covering strategic mandate, competitive position, five-dimension maturity, "
             "value architecture, digital readiness, three-horizon roadmap, CSFs, and peer interview "
-            "priorities; (6) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
+            "priorities; (7) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
             "covering decision architecture, data landscape, orchestration friction, and monetised "
             "opportunity. No separate questionnaire artefact. All approved by human reviewer."
         ),
