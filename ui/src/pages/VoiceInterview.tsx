@@ -462,6 +462,20 @@ export default function VoiceInterview() {
       await speakText(sc.forward_roadmap, voiceId)
       const roadmapResponse = await listenWithRestart(lang)
       qaRef.current.push({ question: sc.forward_roadmap, answer: roadmapResponse })
+      // L0 only — portfolio sequencing options validation
+      if (sc.portfolio_options) {
+        setCurrentQuestion(sc.portfolio_options)
+        await speakText(sc.portfolio_options, voiceId)
+        const portfolioResponse = await listenWithRestart(lang)
+        qaRef.current.push({ question: sc.portfolio_options, answer: portfolioResponse })
+      }
+      // L0 only — executive sponsorship commitment check
+      if (sc.sponsorship_check) {
+        setCurrentQuestion(sc.sponsorship_check)
+        await speakText(sc.sponsorship_check, voiceId)
+        const sponsorshipResponse = await listenWithRestart(lang)
+        qaRef.current.push({ question: sc.sponsorship_check, answer: sponsorshipResponse })
+      }
     }
 
     // Closing

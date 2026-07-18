@@ -4,24 +4,30 @@ from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
 _CONCEPTUAL_SHIFT = """\
-CONCEPTUAL SHIFT — L1 → L2 → L3
-─────────────────────────────────
-L3 interviews:  Focus on execution fidelity, data freshness, bottleneck removal.
-                Talk to practitioners. Uncover where effort is wasted, where data
-                is missing or stale, and where a smarter tool would change behaviour.
-
-L2 interviews:  Focus on orchestration logic, decision architecture, portfolio coherence.
-                Talk to process managers. Surface how work is sequenced, where decisions
-                are made without adequate information, and how trade-offs are resolved.
+CONCEPTUAL SHIFT — L0 → L1 → L2 → L3
+──────────────────────────────────────
+L0 interviews:  Focus on portfolio logic, capital allocation, and competitive positioning.
+                Talk to board members and C-suite executives. Understand where investment
+                should go across the full asset-management portfolio, what trade-offs are
+                acceptable, and what governance ensures value realisation at portfolio level.
 
 L1 interviews:  Focus on strategic alignment, capability roadmaps, value realisation.
                 Talk to GMs and value-stream owners. Explore where investment is not
                 yielding returns, what capabilities are missing, and how value is measured.
 
+L2 interviews:  Focus on orchestration logic, decision architecture, portfolio coherence.
+                Talk to process managers. Surface how work is sequenced, where decisions
+                are made without adequate information, and how trade-offs are resolved.
+
+L3 interviews:  Focus on execution fidelity, data freshness, bottleneck removal.
+                Talk to practitioners. Uncover where effort is wasted, where data
+                is missing or stale, and where a smarter tool would change behaviour.
+
 Instruments must reflect this shift: L3 scripts probe the texture of daily work;
 L2 scripts probe decision quality and orchestration; L1 scripts probe strategy and
-portfolio coherence. All three levels contribute different data that the Synthesis
-Analyst will triangulate into a unified set of findings.
+capability maturity; L0 scripts probe portfolio logic and capital allocation.
+All four levels contribute different data that the Synthesis Analyst will triangulate
+into a unified set of findings.
 """
 
 _L2_L3_FRAMEWORK = """\
@@ -426,6 +432,285 @@ Produce one summary per L2 node in this structure. This is the deliverable, not 
 - [ ] [Downstream executor]
 - [ ] [Finance / governance stakeholder]
 - [ ] [Data / IT stakeholder]
+"""
+
+
+_L0_PRINCIPLES = """\
+L0 INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
+──────────────────────────────────────────────────────
+These six principles govern every L0 design and execution. L0 interviews are shorter,
+more focused, and more decision-oriented than any other level.
+
+1. PORTFOLIO THINKING — NEVER OPTIMISE ONE L1 IN ISOLATION
+   L0 interviewees govern the whole portfolio. Never ask about one L1 capability alone —
+   always ask how the capabilities fit together. "Which L1 do you prioritise?" reveals real
+   allocation logic. "How do they interact?" reveals portfolio coherence or its absence.
+   ✗ "How important is Property transformation to you?"
+   ✓ "How do Property and Fleet transformation fit together in your capital agenda —
+      and if forced to sequence, which goes first and why?"
+
+2. EXECUTIVE BREVITY — 30 MINUTES MAXIMUM
+   Board-level interviewees will not tolerate drift. State the structure upfront. Hold to it.
+   Keep each section to its target. Skip questions the interviewee has already answered.
+   Do not let any single answer run past 3 minutes without redirecting. Silence is not
+   time to fill — it is time to think.
+
+3. CAPITAL DISCIPLINE — ALWAYS TIE TO £ AND ROI
+   "Important" and "strategic" are not investments. Tie every claim to a number: total capex,
+   expected ROI, payback period, hurdle rate, risk-adjusted downside. If the interviewee
+   cannot quantify, probe why: "What would it take to put a number on that?"
+   Unquantified value = undefendable investment at board level.
+
+4. RISK REALISM — NAME THE HARD TRUTHS
+   Executives respect candour more than optimism. Name execution risks, governance gaps, and
+   strategic trade-offs directly. Probe: "What could break this?" "What's your worst case?"
+   "If the ROI comes in at 1.2x — do you hold or fold?"
+   Do not let "it will work out" stand as a risk management answer.
+
+5. DECISION CLARITY — CLARIFY WHAT IS BEING DECIDED AND BY WHOM
+   L0 interviews serve one purpose above all others: clarifying the decision.
+   "What are you asking the board to approve?" If vague, the governance process is not ready.
+   Before closing, every L0 interview must produce a clear statement of: the decision, the
+   decision-maker, the criteria, and the timing.
+
+6. ALIGNMENT TEST — TRIANGULATE ACROSS EXECUTIVES
+   Different L0 interviewees (CEO, CFO, Chair) give different answers on priorities, ROI
+   expectations, and risk tolerance. These discrepancies are findings. Name them in the output
+   summary: "The CFO expects 2.5× ROI; the operations head expects 1.8× — this gap needs
+   resolution before board approval." Do not smooth over executive disagreements.
+"""
+
+_L0_FRAMING_TEMPLATE = """\
+L0 FRAMING BLOCK — MANDATORY OPENING STRUCTURE
+────────────────────────────────────────────────
+Every L0 script must begin with a framing_block that positions the conversation at
+portfolio level before any questions are asked. This is separate from the welcome_message
+(personal, brief, professional) and from Section 1 (which probes strategic mandate).
+
+POSITIONING (framing_block.positioning — 1–2 sentences)
+   Template: "We're assessing [organisation]'s total portfolio of asset-management
+   transformations — [L1 capabilities listed]. We want to understand: how these fit
+   your corporate strategy, where investment should concentrate, what constraints apply,
+   and what governance ensures value realisation."
+   Frame as a portfolio assessment, not an individual capability review.
+
+CONTEXT SETTING (framing_block.context_setting — 4–5 bullets)
+   Template bullets:
+   • "Strategic coherence: how do [L1 capabilities] fit your corporate strategy and
+      compete for capital against other priorities?"
+   • "Capital efficiency: are we investing in the right things, at the right scale,
+      in the right sequence?"
+   • "Risk & trade-offs: what constraints apply, and which strategic trade-offs
+      most concern you?"
+   • "Governance: who is accountable, how is progress tracked, and what is the
+      course-correction mechanism?"
+   • "Competitive positioning: where do you want to lead — and what would it take?"
+
+DUAL LENSES (framing_block.dual_lenses — L0 variant)
+   dual_lenses.efficiency (portfolio investment health):
+   "First, I want to understand the current investment logic — where capital is going,
+   what return is expected, and where the constraints are."
+
+   dual_lenses.effectiveness (portfolio transformation potential):
+   "Second, I want to understand what should be true — where to concentrate investment,
+   what sequencing makes strategic sense, and how to build board confidence in the case."
+"""
+
+_L0_SECTION_GUIDE = """\
+L0 SECTION GUIDE — FIXED 6-SECTION STRUCTURE
+──────────────────────────────────────────────
+L0 interviews use a FIXED structure — all 6 sections are always included. Unlike L1 and L2,
+there is no section library or selection logic. The 30-minute constraint is met by keeping
+each section to its target and skipping questions the interviewee has already answered.
+
+Total section time: ~40 minutes on paper; runs ~25–30 minutes in practice because senior
+interviewees typically answer multiple questions in a single response.
+
+DO NOT include maturity_rating blocks in any L0 section. Maturity assessment is L1's job.
+L0 interviewees assess portfolio logic and capital decisions, not operational capability.
+
+S1. Strategic Mandate & Portfolio Logic (~8 min)
+   Core themes:
+   - Portfolio role: How do the L1 capabilities fit the corporate strategy — strategic
+     enablers, cost centres, or competitive differentiators?
+   - Trade-off framing: How do the L1 capabilities compete for capital, talent, or executive
+     attention? Where are they interdependent?
+   - Capital allocation philosophy: priority ranking; ROI hurdle rates by category; multi-year
+     commitment vs. annual discretionary.
+   - Gating factor: "Are you more constrained by capex budget, organisational capacity, or
+     strategic clarity?" Reveals the binding portfolio constraint.
+   - Forced choice: "If you could do only ONE transformation in the next 3 years, which and why?"
+     Reveals true priority; often surfaces misalignment with L1 leaders.
+
+S2. Competitive Positioning & Disruption (~6 min)
+   Core themes:
+   - Benchmarking: How does the organisation's portfolio compare to competitors? Digital maturity,
+     cost competitiveness, net-zero readiness, talent attraction?
+   - Biggest threat: What threatens the current operating model? Disruption / regulation /
+     economics / talent / technology?
+   - Upside: What is the competitive advantage if transformation succeeds?
+   - Contingencies: What would cause significant change of direction? Acceleration or delay
+     triggers? Monetise the contingency scenarios.
+
+S3. Capital Allocation & ROI Discipline (~8 min)
+   Core themes:
+   - ROI expectations: Total investment (£X over Y years); quantified benefits; payback period;
+     risk-adjusted range (best / likely / worst).
+   - Measurable vs. strategic: How do you balance cost-reduction ROI (quantifiable) vs.
+     strategic enablement (harder to quantify but often the real value driver)?
+   - Downside tolerance: Breakeven point; "if ROI comes in at 1.2× — do you hold or fold?"
+   - Value tracking: How will realisation be tracked? "We'll know it when we see it" → probe for
+     specifics. Single KPI framework or per-capability dashboards?
+   - Course-correction trigger: "If returns lag forecast by 20%, what happens?"
+
+S4. Organisational Readiness & Execution Risk (~7 min)
+   Core themes:
+   - Parallel vs. sequential: Can the organisation execute multiple L1 transformations
+     simultaneously? Shared dependencies (data platform, talent, sponsors)?
+   - Top execution risks: Technical (integration, legacy) / organisational (skills, capacity,
+     leadership turnover) / financial (overrun, benefit slippage) / market / partnership /
+     governance.
+   - Mitigation: "What is your mitigation strategy for the top 3 risks?"
+   - Key person dependency: Critical leaders and succession risk.
+   - Course-correction mechanism: "How will you know if you're off track?"
+
+S5. Governance, Accountability & Measurement (~6 min)
+   Core themes:
+   - Accountability: Who is accountable for portfolio ROI? "Shared" → diffused accountability
+     (will underperform). "I'm not sure" → governance gap.
+   - Review cadence: Monthly / quarterly / annual / ad-hoc.
+   - Metrics: What metrics matter most — cost, schedule, value realisation, capability, risk?
+   - Short vs. long-term balance: How do you protect transformation investment from short-term
+     cost pressure? Many programmes fail because investment is cut mid-stream.
+   - Kill criteria: "What could cause the board to cancel or significantly deprioritise this?"
+
+S6. Strategic Priorities & Board Questions (~5 min)
+   Core themes:
+   - Key message: "What is the #1 thing you want the board to understand?" Vague answer
+     reveals strategic clarity gap.
+   - Board Q&A readiness: "What board questions do you anticipate? How will you answer them?"
+     Standard board questions: Why now? What's the ROI? What could go wrong? Can you execute?
+     How does this compare to other investments? When will we see value?
+   - Board alignment: "Are you aligned with the board on this strategy?" If vague → governance
+     gap. Probe what is uncertain or contested.
+   - Decision statement: "What specific decision are you asking the board to make?" Should be
+     crisp and actionable. Vague = not board-ready.
+"""
+
+_L0_SYNTHESIS_TEMPLATE = """\
+L0 SYNTHESIS CHECK — MANDATORY CLOSING ELEMENT
+────────────────────────────────────────────────
+L0 synthesis_check has FOUR elements — two more than L1/L2. The additional elements
+(portfolio_options and sponsorship_check) are unique to board/exec level and use
+two new optional schema fields not present in L1/L2 synthesis_checks.
+
+1. SYNTHESIS PROMPT (interviewer speaks this)
+   Template: "Based on what you've told me, here's the strategic picture: [L1 capabilities]
+   transformation is [strategic/tactical] to [organisation]; total investment envelope is
+   [£X] over [Y years], with ROI expectations of [Z] and payback by [period]; the key
+   constraint is [capex/capacity/clarity]; the biggest execution risk is [named risk]; and
+   the decision the board needs to make is [clear decision statement].
+   Does that capture it correctly? What am I missing?"
+   MUST be customised to the specific interviewee and portfolio context. No placeholders.
+
+2. RESPONSE PROBES
+   - If positive: "Good — what would you emphasise differently, or what did I miss?"
+   - If qualified or defensive: "Where does my picture differ from yours — and why?"
+     (Surfaces undisclosed constraints or political tensions at exec level.)
+   - If uncertain: "What needs to be resolved before you'd be confident in that picture?"
+     (Reveals what is genuinely unknown vs. what is being avoided.)
+
+3. PORTFOLIO OPTIONS (unique to L0 — put in synthesis_check.portfolio_options field)
+   Present three sequencing options for validation; do not ask which is best — ask which
+   resonates and what the interviewee would add or change.
+   Template: "Following discovery interviews, I'll present three portfolio options:
+   Option A: Sequential — [first L1] established first, then [second L1].
+             Lower risk, slower combined value, tests the model before scaling.
+   Option B: Parallel — both capabilities transform simultaneously.
+             Higher complexity, faster combined value, shared infrastructure leverage.
+   Option C: Phased with gates — begin both, with defined decision gates at [milestones].
+             Balanced risk; allows sequencing adjustment if capacity constraints emerge.
+   We'll present a recommendation within [4–6 weeks]. Which framing resonates at this stage
+   — or is there a fourth option you would add?"
+
+4. SPONSORSHIP CHECK (unique to L0 — put in synthesis_check.sponsorship_check field)
+   Template: "Can we count on your support to unblock barriers as they emerge — particularly
+   [specific barrier named in the interview, e.g. funding approval, cross-functional alignment,
+   partner readiness, board bandwidth]?"
+   Listen for:
+   - Direct commitment → strong sponsorship signal
+   - "That is up to [someone else]" → reveals where real authority sits
+   - "Within limits" → conditional — probe the limits explicitly
+   - Deflection → sponsorship risk; flag in output summary
+
+TONE NOTE: At L0, the synthesis is presented with confidence. You hold a cross-cutting view
+across all levels that the executive does not. Present as a peer debrief: "Here is my read —
+correct me where I am wrong." Do not present as a learner summarising notes.
+"""
+
+_L0_OUTPUT_TEMPLATE = """\
+L0 INTERVIEW SUMMARY TEMPLATE — OUTPUT FORMAT
+───────────────────────────────────────────────
+Produce one portfolio-level summary per L0 interview.
+
+## Portfolio Logic
+- Strategic role:              [L1 capabilities as enablers / cost centres / differentiators]
+- Priority ranking:            [L1a > L1b — rationale from the interviewee]
+- Capital allocation philosophy: [ROI-driven / net-zero first / risk-weighted / unclear]
+- Gating factor named:         [Capex / Capacity / Strategic clarity]
+- Forced-choice answer:        [[L1 named], because [reason] — aligned with L1 leaders?]
+
+## Competitive Context
+- vs. industry peers:          [Ahead / On par / Behind — dimensions named]
+- Biggest threat:              [Named threat + strategic implication]
+- Upside if transformation succeeds: [Named advantage + £ estimate if given]
+- Change-of-direction triggers: [Acceleration trigger / Delay trigger / Kill trigger]
+
+## Capital Allocation & ROI
+- Total investment:            [£X over Y years]
+- Expected ROI:                [£Xm return; Yx multiple; Z-year payback]
+- Risk-adjusted range:         [Best case / Likely / Worst case]
+- Downside tolerance:          [At what ROI threshold do they pause or exit?]
+- Value tracking mechanism:    [KPI framework / TBD / Ad-hoc]
+
+## Execution Risk Assessment
+| Risk                | Probability | Impact | Mitigation named?      |
+|---------------------|-------------|--------|------------------------|
+| Technical           | H/M/L       | H/M/L  | [Yes / Partial / None] |
+| Organisational      | H/M/L       | H/M/L  | [Yes / Partial / None] |
+| Financial           | H/M/L       | H/M/L  | [Yes / Partial / None] |
+| Partnership         | H/M/L       | H/M/L  | [Yes / Partial / None] |
+| Governance          | H/M/L       | H/M/L  | [Yes / Partial / None] |
+- Key person dependency:       [Named individuals + succession risk]
+- Parallel vs. sequential:     [Can execute simultaneously? Evidence for / against]
+
+## Governance & Accountability
+- ROI accountability:          [Named role / Shared / Unclear]
+- Review cadence:              [Monthly / Quarterly / Annual / Ad-hoc]
+- Metrics that matter:         [Top 3–5 metrics named by the interviewee]
+- Kill criteria:               [What would trigger cancellation or major de-scope]
+
+## Board Alignment
+- #1 board message:            [What the interviewee wants the board to understand]
+- Decision needed:             [Specific, actionable decision statement — or 'unclear']
+- Board alignment level:       [Confident / Qualified / Uncertain — evidence]
+- Board Q&A preparedness:      [Ready / Partially ready / Not prepared]
+
+## Strategic Misalignments (Cross-Level)
+- vs. L1 leaders:              [Where L0 framing differs from L1 interviewee answers]
+- Across L0 interviewees:      [Where CEO / CFO / Chair answers diverge — and on what]
+- Implications:                [What must be resolved before board presentation]
+
+## Portfolio Option Resonance
+- Option A (Sequential):       [Interviewee reaction]
+- Option B (Parallel):         [Interviewee reaction]
+- Option C (Phased / gated):   [Interviewee reaction]
+- Preferred framing:           [Which resonated / what conditions named]
+
+## Sponsorship Assessment
+- Commitment level:            [Strong / Conditional / Weak — evidence from interview]
+- Commitment scope:            [What they will unblock / what they will not]
+- Escalation path:             [If barriers emerge, who has authority to resolve?]
 """
 
 
@@ -901,9 +1186,12 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
     return Agent(
         role="Interaction Designer",
         goal=(
-            "Design a coherent set of interview scripts and maturity assessment questionnaires "
-            "for every active L1, L2, and L3 value chain node, ensuring instruments at each "
-            "level probe the right type of insight so findings can be triangulated across levels."
+            "Design a coherent set of interview scripts for every active L0, L1, L2, and L3 "
+            "value chain node, ensuring instruments at each level probe the right type of insight "
+            "so findings can be triangulated across levels. L0 instruments capture portfolio logic "
+            "and capital allocation decisions; L1 captures strategic capability and transformation "
+            "maturity; L2 captures decision architecture and orchestration quality; L3 captures "
+            "execution fidelity and operational bottlenecks."
         ),
         backstory=(
             "You are a specialist in organisational assessment design. You combine management "
@@ -915,6 +1203,7 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
             "data sources can be compared and synthesised.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _L0_PRINCIPLES + "\n"
             + _L1_PRINCIPLES + "\n"
             + _L2_PRINCIPLES +
             "\nYou never flatten these distinctions. A script written at the wrong level — "
@@ -944,12 +1233,17 @@ def create_interaction_designer_task(
 
     return Task(
         description=(
-            "Design integrated interview scripts for every active L1, L2, and L3 value chain node. "
-            "All levels use a single script artefact — maturity ratings are embedded within each "
-            "section as maturity_rating blocks, captured after the narrative discussion. There is "
-            "no separate questionnaire artefact. L3 nodes do not include maturity_rating blocks.\n\n"
+            "Design integrated interview scripts for every active L0, L1, L2, and L3 value chain node. "
+            "All levels use a single script artefact. Maturity ratings are embedded within each "
+            "section as maturity_rating blocks for L1 and L2 only, captured after the narrative discussion. "
+            "There is no separate questionnaire artefact. L0 and L3 nodes do not include maturity_rating "
+            "blocks — L0 operates at portfolio level (no operational maturity ratings); L3 captures "
+            "execution fidelity through narrative, not ratings.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _L0_FRAMING_TEMPLATE + "\n"
+            + _L0_SECTION_GUIDE + "\n"
+            + _L0_SYNTHESIS_TEMPLATE + "\n"
             + _L1_FRAMING_TEMPLATE + "\n"
             + _L1_SECTION_LIBRARY + "\n"
             + _L1_SYNTHESIS_TEMPLATE + "\n"
@@ -960,14 +1254,68 @@ def create_interaction_designer_task(
             "Steps:\n"
             "1. Use SQLiteStateTool with operation='read', key='value_chain_registry', "
             "agent_name='interaction_designer' to load the activity registry. "
-            "Collect every entry where active=true and level is 'L1', 'L2', or 'L3'.\n"
+            "Collect every entry where active=true and level is 'L0', 'L1', 'L2', or 'L3'.\n"
             "2. Use SQLiteStateTool with operation='read', key='value_chain_summary', "
             "agent_name='interaction_designer' to understand the client's operations.\n"
             "3. Use ChromaQueryTool with collection='project' to gather corporate context "
             "(governance posture, known capability gaps, adopted standards, language used).\n\n"
 
+            "── L0 NODES (portfolio / board level — C-suite and board members) ─────────────\n"
+            "4. For each L0 node, apply all 6 L0 Interview Principles from your backstory. "
+            "Core question: 'Where should capital go, in what sequence, and how do we ensure "
+            "value realisation at portfolio level?' Time horizon: 3–5 year strategic cycle. "
+            "AI opportunity: portfolio optimisation, capital efficiency, governance assurance. "
+            "Success metric: ROI realised, strategic mandate delivered, board confidence.\n\n"
+            "   PREPARATION (before designing any section):\n"
+            "   - Identify which L1 capabilities sit beneath this L0 (from value_chain_registry)\n"
+            "   - Draft a portfolio investment narrative: total £X across L1 capabilities, ROI range,\n"
+            "     payback timeline, biggest execution risk\n"
+            "   - Identify which L0 interviewees will be interviewed (CEO, CFO, Chair, COO, etc.)\n"
+            "     so cross-executive misalignments can be tracked\n\n"
+            "   a) FRAMING BLOCK — mandatory, written before sections.\n"
+            "   Using the L0 Framing Block guide from your task context, write a framing_block\n"
+            "   object customised to this portfolio context:\n"
+            "   - positioning: 1–2 sentences stating this is a portfolio-level assessment naming\n"
+            "     the L1 capabilities, and the four things being assessed (fit to corporate strategy,\n"
+            "     capital concentration, constraints, governance for value realisation)\n"
+            "   - context_setting: 4–5 bullets covering strategic coherence, capital efficiency,\n"
+            "     risk & trade-offs, governance, and competitive positioning — customised with the\n"
+            "     client's language and their specific L1 capability names\n"
+            "   - dual_lenses.efficiency (portfolio investment health): current investment logic,\n"
+            "     where capital is going, expected return, and constraints\n"
+            "   - dual_lenses.effectiveness (portfolio transformation potential): where investment\n"
+            "     should concentrate, sequencing strategy, board confidence building\n\n"
+            "   b) FIXED SECTION STRUCTURE — L0 uses all 6 sections from the L0 Section Guide.\n"
+            "   There is NO section selection at L0 — all 6 sections are always included.\n"
+            "   Design specific questions for each section from the themes defined in the L0 Section Guide.\n"
+            f"   Use {preferred_questions} narrative questions per section, plus follow_up_branches (2 per\n"
+            "   question) and evasion_signals (phrases signalling drift from portfolio framing).\n"
+            "   NO maturity_rating blocks in any L0 section.\n\n"
+            "   c) SYNTHESIS CHECK — mandatory closing element with FOUR components.\n"
+            "   Using the L0 Synthesis Check guide from your task context, write a synthesis_check\n"
+            "   object with all four components:\n"
+            "   - synthesis_prompt: customised portfolio synthesis covering strategic role, total\n"
+            "     investment (£), ROI expectations, key constraint, biggest execution risk, and\n"
+            "     the board decision needed. End with 'Does that capture it correctly?'\n"
+            "     MUST be customised — no generic placeholders.\n"
+            "   - response_probes: three probe phrases for positive / qualified / uncertain replies\n"
+            "   - peer_referral: stakeholder mapping question naming who else to interview\n"
+            "   - forward_roadmap: 90-day question ('What would you do first?')\n"
+            "   - portfolio_options: present Options A (Sequential), B (Parallel), C (Phased/gated)\n"
+            "     using the L1 capability names. End: 'Which framing resonates at this stage?'\n"
+            "   - sponsorship_check: commitment question naming a specific barrier from the interview\n\n"
+            "   d) Complete script fields:\n"
+            "      - research_brief and study_objectives framed at portfolio / capital allocation level\n"
+            "      - welcome_message: brief, professional, board-appropriate tone. State the purpose\n"
+            "        (portfolio assessment across [L1 capabilities]), the structure (6 sections,\n"
+            "        ~30 min), and that findings will inform a board recommendation.\n"
+            "      - closing_message: concise thanks, confirm next steps (portfolio options paper\n"
+            "        within [4–6 weeks]), confirm when findings will be shared\n\n"
+            "   e) After drafting, produce one L0 Interview Summary using this template:\n"
+            + _L0_OUTPUT_TEMPLATE + "\n"
+
             "── L1 NODES (strategic / portfolio level — GMs and value-stream owners) ────────\n"
-            "4. For each L1 node, apply all 10 L1 Interview Principles from your backstory. "
+            "5. For each L1 node, apply all 10 L1 Interview Principles from your backstory. "
             "Core question: 'Does this capability deliver the value we need?' "
             "Time horizon: 3–5 years. "
             "AI opportunity: decision optimisation, competitive advantage, strategic enablement. "
@@ -1047,7 +1395,7 @@ def create_interaction_designer_task(
             + _L1_OUTPUT_TEMPLATE + "\n"
 
             "── L2 NODES (operational / process-stage level — process managers) ─────────────\n"
-            "5. For each L2 node, apply all 10 L2 Interview Principles from your backstory. "
+            "6. For each L2 node, apply all 10 L2 Interview Principles from your backstory. "
             "Core question: 'How do we orchestrate & decide better?' Time horizon: next quarter/year. "
             "AI opportunity: decision support. Success metric: decision quality / value realisation.\n\n"
             "   PREPARATION (before designing any section):\n"
@@ -1125,7 +1473,7 @@ def create_interaction_designer_task(
             + _L2_OUTPUT_TEMPLATE + "\n"
 
             "── L3 NODES (activity level — practitioners and operational staff) ──────────────\n"
-            "6. For each L3 node — anchored to the L2 vs L3 framework: core question is "
+            "7. For each L3 node — anchored to the L2 vs L3 framework: core question is "
             "'How do we execute faster & better?', time horizon is next task/next day, "
             "AI opportunity is automation (RPA, ML classification, routing), success metric "
             "is cycle time / error rate / cost per execution. Complexity is operational "
@@ -1186,9 +1534,10 @@ def create_interaction_designer_task(
             "     - L3 sections do NOT include a maturity_rating block — omit the field entirely\n\n"
 
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
-            "7. Output ALL INTERVIEW SCRIPTS (L1, L2, and L3) as a single JSON object keyed "
-            "by node_label. L2 scripts include framing_block and synthesis_check fields. "
-            "L1 and L2 sections include a maturity_rating block. L3 sections do not. "
+            "8. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, and L3) as a single JSON object keyed "
+            "by node_label. L0, L1, and L2 scripts include framing_block and synthesis_check fields. "
+            "L1 and L2 sections include a maturity_rating block; L0 and L3 sections do not. "
+            "L0 synthesis_check includes the additional portfolio_options and sponsorship_check fields. "
             "This is the ONLY script artefact — there is no separate questionnaire.\n"
             "   {\n"
             "     \"<node_label>\": {\n"
@@ -1197,8 +1546,8 @@ def create_interaction_designer_task(
             "       \"research_brief\": \"...\",\n"
             "       \"study_objectives\": [\"...\"],\n"
             "       \"welcome_message\": \"...\",\n"
-            "       // L1 and L2 — framing block spoken before any questions:\n"
-            "       \"framing_block\": {   // PRESENT for L1 and L2; OMIT for L3\n"
+            "       // L0, L1, and L2 — framing block spoken before any questions:\n"
+            "       \"framing_block\": {   // PRESENT for L0, L1, and L2; OMIT for L3\n"
             "         \"positioning\": \"We're mapping [L2 cluster] — the strategic layer "
             "that coordinates [L3 names] and feeds [key decisions].\",\n"
             "         \"context_setting\": [\n"
@@ -1231,7 +1580,7 @@ def create_interaction_designer_task(
             "               \"evasion_signals\": [\"not sure\", \"it varies\"]\n"
             "             }\n"
             "           ],\n"
-            "           \"maturity_rating\": {   // PRESENT for L1 and L2 sections; OMIT for L3\n"
+            "           \"maturity_rating\": {   // PRESENT for L1 and L2 sections; OMIT for L0 and L3\n"
             "             \"dimension\": \"<assessment dimension name>\",\n"
             "             \"prompt\": \"Based on what you've just shared, how would you rate "
             "[dimension] here? Let me read you the levels.\",\n"
@@ -1248,8 +1597,8 @@ def create_interaction_designer_task(
             "           }\n"
             "         }\n"
             "       ],\n"
-            "       // L1 and L2 — synthesis check spoken after all sections, before closing:\n"
-            "       \"synthesis_check\": {   // PRESENT for L1 and L2; OMIT for L3\n"
+            "       // L0, L1, and L2 — synthesis check spoken after all sections, before closing:\n"
+            "       \"synthesis_check\": {   // PRESENT for L0, L1, and L2; OMIT for L3\n"
             "         \"synthesis_prompt\": \"Before I let you go — based on what you've "
             "told me, here's how I see this cluster: [customised synthesis of intent, "
             "maturity, constraint, data gap, opportunity]. Does that match your assessment?\",\n"
@@ -1263,7 +1612,15 @@ def create_interaction_designer_task(
             "stakeholders, and data or IT owners.\",\n"
             "         \"forward_roadmap\": \"If you were shaping the improvement roadmap "
             "for this cluster, where would you start — quick wins in 6 months, or building "
-            "foundations for 2 years? And what's your biggest concern?\"\n"
+            "foundations for 2 years? And what's your biggest concern?\",\n"
+            "         // L0 ONLY — omit for L1 and L2:\n"
+            "         \"portfolio_options\": \"Following discovery interviews, I'll present three "
+            "portfolio options: Option A (Sequential) — [L1a] established first, then [L1b]; "
+            "Option B (Parallel) — both transform simultaneously; Option C (Phased with gates) — "
+            "both begin with defined decision gates at [milestones]. Which framing resonates? "
+            "Or is there a fourth option you would add?\",\n"
+            "         \"sponsorship_check\": \"Can we count on your support to unblock barriers "
+            "as they emerge — particularly [specific barrier from the interview]?\"\n"
             "       },\n"
             "       \"closing_message\": \"...\"\n"
             "     }\n"
@@ -1275,17 +1632,38 @@ def create_interaction_designer_task(
             "in the client's operational context.\n"
             "   Use SQLiteStateTool with operation='write', key='interview_scripts', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "8. Save INTERVIEW SUMMARIES as two separate artefacts:\n"
-            "   a) L1 INTERVIEW SUMMARIES (one per L1 node, produced in step 4g):\n"
+            "9. Save INTERVIEW SUMMARIES as three separate artefacts:\n"
+            "   a) L0 INTERVIEW SUMMARIES (one per L0 node, produced in step 4e):\n"
+            "      { \"<node_label>\": { <fields from L0 Interview Summary Template> } }\n"
+            "      Use SQLiteStateTool with operation='write', key='l0_interview_summaries', "
+            "agent_name='interaction_designer' to save this.\n"
+            "   b) L1 INTERVIEW SUMMARIES (one per L1 node, produced in step 5g):\n"
             "      { \"<node_label>\": { <fields from L1 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l1_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n"
-            "   b) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 5g):\n"
+            "   c) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 6g):\n"
             "      { \"<node_label>\": { <fields from L2 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l2_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "9. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
-            "   • outputs/interview_scripts.json — integrated scripts for all L1, L2, and L3 nodes.\n"
+            "10. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
+            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, and L3 nodes.\n"
+            "   For L0 scripts, check:\n"
+            "     FRAMING BLOCK\n"
+            "     - Does positioning frame this as a PORTFOLIO assessment (not a single-L1 review)?\n"
+            "     - Do context_setting bullets cover strategic coherence, capital efficiency, risk,\n"
+            "       governance, and competitive positioning — with client-specific L1 names?\n"
+            "     - Are dual_lenses named investment health AND transformation potential?\n"
+            "     SECTIONS\n"
+            "     - Are all 6 sections present (no selection/omission)?\n"
+            "     - Do questions probe portfolio logic, capital allocation, ROI, governance?\n"
+            "     - Are there NO maturity_rating blocks in any L0 section?\n"
+            "     - Does S3 probe ROI expectations, downside tolerance, and value tracking?\n"
+            "     - Does S5 probe accountability, review cadence, and kill criteria?\n"
+            "     SYNTHESIS CHECK\n"
+            "     - Does synthesis_prompt cover portfolio role + total investment + ROI + constraint\n"
+            "       + execution risk + board decision? Is it customised (no placeholders)?\n"
+            "     - Are portfolio_options A/B/C present with the client's L1 capability names?\n"
+            "     - Does sponsorship_check name a specific barrier from the interview?\n"
             "   For L1 scripts, check:\n"
             "     FRAMING BLOCK\n"
             "     - Does the positioning frame the capability as a STRATEGIC ASSET (not a process map)?\n"
@@ -1322,24 +1700,29 @@ def create_interaction_designer_task(
             "   For L3 scripts, check:\n"
             "     - No framing_block, no synthesis_check, no maturity_rating blocks\n"
             "     - Exactly 8 sections in prescribed order with correct target_minutes\n"
+            "   • outputs/l0_interview_summaries.json — portfolio logic prep per L0 node\n"
             "   • outputs/l1_interview_summaries.json — capability strategy prep per L1 node\n"
             "   • outputs/l2_interview_summaries.json — decision architecture prep per L2 node\n"
             "   Reply \"approved\" to proceed, or provide revision notes.'\n"
-            "10. If revision notes received, revise and call HumanInputTool again. "
+            "11. If revision notes received, revise and call HumanInputTool again. "
             "Repeat at most 3 times total.\n"
         ),
         expected_output=(
-            "Three artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
-            "integrated script per L1, L2, and L3 node; L1 and L2 scripts include framing_block "
-            "and synthesis_check; L1, L2 sections include maturity_rating blocks with "
-            "dimension-specific scale labels captured after narrative; L3 scripts have exactly "
-            "8 sections with no framing_block, no synthesis_check, no maturity_rating; "
-            "(2) l1_interview_summaries.json — one L1 Interview Summary per L1 node covering "
-            "strategic mandate, competitive position, five-dimension maturity, value architecture, "
-            "digital readiness, three-horizon roadmap, CSFs, and peer interview priorities; "
-            "(3) l2_interview_summaries.json — one L2 Interview Summary per L2 node covering "
-            "decision architecture, data landscape, orchestration friction, and monetised opportunity. "
-            "No separate questionnaire artefact. All approved by human reviewer."
+            "Four artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
+            "integrated script per L0, L1, L2, and L3 node; L0, L1, and L2 scripts include "
+            "framing_block and synthesis_check; L0 synthesis_check also includes portfolio_options "
+            "and sponsorship_check fields; L1 and L2 sections include maturity_rating blocks with "
+            "dimension-specific scale labels captured after narrative; L0 and L3 sections have no "
+            "maturity_rating blocks; L3 scripts have exactly 8 sections with no framing_block, no "
+            "synthesis_check; (2) l0_interview_summaries.json — one L0 Interview Summary per L0 "
+            "node covering portfolio logic, competitive context, capital allocation & ROI, execution "
+            "risk, governance, board alignment, cross-level misalignments, portfolio option resonance, "
+            "and sponsorship assessment; (3) l1_interview_summaries.json — one L1 Interview Summary "
+            "per L1 node covering strategic mandate, competitive position, five-dimension maturity, "
+            "value architecture, digital readiness, three-horizon roadmap, CSFs, and peer interview "
+            "priorities; (4) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
+            "covering decision architecture, data landscape, orchestration friction, and monetised "
+            "opportunity. No separate questionnaire artefact. All approved by human reviewer."
         ),
         agent=agent,
     )

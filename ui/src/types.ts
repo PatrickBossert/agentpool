@@ -420,6 +420,8 @@ export interface SynthesisCheck {
   }
   peer_referral: string
   forward_roadmap: string
+  portfolio_options?: string   // L0 only — interviewer presents sequencing options A/B/C
+  sponsorship_check?: string   // L0 only — commitment test for executive sponsors
 }
 
 export interface SectionMaturityRating {
@@ -435,9 +437,9 @@ export interface InterviewScript {
   research_brief: string
   study_objectives: string[]
   welcome_message: string
-  framing_block?: FramingBlock      // L1 and L2 — spoken before sections
+  framing_block?: FramingBlock      // L0, L1, and L2 — spoken before sections
   sections: InterviewSection[]
-  synthesis_check?: SynthesisCheck  // L1 and L2 — spoken after sections, before closing
+  synthesis_check?: SynthesisCheck  // L0, L1, and L2 — spoken after sections, before closing
   closing_message: string
 }
 
