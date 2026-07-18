@@ -42,14 +42,23 @@ A  interviews:  OUTSIDE-IN (GOVERNANCE) — focus on whether controls are workin
                 transformation readiness. Audit voice is the most credible evidence
                 for governance credibility and remediation priorities.
 
-F  interviews:  GROUND TRUTH (FRONTLINE) — focus on what ACTUALLY happens at the
-                point of execution: where plans hit reality, where processes break,
+F  interviews:  GROUND TRUTH (FRONTLINE OPERATIONS) — focus on what ACTUALLY happens
+                at the point of execution: where plans hit reality, where processes break,
                 where data is trusted or ignored, and where safety risks go unreported.
                 Talk to property FM technicians (ISS), fleet mechanics and drivers (DXI),
                 and planning/dispatch coordinators (GS UK or contractor). Frontline
                 voice reveals workarounds, morale, retention risk, change readiness,
                 and the innovations that never reach management — data no executive
                 can see from their desk.
+
+S  interviews:  GROUND TRUTH (CORPORATE SERVICES) — focus on the invisible friction
+                inside support functions (Finance, HR, IT, Data, Compliance, Procurement)
+                that underpins every Asset Management decision. Talk to the analysts,
+                managers, and leads who provide budget tracking, capability planning,
+                systems integration, data governance, regulatory compliance, and vendor
+                management. Corporate services voice reveals siloed systems, data quality
+                failures, governance gaps, manual workarounds, capability constraints,
+                and cross-function misalignment that are invisible to operational leaders.
 
 Instruments must reflect these shifts:
   L3 scripts probe the texture of daily work;
@@ -62,8 +71,11 @@ Instruments must reflect these shifts:
      and transformation risk from an independent assurance perspective;
   F  scripts probe execution reality, system friction, workarounds, safety culture,
      morale, and change readiness from the ground-truth perspective of operational
-     workers executing asset management tasks daily.
-All seven instrument types contribute different data that the Synthesis Analyst will
+     workers executing asset management tasks daily;
+  S  scripts probe the hidden friction inside support functions — data quality,
+     system integration, governance gaps, manual workarounds, cross-function misalignment,
+     and capability constraints from the people who enable Asset Management decisions.
+All eight instrument types contribute different data that the Synthesis Analyst will
 triangulate into a unified set of findings.
 """
 
@@ -1863,6 +1875,345 @@ role/function/cohort identifiers only (e.g. "ISS Site Technician — Property FM
 """
 
 
+_CORP_SERVICES_PRINCIPLES = """\
+CORPORATE SERVICES INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
+──────────────────────────────────────────────────────────────────────
+Apply these throughout every Corporate Services (S) interview design and execution.
+Corporate Services workers — Finance, HR, IT, Data, Compliance, Procurement — support
+Asset Management but rarely appear in operational reviews. Their friction is invisible
+and systemic; their insight is essential for transformation readiness.
+
+1. SYSTEM COMPLAINTS ARE PROCESS GAP SIGNALS
+   When a Finance analyst says "Tririga and SAP don't reconcile," they are not
+   complaining about software — they are describing a data governance failure that
+   affects every capital decision in the organisation. Treat every system complaint
+   as a signal: what process, governance, or integration gap does this reveal?
+   Do not accept "we work around it" as a satisfactory state.
+
+2. PROBE FOR HIDDEN INEFFICIENCY
+   Knowledge workers absorb inefficiency silently. Manual reconciliation, duplicate
+   data entry, chasing approvals, fixing data errors — these can consume 30–50% of
+   a team's capacity with no one counting the cost. Quantify every workaround:
+   "How many hours per week does your team spend on that?" Then monetise it:
+   "If that disappeared, what strategic work could you do instead?"
+
+3. DATA QUALITY IS THE FOUNDATION
+   Poor data quality in Finance, IT, or Data functions propagates through every
+   decision Asset Management makes. An incorrect asset register affects maintenance
+   planning. Incomplete capex tracking affects investment decisions. Missing KPI
+   data affects performance management. Probe for data quality issues not as
+   technical failures but as decision quality failures: "What decisions are being
+   made with data you don't fully trust?"
+
+4. GOVERNANCE GAPS ARE USUALLY INVISIBLE TO MANAGEMENT
+   Corporate services workers often see governance failures — unclear decision
+   authority, misaligned incentives, absent accountability — that never surface
+   in management meetings. Probe gently but directly: "Have you ever seen a
+   decision made that contradicted what the data said?" The honest answer reveals
+   how the organisation actually works vs. how it believes it works.
+
+5. ASSESS CROSS-FUNCTION ALIGNMENT, NOT JUST FUNCTION-LEVEL
+   Finance and Data may both support Asset Management but operate in silos.
+   HR and IT may be pursuing conflicting timelines for the same transformation.
+   Map the relationships: which functions share data? Which depend on each other?
+   Where do priorities conflict? Cross-function misalignment is often the root
+   cause of delays that get attributed to "the system" or "unclear requirements."
+
+6. DISTINGUISH BURNOUT FROM DISENGAGEMENT
+   Corporate services workers who say "I'm fine" may be burned out and resigned.
+   Watch for capacity signals: "We're at capacity but new requests keep coming."
+   "We can't do strategic work because we're always firefighting." A function that
+   cannot do strategic work during a transformation is a transformation risk.
+
+7. FUNCTION-SPECIFIC CALIBRATION IS MANDATORY
+   Finance, HR, IT, Data, Compliance, and Procurement each have different constraints,
+   systems, risk profiles, and change readiness profiles. A Finance interview that
+   asks IT questions — or vice versa — wastes the slot. Design questions for the
+   specific function's role in asset management: what they own, what they provide,
+   what they need, and what blocks them.
+
+8. THEIR ADVICE IS THE MOST CREDIBLE TRANSFORMATION INPUT
+   Corporate services workers have seen previous transformations succeed and fail.
+   Their post-mortem knowledge — "we underestimated data migration," "the system
+   was never adopted," "we cut training too short" — is the institutional memory
+   that prevents the same mistakes. Actively seek this: "What would you do
+   differently? What should Asset Management ask your function to do?"
+"""
+
+_CORP_SERVICES_FRAMING_TEMPLATE = """\
+CORPORATE SERVICES FRAMING BLOCK — DESIGN GUIDE
+─────────────────────────────────────────────────
+The framing_block is spoken before any questions begin. It acknowledges that
+corporate services functions are often undervalued as "overhead," and positions
+the interview as an opportunity to be heard on the real constraints they face.
+
+POSITIONING (1–2 sentences):
+  NOT a performance review; NOT a function audit. Frame it as: "We're trying to
+  understand what it's actually like to support Asset Management from [Finance /
+  HR / IT / Data / Compliance / Procurement]. What's working? What's frustrating?
+  And what are we missing that could go wrong with transformation?"
+  Make clear this is confidential; their name will not be attached to feedback.
+
+CONTEXT SETTING (5 bullets — speak these naturally):
+  • We want the real story — not the polished version
+  • Your function's constraints are as important as Asset Management's constraints
+  • Your insight into data quality, governance, and systems gaps directly shapes
+    the transformation roadmap
+  • If something is broken or misaligned, we need to hear it now, not at go-live
+  • This stays confidential — you won't be quoted by name
+
+DUAL LENSES:
+  Efficiency lens (friction): "First, I want to understand what's getting in your
+    way — siloed systems, unclear requirements, manual workarounds, data quality
+    issues, governance gaps — where is time wasted or work duplicated?"
+  Effectiveness lens (aspiration): "And second, what would make your function
+    significantly more effective as a partner to Asset Management — and what would
+    need to change to get there?"
+"""
+
+_CORP_SERVICES_SECTION_GUIDE = """\
+CORPORATE SERVICES SECTION GUIDE — 8 FIXED SECTIONS (55 MINUTES)
+──────────────────────────────────────────────────────────────────
+All 8 sections are mandatory — there is NO section selection for Corporate Services
+interviews. Design questions for each section from the themes below, calibrated to
+the specific function (Finance, HR, IT, Data, Compliance, or Procurement).
+NO maturity_rating blocks in any Corporate Services section.
+
+SECTION 1 — Daily Work & Asset Management Support (target_minutes: 8)
+  Core question: What does this function actually contribute to Asset Management —
+  and where does that contribution break down?
+  Key themes:
+    • Walk-through of their team's role: deliverables, stakeholders, systems used
+    • Function-specific context:
+        Finance: budget forecasting, capex tracking, benefit realisation, variance
+        HR: staffing, training, capability planning, organisational change
+        IT: core systems (Tririga, SAP, P6), integration, data architecture, security
+        Data: asset registers, KPI tracking, reporting, governance, data quality
+        Compliance: regulatory requirements, audit prep, controls, risk reporting
+        Procurement: vendor management, contract performance (ISS/DXI), sourcing
+    • Time allocation to Asset Management vs. other programmes (capacity signal)
+    • Most frequent incoming requests and whether they arrive clear, vague, or changing
+    • Delivery quality: how often does what they produce meet the requester's actual need?
+    • Biggest inefficiency in how they currently support Asset Management
+
+SECTION 2 — Data, Systems & Process Friction (target_minutes: 10)
+  Core question: Are the systems and data adequate for the decisions being made —
+  and where does the hidden manual work live?
+  Key themes:
+    • Systems used for Asset Management: Tririga, SAP, P6, Power BI, spreadsheets,
+      email, manual processes — fit for purpose and how often used
+    • System integration quality: data flows automatically vs. manual bridging vs. full silos
+    • Time spent on manual bridging (% of week — probe for 20/40/60% signals)
+    • Data quality issues: cross-system inconsistencies, definition mismatches,
+      incomplete history, inaccessible data, subjective scores
+    • What happens when a data error is found (feedback loop vs. resigned workaround)
+    • Hidden assumptions: decisions made on incomplete or estimated data
+    • Time spent on manual processes that should be automated (hours/week, monetised)
+    • What would make the function 50% more efficient (system integration wins most often)
+    • What is broken about how Asset Management makes decisions from this function's view
+
+SECTION 3 — Governance, Accountability & Decision-Making (target_minutes: 8)
+  Core question: Are the right people involved in decisions at the right time —
+  and does the organisation investigate when things go wrong?
+  Key themes:
+    • When and how this function is involved in major Asset Management decisions
+      (consulted early vs. rubber-stamp vs. not consulted vs. conflicting asks)
+    • Whether decisions are made without adequate data or input from this function
+    • What happens when a decision goes wrong (root cause investigation vs. blame vs. move on)
+    • Alignment between Asset Management leaders (consistent direction vs. competing priorities)
+    • Source of leadership misalignment if present (incentives, authority, philosophy, politics)
+    • Governance gaps: who should be making decisions that currently aren't
+    • Decisions that should be deferred until data/governance is stronger
+    • Highest-impact governance improvement if they could change one thing
+
+SECTION 4 — Capability Gaps & Constraints (target_minutes: 7)
+  Core question: Does this function have the people, tools, and authority to do
+  what Asset Management needs it to do?
+  Key themes:
+    • Skill and knowledge gaps within the team (function-specific):
+        Finance: portfolio analytics, capex forecasting, benefit realisation
+        HR: change management, talent planning, organisational design
+        IT: cloud architecture, data integration, API design, digital platforms
+        Data: data governance, data science, metadata management, master data
+        Compliance: risk management, sector regulatory expertise, audit methodology
+        Procurement: strategic sourcing, vendor performance management, negotiation
+    • Whether training or hiring requests have been made — and funded or not
+    • What the team needs to do their job significantly better
+    • Capacity signals: managing current load vs. at capacity vs. firefighting
+    • Consequence of capability gaps (decision quality, speed, compliance risk, morale)
+    • The single investment that would unlock the most value for this function
+
+SECTION 5 — Organisational Alignment & Culture (target_minutes: 7)
+  Core question: Does Asset Management value corporate services as a partner —
+  or treat them as overhead?
+  Key themes:
+    • Whether the function feels valued by Asset Management (appreciated, neutral,
+      seen as overhead, or actively blamed)
+    • Unjust blame: being held accountable for failures caused by upstream system or
+      process gaps (IT blamed for legacy infrastructure; Data blamed for uncollected data)
+    • How well the different support functions work together (Finance, HR, IT, Data,
+      Compliance, Procurement) — integrated, siloed, or working at cross-purposes
+    • What would make the function feel more valued and better integrated:
+      seat at the table for key decisions, clear strategy communication,
+      recognition, autonomy, fair compensation, reasonable workload
+
+SECTION 6 — Change & Transformation Readiness (target_minutes: 6)
+  Core question: Does this function understand what transformation means for them —
+  and is it being prepared for it?
+  Key themes:
+    • What transformation means for this function specifically (system changes,
+      new data requirements, governance redesign, capability uplift)
+    • Whether the function is being prepared (consulted and planning vs. waiting to be told)
+    • Changes that would actually help (system integration, data governance, clearer
+      processes, decision frameworks, communication alignment)
+    • Changes that would make things harder (imposed without input, too fast, under-resourced,
+      breaks existing controls, inadequate training)
+    • Appetite for co-designing transformation (high engagement vs. conditional vs. disengaged)
+    • What would convince them this transformation will actually succeed
+
+SECTION 7 — Advice for Transformation Success (target_minutes: 5)
+  Core question: What does this function's institutional memory say about what
+  makes transformations succeed or fail?
+  Key themes:
+    • Advice to Asset Management based on hard-won experience
+    • Mistakes seen in past transformations (underestimated change management,
+      built systems without user input, changed too much at once, poor data migration,
+      cut testing short, inadequate training, integration problems, lost focus mid-programme)
+    • What they would do differently given what they now know
+    • What Asset Management should specifically ask this function to contribute:
+        Finance: validate benefit cases, track ROI, forecast scenarios
+        HR: assess capability gaps, design training, manage organisational change
+        IT: assess architecture, plan integration, manage infrastructure
+        Data: assess data readiness, design governance, validate quality
+        Compliance: identify regulatory risks, validate controls
+        Procurement: assess vendor readiness, negotiate transition terms
+    • What they want Asset Management to know about their function that isn't understood
+
+SECTION 8 — Wrap-Up & Feedback (target_minutes: 4)
+  This section maps to the synthesis_check object — it is NOT a separate narrative section.
+  The interviewer summarises the function's perspective, validates it, commits to sharing
+  it with leadership, and confirms next steps. See _CORP_SERVICES_SYNTHESIS_TEMPLATE.
+"""
+
+_CORP_SERVICES_SYNTHESIS_TEMPLATE = """\
+CORPORATE SERVICES SYNTHESIS CHECK — DESIGN GUIDE
+───────────────────────────────────────────────────
+The synthesis_check maps to Section 8 (Wrap-Up). It closes the conversation by
+reflecting the function's perspective back to them and making a commitment. The
+register should be professional and collegial — acknowledging that their support
+is essential and their constraints matter for transformation success.
+
+SYNTHESIS PROMPT:
+  Summarise the function's perspective across: biggest frustration; what would help
+  most; biggest concern about transformation; their readiness to support it; and
+  their key advice for success. Phrase it as: "So from your perspective..." followed
+  by 4–5 specific points drawn from THIS interview — not generic. End with: "Did I
+  capture that accurately? What am I missing?"
+  MUST be customised to this function: name the specific systems, data quality issues,
+  governance gaps, or capability constraints they raised. Generic summaries signal
+  that you weren't listening — the opposite of what this interview is for.
+
+RESPONSE PROBES:
+  if_positive (they agree): "What would you add? Anything else on your mind
+    that you want to make sure I carry back?"
+  if_defensive (they correct): "Where did I get the picture wrong? I want to make
+    sure leadership hears the right story from your function."
+  if_uncertain (they hesitate): "What's hard to summarise? What matters most
+    that we haven't covered?"
+
+PEER REFERRAL:
+  "I'll likely want to follow up with others in your function on [specific topics
+  that emerged]. Is there a colleague I should speak with — someone who sees the
+  data/system/governance issues from a different angle?"
+  Frame as follow-up to this interview, not a generic referral request.
+
+FORWARD ROADMAP:
+  "I'm going to share your function's perspective — anonymised — with Asset Management
+  leadership. Your needs and constraints will inform the transformation roadmap.
+  We'll want to involve your function in [specific workstream] as planning progresses.
+  I'll follow up on [named next step]. Does that sound right?"
+  Name the specific next step — vague commitments erode the trust built in this interview.
+"""
+
+_CORP_SERVICES_OUTPUT_TEMPLATE = """\
+CORPORATE SERVICES INTERVIEW SUMMARY — TEMPLATE
+─────────────────────────────────────────────────
+Produce one summary per corporate services function interviewed. Identify interviewees
+by function and role only — do not include names in shared artefacts.
+(e.g. "Finance — Senior Analyst, Capital Expenditure")
+
+## Function Context
+- Function:                    [Finance / HR / IT / Data / Compliance / Procurement]
+- Role/Title:                  [Analyst / Manager / Lead / Director / etc.]
+- Years in role:               [X]
+- Team size:                   [X people]
+- Time allocation to AM:       [X% of function's capacity on Asset Management]
+
+## Primary Contribution to Asset Management
+- Key deliverables:            [What does this function provide? Budget? Systems? Data? Training?]
+- Criticality to AM decisions: [Essential / Important / Supporting]
+
+## Systems & Process Reality
+- Primary systems:             [SAP / Tririga / P6 / Power BI / Custom / Spreadsheets]
+- Data quality:                [Trustworthy / Mostly / Questionable / Poor]
+- System integration:          [Well-integrated / Partial / Siloed]
+- Manual workarounds:          [Hours/week; what tasks; what they replace]
+- Top process friction:        [What is most broken or inefficient?]
+
+## Capability & Constraints
+- Team capacity:               [Adequate / Stretched / Overwhelmed / Firefighting]
+- Skill gaps:                  [Specific capabilities missing]
+- Technology gaps:             [Systems, tools, platforms needed]
+- Biggest barrier to effectiveness: [What single change would unlock the most value?]
+
+## Alignment & Governance
+- AM strategy understanding:   [Clear / Partial / Unclear / Misaligned]
+- Involvement in AM decisions: [Consulted early / Late validation / Not consulted]
+- Relationship with AM leadership: [Close / Transactional / Distant / Strained]
+- Governance gaps identified:  [Decision authority, missing accountability, siloed incentives]
+
+## Change Readiness
+- Transformation understanding: [Clear / Vague / Concerned]
+- Preparation status:          [Being prepared / Preliminary / Not consulted / Worried]
+- Openness to change:          [Excited / Cautious / Sceptical / Resistant]
+- Co-design appetite:          [Would contribute / Conditional / Prefers to be told]
+
+## Morale & Retention
+- Job satisfaction (1–10):     [X]
+- Burnout risk:                [Low / Medium / High — evidence]
+- Likelihood to stay (1–10):   [X]
+- Key retention factors:       [What keeps them; what would make them leave]
+
+## Pain Points & Friction (Ranked)
+1. Top frustration: [Description]
+   - Impact:     [Decision quality / Efficiency / Morale / Compliance risk]
+   - Root cause: [System / Process / Governance / Resourcing / People]
+   - Fix:        [What would resolve it?]
+2. Second frustration: [...]
+3. Third frustration:  [...]
+
+## Advice for Transformation
+- What would help:          [Key insights from this function's perspective]
+- What to avoid:            [Past mistakes; pitfalls from institutional memory]
+- Critical success factor:  [What must go right from their lens]
+- Their role in success:    [What they want to be asked to do]
+
+## Cross-Function Themes
+- Coordination with [other function]: [Working well / Could improve / Misaligned]
+- Data sharing with [other function]: [Integrated / Manual bridge / Siloed]
+
+## Quotes & Observations
+- "[Paraphrased insight that should inform strategy — using their language]"
+- "[Another key observation]"
+
+## Recommended Actions
+- [ ] [Priority 1: Address specific system, data, or governance gap]
+- [ ] [Priority 2: Capability or capacity investment]
+- [ ] [Priority 3: Governance or alignment improvement]
+- [ ] [Involve this function in: specific transformation workstream]
+"""
+
+
 _L1_PRINCIPLES = """\
 L1 INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
 ──────────────────────────────────────────────────────
@@ -2352,6 +2703,7 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
             "data sources can be compared and synthesised.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _CORP_SERVICES_PRINCIPLES + "\n"
             + _FRONTLINE_PRINCIPLES + "\n"
             + _AUDIT_PRINCIPLES + "\n"
             + _CUSTOMER_PRINCIPLES + "\n"
@@ -2389,11 +2741,12 @@ def create_interaction_designer_task(
             "node, PLUS one customer interview script per identified customer segment (level='C'), "
             "PLUS one audit/assurance interview script per identified auditor or regulator contact "
             "(level='A'), PLUS one frontline worker interview script per identified frontline worker "
-            "cohort (level='F'). "
+            "cohort (level='F'), PLUS one corporate services interview script per identified "
+            "support function (level='S'). "
             "All instruments use a single script artefact per node/segment. Maturity ratings "
             "(maturity_rating blocks) appear in L1 and L2 sections only — captured after narrative "
-            "discussion. L0, L3, C (customer), A (audit), and F (frontline) nodes have no "
-            "maturity_rating blocks. "
+            "discussion. L0, L3, C (customer), A (audit), F (frontline), and S (corporate "
+            "services) nodes have no maturity_rating blocks. "
             "There is no separate questionnaire artefact.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
@@ -2415,6 +2768,9 @@ def create_interaction_designer_task(
             + _FRONTLINE_FRAMING_TEMPLATE + "\n"
             + _FRONTLINE_SECTION_GUIDE + "\n"
             + _FRONTLINE_SYNTHESIS_TEMPLATE + "\n"
+            + _CORP_SERVICES_FRAMING_TEMPLATE + "\n"
+            + _CORP_SERVICES_SECTION_GUIDE + "\n"
+            + _CORP_SERVICES_SYNTHESIS_TEMPLATE + "\n"
             + standards_block +
             "Steps:\n"
             "1. Use SQLiteStateTool with operation='read', key='value_chain_registry', "
@@ -2867,21 +3223,94 @@ def create_interaction_designer_task(
             "   using this template:\n"
             + _FRONTLINE_OUTPUT_TEMPLATE + "\n"
 
+            "── CORPORATE SERVICES INTERVIEWS (ground-truth — support functions) ──────────────\n"
+            "11. Design corporate services interview scripts for each support function identified\n"
+            "in the discovery context. Apply all 8 Corporate Services Interview Principles from\n"
+            "your backstory.\n"
+            "Core question: 'What friction exists inside the support functions that enables Asset\n"
+            "Management decisions — and how does it affect transformation readiness?'\n"
+            "Focus: hidden inefficiency, siloed systems, data quality gaps, governance failures,\n"
+            "capability constraints, cross-function misalignment, and institutional memory from\n"
+            "the people who make Asset Management decisions possible.\n\n"
+            "   PREPARATION (before designing):\n"
+            "   - Review the discovery_brief and ChromaDB context to identify relevant support\n"
+            "     functions: Finance, HR, IT, Data/Analytics, Compliance/Risk, Procurement\n"
+            "   - For each function, understand what they own in Asset Management: budget?\n"
+            "     systems? capability planning? regulatory compliance? vendor contracts?\n"
+            "   - Note known cross-function tensions or data quality issues from discovery docs\n"
+            "   - Design ONE script per function — do not conflate functions (Finance and IT\n"
+            "     have entirely different constraints and probes)\n\n"
+            "   a) FRAMING BLOCK — mandatory, written before sections.\n"
+            "   Using the Corporate Services Framing guide from your task context, write a\n"
+            "   framing_block customised to this function and its role in Asset Management:\n"
+            "   - positioning: 1–2 sentences: NOT a performance review; want to understand\n"
+            "     the real constraints this function faces supporting Asset Management;\n"
+            "     confidential — name will not appear\n"
+            "   - context_setting: 5 bullets covering honest story, function constraints matter,\n"
+            "     insight shapes the roadmap, report what's broken now not at go-live,\n"
+            "     confidentiality — using language natural for a knowledge-worker context\n"
+            "   - dual_lenses.efficiency: friction lens (siloed systems, manual workarounds,\n"
+            "     unclear requirements, data quality issues, governance gaps)\n"
+            "   - dual_lenses.effectiveness: aspiration lens (what would make this function\n"
+            "     significantly more effective as a partner to Asset Management)\n\n"
+            "   b) SECTION DESIGN — all 8 sections are mandatory. Design questions from the\n"
+            "   themes in the Corporate Services Section Guide, calibrated to this function.\n"
+            "   For every section:\n"
+            f"      - {preferred_questions} narrative questions per section, probing the section themes\n"
+            "      - function-specific customisation: S1 probes must reference this function's\n"
+            "        actual systems, deliverables, and Asset Management role specifically —\n"
+            "        not generic support-function questions\n"
+            "      - follow_up_branches: 2 probing follow-ups per question — quantify:\n"
+            "        ('how many hours/week?', 'what % of your team's time?',\n"
+            "        'what decision does that affect?')\n"
+            "      - evasion_signals: phrases signalling the interviewee is understating\n"
+            "        (e.g. 'it mostly works', 'we manage', 'it's not ideal but fine')\n"
+            "      - probing_instructions: embed monetisation prompts where appropriate\n"
+            "        ('push for hours/week and what strategic work gets displaced')\n"
+            "      - NO maturity_rating block in any section\n\n"
+            "   c) SYNTHESIS CHECK — maps to Section 8 (Wrap-Up). Using the Corporate Services\n"
+            "   Synthesis guide:\n"
+            "   - synthesis_prompt: specific summary of biggest frustration, what would help,\n"
+            "     biggest transformation concern, readiness, and key advice — named from this\n"
+            "     interview and this function, not generic. No placeholders.\n"
+            "   - response_probes: three probes for agreement / correction / hesitation\n"
+            "   - peer_referral: targeted follow-up invitation naming specific topics from this\n"
+            "     interview (not a generic referral)\n"
+            "   - forward_roadmap: named specific next step — which workstream, which discussion,\n"
+            "     when — vague commitments erode the trust built in the interview\n\n"
+            "   d) Complete script fields:\n"
+            "      - node_label: '[Function name] Corporate Services Interview'\n"
+            "        (e.g. 'Finance Corporate Services Interview')\n"
+            "      - level: 'S'\n"
+            "      - research_brief and study_objectives framed at support function level:\n"
+            "        'Understand the constraints, data quality issues, system integration gaps,\n"
+            "        and governance friction experienced by [function] in supporting Asset\n"
+            "        Management decisions and transformation readiness'\n"
+            "      - welcome_message: professional, collegial, appreciative register. Acknowledge\n"
+            "        that their function's constraints are often invisible: 'We want to understand\n"
+            "        the real story from your side — not just what Asset Management thinks\n"
+            "        [Function] does, but what it's actually like.'\n"
+            "      - closing_message: thank them for their expertise and frankness; confirm\n"
+            "        that their function's needs will be built into the transformation design\n\n"
+            "   e) After drafting, produce one Corporate Services Interview Summary per function\n"
+            "   using this template:\n"
+            + _CORP_SERVICES_OUTPUT_TEMPLATE + "\n"
+
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
-            "11. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, L3, C, A, and F) as a single JSON object keyed "
-            "by node_label. L0, L1, L2, C, A, and F scripts include framing_block and synthesis_check. "
-            "L1 and L2 sections include a maturity_rating block; L0, L3, C, A, and F sections do not. "
+            "12. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, L3, C, A, F, and S) as a single JSON object keyed "
+            "by node_label. L0, L1, L2, C, A, F, and S scripts include framing_block and synthesis_check. "
+            "L1 and L2 sections include a maturity_rating block; L0, L3, C, A, F, and S sections do not. "
             "L0 synthesis_check includes the additional portfolio_options and sponsorship_check fields. "
             "This is the ONLY script artefact — there is no separate questionnaire.\n"
             "   {\n"
             "     \"<node_label>\": {\n"
             "       \"node_label\": \"<node_label>\",\n"
-            "       \"level\": \"L0\" | \"L1\" | \"L2\" | \"L3\" | \"C\" | \"A\" | \"F\",\n"
+            "       \"level\": \"L0\" | \"L1\" | \"L2\" | \"L3\" | \"C\" | \"A\" | \"F\" | \"S\",\n"
             "       \"research_brief\": \"...\",\n"
             "       \"study_objectives\": [\"...\"],\n"
             "       \"welcome_message\": \"...\",\n"
-            "       // L0, L1, L2, C, A, and F — framing block spoken before any questions:\n"
-            "       \"framing_block\": {   // PRESENT for L0, L1, L2, C, A, and F; OMIT for L3\n"
+            "       // L0, L1, L2, C, A, F, and S — framing block spoken before any questions:\n"
+            "       \"framing_block\": {   // PRESENT for L0, L1, L2, C, A, F, and S; OMIT for L3\n"
             "         \"positioning\": \"We're mapping [L2 cluster] — the strategic layer "
             "that coordinates [L3 names] and feeds [key decisions].\",\n"
             "         \"context_setting\": [\n"
@@ -2931,8 +3360,8 @@ def create_interaction_designer_task(
             "           }\n"
             "         }\n"
             "       ],\n"
-            "       // L0, L1, L2, C, A, and F — synthesis check spoken after sections, before closing:\n"
-            "       \"synthesis_check\": {   // PRESENT for L0, L1, L2, C, A, and F; OMIT for L3\n"
+            "       // L0, L1, L2, C, A, F, and S — synthesis check spoken after sections, before closing:\n"
+            "       \"synthesis_check\": {   // PRESENT for L0, L1, L2, C, A, F, and S; OMIT for L3\n"
             "         \"synthesis_prompt\": \"Before I let you go — based on what you've "
             "told me, here's how I see this cluster: [customised synthesis of intent, "
             "maturity, constraint, data gap, opportunity]. Does that match your assessment?\",\n"
@@ -2966,7 +3395,7 @@ def create_interaction_designer_task(
             "in the client's operational context.\n"
             "   Use SQLiteStateTool with operation='write', key='interview_scripts', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "12. Save INTERVIEW SUMMARIES as six separate artefacts:\n"
+            "13. Save INTERVIEW SUMMARIES as seven separate artefacts:\n"
             "   a) AUDIT INTERVIEW SUMMARIES (one per auditor/regulator, produced in step 9e):\n"
             "      { \"<node_label>\": { <fields from Audit Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='audit_interview_summaries', "
@@ -2990,9 +3419,13 @@ def create_interaction_designer_task(
             "   f) FRONTLINE INTERVIEW SUMMARIES (one per cohort, produced in step 10e):\n"
             "      { \"<node_label>\": { <fields from Frontline Worker Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='frontline_interview_summaries', "
+            "agent_name='interaction_designer' to save this.\n"
+            "   g) CORPORATE SERVICES INTERVIEW SUMMARIES (one per function, produced in step 11e):\n"
+            "      { \"<node_label>\": { <fields from Corporate Services Interview Summary Template> } }\n"
+            "      Use SQLiteStateTool with operation='write', key='corp_services_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "13. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
-            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, L3, C, A, and F nodes.\n"
+            "14. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
+            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, L3, C, A, F, and S nodes.\n"
             "   For Audit (A) scripts, check:\n"
             "     FRAMING BLOCK\n"
             "     - Does positioning explicitly state this is NOT a defensive exercise —\n"
@@ -3109,27 +3542,52 @@ def create_interaction_designer_task(
             "       management confidence, and morale — SPECIFIC to this cohort (no placeholders)?\n"
             "     - Does forward_roadmap make a concrete commitment: anonymised, actioned, fed back?\n"
             "     - Does peer_referral invite voluntary referral of colleagues (not instruct it)?\n"
+            "   For Corporate Services (S) scripts, check:\n"
+            "     FRAMING BLOCK\n"
+            "     - Does positioning acknowledge that corporate services constraints are often\n"
+            "       invisible — and that we want the real story, not the polished version?\n"
+            "     - Is the framing calibrated to this specific function (Finance ≠ IT ≠ HR)?\n"
+            "     - Do dual_lenses cover system/process friction AND effectiveness aspiration?\n"
+            "     SECTIONS\n"
+            "     - Are all 8 sections present with appropriate target_minutes (total 55 min)?\n"
+            "     - Does S1 probe the function's ACTUAL role and deliverables in Asset Management\n"
+            "       — not generic support-function questions?\n"
+            "     - Does S2 push for quantified manual work (hours/week) and monetise the cost?\n"
+            "     - Does S3 probe whether decisions are being made without this function's input,\n"
+            "       or against what the data says?\n"
+            "     - Does S7 extract institutional memory: mistakes in past transformations and\n"
+            "       what this function specifically wants to be asked to contribute?\n"
+            "     - Are there NO maturity_rating blocks in any section?\n"
+            "     - Do evasion_signals flag diplomatic understatement ('it mostly works', 'we manage')?\n"
+            "     SYNTHESIS CHECK\n"
+            "     - Does synthesis_prompt name the function's specific systems, data issues, or\n"
+            "       governance gaps — not generic? No placeholders.\n"
+            "     - Does forward_roadmap name a specific next step (which workstream, which\n"
+            "       discussion) rather than a vague 'we'll be in touch'?\n"
+            "     - Does peer_referral frame as targeted follow-up, not a generic referral?\n"
             "   • outputs/audit_interview_summaries.json — governance assessment per auditor/regulator\n"
+            "   • outputs/corp_services_interview_summaries.json — function summary per support team\n"
             "   • outputs/customer_interview_summaries.json — customer persona per segment\n"
             "   • outputs/frontline_interview_summaries.json — worker reality summary per cohort\n"
             "   • outputs/l0_interview_summaries.json — portfolio logic prep per L0 node\n"
             "   • outputs/l1_interview_summaries.json — capability strategy prep per L1 node\n"
             "   • outputs/l2_interview_summaries.json — decision architecture prep per L2 node\n"
             "   Reply \"approved\" to proceed, or provide revision notes.'\n"
-            "14. If revision notes received, revise and call HumanInputTool again. "
+            "15. If revision notes received, revise and call HumanInputTool again. "
             "Repeat at most 3 times total.\n"
         ),
         expected_output=(
-            "Seven artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
-            "integrated script per L0, L1, L2, L3, C (customer), A (audit), and F (frontline) node; "
-            "L0, L1, L2, C, A, and F scripts include framing_block and synthesis_check; L0 "
-            "synthesis_check also includes portfolio_options and sponsorship_check; L1 and L2 "
-            "sections include maturity_rating blocks; L0, L3, C, A, and F sections have no "
-            "maturity_rating blocks; L3 scripts have exactly 8 fixed sections with no framing_block "
-            "or synthesis_check; C scripts have exactly 8 fixed sections with framing_block and "
-            "synthesis_check; A scripts have exactly 10 fixed sections with framing_block and "
-            "synthesis_check; F scripts have exactly 9 fixed sections with framing_block and "
-            "synthesis_check; "
+            "Eight artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
+            "integrated script per L0, L1, L2, L3, C (customer), A (audit), F (frontline), and "
+            "S (corporate services) node; L0, L1, L2, C, A, F, and S scripts include framing_block "
+            "and synthesis_check; L0 synthesis_check also includes portfolio_options and "
+            "sponsorship_check; L1 and L2 sections include maturity_rating blocks; L0, L3, C, A, "
+            "F, and S sections have no maturity_rating blocks; L3 scripts have exactly 8 fixed "
+            "sections with no framing_block or synthesis_check; C scripts have exactly 8 fixed "
+            "sections with framing_block and synthesis_check; A scripts have exactly 10 fixed "
+            "sections with framing_block and synthesis_check; F scripts have exactly 9 fixed "
+            "sections with framing_block and synthesis_check; S scripts have exactly 8 fixed "
+            "sections with framing_block and synthesis_check; "
             "(2) audit_interview_summaries.json — one governance assessment per auditor/regulator "
             "covering governance maturity, compliance status, financial controls, KPI integrity, "
             "risk management, data quality, third-party management, transformation readiness, "
@@ -3138,17 +3596,22 @@ def create_interaction_designer_task(
             "friction points, satisfaction (1–10 Property and Fleet), unmet needs, data/partnership "
             "quality, change readiness, competitive context, champion/detractor classification, and "
             "key quotes for the business case; "
-            "(4) frontline_interview_summaries.json — one worker reality summary per frontline cohort "
+            "(4) corp_services_interview_summaries.json — one function summary per support team "
+            "covering systems used, data quality, system integration, manual workarounds, capability "
+            "gaps, alignment with Asset Management, governance gaps identified, change readiness, "
+            "morale, institutional memory (past transformation mistakes and advice), and recommended "
+            "actions including which transformation workstream to involve them in; "
+            "(5) frontline_interview_summaries.json — one worker reality summary per frontline cohort "
             "covering day-to-day planned vs. reactive split, job completion rate, workarounds, pain "
             "points, data and systems quality, safety confidence, morale, team dynamics, change "
             "readiness, retention and flight risk, voice quotes, and recommended quick wins; "
-            "(5) l0_interview_summaries.json — one L0 Interview Summary per L0 node covering "
+            "(6) l0_interview_summaries.json — one L0 Interview Summary per L0 node covering "
             "portfolio logic, competitive context, capital allocation & ROI, execution risk, "
             "governance, board alignment, cross-level misalignments, portfolio option resonance, "
-            "and sponsorship assessment; (6) l1_interview_summaries.json — one L1 Interview Summary "
+            "and sponsorship assessment; (7) l1_interview_summaries.json — one L1 Interview Summary "
             "per L1 node covering strategic mandate, competitive position, five-dimension maturity, "
             "value architecture, digital readiness, three-horizon roadmap, CSFs, and peer interview "
-            "priorities; (7) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
+            "priorities; (8) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
             "covering decision architecture, data landscape, orchestration friction, and monetised "
             "opportunity. No separate questionnaire artefact. All approved by human reviewer."
         ),
