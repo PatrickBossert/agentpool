@@ -4,8 +4,8 @@ from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
 _CONCEPTUAL_SHIFT = """\
-CONCEPTUAL SHIFT — L0 → L1 → L2 → L3
-──────────────────────────────────────
+CONCEPTUAL SHIFT — L0 → L1 → L2 → L3  |  C (Customer — outside-in)
+─────────────────────────────────────────────────────────────────────
 L0 interviews:  Focus on portfolio logic, capital allocation, and competitive positioning.
                 Talk to board members and C-suite executives. Understand where investment
                 should go across the full asset-management portfolio, what trade-offs are
@@ -23,11 +23,24 @@ L3 interviews:  Focus on execution fidelity, data freshness, bottleneck removal.
                 Talk to practitioners. Uncover where effort is wasted, where data
                 is missing or stale, and where a smarter tool would change behaviour.
 
-Instruments must reflect this shift: L3 scripts probe the texture of daily work;
-L2 scripts probe decision quality and orchestration; L1 scripts probe strategy and
-capability maturity; L0 scripts probe portfolio logic and capital allocation.
-All four levels contribute different data that the Synthesis Analyst will triangulate
-into a unified set of findings.
+C  interviews:  OUTSIDE-IN — focus on service quality, reliability, and partnership
+                experience as perceived by customers whose operations depend on managed
+                assets. Talk to Regional Operations Leaders, Field Teams, Network Planners,
+                and customer-facing functions. Reveal what actually matters to customers
+                (vs. what we think matters), expose gaps between internal narrative and
+                external reality, identify unmet needs, and validate the ROI narrative
+                ("will transformation improve customer experience?"). Customer voice is
+                the most credible external evidence for the change business case.
+
+Instruments must reflect these shifts:
+  L3 scripts probe the texture of daily work;
+  L2 scripts probe decision quality and orchestration;
+  L1 scripts probe strategy and capability maturity;
+  L0 scripts probe portfolio logic and capital allocation;
+  C  scripts probe service quality, friction, and transformation readiness from
+     the customer's operational lens — not the organisation's internal perspective.
+All five instrument types contribute different data that the Synthesis Analyst will
+triangulate into a unified set of findings.
 """
 
 _L2_L3_FRAMEWORK = """\
@@ -714,6 +727,357 @@ Produce one portfolio-level summary per L0 interview.
 """
 
 
+_CUSTOMER_PRINCIPLES = """\
+CUSTOMER INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
+────────────────────────────────────────────────────────────
+These eight principles govern every customer interview design and execution.
+Customer interviews are fundamentally different from L0–L3: the interviewee is
+external, assesses service quality from their operational reality, and has no
+obligation to be candid. Every technique serves the goal of honest, specific,
+actionable insight.
+
+1. OUTSIDE-IN LENS — FRAME EVERYTHING FROM THE CUSTOMER'S OPERATIONAL IMPACT
+   Customer interviews reveal what VALUE customers PERCEIVE and NEED — not what
+   the organisation thinks it provides. Every question must centre the customer's
+   reality: "How does this impact YOUR team?" not "How are we performing?"
+   ✗ "How do you rate our maintenance response times?"
+   ✓ "When an asset fails unexpectedly, what's the impact on YOUR operations —
+      on safety, on your ability to serve customers, on your team's morale?"
+
+2. LISTEN MORE THAN TALK — SILENCE IS DATA
+   Pause after every question. Hold silence for 3–5 seconds. Customers weigh
+   whether to share the critical thing — silence precedes the most useful insight.
+   Talking more than 20% of the interview is a technique failure.
+   Never fill a pause with a restatement or an easier version of the question.
+
+3. QUANTIFY FRICTION — NEVER ACCEPT VAGUE ANSWERS
+   "Some frustration" is not a finding. Push for hours per week managing asset
+   issues, frequency of unexpected failures, number of safety incidents, cost per
+   occurrence, people considering leaving due to asset frustration.
+   Unquantified pain = undefendable business case.
+   ✗ "There's some frustration with maintenance scheduling"
+   ✓ "We spend roughly 30% of operational time managing asset-related issues —
+      that's 1.5 days per week per team lead that should be on core mission work"
+
+4. NPS HONESTY — TEST SATISFACTION WITHOUT FISHING FOR POSITIVES
+   Always ask the 1–10 satisfaction rating (Property and Fleet separately).
+   Always probe what would drop them BELOW 5 — not just what would lift them.
+   Below-5 risk factors are often more strategically important than aspirations.
+   Do not lead with positives or frame questions to elicit favourable responses;
+   false signals corrupt the change business case.
+
+5. NEED BEHIND THE WANT — PROBE THE VALUE, NOT THE FEATURE
+   Customers state feature requests ("I want a real-time dashboard"). These are
+   solutions, not needs. Probe: "What would that enable for you?" "What decision
+   would you make differently with that information?" Design the business case
+   around needs: "eliminate 2 hours/day of asset-status chasing" not "dashboard."
+
+6. CHANGE READINESS — ALWAYS ASSESS OPENNESS AND PREFERRED CHANNEL
+   If customers would resist or ignore new capabilities, the ROI will not
+   materialise. Always probe: "If we made major improvements, would that be
+   welcome?" "What would concern you?" "Would you participate in a pilot?"
+   "How do you prefer to be communicated with about changes?"
+   Change-resistant customers are a constraint that must be named in the output.
+
+7. CHAMPIONS AND DETRACTORS — IDENTIFY BOTH BEFORE CLOSING
+   Champions (enthusiastic, willing to co-design) accelerate adoption. Detractors
+   (frustrated but resigned, or hostile) must be managed. Assess every interviewee:
+   Would they advocate for or resist transformation? The customer persona output
+   must classify each interviewee on this dimension with evidence.
+
+8. EXTERNAL CREDIBILITY — CAPTURE VIVID QUOTES FOR THE BUSINESS CASE
+   Internal teams can be accused of bias. Customer testimony is much harder to
+   dismiss. A customer who says "better asset management would save my team 15%
+   of their time" is worth ten internal ROI calculations. Capture specific,
+   vivid, attributed quotes (anonymise as needed) that can go directly into the
+   board narrative and change business case.
+"""
+
+_CUSTOMER_FRAMING_TEMPLATE = """\
+CUSTOMER INTERVIEW FRAMING — MANDATORY OPENING STRUCTURE
+──────────────────────────────────────────────────────────
+Customer interviews begin with a framing_block that positions the conversation as
+a service improvement exercise — not a performance audit, complaint session, or
+internal process review. The framing must make the interviewee feel heard and
+respected before any probing begins.
+
+POSITIONING (framing_block.positioning — 1–2 sentences)
+   Template: "This is not a complaint session. We're genuinely trying to understand
+   what would unlock value for your team — your honest, direct feedback helps us
+   prioritise the right improvements rather than the wrong ones."
+   Frame as: partnership-building, customer-centric, honest, safe.
+   NEVER frame as: "We're reviewing our internal processes" or "We're doing a
+   performance review of Asset Management." These frames make customers diplomatic
+   rather than candid — they optimise for politeness, not truth.
+
+CONTEXT SETTING (framing_block.context_setting — 5 bullets)
+   Template bullets — customise with client's operational language and asset types:
+   • "We want to understand what's working well today with [property/fleet] assets"
+   • "Where asset management creates friction or disruption for your team"
+   • "What would make your job easier or more effective on a day-to-day basis"
+   • "What your biggest constraints in the field actually are"
+   • "How better assets, planning, or data could help you and your team"
+
+DUAL LENSES (framing_block.dual_lenses — customer variant)
+   dual_lenses.efficiency (current friction lens):
+   "First, I want to understand the friction — where assets slow you down, create
+   unexpected problems, or force workarounds. I'll push for specifics: hours,
+   frequency, cost, what it means for your team's ability to do their job."
+
+   dual_lenses.effectiveness (aspiration lens):
+   "Second, I want to understand what you'd want. If asset management were
+   genuinely excellent — if property and fleet assets were best-in-class — what
+   would that look like for your team? What would it enable that you can't do today?"
+"""
+
+_CUSTOMER_SECTION_GUIDE = """\
+CUSTOMER INTERVIEW SECTION GUIDE — FIXED 8-SECTION STRUCTURE
+──────────────────────────────────────────────────────────────
+Customer interviews use a FIXED 8-section structure — all sections are always
+included. Unlike L1 and L2, there is no section selection logic. The 50-minute
+total allows genuine conversation. Skip questions the customer has already answered;
+never rush through all questions if a section is yielding rich material.
+
+DO NOT include maturity_rating blocks in any customer interview section.
+Customers assess service quality from their operational perspective, not the
+operational maturity of internal processes. Maturity ratings are L1/L2 instruments.
+
+S1. Operational Context & Asset Dependence (~6 min)
+   Core themes:
+   - Walk-through: how do property and fleet assets enable their day-to-day work?
+     Listen for: assets as enabler (unremarkable) vs. bottleneck (constantly managed).
+   - Time burden: what % of time managing asset-related issues vs. core mission?
+     5–10% = reliable background; 20–30% = significant friction; 40%+ = broken.
+   - Failure impact: when assets fail or perform poorly, what's the impact on THEM?
+     Probe four dimensions: operational (can't do job, must improvise); safety-critical
+     (safety incidents or near-misses?); customer-facing (their customers affected?);
+     personal (stress, overtime, frustration).
+   - Priority comparison: property vs. fleet — which constrains them more, and why?
+   - External benchmark: how does asset management here compare to other organisations
+     they've worked with or know of? Reveals competitive positioning from customer view.
+
+S2. Current Pain Points & Friction (~10 min)
+   Core themes:
+   - Biggest property frustration: listen for reliability (unexpected failures),
+     predictability (no visibility into maintenance schedule), transparency (left in dark
+     about issues), communication (find out after the fact), escalation (hard to reach
+     someone), documentation (no history of what's been done).
+   - Team impact: probe for workarounds (do they improvise?), time (hours/week),
+     stress (source of anxiety?), effectiveness (fighting fires instead of core job?),
+     morale (people considering leaving due to asset frustration?).
+   - Fleet-specific frustrations: vehicle availability, uptime, maintenance timing,
+     EV readiness, visibility into vehicle status or maintenance history.
+   - Response to issues previously raised: "they listened and fixed it" → responsive;
+     "they acknowledged it but nothing changed" → broken follow-through;
+     "we didn't bother raising it" → broken feedback loop entirely.
+   - Data/visibility potential: would transparency alone help, or is it a
+     process or relationship problem? (Separates tool fix from relationship fix.)
+   - Quantified cost of friction: hours/week, % of failures preventable, safety
+     incidents, morale impact, people considering leaving.
+
+S3. Unmet Needs & Aspirations (~8 min)
+   Core themes:
+   - Single highest-priority ask: "If you could ask for ONE thing better, what?"
+     Listen for: visibility (real-time dashboard), predictability (maintenance schedule
+     3 months ahead), responsiveness (2-hour SLA), proactivity (fix before failure),
+     partnership (treat as partner not client), innovation (EV / net-zero transition).
+   - Value behind the want: "What would that enable for your team?"
+     Push for: productivity (hours saved), reliability (failures prevented), safety
+     (incidents avoided), employee experience (stress reduced, morale improved),
+     customer impact (their customers better served).
+   - Aspirational best-in-class: unconstrained vision — "if assets were excellent,
+     what would that look like?" Examples: never break unexpectedly; maintenance never
+     disrupts operations; real-time visibility; proactive alerts; zero safety incidents;
+     GS UK proactively helps us succeed.
+   - Sustainability priority: how important is EV transition / net-zero?
+     Critical (org has targets) / Important (customers expect it) / Nice-to-have /
+     Not our concern. Many customers have their own climate commitments that create
+     urgency independent of ours.
+   - Trust signals: what would make them MORE confident in the partnership?
+     Reveals accountability indicators, transparency preferences, partnership expectations.
+
+S4. Satisfaction & Performance Perception (~6 min)
+   Core themes:
+   - Property satisfaction: 1–10. Then probe all three:
+     "What would move you to 9–10?" "Why not [current score + 1]?"
+     "What would move you BELOW 5?" (Below-5 risk factors are often more important
+     than aspirations — they reveal fragility and switching triggers.)
+   - Fleet satisfaction: 1–10. (Typically different from property — compare and probe why.)
+   - Improvement trajectory confidence: "very / some / not really / negative / no idea."
+     "I have no idea" is a visibility gap, not a neutral response — probe further.
+   - Peer comparison: "What are you hearing from peers about our assets?"
+     Listen for: happy/lucky; mixed; frustrated/compare poorly; complaining as liability.
+   - NPS-like question: "If you had to recommend us to another organisation, what would
+     you say?" Often more honest than the satisfaction question — reveals true sentiment.
+
+S5. Data, Transparency & Partnership Quality (~7 min)
+   Core themes:
+   - Current visibility inventory: ask about each in turn:
+     Asset condition (know how old/worn assets are?), maintenance schedules (know when
+     work will happen?), work order status (can track what's being done?), performance
+     metrics (see SLA compliance, downtime?), planned improvements (know what's coming?).
+     For each dimension: accurate? timely? usable format?
+   - Data wishlist: "What data would help you do your job better?"
+     Examples: real-time asset status, predictive alerts (asset will fail in X weeks),
+     maintenance history per asset, benchmarking vs. peers, planned-failure forecast.
+   - ISS / DXI relationship quality: responsive, professional, listens to needs, proactive
+     vs. reactive, would they recommend them? Where could they improve?
+   - Partnership perception: "Do you feel treated as a partner or as a cost to manage?"
+     Critical for change adoption — customers who feel managed, not partnered, resist
+     transformation even when it would benefit them.
+   - Dialogue gap: "If you could have a standing monthly call with leadership, what would
+     you want to discuss?" Reveals unmet needs for direct engagement.
+
+S6. Change & Transformation Readiness (~5 min)
+   Core themes:
+   - Welcome test: "If we made major improvements — better data, predictive maintenance,
+     faster response — would that be welcome?" Test receptiveness before showing details.
+   - Excitement vs. concern split: what would they be excited about vs. what would concern
+     them? (Concerns: disruption, new tools, increased complexity, relationship changes.)
+   - Disruption tolerance: if transformation meant temporary disruption, what's acceptable?
+     Probe time window, what's too painful, what's manageable.
+   - Communication preference: email, town halls, dedicated contact, dashboards?
+     Ensures the adoption strategy uses the right channel for this customer segment.
+   - Co-creation willingness: "Would you participate in a pilot or co-design?"
+     Champions identify themselves here; detractors decline or hedge.
+
+S7. Competitive & Market Context (~4 min)
+   Core themes:
+   - Strategic importance: how important is our asset management capability to their
+     ability to compete or serve their own customers? Reveals dependency level —
+     high dependency = high leverage AND high risk of reputational impact if things go wrong.
+   - Alternatives awareness: are they aware of or considering alternatives?
+     Handle delicately — this is a hidden retention-risk question.
+   - Switching triggers: what would make them consider an alternative?
+     (assets getting worse / cost increase / capability gap we can't fill / cost to self-manage)
+   - Our competitive advantage: from their perspective, what's our biggest strength?
+     External view of strengths — use directly in the change narrative and board presentation.
+
+S8. Wrap-Up & Partnership (~4 min — this IS the synthesis_check)
+   This section maps directly to the synthesis_check fields:
+   - SUMMARISE → synthesis_prompt: restate their biggest friction, team impact, what
+     would make the biggest difference, satisfaction rating and what would move it.
+   - VALIDATE → response_probes: confirm the synthesis or surface what was missed.
+   - NEXT STEPS → forward_roadmap: preview proposed transformation outcomes for customer
+     validation (better visibility, predictive capabilities, closer partnership, EV support).
+   - ONGOING → peer_referral: invite ongoing engagement and identify other contacts.
+"""
+
+_CUSTOMER_SYNTHESIS_TEMPLATE = """\
+CUSTOMER INTERVIEW SYNTHESIS CHECK — SECTION 8 WRAP-UP
+────────────────────────────────────────────────────────
+The customer synthesis_check is relational, not analytical. Unlike L0/L1/L2 where
+synthesis is about strategic/operational insight, customer synthesis is about being
+heard and building confidence in partnership. The interviewee should leave feeling
+respected and optimistic — even if they gave critical feedback.
+
+SYNTHESIS PROMPT (synthesis_check.synthesis_prompt — interviewer speaks this)
+   Template: "So if I understand correctly: your biggest friction with [property/fleet]
+   assets is [X]; the impact on your team is [Y, quantified]; what would make the
+   biggest difference is [Z]; and you're [A]/10 satisfied, and would move to [target]
+   if [specific condition]. Does that capture it? What am I missing?"
+   MUST be customised to what was actually said in this interview — no template
+   placeholders. Speak with confidence, as a peer debrief: "Here is what I heard —
+   correct me where I've got it wrong."
+
+RESPONSE PROBES (synthesis_check.response_probes)
+   - if_positive: "Good — what would you add or emphasise differently?"
+   - if_defensive: "Where does my picture differ from what you'd say?
+     Let's make sure I take back the right thing." (Customers are often diplomatic —
+     probe gently for the honest view behind polite agreement.)
+   - if_uncertain: "What would you want me to take back that I might have missed?
+     Even something small might be important for how we prioritise."
+
+PEER REFERRAL / ONGOING ENGAGEMENT (synthesis_check.peer_referral)
+   Template: "Can we stay connected? We'd like your perspective as improvements are
+   made — not just a one-time survey. And is there someone else on your team or in
+   your network whose operational view I should also capture?"
+   Dual purpose: identify additional customer contacts for interviews, and establish
+   ongoing relationship for change adoption and co-design participation.
+
+FORWARD ROADMAP / TRANSFORMATION PREVIEW (synthesis_check.forward_roadmap)
+   Template: "As we look at improvements, we're exploring a few things and would
+   value your reaction: better real-time visibility into asset status — would that
+   change how your team plans? Predictive alerts before failures — would that let
+   you take different action? Closer partnership with quarterly check-ins — would
+   that be useful? And support for your EV transition — how can we help your team
+   prepare for that?"
+   Listen for: enthusiasm (champion signal), indifference (priority mismatch),
+   concern (adoption risk), or a redirect to a completely different priority
+   (reveals what we missed earlier in the interview).
+"""
+
+_CUSTOMER_OUTPUT_TEMPLATE = """\
+CUSTOMER INTERVIEW SUMMARY TEMPLATE — OUTPUT FORMAT
+─────────────────────────────────────────────────────
+Produce one customer persona summary per customer interview.
+
+## Customer Profile
+- Role / title:               [Role, operational scope, and organisation context]
+- Asset dependency level:     [High / Medium / Low — evidence from interview]
+- Time burden on asset issues: [% of time; hours/week equivalent]
+- Primary asset concern:      [Property / Fleet / Both equally — and why]
+- External benchmark:         [How they compare GS UK to other organisations they know]
+
+## Top 3 Friction Points (specific and quantified)
+1. [Pain point — named, with frequency, impact, and any £ or time estimate given]
+2. [Pain point — named, with frequency, impact, and any £ or time estimate given]
+3. [Pain point — named, with frequency, impact, and any £ or time estimate given]
+
+## Satisfaction Assessment
+- Property satisfaction:      [X/10 — what would move them to 9–10]
+- Fleet satisfaction:         [X/10 — what would move them to 9–10]
+- Below-5 risk factors:       [What would drop their satisfaction sharply — switching triggers]
+- Improvement confidence:     [Very / Some / Not really / Negative / No idea — evidence]
+- NPS sentiment:              [Promoter / Passive / Detractor — evidence from NPS-like question]
+- Peer comparison view:       [What they hear from peers about our performance]
+
+## Unmet Needs & Aspirations
+- Single highest-priority ask: [Verbatim or close paraphrase]
+- Value behind the ask:        [What it would enable: productivity / safety / morale / customers]
+- Aspirational best-in-class:  [Their unconstrained vision of excellent asset management]
+- Sustainability priority:     [Critical / Important / Nice-to-have / Not our concern]
+- Trust signals:               [What would increase their confidence in the partnership]
+
+## Data & Partnership Quality
+- Visibility — asset condition:      [Adequate / Partial / None — evidence]
+- Visibility — maintenance schedule: [Adequate / Partial / None — evidence]
+- Visibility — work order status:    [Adequate / Partial / None — evidence]
+- Visibility — performance metrics:  [Adequate / Partial / None — evidence]
+- Data wishlist top item:            [Most wanted data capability, in their words]
+- Partnership perception:            [Partner / Cost to manage — specific evidence]
+- ISS / DXI relationship quality:    [Responsive / Reactive / Absent — evidence]
+- Dialogue gap:                      [What they would raise on a standing monthly call]
+
+## Change Readiness
+- Welcome to change:          [Enthusiastic / Willing / Cautious / Resistant — evidence]
+- Excited about:              [Specific improvements they mentioned positively]
+- Concerns about:             [Specific risks or disruptions they named]
+- Disruption tolerance:       [What's acceptable; what would be too painful]
+- Co-creation willingness:    [Yes / Conditional / No — evidence]
+- Communication preference:   [Channel: email / town halls / dedicated contact / dashboards]
+
+## Competitive & Market Context
+- Asset management importance: [Strategic / Operational / Background — to their mission]
+- Alternative awareness:       [None aware / Aware but not considering / Considering]
+- Switching triggers:          [Specific conditions named that would push them to alternatives]
+- Our competitive advantage:   [Their view of our biggest strength — use in change narrative]
+
+## Champion / Detractor Classification
+- Classification:              [Champion / Passive / Detractor]
+- Evidence:                    [Specific signals: enthusiasm level, co-design willingness,
+                               NPS sentiment, language used about the relationship]
+- Engagement potential:        [Pilot participant / Ongoing feedback panel / Co-design partner /
+                               None — basis for engagement strategy]
+
+## Key Quotes for Business Case
+- [Quote 1 — vivid, specific, quantified; relevant to transformation ROI narrative]
+- [Quote 2 — vivid, specific; relevant to change readiness or partnership quality]
+- [Quote 3 — vivid, specific; relevant to the board-level change business case]
+(Anonymise role if required but preserve specificity and vividness of the language.)
+"""
+
+
 _L1_PRINCIPLES = """\
 L1 INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
 ──────────────────────────────────────────────────────
@@ -1203,6 +1567,7 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
             "data sources can be compared and synthesised.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _CUSTOMER_PRINCIPLES + "\n"
             + _L0_PRINCIPLES + "\n"
             + _L1_PRINCIPLES + "\n"
             + _L2_PRINCIPLES +
@@ -1233,14 +1598,17 @@ def create_interaction_designer_task(
 
     return Task(
         description=(
-            "Design integrated interview scripts for every active L0, L1, L2, and L3 value chain node. "
-            "All levels use a single script artefact. Maturity ratings are embedded within each "
-            "section as maturity_rating blocks for L1 and L2 only, captured after the narrative discussion. "
-            "There is no separate questionnaire artefact. L0 and L3 nodes do not include maturity_rating "
-            "blocks — L0 operates at portfolio level (no operational maturity ratings); L3 captures "
-            "execution fidelity through narrative, not ratings.\n\n"
+            "Design integrated interview scripts for every active L0, L1, L2, and L3 value chain "
+            "node, PLUS one customer interview script per identified customer segment. "
+            "All instruments use a single script artefact per node/segment. Maturity ratings "
+            "(maturity_rating blocks) appear in L1 and L2 sections only — captured after narrative "
+            "discussion. L0, L3, and C (customer) nodes have no maturity_rating blocks. "
+            "There is no separate questionnaire artefact.\n\n"
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
+            + _CUSTOMER_FRAMING_TEMPLATE + "\n"
+            + _CUSTOMER_SECTION_GUIDE + "\n"
+            + _CUSTOMER_SYNTHESIS_TEMPLATE + "\n"
             + _L0_FRAMING_TEMPLATE + "\n"
             + _L0_SECTION_GUIDE + "\n"
             + _L0_SYNTHESIS_TEMPLATE + "\n"
@@ -1533,16 +1901,66 @@ def create_interaction_designer_task(
             "itself runs 20–30 minutes because not every branch is taken\n"
             "     - L3 sections do NOT include a maturity_rating block — omit the field entirely\n\n"
 
+            "── CUSTOMER INTERVIEWS (outside-in — customer segments) ────────────────────────\n"
+            "8. Design customer interview scripts for each customer segment identified in the\n"
+            "discovery context. Apply all 8 Customer Interview Principles from your backstory.\n"
+            "Core question: 'What service quality do customers PERCEIVE and NEED?' "
+            "Focus: reliability, responsiveness, transparency, partnership, and transformation "
+            "readiness from the customer's operational lens — not internal process performance.\n\n"
+            "   PREPARATION (before designing):\n"
+            "   - Review the discovery_brief (step 2) and ChromaDB context (step 3) to identify\n"
+            "     customer segments: who depends on the managed assets operationally?\n"
+            "     Examples: Regional Operations Leaders, Field Teams, Network Planners, customer-facing\n"
+            "     functions using the managed assets.\n"
+            "   - Identify 1–3 distinct segments (different roles may have very different perspectives;\n"
+            "     a field team and a network planner have different friction points)\n"
+            "   - Note what's known about current pain points and satisfaction from discovery documents\n\n"
+            "   a) FRAMING BLOCK — mandatory, written before sections.\n"
+            "   Using the Customer Framing guide from your task context, write a framing_block\n"
+            "   customised to this customer segment and asset context:\n"
+            "   - positioning: 1–2 sentences: partnership not performance-review; safe to be candid\n"
+            "   - context_setting: 5 bullets covering what's working, friction, what would help,\n"
+            "     constraints, and how data/planning could help — using client's language\n"
+            "   - dual_lenses.efficiency: friction lens (assets slowing them down, creating problems)\n"
+            "   - dual_lenses.effectiveness: aspiration lens (what excellent would look like for them)\n\n"
+            "   b) SECTION DESIGN — all 8 sections are mandatory. Design questions from the themes in\n"
+            "   the Customer Section Guide. For every section:\n"
+            f"      - {preferred_questions} narrative questions per section, probing the section themes\n"
+            "      - follow_up_branches: 2 probing follow-ups per question\n"
+            "      - evasion_signals: phrases signalling the customer is being diplomatic rather\n"
+            "        than candid (e.g. 'it's generally fine', 'no real complaints', 'I couldn't say')\n"
+            "      - probing_instructions: embed quantification reminders where appropriate\n"
+            "        ('push for hours/week or frequency' / 'probe below 5 risk factors')\n"
+            "      - NO maturity_rating block in any section\n\n"
+            "   c) SYNTHESIS CHECK — maps to Section 8 (Wrap-Up). Using the Customer Synthesis guide:\n"
+            "   - synthesis_prompt: customised summary of their biggest friction, team impact,\n"
+            "     what would make the biggest difference, and their satisfaction rating. No placeholders.\n"
+            "   - response_probes: three probes for positive / defensive (diplomatic) / uncertain\n"
+            "   - peer_referral: ongoing engagement invitation plus additional customer contact question\n"
+            "   - forward_roadmap: transformation preview to validate (visibility, predictive,\n"
+            "     partnership, EV transition) — probe for enthusiasm, concern, or redirection\n\n"
+            "   d) Complete script fields:\n"
+            "      - node_label: '[Segment name] Customer Interview' (e.g. 'Field Team Customer Interview')\n"
+            "      - level: 'C'\n"
+            "      - research_brief and study_objectives framed at customer perception level:\n"
+            "        'Understand service quality as experienced by [segment]'\n"
+            "      - welcome_message: warm, peer-to-peer, grateful tone. Emphasise: no right/wrong\n"
+            "        answers, honest feedback is most valuable, this shapes real decisions\n"
+            "      - closing_message: thank the customer warmly, explain how feedback will be used,\n"
+            "        confirm when they'll hear about outcomes\n\n"
+            "   e) After drafting, produce one Customer Interview Summary using this template:\n"
+            + _CUSTOMER_OUTPUT_TEMPLATE + "\n"
+
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
-            "8. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, and L3) as a single JSON object keyed "
-            "by node_label. L0, L1, and L2 scripts include framing_block and synthesis_check fields. "
-            "L1 and L2 sections include a maturity_rating block; L0 and L3 sections do not. "
+            "9. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, L3, and C) as a single JSON object keyed "
+            "by node_label. L0, L1, L2, and C scripts include framing_block and synthesis_check fields. "
+            "L1 and L2 sections include a maturity_rating block; L0, L3, and C sections do not. "
             "L0 synthesis_check includes the additional portfolio_options and sponsorship_check fields. "
             "This is the ONLY script artefact — there is no separate questionnaire.\n"
             "   {\n"
             "     \"<node_label>\": {\n"
             "       \"node_label\": \"<node_label>\",\n"
-            "       \"level\": \"L1\" | \"L2\" | \"L3\",\n"
+            "       \"level\": \"L0\" | \"L1\" | \"L2\" | \"L3\" | \"C\",\n"
             "       \"research_brief\": \"...\",\n"
             "       \"study_objectives\": [\"...\"],\n"
             "       \"welcome_message\": \"...\",\n"
@@ -1580,7 +1998,7 @@ def create_interaction_designer_task(
             "               \"evasion_signals\": [\"not sure\", \"it varies\"]\n"
             "             }\n"
             "           ],\n"
-            "           \"maturity_rating\": {   // PRESENT for L1 and L2 sections; OMIT for L0 and L3\n"
+            "           \"maturity_rating\": {   // PRESENT for L1 and L2 sections; OMIT for L0, L3, and C\n"
             "             \"dimension\": \"<assessment dimension name>\",\n"
             "             \"prompt\": \"Based on what you've just shared, how would you rate "
             "[dimension] here? Let me read you the levels.\",\n"
@@ -1632,21 +2050,43 @@ def create_interaction_designer_task(
             "in the client's operational context.\n"
             "   Use SQLiteStateTool with operation='write', key='interview_scripts', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "9. Save INTERVIEW SUMMARIES as three separate artefacts:\n"
-            "   a) L0 INTERVIEW SUMMARIES (one per L0 node, produced in step 4e):\n"
+            "10. Save INTERVIEW SUMMARIES as four separate artefacts:\n"
+            "   a) CUSTOMER INTERVIEW SUMMARIES (one per segment, produced in step 8e):\n"
+            "      { \"<node_label>\": { <fields from Customer Interview Summary Template> } }\n"
+            "      Use SQLiteStateTool with operation='write', key='customer_interview_summaries', "
+            "agent_name='interaction_designer' to save this.\n"
+            "   b) L0 INTERVIEW SUMMARIES (one per L0 node, produced in step 4e):\n"
             "      { \"<node_label>\": { <fields from L0 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l0_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n"
-            "   b) L1 INTERVIEW SUMMARIES (one per L1 node, produced in step 5g):\n"
+            "   c) L1 INTERVIEW SUMMARIES (one per L1 node, produced in step 5g):\n"
             "      { \"<node_label>\": { <fields from L1 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l1_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n"
-            "   c) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 6g):\n"
+            "   d) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 6g):\n"
             "      { \"<node_label>\": { <fields from L2 Interview Summary Template> } }\n"
             "      Use SQLiteStateTool with operation='write', key='l2_interview_summaries', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "10. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
-            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, and L3 nodes.\n"
+            "11. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
+            "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, L3, and C nodes.\n"
+            "   For Customer (C) scripts, check:\n"
+            "     FRAMING BLOCK\n"
+            "     - Does positioning make it explicit this is NOT a complaint session or performance review?\n"
+            "     - Does context_setting cover all 5 dimensions (what works, friction, what would help,\n"
+            "       constraints, data/planning impact) with client-specific language?\n"
+            "     - Do dual_lenses capture friction (current pain) AND aspiration (what excellent looks like)?\n"
+            "     SECTIONS\n"
+            "     - Are all 8 sections present in order with appropriate target_minutes?\n"
+            "     - Do questions probe from the CUSTOMER'S operational lens (not from our internal view)?\n"
+            "     - Does S2 push for quantified friction (hours/week, frequency, £ impact)?\n"
+            "     - Does S4 ask both the 1–10 satisfaction question AND the below-5 risk question?\n"
+            "     - Are there NO maturity_rating blocks in any customer section?\n"
+            "     - Do evasion_signals flag diplomatic non-answers ('generally fine', 'no real complaints')?\n"
+            "     SYNTHESIS CHECK\n"
+            "     - Does synthesis_prompt restate friction + impact + what would help + satisfaction rating?\n"
+            "       Is it customised (no placeholders)?\n"
+            "     - Does forward_roadmap preview proposed improvements for customer validation?\n"
+            "     - Does peer_referral invite ongoing engagement AND ask for additional customer contacts?\n"
             "   For L0 scripts, check:\n"
             "     FRAMING BLOCK\n"
             "     - Does positioning frame this as a PORTFOLIO assessment (not a single-L1 review)?\n"
@@ -1700,27 +2140,33 @@ def create_interaction_designer_task(
             "   For L3 scripts, check:\n"
             "     - No framing_block, no synthesis_check, no maturity_rating blocks\n"
             "     - Exactly 8 sections in prescribed order with correct target_minutes\n"
+            "   • outputs/customer_interview_summaries.json — customer persona per segment\n"
             "   • outputs/l0_interview_summaries.json — portfolio logic prep per L0 node\n"
             "   • outputs/l1_interview_summaries.json — capability strategy prep per L1 node\n"
             "   • outputs/l2_interview_summaries.json — decision architecture prep per L2 node\n"
             "   Reply \"approved\" to proceed, or provide revision notes.'\n"
-            "11. If revision notes received, revise and call HumanInputTool again. "
+            "12. If revision notes received, revise and call HumanInputTool again. "
             "Repeat at most 3 times total.\n"
         ),
         expected_output=(
-            "Four artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
-            "integrated script per L0, L1, L2, and L3 node; L0, L1, and L2 scripts include "
-            "framing_block and synthesis_check; L0 synthesis_check also includes portfolio_options "
-            "and sponsorship_check fields; L1 and L2 sections include maturity_rating blocks with "
-            "dimension-specific scale labels captured after narrative; L0 and L3 sections have no "
-            "maturity_rating blocks; L3 scripts have exactly 8 sections with no framing_block, no "
-            "synthesis_check; (2) l0_interview_summaries.json — one L0 Interview Summary per L0 "
-            "node covering portfolio logic, competitive context, capital allocation & ROI, execution "
-            "risk, governance, board alignment, cross-level misalignments, portfolio option resonance, "
-            "and sponsorship assessment; (3) l1_interview_summaries.json — one L1 Interview Summary "
+            "Five artefacts saved via SQLiteStateTool: (1) interview_scripts.json — one "
+            "integrated script per L0, L1, L2, L3, and C (customer) node; L0, L1, L2, and C "
+            "scripts include framing_block and synthesis_check; L0 synthesis_check also includes "
+            "portfolio_options and sponsorship_check; L1 and L2 sections include maturity_rating "
+            "blocks with dimension-specific scale labels; L0, L3, and C sections have no "
+            "maturity_rating blocks; L3 scripts have exactly 8 fixed sections with no framing_block "
+            "or synthesis_check; C scripts have exactly 8 fixed sections with framing_block and "
+            "synthesis_check but no maturity_rating; (2) customer_interview_summaries.json — one "
+            "customer persona per segment covering friction points, satisfaction (1–10 Property and "
+            "Fleet), unmet needs, data/partnership quality, change readiness, competitive context, "
+            "champion/detractor classification, and key quotes for the business case; "
+            "(3) l0_interview_summaries.json — one L0 Interview Summary per L0 node covering "
+            "portfolio logic, competitive context, capital allocation & ROI, execution risk, "
+            "governance, board alignment, cross-level misalignments, portfolio option resonance, "
+            "and sponsorship assessment; (4) l1_interview_summaries.json — one L1 Interview Summary "
             "per L1 node covering strategic mandate, competitive position, five-dimension maturity, "
             "value architecture, digital readiness, three-horizon roadmap, CSFs, and peer interview "
-            "priorities; (4) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
+            "priorities; (5) l2_interview_summaries.json — one L2 Interview Summary per L2 node "
             "covering decision architecture, data landscape, orchestration friction, and monetised "
             "opportunity. No separate questionnaire artefact. All approved by human reviewer."
         ),

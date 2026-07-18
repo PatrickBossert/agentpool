@@ -221,7 +221,7 @@ export interface Stakeholder {
   preferred_language: string
   currency: string
   // Engagement fields
-  level: '' | 'L0' | 'L1' | 'L2' | 'L3'
+  level: '' | 'L0' | 'L1' | 'L2' | 'L3' | 'C'
   entity: string
   comms_channel: 'email' | 'slack' | 'sms'
   // Role flags (a stakeholder can hold all three simultaneously)
@@ -399,7 +399,7 @@ export interface InterviewSection {
   title: string
   target_minutes?: number
   questions: InterviewQuestion[]
-  maturity_rating?: MaturityRating    // present for L1/L2 sections; absent for L3
+  maturity_rating?: MaturityRating    // present for L1/L2 sections; absent for L0, L3, and C
 }
 
 export interface FramingBlock {
@@ -437,9 +437,9 @@ export interface InterviewScript {
   research_brief: string
   study_objectives: string[]
   welcome_message: string
-  framing_block?: FramingBlock      // L0, L1, and L2 — spoken before sections
+  framing_block?: FramingBlock      // L0, L1, L2, and C — spoken before sections
   sections: InterviewSection[]
-  synthesis_check?: SynthesisCheck  // L0, L1, and L2 — spoken after sections, before closing
+  synthesis_check?: SynthesisCheck  // L0, L1, L2, and C — spoken after sections, before closing
   closing_message: string
 }
 
