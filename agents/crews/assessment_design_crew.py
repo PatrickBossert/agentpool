@@ -16,6 +16,10 @@ def create_assessment_design_crew(
     standards_references: str = "",
     preferred_sections: int = 4,
     preferred_questions: int = 3,
+    client_name: str = "",
+    service_categories: str = "",
+    key_vendors: str = "",
+    applicable_regulations: str = "",
     llm: LLM | None = None,
 ) -> Crew:
     if llm is None:
@@ -28,6 +32,10 @@ def create_assessment_design_crew(
         standards_references=standards_references,
         preferred_sections=preferred_sections,
         preferred_questions=preferred_questions,
+        client_name=client_name,
+        service_categories=service_categories,
+        key_vendors=key_vendors,
+        applicable_regulations=applicable_regulations,
     )
 
     return Crew(

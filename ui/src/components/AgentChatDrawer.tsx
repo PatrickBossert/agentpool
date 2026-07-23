@@ -6,6 +6,7 @@ import DOMPurify from 'dompurify'
 import { agentChatApi } from '../api/agentChat'
 import type { InjectedDoc, InjectedLink } from '../api/agentChat'
 import { AGENT_AVATAR, AGENT_SKILLS, AGENT_ROLE, CREW_AGENTS, getIdleStatus } from './agentStatus'
+import { bcp47 } from '../utils/holidays'
 import type { CrewRun } from '../types'
 
 // Configure marked for inline use - no async, GFM tables and line breaks enabled
@@ -35,6 +36,7 @@ export interface AgentChatDrawerProps {
   onClose: () => void
   logs?: string[]
   crewRuns?: CrewRun[]
+  locale?: string
 }
 
 // ── Derive which crew this agent belongs to ────────────────────────────────────
@@ -121,7 +123,7 @@ function MessageBubble({ role, content }: { role: 'user' | 'agent'; content: str
 }
 
 export default function AgentChatDrawer({
-  slug, agentName, onClose, logs = [], crewRuns = [],
+  slug, agentName, onClose, logs = [], crewRuns = [], locale = 'GB',
 }: AgentChatDrawerProps) {
   const [tab, setTab] = useState<Tab>('status')
   const [messages, setMessages] = useState<Message[]>([])
@@ -298,7 +300,7 @@ export default function AgentChatDrawer({
               )}
               {crewRun?.started_at && (
                 <span className="text-[10px] text-gray-400">
-                  Started {new Date(crewRun.started_at + 'Z').toLocaleTimeString()}
+                  Started {new Date(crewRun.started_at + 'Z').toLocaleTimeString(bcp47(locale))}
                 </span>
               )}
             </div>

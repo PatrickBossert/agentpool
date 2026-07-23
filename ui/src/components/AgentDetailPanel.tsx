@@ -22,6 +22,7 @@ import {
 } from './agentStatus'
 import { CREW_ICON_COMPONENT } from './crewIcons'
 import AgentHoverCard from './AgentHoverCard'
+import { bcp47 } from '../utils/holidays'
 import PamReportView, { PamCrewStatusDetail } from './PamReportView'
 import type { CrewRun, AgentOutput, HumanReview } from '../types'
 import AlexSetupTab from './tabs/AlexSetupTab'
@@ -30,6 +31,7 @@ import TaylorSetupTab from './tabs/TaylorSetupTab'
 import AverySetupTab from './tabs/AverySetupTab'
 import AveryOutputExtra from './tabs/AveryOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
+import MayaOutputExtra from './tabs/MayaOutputExtra'
 import PamSetupTab from './tabs/PamSetupTab'
 
 // ── Per-crew slot injection ────────────────────────────────────────────────────
@@ -47,6 +49,7 @@ const CREW_SETUP_OVERRIDE: Partial<Record<string, SlotFC>> = {
 
 // Rendered after the DB output list in the Output tab
 const CREW_OUTPUT_EXTRA: Partial<Record<string, SlotFC>> = {
+  assessment_design:    MayaOutputExtra,
   discovery_interviews: AveryOutputExtra,
   delivery:             LucaOutputExtra,
 }
@@ -74,11 +77,10 @@ const CREW_META: Record<string, CrewMeta> = {
     note: 'Re-running will preserve existing IDs and extend the registry - existing downstream artefacts reference these IDs.',
   },
   assessment_design: {
-    reads: ['value_chain_registry.json', 'value_chain_summary.txt', 'Standards references (from Setup)', 'Project knowledge base'],
-    produces: ['interview_scripts.json', 'questionnaire_scripts.json', 'Node template assignments'],
-    configPage: 'value-chain',
-    configLabel: 'Edit templates in Value Chain → Templates',
-    note: 'Runs after value chain mapping is approved. Scripts and questionnaires are designed together for coherence.',
+    reads: ['value_chain_registry.json', 'value_chain_summary.txt', 'Standards references (from Setup)', 'Project knowledge base', 'Stakeholder registry (for C / A / F / S coverage)'],
+    produces: ['interview_scripts.json', 'l0_interview_summaries.json', 'l1_interview_summaries.json', 'l2_interview_summaries.json', 'audit_interview_summaries.json', 'customer_interview_summaries.json', 'frontline_interview_summaries.json', 'corp_services_interview_summaries.json'],
+    configPage: null,
+    note: 'Runs after value chain mapping is approved. Generates eight instrument types — L0 through L3 for the value chain, plus C, A, F, and S for external and frontline perspectives.',
   },
   discovery: {
     reads: ['Uploaded documents', 'Project knowledge base', 'Captured requirements'],
@@ -232,21 +234,27 @@ function parseMermaidValueChain(content: string): L1Summary[] {
 
 // Human-readable labels for output_type values stored in the DB
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
-  value_chain:                  'Value Chain',
-  interview_scripts:            'Interview Scripts',
-  questionnaire_scripts:        'Maturity Questionnaires',
-  requirements:                 'Requirements',
-  value_levers:                 'Value Levers',
-  value_propositions:           'Value Propositions',
-  portfolio_register:           'Portfolio Register',
-  architecture_blueprint:       'Architecture Blueprint',
-  roadmap:                      'Roadmap',
-  roadmap_data:                 'Roadmap Data',
-  business_plan:                'Business Plan',
-  stakeholder_engagement_plan:  'Stakeholder Engagement Plan',
-  interview_transcripts:        'Interview Transcripts',
-  activity_insights:            'Activity Insights',
-  initiative_register:          'Initiative Register',
+  value_chain:                      'Value Chain',
+  interview_scripts:                'Interview Scripts',
+  l0_interview_summaries:           'L0 Board Summaries',
+  l1_interview_summaries:           'L1 GM Summaries',
+  l2_interview_summaries:           'L2 Process Manager Summaries',
+  audit_interview_summaries:        'Audit Summaries',
+  customer_interview_summaries:     'Customer Summaries',
+  frontline_interview_summaries:    'Frontline Summaries',
+  corp_services_interview_summaries:'Corporate Services Summaries',
+  requirements:                     'Requirements',
+  value_levers:                     'Value Levers',
+  value_propositions:               'Value Propositions',
+  portfolio_register:               'Portfolio Register',
+  architecture_blueprint:           'Architecture Blueprint',
+  roadmap:                          'Roadmap',
+  roadmap_data:                     'Roadmap Data',
+  business_plan:                    'Business Plan',
+  stakeholder_engagement_plan:      'Stakeholder Engagement Plan',
+  interview_transcripts:            'Interview Transcripts',
+  activity_insights:                'Activity Insights',
+  initiative_register:              'Initiative Register',
 }
 
 // 'state' outputs are internal agent state snapshots (SQLiteStateTool) - not user deliverables
@@ -402,11 +410,12 @@ function agentKey(displayName: string): string {
 
 // ── Output item (lazy-load content + inline revision / revert / reject) ────────
 
-function OutputItem({ slug, output, crewKey, allCrewOutputs }: {
+function OutputItem({ slug, output, crewKey, allCrewOutputs, locale = 'GB' }: {
   slug: string
   output: AgentOutput
   crewKey: string
   allCrewOutputs: AgentOutput[]
+  locale?: string
 }) {
   // Previous version of this output type — used by Reject to revert automatically
   const previousVersion = allCrewOutputs.find(
@@ -527,7 +536,7 @@ function OutputItem({ slug, output, crewKey, allCrewOutputs }: {
         )}
         <span className="text-[10px] text-gray-400 flex-shrink-0">v{output.version}</span>
         <span className="text-[10px] text-gray-400 flex-shrink-0">
-          {parseDbDate(output.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          {parseDbDate(output.created_at).toLocaleString(bcp47(locale), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
         </span>
         {/* Action buttons */}
         {output.is_current ? (
@@ -1259,10 +1268,11 @@ export interface AgentDetailPanelProps {
   logs: string[]
   isPipelineActive: boolean
   hitlReviews?: HumanReview[]
+  locale?: string
 }
 
 export default function AgentDetailPanel({
-  slug, crewKey, crewRun, outputs, logs, isPipelineActive, hitlReviews = [],
+  slug, crewKey, crewRun, outputs, logs, isPipelineActive, hitlReviews = [], locale = 'GB',
 }: AgentDetailPanelProps) {
   const navigate = useNavigate()
   useAuth()
@@ -1437,6 +1447,7 @@ export default function AgentDetailPanel({
                   output={o}
                   crewKey={crewKey}
                   allCrewOutputs={crewOutputs}
+                  locale={locale}
                 />
               ))}
             </>
@@ -1467,8 +1478,8 @@ export default function AgentDetailPanel({
           {/* Run timestamps */}
           {crewRun && (
             <div className="flex gap-4 text-[10px] text-gray-400">
-              {crewRun.started_at && <span>Started {new Date(crewRun.started_at + 'Z').toLocaleString()}</span>}
-              {crewRun.finished_at && <span>Finished {new Date(crewRun.finished_at + 'Z').toLocaleString()}</span>}
+              {crewRun.started_at && <span>Started {new Date(crewRun.started_at + 'Z').toLocaleString(bcp47(locale))}</span>}
+              {crewRun.finished_at && <span>Finished {new Date(crewRun.finished_at + 'Z').toLocaleString(bcp47(locale))}</span>}
             </div>
           )}
 

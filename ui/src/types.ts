@@ -105,6 +105,10 @@ export interface ProjectSettings {
   locale?: string
   sched_start?: string | null
   sched_duration_weeks?: number | null
+  client_name?: string
+  service_categories?: string
+  key_vendors?: string
+  applicable_regulations?: string
 }
 
 export interface OutputContent {

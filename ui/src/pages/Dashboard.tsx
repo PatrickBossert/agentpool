@@ -135,6 +135,12 @@ export default function Dashboard() {
     refetchInterval: 60_000,
   })
 
+  const { data: settings } = useQuery({
+    queryKey: ['settings', slug],
+    queryFn: () => projectsApi.getSettings(slug!),
+    enabled: !!slug,
+  })
+
   const runMutation = useMutation({
     mutationFn: () => projectsApi.orchestrate(slug!),
     onSuccess: (data) => navigate(`/${slug}/runs/${data.orchestration_run_id}`),
@@ -313,6 +319,7 @@ export default function Dashboard() {
               logs={logs}
               isPipelineActive={isPipelineActive}
               hitlReviews={hitlReviews}
+              locale={settings?.locale}
             />
           </div>
         </div>

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ProjectSettings, InterviewSessionsResponse, InterviewSessionStatus } from '../types'
+import { bcp47 } from '../utils/holidays'
 
 // ── InterviewSessionsPanel ────────────────────────────────────────────────────
 
@@ -13,7 +14,7 @@ const STATUS_CLASSES: Record<InterviewSessionStatus['status'], string> = {
   abandoned: 'bg-gray-100 text-gray-400',
 }
 
-function InterviewSessionsPanel({ slug }: { slug: string }) {
+function InterviewSessionsPanel({ slug, locale = 'GB' }: { slug: string; locale?: string }) {
   const queryClient = useQueryClient()
   const [copiedToken, setCopiedToken] = useState<string | null>(null)
 
@@ -89,10 +90,10 @@ function InterviewSessionsPanel({ slug }: { slug: string }) {
                     </button>
                   </td>
                   <td className="py-2 pr-4 text-gray-500">
-                    {s.started_at ? new Date(s.started_at).toLocaleDateString() : '-'}
+                    {s.started_at ? new Date(s.started_at).toLocaleDateString(bcp47(locale)) : '-'}
                   </td>
                   <td className="py-2 pr-4 text-gray-500">
-                    {s.completed_at ? new Date(s.completed_at).toLocaleDateString() : '-'}
+                    {s.completed_at ? new Date(s.completed_at).toLocaleDateString(bcp47(locale)) : '-'}
                   </td>
                   <td className="py-2">
                     {s.status !== 'completed' && s.status !== 'abandoned' && (
@@ -149,7 +150,7 @@ export default function Discovery() {
       {activeTab === 'interviews' && (
         <div className="max-w-3xl">
           {settings?.interview_method === 'agent' ? (
-            <InterviewSessionsPanel slug={slug!} />
+            <InterviewSessionsPanel slug={slug!} locale={settings?.locale} />
           ) : (
             <div className="border border-gray-200 rounded-lg p-8 text-center">
               <p className="text-sm font-semibold text-gray-700 mb-2">Interview phase not enabled</p>

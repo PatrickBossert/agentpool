@@ -237,7 +237,29 @@ async def _pam_context(conn, project_id: int) -> str:
         if project_row[2]:
             try:
                 cfg = _json.loads(project_row[2])
-                for key in ("locale", "sched_start", "sched_duration_weeks",
+                locale_code = cfg.get("locale", "GB")
+                _LOCALE_CONVENTIONS = {
+                    "GB": ("DD/MM/YYYY", "British English"),
+                    "AU": ("DD/MM/YYYY", "Australian English"),
+                    "NZ": ("DD/MM/YYYY", "New Zealand English"),
+                    "IE": ("DD/MM/YYYY", "Irish English"),
+                    "CA": ("YYYY-MM-DD", "Canadian English"),
+                    "US": ("MM/DD/YYYY", "American English"),
+                    "DE": ("DD.MM.YYYY", "German"),
+                    "FR": ("DD/MM/YYYY", "French"),
+                    "SG": ("DD/MM/YYYY", "Singapore English"),
+                }
+                date_fmt, spelling = _LOCALE_CONVENTIONS.get(
+                    locale_code, ("DD/MM/YYYY", "British English")
+                )
+                settings_lines.append(f"Locale: {locale_code}")
+                settings_lines.append(
+                    f"Date format: {date_fmt} — use this format for all dates in your responses"
+                )
+                settings_lines.append(
+                    f"Spelling convention: {spelling} — use this spelling throughout"
+                )
+                for key in ("sched_start", "sched_duration_weeks",
                             "n8n_webhook_url", "public_url"):
                     val = cfg.get(key)
                     if val is not None:

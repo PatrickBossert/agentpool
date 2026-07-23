@@ -15,6 +15,10 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
   const [standardsRefs, setStandardsRefs] = useState('')
   const [prefSections, setPrefSections] = useState(4)
   const [prefQuestionsPerSection, setPrefQuestionsPerSection] = useState(3)
+  const [clientName, setClientName] = useState('')
+  const [serviceCategories, setServiceCategories] = useState('')
+  const [keyVendors, setKeyVendors] = useState('')
+  const [applicableRegulations, setApplicableRegulations] = useState('')
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -36,6 +40,10 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
     setStandardsRefs(settings.standards_references ?? '')
     setPrefSections(settings.preferred_questionnaire_sections ?? 4)
     setPrefQuestionsPerSection(settings.preferred_questions_per_section ?? 3)
+    setClientName(settings.client_name ?? '')
+    setServiceCategories(settings.service_categories ?? '')
+    setKeyVendors(settings.key_vendors ?? '')
+    setApplicableRegulations(settings.applicable_regulations ?? '')
   }, [settings])
 
   const mutation = useMutation({
@@ -59,6 +67,10 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
       standards_references: standardsRefs,
       preferred_questionnaire_sections: prefSections,
       preferred_questions_per_section: prefQuestionsPerSection,
+      client_name: clientName,
+      service_categories: serviceCategories,
+      key_vendors: keyVendors,
+      applicable_regulations: applicableRegulations,
     })
   }
 
@@ -172,6 +184,56 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* Project Context — Alex's handoff to Maya */}
+      <section>
+        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Project Context</h3>
+        <p className="text-[11px] text-gray-400 mb-3">
+          Alex establishes these fields after value chain discovery. Maya reads them at run time to make interview instruments specific to this engagement — populate before running Maya.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Client organisation name</label>
+            <input
+              type="text"
+              value={clientName}
+              onChange={e => setClientName(e.target.value)}
+              placeholder="e.g. Network Rail, Tesco, HSBC"
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Service categories (what the client delivers)</label>
+            <input
+              type="text"
+              value={serviceCategories}
+              onChange={e => setServiceCategories(e.target.value)}
+              placeholder="e.g. track maintenance, retail operations, retail banking"
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Key vendors / outsourced service providers</label>
+            <input
+              type="text"
+              value={keyVendors}
+              onChange={e => setKeyVendors(e.target.value)}
+              placeholder="e.g. Amey, Capita, IBM — comma-separated"
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Applicable regulatory frameworks</label>
+            <input
+              type="text"
+              value={applicableRegulations}
+              onChange={e => setApplicableRegulations(e.target.value)}
+              placeholder="e.g. ORR, FCA, ISO 55001 — comma-separated"
+              className={inputCls}
+            />
+          </div>
+        </div>
       </section>
 
       {/* Standards & Questionnaire Preferences */}

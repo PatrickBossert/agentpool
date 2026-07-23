@@ -36,7 +36,7 @@ C  interviews:  OUTSIDE-IN (SERVICE) — focus on service quality, reliability, 
 A  interviews:  OUTSIDE-IN (GOVERNANCE) — focus on whether controls are working,
                 promises are being kept, risks are managed, and the organisation is
                 delivering what it committed to. Talk to internal and external auditors,
-                compliance officers, and regulators (e.g. Ofgem, ORR). Provide
+                compliance officers, and relevant sector regulators. Provide
                 independent assessment of governance maturity, compliance status,
                 financial controls, KPI data integrity, third-party management, and
                 transformation readiness. Audit voice is the most credible evidence
@@ -45,11 +45,11 @@ A  interviews:  OUTSIDE-IN (GOVERNANCE) — focus on whether controls are workin
 F  interviews:  GROUND TRUTH (FRONTLINE OPERATIONS) — focus on what ACTUALLY happens
                 at the point of execution: where plans hit reality, where processes break,
                 where data is trusted or ignored, and where safety risks go unreported.
-                Talk to property FM technicians (ISS), fleet mechanics and drivers (DXI),
-                and planning/dispatch coordinators (GS UK or contractor). Frontline
-                voice reveals workarounds, morale, retention risk, change readiness,
-                and the innovations that never reach management — data no executive
-                can see from their desk.
+                Talk to frontline workers and operational staff who execute the client's
+                core service delivery tasks — including both directly employed staff and
+                contracted service provider personnel. Frontline voice reveals workarounds,
+                morale, retention risk, change readiness, and the innovations that never
+                reach management — data no executive can see from their desk.
 
 S  interviews:  GROUND TRUTH (CORPORATE SERVICES) — focus on the invisible friction
                 inside support functions (Finance, HR, IT, Data, Compliance, Procurement)
@@ -236,17 +236,15 @@ Write it in natural spoken English — shorter sentences, no jargon, no bullet s
 _L2_SECTION_LIBRARY = """\
 L2 SECTION LIBRARY — SELECT 4–5 SECTIONS FOR EACH NODE
 ────────────────────────────────────────────────────────
-The following 8 thematic sections form a reference library. Maya selects the most
-relevant 4–5 sections for each node based on its strategic priority and available
-interview time (target: 25–30 minutes standard; 45–60 minutes for senior stakeholders
-or high-priority nodes). Sections S1 and S2 are mandatory for every L2.
+The following 7 thematic sections form a reference library. Maya selects the most
+relevant 4–5 sections for each node. Target: 35–50 min. Sections S1 and S2 are mandatory for every L2.
 
 Each section maps to a theme — design specific questions from these themes, informed
 by the node's L3 inputs, downstream consumers, and corporate context.
 
 MANDATORY ─────────────────────────────────────────────────────────────────────────
 
-S1. Strategic Intent & Decision Architecture (~8 min standard, ~12 min deep-dive)
+S1. Strategic Intent & Decision Architecture (~8 min)
    Core themes:
    - Decision mapping: what strategic or operational decisions does this L2 exist to support?
    - Decision dependency: who makes each decision, at what cadence, based on what inputs?
@@ -494,8 +492,8 @@ more focused, and more decision-oriented than any other level.
    L0 interviewees govern the whole portfolio. Never ask about one L1 capability alone —
    always ask how the capabilities fit together. "Which L1 do you prioritise?" reveals real
    allocation logic. "How do they interact?" reveals portfolio coherence or its absence.
-   ✗ "How important is Property transformation to you?"
-   ✓ "How do Property and Fleet transformation fit together in your capital agenda —
+   ✗ "How important is [Capability X] transformation to you?"
+   ✓ "How do [Capability X] and [Capability Y] fit together in your capital agenda —
       and if forced to sequence, which goes first and why?"
 
 2. EXECUTIVE BREVITY — 30 MINUTES MAXIMUM
@@ -796,7 +794,7 @@ actionable insight.
       that's 1.5 days per week per team lead that should be on core mission work"
 
 4. NPS HONESTY — TEST SATISFACTION WITHOUT FISHING FOR POSITIVES
-   Always ask the 1–10 satisfaction rating (Property and Fleet separately).
+   Always ask the 1–10 satisfaction rating per primary service category the client delivers.
    Always probe what would drop them BELOW 5 — not just what would lift them.
    Below-5 risk factors are often more strategically important than aspirations.
    Do not lead with positives or frame questions to elicit favourable responses;
@@ -847,9 +845,9 @@ POSITIONING (framing_block.positioning — 1–2 sentences)
    rather than candid — they optimise for politeness, not truth.
 
 CONTEXT SETTING (framing_block.context_setting — 5 bullets)
-   Template bullets — customise with client's operational language and asset types:
-   • "We want to understand what's working well today with [property/fleet] assets"
-   • "Where asset management creates friction or disruption for your team"
+   Template bullets — customise with the client's operational language and service categories:
+   • "We want to understand what's working well today with [the client's services]"
+   • "Where the service creates friction or disruption for your team"
    • "What would make your job easier or more effective on a day-to-day basis"
    • "What your biggest constraints in the field actually are"
    • "How better assets, planning, or data could help you and your team"
@@ -861,9 +859,9 @@ DUAL LENSES (framing_block.dual_lenses — customer variant)
    frequency, cost, what it means for your team's ability to do their job."
 
    dual_lenses.effectiveness (aspiration lens):
-   "Second, I want to understand what you'd want. If asset management were
-   genuinely excellent — if property and fleet assets were best-in-class — what
-   would that look like for your team? What would it enable that you can't do today?"
+   "Second, I want to understand what you'd want. If the service were genuinely
+   excellent — best-in-class — what would that look like for your team?
+   What would it enable that you can't do today?"
 """
 
 _CUSTOMER_SECTION_GUIDE = """\
@@ -880,29 +878,29 @@ operational maturity of internal processes. Maturity ratings are L1/L2 instrumen
 
 S1. Operational Context & Asset Dependence (~6 min)
    Core themes:
-   - Walk-through: how do property and fleet assets enable their day-to-day work?
-     Listen for: assets as enabler (unremarkable) vs. bottleneck (constantly managed).
-   - Time burden: what % of time managing asset-related issues vs. core mission?
+   - Walk-through: how do the client's services and assets enable their day-to-day work?
+     Listen for: service as enabler (unremarkable) vs. bottleneck (constantly managed).
+   - Time burden: what % of time managing service-related issues vs. core mission?
      5–10% = reliable background; 20–30% = significant friction; 40%+ = broken.
-   - Failure impact: when assets fail or perform poorly, what's the impact on THEM?
+   - Failure impact: when service fails or performs poorly, what's the impact on THEM?
      Probe four dimensions: operational (can't do job, must improvise); safety-critical
      (safety incidents or near-misses?); customer-facing (their customers affected?);
      personal (stress, overtime, frustration).
-   - Priority comparison: property vs. fleet — which constrains them more, and why?
-   - External benchmark: how does asset management here compare to other organisations
+   - Priority comparison: which service area or asset type constrains them most, and why?
+   - External benchmark: how does service management here compare to other organisations
      they've worked with or know of? Reveals competitive positioning from customer view.
 
 S2. Current Pain Points & Friction (~10 min)
    Core themes:
-   - Biggest property frustration: listen for reliability (unexpected failures),
-     predictability (no visibility into maintenance schedule), transparency (left in dark
-     about issues), communication (find out after the fact), escalation (hard to reach
+   - Biggest service frustration: listen for reliability (unexpected failures),
+     predictability (no visibility into schedule), transparency (left in dark about
+     issues), communication (find out after the fact), escalation (hard to reach
      someone), documentation (no history of what's been done).
    - Team impact: probe for workarounds (do they improvise?), time (hours/week),
      stress (source of anxiety?), effectiveness (fighting fires instead of core job?),
-     morale (people considering leaving due to asset frustration?).
-   - Fleet-specific frustrations: vehicle availability, uptime, maintenance timing,
-     EV readiness, visibility into vehicle status or maintenance history.
+     morale (people considering leaving due to service frustration?).
+   - Service-specific frustrations: availability, uptime, scheduling, response
+     times, visibility into status, and communication about planned work.
    - Response to issues previously raised: "they listened and fixed it" → responsive;
      "they acknowledged it but nothing changed" → broken follow-through;
      "we didn't bother raising it" → broken feedback loop entirely.
@@ -916,29 +914,29 @@ S3. Unmet Needs & Aspirations (~8 min)
    - Single highest-priority ask: "If you could ask for ONE thing better, what?"
      Listen for: visibility (real-time dashboard), predictability (maintenance schedule
      3 months ahead), responsiveness (2-hour SLA), proactivity (fix before failure),
-     partnership (treat as partner not client), innovation (EV / net-zero transition).
+     partnership (treat as partner not client), innovation (technology modernisation).
    - Value behind the want: "What would that enable for your team?"
      Push for: productivity (hours saved), reliability (failures prevented), safety
      (incidents avoided), employee experience (stress reduced, morale improved),
      customer impact (their customers better served).
-   - Aspirational best-in-class: unconstrained vision — "if assets were excellent,
-     what would that look like?" Examples: never break unexpectedly; maintenance never
-     disrupts operations; real-time visibility; proactive alerts; zero safety incidents;
-     GS UK proactively helps us succeed.
-   - Sustainability priority: how important is EV transition / net-zero?
-     Critical (org has targets) / Important (customers expect it) / Nice-to-have /
-     Not our concern. Many customers have their own climate commitments that create
-     urgency independent of ours.
+   - Aspirational best-in-class: unconstrained vision — "if the service were excellent,
+     what would that look like?" Examples: never fail unexpectedly; work never disrupts
+     operations; real-time visibility; proactive alerts; zero safety incidents;
+     [CLIENT ORGANISATION] proactively helps us succeed.
+   - Sustainability and technology priorities: how important are the client's sector-specific
+     sustainability or technology modernisation commitments? Critical / Important /
+     Nice-to-have / Not our concern. Customers may have their own regulatory or
+     commercial imperatives that create urgency independent of the client's agenda.
    - Trust signals: what would make them MORE confident in the partnership?
      Reveals accountability indicators, transparency preferences, partnership expectations.
 
 S4. Satisfaction & Performance Perception (~6 min)
    Core themes:
-   - Property satisfaction: 1–10. Then probe all three:
+   - Satisfaction by service category: 1–10 for each primary service category the
+     client delivers. Then probe all three for each:
      "What would move you to 9–10?" "Why not [current score + 1]?"
      "What would move you BELOW 5?" (Below-5 risk factors are often more important
      than aspirations — they reveal fragility and switching triggers.)
-   - Fleet satisfaction: 1–10. (Typically different from property — compare and probe why.)
    - Improvement trajectory confidence: "very / some / not really / negative / no idea."
      "I have no idea" is a visibility gap, not a neutral response — probe further.
    - Peer comparison: "What are you hearing from peers about our assets?"
@@ -956,8 +954,8 @@ S5. Data, Transparency & Partnership Quality (~7 min)
    - Data wishlist: "What data would help you do your job better?"
      Examples: real-time asset status, predictive alerts (asset will fail in X weeks),
      maintenance history per asset, benchmarking vs. peers, planned-failure forecast.
-   - ISS / DXI relationship quality: responsive, professional, listens to needs, proactive
-     vs. reactive, would they recommend them? Where could they improve?
+   - Key service provider relationship quality: responsive, professional, listens to needs,
+     proactive vs. reactive, would they recommend them? Where could they improve?
    - Partnership perception: "Do you feel treated as a partner or as a cost to manage?"
      Critical for change adoption — customers who feel managed, not partnered, resist
      transformation even when it would benefit them.
@@ -995,7 +993,7 @@ S8. Wrap-Up & Partnership (~4 min — this IS the synthesis_check)
      would make the biggest difference, satisfaction rating and what would move it.
    - VALIDATE → response_probes: confirm the synthesis or surface what was missed.
    - NEXT STEPS → forward_roadmap: preview proposed transformation outcomes for customer
-     validation (better visibility, predictive capabilities, closer partnership, EV support).
+     validation (better visibility, predictive capabilities, closer partnership, key sector priorities).
    - ONGOING → peer_referral: invite ongoing engagement and identify other contacts.
 """
 
@@ -1008,8 +1006,8 @@ heard and building confidence in partnership. The interviewee should leave feeli
 respected and optimistic — even if they gave critical feedback.
 
 SYNTHESIS PROMPT (synthesis_check.synthesis_prompt — interviewer speaks this)
-   Template: "So if I understand correctly: your biggest friction with [property/fleet]
-   assets is [X]; the impact on your team is [Y, quantified]; what would make the
+   Template: "So if I understand correctly: your biggest friction with [the service]
+   is [X]; the impact on your team is [Y, quantified]; what would make the
    biggest difference is [Z]; and you're [A]/10 satisfied, and would move to [target]
    if [specific condition]. Does that capture it? What am I missing?"
    MUST be customised to what was actually said in this interview — no template
@@ -1033,11 +1031,10 @@ PEER REFERRAL / ONGOING ENGAGEMENT (synthesis_check.peer_referral)
 
 FORWARD ROADMAP / TRANSFORMATION PREVIEW (synthesis_check.forward_roadmap)
    Template: "As we look at improvements, we're exploring a few things and would
-   value your reaction: better real-time visibility into asset status — would that
+   value your reaction: better real-time visibility into service status — would that
    change how your team plans? Predictive alerts before failures — would that let
-   you take different action? Closer partnership with quarterly check-ins — would
-   that be useful? And support for your EV transition — how can we help your team
-   prepare for that?"
+   you take different action? Closer partnership with regular check-ins — would
+   that be useful? And how can we help your team with your own strategic priorities?"
    Listen for: enthusiasm (champion signal), indifference (priority mismatch),
    concern (adoption risk), or a redirect to a completely different priority
    (reveals what we missed earlier in the interview).
@@ -1052,8 +1049,8 @@ Produce one customer persona summary per customer interview.
 - Role / title:               [Role, operational scope, and organisation context]
 - Asset dependency level:     [High / Medium / Low — evidence from interview]
 - Time burden on asset issues: [% of time; hours/week equivalent]
-- Primary asset concern:      [Property / Fleet / Both equally — and why]
-- External benchmark:         [How they compare GS UK to other organisations they know]
+- Primary service concern:    [Service category and why — their words]
+- External benchmark:         [How they compare [CLIENT ORGANISATION] to alternatives or peers they know]
 
 ## Top 3 Friction Points (specific and quantified)
 1. [Pain point — named, with frequency, impact, and any £ or time estimate given]
@@ -1061,8 +1058,7 @@ Produce one customer persona summary per customer interview.
 3. [Pain point — named, with frequency, impact, and any £ or time estimate given]
 
 ## Satisfaction Assessment
-- Property satisfaction:      [X/10 — what would move them to 9–10]
-- Fleet satisfaction:         [X/10 — what would move them to 9–10]
+- Service satisfaction by category: [X/10 per primary service category — what would move each to 9–10]
 - Below-5 risk factors:       [What would drop their satisfaction sharply — switching triggers]
 - Improvement confidence:     [Very / Some / Not really / Negative / No idea — evidence]
 - NPS sentiment:              [Promoter / Passive / Detractor — evidence from NPS-like question]
@@ -1082,7 +1078,7 @@ Produce one customer persona summary per customer interview.
 - Visibility — performance metrics:  [Adequate / Partial / None — evidence]
 - Data wishlist top item:            [Most wanted data capability, in their words]
 - Partnership perception:            [Partner / Cost to manage — specific evidence]
-- ISS / DXI relationship quality:    [Responsive / Reactive / Absent — evidence]
+- Key service provider relationship:  [Responsive / Reactive / Absent — evidence per named provider]
 - Dialogue gap:                      [What they would raise on a standing monthly call]
 
 ## Change Readiness
@@ -1144,13 +1140,13 @@ their assessment during the interview. Never seek validation — seek truth.
 
 4. PROBE HISTORY — PAST ISSUES PREDICT FUTURE RISK
    Repeat findings, recurring control gaps, and unresolved audit observations are
-   the single strongest predictor of future governance failure. Always ask: "Has GS UK
-   addressed prior audit findings?" "Do you see recurring issues?" Patterns matter
-   more than any single incident.
+   the single strongest predictor of future governance failure. Always ask: "Has
+   [CLIENT ORGANISATION] addressed prior audit findings?" "Do you see recurring issues?"
+   Patterns matter more than any single incident.
 
 5. THIRD-PARTY RISK — VENDOR PERFORMANCE IS GOVERNANCE PERFORMANCE
-   ISS (Property) and DXI (Fleet) performance directly impacts GS UK's governance
-   health. If ISS/DXI SLA compliance is unmonitored, GS UK's compliance is unknowable.
+   Key vendor and contractor performance directly impacts the client's governance health.
+   Where significant work is outsourced, vendor SLA compliance is a material audit risk.
    If audit does not independently test vendor performance, vendor reporting cannot
    be trusted. Ask whether there is independent vendor audit — "we rely on their
    reporting" is not a control.
@@ -1195,7 +1191,7 @@ POSITIONING (framing_block.positioning — 1–2 sentences)
 CONTEXT SETTING (framing_block.context_setting — 5 bullets)
    Template bullets — customise with client's specific regulatory and audit context:
    • "We want to know: are we doing what we say we'll do — governance, compliance, controls?"
-   • "Are controls adequate for the risks we're taking with [property/fleet capex]?"
+   • "Are controls adequate for the risks we're taking in [the client's primary capital programmes]?"
    • "What are your observations about accountability and decision-making quality?"
    • "Where are the material gaps or risks we may not be seeing clearly ourselves?"
    • "What areas concern you most about our asset management programme?"
@@ -1216,16 +1212,16 @@ _AUDIT_SECTION_GUIDE = """\
 AUDIT INTERVIEW SECTION GUIDE — FIXED 9-SECTION STRUCTURE
 ───────────────────────────────────────────────────────────
 Audit interviews use a FIXED 10-section structure — all sections are always included.
-Unlike L1 and L2, there is no section selection logic. The 68-minute total allows
-thorough governance coverage. Follow the auditor's thread — if a section yields
-material findings, let it run over and compress advisory sections.
+Unlike L1 and L2, there is no section selection logic. The 10-section structure is
+designed to run within 53 minutes — keep each section to its target and compress
+lighter sections if a key section yields material findings.
 
 DO NOT include maturity_rating blocks in any audit interview section.
 Auditors give qualitative maturity assessments (Ad-hoc / Repeatable / Managed / etc.)
 conversationally within sections — these are captured as narrative, not structured
 0–4 per-section ratings. The overall governance maturity rating goes in the synthesis.
 
-S1. Governance & Accountability Framework (~8 min)
+S1. Governance & Accountability Framework (~6 min)
    Core themes:
    - Decision authority: Is it documented? Who decides what? Are authorities clear
      and enforced, or informal and assumed?
@@ -1237,29 +1233,29 @@ S1. Governance & Accountability Framework (~8 min)
      Do they understand the risks they're approving?
    - Conflicts of interest: procurement separation of duties, vendor management
      independence, incentive alignment checks.
-   - Historical responsiveness: has GS UK addressed prior audit findings, or do
-     recurring issues indicate a pattern of non-remediation?
+   - Historical responsiveness: has [CLIENT ORGANISATION] addressed prior audit findings,
+     or do recurring issues indicate a pattern of non-remediation?
    - Ultimate accountability test: "If a major capex overrun or safety incident
      occurred, would it be caught? Who is accountable?" (Tests control effectiveness.)
 
-S2. Contract & Compliance Management (~8 min)
+S2. Contract & Compliance Management (~5 min)
    Core themes:
    - Material obligations: SLAs, KPIs, performance standards, capex responsibilities,
-     change control process, performance incentives, exit clauses with ISS (Property)
-     and DXI (Fleet).
+     change control process, performance incentives, exit clauses with key outsourced
+     service providers.
    - Compliance status: are obligations being met? Listen for: fully compliant
      (ask for evidence) / mostly (which exceptions? how managed?) / not consistently
      (recurring breaches: red flag) / uncertain or not tracked (bigger red flag).
-   - Regulatory obligations scope: Health & Safety (RIDDOR), Environmental (asbestos,
-     waste, emissions), Energy efficiency (MEES for property, DVSA for fleet),
-     Financial (capex reporting, depreciation), Accessibility, Net-zero / carbon
-     (increasingly material).
+   - Regulatory obligations scope: applicable health & safety regulations, environmental
+     obligations (waste, emissions, contamination), sector-specific compliance frameworks
+     (energy, transport, finance, data protection, accessibility), financial reporting and
+     capex governance requirements. Use [APPLICABLE_REGULATIONS] from project context.
    - Regulatory compliance status: any violations, fines, or enforcement actions?
      Is there a compliance calendar with monitored deadlines?
    - Systematic vs. ad-hoc compliance: "We're compliant but don't have a systematic
      process" is a control gap, not a clean bill of health.
 
-S3. Financial Controls & Capex Discipline (~8 min)
+S3. Financial Controls & Capex Discipline (~6 min)
    Core themes:
    - Budget control dimensions: annual forecast vs. actuals variance; approval
      process at each spend level (enforced vs. nominal); monthly tracking against
@@ -1276,10 +1272,10 @@ S3. Financial Controls & Capex Discipline (~8 min)
      especially property revaluations.
    - Separation of duties: who can approve spend? Who can modify the approval
      framework? Are those functions independent?
-   - Financial data confidence: 1–10 confidence in integrity of financial data for
-     property and fleet. Press for what drives any confidence below 8.
+   - Financial data confidence: 1–10 confidence in integrity of financial data across
+     the client's key operational domains. Press for what drives any confidence below 8.
 
-S4. Performance Tracking & KPI Integrity (~8 min)
+S4. Performance Tracking & KPI Integrity (~5 min)
    Core themes:
    - KPI coverage: should include availability/uptime, cost (capex + opex per
      asset), quality/defects, safety incidents, compliance, customer satisfaction,
@@ -1298,14 +1294,14 @@ S4. Performance Tracking & KPI Integrity (~8 min)
    - Trend reliability: "If I looked at the last 12 months of KPI reports, what
      would I find?" Are trends real or artefacts of measurement changes?
 
-S5. Risk Identification & Mitigation (~8 min)
+S5. Risk Identification & Mitigation (~6 min)
    Core themes:
    - Material risk scope: operational (asset failure, downtime, safety); financial
      (capex overrun, benefit shortfall, vendor cost escalation); regulatory
      (non-compliance, violations, environmental liability); strategic (market
      disruption, technology obsolescence, talent loss); organisational (key person
-     dependency, change capacity); partnership (ISS/DXI underperformance, vendor
-     failure); reputational (public safety incident, environmental issue).
+     dependency, change capacity); partnership (key vendor underperformance or failure);
+     reputational (public safety incident, environmental issue).
    - Risk register: maintained quarterly and reported to Audit Committee vs.
      partially documented vs. managed ad-hoc vs. no systematic process.
    - Mitigation strategy types: preventive controls (design out), detective controls
@@ -1313,54 +1309,55 @@ S5. Risk Identification & Mitigation (~8 min)
      (knowingly taking).
    - Mitigation effectiveness: monitored with evidence vs. assumed without testing
      vs. past instances of mitigation failure.
-   - Emerging risks: EV transition complexity and technology readiness; talent
-     shortage in skilled trades; regulatory tightening (environmental, safety);
-     supply chain disruption; cybersecurity for connected assets and operational data.
+   - Emerging risks: technology transformation complexity; specialist labour and skills
+     shortages; regulatory tightening (environmental, safety, data); supply chain
+     disruption; cybersecurity for connected systems and operational data.
+     Include [APPLICABLE_REGULATIONS] context for sector-specific emerging risks.
    - Control gap evidence: near-miss incidents or past control failures that revealed
      gaps — and whether the organisation learned from them.
-   - Overall risk rating: 1–10 auditor assessment of property/fleet risk profile.
+   - Overall risk rating: 1–10 auditor assessment of overall operational risk profile.
      Press for what would change the rating in either direction.
 
-S6. Data & Information Quality (~7 min)
+S6. Data & Information Quality (~5 min)
    Core themes:
    - Asset data quality dimensions: completeness (% of assets in system, historical
      data present?); accuracy (conflicts between systems, age of records?);
-     consistency (definitions aligned across property and fleet?); timeliness
+     consistency (definitions aligned across operational domains?); timeliness
      (real-time feeds or batch-updated?); security (access controlled?);
      auditability (can you trace data lineage to the source decision?).
    - Data governance controls: formal data governance office with policies and
      standards vs. partial/ad-hoc controls vs. no formal governance at all.
    - Data quality issues found in prior audits: significant cross-system
-     inconsistencies; incomplete or inaccurate asset register; data integrity not
-     verified before use in decisions; historical data lost or unreliable.
+     inconsistencies; incomplete or inaccurate asset/operational register; data
+     integrity not verified before use in decisions; historical data lost or unreliable.
    - Data ownership: is there a named data owner accountable for quality and
      completeness? "Everyone owns it" = no one owns it.
-   - Systems integration: how integrated is asset data across platforms (Tririga,
-     SAP, Primavera, BI tools)? Fully automated feeds vs. manual reconciliation
-     vs. siloed systems with significant manual effort.
+   - Systems integration: how integrated is operational data across core platforms?
+     Use [KEY_VENDORS] and project context to name the relevant systems. Assess:
+     fully automated feeds vs. manual reconciliation vs. siloed systems.
    - Strategic decision trust: "Would you trust this data for a £100M capex
      allocation decision?" If not — what specifically prevents that trust?
 
-S7. Third-Party Management — ISS & DXI (~8 min)
-   Core themes:
-   - SLA and KPI monitoring rigor: is compliance data generated independently (GS UK
-     systems) or self-reported by ISS/DXI? Are there penalties for SLA breach and
-     are they enforced?
+S7. Third-Party & Vendor Management (~6 min)
+   Core themes: (use [KEY_VENDORS] from project context to name specific providers)
+   - SLA and KPI monitoring rigor: is compliance data generated independently
+     ([CLIENT ORGANISATION] systems) or self-reported by outsourced providers?
+     Are there penalties for SLA breach and are they enforced?
    - Performance reporting independence: "We rely on their reporting" is not a control.
-     Is there any independent verification of ISS/DXI performance claims?
+     Is there any independent verification of key vendor performance claims?
    - Conflict of interest checks: same person negotiating contract and managing
      performance (conflict); procurement with adequate separation of duties (good);
-     ISS/DXI incentives to inflate scope or costs (monitor).
+     vendor incentives to inflate scope or costs (monitor).
    - Audit frequency: quarterly compliance audits + annual detailed audit vs.
      annual audit + ad-hoc vs. relying solely on vendor reporting.
-   - Compliance/performance gap findings: have prior audits found gaps with ISS or
-     DXI? Were they remediated? Do they recur?
-   - Transformation capability: confidence in ISS/DXI ability to support major
-     transformation (EV transition, digital capability) — high/medium/low/uncertain.
-   - Vendor lock-in risk: if GS UK needed to exit ISS or DXI contracts, what is
-     the risk? What alternative sourcing options exist?
+   - Compliance/performance gap findings: have prior audits found gaps with key
+     vendors? Were they remediated? Do they recur?
+   - Transformation capability: confidence in key vendors' ability to support
+     major transformation — high/medium/low/uncertain.
+   - Vendor lock-in risk: if [CLIENT ORGANISATION] needed to exit a key contract,
+     what is the risk? What alternative sourcing options exist?
 
-S8. Transformation & Change Governance (~6 min)
+S8. Transformation & Change Governance (~5 min)
    Core themes:
    - Organisational readiness signals: change history (successful past
      transformations?); programme governance (formal PMO?); executive sponsorship
@@ -1380,10 +1377,10 @@ S8. Transformation & Change Governance (~6 min)
    - High-risk escalation triggers: what would cause the auditor to flag the
      transformation programme as requiring enhanced oversight or board intervention?
 
-S9. Comparative & Peer Assessment (~5 min)
+S9. Comparative & Peer Assessment (~4 min)
    Core themes:
-   - Governance benchmarking vs. peers (other UK utilities, rail, similar
-     organisations): ahead / in line / behind / not benchmarked.
+   - Governance benchmarking vs. peers (relevant sector comparators): ahead / in line /
+     behind / not benchmarked. Use [CLIENT ORGANISATION]'s sector for framing.
    - Best-practice opportunities: specific practices from other organisations that
      should be adopted.
    - Regulatory trend horizon: carbon reporting / net-zero accountability;
@@ -1420,7 +1417,7 @@ SYNTHESIS PROMPT (synthesis_check.synthesis_prompt — interviewer speaks this)
    material control gaps: [1–3 named gaps];
    compliance status: [on track / at risk / issues found];
    data integrity: [high confidence / adequate / concerns — what drives this];
-   vendor management: [strong / adequate / gaps with ISS/DXI];
+   vendor management: [strong / adequate / gaps with key outsourced providers];
    transformation readiness: [ready / adequate / concerns — named risks];
    overall risk rating: [X/10 — your assessment];
    and the top priorities you would recommend addressing: [1–3].
@@ -1468,7 +1465,7 @@ Produce one audit summary per interviewee / assurance function.
 ## Auditor / Regulator Profile
 - Name / organisation:         [Name, audit function, and mandate]
 - Audit scope:                 [What they cover: enterprise risk / external / regulatory]
-- Prior engagement with GS UK: [Audit history; prior findings and remediation status]
+- Prior engagement with [CLIENT ORGANISATION]: [Audit history; prior findings and remediation status]
 
 ## Governance Assessment
 - Decision authority clarity:  [Clear / Adequate / Gaps / Unclear — evidence]
@@ -1480,7 +1477,7 @@ Produce one audit summary per interviewee / assurance function.
 - Prior audit findings addressed: [Yes / Partially / Recurring issues — detail]
 
 ## Compliance & Regulatory Status
-- ISS / DXI obligations:       [Compliant / Minor breaches / Recurrent / Untracked]
+- Key vendor obligations:       [Compliant / Minor breaches / Recurrent / Untracked — per named provider]
 - Regulatory obligations:      [Compliant / At risk / Violations found — by category]
 - Documentation & audit trail: [Strong / Adequate / Gaps]
 - Compliance calendar:         [Systematic / Ad-hoc / None]
@@ -1508,7 +1505,7 @@ Produce one audit summary per interviewee / assurance function.
 - Risk register status:        [Maintained quarterly / Partial / None]
 - Material risks identified:   [Comprehensive / Adequate / Material omissions — what's missing]
 - Mitigation effectiveness:    [Monitored with evidence / Assumed / Past failures found]
-- Emerging risks flagged:      [EV / Talent / Regulatory / Cyber / Supply chain — detail]
+- Emerging risks flagged:      [Technology / Talent / Regulatory / Cyber / Supply chain — detail]
 - Near-miss / gap revelations: [Any incidents that exposed control gaps]
 - Overall risk rating:         [X/10 — what would move it in either direction]
 
@@ -1522,8 +1519,8 @@ Produce one audit summary per interviewee / assurance function.
 - Systems integration:         [Automated feeds / Manual reconciliation / Siloed]
 - Strategic decision trust:    [Would trust for £100M decision? Evidence]
 
-## Third-Party Management (ISS / DXI)
-- SLA monitoring rigor:        [Independent / Self-reported / Not monitored]
+## Third-Party & Vendor Management
+- SLA monitoring rigor:        [Independent / Self-reported / Not monitored — per named vendor]
 - Independent vendor audit:    [Quarterly / Annual / Ad-hoc / None]
 - Prior compliance gaps:       [Found and remediated / Found and open / None found]
 - Conflict of interest:        [Well managed / Partial / Gap found]
@@ -1665,7 +1662,7 @@ All 9 sections are mandatory — there is NO section selection for Frontline int
 Design questions for each section from the themes below.
 NO maturity_rating blocks in any Frontline section.
 
-SECTION 1 — Day-in-the-Life & Actual Work (target_minutes: 8)
+SECTION 1 — Day-in-the-Life & Actual Work (target_minutes: 7)
   Core question: What ACTUALLY happens vs. what is planned?
   Key themes:
     • Walk-through of a recent day/week — get them talking; observe natural friction
@@ -1676,7 +1673,7 @@ SECTION 1 — Day-in-the-Life & Actual Work (target_minutes: 8)
     • Workarounds: duplicate entry, parallel spreadsheets, phone calls replacing systems
     • The ONE thing that would save the most time (highest-impact inefficiency)
 
-SECTION 2 — Constraints, Friction & Pain Points (target_minutes: 8)
+SECTION 2 — Constraints, Friction & Pain Points (target_minutes: 7)
   Core question: Where does the system break, and who pays the price?
   Key themes:
     • Most frustrating aspect of the job (intensity reveals real pain; note the category)
@@ -1728,7 +1725,7 @@ SECTION 6 — Team Dynamics & Culture (target_minutes: 6)
     • Direct supervisor: supportive advocate vs. disconnected or blame-shifting
     • Company engagement: proud, neutral, frustrated, or considering leaving
     • Understanding of strategy: do they know WHY they're doing what they're doing?
-    • Cross-organisation coordination (GS UK, ISS, DXI): clear, fragmented, or conflicting?
+    • Cross-organisation coordination ([CLIENT ORGANISATION] and its key contracted providers): clear, fragmented, or conflicting?
     • Unjust accountability: blamed for things clearly outside their control?
     • What would make them MORE likely to stay and do excellent work
 
@@ -1802,12 +1799,12 @@ FRONTLINE WORKER INTERVIEW SUMMARY — TEMPLATE
 ──────────────────────────────────────────────
 Produce one summary per frontline worker cohort interviewed. This summary is
 CONFIDENTIAL: do not include any individual's name in shared artefacts — use
-role/function/cohort identifiers only (e.g. "ISS Site Technician — Property FM").
+role/function/cohort identifiers only (e.g. "[Role] — [Function]").
 
 ## Worker Profile
-- Role/Title:            [Technician / Driver / Coordinator / Inspector / etc.]
-- Function:              [Property FM / Fleet / Planning / Other]
-- Organisation:          [GS UK / ISS / DXI]
+- Role/Title:            [Role from the client's operational context]
+- Function:              [Service function or department — use [SERVICE_CATEGORIES] from project context]
+- Organisation:          [[CLIENT ORGANISATION] or named contracted provider — use [KEY_VENDORS]]
 - Years in role:         [X]
 - Feedback confidence:   [High / Medium / Low — did they speak openly?]
 
@@ -1884,7 +1881,7 @@ Asset Management but rarely appear in operational reviews. Their friction is inv
 and systemic; their insight is essential for transformation readiness.
 
 1. SYSTEM COMPLAINTS ARE PROCESS GAP SIGNALS
-   When a Finance analyst says "Tririga and SAP don't reconcile," they are not
+   When a Finance analyst says "our core systems don't reconcile," they are not
    complaining about software — they are describing a data governance failure that
    affects every capital decision in the organisation. Treat every system complaint
    as a signal: what process, governance, or integration gap does this reveal?
@@ -1987,10 +1984,10 @@ SECTION 1 — Daily Work & Asset Management Support (target_minutes: 8)
     • Function-specific context:
         Finance: budget forecasting, capex tracking, benefit realisation, variance
         HR: staffing, training, capability planning, organisational change
-        IT: core systems (Tririga, SAP, P6), integration, data architecture, security
+        IT: core operational systems, integration, data architecture, security
         Data: asset registers, KPI tracking, reporting, governance, data quality
         Compliance: regulatory requirements, audit prep, controls, risk reporting
-        Procurement: vendor management, contract performance (ISS/DXI), sourcing
+        Procurement: vendor management, contract performance (key outsourced providers), sourcing
     • Time allocation to Asset Management vs. other programmes (capacity signal)
     • Most frequent incoming requests and whether they arrive clear, vague, or changing
     • Delivery quality: how often does what they produce meet the requester's actual need?
@@ -2000,8 +1997,9 @@ SECTION 2 — Data, Systems & Process Friction (target_minutes: 10)
   Core question: Are the systems and data adequate for the decisions being made —
   and where does the hidden manual work live?
   Key themes:
-    • Systems used for Asset Management: Tririga, SAP, P6, Power BI, spreadsheets,
-      email, manual processes — fit for purpose and how often used
+    • Systems used for their role: core operational and enterprise systems (ERP,
+      asset management platforms, BI tools, collaboration tools, spreadsheets) — use
+      [KEY_SYSTEMS] from project context. Assess fit for purpose and actual usage.
     • System integration quality: data flows automatically vs. manual bridging vs. full silos
     • Time spent on manual bridging (% of week — probe for 20/40/60% signals)
     • Data quality issues: cross-system inconsistencies, definition mismatches,
@@ -2154,7 +2152,7 @@ by function and role only — do not include names in shared artefacts.
 - Criticality to AM decisions: [Essential / Important / Supporting]
 
 ## Systems & Process Reality
-- Primary systems:             [SAP / Tririga / P6 / Power BI / Custom / Spreadsheets]
+- Primary systems:             [Core operational and enterprise systems used — name from project context]
 - Data quality:                [Trustworthy / Mostly / Questionable / Poor]
 - System integration:          [Well-integrated / Partial / Siloed]
 - Manual workarounds:          [Hours/week; what tasks; what they replace]
@@ -2224,8 +2222,8 @@ they are persistent lenses to hold across the entire conversation.
    L3 asks: "How do you execute this task?" L2 asks: "How do you make this decision?"
    L1 asks: "Does this capability deliver the value we need, and what would unlock more?"
    Reframe every question away from operational process toward strategic asset.
-   ✗ "Walk me through how you manage property maintenance."
-   ✓ "How does Property Management create strategic value — and where is it falling short
+   ✗ "Walk me through how you manage [this activity]."
+   ✓ "How does [this capability] create strategic value — and where is it falling short
       of its potential?"
 
 2. SURFACE STRATEGIC CLARITY BEFORE OPERATIONS
@@ -2308,8 +2306,8 @@ POSITIONING (framing_block.positioning — 1–2 sentences)
 
    The framing must signal IMMEDIATELY that this is a capability strategy conversation,
    not an operational process review.
-   ✗ "We're mapping the Property Management value chain to understand your processes."
-   ✓ "We're assessing Property Management as a strategic asset — how it creates value
+   ✗ "We're mapping the [Capability] value chain to understand your processes."
+   ✓ "We're assessing [Capability] as a strategic asset — how it creates value
       today, where it faces constraints, and what transformation could unlock."
 
 CONTEXT SETTING (framing_block.context_setting — 4–5 bullets)
@@ -2357,8 +2355,7 @@ The following 8 thematic sections form a reference library. Maya selects the mos
 relevant sections for each L1 node based on its strategic context and available
 interview time. Sections S1, S2, and S3 are mandatory for every L1 interview.
 
-Target durations: Standard L1 (45–55 min); Deep-dive L1 (60–75 min for senior
-stakeholders or transformationally critical capabilities).
+Target duration: 45–55 min. All interviews use the standard structure.
 
 MANDATORY ─────────────────────────────────────────────────────────────────────────
 
@@ -2539,7 +2536,6 @@ only one L1 capability. Calibrate depth to their cross-portfolio visibility.
 
 SECTION SELECTION RULES
    Standard L1 (45–55 min): S1 + S2 + S3 + select 1–2 from {S4, S5, S6} + closing
-   Deep-dive L1 (60–75 min): S1 + S2 + S3 + S4 + select 2–3 from {S5, S6, S7, S8} + closing
    Priority signals for selection:
    - Digital transformation is the primary agenda → include S4
    - Roadmap or sequencing clarity needed → include S5
@@ -2728,11 +2724,38 @@ def create_interaction_designer_task(
     standards_references: str = "",
     preferred_sections: int = 4,
     preferred_questions: int = 3,
+    client_name: str = "",
+    service_categories: str = "",
+    key_vendors: str = "",
+    applicable_regulations: str = "",
 ) -> Task:
     standards_block = (
         f"Standards and frameworks to draw on:\n{standards_references}\n\n"
         if standards_references
         else "Draw on ISO 55001, IIMM, PAS 55, IIRC Six Capitals, and sector best-practice.\n\n"
+    )
+
+    # Build the client context injection block. Wherever the section guides below
+    # use [CLIENT ORGANISATION], [KEY_VENDORS], [SERVICE_CATEGORIES], or
+    # [APPLICABLE_REGULATIONS] as placeholders, substitute these values.
+    _client = client_name or "[client organisation — populate via Alex's Project Context settings]"
+    _services = service_categories or "[service categories — populate via Alex's Project Context settings]"
+    _vendors = key_vendors or "[key vendors — populate via Alex's Project Context settings, or omit vendor-specific probes if none apply]"
+    _regs = applicable_regulations or "[applicable regulations — populate via Alex's Project Context settings]"
+
+    context_block = (
+        "CLIENT ENGAGEMENT CONTEXT\n"
+        "─────────────────────────\n"
+        "Substitute these values wherever placeholders appear in the templates below.\n"
+        f"  [CLIENT ORGANISATION]    = {_client}\n"
+        f"  [SERVICE_CATEGORIES]     = {_services}\n"
+        f"  [KEY_VENDORS]            = {_vendors}\n"
+        f"  [APPLICABLE_REGULATIONS] = {_regs}\n"
+        "\n"
+        "Use these values to populate all instrument sections that reference the client's\n"
+        "name, service areas, outsourced providers, or regulatory obligations. Do NOT\n"
+        "invent values — if a field references vendor names and none are supplied, omit\n"
+        "the vendor-specific probe and apply the generic governance principle instead.\n\n"
     )
 
     return Task(
@@ -2748,6 +2771,7 @@ def create_interaction_designer_task(
             "discussion. L0, L3, C (customer), A (audit), F (frontline), and S (corporate "
             "services) nodes have no maturity_rating blocks. "
             "There is no separate questionnaire artefact.\n\n"
+            + context_block
             + _CONCEPTUAL_SHIFT + "\n"
             + _L2_L3_FRAMEWORK + "\n"
             + _AUDIT_FRAMING_TEMPLATE + "\n"
@@ -2844,7 +2868,7 @@ def create_interaction_designer_task(
             "   PREPARATION (before designing any section):\n"
             "   - Review which L2 nodes and activities sit beneath this L1 (from value_chain_registry)\n"
             "   - Draft a TAV narrative: cost avoidance + revenue protection + risk reduction + strategic value\n"
-            "   - Assess node strategic priority: standard (45–55 min) or senior deep-dive (60–75 min)\n"
+            "   - Assess node strategic priority and scope: all interviews use the standard structure (45–55 min)\n"
             "   - Identify triangulation stakeholders: which executive peers should be interviewed after\n\n"
             "   a) FRAMING BLOCK — mandatory, written before sections.\n"
             "   Using the L1 Framing Block guide from your task context, write a framing_block\n"
@@ -2870,8 +2894,7 @@ def create_interaction_designer_task(
             "   - Change readiness or sponsorship risk identified → include S6\n"
             "   - Value case rigour needed for board approval → include S7\n"
             "   - Interviewee has cross-L1 or cross-organisation visibility → add S8\n"
-            "   Standard L1 (45–55 min): S1 + S2 + S3 + select 1 from {S4, S5, S6} + closing\n"
-            "   Deep-dive L1 (60–75 min): S1 + S2 + S3 + S4 + select 2 from {S5, S6, S7, S8} + closing\n\n"
+            "   Standard L1 (45–55 min): S1 + S2 + S3 + select 1 from {S4, S5, S6} + closing\n\n"
             "   c) SECTION DESIGN — for each selected section, design specific questions from its\n"
             "   themes (defined in the L1 Section Library). For every section:\n"
             f"      - {preferred_questions} narrative questions per section, probing the section themes\n"
@@ -3090,8 +3113,9 @@ def create_interaction_designer_task(
             "     what would make the biggest difference, and their satisfaction rating. No placeholders.\n"
             "   - response_probes: three probes for positive / defensive (diplomatic) / uncertain\n"
             "   - peer_referral: ongoing engagement invitation plus additional customer contact question\n"
-            "   - forward_roadmap: transformation preview to validate (visibility, predictive,\n"
-            "     partnership, EV transition) — probe for enthusiasm, concern, or redirection\n\n"
+            "   - forward_roadmap: transformation preview to validate (visibility, predictive\n"
+            "     capabilities, closer partnership, client's key strategic priorities) —\n"
+            "     probe for enthusiasm, concern, or redirection\n\n"
             "   d) Complete script fields:\n"
             "      - node_label: '[Segment name] Customer Interview' (e.g. 'Field Team Customer Interview')\n"
             "      - level: 'C'\n"
@@ -3114,7 +3138,9 @@ def create_interaction_designer_task(
             "   PREPARATION (before designing):\n"
             "   - Review the discovery_brief and ChromaDB context to identify audit/assurance\n"
             "     contacts: internal audit (enterprise risk, finance, compliance), external\n"
-            "     auditors (EY, KPMG, etc.), and relevant regulatory bodies (Ofgem, ORR, etc.)\n"
+            "     auditors (e.g. Big Four firms), and relevant regulatory bodies — use\n"
+            "     [APPLICABLE_REGULATIONS] from the CLIENT ENGAGEMENT CONTEXT above to name\n"
+            "     specific bodies in scope\n"
             "   - Review any available prior audit findings or regulatory reports to understand\n"
             "     existing observations and remediation status\n"
             "   - Identify applicable regulations (Health & Safety, Environmental, Energy\n"
@@ -3170,10 +3196,11 @@ def create_interaction_designer_task(
             "morale, retention risk, change readiness, and the voice of workers executing asset\n"
             "management tasks daily.\n\n"
             "   PREPARATION (before designing):\n"
-            "   - Review the discovery_brief and ChromaDB context to identify frontline cohorts:\n"
-            "     Property FM: site technicians, maintenance workers, inspectors (ISS employees)\n"
-            "     Fleet: vehicle mechanics, drivers, charging station technicians (DXI employees)\n"
-            "     Planning: dispatch coordinators, schedulers (GS UK or contractor)\n"
+            "   - Review the discovery_brief and ChromaDB context to identify frontline cohorts.\n"
+            "     Use [SERVICE_CATEGORIES] and [KEY_VENDORS] from the CLIENT ENGAGEMENT CONTEXT\n"
+            "     above to name the specific roles, functions, and organisations in scope.\n"
+            "     Common cohort dimensions: directly employed operational staff; contracted\n"
+            "     service provider staff; planning/coordination roles.\n"
             "   - Identify 1–3 distinct cohorts (different roles have different friction profiles;\n"
             "     a site technician and a dispatch coordinator have very different pain points)\n"
             "   - Note known operational friction from discovery documents\n\n"
@@ -3210,7 +3237,8 @@ def create_interaction_designer_task(
             "   - forward_roadmap: explicit commitment — anonymised, acted on, communicated back\n\n"
             "   d) Complete script fields:\n"
             "      - node_label: '[Cohort name] Frontline Interview'\n"
-            "        (e.g. 'ISS Site Technician Frontline Interview')\n"
+            "        (e.g. 'Maintenance Technician Frontline Interview', using the actual\n"
+            "        cohort role name derived from [KEY_VENDORS] and [SERVICE_CATEGORIES])\n"
             "      - level: 'F'\n"
             "      - research_brief and study_objectives framed at execution reality level:\n"
             "        'Surface ground-truth constraints, workarounds, safety culture, and change\n"
@@ -3440,7 +3468,7 @@ def create_interaction_designer_task(
             "     - Does S3 probe budget variance history, separation of duties, and overrun cases?\n"
             "     - Does S4 probe data integrity concerns AND independent verification?\n"
             "     - Does S6 probe data completeness, governance controls, and strategic trust?\n"
-            "     - Does S7 probe whether ISS/DXI performance is independently verified?\n"
+            "     - Does S7 probe whether third-party and vendor performance is independently verified?\n"
             "     - Are there NO maturity_rating blocks in any audit section?\n"
             "     - Do evasion_signals flag diplomatic non-answers ('generally adequate',\n"
             "       'we monitor it', 'no major concerns')?\n"
@@ -3530,7 +3558,7 @@ def create_interaction_designer_task(
             "     - Do dual_lenses cover friction (what gets in the way) AND aspiration (what would\n"
             "       make them significantly more effective)?\n"
             "     SECTIONS\n"
-            "     - Are all 9 sections present in order with appropriate target_minutes (total 57 min)?\n"
+            "     - Are all 9 sections present in order with appropriate target_minutes (total 55 min)?\n"
             "     - Does S1 ask for the walk-through of an ACTUAL recent day (not a process description)?\n"
             "     - Does S2 probe for workarounds AND safety pressure indicators?\n"
             "     - Does S3 probe for data errors that go UNREPORTED to management?\n"
@@ -3593,7 +3621,7 @@ def create_interaction_designer_task(
             "risk management, data quality, third-party management, transformation readiness, "
             "overall risk rating, and prioritised recommendations; "
             "(3) customer_interview_summaries.json — one customer persona per segment covering "
-            "friction points, satisfaction (1–10 Property and Fleet), unmet needs, data/partnership "
+            "friction points, satisfaction (1–10), unmet needs, data/partnership "
             "quality, change readiness, competitive context, champion/detractor classification, and "
             "key quotes for the business case; "
             "(4) corp_services_interview_summaries.json — one function summary per support team "

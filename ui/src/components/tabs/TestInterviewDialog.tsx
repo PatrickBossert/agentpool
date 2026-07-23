@@ -7,6 +7,7 @@
 // Empty responses trigger a single gentle repeat before moving on.
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2 } from 'lucide-react'
+import { bcp47 } from '../../utils/holidays'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const webkitSpeechRecognition: any
@@ -67,9 +68,9 @@ function wordSimilarity(a: string, b: string): number {
 
 // ── Main dialog ───────────────────────────────────────────────────────────────
 
-interface Props { slug: string; onClose: () => void }
+interface Props { slug: string; onClose: () => void; locale?: string }
 
-export default function TestInterviewDialog({ slug: _slug, onClose }: Props) {
+export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB' }: Props) {
   const [phase, setPhase]             = useState<Phase>('loading')
   const [script, setScript]           = useState<InterviewScript | null>(null)
   const [errorMsg, setErrorMsg]       = useState('')
@@ -283,7 +284,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose }: Props) {
     try { r.stop() } catch { /* already stopped */ }
   }
 
-  function listenForAnswer(lang = 'en-GB', question?: ScriptQuestion): Promise<string> {
+  function listenForAnswer(lang = bcp47(locale), question?: ScriptQuestion): Promise<string> {
     return new Promise(resolve => {
       const SpeechRecognition =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -439,7 +440,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose }: Props) {
         await speakText(question.text)
         if (aborted()) return
 
-        let answer = await listenForAnswer('en-GB', question)
+        let answer = await listenForAnswer(bcp47(locale), question)
         if (aborted()) return
 
         // No response — repeat the question once with a gentle lead-in
@@ -448,7 +449,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose }: Props) {
           setCurrentQ(prompt + question.text)
           await speakText(prompt + question.text)
           if (aborted()) return
-          answer = await listenForAnswer('en-GB', question)
+          answer = await listenForAnswer(bcp47(locale), question)
           if (aborted()) return
         }
 
@@ -464,7 +465,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose }: Props) {
           setCurrentQ(pressText)
           await speakText(pressText)
           if (aborted()) return
-          const elaborationAnswer = await listenForAnswer('en-GB')
+          const elaborationAnswer = await listenForAnswer(bcp47(locale))
           if (aborted()) return
           addToTranscript(pressText, elaborationAnswer)
           answer = `${answer} ${elaborationAnswer}`.trim()
@@ -482,7 +483,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose }: Props) {
           setCurrentQ(branch)
           await speakText(branch)
           if (aborted()) return
-          const branchAnswer = await listenForAnswer('en-GB')
+          const branchAnswer = await listenForAnswer(bcp47(locale))
           if (aborted()) return
           addToTranscript(branch, branchAnswer)
           followUpCount++

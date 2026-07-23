@@ -1,7 +1,9 @@
 // ui/src/components/tabs/AverySetupTab.tsx
 // Avery's Setup tab: voice interviewer configuration (localStorage-backed preferences)
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { FlaskConical } from 'lucide-react'
+import { projectsApi } from '../../api/endpoints'
 import TestInterviewDialog from './TestInterviewDialog'
 
 const AVERY_CONFIG_KEY = 'agentpool-avery-voice-config'
@@ -34,6 +36,12 @@ export default function AverySetupTab({ slug }: { slug: string }) {
   const [config, setConfig] = useState<AveryConfig>(() => loadConfig(slug))
   const [saved, setSaved] = useState(false)
   const [showTest, setShowTest] = useState(false)
+
+  const { data: settings } = useQuery({
+    queryKey: ['settings', slug],
+    queryFn: () => projectsApi.getSettings(slug),
+    enabled: !!slug,
+  })
 
   function save() {
     try {
@@ -160,7 +168,7 @@ export default function AverySetupTab({ slug }: { slug: string }) {
         </div>
       </div>
 
-      {showTest && <TestInterviewDialog slug={slug} onClose={() => setShowTest(false)} />}
+      {showTest && <TestInterviewDialog slug={slug} onClose={() => setShowTest(false)} locale={settings?.locale} />}
     </div>
   )
 }

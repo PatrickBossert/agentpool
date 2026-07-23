@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import StatusBadge from '../components/StatusBadge'
+import { bcp47 } from '../utils/holidays'
 import type { OrchestrationRunHistory } from '../types'
 
 function formatDuration(started: string | null, completed: string | null): string {
@@ -13,7 +14,7 @@ function formatDuration(started: string | null, completed: string | null): strin
   return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
 }
 
-function RunRow({ run, slug }: { run: OrchestrationRunHistory; slug: string }) {
+function RunRow({ run, slug, locale = 'GB' }: { run: OrchestrationRunHistory; slug: string; locale?: string }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -42,7 +43,7 @@ function RunRow({ run, slug }: { run: OrchestrationRunHistory; slug: string }) {
         </div>
         <div className="flex items-center gap-4">
           <span className="text-xs text-gray-400">
-            {run.started_at ? new Date(run.started_at).toLocaleString() : '-'}
+            {run.started_at ? new Date(run.started_at).toLocaleString(bcp47(locale)) : '-'}
           </span>
           <span className="text-xs text-gray-400">
             {formatDuration(run.started_at, run.completed_at)}
@@ -84,6 +85,12 @@ export default function Runs() {
     },
   })
 
+  const { data: settings } = useQuery({
+    queryKey: ['settings', slug],
+    queryFn: () => projectsApi.getSettings(slug!),
+    enabled: !!slug,
+  })
+
   return (
     <div className="p-6 space-y-6">
       <h2 className="text-lg font-semibold text-gray-900">Run History</h2>
@@ -93,7 +100,7 @@ export default function Runs() {
       )}
       <div className="space-y-3">
         {runs.map((run) => (
-          <RunRow key={run.id} run={run} slug={slug!} />
+          <RunRow key={run.id} run={run} slug={slug!} locale={settings?.locale} />
         ))}
       </div>
     </div>

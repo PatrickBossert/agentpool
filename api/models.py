@@ -38,6 +38,11 @@ class ProjectSettings(BaseModel):
     brand_interviewer_image_url: str = ""
     brand_interviewer_name: str = "Avery Singh"
     brand_interviewer_tagline: str = "I'll be guiding our conversation today"
+    # Project context — populated by Alex (Value Chain Mapper) to ground Maya's interview instruments
+    client_name: str = ""
+    service_categories: str = ""
+    key_vendors: str = ""
+    applicable_regulations: str = ""
     # Questionnaire configuration
     standards_references: str = ""
     preferred_questionnaire_sections: int = 4

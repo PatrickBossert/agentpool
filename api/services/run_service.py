@@ -319,6 +319,10 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         standards_references = config.get("standards_references", "")
         preferred_sections = config.get("preferred_questionnaire_sections", 4)
         preferred_questions = config.get("preferred_questions_per_section", 3)
+        client_name = config.get("client_name", "")
+        service_categories = config.get("service_categories", "")
+        key_vendors = config.get("key_vendors", "")
+        applicable_regulations = config.get("applicable_regulations", "")
         from agents.crews.assessment_design_crew import create_assessment_design_crew
         crew = create_assessment_design_crew(
             slug=slug,
@@ -328,6 +332,10 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             standards_references=standards_references,
             preferred_sections=preferred_sections,
             preferred_questions=preferred_questions,
+            client_name=client_name,
+            service_categories=service_categories,
+            key_vendors=key_vendors,
+            applicable_regulations=applicable_regulations,
         )
 
     elif crew_name == "stakeholder_management":
