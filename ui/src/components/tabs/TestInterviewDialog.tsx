@@ -82,6 +82,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
   const [progress, setProgress]       = useState({ current: 0, total: 0 })
   const [transcript, setTranscript]   = useState<QAPair[]>([])
   const [showTranscript, setShowTx]   = useState(false)
+  const [isBriefing, setIsBriefing]   = useState(false)
 
   // Mic/speaker setup
   const [audioInputs, setAudioInputs]     = useState<MediaDeviceInfo[]>([])
@@ -98,6 +99,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
   const recogRef           = useRef<{ recognition: any; controller: AbortController | null } | null>(null) // eslint-disable-line @typescript-eslint/no-explicit-any
   const audioRef           = useRef<HTMLAudioElement | null>(null)
   const interviewAbortRef  = useRef<AbortController | null>(null)
+  const briefingCtxRef     = useRef<AudioContext | null>(null)
 
   useEffect(() => { loadScript() }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => {
@@ -106,6 +108,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
     speculativeRef.current?.controller.abort()
     interviewAbortRef.current?.abort()
     audioRef.current?.pause()
+    briefingCtxRef.current?.close().catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Data fetching ────────────────────────────────────────────────────────────
@@ -411,6 +414,46 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
 
   // ── Interview orchestration ───────────────────────────────────────────────────
 
+  // Called synchronously from the "Continue →" button click so that the
+  // AudioContext captures the user gesture before any async boundary.
+  function startBriefingAudio() {
+    const BRIEFING =
+      "Hi, I'm Avery — and I'll be your interviewer today. " +
+      "Before we begin, let me run through how this works. " +
+      "This is a verbal interview — just speak naturally and in your own words. " +
+      "After each answer, a brief pause will move us to the next question, or tap Done whenever you're ready. " +
+      "If you'd like to re-record any answer, just tap Restart. " +
+      "And wherever you can, use real examples — specific situations that have actually happened are far more useful than general impressions. " +
+      "... Right, let's begin."
+
+    // AudioContext created synchronously retains user-gesture authorisation
+    // across the async fetch that follows — unlike new Audio().play().
+    const ctx = new AudioContext()
+    briefingCtxRef.current = ctx
+    setIsBriefing(true)
+
+    fetch(`${API_BASE}/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ text: BRIEFING, voice_id: AVERY_VOICE_ID }),
+    })
+      .then(res => res.ok ? res.arrayBuffer() : Promise.reject(res.status))
+      .then(buf => ctx.decodeAudioData(buf))
+      .then(audioBuffer => new Promise<void>(resolve => {
+        const source = ctx.createBufferSource()
+        source.buffer = audioBuffer
+        source.connect(ctx.destination)
+        source.onended = () => resolve()
+        source.start()
+      }))
+      .catch(() => { /* network/decode error — briefing plays silently */ })
+      .finally(() => {
+        ctx.close().catch(() => {})
+        briefingCtxRef.current = null
+        setIsBriefing(false)
+      })
+  }
+
   const runInterview = useCallback(async () => {
     if (!script) return
 
@@ -626,7 +669,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
 
             <div className="flex justify-end">
               <button
-                onClick={() => { stopMicTestInternal(); setPhase('ready') }}
+                onClick={() => { stopMicTestInternal(); startBriefingAudio(); setPhase('ready') }}
                 className="px-8 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-semibold transition-colors"
               >
                 Continue →
@@ -637,25 +680,43 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
 
         {/* ── Ready ── */}
         {phase === 'ready' && script && (
-          <div className="flex flex-col items-center py-10 px-8 gap-6">
-            <img
-              src={AVERY_HIRES}
-              alt="Avery Singh"
-              className="w-32 h-32 rounded-full object-cover ring-4 ring-teal-500/40 shadow-lg"
-            />
-            <div className="text-center">
-              <p className="text-teal-400 text-xs font-bold uppercase tracking-widest mb-1">Test Interview</p>
-              <h2 className="text-white text-xl font-bold mb-1">{script.node_label}</h2>
-              <p className="text-slate-400 text-sm">{script.study_objectives.join(' · ')}</p>
-            </div>
-            <div className="bg-slate-800 rounded-xl px-5 py-4 text-sm text-slate-300 leading-relaxed max-w-md text-center border border-slate-700">
-              {script.welcome_message}
+          <div className="flex flex-col items-center py-8 px-8 gap-5">
+            <div className="flex items-center gap-4 w-full max-w-md">
+              <img
+                src={AVERY_HIRES}
+                alt="Avery Singh"
+                className="w-16 h-16 rounded-full object-cover ring-2 ring-teal-500/40 shadow-lg flex-shrink-0"
+              />
+              <div>
+                <p className="text-teal-400 text-[10px] font-bold uppercase tracking-widest mb-0.5">Test Interview</p>
+                <h2 className="text-white text-lg font-bold leading-snug">{script.node_label}</h2>
+                <p className="text-slate-500 text-xs">{progress.total} question{progress.total !== 1 ? 's' : ''} · ElevenLabs voice</p>
+              </div>
             </div>
 
-            <div className="flex flex-col items-center gap-3">
-              <p className="text-slate-500 text-xs">
-                {progress.total} question{progress.total !== 1 ? 's' : ''} · smoke-test script · ElevenLabs voice
-              </p>
+            <div className="bg-slate-800 rounded-xl p-5 w-full max-w-md border border-slate-700">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">How it works</p>
+              <ul className="space-y-2.5">
+                {[
+                  'This is a verbal interview — speak naturally and in your own words.',
+                  'A pause of a few seconds, or tapping "✓ Done", will move to the next question.',
+                  'Tap "Restart answer" at any time to re-record your response.',
+                  'Use real examples where you can — specific situations that have happened are more useful than general impressions.',
+                ].map((tip, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-sm text-slate-300">
+                    <span className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold mt-0.5 bg-teal-600 text-white">{i + 1}</span>
+                    {tip}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {isBriefing ? (
+              <div className="flex items-center gap-3 text-slate-400 text-sm">
+                <WaveformIcon />
+                <span>Avery is speaking…</span>
+              </div>
+            ) : (
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setPhase('setup')}
@@ -665,12 +726,13 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
                 </button>
                 <button
                   onClick={runInterview}
-                  className="px-8 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-semibold transition-colors shadow-lg shadow-teal-900/40"
+                  disabled={isBriefing}
+                  className="px-8 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-semibold transition-colors shadow-lg shadow-teal-900/40"
                 >
                   Start Test Interview
                 </button>
               </div>
-            </div>
+            )}
           </div>
         )}
 

@@ -27,7 +27,8 @@ export default function Login() {
         // token may not be a valid JWT (e.g. in tests)
       }
       login(resp.access_token, payload)
-      navigate('/')
+      const lastProject = localStorage.getItem(`ap_last_project:${payload.sub}`)
+      navigate(lastProject ? `/${lastProject}` : '/')
     } catch {
       setError('Invalid username or password')
     } finally {

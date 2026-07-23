@@ -1275,8 +1275,16 @@ export default function AgentDetailPanel({
   slug, crewKey, crewRun, outputs, logs, isPipelineActive, hitlReviews = [], locale = 'GB',
 }: AgentDetailPanelProps) {
   const navigate = useNavigate()
-  useAuth()
-  const [tab, setTab] = useState<Tab>('output')
+  const { user } = useAuth()
+
+  const tabKey = user?.sub ? `ap_panel_tab:${user.sub}:${slug}:${crewKey}` : null
+  const [tab, setTab] = useState<Tab>(() => {
+    if (tabKey) {
+      const saved = localStorage.getItem(tabKey)
+      if (saved === 'output' || saved === 'status' || saved === 'chat' || saved === 'setup' || saved === 'skills') return saved
+    }
+    return 'output'
+  })
   const [messages, setMessages] = useState<{ role: 'user' | 'agent'; content: string; agentName?: string }[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
@@ -1391,7 +1399,7 @@ export default function AgentDetailPanel({
         {TABS.map(t => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => { setTab(t.key); if (tabKey) localStorage.setItem(tabKey, t.key) }}
             className={`flex-1 py-2 text-xs font-semibold transition-colors ${
               tab === t.key
                 ? 'text-teal-700 border-b-2 border-teal-600 bg-teal-50/30'

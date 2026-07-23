@@ -1,5 +1,5 @@
 // ui/src/components/AppLayout.tsx
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NavLink, Outlet, useNavigate, useParams, Link } from 'react-router-dom'
 import { Settings } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
@@ -14,6 +14,12 @@ export default function AppLayout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [showModal, setShowModal] = useState(false)
+
+  useEffect(() => {
+    if (slug && user?.sub) {
+      localStorage.setItem(`ap_last_project:${user.sub}`, slug)
+    }
+  }, [slug, user?.sub])
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['projects'],
