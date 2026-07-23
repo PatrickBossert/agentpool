@@ -202,15 +202,18 @@ function SlideCover() {
         </div>
       </div>
 
-      <div className="flex items-center gap-10 mt-4">
-        <div className="flex flex-col items-center gap-2">
-          <p className="text-slate-600 text-[10px] uppercase tracking-widest">Powered by</p>
-          <img src={logoUrl} alt="TaskReimagination.ai" className="h-8 w-auto" />
+      <div className="flex flex-col items-center gap-2 mt-4">
+        {/* Labels row — widths matched so they sit directly above their logo */}
+        <div className="flex items-center gap-10">
+          <p className="text-slate-600 text-[10px] uppercase tracking-widest w-36 text-center">Powered by</p>
+          <div className="w-px opacity-0" />
+          <p className="text-slate-600 text-[10px] uppercase tracking-widest w-36 text-center">Facilitated by</p>
         </div>
-        <div className="w-px h-10 bg-slate-800" />
-        <div className="flex flex-col items-center gap-2">
-          <p className="text-slate-600 text-[10px] uppercase tracking-widest">Facilitated by</p>
-          <img src={arupLogoUrl} alt="Arup" className="h-8 w-auto rounded" />
+        {/* Logos row — items-center guarantees shared centreline */}
+        <div className="flex items-center gap-10">
+          <img src={logoUrl} alt="TaskReimagination.ai" className="h-12 w-auto" />
+          <div className="w-px h-14 bg-slate-800" />
+          <img src={arupLogoUrl} alt="Arup" className="h-12 w-auto rounded" />
         </div>
       </div>
     </div>
