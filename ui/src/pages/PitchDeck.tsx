@@ -217,21 +217,34 @@ function SlideCover() {
   )
 }
 
-// ── Slide 2: The Prize ─────────────────────────────────────────────────────────
+// ── Slide 2: Three Investment Challenges ──────────────────────────────────────
 
 function SlidePrize() {
   return (
     <div>
-      <SlideHeader
-        eyebrow="Two investment problems"
-        title="Fifteen years of asset decisions. The tools to make them well."
-        subtitle="Property and Fleet are making long-horizon decisions about asset maintenance and renewal. A wrong call today — on a 25-year asset — compounds for decades. Getting these decisions right requires the right decision-support tooling. Building that tooling is its own investment decision."
-      />
+      <div className="mb-6">
+        <p className="text-teal-400 text-xs font-bold uppercase tracking-widest mb-4">Three investment challenges</p>
+        <div className="space-y-0.5 mb-4">
+          {[
+            'Fifteen years of asset decisions',
+            'The tools to make them well',
+            'Confidence in the underlying data',
+          ].map((line, i) => (
+            <h2 key={i} className="text-white text-3xl font-bold leading-tight tracking-tight flex items-baseline gap-3">
+              <span className="text-slate-600 text-xl font-normal w-6 flex-shrink-0">{i + 1}.</span>
+              {line}
+            </h2>
+          ))}
+        </div>
+        <p className="text-slate-400 text-base leading-relaxed">
+          Property and Fleet face three compounding challenges: long-horizon asset decisions spanning up to 25 years, made without the right analytical tools, on data that is less than 50% complete. Confidence in the underlying data is very low. Every decision made in that condition carries unquantified risk — financial, operational, and with a 2035 net zero commitment, carbon.
+        </p>
+      </div>
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Risk', body: 'Without a risk model, maintenance scheduling is reactive. Unplanned failures on long-life assets cost multiples of planned intervention — and the gap widens over a 15-year horizon.' },
-          { label: 'Cost', body: 'Whole-life cost is invisible without the right tools. The cheapest intervention today is often the most expensive outcome over time. Capital is consumed rather than optimised.' },
-          { label: 'Performance', body: 'Without baselines and benchmarks, leadership cannot demonstrate value from the budget — nor identify which assets are underperforming before the consequences are irreversible.' },
+          { label: 'Risk', body: 'Without a risk model, maintenance scheduling is reactive. Unplanned failures on long-life assets cost multiples of planned intervention — and with incomplete data, failure probability cannot be estimated.' },
+          { label: 'Cost', body: 'Whole-life cost is invisible without the right tools. The cheapest intervention today is often the most expensive outcome over time — and with less than half the asset data in place, the true cost picture is unknown.' },
+          { label: 'Carbon', body: 'Scottish Power has committed to net zero by 2035. Without reliable asset and consumption data, carbon liability cannot be quantified — and the decisions needed to meet that commitment cannot be confidently made.' },
         ].map(item => (
           <Card key={item.label}>
             <p className="text-teal-400 text-xs font-bold uppercase tracking-widest mb-3">{item.label}</p>
@@ -280,10 +293,10 @@ function SlideLeaks() {
             icon: '£',
           },
           {
-            dim: 'Performance',
-            now: 'No baselines or benchmarks',
-            loss: 'Leadership cannot demonstrate value or identify underperformance',
-            icon: '↗',
+            dim: 'Carbon',
+            now: 'No carbon baseline or consumption data',
+            loss: '2035 net zero target cannot be tracked or actioned without quantified carbon liability',
+            icon: '↓',
           },
         ].map(item => (
           <Card key={item.dim} className="space-y-4">
@@ -499,7 +512,7 @@ function SlidePhase2() {
             <MetaRow label="Scope" value="Working prototypes of the three to five highest-value tools identified and prioritised in Phase 1." />
             <MetaRow label="Preferred model" value="Upskill a frontier IT team within Scottish Power Group Services. TaskReimagination.ai provides engineering support and assurance — the build happens within Scottish Power's own IT estate, demonstrating internal deliverability from day one." />
             <MetaRow label="Why this matters" value="The demonstrators are not a vendor prototype. They are built by Scottish Power's own engineers, proving the organisation can industrialise and own them. We de-risk the build; you own the outcome." />
-            <MetaRow label="Examples" value="Risk exposure dashboard, whole-life cost optimisation model, performance benchmarking and reporting. Final scope confirmed by Phase 1 output." />
+            <MetaRow label="Examples" value="Risk exposure dashboard, whole-life cost optimisation model, carbon liability and net zero tracking tool. Final scope confirmed by Phase 1 output." />
             <MetaRow label="Output" value="Interactive demonstrators — built in-house, assured externally — that bring potential value to life for leadership and are ready to industrialise." />
           </div>
         </Card>
