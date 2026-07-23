@@ -80,18 +80,20 @@ export default function PitchDeck() {
 
       {/* Bottom nav */}
       <div className="flex items-center justify-between px-8 py-5 flex-shrink-0 border-t border-white/5">
-        {/* Dot indicators */}
-        <div className="flex gap-1.5">
+        {/* Slide indicators */}
+        <div className="flex gap-1">
           {slides.map((_, i) => (
             <button
               key={i}
               onClick={() => go(i)}
-              className={`rounded-full transition-all duration-200 ${
+              className={`w-6 h-6 rounded text-[10px] font-mono transition-all duration-200 ${
                 i === idx
-                  ? 'w-5 h-1.5 bg-teal-400'
-                  : 'w-1.5 h-1.5 bg-slate-700 hover:bg-slate-500'
+                  ? 'bg-teal-400/15 text-teal-400 font-bold'
+                  : 'text-slate-600 hover:text-slate-400'
               }`}
-            />
+            >
+              {i + 1}
+            </button>
           ))}
         </div>
 
