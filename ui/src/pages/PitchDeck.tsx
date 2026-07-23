@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, ArrowLeft } from 'lucide-react'
 import logoUrl from '../assets/TR_Logo_strapiline.png'
+import arupLogoUrl from '../assets/arup-logo.jpg'
 
 // ── Slide definitions ─────────────────────────────────────────────────────────
 
@@ -201,9 +202,16 @@ function SlideCover() {
         </div>
       </div>
 
-      <div className="flex flex-col items-center gap-2 mt-4">
-        <p className="text-slate-600 text-[10px] uppercase tracking-widest">Powered by</p>
-        <img src={logoUrl} alt="TaskReimagination.ai" className="h-8 w-auto" />
+      <div className="flex items-center gap-10 mt-4">
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-slate-600 text-[10px] uppercase tracking-widest">Powered by</p>
+          <img src={logoUrl} alt="TaskReimagination.ai" className="h-8 w-auto" />
+        </div>
+        <div className="w-px h-10 bg-slate-800" />
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-slate-600 text-[10px] uppercase tracking-widest">Facilitated by</p>
+          <img src={arupLogoUrl} alt="Arup" className="h-8 w-auto rounded" />
+        </div>
       </div>
     </div>
   )
