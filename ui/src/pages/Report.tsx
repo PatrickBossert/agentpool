@@ -288,7 +288,7 @@ function DeliveryCalendarSection({
 
   return (
     <div className="report-section">
-      <h2 className="report-section-title">Delivery Calendar</h2>
+      <h2 className="report-section-title">Progress Against Plan</h2>
       <div className="report-gantt">
         <GanttReadOnly
           milestones={milestones}
@@ -314,10 +314,11 @@ export default function Report() {
     enabled: !!slug,
   })
 
-  const { data: financialSummary } = useQuery({
+  const { data: financialSummary, isPending: financialPending } = useQuery({
     queryKey: ['financial-summary', slug],
     queryFn: () => projectsApi.financialSummary(slug!),
     enabled: !!slug,
+    retry: false,
   })
 
   const { data: propositions = [] } = useQuery({
@@ -326,10 +327,11 @@ export default function Report() {
     enabled: !!slug,
   })
 
-  const { data: roadmapData } = useQuery({
+  const { data: roadmapData, isPending: roadmapPending } = useQuery({
     queryKey: ['roadmap-data', slug],
     queryFn: () => projectsApi.roadmapData(slug!),
     enabled: !!slug,
+    retry: false,
   })
 
   const { data: outputs = [] } = useQuery({
@@ -350,7 +352,7 @@ export default function Report() {
     enabled: !!slug,
   })
 
-  const allLoaded = settings !== undefined && financialSummary !== undefined && roadmapData !== undefined && milestones !== undefined
+  const allLoaded = settings !== undefined && !financialPending && !roadmapPending && milestones !== undefined
 
   // Auto-trigger print dialog once all data has loaded
   useEffect(() => {
@@ -370,16 +372,26 @@ export default function Report() {
       <CoverPage slug={slug ?? ''} sector={settings?.sector ?? ''} />
       <ValuePropositionsSection items={propositions} />
       <InitiativeRegisterSection initiatives={initiatives} />
-      {(milestones ?? []).filter(m => m.due_date).length >= 2 && (() => {
-        const ms = milestones!
+      {milestones !== undefined && (() => {
+        const msWithDates = milestones.filter(m => m.due_date)
+        if (msWithDates.length < 2) {
+          return (
+            <div className="report-section">
+              <h2 className="report-section-title">Progress Against Plan</h2>
+              <p style={{ color: '#666', fontSize: '0.875rem', paddingTop: '0.5rem' }}>
+                Schedule dates have not been configured — set milestone due dates to see the delivery timeline.
+              </p>
+            </div>
+          )
+        }
         const locale = settings?.locale ?? 'GB'
         const stored = settings?.sched_start && settings?.sched_duration_weeks
         const { schedStart, durationWeeks } = stored
           ? { schedStart: settings!.sched_start!, durationWeeks: settings!.sched_duration_weeks! }
-          : inferSchedule(ms.map(m => m.due_date).filter(Boolean) as string[])
+          : inferSchedule(msWithDates.map(m => m.due_date) as string[])
         return (
           <DeliveryCalendarSection
-            milestones={ms}
+            milestones={milestones}
             nonWorkingRanges={nonWorkingRanges}
             locale={locale}
             schedStart={schedStart}

@@ -475,12 +475,23 @@ def _scripts_path(slug: str, kind: str) -> Path:
 
 @router.get("/{slug}/interview-scripts")
 async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_auth)):
-    """Return all interview scripts keyed by node_label."""
+    """Return all interview scripts keyed by node_label, merging all versioned files."""
     await check_project_access(slug, payload)
-    p = _scripts_path(slug, "interview")
-    if not p.exists():
+    outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
+    exact = outputs_dir / "interview_scripts.json"
+    if exact.exists():
+        return json.loads(exact.read_text(encoding="utf-8"))
+    # Merge versioned files (oldest first so newer versions overwrite for the same key)
+    files = sorted(outputs_dir.glob("interview_scripts*.json"), key=lambda p: p.stat().st_mtime)
+    if not files:
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    merged: dict = {}
+    for f in files:
+        try:
+            merged.update(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return merged
 
 
 @router.get("/{slug}/interview-scripts/{node_label}")
