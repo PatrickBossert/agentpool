@@ -6,7 +6,7 @@
 // offers "Resume from Q{n}" so nothing is lost on accidental dismissal.
 // Empty responses trigger a single gentle repeat before moving on.
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2 } from 'lucide-react'
+import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2, Pause, Play } from 'lucide-react'
 import { bcp47 } from '../../utils/holidays'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -100,6 +100,14 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
   const audioRef           = useRef<HTMLAudioElement | null>(null)
   const interviewAbortRef  = useRef<AbortController | null>(null)
   const briefingCtxRef     = useRef<AudioContext | null>(null)
+
+  // Thinking-pause state
+  const [isPaused, setIsPaused]             = useState(false)
+  const [silenceProgress, setSilenceProgress] = useState(0)
+  const isPausedRef          = useRef(false)
+  const silenceTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const silenceIntervalRef   = useRef<ReturnType<typeof setInterval> | null>(null)
+  const resetSilenceTimerRef = useRef<(() => void) | null>(null)
 
   useEffect(() => { loadScript() }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => {
@@ -277,6 +285,11 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
     const { recognition } = recogRef.current
     recogRef.current = null
     try { recognition.stop() } catch { /* already stopped */ }
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
+    if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
+    setSilenceProgress(0)
+    setIsPaused(false)
+    isPausedRef.current = false
     setIsListening(false)
   }
 
@@ -285,6 +298,20 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
     const r = recogRef.current.recognition
     recogRef.current = null
     try { r.stop() } catch { /* already stopped */ }
+  }
+
+  function handlePause() {
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
+    if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
+    setSilenceProgress(0)
+    setIsPaused(true)
+    isPausedRef.current = true
+  }
+
+  function handleResume() {
+    setIsPaused(false)
+    isPausedRef.current = false
+    resetSilenceTimerRef.current?.()
   }
 
   function listenForAnswer(lang = bcp47(locale), question?: ScriptQuestion): Promise<string> {
@@ -304,12 +331,44 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
 
       const parts: string[] = []
       let resolved           = false
-      let silenceTimer: ReturnType<typeof setTimeout> | null = null
       let speculativeTimer: ReturnType<typeof setTimeout> | null = null
 
       recogRef.current = { recognition, controller: null }
       setIsListening(true)
       setStatusMsg('')
+      setIsPaused(false)
+      isPausedRef.current = false
+      setSilenceProgress(0)
+
+      const INITIAL_SILENCE_MS = 10000
+      const ANSWER_SILENCE_MS  = 3500
+      const TICK_MS = 50
+
+      function clearSilenceTimers() {
+        if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
+        if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
+      }
+
+      function resetSilenceTimer(initial = false) {
+        if (isPausedRef.current) return
+        clearSilenceTimers()
+        const duration = initial ? INITIAL_SILENCE_MS : ANSWER_SILENCE_MS
+        let elapsed = 0
+        setSilenceProgress(100)
+        silenceIntervalRef.current = setInterval(() => {
+          elapsed += TICK_MS
+          setSilenceProgress(Math.max(0, 100 - (elapsed / duration) * 100))
+        }, TICK_MS)
+        silenceTimerRef.current = setTimeout(() => {
+          clearSilenceTimers()
+          setSilenceProgress(0)
+          recogRef.current = null
+          try { recognition.stop() } catch { finish(parts.join(' ')) }
+        }, duration)
+      }
+
+      resetSilenceTimer(true)
+      resetSilenceTimerRef.current = () => resetSilenceTimer(false)
 
       // Also resolve if interview is aborted externally
       const abortHandler = () => finish('')
@@ -318,20 +377,15 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
       function finish(finalText: string) {
         if (resolved) return
         resolved = true
-        if (silenceTimer) clearTimeout(silenceTimer)
+        clearSilenceTimers()
+        setSilenceProgress(0)
         if (speculativeTimer) clearTimeout(speculativeTimer)
         interviewAbortRef.current?.signal.removeEventListener('abort', abortHandler)
         recogRef.current = null
         setIsListening(false)
+        setIsPaused(false)
+        isPausedRef.current = false
         resolve(finalText.trim())
-      }
-
-      function resetSilenceTimer() {
-        if (silenceTimer) clearTimeout(silenceTimer)
-        silenceTimer = setTimeout(() => {
-          recogRef.current = null
-          try { recognition.stop() } catch { finish(parts.join(' ')) }
-        }, 3500)
       }
 
       function maybeStartSpeculative(interimText: string) {
@@ -347,7 +401,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
       }
 
       recognition.onresult = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-        resetSilenceTimer()
+        resetSilenceTimer(false)
         let currentInterim = ''
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) parts.push(event.results[i][0].transcript)
@@ -357,15 +411,17 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
       }
 
       recognition.onend = () => {
-        if (silenceTimer) clearTimeout(silenceTimer)
         if (recogRef.current?.recognition === recognition) {
           try { recognition.start(); return } catch { /* can't restart */ }
         }
+        clearSilenceTimers()
+        setSilenceProgress(0)
         finish(parts.join(' '))
       }
 
       recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-        if (silenceTimer) clearTimeout(silenceTimer)
+        clearSilenceTimers()
+        setSilenceProgress(0)
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           setStatusMsg('Microphone access denied — allow it in browser settings.')
           recogRef.current = null
@@ -422,7 +478,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
       "Before we begin, let me run through how this works. " +
       "This is a verbal interview — just speak naturally and in your own words. " +
       "After each answer, a brief pause will move us to the next question, or tap Done whenever you're ready. " +
-      "If you'd like to re-record any answer, just tap Restart. " +
+      "If you need a moment to gather your thoughts, just tap the Hold button to pause the timer. " +
       "And wherever you can, use real examples — specific situations that have actually happened are far more useful than general impressions. " +
       "... Right, let's begin."
 
@@ -699,8 +755,8 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
               <ul className="space-y-2.5">
                 {[
                   'This is a verbal interview — speak naturally and in your own words.',
-                  'A pause of a few seconds, or tapping "✓ Done", will move to the next question.',
-                  'Tap "Restart answer" at any time to re-record your response.',
+                  'A pause of a few seconds, or tapping "Done speaking", will move to the next question.',
+                  'Need a moment to think? Tap "Hold — I\'m thinking" to pause the timer.',
                   'Use real examples where you can — specific situations that have happened are more useful than general impressions.',
                 ].map((tip, i) => (
                   <li key={i} className="flex items-start gap-2.5 text-sm text-slate-300">
@@ -780,12 +836,48 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
                     <p className="text-xs text-amber-400 text-center max-w-xs">{statusMsg}</p>
                   )}
                   {isListening && (
-                    <button
-                      onClick={submitAnswer}
-                      className="px-8 py-3 rounded-full bg-teal-600 hover:bg-teal-500 text-white font-semibold transition-colors flex items-center gap-2 shadow-lg shadow-teal-900/30"
-                    >
-                      <CheckCircle2 size={18} /> Done speaking
-                    </button>
+                    <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+                      {/* Silence countdown bar */}
+                      {!isPaused && (
+                        <div className="w-full">
+                          <div className="w-full bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                            <div
+                              className="h-1.5 rounded-full bg-teal-500 transition-none"
+                              style={{ width: `${silenceProgress}%` }}
+                            />
+                          </div>
+                          <p className="text-[11px] text-slate-500 text-center mt-1">
+                            {silenceProgress > 0 ? 'Moving on when you stop speaking…' : 'Waiting for your response…'}
+                          </p>
+                        </div>
+                      )}
+                      {isPaused && (
+                        <p className="text-sm text-amber-400 font-medium">Timer paused — take your time.</p>
+                      )}
+                      <button
+                        onClick={submitAnswer}
+                        className="px-8 py-3 rounded-full bg-teal-600 hover:bg-teal-500 text-white font-semibold transition-colors flex items-center gap-2 shadow-lg shadow-teal-900/30"
+                      >
+                        <CheckCircle2 size={18} /> Done speaking
+                      </button>
+                      {isPaused ? (
+                        <button
+                          onClick={handleResume}
+                          className="flex items-center gap-2 text-sm font-medium text-teal-400 bg-teal-900/30 hover:bg-teal-900/50 border border-teal-800/60 rounded-full px-4 py-2 transition-colors"
+                          aria-label="Resume - I'm good, let's continue"
+                        >
+                          <Play size={14} />Ready — continue
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handlePause}
+                          className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full px-4 py-2 transition-colors"
+                          aria-label="Pause - I need a moment to think"
+                        >
+                          <Pause size={14} />Hold — I'm thinking
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
 
