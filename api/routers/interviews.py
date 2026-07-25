@@ -6,6 +6,9 @@ Session tokens (UUID4) serve as the access credential.
 from __future__ import annotations
 
 import json
+import re
+import time
+from collections import defaultdict
 
 import aiosqlite
 import httpx
@@ -291,6 +294,13 @@ async def complete_interview(session_token: str, body: CompleteRequest):
     return {"ok": True}
 
 
+# Rate limit: session_token → list of send timestamps (in-memory, per-process)
+_transcript_email_log: dict[str, list[float]] = defaultdict(list)
+_EMAIL_RATE_LIMIT = 3
+_EMAIL_RATE_WINDOW = 3600  # seconds
+_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{1,63}$")
+
+
 class TranscriptEmailRequest(BaseModel):
     email: str
     qa_pairs: list[dict]
@@ -298,18 +308,59 @@ class TranscriptEmailRequest(BaseModel):
 
 @router.post("/{session_token}/email-transcript")
 async def email_transcript(session_token: str, body: TranscriptEmailRequest):
-    """Send the (possibly edited) transcript to the interviewee's email address."""
+    """Send the (possibly user-edited) transcript copy to the interviewee.
+
+    Security controls:
+    - Session must exist and be in 'completed' status (prevents random-token abuse).
+    - Email format validated server-side.
+    - Pair count and field length capped (prevents body-stuffing).
+    - Rate-limited to 3 sends per session per hour (prevents relay spam).
+    """
+    # 1 — Validate email format
+    if not _EMAIL_RE.match(body.email):
+        raise HTTPException(status_code=422, detail="Invalid email address")
+
+    # 2 — Verify session exists and is completed
+    db_path = await _find_session_db(session_token)
+    if not db_path:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    async with aiosqlite.connect(db_path) as _conn:
+        _conn.row_factory = aiosqlite.Row
+        async with _conn.execute(
+            "SELECT status FROM interview_sessions WHERE session_token=?",
+            (session_token,),
+        ) as _cur:
+            row = await _cur.fetchone()
+
+    if not row or row["status"] != "completed":
+        raise HTTPException(status_code=403, detail="Session not completed")
+
+    # 3 — Rate limit
+    now = time.monotonic()
+    sends = [t for t in _transcript_email_log[session_token] if now - t < _EMAIL_RATE_WINDOW]
+    if len(sends) >= _EMAIL_RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Too many requests — try again later")
+
+    # 4 — Validate payload size
+    if len(body.qa_pairs) > 100:
+        raise HTTPException(status_code=422, detail="Too many pairs")
+    for pair in body.qa_pairs:
+        if len(str(pair.get("question", ""))) > 5000 or len(str(pair.get("answer", ""))) > 10000:
+            raise HTTPException(status_code=422, detail="Pair content too long")
+
+    # 5 — Check Resend is configured
     settings = get_settings()
     api_key = settings.resend_api_key
     from_addr = settings.from_email
-
     if not api_key:
         raise HTTPException(status_code=503, detail="Email delivery not configured")
 
+    # 6 — Build plain-text body (no HTML — prevents injection)
     lines: list[str] = ["Thank you for completing the interview.\n\nHere is a copy of your responses:\n"]
     for i, pair in enumerate(body.qa_pairs, 1):
-        lines.append(f"Q{i}: {pair.get('question', '')}")
-        lines.append(f"A{i}: {pair.get('answer', '') or 'No response recorded'}")
+        lines.append(f"Q{i}: {str(pair.get('question', ''))[:5000]}")
+        lines.append(f"A{i}: {str(pair.get('answer', '') or 'No response recorded')[:10000]}")
         lines.append("")
 
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -326,5 +377,10 @@ async def email_transcript(session_token: str, body: TranscriptEmailRequest):
 
     if resp.status_code not in (200, 201):
         raise HTTPException(status_code=502, detail="Email delivery failed")
+
+    # Record send timestamp only on success
+    sends.append(now)
+    _transcript_email_log[session_token] = sends
+
     return {"sent": True}
 
