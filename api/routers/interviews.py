@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 
 import aiosqlite
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 from pydantic import BaseModel
@@ -288,4 +289,42 @@ async def complete_interview(session_token: str, body: CompleteRequest):
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"ok": True}
+
+
+class TranscriptEmailRequest(BaseModel):
+    email: str
+    qa_pairs: list[dict]
+
+
+@router.post("/{session_token}/email-transcript")
+async def email_transcript(session_token: str, body: TranscriptEmailRequest):
+    """Send the (possibly edited) transcript to the interviewee's email address."""
+    settings = get_settings()
+    api_key = settings.resend_api_key
+    from_addr = settings.from_email
+
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Email delivery not configured")
+
+    lines: list[str] = ["Thank you for completing the interview.\n\nHere is a copy of your responses:\n"]
+    for i, pair in enumerate(body.qa_pairs, 1):
+        lines.append(f"Q{i}: {pair.get('question', '')}")
+        lines.append(f"A{i}: {pair.get('answer', '') or 'No response recorded'}")
+        lines.append("")
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            "https://api.resend.com/emails",
+            json={
+                "from": from_addr,
+                "to": [body.email],
+                "subject": "Your interview transcript",
+                "text": "\n".join(lines),
+            },
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=502, detail="Email delivery failed")
+    return {"sent": True}
 

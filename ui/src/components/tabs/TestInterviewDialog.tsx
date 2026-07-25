@@ -6,7 +6,7 @@
 // offers "Resume from Q{n}" so nothing is lost on accidental dismissal.
 // Empty responses trigger a single gentle repeat before moving on.
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2, Pause, Play } from 'lucide-react'
+import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2, Pause, Play, Pencil, Check } from 'lucide-react'
 import { bcp47 } from '../../utils/holidays'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -83,6 +83,10 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
   const [transcript, setTranscript]   = useState<QAPair[]>([])
   const [showTranscript, setShowTx]   = useState(false)
   const [isBriefing, setIsBriefing]   = useState(false)
+  const [editingIdx, setEditingIdx]   = useState<number | null>(null)
+  const [editText, setEditText]       = useState('')
+  const [sendCopy, setSendCopy]       = useState(false)
+  const [copyEmail, setCopyEmail]     = useState('')
 
   // Mic/speaker setup
   const [audioInputs, setAudioInputs]     = useState<MediaDeviceInfo[]>([])
@@ -852,7 +856,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
                         </div>
                       )}
                       {isPaused && (
-                        <p className="text-sm text-amber-400 font-medium">Timer paused — take your time.</p>
+                        <p className="text-sm text-amber-400 font-medium">Interview paused — take your time.</p>
                       )}
                       <button
                         onClick={submitAnswer}
@@ -938,23 +942,101 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
                       <p className="text-slate-200 text-sm leading-relaxed">{pair.question}</p>
                     </div>
                   </div>
-                  {pair.answer && (
-                    <div className="flex items-start gap-3 pl-9 flex-row-reverse">
-                      <div className="bg-teal-900/40 border border-teal-800/40 rounded-xl rounded-tr-none px-4 py-3 flex-1">
-                        <p className="text-slate-200 text-sm leading-relaxed">{pair.answer}</p>
-                      </div>
+                  <div className="flex items-start gap-3 pl-9 flex-row-reverse">
+                    <div className="bg-teal-900/40 border border-teal-800/40 rounded-xl rounded-tr-none px-4 py-3 flex-1">
+                      {editingIdx === i ? (
+                        <div className="space-y-2">
+                          <textarea
+                            className="w-full text-sm text-slate-200 bg-slate-800 border border-teal-600/50 rounded-lg p-2 resize-none focus:outline-none focus:ring-1 focus:ring-teal-500"
+                            rows={4}
+                            value={editText}
+                            onChange={e => setEditText(e.target.value)}
+                            autoFocus
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              onClick={() => setEditingIdx(null)}
+                              className="flex items-center gap-1 text-xs text-slate-400 hover:text-white px-2.5 py-1 border border-slate-700 rounded-lg transition-colors"
+                            >
+                              <X size={10} /> Cancel
+                            </button>
+                            <button
+                              onClick={() => {
+                                const updated = [...transcript]
+                                updated[i] = { ...updated[i], answer: editText }
+                                setTranscript(updated)
+                                setEditingIdx(null)
+                              }}
+                              className="flex items-center gap-1 text-xs text-white px-2.5 py-1 bg-teal-600 hover:bg-teal-500 rounded-lg transition-colors"
+                            >
+                              <Check size={10} /> Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2">
+                          <p className="flex-1 text-slate-200 text-sm leading-relaxed">
+                            {pair.answer || <span className="text-slate-500 italic">No response recorded</span>}
+                          </p>
+                          <button
+                            onClick={() => { setEditingIdx(i); setEditText(pair.answer) }}
+                            className="flex-shrink-0 p-1 text-slate-600 hover:text-teal-400 transition-colors rounded"
+                            title="Edit this response"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               ))}
               {transcript.length === 0 && (
                 <p className="text-slate-500 text-sm text-center py-8">No responses recorded.</p>
               )}
+
+              {/* Send copy */}
+              <div className="border-t border-slate-800 pt-5">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={sendCopy}
+                    onChange={e => setSendCopy(e.target.checked)}
+                    className="w-4 h-4 rounded accent-teal-500"
+                  />
+                  <span className="text-sm text-slate-300">Send a copy of this transcript to me</span>
+                </label>
+                {sendCopy && (
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      type="email"
+                      placeholder="Your email address"
+                      value={copyEmail}
+                      onChange={e => setCopyEmail(e.target.value)}
+                      className="flex-1 text-sm bg-slate-800 border border-slate-700 text-slate-200 placeholder-slate-500 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                    />
+                    <button
+                      disabled={!copyEmail}
+                      onClick={() => {
+                        const lines = transcript.map((p, idx) =>
+                          `Q${idx + 1}: ${p.question}\nA${idx + 1}: ${p.answer || 'No response recorded'}`
+                        ).join('\n\n')
+                        const subject = encodeURIComponent('Your interview transcript')
+                        const body = encodeURIComponent(`Thank you for completing the interview.\n\nHere is a copy of your responses:\n\n${lines}`)
+                        window.open(`mailto:${copyEmail}?subject=${subject}&body=${body}`)
+                      }}
+                      className="px-4 py-2 text-sm bg-teal-600 hover:bg-teal-500 disabled:opacity-40 text-white rounded-lg transition-colors"
+                    >
+                      Send
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center justify-between px-8 py-5 border-t border-slate-800 flex-shrink-0">
               <button
-                onClick={() => { setPhase('ready'); setTranscript([]); transcriptRef.current = [] }}
+                onClick={() => { setPhase('ready'); setTranscript([]); transcriptRef.current = []; setEditingIdx(null); setSendCopy(false); setCopyEmail('') }}
                 className="text-sm text-slate-400 hover:text-white transition-colors"
               >
                 Run again

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Pause, Play } from 'lucide-react'
+import { Pause, Play, Pencil, Check, X } from 'lucide-react'
 import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
 
 // webkit speech recognition types (Chrome/Safari vendor prefix)
@@ -42,6 +42,13 @@ export default function VoiceInterview() {
   const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [isPaused, setIsPaused] = useState(false)
   const [silenceProgress, setSilenceProgress] = useState(0)
+  const [editableTranscript, setEditableTranscript] = useState<{ question: string; answer: string }[]>([])
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
+  const [editText, setEditText] = useState('')
+  const [sendCopy, setSendCopy] = useState(false)
+  const [copyEmail, setCopyEmail] = useState('')
+  const [sendingEmail, setSendingEmail] = useState(false)
+  const [emailSent, setEmailSent] = useState(false)
   const isPausedRef = useRef(false)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const silenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -54,6 +61,11 @@ export default function VoiceInterview() {
   // Stop mic test stream when leaving mic_setup or ready phase
   useEffect(() => {
     if (phase !== 'mic_setup' && phase !== 'ready') stopMicTest()
+  }, [phase])
+
+  // Snapshot the QA ref into editable state when the interview completes
+  useEffect(() => {
+    if (phase === 'complete') setEditableTranscript([...qaRef.current])
   }, [phase])
 
   // Load audio input devices when entering the ready phase
@@ -593,6 +605,23 @@ export default function VoiceInterview() {
     // phase reverts to 'interviewing' in the loop after collectInlineRating resolves
   }
 
+  async function handleFinishInterview() {
+    if (sendCopy && copyEmail) {
+      setSendingEmail(true)
+      try {
+        await fetch(`${BASE}/interviews/${sessionToken}/email-transcript`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: copyEmail, qa_pairs: editableTranscript }),
+        })
+      } catch {
+        // fail silently — transcript is already saved server-side
+      }
+      setSendingEmail(false)
+    }
+    setEmailSent(true)
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   if (phase === 'loading') {
@@ -621,15 +650,121 @@ export default function VoiceInterview() {
   }
 
   if (phase === 'complete') {
+    const primaryColor = branding?.primary_color ?? '#0d9488'
     return (
-      <div className="h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
-        <div className="text-center max-w-md">
-          {branding?.header_image_url && (
-            <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
-          )}
-          <div className="text-5xl mb-4">✓</div>
-          <h1 className="text-2xl font-bold text-gray-800 mb-2">Thank you!</h1>
-          <p className="text-gray-500">Your responses have been recorded. You may now close this window.</p>
+      <div className="min-h-screen bg-gray-50 flex flex-col">
+        {branding?.header_image_url && (
+          <div className="bg-white border-b border-gray-100 px-6 py-3 flex-shrink-0">
+            <img src={branding.header_image_url} alt="" className="h-10 object-contain" />
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto px-4 py-8">
+          <div className="max-w-2xl mx-auto">
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-teal-50 mb-3">
+                <Check size={24} style={{ color: primaryColor }} />
+              </div>
+              <h1 className="text-2xl font-bold text-gray-800">Thank you!</h1>
+              <p className="text-gray-500 text-sm mt-1">
+                {emailSent
+                  ? 'Your responses have been recorded. You may now close this window.'
+                  : 'Please review your responses below. You can edit any answer before finishing.'}
+              </p>
+            </div>
+
+            {!emailSent && (
+              <>
+                <div className="space-y-4 mb-6">
+                  {editableTranscript.map((pair, i) => (
+                    <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                      <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+                        <p className="text-sm text-gray-600 leading-relaxed">{pair.question}</p>
+                      </div>
+                      <div className="px-4 py-3">
+                        {editingIdx === i ? (
+                          <div className="space-y-2">
+                            <textarea
+                              className="w-full text-sm text-gray-700 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-teal-400"
+                              rows={4}
+                              value={editText}
+                              onChange={e => setEditText(e.target.value)}
+                              autoFocus
+                            />
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                onClick={() => setEditingIdx(null)}
+                                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-3 py-1.5 border border-gray-200 rounded-lg transition-colors"
+                              >
+                                <X size={12} /> Cancel
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const updated = [...editableTranscript]
+                                  updated[i] = { ...updated[i], answer: editText }
+                                  setEditableTranscript(updated)
+                                  setEditingIdx(null)
+                                }}
+                                className="flex items-center gap-1 text-xs text-white px-3 py-1.5 rounded-lg transition-colors"
+                                style={{ backgroundColor: primaryColor }}
+                              >
+                                <Check size={12} /> Save
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-2">
+                            <p className="flex-1 text-sm text-gray-700 leading-relaxed">
+                              {pair.answer || <span className="text-gray-400 italic">No response recorded</span>}
+                            </p>
+                            <button
+                              onClick={() => { setEditingIdx(i); setEditText(pair.answer) }}
+                              className="flex-shrink-0 p-1 text-gray-300 hover:text-teal-500 transition-colors rounded"
+                              title="Edit this response"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={sendCopy}
+                      onChange={e => setSendCopy(e.target.checked)}
+                      className="w-4 h-4 rounded"
+                      style={{ accentColor: primaryColor }}
+                    />
+                    <span className="text-sm text-gray-700">Send a copy of this transcript to me</span>
+                  </label>
+                  {sendCopy && (
+                    <input
+                      type="email"
+                      placeholder="Your email address"
+                      value={copyEmail}
+                      onChange={e => setCopyEmail(e.target.value)}
+                      className="mt-3 w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-teal-400"
+                    />
+                  )}
+                </div>
+
+                <div className="text-center">
+                  <button
+                    onClick={handleFinishInterview}
+                    disabled={sendingEmail || (sendCopy && !copyEmail)}
+                    className="px-8 py-3 rounded-xl text-white font-medium text-sm disabled:opacity-50 transition-opacity"
+                    style={{ backgroundColor: primaryColor }}
+                  >
+                    {sendingEmail ? 'Sending…' : 'Finish'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     )
@@ -946,7 +1081,7 @@ export default function VoiceInterview() {
                   </div>
                 )}
                 {isPaused && (
-                  <p className="text-sm text-amber-600 font-medium">Timer paused — take your time.</p>
+                  <p className="text-sm text-amber-600 font-medium">Interview paused — take your time.</p>
                 )}
                 <div className="flex items-center gap-3">
                   <button
