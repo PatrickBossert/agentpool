@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
+import { Pause, Play } from 'lucide-react'
 import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
 
 // webkit speech recognition types (Chrome/Safari vendor prefix)
@@ -39,6 +40,12 @@ export default function VoiceInterview() {
   const interviewLangRef = useRef<string>('en-GB')
   const micStreamRef = useRef<MediaStream | null>(null)
   const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [isPaused, setIsPaused] = useState(false)
+  const [silenceProgress, setSilenceProgress] = useState(0)
+  const isPausedRef = useRef(false)
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const silenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const resetSilenceTimerRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     fetchSession()
@@ -223,20 +230,49 @@ export default function VoiceInterview() {
 
       setStatusMessage('Listening…')
       setIsListening(true)
+      setIsPaused(false)
+      isPausedRef.current = false
+      setSilenceProgress(0)
 
-      let silenceTimer: ReturnType<typeof setTimeout> | null = null
+      // Longer initial wait (before first speech), shorter gap once they've started
+      const INITIAL_SILENCE_MS = 10000
+      const ANSWER_SILENCE_MS  = 3000
+      const TICK_MS = 50
+      let hasSpoken = false
 
-      function resetSilenceTimer() {
-        if (silenceTimer) clearTimeout(silenceTimer)
-        // Clear ref first so onend knows this stop is intentional (not a Chrome timeout)
-        silenceTimer = setTimeout(() => {
-          recognitionRef.current = null
-          try { recognition.stop() } catch { finish() }
-        }, 3000)
+      function clearSilenceTimers() {
+        if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
+        if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
       }
 
+      function resetSilenceTimer(initial = false) {
+        if (isPausedRef.current) return
+        clearSilenceTimers()
+        const duration = initial ? INITIAL_SILENCE_MS : ANSWER_SILENCE_MS
+        let elapsed = 0
+        setSilenceProgress(100)
+        silenceIntervalRef.current = setInterval(() => {
+          elapsed += TICK_MS
+          setSilenceProgress(Math.max(0, 100 - (elapsed / duration) * 100))
+        }, TICK_MS)
+        // Clear ref first so onend knows this stop is intentional (not a Chrome timeout)
+        silenceTimerRef.current = setTimeout(() => {
+          clearSilenceTimers()
+          setSilenceProgress(0)
+          recognitionRef.current = null
+          try { recognition.stop() } catch { finish() }
+        }, duration)
+      }
+
+      // Start the initial (longer) countdown immediately so the user sees it from the first frame
+      resetSilenceTimer(true)
+      resetSilenceTimerRef.current = () => resetSilenceTimer(false)
+
       recognition.onresult = (event: typeof SpeechRecognitionEvent) => {
-        resetSilenceTimer()
+        if (!hasSpoken) {
+          hasSpoken = true
+        }
+        resetSilenceTimer(false)
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
             parts.push(event.results[i][0].transcript)
@@ -257,7 +293,6 @@ export default function VoiceInterview() {
       // Only finish if the ref was cleared (user/silence-timer initiated stop).
       // Otherwise restart to keep listening.
       recognition.onend = () => {
-        if (silenceTimer) clearTimeout(silenceTimer)
         if (recognitionRef.current === recognition) {
           // Chrome stopped us internally - restart to keep listening
           try {
@@ -267,11 +302,14 @@ export default function VoiceInterview() {
             // Can't restart (e.g., permission revoked mid-session)
           }
         }
+        clearSilenceTimers()
+        setSilenceProgress(0)
         finish()
       }
 
       recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-        if (silenceTimer) clearTimeout(silenceTimer)
+        clearSilenceTimers()
+        setSilenceProgress(0)
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           // Microphone permission denied - show message, block auto-advance
           setStatusMessage('⚠️ Microphone access denied. Allow microphone access in your browser, then click ✓ Done to continue.')
@@ -296,6 +334,20 @@ export default function VoiceInterview() {
   function restartAnswer() {
     restartAnswerRef.current = true
     submitAnswer()
+  }
+
+  function handlePause() {
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
+    if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
+    setSilenceProgress(0)
+    setIsPaused(true)
+    isPausedRef.current = true
+  }
+
+  function handleResume() {
+    setIsPaused(false)
+    isPausedRef.current = false
+    resetSilenceTimerRef.current?.()
   }
 
   async function listenWithRestart(lang: string = 'en-GB'): Promise<string> {
@@ -746,6 +798,7 @@ export default function VoiceInterview() {
               {[
                 'This is a verbal interview — speak naturally and in your own words.',
                 'A pause of a few seconds, or tapping “✓ Done”, will move to the next question.',
+                'Need a moment to think? Tap “Hold — I\'m thinking” to pause the timer.',
                 'Tap “Restart answer” at any time to re-record your response.',
                 'Take your time — there are no right or wrong answers.',
               ].map((tip, i) => (
@@ -877,22 +930,59 @@ export default function VoiceInterview() {
               </p>
             )}
             {isListening && (
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={submitAnswer}
-                  style={{ backgroundColor: branding?.primary_color }}
-                  className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-10 rounded-full text-lg transition-colors shadow-md"
-                  aria-label="Done speaking"
-                >
-                  ✓ Done
-                </button>
-                <button
-                  onClick={restartAnswer}
-                  className="text-sm text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors"
-                  aria-label="Restart answer"
-                >
-                  Restart answer
-                </button>
+              <div className="flex flex-col items-center gap-3 w-full max-w-sm">
+                {/* Silence countdown bar */}
+                {!isPaused && (
+                  <div className="w-full">
+                    <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="h-1.5 rounded-full transition-none"
+                        style={{ width: `${silenceProgress}%`, backgroundColor: branding?.primary_color ?? '#0d9488' }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-gray-400 text-center mt-1">
+                      {silenceProgress > 0 ? 'Moving on when you stop speaking…' : 'Waiting for your response…'}
+                    </p>
+                  </div>
+                )}
+                {isPaused && (
+                  <p className="text-sm text-amber-600 font-medium">Timer paused — take your time.</p>
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={submitAnswer}
+                    style={{ backgroundColor: branding?.primary_color }}
+                    className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-10 rounded-full text-lg transition-colors shadow-md"
+                    aria-label="Done speaking"
+                  >
+                    ✓ Done
+                  </button>
+                  <button
+                    onClick={restartAnswer}
+                    className="text-sm text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors"
+                    aria-label="Restart answer"
+                  >
+                    Restart answer
+                  </button>
+                </div>
+                {/* Pause / Resume thinking time */}
+                {isPaused ? (
+                  <button
+                    onClick={handleResume}
+                    className="flex items-center gap-2 text-sm font-medium text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-full px-4 py-2 transition-colors"
+                    aria-label="Resume - I'm good, let's continue"
+                  >
+                    <Play size={14} />Ready — continue
+                  </button>
+                ) : (
+                  <button
+                    onClick={handlePause}
+                    className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-full px-4 py-2 transition-colors"
+                    aria-label="Pause - I need a moment to think"
+                  >
+                    <Pause size={14} />Hold — I'm thinking
+                  </button>
+                )}
               </div>
             )}
           </div>
