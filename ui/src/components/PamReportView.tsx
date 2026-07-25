@@ -435,53 +435,49 @@ export default function PamReportView({ slug }: { slug: string }) {
           )
         })()}
 
-        {/* Full Gantt — uses stored schedule window, falls back to milestone-date inference */}
-        {report.milestones.filter(m => m.due_date).length >= 2 && (() => {
-          const locale = settings?.locale ?? 'GB'
-          const stored = settings?.sched_start && settings?.sched_duration_weeks
-          const { schedStart, durationWeeks } = stored
-            ? { schedStart: settings!.sched_start!, durationWeeks: settings!.sched_duration_weeks! }
-            : inferSchedule(report.milestones.map(m => m.due_date).filter(Boolean) as string[])
-          const endDate = new Date(schedStart + 'T00:00:00')
-          endDate.setDate(endDate.getDate() + durationWeeks * 7)
-          const endStr = endDate.toISOString().slice(0, 10)
-          const holidays = getPublicHolidays(locale, schedStart, endStr)
-          return (
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                <CalendarDays size={11} />Schedule
-              </p>
-              <GanttReadOnly
-                milestones={report.milestones}
-                startDate={schedStart}
-                durationWeeks={durationWeeks}
-                holidays={holidays}
-                nonWorkingRanges={nonWorkingRanges}
-                locale={locale}
-              />
+        {/* Progress Against Plan — always visible */}
+        <div>
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+            <CalendarDays size={11} />Progress Against Plan
+          </p>
+          {report.milestones.length === 0 ? (
+            <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+              <CheckCheck size={14} className="text-gray-300" />No milestones scheduled yet.
             </div>
-          )
-        })()}
-
-        {/* Timeline — instant RAG view of all milestones */}
-        {report.milestones.length > 0 && (() => {
-          const locale = settings?.locale ?? 'GB'
-          const stored = settings?.sched_start && settings?.sched_duration_weeks
-          const { schedStart, durationWeeks } = stored
-            ? { schedStart: settings!.sched_start!, durationWeeks: settings!.sched_duration_weeks! }
-            : inferSchedule(report.milestones.map(m => m.due_date).filter(Boolean) as string[])
-          const endStr = (() => { const d = new Date(schedStart + 'T00:00:00'); d.setDate(d.getDate() + durationWeeks * 7); return d.toISOString().slice(0, 10) })()
-          const holidays = getPublicHolidays(locale, schedStart, endStr)
-          const excluded = buildExcludedDateSet(holidays, nonWorkingRanges)
-          return (
-            <MilestoneTimeline
-              milestones={report.milestones}
-              complete={report.milestones_complete}
-              total={report.milestones_total}
-              excludedDates={excluded}
-            />
-          )
-        })()}
+          ) : (() => {
+            const locale = settings?.locale ?? 'GB'
+            const stored = settings?.sched_start && settings?.sched_duration_weeks
+            const datedMs = report.milestones.map(m => m.due_date).filter(Boolean) as string[]
+            const { schedStart, durationWeeks } = stored
+              ? { schedStart: settings!.sched_start!, durationWeeks: settings!.sched_duration_weeks! }
+              : (datedMs.length >= 2 ? inferSchedule(datedMs) : { schedStart: datedMs[0] ?? new Date().toISOString().slice(0, 10), durationWeeks: 12 })
+            const endDate = new Date(schedStart + 'T00:00:00')
+            endDate.setDate(endDate.getDate() + durationWeeks * 7)
+            const endStr = endDate.toISOString().slice(0, 10)
+            const holidays = getPublicHolidays(locale, schedStart, endStr)
+            const excluded = buildExcludedDateSet(holidays, nonWorkingRanges)
+            return (
+              <div className="space-y-4">
+                {datedMs.length >= 2 && (
+                  <GanttReadOnly
+                    milestones={report.milestones}
+                    startDate={schedStart}
+                    durationWeeks={durationWeeks}
+                    holidays={holidays}
+                    nonWorkingRanges={nonWorkingRanges}
+                    locale={locale}
+                  />
+                )}
+                <MilestoneTimeline
+                  milestones={report.milestones}
+                  complete={report.milestones_complete}
+                  total={report.milestones_total}
+                  excludedDates={excluded}
+                />
+              </div>
+            )
+          })()}
+        </div>
 
         {/* Stats */}
         <StatsRow report={report} />

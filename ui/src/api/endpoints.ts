@@ -101,6 +101,9 @@ export const projectsApi = {
   roadmapData: (slug: string): Promise<RoadmapData> =>
     apiClient.get<RoadmapData>(`/projects/${slug}/roadmap-data`).then((r) => r.data),
 
+  getInterviewScripts: (slug: string): Promise<Record<string, import('../types').InterviewScript>> =>
+    apiClient.get<Record<string, import('../types').InterviewScript>>(`/projects/${slug}/interview-scripts`).then((r) => r.data),
+
   financialSummary: (slug: string): Promise<FinancialSummary> =>
     apiClient.get<FinancialSummary>(`/projects/${slug}/financial-summary`).then((r) => r.data),
 

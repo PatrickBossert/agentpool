@@ -47,7 +47,7 @@ class SQLiteStateTool(BaseTool):
                 insert_agent_output_sync(
                     slug=self.slug,
                     agent_name=agent_name,
-                    output_type="state",
+                    output_type=key,
                     file_path=str(file_path),
                 )
             except (OSError, ValueError) as e:
