@@ -411,7 +411,16 @@ async def dispatch_crew(slug: str, crew_name: str, run_id: int) -> None:
 
 # ── Standalone agent dispatch ──────────────────────────────────────────────────
 
-# Which crew name to record in crew_runs for each agent key
+# Which crew name to record in crew_runs for each agent key.
+#
+# Every key here MUST have a branch in build_and_run_agent. run_crew() checks
+# membership of this dict and creates a crew_run row before dispatching, so a key
+# without a branch produces a run that fails instantly with "Unknown agent key".
+# tests/test_standalone_agent_dispatch.py enforces the invariant.
+#
+# questionnaire_builder is deliberately absent: its agent was removed when
+# questionnaires moved inline into the interview. The crew-name alias in
+# build_and_run_crew stays, for stored crew_run rows in other environments.
 AGENT_CREW_NAME: dict[str, str] = {
     "requirements_analyst":        "discovery",
     "value_lever_analyst":         "discovery",
@@ -422,7 +431,6 @@ AGENT_CREW_NAME: dict[str, str] = {
     "initiative_identifier":       "architecture",
     "roadmap_generator":           "delivery",
     "business_plan_generator":     "business_plan",
-    "questionnaire_builder":       "assessment_design",
     "interaction_designer":        "assessment_design",
     "stakeholder_manager":         "stakeholder_management",
 }
@@ -498,6 +506,39 @@ async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
         from agents.business_plan.business_plan_generator import create_business_plan_generator, create_business_plan_generator_task
         agent_obj = create_business_plan_generator(slug=slug, llm=llm, tools=tools)
         task = create_business_plan_generator_task(agent=agent_obj)
+
+    elif agent_key == "interaction_designer":
+        # Same construction as create_assessment_design_crew - that crew is this
+        # single agent, so standalone dispatch and the crew must behave identically.
+        from agents.discovery.interaction_designer import (
+            create_interaction_designer,
+            create_interaction_designer_task,
+        )
+        agent_obj = create_interaction_designer(slug=slug, llm=llm, tools=tools)
+        task = create_interaction_designer_task(
+            agent=agent_obj,
+            standards_references=config.get("standards_references", ""),
+            preferred_sections=config.get("preferred_questionnaire_sections", 4),
+            preferred_questions=config.get("preferred_questions_per_section", 3),
+            client_name=config.get("client_name", ""),
+            service_categories=config.get("service_categories", ""),
+            key_vendors=config.get("key_vendors", ""),
+            applicable_regulations=config.get("applicable_regulations", ""),
+        )
+
+    elif agent_key == "stakeholder_manager":
+        # Mirrors create_stakeholder_management_crew, which is also a single agent.
+        from agents.discovery.stakeholder_manager_agent import (
+            create_stakeholder_manager,
+            create_stakeholder_manager_task,
+        )
+        public_url = config.get("public_url", "")
+        agent_obj = create_stakeholder_manager(slug=slug, llm=llm, tools=tools)
+        task = create_stakeholder_manager_task(
+            agent=agent_obj,
+            project_slug=slug,
+            public_interview_url_base=f"{public_url}/dashboard/interview" if public_url else "",
+        )
 
     else:
         raise ValueError(f"Unknown agent key: '{agent_key}'")
