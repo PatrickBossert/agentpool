@@ -115,9 +115,12 @@ async def test_html_roadmap_tool_writes_json(client):
         agent_name="test_roadmap_agent",
     )
 
+    # insert_agent_output_sync renames each written output to a _vN suffix, so
+    # the file lands as roadmap_data_v1.json rather than roadmap_data.json.
     outputs_dir = Path(settings.projects_dir) / SLUG / "outputs"
-    json_file = outputs_dir / "roadmap_data.json"
-    assert json_file.exists(), "roadmap_data.json was not written"
+    candidates = sorted(outputs_dir.glob("roadmap_data*.json"))
+    assert candidates, f"no roadmap_data JSON written to {outputs_dir}"
+    json_file = candidates[-1]
     data = json.loads(json_file.read_text(encoding="utf-8"))
     assert "periods" in data
     assert "initiatives" in data

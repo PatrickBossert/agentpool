@@ -6,6 +6,19 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+def _read_registry(base, slug):
+    """Read the registry the tool just wrote.
+
+    insert_agent_output_sync renames each output to a _vN suffix, so nothing is
+    left at the base filename. Resolve the same way production does.
+    """
+    from agents.tools.derive_registry import _latest_registry
+    outputs = base / "projects" / slug / "outputs"
+    path = _latest_registry(outputs)
+    assert path is not None, "no registry file was written"
+    return json.loads(path.read_text())
+
+
 SAMPLE_TREE = [
     {
         "id": "1", "label": "Inbound", "level": "L1",
@@ -37,7 +50,17 @@ def project_dir(tmp_path):
     db_path.parent.mkdir(parents=True)
     conn = sqlite3.connect(str(db_path))
     conn.execute("CREATE TABLE projects (id INTEGER PRIMARY KEY, slug TEXT)")
-    conn.execute("CREATE TABLE agent_outputs (id INTEGER PRIMARY KEY, project_id INTEGER, agent_name TEXT, output_type TEXT, file_path TEXT, version INTEGER, review_status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    # Mirror the production schema in api/database.py, including the columns
+    # added by later migrations (is_current, revision_notes) — _db.py writes to
+    # is_current, so omitting it fails with "no such column".
+    conn.execute(
+        "CREATE TABLE agent_outputs ("
+        " id INTEGER PRIMARY KEY, project_id INTEGER, agent_name TEXT,"
+        " output_type TEXT, file_path TEXT, version INTEGER,"
+        " review_status TEXT DEFAULT 'pending', revision_notes TEXT,"
+        " is_current INTEGER NOT NULL DEFAULT 1,"
+        " created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    )
     conn.execute("INSERT INTO projects (id, slug) VALUES (1, 'test-proj')")
     conn.commit()
     conn.close()
@@ -85,8 +108,7 @@ def test_derive_registry_creates_flat_entries(project_dir):
         result = tool._run()
 
     assert "6 active" in result
-    registry_path = base / "projects" / slug / "outputs" / "value_chain_registry.json"
-    data = json.loads(registry_path.read_text())
+    data = _read_registry(base, slug)
     assert data["schema_version"] == 2
     acts = data["activities"]
     assert len(acts) == 6
@@ -103,7 +125,7 @@ def test_derive_registry_all_active(project_dir):
         m_s.return_value.projects_dir = str(base / "projects")
         m_db.return_value.database_dir = str(base / "data")
         DeriveRegistryTool(slug=slug)._run()
-    data = json.loads((base / "projects" / slug / "outputs" / "value_chain_registry.json").read_text())
+    data = _read_registry(base, slug)
     assert all(a["active"] for a in data["activities"])
 
 
@@ -116,7 +138,7 @@ def test_derive_registry_parent_id_set(project_dir):
         m_s.return_value.projects_dir = str(base / "projects")
         m_db.return_value.database_dir = str(base / "data")
         DeriveRegistryTool(slug=slug)._run()
-    data = json.loads((base / "projects" / slug / "outputs" / "value_chain_registry.json").read_text())
+    data = _read_registry(base, slug)
     by_id = {a["id"]: a for a in data["activities"]}
     assert by_id["1.1"]["parent_id"] == "1"
     assert by_id["1.1.1"]["parent_id"] == "1.1"
@@ -147,7 +169,7 @@ def test_derive_registry_marks_removed_as_inactive(project_dir):
         result = DeriveRegistryTool(slug=slug)._run()
 
     assert "inactive" in result
-    data = json.loads((base / "projects" / slug / "outputs" / "value_chain_registry.json").read_text())
+    data = _read_registry(base, slug)
     by_id = {a["id"]: a for a in data["activities"]}
     assert by_id["1"]["active"] is True
     assert by_id["1.1"]["active"] is True
@@ -163,3 +185,38 @@ def test_derive_registry_invalid_tree(project_dir):
         tool = DeriveRegistryTool(slug=slug)
         result = tool._run()
     assert "not valid JSON" in result
+
+
+def test_derive_registry_preserves_history_across_runs(project_dir):
+    """Running twice must keep entries dropped from the tree, as active=false.
+
+    Regression test: insert_agent_output_sync renames each written registry to a
+    _vN path, so the tool's second run found nothing at the base filename and
+    silently started fresh — losing every previously-recorded inactive activity.
+    """
+    base, slug = project_dir
+    outputs = base / "projects" / slug / "outputs"
+    from agents.tools.derive_registry import DeriveRegistryTool
+
+    def _run_with(tree):
+        (outputs / "value_chain_tree.json").write_text(json.dumps(tree))
+        with patch("agents.tools.derive_registry.get_settings") as m_s, \
+             patch("agents.tools._db.get_settings") as m_db:
+            m_s.return_value.projects_dir = str(base / "projects")
+            m_db.return_value.database_dir = str(base / "data")
+            return DeriveRegistryTool(slug=slug)._run()
+
+    # First run records both activities
+    _run_with([{"id": "1", "label": "Kept", "level": "L1", "children": [
+        {"id": "1.1", "label": "Dropped Later", "level": "L2"}
+    ]}])
+    first = _read_registry(base, slug)
+    assert {a["id"] for a in first["activities"]} == {"1", "1.1"}
+
+    # Second run drops 1.1 from the tree — it must survive as inactive
+    result = _run_with([{"id": "1", "label": "Kept", "level": "L1", "children": []}])
+
+    assert "inactive" in result
+    by_id = {a["id"]: a for a in _read_registry(base, slug)["activities"]}
+    assert by_id["1"]["active"] is True
+    assert by_id["1.1"]["active"] is False, "history lost between runs"

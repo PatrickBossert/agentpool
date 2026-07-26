@@ -116,6 +116,8 @@ def project_id_pam(test_slug_pam) -> int:
             file_path TEXT NOT NULL,
             version INTEGER NOT NULL DEFAULT 1,
             review_status TEXT NOT NULL DEFAULT 'pending',
+            revision_notes TEXT,
+            is_current INTEGER NOT NULL DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS human_reviews (

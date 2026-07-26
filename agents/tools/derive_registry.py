@@ -11,7 +11,19 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from api.config import get_settings
-from agents.tools._db import insert_agent_output_sync
+from agents.tools._db import insert_agent_output_sync, latest_output_path
+
+_REGISTRY_STEM = "value_chain_registry"
+
+
+def _latest_registry(outputs_dir: Path) -> Path | None:
+    """Return the most recent registry file, or None if there is no previous one.
+
+    Looking only at the base filename made every run behave as if it were the
+    first — activities dropped from the tree were silently forgotten instead of
+    being preserved as active=false. See latest_output_path for why.
+    """
+    return latest_output_path(outputs_dir / f"{_REGISTRY_STEM}.json")
 
 
 class DeriveRegistryToolInput(BaseModel):
@@ -47,11 +59,14 @@ class DeriveRegistryTool(BaseTool):
         except json.JSONDecodeError as e:
             return f"Error: value_chain_tree.json is not valid JSON — {e}"
 
-        # Load existing registry to preserve any historical inactive entries
+        # Load existing registry to preserve any historical inactive entries.
+        # This must look at the latest *versioned* file, not the base name —
+        # see _latest_registry.
         old_entries: dict[str, dict] = {}
-        if registry_path.exists():
+        previous = _latest_registry(outputs_dir)
+        if previous is not None:
             try:
-                old_data = json.loads(registry_path.read_text())
+                old_data = json.loads(previous.read_text())
                 for entry in old_data.get("activities", []):
                     old_entries[entry["id"]] = entry
             except Exception:
@@ -113,4 +128,7 @@ class DeriveRegistryTool(BaseTool):
         msg = f"Registry derived from tree: {active_count} active activities"
         if inactive_count:
             msg += f", {inactive_count} inactive (preserved from previous runs)"
-        return msg + f" — saved to {registry_path}"
+        # Report where the file actually landed — insert_agent_output_sync has
+        # renamed it to a versioned path by this point.
+        saved = _latest_registry(outputs_dir) or registry_path
+        return msg + f" — saved to {saved}"

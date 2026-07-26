@@ -5,6 +5,7 @@ Tools run in CrewAI's thread pool (not the FastAPI event loop), so they must
 use the standard sqlite3 module rather than aiosqlite.
 """
 import contextlib
+import re
 import sqlite3
 from pathlib import Path
 from api.config import get_settings
@@ -13,6 +14,29 @@ from api.config import get_settings
 def _versioned_path(original: Path, version: int) -> Path:
     """Return a version-stamped sibling path, e.g. value_chain_v2.md."""
     return original.parent / f"{original.stem}_v{version}{original.suffix}"
+
+
+def latest_output_path(original: Path) -> Path | None:
+    """Resolve the newest file written under `original`'s name, or None.
+
+    insert_agent_output_sync renames every output it records to a _vN suffix,
+    so after the first write nothing remains at the un-suffixed path. Any code
+    reading an output back must resolve through here — reading the base path
+    directly silently behaves as though the output had never been written.
+
+    The un-suffixed path is preferred when present, so outputs written before
+    versioning existed (or by hand) are still found.
+    """
+    if original.exists():
+        return original
+
+    pattern = re.compile(rf"^{re.escape(original.stem)}_v(\d+){re.escape(original.suffix)}$")
+    versions: list[tuple[int, Path]] = []
+    for candidate in original.parent.glob(f"{original.stem}_v*{original.suffix}"):
+        match = pattern.match(candidate.name)
+        if match:
+            versions.append((int(match.group(1)), candidate))
+    return max(versions)[1] if versions else None
 
 
 def _db_path(slug: str) -> str:

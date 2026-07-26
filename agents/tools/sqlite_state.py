@@ -4,7 +4,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from api.config import get_settings
-from agents.tools._db import insert_agent_output_sync
+from agents.tools._db import insert_agent_output_sync, latest_output_path
 
 
 class SQLiteStateToolInput(BaseModel):
@@ -55,8 +55,12 @@ class SQLiteStateTool(BaseTool):
             return f"Written to {file_path}"
 
         if operation == "read":
-            if not file_path.exists():
+            # Resolve through latest_output_path: the write above is renamed to
+            # a _vN suffix by insert_agent_output_sync, so reading file_path
+            # directly never finds anything the tool itself wrote.
+            stored = latest_output_path(file_path)
+            if stored is None:
                 return f"Error: no state found for key '{key}'"
-            return file_path.read_text()
+            return stored.read_text()
 
         return f"Error: unknown operation '{operation}' — use 'read' or 'write'"

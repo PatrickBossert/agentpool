@@ -31,9 +31,11 @@ def test_sqlite_state_tool_round_trip(test_slug, project_id):
     data = json.loads(read_result)
     assert data == {"hello": "world"}
 
-    # Verify file was written
-    file_path = Path(settings.projects_dir) / test_slug / "outputs" / "test_state.json"
-    assert file_path.exists()
+    # Verify file was written. insert_agent_output_sync renames it to a _vN
+    # suffix, so resolve the same way the tool's read path does.
+    from agents.tools._db import latest_output_path
+    base = Path(settings.projects_dir) / test_slug / "outputs" / "test_state.json"
+    assert latest_output_path(base) is not None
 
 
 @pytest.mark.integration
@@ -145,6 +147,9 @@ graph LR
     result = tool._run(mermaid_md=mermaid_md, filename="test_value_chain")
 
     assert "test_value_chain.md" in result
-    file_path = Path(settings.projects_dir) / test_slug / "outputs" / "test_value_chain.md"
-    assert file_path.exists()
-    assert "graph LR" in file_path.read_text()
+    # insert_agent_output_sync renames written outputs to a _vN suffix, so the
+    # file lands as test_value_chain_v1.md rather than test_value_chain.md.
+    outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
+    written = sorted(outputs_dir.glob("test_value_chain*.md"))
+    assert written, f"no test_value_chain markdown written to {outputs_dir}"
+    assert "graph LR" in written[-1].read_text()
