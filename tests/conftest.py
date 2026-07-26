@@ -18,9 +18,17 @@ os.environ.setdefault("LITELLM_PROXY_URL", "http://localhost:4000")
 os.environ.setdefault("LLAMACPP_BASE_URL", "http://localhost:10000")
 os.environ.setdefault("CHROMA_HOST", "localhost")
 os.environ.setdefault("CHROMA_PORT", "8002")  # pydantic coerces str→int
-# Blank so unit tests always take the HttpClient branch in ingest_service,
-# even when a real Chroma Cloud key is present in .env
+# Blank all credential-gated settings so unit tests behave identically whether
+# or not the developer has real services configured in .env. pydantic-settings
+# reads .env directly, so without these a populated .env changes test outcomes:
+# a real CHROMA_API_KEY flips ingest_service to CloudClient, a real
+# RESEND_API_KEY makes "no key" paths attempt real sends, and so on.
 os.environ.setdefault("CHROMA_API_KEY", "")
+os.environ.setdefault("RESEND_API_KEY", "")
+os.environ.setdefault("TAVILY_API_KEY", "")
+os.environ.setdefault("ELEVENLABS_API_KEY", "")
+os.environ.setdefault("DEEPGRAM_API_KEY", "")
+os.environ.setdefault("N8N_WEBHOOK_URL", "")
 os.environ.setdefault("FRONTEND_URL", "http://localhost:3000")
 
 Path("/tmp/agentpool_test").mkdir(exist_ok=True)
