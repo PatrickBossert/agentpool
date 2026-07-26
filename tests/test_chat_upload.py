@@ -1,0 +1,118 @@
+# tests/test_chat_upload.py
+import pytest
+from unittest.mock import patch, AsyncMock
+
+SLUG = "upload-test"
+
+
+async def _make_project(client):
+    await client.post("/projects", json={
+        "client_slug": SLUG, "llm_mode": "standard", "sector": "rail",
+    })
+
+
+@pytest.mark.asyncio
+async def test_upload_ingests_before_responding(client):
+    """Ingestion is awaited, not queued - the document is searchable on return."""
+    await _make_project(client)
+    with patch("api.routers.agent_chat.ingest_document", new_callable=AsyncMock) as m_ingest:
+        resp = await client.post(
+            f"/projects/{SLUG}/agent-chat/upload",
+            data={"agent_name": "Interview Coordinator"},
+            files={"file": ("notes.txt", b"warehouse runs two shifts", "text/plain")},
+        )
+    assert resp.status_code == 201
+    m_ingest.assert_awaited_once()
+    assert m_ingest.await_args.kwargs["raise_on_error"] is True
+
+
+@pytest.mark.asyncio
+async def test_upload_fails_loudly_when_ingestion_fails(client):
+    """A Chroma outage must not produce a document that looks uploaded but is invisible."""
+    await _make_project(client)
+    from api.services.ingest_service import IngestError
+    with patch("api.routers.agent_chat.ingest_document",
+               new_callable=AsyncMock, side_effect=IngestError("chroma down")):
+        resp = await client.post(
+            f"/projects/{SLUG}/agent-chat/upload",
+            data={"agent_name": "Interview Coordinator"},
+            files={"file": ("notes.txt", b"some text", "text/plain")},
+        )
+    assert resp.status_code == 502
+    assert "index" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_response_no_longer_carries_preview_text(client):
+    await _make_project(client)
+    with patch("api.routers.agent_chat.ingest_document", new_callable=AsyncMock):
+        resp = await client.post(
+            f"/projects/{SLUG}/agent-chat/upload",
+            data={"agent_name": "Interview Coordinator"},
+            files={"file": ("notes.txt", b"some text", "text/plain")},
+        )
+    assert resp.status_code == 201
+    assert "preview_text" not in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_oversized_image_rejected(client):
+    await _make_project(client)
+    from api.routers.agent_chat import MAX_IMAGE_BYTES
+    oversized = b"\x89PNG\r\n\x1a\n" + b"x" * MAX_IMAGE_BYTES
+    resp = await client.post(
+        f"/projects/{SLUG}/agent-chat/upload",
+        data={"agent_name": "Interview Coordinator"},
+        files={"file": ("big.png", oversized, "image/png")},
+    )
+    assert resp.status_code == 422
+    assert "4 MB" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_image_upload_skips_ingestion(client):
+    """Images cannot be embedded by a text pipeline - do not try."""
+    await _make_project(client)
+    with patch("api.routers.agent_chat.ingest_document", new_callable=AsyncMock) as m_ingest:
+        resp = await client.post(
+            f"/projects/{SLUG}/agent-chat/upload",
+            data={"agent_name": "Interview Coordinator"},
+            files={"file": ("chart.png", b"\x89PNG\r\n\x1a\ndata", "image/png")},
+        )
+    assert resp.status_code == 201
+    assert resp.json()["is_image"] is True
+    m_ingest.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_document_with_no_extractable_text_still_uploads(client):
+    """A scanned PDF yields no chunks. That is not an error - see the spec.
+
+    raise_on_error=True must not turn 'nothing to index' into a failed upload,
+    or every image-only PDF becomes an unexplained 502.
+    """
+    await _make_project(client)
+    with patch("api.services.ingest_service._extract_text", return_value="   "):
+        resp = await client.post(
+            f"/projects/{SLUG}/agent-chat/upload",
+            data={"agent_name": "Interview Coordinator"},
+            files={"file": ("scanned.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        )
+    assert resp.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_chat_upload_appears_in_project_documents(client):
+    """Regression lock: chat uploads are project documents, not a separate store."""
+    await _make_project(client)
+    with patch("api.routers.agent_chat.ingest_document", new_callable=AsyncMock):
+        upload = await client.post(
+            f"/projects/{SLUG}/agent-chat/upload",
+            data={"agent_name": "Interview Coordinator"},
+            files={"file": ("shared.txt", b"content", "text/plain")},
+        )
+    doc_id = upload.json()["doc_id"]
+
+    listing = await client.get(f"/projects/{SLUG}/documents")
+    assert listing.status_code == 200
+    assert doc_id in [d["id"] for d in listing.json()]

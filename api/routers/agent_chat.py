@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from api.auth import check_project_access, require_any_auth
@@ -23,13 +23,14 @@ from api.database import (
     update_project_config,
 )
 from api.services.agent_chat_service import AGENT_PERSONAS, run_agent_chat
-from api.services.ingest_service import SUPPORTED_SUFFIXES, _extract_text, ingest_document
+from api.services.ingest_service import SUPPORTED_SUFFIXES, IngestError, ingest_document
 
 router = APIRouter(prefix="/projects", tags=["agent-chat"])
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _UPLOAD_SUFFIXES = SUPPORTED_SUFFIXES | _IMAGE_SUFFIXES
-_PREVIEW_CHARS = 3_000
+_PREVIEW_CHARS = 3_000  # still used by the link-preview path below
+MAX_IMAGE_BYTES = 4 * 1024 * 1024  # Anthropic's limit is ~5 MB base64; encoding adds ~33%
 
 
 # ── Request / response models ──────────────────────────────────────────────────
@@ -209,7 +210,6 @@ async def agent_chat(
 @router.post("/{slug}/agent-chat/upload", status_code=201)
 async def chat_upload(
     slug: str,
-    background_tasks: BackgroundTasks,
     agent_name: str = Form(...),
     file: UploadFile = File(...),
     payload: dict = Depends(require_any_auth),
@@ -225,6 +225,13 @@ async def chat_upload(
             detail=f"Unsupported file type '{suffix}'. Supported: {', '.join(sorted(_UPLOAD_SUFFIXES))}",
         )
 
+    content = await file.read()
+    if suffix in _IMAGE_SUFFIXES and len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail="Image is too large - the maximum is 4 MB.",
+        )
+
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
@@ -237,7 +244,6 @@ async def chat_upload(
         unique_name = f"{uuid.uuid4().hex}{suffix}"
         dest = docs_dir / unique_name
 
-        content = await file.read()
         dest.write_bytes(content)
 
         try:
@@ -262,23 +268,20 @@ async def chat_upload(
             await _patch_config(conn, project, "discovery_document_ids", doc_ids)
 
     is_image = suffix in _IMAGE_SUFFIXES
-    preview_text = ""
 
-    if not is_image and suffix in SUPPORTED_SUFFIXES:
+    if not is_image:
         try:
-            text = await asyncio.to_thread(_extract_text, dest)
-            preview_text = text[:_PREVIEW_CHARS]
-        except Exception:
-            preview_text = ""
-        background_tasks.add_task(ingest_document, slug, doc_id, str(dest))
-    else:
-        preview_text = f"[Image file: {file.filename}]"
+            await ingest_document(slug, doc_id, str(dest), raise_on_error=True)
+        except IngestError:
+            raise HTTPException(
+                status_code=502,
+                detail="Document saved but could not be indexed for search - try again.",
+            )
 
     return {
         "doc_id": doc_id,
         "filename": unique_name,
         "original_name": file.filename or unique_name,
-        "preview_text": preview_text,
         "is_image": is_image,
     }
 
