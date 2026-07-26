@@ -1442,7 +1442,7 @@ export default function AgentDetailPanel({
       {/* ── OUTPUT TAB ─────────────────────────────────────────────────────────── */}
       {tab === 'output' && crewKey !== 'PAM' && (
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {crewOutputs.length === 0 ? (
+          {crewOutputs.length === 0 && !CREW_OUTPUT_EXTRA[crewKey] ? (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
               <div className="w-16 h-16 rounded-full overflow-hidden opacity-30 flex-shrink-0">
                 {AGENT_AVATAR_IMAGE[primaryAgent] ? (
@@ -1458,9 +1458,11 @@ export default function AgentDetailPanel({
             </div>
           ) : (
             <>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
-                {crewOutputs.length} output{crewOutputs.length !== 1 ? 's' : ''}
-              </p>
+              {crewOutputs.length > 0 && (
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+                  {crewOutputs.length} output{crewOutputs.length !== 1 ? 's' : ''}
+                </p>
+              )}
               {crewOutputs.map(o => (
                 <OutputItem
                   key={o.id}
