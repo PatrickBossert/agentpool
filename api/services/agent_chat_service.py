@@ -2,12 +2,14 @@
 """Agent chat — persona definitions, context fetching, and Claude call."""
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from pathlib import Path
 from anthropic import AsyncAnthropic
 
 from api.database import get_connection, get_db_path, fetch_project
 from api.config import get_settings
+from api.services.chat_retrieval_service import RETRIEVAL_TOP_K, search as retrieve_chunks
 
 # Max characters to include per output file in chat context.
 _OUTPUT_CONTENT_LIMIT = 6_000
@@ -390,6 +392,20 @@ async def _build_crew_system_prompt(
     )
 
 
+def _format_retrieved(chunks: list[dict]) -> str:
+    """Render retrieved chunks as a prompt block, each labelled with its source.
+
+    Attribution matters: without the filename the agent cannot tell the user
+    which document an answer came from.
+    """
+    if not chunks:
+        return ""
+    lines = ["--- Retrieved from project documents ---"]
+    for chunk in chunks:
+        lines.append(f"[{chunk['filename']}] {chunk['text']}")
+    return "\n".join(lines)
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 async def run_agent_chat(
@@ -440,6 +456,14 @@ async def run_agent_chat(
                 "Use bullet points for lists. "
                 "If you don't have the data to answer, say so — don't invent details."
             )
+
+    # Retrieval runs on every turn - see the design spec for why there is no
+    # relevance threshold. Chroma's client is synchronous, so keep it off the
+    # event loop.
+    retrieved = await asyncio.to_thread(retrieve_chunks, slug, message, RETRIEVAL_TOP_K)
+    retrieved_block = _format_retrieved(retrieved)
+    if retrieved_block:
+        system_prompt += f"\n\n{retrieved_block}"
 
     if injected_docs:
         for doc in injected_docs:
