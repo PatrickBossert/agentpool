@@ -1,4 +1,6 @@
 # tests/test_chat_upload.py
+import re
+
 import pytest
 from unittest.mock import patch, AsyncMock
 
@@ -39,7 +41,9 @@ async def test_upload_fails_loudly_when_ingestion_fails(client):
             files={"file": ("notes.txt", b"some text", "text/plain")},
         )
     assert resp.status_code == 502
-    assert "index" in resp.json()["detail"].lower()
+    detail = resp.json()["detail"].lower()
+    assert "index" in detail
+    assert "reingest" in detail
 
 
 @pytest.mark.asyncio
@@ -116,3 +120,31 @@ async def test_chat_upload_appears_in_project_documents(client):
     listing = await client.get(f"/projects/{SLUG}/documents")
     assert listing.status_code == 200
     assert doc_id in [d["id"] for d in listing.json()]
+
+
+@pytest.mark.asyncio
+async def test_failed_ingestion_leaves_document_recoverable(client):
+    """After a 502, the row and file are deliberately kept, not rolled back.
+
+    The human's ruling: recovery is via the reingest endpoint, not a re-upload,
+    so the document must still be visible in the project library afterwards.
+    """
+    await _make_project(client)
+    from api.services.ingest_service import IngestError
+    with patch("api.routers.agent_chat.ingest_document",
+               new_callable=AsyncMock, side_effect=IngestError("chroma down")):
+        upload = await client.post(
+            f"/projects/{SLUG}/agent-chat/upload",
+            data={"agent_name": "Interview Coordinator"},
+            files={"file": ("notes.txt", b"some text", "text/plain")},
+        )
+    assert upload.status_code == 502
+    match = re.search(r"id (\d+)", upload.json()["detail"])
+    assert match, "502 detail must name the document id so it can be located"
+    doc_id = int(match.group(1))
+
+    listing = await client.get(f"/projects/{SLUG}/documents")
+    assert listing.status_code == 200
+    docs_by_id = {d["id"]: d for d in listing.json()}
+    assert doc_id in docs_by_id
+    assert docs_by_id[doc_id]["ingested"] is False

@@ -105,6 +105,57 @@ async def test_happy_path_txt(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_chroma_failure_raises_when_raise_on_error(tmp_path):
+    """raise_on_error=True is the whole 'fail loudly' mechanism - a Chroma outage must
+    surface as IngestError, not just a log line, for callers awaiting it in a request."""
+    txt_file = tmp_path / "report.txt"
+    txt_file.write_text("Some important content here.")
+
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
+         patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db:
+        mock_get_client.side_effect = Exception("connection refused")
+        from api.services.ingest_service import IngestError, ingest_document
+        with pytest.raises(IngestError):
+            await ingest_document("test-slug", doc_id=6, file_path=str(txt_file), raise_on_error=True)
+
+    mock_db.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_text_extraction_failure_raises_when_raise_on_error(tmp_path):
+    """raise_on_error=True must surface an extraction failure as IngestError too."""
+    bad_pdf = tmp_path / "broken.pdf"
+    bad_pdf.write_bytes(b"not a real pdf")
+
+    with patch("api.services.ingest_service._extract_text", side_effect=Exception("parse error")):
+        from api.services.ingest_service import IngestError, ingest_document
+        with pytest.raises(IngestError):
+            await ingest_document("test-slug", doc_id=7, file_path=str(bad_pdf), raise_on_error=True)
+
+
+@pytest.mark.asyncio
+async def test_extraction_and_chroma_failures_stay_silent_by_default(tmp_path):
+    """Background callers (api/routers/documents.py) call ingest_document without
+    raise_on_error and rely on failures staying silent (logged, not raised)."""
+    from api.services.ingest_service import ingest_document
+
+    bad_pdf = tmp_path / "broken.pdf"
+    bad_pdf.write_bytes(b"not a real pdf")
+    with patch("api.services.ingest_service._extract_text", side_effect=Exception("parse error")):
+        result = await ingest_document("test-slug", doc_id=8, file_path=str(bad_pdf))
+    assert result is None
+
+    txt_file = tmp_path / "report.txt"
+    txt_file.write_text("Some important content here.")
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
+         patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db:
+        mock_get_client.side_effect = Exception("connection refused")
+        result = await ingest_document("test-slug", doc_id=9, file_path=str(txt_file))
+    assert result is None
+    mock_db.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_happy_path_docx(tmp_path):
     """.docx file: python-docx path exercised, chunks upserted, flag set."""
     from docx import Document as DocxDocument
