@@ -19,35 +19,58 @@ import pytest
 import chromadb
 from dotenv import load_dotenv
 
-# Load .env with override=True so real keys take precedence over the dummy
-# values set by tests/conftest.py (which runs first as the parent conftest).
-_env_file = Path(__file__).parents[2] / ".env"
-load_dotenv(_env_file, override=True)
-
-# Override dirs to isolated tmp paths, then clear the cached settings so
-# get_settings() re-reads all values (including real API keys from .env).
 from api.config import get_settings
-os.environ["DATABASE_DIR"] = "/tmp/agentpool_integration_test"
-os.environ["PROJECTS_DIR"] = "/tmp/agentpool_integration_test_projects"
-get_settings.cache_clear()
 
-os.environ.setdefault("JWT_SECRET", "test-secret")
-os.environ.setdefault("ADMIN_PASSWORD", "test-admin-pw")
-os.environ.setdefault("ADMIN_USERNAME", "admin")
-# Auto-respond to all HITL prompts in integration tests
-os.environ["HITL_AUTO_RESPOND"] = "approved"
+_env_file = Path(__file__).parents[2] / ".env"
 
-Path("/tmp/agentpool_integration_test").mkdir(exist_ok=True)
-Path("/tmp/agentpool_integration_test_projects").mkdir(exist_ok=True)
+_INTEGRATION_DB_DIR = "/tmp/agentpool_integration_test"
+_INTEGRATION_PROJECTS_DIR = "/tmp/agentpool_integration_test_projects"
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="package", autouse=True)
+def integration_env():
+    """Apply real credentials and isolated dirs — for integration tests only.
+
+    This previously ran at module level. pytest imports every conftest.py during
+    *collection*, before running a single test, so merely collecting this
+    directory reconfigured DATABASE_DIR and overrode ADMIN_PASSWORD for the
+    whole session. Unit tests then wrote to one database and read from another,
+    and their logins failed against the real admin password — roughly 100
+    failures that had nothing to do with the code under test.
+
+    Scoping this to a package fixture confines the changes to integration runs,
+    and the teardown restores the prior environment so unit tests collected in
+    the same session are unaffected regardless of execution order.
+    """
+    saved_env = dict(os.environ)
+
+    # Real keys must beat the dummy values set by the parent tests/conftest.py
+    load_dotenv(_env_file, override=True)
+    os.environ["DATABASE_DIR"] = _INTEGRATION_DB_DIR
+    os.environ["PROJECTS_DIR"] = _INTEGRATION_PROJECTS_DIR
+    os.environ.setdefault("JWT_SECRET", "test-secret")
+    os.environ.setdefault("ADMIN_PASSWORD", "test-admin-pw")
+    os.environ.setdefault("ADMIN_USERNAME", "admin")
+    # Auto-respond to all HITL prompts in integration tests
+    os.environ["HITL_AUTO_RESPOND"] = "approved"
+
+    Path(_INTEGRATION_DB_DIR).mkdir(exist_ok=True)
+    Path(_INTEGRATION_PROJECTS_DIR).mkdir(exist_ok=True)
+
+    get_settings.cache_clear()
+    yield
+    os.environ.clear()
+    os.environ.update(saved_env)
+    get_settings.cache_clear()
+
+
+@pytest.fixture(scope="package")
 def test_slug() -> str:
     return f"test-sp3a-{uuid.uuid4().hex[:8]}"
 
 
-@pytest.fixture(scope="session")
-def chroma_client():
+@pytest.fixture(scope="package")
+def chroma_client(integration_env):
     settings = get_settings()
     if settings.chroma_api_key:
         return chromadb.CloudClient(
@@ -58,7 +81,7 @@ def chroma_client():
     return chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="package", autouse=True)
 def setup_test_project(test_slug, chroma_client):
     """Create a full project environment for integration tests."""
     from api.config import get_settings
@@ -128,6 +151,8 @@ def setup_test_project(test_slug, chroma_client):
             file_path TEXT NOT NULL,
             version INTEGER NOT NULL DEFAULT 1,
             review_status TEXT NOT NULL DEFAULT 'pending',
+            revision_notes TEXT,
+            is_current INTEGER NOT NULL DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS human_reviews (
@@ -190,7 +215,7 @@ def setup_test_project(test_slug, chroma_client):
         pass
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="package")
 def project_id(test_slug, setup_test_project) -> int:
     from api.config import get_settings
     settings = get_settings()
@@ -204,7 +229,7 @@ def project_id(test_slug, setup_test_project) -> int:
     return row[0]
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="package")
 def seed_discovery_outputs(test_slug, setup_test_project):
     """
     Write mock Discovery crew outputs to the test project's outputs directory.
@@ -283,7 +308,7 @@ def seed_discovery_outputs(test_slug, setup_test_project):
     yield  # no teardown needed — project dir is cleaned up by setup_test_project
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="package")
 def seed_value_design_outputs(test_slug, seed_discovery_outputs):
     """
     Write mock Value Design crew outputs to the test project's outputs directory.
@@ -332,7 +357,7 @@ def seed_value_design_outputs(test_slug, seed_discovery_outputs):
     yield  # no teardown needed
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="package")
 def seed_architecture_outputs(test_slug, seed_value_design_outputs):
     """
     Write mock Architecture crew outputs to the test project's outputs directory.
@@ -377,7 +402,7 @@ def seed_architecture_outputs(test_slug, seed_value_design_outputs):
     yield  # no teardown needed
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="package")
 def seed_delivery_outputs(test_slug, seed_architecture_outputs):
     """
     Write mock Delivery crew outputs to the test project's outputs directory.
