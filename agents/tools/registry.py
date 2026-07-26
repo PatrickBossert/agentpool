@@ -128,10 +128,6 @@ def get_tools_for_agent(
             SQLiteStateTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
-        "questionnaire_builder": [
-            SQLiteStateTool(slug=slug),
-            ChromaQueryTool(slug=slug, sector=sector),
-        ],
         "interaction_designer": [
             SQLiteStateTool(slug=slug),
             ChromaQueryTool(slug=slug, sector=sector),
