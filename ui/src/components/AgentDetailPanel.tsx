@@ -260,15 +260,27 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
 // 'state' outputs are internal agent state snapshots (SQLiteStateTool) - not user deliverables
 const INTERNAL_OUTPUT_TYPES = new Set(['state'])
 
-// Output types already rendered by a crew-specific panel further down the tab.
-// Listing them again as raw files shows the same content twice - once readably,
-// once as a cryptic file name like `interview_scripts_l2_1`.
-const PANEL_RENDERED_PREFIXES: Record<string, string[]> = {
+// Output types the raw file list should not show for a given crew.
+//
+// PREFIXES - already rendered by the crew's own panel further down the tab, so
+// listing them again shows the same content twice: once readably, once as a
+// cryptic file name like `interview_scripts_l2_1`.
+//
+// SUFFIXES - not that crew's deliverable at all. Maya Patel's
+// *_interview_summaries are synthesis of interview results, which is Casey Liu's
+// job; they were removed from her task, but historical rows stay in the database
+// for audit and the list shows every version, not just current ones.
+const CREW_HIDDEN_OUTPUT_PREFIXES: Record<string, string[]> = {
   assessment_design: ['interview_scripts'],
 }
 
-function isRenderedByPanel(crewKey: string, outputType: string): boolean {
-  return (PANEL_RENDERED_PREFIXES[crewKey] ?? []).some(p => outputType.startsWith(p))
+const CREW_HIDDEN_OUTPUT_SUFFIXES: Record<string, string[]> = {
+  assessment_design: ['interview_summaries'],
+}
+
+function isHiddenFromOutputList(crewKey: string, outputType: string): boolean {
+  return (CREW_HIDDEN_OUTPUT_PREFIXES[crewKey] ?? []).some(p => outputType.startsWith(p))
+      || (CREW_HIDDEN_OUTPUT_SUFFIXES[crewKey] ?? []).some(sfx => outputType.endsWith(sfx))
 }
 
 function outputLabel(outputType: string): string {
@@ -1344,7 +1356,7 @@ export default function AgentDetailPanel({
   const crewOutputs = outputs
     .filter(o => agentKeys.has(o.agent_name)
       && !INTERNAL_OUTPUT_TYPES.has(o.output_type)
-      && !isRenderedByPanel(crewKey, o.output_type))
+      && !isHiddenFromOutputList(crewKey, o.output_type))
     .sort((a, b) => parseDbDate(b.created_at).getTime() - parseDbDate(a.created_at).getTime())
 
   const crewMeta = CREW_META[crewKey]
