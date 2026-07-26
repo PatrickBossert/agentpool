@@ -1040,76 +1040,6 @@ FORWARD ROADMAP / TRANSFORMATION PREVIEW (synthesis_check.forward_roadmap)
    (reveals what we missed earlier in the interview).
 """
 
-_CUSTOMER_OUTPUT_TEMPLATE = """\
-CUSTOMER INTERVIEW SUMMARY TEMPLATE — OUTPUT FORMAT
-─────────────────────────────────────────────────────
-Produce one customer persona summary per customer interview.
-
-## Customer Profile
-- Role / title:               [Role, operational scope, and organisation context]
-- Asset dependency level:     [High / Medium / Low — evidence from interview]
-- Time burden on asset issues: [% of time; hours/week equivalent]
-- Primary service concern:    [Service category and why — their words]
-- External benchmark:         [How they compare [CLIENT ORGANISATION] to alternatives or peers they know]
-
-## Top 3 Friction Points (specific and quantified)
-1. [Pain point — named, with frequency, impact, and any £ or time estimate given]
-2. [Pain point — named, with frequency, impact, and any £ or time estimate given]
-3. [Pain point — named, with frequency, impact, and any £ or time estimate given]
-
-## Satisfaction Assessment
-- Service satisfaction by category: [X/10 per primary service category — what would move each to 9–10]
-- Below-5 risk factors:       [What would drop their satisfaction sharply — switching triggers]
-- Improvement confidence:     [Very / Some / Not really / Negative / No idea — evidence]
-- NPS sentiment:              [Promoter / Passive / Detractor — evidence from NPS-like question]
-- Peer comparison view:       [What they hear from peers about our performance]
-
-## Unmet Needs & Aspirations
-- Single highest-priority ask: [Verbatim or close paraphrase]
-- Value behind the ask:        [What it would enable: productivity / safety / morale / customers]
-- Aspirational best-in-class:  [Their unconstrained vision of excellent asset management]
-- Sustainability priority:     [Critical / Important / Nice-to-have / Not our concern]
-- Trust signals:               [What would increase their confidence in the partnership]
-
-## Data & Partnership Quality
-- Visibility — asset condition:      [Adequate / Partial / None — evidence]
-- Visibility — maintenance schedule: [Adequate / Partial / None — evidence]
-- Visibility — work order status:    [Adequate / Partial / None — evidence]
-- Visibility — performance metrics:  [Adequate / Partial / None — evidence]
-- Data wishlist top item:            [Most wanted data capability, in their words]
-- Partnership perception:            [Partner / Cost to manage — specific evidence]
-- Key service provider relationship:  [Responsive / Reactive / Absent — evidence per named provider]
-- Dialogue gap:                      [What they would raise on a standing monthly call]
-
-## Change Readiness
-- Welcome to change:          [Enthusiastic / Willing / Cautious / Resistant — evidence]
-- Excited about:              [Specific improvements they mentioned positively]
-- Concerns about:             [Specific risks or disruptions they named]
-- Disruption tolerance:       [What's acceptable; what would be too painful]
-- Co-creation willingness:    [Yes / Conditional / No — evidence]
-- Communication preference:   [Channel: email / town halls / dedicated contact / dashboards]
-
-## Competitive & Market Context
-- Asset management importance: [Strategic / Operational / Background — to their mission]
-- Alternative awareness:       [None aware / Aware but not considering / Considering]
-- Switching triggers:          [Specific conditions named that would push them to alternatives]
-- Our competitive advantage:   [Their view of our biggest strength — use in change narrative]
-
-## Champion / Detractor Classification
-- Classification:              [Champion / Passive / Detractor]
-- Evidence:                    [Specific signals: enthusiasm level, co-design willingness,
-                               NPS sentiment, language used about the relationship]
-- Engagement potential:        [Pilot participant / Ongoing feedback panel / Co-design partner /
-                               None — basis for engagement strategy]
-
-## Key Quotes for Business Case
-- [Quote 1 — vivid, specific, quantified; relevant to transformation ROI narrative]
-- [Quote 2 — vivid, specific; relevant to change readiness or partnership quality]
-- [Quote 3 — vivid, specific; relevant to the board-level change business case]
-(Anonymise role if required but preserve specificity and vividness of the language.)
-"""
-
-
 _AUDIT_PRINCIPLES = """\
 AUDIT / ASSURANCE / REGULATOR INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
 ──────────────────────────────────────────────────────────────────────────────────
@@ -1457,110 +1387,6 @@ NEXT STEPS (synthesis_check.forward_roadmap)
    or scope expansion (areas outside the original brief that should be included).
 """
 
-_AUDIT_OUTPUT_TEMPLATE = """\
-AUDIT INTERVIEW SUMMARY TEMPLATE — OUTPUT FORMAT
-──────────────────────────────────────────────────
-Produce one audit summary per interviewee / assurance function.
-
-## Auditor / Regulator Profile
-- Name / organisation:         [Name, audit function, and mandate]
-- Audit scope:                 [What they cover: enterprise risk / external / regulatory]
-- Prior engagement with [CLIENT ORGANISATION]: [Audit history; prior findings and remediation status]
-
-## Governance Assessment
-- Decision authority clarity:  [Clear / Adequate / Gaps / Unclear — evidence]
-- Accountability framework:    [Documented / Partially / Ad-hoc — evidence]
-- Escalation process:          [Defined / Informal / Missing — tested or theoretical?]
-- Board oversight adequacy:    [Adequate / Needs strengthening — evidence]
-- Conflicts of interest managed: [Yes / Partially / Gap found — evidence]
-- Governance maturity rating:  [Ad-hoc / Repeatable / Managed / Optimised — justification]
-- Prior audit findings addressed: [Yes / Partially / Recurring issues — detail]
-
-## Compliance & Regulatory Status
-- Key vendor obligations:       [Compliant / Minor breaches / Recurrent / Untracked — per named provider]
-- Regulatory obligations:      [Compliant / At risk / Violations found — by category]
-- Documentation & audit trail: [Strong / Adequate / Gaps]
-- Compliance calendar:         [Systematic / Ad-hoc / None]
-- Material compliance risks:   [List named gaps with severity — Material / Significant / Advisory]
-
-## Financial Controls Assessment
-- Capex discipline:            [Tight (±5%) / Reasonable (±15%) / Loose (±20%+)]
-- Budget variance pattern:     [Evidence from last 3–5 years]
-- Change control:              [Enforced / Partially / Weak]
-- Contingency / risk reserves: [Explicit & disclosed / Hidden / Absent]
-- Separation of duties:        [Adequate / Partial / Gap found]
-- Financial data confidence:   [X/10 — what drives any score below 8]
-- Major overrun history:       [Incidents named; how managed; what was learnt]
-
-## KPI & Performance Tracking
-- KPI coverage:                [Comprehensive / Adequate / Material gaps — what's missing]
-- Tracking discipline:         [Monthly trended to board / Partial / Ad-hoc / Missing]
-- Data integrity concerns:     [None / Minor / Material — specifics]
-- Independent verification:    [Annual external / Internal review / None]
-- Restatement history:         [Clean / One-off corrected / Pattern]
-- Incentive alignment risk:    [KPIs tied to comp — robust metrics / gaming risk]
-- Trend reliability:           [Trust trends / Question assumptions — reason]
-
-## Risk Management
-- Risk register status:        [Maintained quarterly / Partial / None]
-- Material risks identified:   [Comprehensive / Adequate / Material omissions — what's missing]
-- Mitigation effectiveness:    [Monitored with evidence / Assumed / Past failures found]
-- Emerging risks flagged:      [Technology / Talent / Regulatory / Cyber / Supply chain — detail]
-- Near-miss / gap revelations: [Any incidents that exposed control gaps]
-- Overall risk rating:         [X/10 — what would move it in either direction]
-
-## Data & Information Quality
-- Asset data completeness:     [% assets in system; historical data present]
-- Accuracy & consistency:      [Cross-system conflicts; definition alignment]
-- Timeliness:                  [Real-time / Batch / Unreliable]
-- Data governance controls:    [Formal governance / Partial / None]
-- Data issues in prior audits: [Named issues; remediated / open]
-- Data ownership:              [Named owner / Shared / None]
-- Systems integration:         [Automated feeds / Manual reconciliation / Siloed]
-- Strategic decision trust:    [Would trust for £100M decision? Evidence]
-
-## Third-Party & Vendor Management
-- SLA monitoring rigor:        [Independent / Self-reported / Not monitored — per named vendor]
-- Independent vendor audit:    [Quarterly / Annual / Ad-hoc / None]
-- Prior compliance gaps:       [Found and remediated / Found and open / None found]
-- Conflict of interest:        [Well managed / Partial / Gap found]
-- Transformation capability:   [Confident / Medium / Low / Unassessed]
-- Vendor lock-in risk:         [Low / Medium / High — exit options available?]
-
-## Transformation Readiness
-- Governance capability:       [Ready / Adequate / Concerns — evidence]
-- Programme governance:        [PMO + sponsor / Partial / Not yet defined]
-- Control continuity plan:     [Parallel controls planned / Ad-hoc / Not addressed]
-- Execution risk level:        [Low / Moderate / High]
-- Escalation triggers:         [What would prompt board-level intervention]
-
-## Comparative & Peer Assessment
-- Governance vs. peers:        [Ahead / In line / Behind / Not benchmarked]
-- Best-practice opportunities: [Named practices from other organisations]
-- Regulatory trend horizon:    [Named upcoming requirements that need preparation]
-- Capability confidence vs. peers: [X/10 — evidence basis]
-
-## Overall Audit Assessment
-- Governance maturity:         [Ad-hoc / Repeatable / Managed / Optimised]
-- Material control gaps:       [1–3 most urgent findings — material only]
-- Compliance status:           [On track / At risk / Issues requiring board reporting]
-- Data integrity:              [High / Medium / Concerns]
-- Overall risk rating:         [X/10]
-
-## Key Recommendations (Priority-ordered)
-1. [Material finding — action required, owner, timeline]
-2. [Significant finding — action plan, deadline]
-3. [Advisory improvement opportunity]
-
-## Follow-Up Actions
-- [ ] Board / Audit Committee reporting for material findings
-- [ ] Management response and remediation plan
-- [ ] Transformation programme governance alignment
-- [ ] Enhanced monitoring schedule during change
-- [ ] Re-assessment date at programme milestones
-"""
-
-
 _FRONTLINE_PRINCIPLES = """\
 FRONTLINE INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
 ─────────────────────────────────────────────────────────────
@@ -1793,84 +1619,6 @@ FORWARD ROADMAP:
   This closes the psychological contract: they gave honest feedback; we commit to act
   on it and communicate back what changed.
 """
-
-_FRONTLINE_OUTPUT_TEMPLATE = """\
-FRONTLINE WORKER INTERVIEW SUMMARY — TEMPLATE
-──────────────────────────────────────────────
-Produce one summary per frontline worker cohort interviewed. This summary is
-CONFIDENTIAL: do not include any individual's name in shared artefacts — use
-role/function/cohort identifiers only (e.g. "[Role] — [Function]").
-
-## Worker Profile
-- Role/Title:            [Role from the client's operational context]
-- Function:              [Service function or department — use [SERVICE_CATEGORIES] from project context]
-- Organisation:          [[CLIENT ORGANISATION] or named contracted provider — use [KEY_VENDORS]]
-- Years in role:         [X]
-- Feedback confidence:   [High / Medium / Low — did they speak openly?]
-
-## Day-to-Day Reality
-- Planned vs. reactive split: [X% planned, Y% reactive]
-- Job completion rate:        [% first attempt]
-- Top completion blockers:    [1–3 most common reasons jobs don't complete]
-- Admin/data entry time:      [X% of working day]
-- Key workarounds:            [Describe the duplicate processes or system bypasses]
-
-## Pain Points & Friction (Ranked)
-1. Top frustration: [Description]
-   - Type:      [Process / Tools / Resourcing / Safety / Leadership / External]
-   - Frequency: [Daily / Weekly / Chronic]
-   - Fix:       [What would resolve it?]
-2. Second frustration: [...]
-3. Third frustration:  [...]
-
-## Data & Systems Reality
-- System quality:      [Working well / Adequate / Problematic / Broken]
-- Data accuracy:       [Trust it fully / Mostly / Sceptical / Don't trust it]
-- Data completeness:   [Complete / Gaps / Major gaps]
-- Active workarounds:  [Systems being replaced or bypassed by manual alternatives]
-
-## Safety & Wellbeing
-- Safety confidence:       [1–10]
-- Unreported concerns:     [Yes — describe / No known concerns]
-- Pressure to cut corners: [Yes / No / Sometimes — describe context]
-- Burnout risk:            [Low / Medium / High — evidence]
-- Morale:                  [Good / Neutral / Low]
-
-## Team & Leadership
-- Direct supervisor:   [Supportive advocate / Transactional / Disconnected / Source of tension]
-- Company engagement:  [Proud / Neutral / Frustrated / Considering leaving]
-- Unheard concerns:    [What do they want management to know that they haven't said?]
-
-## Capability & Development
-- Training adequacy:     [Sufficient / Gaps in: [areas]]
-- Career growth:         [Possible / Stalled / No visible path]
-- Key person dependency: [Is this worker a critical knowledge holder?]
-- Succession risk:       [Knowledge that would leave if they left]
-
-## Change Readiness
-- Openness to improvement: [Excited / Cautious / Sceptical / Resistant]
-- Change fatigue:          [Fresh / Moderate / Exhausted]
-- Co-design appetite:      [Would participate / Maybe / No thanks]
-- Changes they want:       [Specific improvements they named]
-- Changes to avoid:        [What would make things worse]
-
-## Retention & Flight Risk
-- Likelihood to stay (1–10): [X]
-- Key retention factors:     [What keeps them; what would make them leave]
-- Risk indicators:           [Burnout / Unsafe conditions / Poor management / No growth]
-
-## Voice & Quotes
-- "[Paraphrased insight that should inform strategy — using their language]"
-- "[Another key observation]"
-- "[A safety or morale signal that management should see]"
-
-## Recommended Actions
-- [ ] [Quick win this cohort would notice — implement before the main programme]
-- [ ] [Safety concern to escalate or monitor]
-- [ ] [Retention risk to address]
-- [ ] [System or process improvement to include in transformation scope]
-"""
-
 
 _CORP_SERVICES_PRINCIPLES = """\
 CORPORATE SERVICES INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
@@ -2132,85 +1880,6 @@ FORWARD ROADMAP:
   I'll follow up on [named next step]. Does that sound right?"
   Name the specific next step — vague commitments erode the trust built in this interview.
 """
-
-_CORP_SERVICES_OUTPUT_TEMPLATE = """\
-CORPORATE SERVICES INTERVIEW SUMMARY — TEMPLATE
-─────────────────────────────────────────────────
-Produce one summary per corporate services function interviewed. Identify interviewees
-by function and role only — do not include names in shared artefacts.
-(e.g. "Finance — Senior Analyst, Capital Expenditure")
-
-## Function Context
-- Function:                    [Finance / HR / IT / Data / Compliance / Procurement]
-- Role/Title:                  [Analyst / Manager / Lead / Director / etc.]
-- Years in role:               [X]
-- Team size:                   [X people]
-- Time allocation to AM:       [X% of function's capacity on Asset Management]
-
-## Primary Contribution to Asset Management
-- Key deliverables:            [What does this function provide? Budget? Systems? Data? Training?]
-- Criticality to AM decisions: [Essential / Important / Supporting]
-
-## Systems & Process Reality
-- Primary systems:             [Core operational and enterprise systems used — name from project context]
-- Data quality:                [Trustworthy / Mostly / Questionable / Poor]
-- System integration:          [Well-integrated / Partial / Siloed]
-- Manual workarounds:          [Hours/week; what tasks; what they replace]
-- Top process friction:        [What is most broken or inefficient?]
-
-## Capability & Constraints
-- Team capacity:               [Adequate / Stretched / Overwhelmed / Firefighting]
-- Skill gaps:                  [Specific capabilities missing]
-- Technology gaps:             [Systems, tools, platforms needed]
-- Biggest barrier to effectiveness: [What single change would unlock the most value?]
-
-## Alignment & Governance
-- AM strategy understanding:   [Clear / Partial / Unclear / Misaligned]
-- Involvement in AM decisions: [Consulted early / Late validation / Not consulted]
-- Relationship with AM leadership: [Close / Transactional / Distant / Strained]
-- Governance gaps identified:  [Decision authority, missing accountability, siloed incentives]
-
-## Change Readiness
-- Transformation understanding: [Clear / Vague / Concerned]
-- Preparation status:          [Being prepared / Preliminary / Not consulted / Worried]
-- Openness to change:          [Excited / Cautious / Sceptical / Resistant]
-- Co-design appetite:          [Would contribute / Conditional / Prefers to be told]
-
-## Morale & Retention
-- Job satisfaction (1–10):     [X]
-- Burnout risk:                [Low / Medium / High — evidence]
-- Likelihood to stay (1–10):   [X]
-- Key retention factors:       [What keeps them; what would make them leave]
-
-## Pain Points & Friction (Ranked)
-1. Top frustration: [Description]
-   - Impact:     [Decision quality / Efficiency / Morale / Compliance risk]
-   - Root cause: [System / Process / Governance / Resourcing / People]
-   - Fix:        [What would resolve it?]
-2. Second frustration: [...]
-3. Third frustration:  [...]
-
-## Advice for Transformation
-- What would help:          [Key insights from this function's perspective]
-- What to avoid:            [Past mistakes; pitfalls from institutional memory]
-- Critical success factor:  [What must go right from their lens]
-- Their role in success:    [What they want to be asked to do]
-
-## Cross-Function Themes
-- Coordination with [other function]: [Working well / Could improve / Misaligned]
-- Data sharing with [other function]: [Integrated / Manual bridge / Siloed]
-
-## Quotes & Observations
-- "[Paraphrased insight that should inform strategy — using their language]"
-- "[Another key observation]"
-
-## Recommended Actions
-- [ ] [Priority 1: Address specific system, data, or governance gap]
-- [ ] [Priority 2: Capability or capacity investment]
-- [ ] [Priority 3: Governance or alignment improvement]
-- [ ] [Involve this function in: specific transformation workstream]
-"""
-
 
 _L1_PRINCIPLES = """\
 L1 INTERVIEW PRINCIPLES — MAYA'S JUDGMENT HEURISTICS
@@ -2857,7 +2526,6 @@ def create_interaction_designer_task(
             "      - closing_message: concise thanks, confirm next steps (portfolio options paper\n"
             "        within [4–6 weeks]), confirm when findings will be shared\n\n"
             "   e) After drafting, produce one L0 Interview Summary using this template:\n"
-            + _L0_OUTPUT_TEMPLATE + "\n"
 
             "── L1 NODES (strategic / portfolio level — GMs and value-stream owners) ────────\n"
             "5. For each L1 node, apply all 10 L1 Interview Principles from your backstory. "
@@ -2936,7 +2604,6 @@ def create_interaction_designer_task(
             "      - closing_message: follows synthesis_check; thanks, confirms stakeholder\n"
             "        interviews to follow and when findings will be shared\n\n"
             "   g) After drafting, produce one L1 Interview Summary using this template:\n"
-            + _L1_OUTPUT_TEMPLATE + "\n"
 
             "── L2 NODES (operational / process-stage level — process managers) ─────────────\n"
             "6. For each L2 node, apply all 10 L2 Interview Principles from your backstory. "
@@ -3014,7 +2681,6 @@ def create_interaction_designer_task(
             "      - closing_message: follows synthesis_check; brief thanks and next steps\n\n"
 
             "   g) After drafting, produce one L2 Interview Summary using this template:\n"
-            + _L2_OUTPUT_TEMPLATE + "\n"
 
             "── L3 NODES (activity level — practitioners and operational staff) ──────────────\n"
             "7. For each L3 node — anchored to the L2 vs L3 framework: core question is "
@@ -3126,7 +2792,6 @@ def create_interaction_designer_task(
             "      - closing_message: thank the customer warmly, explain how feedback will be used,\n"
             "        confirm when they'll hear about outcomes\n\n"
             "   e) After drafting, produce one Customer Interview Summary using this template:\n"
-            + _CUSTOMER_OUTPUT_TEMPLATE + "\n"
 
             "── AUDIT / ASSURANCE / REGULATOR INTERVIEWS (outside-in — governance) ──────────\n"
             "9. Design audit interview scripts for each auditor or regulator identified in the\n"
@@ -3185,7 +2850,6 @@ def create_interaction_designer_task(
             "      - closing_message: thank them for their independent perspective, confirm\n"
             "        how findings will feed into the governance assessment and board reporting\n\n"
             "   e) After drafting, produce one Audit Interview Summary using this template:\n"
-            + _AUDIT_OUTPUT_TEMPLATE + "\n"
 
             "── FRONTLINE INTERVIEWS (ground-truth — operational workers) ─────────────────────\n"
             "10. Design frontline worker interview scripts for each frontline worker cohort\n"
@@ -3249,7 +2913,6 @@ def create_interaction_designer_task(
             "        what was acted on because of their input\n\n"
             "   e) After drafting, produce one Frontline Worker Interview Summary per cohort\n"
             "   using this template:\n"
-            + _FRONTLINE_OUTPUT_TEMPLATE + "\n"
 
             "── CORPORATE SERVICES INTERVIEWS (ground-truth — support functions) ──────────────\n"
             "11. Design corporate services interview scripts for each support function identified\n"
@@ -3322,7 +2985,6 @@ def create_interaction_designer_task(
             "        that their function's needs will be built into the transformation design\n\n"
             "   e) After drafting, produce one Corporate Services Interview Summary per function\n"
             "   using this template:\n"
-            + _CORP_SERVICES_OUTPUT_TEMPLATE + "\n"
 
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
             "12. Output ALL INTERVIEW SCRIPTS (L0, L1, L2, L3, C, A, F, and S) as a single JSON object keyed "
@@ -3423,36 +3085,7 @@ def create_interaction_designer_task(
             "in the client's operational context.\n"
             "   Use SQLiteStateTool with operation='write', key='interview_scripts', "
             "agent_name='interaction_designer' to save this.\n\n"
-            "13. Save INTERVIEW SUMMARIES as seven separate artefacts:\n"
-            "   a) AUDIT INTERVIEW SUMMARIES (one per auditor/regulator, produced in step 9e):\n"
-            "      { \"<node_label>\": { <fields from Audit Interview Summary Template> } }\n"
-            "      Use SQLiteStateTool with operation='write', key='audit_interview_summaries', "
-            "agent_name='interaction_designer' to save this.\n"
-            "   b) CUSTOMER INTERVIEW SUMMARIES (one per segment, produced in step 8e):\n"
-            "      { \"<node_label>\": { <fields from Customer Interview Summary Template> } }\n"
-            "      Use SQLiteStateTool with operation='write', key='customer_interview_summaries', "
-            "agent_name='interaction_designer' to save this.\n"
-            "   c) L0 INTERVIEW SUMMARIES (one per L0 node, produced in step 4e):\n"
-            "      { \"<node_label>\": { <fields from L0 Interview Summary Template> } }\n"
-            "      Use SQLiteStateTool with operation='write', key='l0_interview_summaries', "
-            "agent_name='interaction_designer' to save this.\n"
-            "   d) L1 INTERVIEW SUMMARIES (one per L1 node, produced in step 5g):\n"
-            "      { \"<node_label>\": { <fields from L1 Interview Summary Template> } }\n"
-            "      Use SQLiteStateTool with operation='write', key='l1_interview_summaries', "
-            "agent_name='interaction_designer' to save this.\n"
-            "   e) L2 INTERVIEW SUMMARIES (one per L2 node, produced in step 6g):\n"
-            "      { \"<node_label>\": { <fields from L2 Interview Summary Template> } }\n"
-            "      Use SQLiteStateTool with operation='write', key='l2_interview_summaries', "
-            "agent_name='interaction_designer' to save this.\n"
-            "   f) FRONTLINE INTERVIEW SUMMARIES (one per cohort, produced in step 10e):\n"
-            "      { \"<node_label>\": { <fields from Frontline Worker Interview Summary Template> } }\n"
-            "      Use SQLiteStateTool with operation='write', key='frontline_interview_summaries', "
-            "agent_name='interaction_designer' to save this.\n"
-            "   g) CORPORATE SERVICES INTERVIEW SUMMARIES (one per function, produced in step 11e):\n"
-            "      { \"<node_label>\": { <fields from Corporate Services Interview Summary Template> } }\n"
-            "      Use SQLiteStateTool with operation='write', key='corp_services_interview_summaries', "
-            "agent_name='interaction_designer' to save this.\n\n"
-            "14. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
+            "13. Use HumanInputTool with prompt: 'Assessment instruments saved. Please review:\n"
             "   • outputs/interview_scripts.json — integrated scripts for all L0, L1, L2, L3, C, A, F, and S nodes.\n"
             "   For Audit (A) scripts, check:\n"
             "     FRAMING BLOCK\n"
@@ -3593,15 +3226,8 @@ def create_interaction_designer_task(
             "     - Does forward_roadmap name a specific next step (which workstream, which\n"
             "       discussion) rather than a vague 'we'll be in touch'?\n"
             "     - Does peer_referral frame as targeted follow-up, not a generic referral?\n"
-            "   • outputs/audit_interview_summaries.json — governance assessment per auditor/regulator\n"
-            "   • outputs/corp_services_interview_summaries.json — function summary per support team\n"
-            "   • outputs/customer_interview_summaries.json — customer persona per segment\n"
-            "   • outputs/frontline_interview_summaries.json — worker reality summary per cohort\n"
-            "   • outputs/l0_interview_summaries.json — portfolio logic prep per L0 node\n"
-            "   • outputs/l1_interview_summaries.json — capability strategy prep per L1 node\n"
-            "   • outputs/l2_interview_summaries.json — decision architecture prep per L2 node\n"
             "   Reply \"approved\" to proceed, or provide revision notes.'\n"
-            "15. If revision notes received, revise and call HumanInputTool again. "
+            "14. If revision notes received, revise and call HumanInputTool again. "
             "Repeat at most 3 times total.\n"
         ),
         expected_output=(
