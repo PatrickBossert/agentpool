@@ -5,6 +5,8 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from pathlib import Path
 
+from api.config import get_settings
+
 # asyncio_mode = strict (see pytest.ini) — all async tests must use @pytest.mark.asyncio
 
 # Point to a temp directory so tests never touch real project data
@@ -33,6 +35,25 @@ os.environ.setdefault("FRONTEND_URL", "http://localhost:3000")
 
 Path("/tmp/agentpool_test").mkdir(exist_ok=True)
 Path("/tmp/agentpool_test_projects").mkdir(exist_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def reset_settings_cache():
+    """Rebuild Settings for every test and drop the cache afterwards.
+
+    get_settings() is lru_cached. Tests that monkeypatch env vars and call
+    cache_clear() themselves get correct settings — but monkeypatch restores the
+    environment at teardown while the cache still holds the Settings object
+    built from the patched values. Every later test then reads a stale config;
+    test_admin.py pointing DATABASE_DIR at /tmp/test_admin_db was making the
+    agent-chat tests 404 because the app looked for projects in the wrong
+    directory.
+
+    Clearing on both sides makes each test read the environment as it stands.
+    """
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest_asyncio.fixture
