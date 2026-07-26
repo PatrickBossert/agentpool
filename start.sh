@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start.sh — start all FutureMomentum services
+# start.sh — start all TaskReimagination services
 set -e
 cd "$(dirname "$0")"
 
@@ -44,7 +44,7 @@ else
 fi
 
 echo ""
-echo "FutureMomentum services running:"
+echo "TaskReimagination services running:"
 echo "  FastAPI:      http://localhost:8000/docs"
 echo "  Chainlit:     http://localhost:8001"
 echo "  React UI:     http://localhost:3000"
@@ -52,4 +52,4 @@ echo "  Caddy (local) http://localhost:80"
 echo "  n8n:          http://localhost:5678"
 echo "  ChromaDB:     http://localhost:8002"
 echo "  LiteLLM:      http://localhost:4000"
-echo "  Public URL:   https://futuremomentum.ai/dashboard"
+echo "  Public URL:   https://taskreimagination.ai/dashboard"

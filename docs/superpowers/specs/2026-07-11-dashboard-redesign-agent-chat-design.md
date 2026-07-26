@@ -315,7 +315,7 @@ Context is fetched before calling Claude:
 ### System Prompt Template
 
 ```
-You are {agent_name}, an AI agent within the FutureMomentum platform.
+You are {agent_name}, an AI agent within the TaskReimagination platform.
 
 Your role: {role}
 

@@ -1,10 +1,10 @@
-# FutureMomentum Deployment Design
+# TaskReimagination Deployment Design
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make FutureMomentum (formerly AgentPool) accessible to external stakeholders for voice interviews and to consultants for the dashboard, running from a laptop with zero infrastructure overhead.
+**Goal:** Make TaskReimagination (formerly AgentPool) accessible to external stakeholders for voice interviews and to consultants for the dashboard, running from a laptop with zero infrastructure overhead.
 
-**Architecture:** Caddy reverse proxy sits in front of all local services on port 80. cloudflared tunnels that single port through Cloudflare's edge to `futuremomentum.ai`. Cloudflare Access protects `/dashboard/*` with email OTP. The interview route `/interview/:token` is public. The homepage `/` serves a static placeholder.
+**Architecture:** Caddy reverse proxy sits in front of all local services on port 80. cloudflared tunnels that single port through Cloudflare's edge to `taskreimagination.ai`. Cloudflare Access protects `/dashboard/*` with email OTP. The interview route `/interview/:token` is public. The homepage `/` serves a static placeholder.
 
 **Tech Stack:** Caddy 2, cloudflared, Cloudflare Zero Trust, React (Vite base path), IONOS SMTP via n8n.
 
@@ -12,13 +12,13 @@
 
 ## Domain & DNS
 
-`futuremomentum.ai` is already registered and managed in Cloudflare — no nameserver changes needed. The Cloudflare Tunnel setup automatically creates the CNAME record when a public hostname is added in Zero Trust.
+`taskreimagination.ai` is already registered and managed in Cloudflare — no nameserver changes needed. The Cloudflare Tunnel setup automatically creates the CNAME record when a public hostname is added in Zero Trust.
 
 **Planned URLs:**
-- `https://futuremomentum.ai/` — static landing placeholder (public)
-- `https://futuremomentum.ai/dashboard/*` — React SPA consultant dashboard (Cloudflare Access, email OTP)
-- `https://futuremomentum.ai/interview/:token` — stakeholder voice interview (public, no login)
-- `https://futuremomentum.ai/api/*` — FastAPI backend (JWT auth enforced by FastAPI, not Cloudflare)
+- `https://taskreimagination.ai/` — static landing placeholder (public)
+- `https://taskreimagination.ai/dashboard/*` — React SPA consultant dashboard (Cloudflare Access, email OTP)
+- `https://taskreimagination.ai/interview/:token` — stakeholder voice interview (public, no login)
+- `https://taskreimagination.ai/api/*` — FastAPI backend (JWT auth enforced by FastAPI, not Cloudflare)
 
 ---
 
@@ -65,14 +65,14 @@ No inbound firewall ports are needed — cloudflared makes outbound-only connect
 
 **One-time Cloudflare setup (done in the dashboard, not in code):**
 1. Cloudflare Zero Trust → Networks → Tunnels → Create tunnel → copy token
-2. Add public hostname: `futuremomentum.ai` → Service: `http://localhost:80`
+2. Add public hostname: `taskreimagination.ai` → Service: `http://localhost:80`
 3. Cloudflare auto-creates the CNAME record in DNS
 
 ### 3. Cloudflare Access policy
 
 Protects the consultant dashboard. Set up in Cloudflare Zero Trust → Access → Applications.
 
-- **Application:** `futuremomentum.ai/dashboard*`
+- **Application:** `taskreimagination.ai/dashboard*`
 - **Policy:** Allow — email OTP — include `*@futureedge.consulting` (add other consultant emails as needed)
 - **Bypass rules:**
   - `/interview/*` — public (stakeholders)
@@ -105,7 +105,7 @@ A minimal `landing/index.html` file served by Caddy at `/`. Placeholder content 
 
 ```
 landing/
-  index.html   ← "FutureMomentum.ai — Coming Soon"
+  index.html   ← "TaskReimagination.ai — Coming Soon"
 ```
 
 ### 6. Resend SMTP via n8n
@@ -114,9 +114,9 @@ n8n already dispatches campaign reminder emails. A new SMTP credential is added 
 
 **One-time domain setup (done in Resend dashboard + Cloudflare DNS):**
 1. Create account at resend.com
-2. Add domain `futuremomentum.ai` → Resend generates one DKIM DNS record
+2. Add domain `taskreimagination.ai` → Resend generates one DKIM DNS record
 3. Add that record in Cloudflare DNS (one click — domain already managed there)
-4. Emails send from `noreply@futuremomentum.ai` — on-brand, verified sender
+4. Emails send from `noreply@taskreimagination.ai` — on-brand, verified sender
 
 **Credential settings (configured in n8n UI — not in code):**
 - Type: SMTP
@@ -130,7 +130,7 @@ n8n already dispatches campaign reminder emails. A new SMTP credential is added 
 
 The interview invitation email body uses the stable public URL:
 ```
-https://futuremomentum.ai/interview/{{session_token}}
+https://taskreimagination.ai/interview/{{session_token}}
 ```
 
 ### 7. start.sh additions
@@ -151,7 +151,7 @@ echo $! > .pids/cloudflared.pid
 
 ### 8. Rebranding pass
 
-The internal name "AgentPool" is replaced with "FutureMomentum" in user-visible strings:
+The internal name "AgentPool" is replaced with "TaskReimagination" in user-visible strings:
 
 - `chainlit_app/app.py` — Chainlit app title
 - `ui/index.html` — `<title>` tag

@@ -107,7 +107,7 @@ export default function AppLayout() {
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Top nav */}
       <header className="bg-white border-b border-gray-200 px-4 h-12 flex items-center gap-6">
-        <span className="font-bold text-brand text-sm tracking-wide">FutureMomentum</span>
+        <span className="font-bold text-brand text-sm tracking-wide">TaskReimagination</span>
         <nav className="flex gap-4 overflow-x-auto">
           {navItems.map((item) => (
             <NavLink
@@ -1329,7 +1329,7 @@ async def run_agent_chat(
         context_block = await _fetch_context(conn, project["id"], persona["context_type"])
 
     system_prompt = (
-        f"You are {agent_name}, an AI agent within the FutureMomentum platform.\n\n"
+        f"You are {agent_name}, an AI agent within the TaskReimagination platform.\n\n"
         f"Your role: {persona['role']}\n\n"
         f"Project: {slug}\n"
         f"Today: {date.today().isoformat()}\n\n"

@@ -1,4 +1,4 @@
-# FutureMomentum AgentPool
+# TaskReimagination AgentPool
 
 AI-driven business strategy platform. Multi-agent crews analyse organisations, surface value opportunities, build roadmaps, interview stakeholders, and produce boardroom-ready outputs — Business Plan, Value Chain, Initiative Register, and client Report PDF.
 
@@ -254,7 +254,7 @@ Ensure `N8N_WEBHOOK_URL` in `.env` matches the webhook URL configured in n8n. Th
 Browser must support Web Speech API (Chrome/Edge). Check that `PUBLIC_URL` is set correctly so interview links resolve.
 
 **Resend emails not sending**
-Verify `RESEND_API_KEY` is set and `futuremomentum.ai` is a verified sender domain in the Resend dashboard.
+Verify `RESEND_API_KEY` is set and `taskreimagination.ai` is a verified sender domain in the Resend dashboard.
 
 **python-pptx ImportError**
 Install inside the venv: `pip install python-pptx`. Do not use system pip on macOS with Homebrew Python.

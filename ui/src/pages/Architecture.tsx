@@ -61,7 +61,7 @@ export default function Architecture() {
           <span className="ml-2 text-xs bg-amber-900/50 text-amber-300 border border-amber-700 px-2 py-0.5 rounded">internal</span>
         </div>
         <p className="text-slate-400 text-sm">
-          FutureMomentum - application architecture, agent inventory, data model, and tool access reference.
+          TaskReimagination - application architecture, agent inventory, data model, and tool access reference.
           Not linked from nav. Access at <code className="text-brand">/dashboard/architecture</code>.
         </p>
       </div>
@@ -103,7 +103,7 @@ export default function Architecture() {
               <TableRow cells={['LiteLLM proxy', ':4000', 'LiteLLM', 'LLM routing - Claude Opus/Sonnet/Haiku + local qwen3']} />
               <TableRow cells={['ChromaDB', ':8002', 'ChromaDB (Docker)', 'Vector store - project docs + sector knowledge']} />
               <TableRow cells={['n8n', ':5678', 'n8n (Docker)', 'Webhook relay, HITL review events, Slack notifications']} />
-              <TableRow cells={['Cloudflare Tunnel', '(managed)', 'cloudflared', 'Exposes :80 publicly at https://futuremomentum.ai']} />
+              <TableRow cells={['Cloudflare Tunnel', '(managed)', 'cloudflared', 'Exposes :80 publicly at https://taskreimagination.ai']} />
               <TableRow cells={['llama.cpp', ':10000', 'llama.cpp / Unsloth', 'Local LLM endpoint (sensitive mode, Qwen3-4B)']} />
             </tbody>
           </table>
@@ -516,7 +516,7 @@ export default function Architecture() {
 
       {/* ── API Endpoints ── */}
       <Section id="api" title="API Endpoints">
-        <p className="text-xs text-slate-500 mb-3">Base URL: <code className="text-slate-300">https://futuremomentum.ai/api</code> (locally: <code className="text-slate-300">http://localhost:8000</code>). JWT Bearer required except /auth/login and public interview routes.</p>
+        <p className="text-xs text-slate-500 mb-3">Base URL: <code className="text-slate-300">https://taskreimagination.ai/api</code> (locally: <code className="text-slate-300">http://localhost:8000</code>). JWT Bearer required except /auth/login and public interview routes.</p>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-slate-800/60">
@@ -627,8 +627,8 @@ export default function Architecture() {
           <div className="mt-3 text-sm text-slate-300">
             <p className="text-slate-400 text-xs mb-1">Workflows:</p>
             <div className="space-y-1">
-              <div><Tag color="amber">FutureMomentum Notifications</Tag> <span className="text-slate-400 text-xs">- Webhook → Switch on event_type → Slack HITL DM or Slack Channel Notify</span></div>
-              <div><Tag color="amber">FutureMomentum Slack Run Command</Tag> <span className="text-slate-400 text-xs">- Slack /run slash command → POST /orchestrate → Slack confirm</span></div>
+              <div><Tag color="amber">TaskReimagination Notifications</Tag> <span className="text-slate-400 text-xs">- Webhook → Switch on event_type → Slack HITL DM or Slack Channel Notify</span></div>
+              <div><Tag color="amber">TaskReimagination Slack Run Command</Tag> <span className="text-slate-400 text-xs">- Slack /run slash command → POST /orchestrate → Slack confirm</span></div>
             </div>
           </div>
         </Card>
@@ -644,10 +644,10 @@ export default function Architecture() {
         <Card title="Resend (Email)" accent="border-teal-700/50">
           <KV k="API endpoint" v="https://api.resend.com/emails  (POST)" />
           <KV k="Auth method" v="Bearer token (RESEND_API_KEY env var)" />
-          <KV k="From address" v="FutureMomentum <noreply@futuremomentum.ai>" />
+          <KV k="From address" v="TaskReimagination <noreply@taskreimagination.ai>" />
           <KV k="Use case" v="Stakeholder interview reminder emails (gentle / firm / urgent escalation)" />
           <KV k="Triggered by" v="POST /projects/{slug}/reminder-emails/send" />
-          <p className="text-xs text-slate-500 mt-2">Domain futuremomentum.ai must be verified in Resend dashboard before emails deliver.</p>
+          <p className="text-xs text-slate-500 mt-2">Domain taskreimagination.ai must be verified in Resend dashboard before emails deliver.</p>
         </Card>
 
         <Card title="Anthropic / Claude API" accent="border-rose-700/50">
@@ -684,7 +684,7 @@ export default function Architecture() {
         </Card>
 
         <Card title="Cloudflare Tunnel" accent="border-slate-600">
-          <KV k="Public URL" v="https://futuremomentum.ai" />
+          <KV k="Public URL" v="https://taskreimagination.ai" />
           <KV k="Auth method" v="CLOUDFLARE_TUNNEL_TOKEN env var (outbound-only, no inbound ports needed)" />
           <KV k="Dashboard URL" v="Cloudflare Zero Trust dashboard" />
           <KV k="Access policy" v="Cloudflare Access - email OTP protects /dashboard/*; bypass for /api/* and /dashboard/interview/*" />
@@ -699,7 +699,7 @@ export default function Architecture() {
       </Section>
 
       <div className="text-center text-slate-600 text-xs py-8 border-t border-slate-800">
-        FutureMomentum internal architecture reference - not for distribution
+        TaskReimagination internal architecture reference - not for distribution
       </div>
     </div>
   )

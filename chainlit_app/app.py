@@ -1,6 +1,6 @@
 # chainlit_app/app.py
 """
-FutureMomentum Chainlit HITL interface.
+TaskReimagination Chainlit HITL interface.
 
 Session flow:
   selecting_project  →  (enter project slug)
@@ -39,7 +39,7 @@ async def start() -> None:
     cl.user_session.set("crew", None)
     await cl.Message(
         content=(
-            "**FutureMomentum** — Digital Modernisation Agent Team\n\n"
+            "**TaskReimagination** — Digital Modernisation Agent Team\n\n"
             "Enter a project slug to begin (e.g. `acme-rail`)."
         )
     ).send()

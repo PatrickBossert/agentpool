@@ -227,7 +227,7 @@ DELETE /auth/users/{user_id}/projects/{slug}      revoke reviewer access
 On `POST /auth/users`, after inserting the user record, send one email via Resend:
 
 - **To:** the new user's email address
-- **Subject:** `"Your FutureMomentum account has been created"`
+- **Subject:** `"Your TaskReimagination account has been created"`
 - **Body:** username, temporary password (plaintext, one-time only — user should change on first login), login URL (`PUBLIC_URL/dashboard/login`)
 
 Uses existing `RESEND_API_KEY` and `FROM_EMAIL` from config. If `RESEND_API_KEY` is empty, the user is still created and the email is silently skipped (same pattern as reminder emails).

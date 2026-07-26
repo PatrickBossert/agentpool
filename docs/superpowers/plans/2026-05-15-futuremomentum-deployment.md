@@ -1,10 +1,10 @@
-# FutureMomentum Deployment Implementation Plan
+# TaskReimagination Deployment Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make FutureMomentum accessible externally — stakeholders reach voice interviews via public URL, consultants access the dashboard via Cloudflare Access email OTP — all running from a laptop with zero infrastructure overhead.
+**Goal:** Make TaskReimagination accessible externally — stakeholders reach voice interviews via public URL, consultants access the dashboard via Cloudflare Access email OTP — all running from a laptop with zero infrastructure overhead.
 
-**Architecture:** Caddy reverse proxy on `:80` routes three zones: `/api/*` → FastAPI :8000, `/dashboard*` → Vite dev server :3000, `/` → static landing HTML. cloudflared tunnels `:80` to `futuremomentum.ai` via Cloudflare's edge (outbound-only, no inbound firewall changes). Cloudflare Access protects `/dashboard/*` with email OTP, bypassing `/dashboard/interview/*` for public stakeholder access. React SPA uses `base: '/dashboard'` in Vite + `basename: '/dashboard'` in React Router so all app routes live under the `/dashboard` prefix.
+**Architecture:** Caddy reverse proxy on `:80` routes three zones: `/api/*` → FastAPI :8000, `/dashboard*` → Vite dev server :3000, `/` → static landing HTML. cloudflared tunnels `:80` to `taskreimagination.ai` via Cloudflare's edge (outbound-only, no inbound firewall changes). Cloudflare Access protects `/dashboard/*` with email OTP, bypassing `/dashboard/interview/*` for public stakeholder access. React SPA uses `base: '/dashboard'` in Vite + `basename: '/dashboard'` in React Router so all app routes live under the `/dashboard` prefix.
 
 **Tech Stack:** Caddy 2, cloudflared, Cloudflare Zero Trust, React Router v6 `createBrowserRouter`, Vite, FastAPI.
 
@@ -17,12 +17,12 @@ These are one-time steps done in web dashboards — not code. Complete them befo
 **Cloudflare Zero Trust tunnel:**
 1. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com) → Networks → Tunnels → Create Tunnel
 2. Copy the tunnel token
-3. Add public hostname: domain `futuremomentum.ai` → Service: `http://localhost:80`
+3. Add public hostname: domain `taskreimagination.ai` → Service: `http://localhost:80`
 4. Cloudflare auto-creates the required CNAME in DNS
 
 **Cloudflare Access policy:**
 1. Zero Trust → Access → Applications → Add Application → Self-hosted
-2. App domain: `futuremomentum.ai/dashboard*`
+2. App domain: `taskreimagination.ai/dashboard*`
 3. Policy: Allow — email OTP — include your consultant email domain(s)
 4. Add bypass rules:
    - `/dashboard/interview/*` — public (stakeholder voice interviews)
@@ -30,12 +30,12 @@ These are one-time steps done in web dashboards — not code. Complete them befo
 
 **Resend SMTP:**
 1. Create account at resend.com
-2. Add domain `futuremomentum.ai` → copy the DKIM DNS record Resend generates
+2. Add domain `taskreimagination.ai` → copy the DKIM DNS record Resend generates
 3. Add that TXT record in Cloudflare DNS (domain already managed there)
 4. In n8n: Credentials → New → SMTP → Host: `smtp.resend.com`, Port: `465`, Security: SSL/TLS, Username: `resend`, Password: your Resend API key
-5. Update interview invitation email body URL to: `https://futuremomentum.ai/dashboard/interview/{{session_token}}`
+5. Update interview invitation email body URL to: `https://taskreimagination.ai/dashboard/interview/{{session_token}}`
 
-> **Note on interview URL:** The React SPA uses `base: '/dashboard'` in Vite and `basename: '/dashboard'` in React Router. This means all SPA routes — including the public interview page — are served under `/dashboard`. The stakeholder interview URL is therefore `https://futuremomentum.ai/dashboard/interview/:token` (not `/interview/:token`). The Cloudflare Access bypass rule for `/dashboard/interview/*` ensures this route remains publicly accessible.
+> **Note on interview URL:** The React SPA uses `base: '/dashboard'` in Vite and `basename: '/dashboard'` in React Router. This means all SPA routes — including the public interview page — are served under `/dashboard`. The stakeholder interview URL is therefore `https://taskreimagination.ai/dashboard/interview/:token` (not `/interview/:token`). The Cloudflare Access bypass rule for `/dashboard/interview/*` ensures this route remains publicly accessible.
 
 ---
 
@@ -50,7 +50,7 @@ These are one-time steps done in web dashboards — not code. Complete them befo
 | `ui/src/router.tsx` | Modify | Add `basename: '/dashboard'` to createBrowserRouter |
 | `ui/src/pages/Dashboard.tsx` | Modify | Fix `window.open` URL for report |
 | `start.sh` | Modify | Add Caddy and cloudflared process management |
-| `ui/index.html` | Modify | Rebrand `<title>` from AgentPool → FutureMomentum |
+| `ui/index.html` | Modify | Rebrand `<title>` from AgentPool → TaskReimagination |
 | `chainlit_app/app.py` | Modify | Rebrand title + greeting strings |
 
 ---
@@ -186,7 +186,7 @@ Create `landing/index.html`:
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FutureMomentum — AI-powered transformation intelligence</title>
+    <title>TaskReimagination — AI-powered transformation intelligence</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
@@ -231,7 +231,7 @@ caddy run --config Caddyfile --adapter caddyfile &
 sleep 1
 
 # Fetch the landing page
-curl -s http://localhost:80/ | grep -q "FutureMomentum" && echo "PASS" || echo "FAIL"
+curl -s http://localhost:80/ | grep -q "TaskReimagination" && echo "PASS" || echo "FAIL"
 
 # Stop Caddy
 kill %1
@@ -243,7 +243,7 @@ Expected: `PASS`
 
 ```bash
 git add landing/index.html
-git commit -m "feat: add static landing page for futuremomentum.ai homepage"
+git commit -m "feat: add static landing page for taskreimagination.ai homepage"
 ```
 
 ---
@@ -255,7 +255,7 @@ git commit -m "feat: add static landing page for futuremomentum.ai homepage"
 - Modify: `ui/src/router.tsx`
 - Modify: `ui/src/pages/Dashboard.tsx`
 
-> Setting `base: '/dashboard'` in Vite changes ALL asset paths (JS, CSS, fonts) to be prefixed with `/dashboard`. `basename: '/dashboard'` in React Router tells it to strip that prefix before matching routes. Together they mean the browser URL `futuremomentum.ai/dashboard/login` maps to the `<Login />` component at path `/login` in the router config.
+> Setting `base: '/dashboard'` in Vite changes ALL asset paths (JS, CSS, fonts) to be prefixed with `/dashboard`. `basename: '/dashboard'` in React Router tells it to strip that prefix before matching routes. Together they mean the browser URL `taskreimagination.ai/dashboard/login` maps to the `<Login />` component at path `/login` in the router config.
 
 - [ ] **Step 1: Add base to vite.config.ts**
 
@@ -446,7 +446,7 @@ Replace the entire contents of `start.sh` with:
 
 ```bash
 #!/usr/bin/env bash
-# start.sh — start all FutureMomentum services
+# start.sh — start all TaskReimagination services
 set -e
 cd "$(dirname "$0")"
 
@@ -487,7 +487,7 @@ cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
 echo $! > .pids/cloudflared.pid
 
 echo ""
-echo "FutureMomentum services running:"
+echo "TaskReimagination services running:"
 echo "  FastAPI:      http://localhost:8000/docs"
 echo "  Chainlit:     http://localhost:8001"
 echo "  React UI:     http://localhost:3000"
@@ -495,7 +495,7 @@ echo "  Caddy (local) http://localhost:80"
 echo "  n8n:          http://localhost:5678"
 echo "  ChromaDB:     http://localhost:8002"
 echo "  LiteLLM:      http://localhost:4000"
-echo "  Public URL:   https://futuremomentum.ai/dashboard"
+echo "  Public URL:   https://taskreimagination.ai/dashboard"
 ```
 
 - [ ] **Step 2: Make start.sh executable**
@@ -538,7 +538,7 @@ Current `ui/index.html` line 6:
 
 Updated:
 ```html
-    <title>FutureMomentum</title>
+    <title>TaskReimagination</title>
 ```
 
 - [ ] **Step 2: Update Chainlit app title and greeting**
@@ -551,7 +551,7 @@ Line 3 — module docstring:
 AgentPool Chainlit HITL interface.
 
 # After:
-FutureMomentum Chainlit HITL interface.
+TaskReimagination Chainlit HITL interface.
 ```
 
 Line 42 — greeting message (update the `AgentPool` reference):
@@ -560,7 +560,7 @@ Line 42 — greeting message (update the `AgentPool` reference):
             "**AgentPool** — Digital Modernisation Agent Team\n\n"
 
 # After:
-            "**FutureMomentum** — Digital Modernisation Agent Team\n\n"
+            "**TaskReimagination** — Digital Modernisation Agent Team\n\n"
 ```
 
 - [ ] **Step 3: Verify no other AgentPool user-visible strings remain**
@@ -580,7 +580,7 @@ Review the output. Any remaining hits in Python imports (`from agentpool...`), d
 
 ```bash
 git add ui/index.html chainlit_app/app.py
-git commit -m "feat: rebrand user-visible strings from AgentPool to FutureMomentum"
+git commit -m "feat: rebrand user-visible strings from AgentPool to TaskReimagination"
 ```
 
 ---
@@ -601,7 +601,7 @@ Wait ~10 seconds for services to initialise.
 
 ```bash
 # Landing page at root
-curl -s http://localhost:80/ | grep -q "FutureMomentum" && echo "PASS: landing page" || echo "FAIL: landing page"
+curl -s http://localhost:80/ | grep -q "TaskReimagination" && echo "PASS: landing page" || echo "FAIL: landing page"
 
 # Dashboard route served by Vite (returns 200 with the SPA shell)
 curl -s -o /dev/null -w "%{http_code}" http://localhost:80/dashboard/ | grep -q "200" && echo "PASS: dashboard route" || echo "FAIL: dashboard route"
@@ -619,7 +619,7 @@ Expected: all four `PASS`.
 
 - [ ] **Step 3: Verify React app loads in browser**
 
-Open `http://localhost:80/dashboard` in a browser. You should see the FutureMomentum login page (or dashboard if already logged in). The browser URL bar should read `.../dashboard/login` after redirect — confirming the basename is working.
+Open `http://localhost:80/dashboard` in a browser. You should see the TaskReimagination login page (or dashboard if already logged in). The browser URL bar should read `.../dashboard/login` after redirect — confirming the basename is working.
 
 - [ ] **Step 4: Verify the report opens with correct URL**
 
@@ -632,11 +632,11 @@ Log in to the dashboard, open a project, click "Export Report". Verify the new t
 cat .pids/cloudflared.pid | xargs ps -p | grep cloudflared && echo "PASS: tunnel running" || echo "FAIL: tunnel not running"
 ```
 
-Then open `https://futuremomentum.ai/dashboard` in a browser. You should see the Cloudflare Access email OTP screen. Enter a permitted email, verify the OTP, and confirm the dashboard loads.
+Then open `https://taskreimagination.ai/dashboard` in a browser. You should see the Cloudflare Access email OTP screen. Enter a permitted email, verify the OTP, and confirm the dashboard loads.
 
 - [ ] **Step 6: Verify public interview URL is accessible without OTP**
 
-Open `https://futuremomentum.ai/dashboard/interview/test-token` in a private browser window. It should load the voice interview page **without** triggering the Cloudflare Access OTP. If it asks for email, the bypass rule for `/dashboard/interview/*` is not configured — go back to the Pre-flight section.
+Open `https://taskreimagination.ai/dashboard/interview/test-token` in a private browser window. It should load the voice interview page **without** triggering the Cloudflare Access OTP. If it asks for email, the bypass rule for `/dashboard/interview/*` is not configured — go back to the Pre-flight section.
 
 - [ ] **Step 7: Stop services**
 
