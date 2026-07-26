@@ -260,6 +260,17 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
 // 'state' outputs are internal agent state snapshots (SQLiteStateTool) - not user deliverables
 const INTERNAL_OUTPUT_TYPES = new Set(['state'])
 
+// Output types already rendered by a crew-specific panel further down the tab.
+// Listing them again as raw files shows the same content twice - once readably,
+// once as a cryptic file name like `interview_scripts_l2_1`.
+const PANEL_RENDERED_PREFIXES: Record<string, string[]> = {
+  assessment_design: ['interview_scripts'],
+}
+
+function isRenderedByPanel(crewKey: string, outputType: string): boolean {
+  return (PANEL_RENDERED_PREFIXES[crewKey] ?? []).some(p => outputType.startsWith(p))
+}
+
 function outputLabel(outputType: string): string {
   return OUTPUT_TYPE_LABELS[outputType] ?? outputType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
@@ -1331,7 +1342,9 @@ export default function AgentDetailPanel({
   // Outputs for this crew - match stored snake_case agent_name, exclude internal state snapshots
   const agentKeys = new Set(agents.map(agentKey))
   const crewOutputs = outputs
-    .filter(o => agentKeys.has(o.agent_name) && !INTERNAL_OUTPUT_TYPES.has(o.output_type))
+    .filter(o => agentKeys.has(o.agent_name)
+      && !INTERNAL_OUTPUT_TYPES.has(o.output_type)
+      && !isRenderedByPanel(crewKey, o.output_type))
     .sort((a, b) => parseDbDate(b.created_at).getTime() - parseDbDate(a.created_at).getTime())
 
   const crewMeta = CREW_META[crewKey]

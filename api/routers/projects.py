@@ -478,9 +478,10 @@ async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_
     """Return all interview scripts keyed by node_label, merging all versioned files."""
     await check_project_access(slug, payload)
     outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
+    from api.services.interview_scripts_service import dedupe_script_map
     exact = outputs_dir / "interview_scripts.json"
     if exact.exists():
-        return json.loads(exact.read_text(encoding="utf-8"))
+        return dedupe_script_map(json.loads(exact.read_text(encoding="utf-8")))
     # Merge versioned files (oldest first so newer versions overwrite for the same key)
     files = sorted(outputs_dir.glob("interview_scripts*.json"), key=lambda p: p.stat().st_mtime)
     if not files:
@@ -491,7 +492,7 @@ async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_
             merged.update(json.loads(f.read_text(encoding="utf-8")))
         except Exception:
             pass
-    return merged
+    return dedupe_script_map(merged)
 
 
 @router.get("/{slug}/interview-scripts/{node_label}")
