@@ -43,5 +43,18 @@ ui/dist/
 .pids/
 .worktrees/
 .superpowers/
+.chainlit/
+.playwright-mcp/
 .DS_Store
 *.log
+
+# ── Scratch artefacts at repo root ──────────────────────────────
+# Leading slash confines these to the root so genuine assets under
+# ui/public/ stay tracked.
+/*.png
+/*.jpg
+/*.docx
+/*.pdf
+
+# ── Local image backups ─────────────────────────────────────────
+ui/public/agents/oldagents/
