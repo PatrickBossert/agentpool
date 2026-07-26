@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
-import type { InterviewScript } from '../../types'
+import type { InterviewQuestion, InterviewScript, InterviewSection } from '../../types'
 
 const LEVEL_BADGE: Record<string, string> = {
   L0: 'bg-purple-100 text-purple-700',
@@ -31,9 +31,128 @@ const LEVEL_TITLE: Record<string, string> = {
 const VC_LEVELS  = new Set(['L0', 'L1', 'L2', 'L3'])
 const EXT_LEVELS = new Set(['C', 'A', 'F', 'S'])
 
+function Block({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">{label}</p>
+      {children}
+    </div>
+  )
+}
+
+function Spoken({ text }: { text: string }) {
+  return (
+    <p className="text-[11px] text-gray-700 leading-relaxed italic border-l-2 border-gray-200 pl-2">
+      {text}
+    </p>
+  )
+}
+
+function QuestionBlock({ q, index }: { q: InterviewQuestion; index: number }) {
+  return (
+    <div className="pl-2 border-l-2 border-gray-200 space-y-1.5">
+      <div className="flex items-start gap-2">
+        <span className="text-[9px] font-mono text-gray-400 mt-0.5 flex-shrink-0">{q.id || `Q${index + 1}`}</span>
+        <p className="text-[11px] text-gray-800 leading-relaxed flex-1">{q.text}</p>
+      </div>
+
+      {q.probing_instructions && (
+        <div>
+          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Probing</p>
+          <p className="text-[10px] text-gray-600 leading-relaxed">{q.probing_instructions}</p>
+        </div>
+      )}
+
+      {q.follow_up_branches?.length > 0 && (
+        <div>
+          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+            Follow-ups ({q.follow_up_branches.length})
+          </p>
+          <ul className="space-y-0.5 mt-0.5">
+            {q.follow_up_branches.map((b, i) => (
+              <li key={i} className="flex items-start gap-1.5">
+                <span className="text-gray-300 mt-0.5 flex-shrink-0 text-[10px]">→</span>
+                <p className="text-[10px] text-gray-600 leading-relaxed">{b}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {q.evasion_signals?.length > 0 && (
+        <div>
+          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Evasion signals</p>
+          <div className="flex flex-wrap gap-1 mt-0.5">
+            {q.evasion_signals.map((sig, i) => (
+              <span key={i} className="text-[9px] text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 italic">
+                “{sig}”
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SectionBlock({ section, index }: { section: InterviewSection; index: number }) {
+  const [open, setOpen] = useState(false)
+  const qCount = section.questions?.length ?? 0
+
+  return (
+    <div className="rounded border border-gray-200 bg-white overflow-hidden">
+      <button
+        className="w-full flex items-start gap-2 px-2.5 py-2 text-left hover:bg-gray-50 transition-colors"
+        onClick={() => setOpen(v => !v)}
+      >
+        <span className="mt-0.5 flex-shrink-0 text-gray-300">
+          {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        </span>
+        <span className="text-[10px] text-gray-400 font-mono flex-shrink-0 mt-0.5">{index + 1}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] text-gray-700">{section.title}</p>
+          <p className="text-[10px] text-gray-400">
+            {qCount} question{qCount !== 1 ? 's' : ''}
+            {section.target_minutes ? ` · ${section.target_minutes} min` : ''}
+            {section.maturity_rating ? ' · maturity rating' : ''}
+          </p>
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100 px-2.5 py-2.5 space-y-3">
+          {(section.questions ?? []).map((q, i) => (
+            <QuestionBlock key={q.id || i} q={q} index={i} />
+          ))}
+
+          {section.maturity_rating && (
+            <div className="rounded bg-blue-50/60 px-2 py-1.5">
+              <p className="text-[9px] font-bold text-blue-500 uppercase tracking-widest">
+                Maturity rating — {section.maturity_rating.dimension}
+              </p>
+              <p className="text-[10px] text-gray-600 leading-relaxed mt-0.5">{section.maturity_rating.prompt}</p>
+              {section.maturity_rating.scale && (
+                <ul className="mt-1 space-y-0.5">
+                  {Object.entries(section.maturity_rating.scale).map(([lvl, desc]) => (
+                    <li key={lvl} className="flex items-start gap-1.5">
+                      <span className="text-[9px] font-mono text-blue-400 flex-shrink-0 mt-0.5">{lvl}</span>
+                      <p className="text-[10px] text-gray-600 leading-relaxed">{desc}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ScriptCard({ script }: { script: InterviewScript }) {
   const [expanded, setExpanded] = useState(false)
   const badgeCls = LEVEL_BADGE[script.level] ?? 'bg-gray-100 text-gray-600'
+  const totalQuestions = (script.sections ?? []).reduce((n, s) => n + (s.questions?.length ?? 0), 0)
 
   return (
     <div className="rounded-lg border border-gray-100 overflow-hidden">
@@ -55,12 +174,15 @@ function ScriptCard({ script }: { script: InterviewScript }) {
           <p className="text-[10px] text-gray-400 line-clamp-1">{script.research_brief}</p>
         </div>
         <span className="text-[10px] text-gray-300 flex-shrink-0 mt-0.5 whitespace-nowrap">
-          {script.sections.length} sections
+          {script.sections.length} sections · {totalQuestions} questions
         </span>
       </button>
 
       {expanded && (
         <div className="border-t border-gray-100 px-3 py-2.5 space-y-3 bg-gray-50/60">
+          <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest border-b border-gray-200 pb-1">
+            Research
+          </p>
           <div>
             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Research Brief</p>
             <p className="text-[11px] text-gray-700 leading-relaxed">{script.research_brief}</p>
@@ -78,24 +200,86 @@ function ScriptCard({ script }: { script: InterviewScript }) {
               </ul>
             </div>
           )}
+          <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest border-b border-gray-200 pb-1 pt-1">
+            Interview script
+          </p>
+
+          {script.welcome_message && (
+            <Block label="Welcome (spoken)"><Spoken text={script.welcome_message} /></Block>
+          )}
+
+          {script.framing_block && (
+            <Block label="Framing (spoken)">
+              <div className="space-y-1.5">
+                <Spoken text={script.framing_block.positioning} />
+                {script.framing_block.context_setting?.length > 0 && (
+                  <ul className="space-y-0.5">
+                    {script.framing_block.context_setting.map((c, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        <span className="text-gray-300 mt-0.5 flex-shrink-0">·</span>
+                        <p className="text-[10px] text-gray-600 leading-relaxed">{c}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {script.framing_block.dual_lenses && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded bg-white px-2 py-1.5">
+                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Efficiency</p>
+                      <p className="text-[10px] text-gray-600 leading-relaxed">{script.framing_block.dual_lenses.efficiency}</p>
+                    </div>
+                    <div className="rounded bg-white px-2 py-1.5">
+                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Effectiveness</p>
+                      <p className="text-[10px] text-gray-600 leading-relaxed">{script.framing_block.dual_lenses.effectiveness}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Block>
+          )}
+
           <div>
             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Sections</p>
             <div className="space-y-1">
               {script.sections.map((s, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <span className="text-[10px] text-gray-400 w-5 flex-shrink-0 font-mono">{i + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] text-gray-700">{s.title}</p>
-                    <p className="text-[10px] text-gray-400">
-                      {s.questions.length} question{s.questions.length !== 1 ? 's' : ''}
-                      {s.target_minutes ? ` · ${s.target_minutes} min` : ''}
-                      {s.maturity_rating ? ' · maturity rating' : ''}
-                    </p>
-                  </div>
-                </div>
+                <SectionBlock key={i} section={s} index={i} />
               ))}
             </div>
           </div>
+
+          {script.synthesis_check && (
+            <Block label="Synthesis check (spoken after sections)">
+              <div className="space-y-1.5">
+                <Spoken text={script.synthesis_check.synthesis_prompt} />
+                {script.synthesis_check.response_probes && (
+                  <div className="space-y-1">
+                    {Object.entries(script.synthesis_check.response_probes).map(([k, v]) => (
+                      <div key={k} className="flex items-start gap-1.5">
+                        <span className="text-[9px] font-mono text-gray-400 flex-shrink-0 mt-0.5 w-16">
+                          {k.replace('if_', 'if ')}
+                        </span>
+                        <p className="text-[10px] text-gray-600 leading-relaxed flex-1">{v}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {script.synthesis_check.peer_referral && (
+                  <p className="text-[10px] text-gray-600 leading-relaxed">
+                    <span className="text-gray-400">Peer referral: </span>{script.synthesis_check.peer_referral}
+                  </p>
+                )}
+                {script.synthesis_check.forward_roadmap && (
+                  <p className="text-[10px] text-gray-600 leading-relaxed">
+                    <span className="text-gray-400">Forward roadmap: </span>{script.synthesis_check.forward_roadmap}
+                  </p>
+                )}
+              </div>
+            </Block>
+          )}
+
+          {script.closing_message && (
+            <Block label="Closing (spoken)"><Spoken text={script.closing_message} /></Block>
+          )}
         </div>
       )}
     </div>
