@@ -313,6 +313,10 @@ async def email_transcript(session_token: str, body: TranscriptEmailRequest):
     Security controls:
     - Session must exist and be in 'completed' status (prevents random-token abuse).
     - Email format validated server-side.
+    - Destination must match the stakeholder invited for this session. The body is
+      caller-supplied so the interviewee can edit their transcript before sending;
+      constraining the destination is what stops a leaked token being used to send
+      attacker-controlled text from our verified sending domain.
     - Pair count and field length capped (prevents body-stuffing).
     - Rate-limited to 3 sends per session per hour (prevents relay spam).
     """
@@ -328,13 +332,22 @@ async def email_transcript(session_token: str, body: TranscriptEmailRequest):
     async with aiosqlite.connect(db_path) as _conn:
         _conn.row_factory = aiosqlite.Row
         async with _conn.execute(
-            "SELECT status FROM interview_sessions WHERE session_token=?",
+            "SELECT s.status, st.email AS stakeholder_email "
+            "FROM interview_sessions s "
+            "JOIN stakeholders st ON st.id = s.stakeholder_id "
+            "WHERE s.session_token=?",
             (session_token,),
         ) as _cur:
             row = await _cur.fetchone()
 
     if not row or row["status"] != "completed":
         raise HTTPException(status_code=403, detail="Session not completed")
+
+    # 2b — Destination must be the stakeholder this session was created for.
+    # Empty stored email fails closed: a stakeholder with no address on file was
+    # never invited by email, so there is no legitimate destination to send to.
+    if body.email.strip().lower() != (row["stakeholder_email"] or "").strip().lower():
+        raise HTTPException(status_code=403, detail="Email does not match session")
 
     # 3 — Rate limit
     now = time.monotonic()

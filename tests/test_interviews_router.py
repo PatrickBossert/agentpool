@@ -314,3 +314,159 @@ async def test_get_sessions_with_data(client, clean_sessions_with_data):
     assert data["summary"]["pending"] == 0
     assert data["summary"]["active"] == 0
     assert data["summary"]["abandoned"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 9. POST /{session_token}/email-transcript — destination must match the
+#    stakeholder the session was created for.
+#
+#    The transcript body is deliberately caller-supplied (interviewees edit it
+#    before sending), so the destination check is the control that stops a
+#    leaked token being used to send attacker-controlled text from our
+#    verified sending domain.
+# ---------------------------------------------------------------------------
+
+_EMAIL_SLUG = "email-transcript-test"
+_STAKEHOLDER_EMAIL = "alice@example.com"
+
+
+@pytest.fixture
+def clean_email_transcript():
+    db_path = Path(get_settings().database_dir) / f"{_EMAIL_SLUG}.db"
+    db_path.unlink(missing_ok=True)
+    yield
+    get_settings.cache_clear()
+    db_path.unlink(missing_ok=True)
+
+
+async def _seed_completed_session(client, token: str) -> None:
+    """Create a project with one completed session for _STAKEHOLDER_EMAIL."""
+    r = await client.post(
+        "/projects",
+        json={"client_slug": _EMAIL_SLUG, "llm_mode": "standard", "sector": "test"},
+    )
+    assert r.status_code in (200, 201)
+
+    async with get_connection(_EMAIL_SLUG) as conn:
+        async with conn.execute(
+            "SELECT id FROM projects WHERE slug=?", (_EMAIL_SLUG,)
+        ) as cur:
+            project_id = (await cur.fetchone())["id"]
+
+        cur = await conn.execute(
+            "INSERT INTO stakeholders (project_id, name, email) VALUES (?,?,?)",
+            (project_id, "Alice Chen", _STAKEHOLDER_EMAIL),
+        )
+        await conn.commit()
+
+        await insert_interview_session(
+            conn,
+            project_id=project_id,
+            orchestration_run_id=None,
+            stakeholder_id=cur.lastrowid,
+            node_label="Goods-in Inspection",
+            session_token=token,
+        )
+        await conn.execute(
+            "UPDATE interview_sessions SET status='completed' WHERE session_token=?",
+            (token,),
+        )
+        await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_email_transcript_rejects_foreign_destination(client, clean_email_transcript):
+    """A valid completed token must not be usable to mail an arbitrary address."""
+    token = "email-token-foreign"
+    await _seed_completed_session(client, token)
+
+    with patch("api.routers.interviews.httpx.AsyncClient") as mock_client:
+        r = await client.post(
+            f"/api/interviews/{token}/email-transcript",
+            json={
+                "email": "attacker@evil.example",
+                "qa_pairs": [{"question": "Q", "answer": "attacker-controlled text"}],
+            },
+        )
+
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Email does not match session"
+    # Crucially: no outbound request was attempted
+    mock_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_email_transcript_allows_matching_destination(client, clean_email_transcript):
+    """The invited stakeholder's own address still works, with edited content."""
+    token = "email-token-match"
+    await _seed_completed_session(client, token)
+
+    mock_resp = type("R", (), {"status_code": 200})()
+    mock_ctx = AsyncMock()
+    mock_ctx.post = AsyncMock(return_value=mock_resp)
+
+    with patch("api.routers.interviews.httpx.AsyncClient") as mock_client, \
+         patch("api.routers.interviews.get_settings") as mock_settings:
+        mock_client.return_value.__aenter__.return_value = mock_ctx
+        mock_settings.return_value.resend_api_key = "re_test"
+        mock_settings.return_value.from_email = "T <noreply@example.com>"
+
+        r = await client.post(
+            f"/api/interviews/{token}/email-transcript",
+            json={
+                "email": _STAKEHOLDER_EMAIL,
+                "qa_pairs": [{"question": "Q1", "answer": "edited answer"}],
+            },
+        )
+
+    assert r.status_code == 200
+    sent = mock_ctx.post.call_args.kwargs["json"]
+    assert sent["to"] == [_STAKEHOLDER_EMAIL]
+    # The caller's edited text is preserved — that feature must keep working
+    assert "edited answer" in sent["text"]
+
+
+@pytest.mark.asyncio
+async def test_email_transcript_match_is_case_insensitive(client, clean_email_transcript):
+    """Address comparison must not reject purely on casing."""
+    token = "email-token-case"
+    await _seed_completed_session(client, token)
+
+    mock_resp = type("R", (), {"status_code": 200})()
+    mock_ctx = AsyncMock()
+    mock_ctx.post = AsyncMock(return_value=mock_resp)
+
+    with patch("api.routers.interviews.httpx.AsyncClient") as mock_client, \
+         patch("api.routers.interviews.get_settings") as mock_settings:
+        mock_client.return_value.__aenter__.return_value = mock_ctx
+        mock_settings.return_value.resend_api_key = "re_test"
+        mock_settings.return_value.from_email = "T <noreply@example.com>"
+
+        r = await client.post(
+            f"/api/interviews/{token}/email-transcript",
+            json={
+                "email": "Alice@Example.COM",
+                "qa_pairs": [{"question": "Q1", "answer": "A1"}],
+            },
+        )
+
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_email_transcript_rejects_whitespace_padded_address(client, clean_email_transcript):
+    """Padded addresses are rejected by the format validator before comparison."""
+    token = "email-token-padded"
+    await _seed_completed_session(client, token)
+
+    with patch("api.routers.interviews.httpx.AsyncClient") as mock_client:
+        r = await client.post(
+            f"/api/interviews/{token}/email-transcript",
+            json={
+                "email": f"  {_STAKEHOLDER_EMAIL}  ",
+                "qa_pairs": [{"question": "Q1", "answer": "A1"}],
+            },
+        )
+
+    assert r.status_code == 422
+    mock_client.assert_not_called()
