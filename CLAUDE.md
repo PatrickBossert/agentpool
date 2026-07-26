@@ -25,15 +25,31 @@ These rules apply to all content produced for this project — UI labels, copy, 
 
 | Layer | Technology |
 |-------|-----------|
+| Runtime | **Python 3.13 required** — see below |
 | Backend | FastAPI (async), aiosqlite, Pydantic v2, pydantic-settings |
 | AI crews | CrewAI, Anthropic Claude Opus (PAM always; others configurable) |
-| Vector store | ChromaDB (HttpClient on :8002) |
+| Vector store | ChromaDB — `CloudClient` when `CHROMA_API_KEY` is set, else `HttpClient` on :8002 |
 | Auth | JWT (python-jose), bcrypt (direct — NOT passlib; see below) |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS v3, React Router v6 |
 | Email | Resend HTTP API (httpx — not SMTP) |
 | Voice | ElevenLabs (TTS) + Web Speech API + Deepgram (STT) |
 | Workflow | n8n (Docker, :5678) — triggers /orchestrate webhook |
 | Infra | Docker Compose (ChromaDB + n8n), Caddy (prod), cloudflared (prod) |
+
+---
+
+## Critical: Python version
+
+**Python 3.13 only. 3.14 will not install.** Both `crewai` and `litellm` declare `Requires-Python >=3.10,<3.14`, so pip on 3.14 silently falls back to ancient crewai versions and then fails with `No matching distribution found`.
+
+Create the venv against a 3.13 interpreter explicitly:
+```bash
+uv python install 3.13                              # or: brew install python@3.13
+$(uv python find 3.13) -m venv venv
+./venv/bin/pip install -r requirements.txt
+```
+
+Never copy a `venv/` between machines — console-script shebangs hardcode absolute paths and break.
 
 ---
 
@@ -114,11 +130,14 @@ Do NOT use `sky-*` or `blue-*` classes — these were replaced with `brand` toke
 
 ## Crew / agent conventions
 
-- Crew factories: `crews/<crew_name>_crew.py`
-- Agent modules: `crews/agents/<agent_name>_agent.py`
-- Tool modules: `crews/tools/<tool_name>_tool.py`
-- Registry: `crews/registry.py` — maps crew name strings to factory functions
+- Crew factories: `agents/crews/<crew_name>_crew.py`
+- Agent modules: `agents/<domain>/<agent_name>.py` — grouped by domain, not suffixed. Domains are `discovery`, `value_design`, `architecture`, `delivery`, `business_plan`, `pam` (e.g. `agents/discovery/interview_coordinator.py`)
+- Tool modules: `agents/tools/<tool_name>.py` — no `_tool` suffix (e.g. `agents/tools/chroma_query.py`)
+- Tool registry: `agents/tools/registry.py` — `get_tools_for_agent(agent_name, slug, ...)` maps **agent** names to tool lists
+- Crew dispatch: `api/services/run_service.py` — `build_and_run_crew()` imports each crew factory inline; `_CREW_AGENT_NAMES` maps crew names to their agent lists. There is no standalone crew registry module.
 - All crews return structured JSON; output files written to `projects/<slug>/outputs/`
+
+There is no top-level `crews/` directory — everything lives under `agents/`.
 
 PAM always uses `claude-opus-4-6` regardless of sensitive mode. Other agents use `LOCAL_LLM_MODEL` when sensitive mode is enabled (routes to `LLAMACPP_BASE_URL`).
 
@@ -135,8 +154,8 @@ PAM always uses `claude-opus-4-6` regardless of sensitive mode. Other agents use
 | `api/services/run_service.py` | Crew execution dispatch |
 | `api/services/orchestration_service.py` | PAM two-phase orchestration |
 | `api/services/campaign_service.py` | Interview campaigns + Resend email dispatch |
-| `crews/pam_crew.py` | Project Automation Manager (top-level orchestrator) |
-| `crews/registry.py` | Crew name → factory mapping |
+| `agents/crews/pam_crew.py` | Project Automation Manager (top-level orchestrator) |
+| `agents/tools/registry.py` | Agent name → tool list mapping |
 | `ui/src/router.tsx` | All frontend routes |
 | `ui/src/pages/Architecture.tsx` | Hidden `/architecture` reference page |
 | `docker-compose.yml` | ChromaDB + n8n (credentials from `.env`) |
@@ -155,8 +174,8 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 ## Known issues / tech debt
 
 - `python-pptx` must be installed inside the venv (not system pip on macOS with Homebrew Python 3.13 / PEP 668)
-- Slack bot must be manually invited to the target channel (`/invite @FutureMomentum` in Slack) before `SlackNotifyTool` works
-- `futuremomentum.ai` must be a verified sender domain in Resend before reminder emails deliver
+- Slack bot must be manually invited to the target channel (`/invite @TaskReimagination` in Slack) before `SlackNotifyTool` works
+- `taskreimagination.ai` must be a verified sender domain in Resend before reminder emails deliver
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
 
 ---
