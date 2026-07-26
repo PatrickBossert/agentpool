@@ -2,12 +2,18 @@
 """Agent chat — persona definitions, context fetching, and Claude call."""
 from __future__ import annotations
 
+import asyncio
+import base64
+import logging
 from datetime import date
 from pathlib import Path
 from anthropic import AsyncAnthropic
 
-from api.database import get_connection, get_db_path, fetch_project
+from api.database import get_connection, get_db_path, fetch_project, fetch_documents
 from api.config import get_settings
+from api.services.chat_retrieval_service import RETRIEVAL_TOP_K, search as retrieve_chunks
+
+logger = logging.getLogger(__name__)
 
 # Max characters to include per output file in chat context.
 _OUTPUT_CONTENT_LIMIT = 6_000
@@ -390,6 +396,104 @@ async def _build_crew_system_prompt(
     )
 
 
+def _format_retrieved(chunks: list[dict]) -> str:
+    """Render retrieved chunks as a prompt block, each labelled with its source.
+
+    Attribution matters: without the filename the agent cannot tell the user
+    which document an answer came from.
+    """
+    if not chunks:
+        return ""
+    lines = ["--- Retrieved from project documents ---"]
+    for chunk in chunks:
+        lines.append(f"[{chunk['filename']}] {chunk['text']}")
+    return "\n".join(lines)
+
+
+async def _attribute_chunks(conn, project_id: int, chunks: list[dict]) -> list[dict]:
+    """Resolve each chunk's doc_id to client_documents.original_name.
+
+    Uploads are saved to disk under a UUID filename; that UUID is what
+    ingest_document writes into Chroma metadata as "filename", so retrieved
+    chunks are attributed with a meaningless name unless we map doc_id back to
+    the human-readable original_name here.
+
+    A chunk with no doc_id, or a doc_id that doesn't match any row (for
+    example chunks written by agents/tools/document_ingestion.py, which never
+    set doc_id), keeps whatever filename it already had.
+    """
+    if not chunks:
+        return chunks
+    rows = await fetch_documents(conn, project_id=project_id)
+    names_by_id = {row["id"]: row["original_name"] for row in rows}
+    attributed = []
+    for chunk in chunks:
+        doc_id = chunk.get("doc_id")
+        filename = names_by_id.get(doc_id, chunk["filename"]) if doc_id is not None else chunk["filename"]
+        attributed.append({**chunk, "filename": filename})
+    return attributed
+
+
+def _format_attachments(docs: list[dict]) -> str:
+    """Name the non-image files attached to this chat turn.
+
+    Retrieval replaces document CONTENT in the prompt, but it dropped the
+    signal that a file was attached at all. Without this the agent cannot
+    resolve deictic references such as "this" or "the file I just sent" -
+    it just sees the same retrieved chunks it would see on any other turn.
+    Names only: content injection is deliberately not reintroduced here.
+    """
+    names = [d["original_name"] for d in docs if not d.get("is_image") and d.get("original_name")]
+    if not names:
+        return ""
+    return "\n".join(["--- Files the user has attached to this message ---", *names])
+
+
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+
+async def _build_image_blocks(conn, project_id: int, docs: list[dict]) -> list[dict]:
+    """Turn attached image documents into Anthropic image content blocks.
+
+    Paths are resolved from client_documents by doc_id rather than taken from the
+    request, so a caller cannot point this at an arbitrary file on disk.
+    Unreadable or unrecognised files are skipped rather than failing the turn.
+    """
+    wanted = {d["doc_id"] for d in docs if d.get("is_image") and d.get("doc_id") is not None}
+    if not wanted:
+        return []
+
+    rows = await fetch_documents(conn, project_id=project_id)
+    blocks: list[dict] = []
+    for row in rows:
+        if row["id"] not in wanted:
+            continue
+        path = Path(row["file_path"])
+        media_type = IMAGE_MEDIA_TYPES.get(path.suffix.lower())
+        if media_type is None:
+            continue
+        try:
+            data = await asyncio.to_thread(path.read_bytes)
+        except OSError as exc:
+            logger.warning("agent chat: could not read image %s: %s", path, exc)
+            continue
+        blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.b64encode(data).decode(),
+            },
+        })
+    return blocks
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 async def run_agent_chat(
@@ -441,13 +545,22 @@ async def run_agent_chat(
                 "If you don't have the data to answer, say so — don't invent details."
             )
 
-    if injected_docs:
-        for doc in injected_docs:
-            system_prompt += f"\n\n--- Shared file: {doc['original_name']} ---\n"
-            if doc.get("is_image"):
-                system_prompt += "[Image file — the user has shared this for context.]\n"
-            else:
-                system_prompt += doc.get("preview_text", "") or "[No text extracted]"
+        image_blocks = await _build_image_blocks(conn, project["id"], injected_docs or [])
+
+        # Retrieval runs on every turn - see the design spec for why there is no
+        # relevance threshold. Chroma's client is synchronous, so keep it off the
+        # event loop. Attribution needs DB access, so it happens inside this
+        # connection block too, rather than reopening a connection afterwards.
+        retrieved = await asyncio.to_thread(retrieve_chunks, slug, message, RETRIEVAL_TOP_K)
+        retrieved = await _attribute_chunks(conn, project["id"], retrieved)
+
+    retrieved_block = _format_retrieved(retrieved)
+    if retrieved_block:
+        system_prompt += f"\n\n{retrieved_block}"
+
+    attachments_block = _format_attachments(injected_docs or [])
+    if attachments_block:
+        system_prompt += f"\n\n{attachments_block}"
 
     if injected_links:
         for lnk in injected_links:
@@ -461,7 +574,13 @@ async def run_agent_chat(
         }
         for m in history
     ]
-    api_messages.append({"role": "user", "content": message})
+    if image_blocks:
+        api_messages.append({
+            "role": "user",
+            "content": [*image_blocks, {"type": "text", "text": message}],
+        })
+    else:
+        api_messages.append({"role": "user", "content": message})
 
     client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
     response = await client.messages.create(

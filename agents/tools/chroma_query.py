@@ -3,8 +3,8 @@ import socket
 from typing import Literal
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
-import chromadb
 from api.config import get_settings
+from api.services.chroma_client import get_chroma_client
 
 
 def _chroma_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
@@ -44,14 +44,7 @@ class ChromaQueryTool(BaseTool):
         settings = get_settings()
         if not settings.chroma_api_key and not _chroma_reachable(settings.chroma_host, settings.chroma_port):
             return "ChromaDB is not reachable. Start Docker (docker compose up -d) and retry."
-        if settings.chroma_api_key:
-            client = chromadb.CloudClient(
-                tenant=settings.chroma_tenant,
-                database=settings.chroma_database,
-                api_key=settings.chroma_api_key,
-            )
-        else:
-            client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+        client = get_chroma_client()
 
         collection_name = (
             f"{self.slug}_docs" if collection == "project" else f"sector_{self.sector}"

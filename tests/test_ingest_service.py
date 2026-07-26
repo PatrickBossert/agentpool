@@ -11,7 +11,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _make_chroma_mock():
-    """Return a mock chromadb.HttpClient whose get_or_create_collection works."""
+    """Return a mock Chroma client whose get_or_create_collection works."""
     collection = MagicMock()
     collection.upsert = MagicMock()
     client = MagicMock()
@@ -38,12 +38,12 @@ async def test_unsupported_extension_skips(tmp_path):
     zip_file = tmp_path / "archive.zip"
     zip_file.write_bytes(b"PK...")
 
-    with patch("api.services.ingest_service.chromadb") as mock_chroma, \
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
          patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db:
         from api.services.ingest_service import ingest_document
         await ingest_document("test-slug", doc_id=1, file_path=str(zip_file))
 
-    mock_chroma.HttpClient.assert_not_called()
+    mock_get_client.assert_not_called()
     mock_db.assert_not_called()
 
 
@@ -54,10 +54,10 @@ async def test_text_extraction_failure_leaves_ingested_false(tmp_path):
     bad_pdf.write_bytes(b"not a real pdf")
 
     chroma_client, _ = _make_chroma_mock()
-    with patch("api.services.ingest_service.chromadb") as mock_chroma, \
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
          patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db, \
          patch("api.services.ingest_service._extract_text", side_effect=Exception("parse error")):
-        mock_chroma.HttpClient.return_value = chroma_client
+        mock_get_client.return_value = chroma_client
         from api.services.ingest_service import ingest_document
         await ingest_document("test-slug", doc_id=2, file_path=str(bad_pdf))
 
@@ -70,10 +70,9 @@ async def test_chroma_unavailable_leaves_ingested_false(tmp_path):
     txt_file = tmp_path / "report.txt"
     txt_file.write_text("Some important content here.")
 
-    with patch("api.services.ingest_service.chromadb") as mock_chroma, \
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
          patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db:
-        mock_chroma.HttpClient.side_effect = Exception("connection refused")
-        mock_chroma.CloudClient.side_effect = Exception("connection refused")
+        mock_get_client.side_effect = Exception("connection refused")
         from api.services.ingest_service import ingest_document
         await ingest_document("test-slug", doc_id=3, file_path=str(txt_file))
 
@@ -91,10 +90,10 @@ async def test_happy_path_txt(tmp_path):
     mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_conn.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("api.services.ingest_service.chromadb") as mock_chroma, \
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
          patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db, \
          patch("api.services.ingest_service.get_connection", return_value=mock_conn):
-        mock_chroma.HttpClient.return_value = chroma_client
+        mock_get_client.return_value = chroma_client
         from api.services.ingest_service import ingest_document
         await ingest_document("test-slug", doc_id=4, file_path=str(txt_file))
 
@@ -103,6 +102,57 @@ async def test_happy_path_txt(tmp_path):
     assert len(call_kwargs.kwargs["documents"]) >= 1
     assert call_kwargs.kwargs["ids"][0].startswith("brief.txt::")
     mock_db.assert_awaited_once_with(mock_conn, doc_id=4)
+
+
+@pytest.mark.asyncio
+async def test_chroma_failure_raises_when_raise_on_error(tmp_path):
+    """raise_on_error=True is the whole 'fail loudly' mechanism - a Chroma outage must
+    surface as IngestError, not just a log line, for callers awaiting it in a request."""
+    txt_file = tmp_path / "report.txt"
+    txt_file.write_text("Some important content here.")
+
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
+         patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db:
+        mock_get_client.side_effect = Exception("connection refused")
+        from api.services.ingest_service import IngestError, ingest_document
+        with pytest.raises(IngestError):
+            await ingest_document("test-slug", doc_id=6, file_path=str(txt_file), raise_on_error=True)
+
+    mock_db.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_text_extraction_failure_raises_when_raise_on_error(tmp_path):
+    """raise_on_error=True must surface an extraction failure as IngestError too."""
+    bad_pdf = tmp_path / "broken.pdf"
+    bad_pdf.write_bytes(b"not a real pdf")
+
+    with patch("api.services.ingest_service._extract_text", side_effect=Exception("parse error")):
+        from api.services.ingest_service import IngestError, ingest_document
+        with pytest.raises(IngestError):
+            await ingest_document("test-slug", doc_id=7, file_path=str(bad_pdf), raise_on_error=True)
+
+
+@pytest.mark.asyncio
+async def test_extraction_and_chroma_failures_stay_silent_by_default(tmp_path):
+    """Background callers (api/routers/documents.py) call ingest_document without
+    raise_on_error and rely on failures staying silent (logged, not raised)."""
+    from api.services.ingest_service import ingest_document
+
+    bad_pdf = tmp_path / "broken.pdf"
+    bad_pdf.write_bytes(b"not a real pdf")
+    with patch("api.services.ingest_service._extract_text", side_effect=Exception("parse error")):
+        result = await ingest_document("test-slug", doc_id=8, file_path=str(bad_pdf))
+    assert result is None
+
+    txt_file = tmp_path / "report.txt"
+    txt_file.write_text("Some important content here.")
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
+         patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db:
+        mock_get_client.side_effect = Exception("connection refused")
+        result = await ingest_document("test-slug", doc_id=9, file_path=str(txt_file))
+    assert result is None
+    mock_db.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -120,10 +170,10 @@ async def test_happy_path_docx(tmp_path):
     mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_conn.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("api.services.ingest_service.chromadb") as mock_chroma, \
+    with patch("api.services.ingest_service.get_chroma_client") as mock_get_client, \
          patch("api.services.ingest_service.update_document_ingested", new_callable=AsyncMock) as mock_db, \
          patch("api.services.ingest_service.get_connection", return_value=mock_conn):
-        mock_chroma.HttpClient.return_value = chroma_client
+        mock_get_client.return_value = chroma_client
         from api.services.ingest_service import ingest_document
         await ingest_document("test-slug", doc_id=5, file_path=str(docx_path))
 
