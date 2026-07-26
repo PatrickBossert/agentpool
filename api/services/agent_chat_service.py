@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import logging
 from datetime import date
 from pathlib import Path
 from anthropic import AsyncAnthropic
 
-from api.database import get_connection, get_db_path, fetch_project
+from api.database import get_connection, get_db_path, fetch_project, fetch_documents
 from api.config import get_settings
 from api.services.chat_retrieval_service import RETRIEVAL_TOP_K, search as retrieve_chunks
+
+logger = logging.getLogger(__name__)
 
 # Max characters to include per output file in chat context.
 _OUTPUT_CONTENT_LIMIT = 6_000
@@ -406,6 +410,51 @@ def _format_retrieved(chunks: list[dict]) -> str:
     return "\n".join(lines)
 
 
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+
+async def _build_image_blocks(conn, project_id: int, docs: list[dict]) -> list[dict]:
+    """Turn attached image documents into Anthropic image content blocks.
+
+    Paths are resolved from client_documents by doc_id rather than taken from the
+    request, so a caller cannot point this at an arbitrary file on disk.
+    Unreadable or unrecognised files are skipped rather than failing the turn.
+    """
+    wanted = {d["doc_id"] for d in docs if d.get("is_image") and d.get("doc_id") is not None}
+    if not wanted:
+        return []
+
+    rows = await fetch_documents(conn, project_id=project_id)
+    blocks: list[dict] = []
+    for row in rows:
+        if row["id"] not in wanted:
+            continue
+        path = Path(row["file_path"])
+        media_type = IMAGE_MEDIA_TYPES.get(path.suffix.lower())
+        if media_type is None:
+            continue
+        try:
+            data = await asyncio.to_thread(path.read_bytes)
+        except OSError as exc:
+            logger.warning("agent chat: could not read image %s: %s", path, exc)
+            continue
+        blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.b64encode(data).decode(),
+            },
+        })
+    return blocks
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 async def run_agent_chat(
@@ -457,6 +506,8 @@ async def run_agent_chat(
                 "If you don't have the data to answer, say so — don't invent details."
             )
 
+        image_blocks = await _build_image_blocks(conn, project["id"], injected_docs or [])
+
     # Retrieval runs on every turn - see the design spec for why there is no
     # relevance threshold. Chroma's client is synchronous, so keep it off the
     # event loop.
@@ -464,14 +515,6 @@ async def run_agent_chat(
     retrieved_block = _format_retrieved(retrieved)
     if retrieved_block:
         system_prompt += f"\n\n{retrieved_block}"
-
-    if injected_docs:
-        for doc in injected_docs:
-            system_prompt += f"\n\n--- Shared file: {doc['original_name']} ---\n"
-            if doc.get("is_image"):
-                system_prompt += "[Image file — the user has shared this for context.]\n"
-            else:
-                system_prompt += doc.get("preview_text", "") or "[No text extracted]"
 
     if injected_links:
         for lnk in injected_links:
@@ -485,7 +528,13 @@ async def run_agent_chat(
         }
         for m in history
     ]
-    api_messages.append({"role": "user", "content": message})
+    if image_blocks:
+        api_messages.append({
+            "role": "user",
+            "content": [*image_blocks, {"type": "text", "text": message}],
+        })
+    else:
+        api_messages.append({"role": "user", "content": message})
 
     client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
     response = await client.messages.create(

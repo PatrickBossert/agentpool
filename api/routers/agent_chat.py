@@ -37,7 +37,7 @@ _PREVIEW_CHARS = 3_000
 class InjectedDoc(BaseModel):
     doc_id: int
     original_name: str
-    preview_text: str
+    preview_text: str = ""
     is_image: bool = False
 
 
