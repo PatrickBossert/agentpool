@@ -24,14 +24,19 @@ def _build_crew(mock_llm, stakeholder_assignments=None, discovery_brief=""):
         )
 
 
-def test_discovery_interviews_crew_has_four_agents(mock_llm):
+def test_discovery_interviews_crew_has_three_agents(mock_llm):
+    """Coordinator, interviewer, analyst.
+
+    The interview_script_designer agent was removed from this crew in 6dab668;
+    script design moved to the template-driven API path (239e469).
+    """
     crew = _build_crew(mock_llm)
-    assert len(crew.agents) == 4
+    assert len(crew.agents) == 3
 
 
-def test_discovery_interviews_crew_has_four_tasks(mock_llm):
+def test_discovery_interviews_crew_has_three_tasks(mock_llm):
     crew = _build_crew(mock_llm)
-    assert len(crew.tasks) == 4
+    assert len(crew.tasks) == 3
 
 
 def test_discovery_interviews_crew_sequential(mock_llm):
@@ -40,19 +45,17 @@ def test_discovery_interviews_crew_sequential(mock_llm):
 
 
 def test_discovery_interviews_crew_injects_assignments(mock_llm):
-    """Script Designer (t0) and Coordinator (t1) task descriptions include the formatted stakeholder string."""
+    """The Coordinator task description includes the formatted stakeholder string."""
     assignments = [
         {"name": "Alice Chen", "job_title": "Head of Ops", "level": "L2", "node_label": "Order Fulfilment"},
     ]
     crew = _build_crew(mock_llm, stakeholder_assignments=assignments)
-    script_designer_task = crew.tasks[0]
-    coordinator_task = crew.tasks[1]
-    assert "Alice Chen" in script_designer_task.description
+    coordinator_task = crew.tasks[0]
     assert "Alice Chen" in coordinator_task.description
 
 
 def test_discovery_interviews_crew_uses_registry(mock_llm):
-    """get_tools_for_agent is called for all four agent roles."""
+    """get_tools_for_agent is called for each of the three agent roles."""
     with patch(
         "agents.crews.discovery_interviews_crew.get_tools_for_agent", return_value=[]
     ) as mock_reg:
@@ -62,7 +65,6 @@ def test_discovery_interviews_crew_uses_registry(mock_llm):
             stakeholder_assignments=[], llm=mock_llm,
         )
     called_agents = {c.args[0] for c in mock_reg.call_args_list}
-    assert "interview_script_designer" in called_agents
     assert "interview_coordinator" in called_agents
     assert "stakeholder_interviewer" in called_agents
     assert "synthesis_analyst" in called_agents
