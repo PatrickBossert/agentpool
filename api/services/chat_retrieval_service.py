@@ -35,19 +35,19 @@ def search(slug: str, query: str, k: int = RETRIEVAL_TOP_K) -> list[dict]:
         if not count:
             return []
         results = collection.query(query_texts=[query], n_results=min(k, count))
+
+        documents = (results.get("documents") or [[]])[0]
+        metadatas = (results.get("metadatas") or [[]])[0]
+
+        chunks: list[dict] = []
+        for i, text in enumerate(documents):
+            meta = metadatas[i] if i < len(metadatas) and metadatas[i] else {}
+            chunks.append({
+                "text": text,
+                "filename": meta.get("filename", "unknown"),
+                "doc_id": meta.get("doc_id"),
+            })
+        return chunks
     except Exception as exc:
         logger.warning("chat retrieval failed for project %s: %s", slug, exc)
         return []
-
-    documents = (results.get("documents") or [[]])[0]
-    metadatas = (results.get("metadatas") or [[]])[0]
-
-    chunks: list[dict] = []
-    for i, text in enumerate(documents):
-        meta = metadatas[i] if i < len(metadatas) and metadatas[i] else {}
-        chunks.append({
-            "text": text,
-            "filename": meta.get("filename", "unknown"),
-            "doc_id": meta.get("doc_id"),
-        })
-    return chunks

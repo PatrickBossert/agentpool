@@ -65,3 +65,40 @@ def test_tolerates_missing_metadata():
         assert search("acme", "q") == [
             {"text": "chunk", "filename": "unknown", "doc_id": None}
         ]
+
+
+def test_returns_empty_when_metadata_slot_is_none():
+    """A malformed-but-non-raising Chroma response must degrade to [], not raise."""
+    col = MagicMock()
+    col.count.return_value = 5
+    col.query.return_value = {"documents": [["chunk"]], "metadatas": [None]}
+    client = MagicMock()
+    client.get_collection.return_value = col
+    with patch("api.services.chat_retrieval_service.get_chroma_client", return_value=client):
+        from api.services.chat_retrieval_service import search
+        assert search("acme", "q") == []
+
+
+def test_tolerates_metadatas_shorter_than_documents():
+    """When metadatas list is shorter than documents, short-fall chunks get defaults."""
+    client, _ = _client_returning(
+        ["chunk one", "chunk two"],
+        [{"filename": "a.pdf", "doc_id": 1}],  # Only one metadata for two documents
+    )
+    with patch("api.services.chat_retrieval_service.get_chroma_client", return_value=client):
+        from api.services.chat_retrieval_service import search
+        result = search("acme", "q")
+
+    assert result == [
+        {"text": "chunk one", "filename": "a.pdf", "doc_id": 1},
+        {"text": "chunk two", "filename": "unknown", "doc_id": None},
+    ]
+
+
+def test_empty_or_whitespace_query_returns_empty_without_calling_client():
+    """Empty or whitespace-only query returns [] without reaching Chroma."""
+    with patch("api.services.chat_retrieval_service.get_chroma_client") as m_client:
+        from api.services.chat_retrieval_service import search
+        assert search("acme", "") == []
+        assert search("acme", "   ") == []
+    m_client.assert_not_called()
