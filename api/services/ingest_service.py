@@ -2,9 +2,7 @@
 import logging
 from pathlib import Path
 
-import chromadb
-
-from api.config import get_settings
+from api.services.chroma_client import get_chroma_client
 from api.database import get_connection, update_document_ingested
 
 logger = logging.getLogger(__name__)
@@ -45,7 +43,6 @@ async def ingest_document(slug: str, doc_id: int, file_path: str) -> None:
         logger.info("ingest_document: unsupported type %s, skipping", path.suffix)
         return
 
-    settings = get_settings()
     try:
         text = _extract_text(path)
     except Exception as exc:
@@ -58,14 +55,7 @@ async def ingest_document(slug: str, doc_id: int, file_path: str) -> None:
         return
 
     try:
-        if settings.chroma_api_key:
-            client = chromadb.CloudClient(
-                tenant=settings.chroma_tenant,
-                database=settings.chroma_database,
-                api_key=settings.chroma_api_key,
-            )
-        else:
-            client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+        client = get_chroma_client()
         collection = client.get_or_create_collection(f"{slug}_docs")
         ids = [f"{path.name}::{i}" for i in range(len(chunks))]
         metadatas = [{"filename": path.name, "chunk": i, "doc_id": doc_id} for i in range(len(chunks))]
