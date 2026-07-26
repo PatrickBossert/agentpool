@@ -71,10 +71,30 @@ def test_discovery_interviews_crew_uses_registry(mock_llm):
 
 
 def test_discovery_interviews_crew_accepts_discovery_brief(mock_llm):
-    """discovery_brief is passed through to the crew tasks."""
+    """discovery_brief reaches the Coordinator task (task index 0).
+
+    It previously reached nothing: the parameter was accepted and silently
+    discarded after the Script Designer task that consumed it was removed,
+    so run_service passed the project brief into a black hole.
+    """
     crew = _build_crew(mock_llm, discovery_brief="Test brief text")
-    # The brief should appear in the script designer task (task index 0)
     assert "Test brief text" in crew.tasks[0].description
+
+
+def test_discovery_interviews_crew_accepts_node_templates(mock_llm):
+    """node_templates_block reaches the Coordinator task too.
+
+    run_service assembles this block from the project's node templates, so
+    dropping it silently wasted that work.
+    """
+    with patch("agents.crews.discovery_interviews_crew.get_tools_for_agent", return_value=[]):
+        from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew
+        crew = create_discovery_interviews_crew(
+            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            stakeholder_assignments=[], llm=mock_llm,
+            node_templates_block='{"Goods-in Inspection": {"questions": []}}',
+        )
+    assert "Goods-in Inspection" in crew.tasks[0].description
 
 
 def test_registry_has_interview_script_designer_entry():

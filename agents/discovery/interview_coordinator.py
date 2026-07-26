@@ -38,14 +38,31 @@ def create_interview_coordinator_task(
     agent: Agent,
     stakeholder_assignments: str = "",
     context: list | None = None,
+    discovery_brief: str = "",
+    node_templates_block: str = "",
 ) -> Task:
     assignments_block = (
         f"Stakeholder assignments:\n{stakeholder_assignments}\n\n"
         if stakeholder_assignments
         else ""
     )
+    # Both of these were previously consumed by the Script Designer task, which
+    # was removed from this crew. They are planning context for the programme,
+    # so the Coordinator is now their reader.
+    brief_block = (
+        f"Discovery brief for this engagement:\n{discovery_brief}\n\n"
+        if discovery_brief
+        else ""
+    )
+    templates_block = (
+        f"Node templates (question schemas keyed by node_label):\n{node_templates_block}\n\n"
+        if node_templates_block
+        else ""
+    )
     return Task(
         description=(
+            f"{brief_block}"
+            f"{templates_block}"
             f"{assignments_block}"
             "Build the interview session plan for this project.\n\n"
             f"{VOICE_LOCALE_TABLE}\n\n"

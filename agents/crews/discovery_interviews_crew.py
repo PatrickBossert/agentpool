@@ -80,7 +80,13 @@ def create_discovery_interviews_crew(
         tools=get_tools_for_agent("synthesis_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 
-    t1 = create_interview_coordinator_task(agent=coordinator, stakeholder_assignments=assignments_str, context=[])
+    t1 = create_interview_coordinator_task(
+        agent=coordinator,
+        stakeholder_assignments=assignments_str,
+        context=[],
+        discovery_brief=discovery_brief,
+        node_templates_block=node_templates_block,
+    )
     t2 = create_stakeholder_interviewer_task(agent=interviewer, context_tasks=[t1])
     t3 = create_synthesis_analyst_task(agent=analyst, context_tasks=[t2])
 
