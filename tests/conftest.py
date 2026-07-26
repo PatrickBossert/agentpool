@@ -18,6 +18,9 @@ os.environ.setdefault("LITELLM_PROXY_URL", "http://localhost:4000")
 os.environ.setdefault("LLAMACPP_BASE_URL", "http://localhost:10000")
 os.environ.setdefault("CHROMA_HOST", "localhost")
 os.environ.setdefault("CHROMA_PORT", "8002")  # pydantic coerces str→int
+# Blank so unit tests always take the HttpClient branch in ingest_service,
+# even when a real Chroma Cloud key is present in .env
+os.environ.setdefault("CHROMA_API_KEY", "")
 os.environ.setdefault("FRONTEND_URL", "http://localhost:3000")
 
 Path("/tmp/agentpool_test").mkdir(exist_ok=True)
