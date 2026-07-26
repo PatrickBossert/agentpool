@@ -43,7 +43,8 @@ async def test_upload_fails_loudly_when_ingestion_fails(client):
     assert resp.status_code == 502
     detail = resp.json()["detail"].lower()
     assert "index" in detail
-    assert "reingest" in detail
+    assert "documents page" in detail
+    assert re.search(r"id \d+", detail), "502 detail must name the document id so it can be located"
 
 
 @pytest.mark.asyncio

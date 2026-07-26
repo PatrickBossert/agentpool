@@ -276,9 +276,10 @@ async def chat_upload(
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    f"Document saved as id {doc_id} but could not be indexed for search. "
-                    f"It is in the project library - retry indexing with "
-                    f"POST /projects/{slug}/documents/{doc_id}/reingest rather than uploading it again."
+                    f"Document saved as id {doc_id} but could not be indexed for search - "
+                    f"it remains in the project library. Retry indexing from the project's "
+                    f"Documents page; if that option is not available to you, ask an "
+                    f"administrator to retry it."
                 ),
             )
 

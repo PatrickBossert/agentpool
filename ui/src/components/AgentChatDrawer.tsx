@@ -180,7 +180,7 @@ export default function AgentChatDrawer({
     try {
       const injectedDocs = currentAttachments
         .filter((a): a is DocAttachment => a.type === 'doc')
-        .map(({ doc_id, original_name, preview_text, is_image }) => ({ doc_id, original_name, preview_text, is_image }))
+        .map(({ doc_id, original_name, is_image }) => ({ doc_id, original_name, is_image }))
       const injectedLinks = currentAttachments
         .filter((a): a is LinkAttachment => a.type === 'link')
         .map(({ url, label, content_preview }) => ({ url, label, content_preview }))

@@ -25,10 +25,10 @@ def search(slug: str, query: str, k: int = RETRIEVAL_TOP_K) -> list[dict]:
 
     Returns [] when the collection is missing, empty, or Chroma is unreachable.
     """
-    if not query.strip():
-        return []
-
     try:
+        if not query.strip():
+            return []
+
         client = get_chroma_client()
         collection = client.get_collection(f"{slug}_docs")
         count = collection.count()

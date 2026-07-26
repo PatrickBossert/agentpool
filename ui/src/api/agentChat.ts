@@ -9,7 +9,6 @@ export interface ChatMessage {
 export interface InjectedDoc {
   doc_id: number
   original_name: string
-  preview_text: string
   is_image: boolean
 }
 
@@ -23,7 +22,6 @@ export interface UploadResult {
   doc_id: number
   filename: string
   original_name: string
-  preview_text: string
   is_image: boolean
 }
 

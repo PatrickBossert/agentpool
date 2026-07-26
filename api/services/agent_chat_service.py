@@ -410,6 +410,45 @@ def _format_retrieved(chunks: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _attribute_chunks(conn, project_id: int, chunks: list[dict]) -> list[dict]:
+    """Resolve each chunk's doc_id to client_documents.original_name.
+
+    Uploads are saved to disk under a UUID filename; that UUID is what
+    ingest_document writes into Chroma metadata as "filename", so retrieved
+    chunks are attributed with a meaningless name unless we map doc_id back to
+    the human-readable original_name here.
+
+    A chunk with no doc_id, or a doc_id that doesn't match any row (for
+    example chunks written by agents/tools/document_ingestion.py, which never
+    set doc_id), keeps whatever filename it already had.
+    """
+    if not chunks:
+        return chunks
+    rows = await fetch_documents(conn, project_id=project_id)
+    names_by_id = {row["id"]: row["original_name"] for row in rows}
+    attributed = []
+    for chunk in chunks:
+        doc_id = chunk.get("doc_id")
+        filename = names_by_id.get(doc_id, chunk["filename"]) if doc_id is not None else chunk["filename"]
+        attributed.append({**chunk, "filename": filename})
+    return attributed
+
+
+def _format_attachments(docs: list[dict]) -> str:
+    """Name the non-image files attached to this chat turn.
+
+    Retrieval replaces document CONTENT in the prompt, but it dropped the
+    signal that a file was attached at all. Without this the agent cannot
+    resolve deictic references such as "this" or "the file I just sent" -
+    it just sees the same retrieved chunks it would see on any other turn.
+    Names only: content injection is deliberately not reintroduced here.
+    """
+    names = [d["original_name"] for d in docs if not d.get("is_image") and d.get("original_name")]
+    if not names:
+        return ""
+    return "\n".join(["--- Files the user has attached to this message ---", *names])
+
+
 IMAGE_MEDIA_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -508,13 +547,20 @@ async def run_agent_chat(
 
         image_blocks = await _build_image_blocks(conn, project["id"], injected_docs or [])
 
-    # Retrieval runs on every turn - see the design spec for why there is no
-    # relevance threshold. Chroma's client is synchronous, so keep it off the
-    # event loop.
-    retrieved = await asyncio.to_thread(retrieve_chunks, slug, message, RETRIEVAL_TOP_K)
+        # Retrieval runs on every turn - see the design spec for why there is no
+        # relevance threshold. Chroma's client is synchronous, so keep it off the
+        # event loop. Attribution needs DB access, so it happens inside this
+        # connection block too, rather than reopening a connection afterwards.
+        retrieved = await asyncio.to_thread(retrieve_chunks, slug, message, RETRIEVAL_TOP_K)
+        retrieved = await _attribute_chunks(conn, project["id"], retrieved)
+
     retrieved_block = _format_retrieved(retrieved)
     if retrieved_block:
         system_prompt += f"\n\n{retrieved_block}"
+
+    attachments_block = _format_attachments(injected_docs or [])
+    if attachments_block:
+        system_prompt += f"\n\n{attachments_block}"
 
     if injected_links:
         for lnk in injected_links:
