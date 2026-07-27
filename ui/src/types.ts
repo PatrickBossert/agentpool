@@ -214,7 +214,7 @@ export interface Stakeholder {
   slack_handle: string
   mobile: string
   stakeholder_groups: string[]
-  project_role: 'recipient' | 'governing' | 'actor' | 'reviewer'
+  project_role: 'recipient' | 'governing' | 'actor'
   value_streams: string[]
   value_chain_stage: string
   activity: string

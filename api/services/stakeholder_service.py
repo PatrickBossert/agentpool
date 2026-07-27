@@ -13,9 +13,9 @@ from api.database import (
     delete_stakeholder,
 )
 
-# recipient receives approved output; governing approves; actor is engaged with;
-# reviewer may review and request changes but cannot approve.
-VALID_ROLES = {"recipient", "governing", "actor", "reviewer"}
+# recipient receives approved output; governing approves; actor is engaged with.
+# Review and approval routing uses is_reviewer and is_approver boolean columns, not this set.
+VALID_ROLES = {"recipient", "governing", "actor"}
 VALID_DISPOSITIONS = {"champion", "supporter", "neutral", "skeptic", "blocker"}
 
 
