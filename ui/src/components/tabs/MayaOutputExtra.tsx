@@ -216,7 +216,7 @@ function ScriptCard({ script }: { script: InterviewScript }) {
                   <ul className="space-y-0.5">
                     {script.framing_block.context_setting.map((c, i) => (
                       <li key={i} className="flex items-start gap-1.5">
-                        <span className="text-gray-300 mt-0.5 flex-shrink-0">·</span>
+                        <span className="text-[10px] leading-relaxed text-gray-300 flex-shrink-0">·</span>
                         <p className="text-[10px] text-gray-600 leading-relaxed">{c}</p>
                       </li>
                     ))}
