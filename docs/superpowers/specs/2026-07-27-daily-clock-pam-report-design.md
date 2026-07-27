@@ -153,6 +153,13 @@ Unit tests, with the clock and email boundaries mocked - no waiting on real time
 - A risk that has cleared is reported as resolved
 - The first report for a project reports no changes rather than everything
 
+**Tokenised access**
+- `require_any_auth`, `require_org_admin_or_above` and `require_sysadmin` each reject a token carrying a `scope` claim
+- `require_report_access` accepts a normal session
+- `require_report_access` accepts a `report:read` token whose slug matches, and rejects one whose slug does not
+- Exchange rejects an expired token, a revoked token, and an unknown token
+- A successful exchange records `last_used_at`
+
 **Report job**
 - The stored artefact is recorded as a versioned `agent_outputs` row with `is_current` set
 - Email recipients resolve to `governing` and `reviewer` stakeholders only
@@ -161,9 +168,96 @@ Unit tests, with the clock and email boundaries mocked - no waiting on real time
 
 ---
 
+## Tokenised report access
+
+Recipients must be able to open the report without an account. The link therefore
+carries a scoped, expiring access token.
+
+### The hard boundary
+
+**The token grants read access to one project's reports and nothing else. It must
+never authorise approval.** Reading a status report and approving one are
+categorically different acts: in Spec 2 an approval triggers a wider send to
+`recipient` stakeholders, so a forwarded email that could approve would be a
+forwarded email that could publish to the client's board.
+
+This is not merely a policy statement, it is the single most dangerous
+implementation detail in this spec. `require_any_auth` today returns any valid
+token unconditionally:
+
+```python
+def require_any_auth(payload: dict = Depends(get_token_payload)) -> dict:
+    """Any valid token - just verifies authentication."""
+    return payload
+```
+
+A report token minted with `create_access_token` would satisfy it, and would
+therefore unlock every endpoint guarded by it - documents, stakeholders, outputs,
+the lot. So:
+
+- report tokens carry a `scope` claim of `report:read` plus the `slug` they apply to
+- `require_sysadmin`, `require_org_admin_or_above` and `require_any_auth` all
+  **reject any token carrying a `scope` claim**
+- a new `require_report_access(slug)` dependency accepts either a normal session
+  or a `report:read` token whose `slug` matches the path
+
+Failing to add the rejection turns a read-only report link into full project read
+access. A test asserts each existing dependency rejects a scoped token.
+
+### The token in the URL fragment
+
+The emailed link is:
+
+```
+{public_url}/dashboard/report/{slug}#t=<token>
+```
+
+The token sits in the **fragment**, which browsers never transmit to a server. It
+therefore cannot appear in Caddy, Cloudflare or uvicorn access logs, and cannot
+leak through a `Referer` header. The SPA reads `location.hash`, exchanges it once
+via `POST /projects/{slug}/report-access/exchange`, receives a short-lived
+`report:read` session, and clears the hash from the URL.
+
+This is deliberately different from the existing interview tokens, which sit in
+the path (`/interview/:sessionToken`) and are consequently logged. The realistic
+way tokens leak is not attackers guessing UUID4s - it is tokens sitting in log
+files and analytics that nobody remembers are collecting them. Worth back-porting
+to the interview links later.
+
+### Issuance, expiry and revocation
+
+A `report_access_tokens` table records `(token, slug, stakeholder_id, expires_at,
+revoked_at, created_at, last_used_at)`.
+
+- **Per recipient.** Each stakeholder gets their own token, so revocation is
+  surgical and a leaked link identifies who forwarded it.
+- **Expires after 30 days.** A stale link stops working rather than living forever.
+- **Revocable** by setting `revoked_at`. Exchange rejects revoked or expired tokens.
+- **`last_used_at`** records access, which doubles as a read receipt.
+
+Tokens are generated with `secrets.token_urlsafe`, not `uuid4` - they are
+credentials, and should come from a cryptographic generator.
+
+### Security headers
+
+The app registers only `CORSMiddleware` today. This adds `Referrer-Policy:
+no-referrer` so that even the non-fragment parts of report URLs cannot leak
+through outbound links.
+
+### Why this is safer than the alternative
+
+A PDF attachment - the format originally considered for sealing the report -
+cannot be expired, cannot be revoked, tells you nothing about who opened it, and
+is forwardable without limit. A scoped link is strictly more controllable on every
+one of those axes. The residual risk is that a recipient forwards the email and a
+colleague reads status reports until the token expires or is revoked, which is the
+same exposure as forwarding a PDF, with a kill switch attached.
+
+---
+
 ## Scope
 
-**Included:** the `scheduled_jobs` table, the scheduler, the `pam_daily_report` job, change detection, storage as a versioned output, the plain-text email with a link, the `dev_mode` flag, and the `reviewer` role.
+**Included:** the `scheduled_jobs` table, the scheduler, the `pam_daily_report` job, change detection, storage as a versioned output, the plain-text email with a link, the `dev_mode` flag, the `reviewer` role, and tokenised report access with its scope rejection, fragment exchange, expiry, revocation and `Referrer-Policy` header.
 
 **Explicitly excluded:**
 
@@ -177,8 +271,6 @@ Unit tests, with the clock and email boundaries mocked - no waiting on real time
 ---
 
 ## Known consequences
-
-**The report link requires a login.** `/:slug/report` is wrapped in `ProtectedRoute`. Recipients without an account will hit a login wall. That is acceptable while `dev_mode` is on and the only recipient is Patrick, but it must be solved before external governing stakeholders are emailed. The codebase already has the pattern for this: `/interview/:sessionToken` is a public tokenised route.
 
 **The first real send is the risky one.** Everything up to that point is reversible; an email is not. `dev_mode` defaulting to true is the guard, and turning it off should be a deliberate act with the recipient list checked first.
 
