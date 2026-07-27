@@ -99,16 +99,26 @@ The gantt chart needs no new work. The email links to the existing report view, 
 
 ## Roles
 
-`stakeholders.project_role` gains `reviewer`:
+Review and approval routing uses the **existing multi-valued engagement-role
+columns**, not `project_role`:
 
-| Role | Meaning |
-|------|---------|
-| `recipient` | Receives approved output |
-| `governing` | Approves. There can be more than one |
-| `actor` | Someone the project engages with |
-| `reviewer` | May review and request changes, but cannot approve |
+| Column | Meaning |
+|--------|---------|
+| `is_participant` | Attends workshops, surveys or discovery interviews |
+| `is_reviewer` | Reviews deliverables and provides sign-off comments before a gate closes |
+| `is_approver` | Has authority to formally approve milestone completion |
 
-`project_role` is a plain `TEXT` column with no CHECK constraint, so this needs no migration - only the `VALID_ROLES` set in `stakeholder_service.py` and the role pickers in the UI.
+Pamela's report goes to stakeholders flagged `is_reviewer` or `is_approver`.
+
+An earlier draft of this spec added a fourth value to `project_role`. That was
+wrong: `project_role` is single-select, so it cannot express someone who is both a
+recipient and a reviewer, and the boolean columns already existed for exactly this
+purpose - the stakeholder form even says "A stakeholder may hold all three roles
+simultaneously. The PMO uses these to route review requests and approval gates."
+Nothing read them until now; this gives them their first consumer.
+
+`project_role` keeps its three values and its own meaning: the stakeholder's
+relationship to the engagement.
 
 ---
 

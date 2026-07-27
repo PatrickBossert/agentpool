@@ -17,7 +17,9 @@
 - Schedule is **17:00 daily, server local time**. Tick interval **15 minutes**. Run once on boot if overdue; **never backfill** missed days.
 - Change detection keys on the risk/issue **`title`** field.
 - `dev_mode` defaults to **true** for existing and new projects. When true every recipient is replaced by `Patrick@FutureEdge.consulting`, and the body still names who would have received it.
-- Report recipients are stakeholders whose `project_role` is `governing` or `reviewer`.
+- Report recipients are stakeholders flagged `is_reviewer` or `is_approver` - the existing multi-valued
+  engagement-role columns. NOT `project_role`, which is single-select and cannot express someone who is
+  both a recipient and a reviewer.
 - The async `insert_agent_output` helper does **not** set `is_current` (unlike `insert_agent_output_sync`). The job must set it explicitly and supersede prior reports, or every report will look superseded.
 - A job that throws records the error and schedules the next run normally. The scheduler itself must never be able to kill the app.
 - British English (`-ise`, `-our`). Use ` - ` (spaced hyphen), never an em dash, in comments and strings.
@@ -35,7 +37,7 @@
 | `api/database.py` (modify) | `scheduled_jobs` table + its helpers |
 | `api/main.py` (modify) | Start and stop the scheduler in the lifespan |
 | `api/models.py` (modify) | `dev_mode` on `ProjectSettings` |
-| `api/services/stakeholder_service.py` (modify) | `reviewer` in `VALID_ROLES` |
+| `api/services/stakeholder_service.py` (modify) | Comment recording that review routing uses the boolean columns |
 
 ---
 
@@ -156,7 +158,7 @@ git commit -m "refactor: extract the PAM report derivation into a service"
 
 ---
 
-### Task 2: The reviewer role and the dev_mode setting
+### Task 2: The dev_mode setting
 
 **Files:**
 - Modify: `api/services/stakeholder_service.py:16`
@@ -943,38 +945,46 @@ from api.services.pam_report_job import JOB_NAME, resolve_recipients
 SLUG = "pam-job-test"
 
 
-def _sh(name, email, role):
-    return {"name": name, "email": email, "project_role": role}
+def _sh(name, email, *, reviewer=False, approver=False):
+    return {"name": name, "email": email,
+            "is_reviewer": int(reviewer), "is_approver": int(approver)}
 
 
-def test_recipients_are_governing_and_reviewer_only():
+def test_recipients_are_reviewers_and_approvers_only():
     people = [
-        _sh("Gov", "gov@example.test", "governing"),
-        _sh("Rev", "rev@example.test", "reviewer"),
-        _sh("Rec", "rec@example.test", "recipient"),
-        _sh("Act", "act@example.test", "actor"),
+        _sh("Rev", "rev@example.test", reviewer=True),
+        _sh("App", "app@example.test", approver=True),
+        _sh("Both", "both@example.test", reviewer=True, approver=True),
+        _sh("Neither", "none@example.test"),
     ]
     actual, intended = resolve_recipients(people, dev_mode=False)
-    assert sorted(actual) == ["gov@example.test", "rev@example.test"]
-    assert sorted(intended) == ["gov@example.test", "rev@example.test"]
+    assert sorted(actual) == ["app@example.test", "both@example.test", "rev@example.test"]
+    assert sorted(intended) == sorted(actual)
+
+
+def test_someone_flagged_both_appears_once():
+    """The flags are independent, so a person holding both must not be emailed twice."""
+    people = [_sh("Both", "both@example.test", reviewer=True, approver=True)]
+    actual, _ = resolve_recipients(people, dev_mode=False)
+    assert actual == ["both@example.test"]
 
 
 def test_dev_mode_redirects_but_still_reports_the_intended_list():
-    people = [_sh("Gov", "gov@example.test", "governing")]
+    people = [_sh("Rev", "rev@example.test", reviewer=True)]
     actual, intended = resolve_recipients(people, dev_mode=True)
     assert actual == ["Patrick@FutureEdge.consulting"]
-    assert intended == ["gov@example.test"]
+    assert intended == ["rev@example.test"]
 
 
 def test_stakeholders_without_an_email_are_skipped():
-    people = [_sh("NoMail", "", "governing"), _sh("Gov", "gov@example.test", "governing")]
+    people = [_sh("NoMail", "", reviewer=True), _sh("Rev", "rev@example.test", reviewer=True)]
     actual, _ = resolve_recipients(people, dev_mode=False)
-    assert actual == ["gov@example.test"]
+    assert actual == ["rev@example.test"]
 
 
 def test_dev_mode_sends_nowhere_when_there_are_no_eligible_stakeholders():
     """Redirecting an empty list must not invent a recipient."""
-    actual, intended = resolve_recipients([_sh("Act", "a@example.test", "actor")], dev_mode=True)
+    actual, intended = resolve_recipients([_sh("Nobody", "a@example.test")], dev_mode=True)
     assert actual == []
     assert intended == []
 
@@ -1095,7 +1105,9 @@ logger = logging.getLogger(__name__)
 JOB_NAME = "pam_daily_report"
 OUTPUT_TYPE = "pam_report"
 DEV_MODE_ADDRESS = "Patrick@FutureEdge.consulting"
-REVIEW_ROLES = {"governing", "reviewer"}
+# The multi-valued engagement-role columns, not project_role: one person can be
+# both a recipient and a reviewer, which a single-select role cannot express.
+REVIEW_FLAGS = ("is_reviewer", "is_approver")
 
 
 def resolve_recipients(stakeholders: list[dict], dev_mode: bool) -> tuple[list[str], list[str]]:
@@ -1107,7 +1119,7 @@ def resolve_recipients(stakeholders: list[dict], dev_mode: bool) -> tuple[list[s
     """
     intended = [
         s["email"] for s in stakeholders
-        if (s.get("project_role") or "") in REVIEW_ROLES and (s.get("email") or "").strip()
+        if any(s.get(flag) for flag in REVIEW_FLAGS) and (s.get("email") or "").strip()
     ]
     if not intended:
         return [], []
@@ -1223,7 +1235,7 @@ async def run_pam_daily_report(slug: str) -> None:
 
     actual, intended = resolve_recipients(stakeholders, dev_mode)
     if not actual:
-        logger.info("pam report job: %s has no governing or reviewer stakeholders - stored, not sent", slug)
+        logger.info("pam report job: %s has no reviewer or approver stakeholders - stored, not sent", slug)
         return
 
     subject = f"{slug} status report - {datetime.now().strftime('%d %b %Y')}"
@@ -1429,4 +1441,4 @@ The tests mock the clock and the email boundary. Before considering this done, v
    ```
 4. Confirm the report appears in Pamela's Outputs tab, is `is_current`, and that a second run supersedes the first.
 5. Confirm the email arrived at `Patrick@FutureEdge.consulting` with the dev-mode footer naming the intended recipients, and that the link opens the report.
-6. Add a `reviewer` stakeholder and confirm they appear in the intended list on the next run.
+6. Flag a stakeholder `is_reviewer` and confirm they appear in the intended list on the next run.
