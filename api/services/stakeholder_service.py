@@ -13,7 +13,9 @@ from api.database import (
     delete_stakeholder,
 )
 
-VALID_ROLES = {"recipient", "governing", "actor"}
+# recipient receives approved output; governing approves; actor is engaged with;
+# reviewer may review and request changes but cannot approve.
+VALID_ROLES = {"recipient", "governing", "actor", "reviewer"}
 VALID_DISPOSITIONS = {"champion", "supporter", "neutral", "skeptic", "blocker"}
 
 

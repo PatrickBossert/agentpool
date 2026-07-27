@@ -409,6 +409,7 @@ export default function StakeholderForm() {
               <option value="recipient">Recipient</option>
               <option value="governing">Governing</option>
               <option value="actor">Actor</option>
+              <option value="reviewer">Reviewer (may request changes, cannot approve)</option>
             </select>
           </Field>
           <Field label="Disposition">

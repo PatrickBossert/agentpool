@@ -28,6 +28,10 @@ class ProjectSettings(BaseModel):
     ]
     review_gates: bool = True
     slack_channel: str = ""
+    # When true, all outbound project email goes to a single dev address instead
+    # of real stakeholders. Defaults to true: emailing real people the first time
+    # the scheduler runs correctly is a worse failure than emailing nobody.
+    dev_mode: bool = True
     discovery_brief: str = ""
     discovery_links: list[dict] = []
     discovery_document_ids: list[int] = []
