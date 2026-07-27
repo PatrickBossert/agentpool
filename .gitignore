@@ -58,3 +58,7 @@ ui/dist/
 
 # ── Local image backups ─────────────────────────────────────────
 ui/public/agents/oldagents/
+# Playwright accessibility dumps written to the repo root when a bare
+# filename is passed to browser_snapshot - they belong in .playwright-mcp/
+/*-team.yml
+/page-*.yml
