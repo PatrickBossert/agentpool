@@ -1514,6 +1514,16 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             agent_name  TEXT NOT NULL,
             PRIMARY KEY (skill_id, agent_name)
         );
+
+        CREATE TABLE IF NOT EXISTS scheduled_jobs (
+            job_name     TEXT NOT NULL,
+            slug         TEXT NOT NULL,
+            next_due_at  TEXT NOT NULL,
+            last_run_at  TEXT,
+            status       TEXT NOT NULL DEFAULT 'idle',
+            last_error   TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (job_name, slug)
+        );
     """)
     await conn.commit()
 
@@ -2207,4 +2217,60 @@ async def update_user(
 
 async def delete_user(conn: aiosqlite.Connection, *, user_id: int) -> None:
     await conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    await conn.commit()
+
+
+# ── Scheduled jobs ────────────────────────────────────────────────────────────
+
+async def upsert_scheduled_job(
+    conn: aiosqlite.Connection, *, job_name: str, slug: str, next_due_at: str
+) -> None:
+    """Register a job, leaving an existing row's schedule untouched.
+
+    Called on every boot, so it must not reset the next due time of a job that is
+    already scheduled - otherwise a restart would postpone every job.
+    """
+    await conn.execute(
+        "INSERT INTO scheduled_jobs (job_name, slug, next_due_at) VALUES (?,?,?) "
+        "ON CONFLICT(job_name, slug) DO NOTHING",
+        (job_name, slug, next_due_at),
+    )
+    await conn.commit()
+
+
+async def fetch_due_jobs(conn: aiosqlite.Connection, *, now_iso: str) -> list[dict]:
+    """Jobs whose next_due_at has passed and which are not already running."""
+    async with conn.execute(
+        "SELECT * FROM scheduled_jobs WHERE next_due_at <= ? AND status != 'running' "
+        "ORDER BY next_due_at",
+        (now_iso,),
+    ) as cur:
+        return [dict(row) for row in await cur.fetchall()]
+
+
+async def mark_job_running(
+    conn: aiosqlite.Connection, *, job_name: str, slug: str, now_iso: str
+) -> bool:
+    """Claim a job. Returns False when another claim already holds it.
+
+    The status guard in the WHERE clause is what makes the claim atomic.
+    """
+    cur = await conn.execute(
+        "UPDATE scheduled_jobs SET status='running', last_run_at=? "
+        "WHERE job_name=? AND slug=? AND status != 'running'",
+        (now_iso, job_name, slug),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def mark_job_finished(
+    conn: aiosqlite.Connection, *, job_name: str, slug: str, status: str,
+    next_due_at: str, last_error: str = "",
+) -> None:
+    await conn.execute(
+        "UPDATE scheduled_jobs SET status=?, next_due_at=?, last_error=? "
+        "WHERE job_name=? AND slug=?",
+        (status, next_due_at, last_error, job_name, slug),
+    )
     await conn.commit()
