@@ -56,7 +56,39 @@ async def create_project(req: ProjectCreate) -> dict:
             sector=req.sector,
             config_json=json.dumps(config),
         )
-        return await fetch_project(conn, slug=slug)
+        result = await fetch_project(conn, slug=slug)
+
+    await _register_daily_report_job(slug)
+    return result
+
+
+async def _register_daily_report_job(slug: str) -> None:
+    """Register Pamela's daily report job for a newly created project.
+
+    Boot-time registration (`api.main._register_scheduled_jobs`) only covers
+    projects that already exist when the process starts, so a project created
+    while the server is running would otherwise have no scheduled_jobs row
+    until someone restarts it - silently producing no daily report, possibly
+    for weeks. Uses the same upsert (ON CONFLICT DO NOTHING) and next_due_at
+    computation as the boot path. Must never fail project creation - a
+    scheduling problem is logged, not raised.
+    """
+    import logging
+    from datetime import datetime
+
+    from api.database import upsert_scheduled_job
+    from api.services.pam_report_job import JOB_NAME
+    from api.services.scheduler_service import next_due_at
+
+    log = logging.getLogger(__name__)
+    try:
+        async with get_system_connection() as sys_conn:
+            await upsert_scheduled_job(
+                sys_conn, job_name=JOB_NAME, slug=slug,
+                next_due_at=next_due_at(datetime.now()),
+            )
+    except Exception:
+        log.exception("scheduler: could not register daily report job for %s", slug)
 
 
 async def get_project_status(slug: str) -> dict | None:
