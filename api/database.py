@@ -2274,3 +2274,24 @@ async def mark_job_finished(
         (status, next_due_at, last_error, job_name, slug),
     )
     await conn.commit()
+
+
+async def reset_stale_running_jobs(conn: aiosqlite.Connection) -> int:
+    """On startup, reset any scheduled_jobs rows left in 'running'.
+
+    A row stuck in 'running' is orphaned by a previous process death - power
+    cut, SIGKILL, operator restart, or mark_job_finished itself raising. Since
+    fetch_due_jobs excludes 'running' rows and nothing else ever clears the
+    status, that project's job would otherwise never run again.
+
+    next_due_at is left untouched so an overdue job runs on the next tick
+    rather than being postponed a day. Mirrors _mark_stale_runs_failed's
+    treatment of crew_runs.
+    """
+    cur = await conn.execute(
+        "UPDATE scheduled_jobs SET status='idle', last_error=? "
+        "WHERE status='running'",
+        ("interrupted by a restart",),
+    )
+    await conn.commit()
+    return cur.rowcount

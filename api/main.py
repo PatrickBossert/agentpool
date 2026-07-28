@@ -56,6 +56,28 @@ async def _mark_stale_runs_failed(database_dir: str) -> None:
             log.exception("Could not clean up stale runs in %s", db_path.name)
 
 
+async def _reset_stale_scheduled_jobs() -> None:
+    """On startup, reset any scheduled_jobs rows orphaned by a previous
+    process death (power cut, SIGKILL, operator restart) - see
+    reset_stale_running_jobs. This is a 24x7 unattended process, so it must
+    self-heal on boot rather than leaving that project's daily report stuck
+    forever. Never raises: a scheduling problem must not stop the API from
+    starting.
+    """
+    import logging
+
+    from api.database import get_system_connection, reset_stale_running_jobs
+
+    log = logging.getLogger(__name__)
+    try:
+        async with get_system_connection() as conn:
+            n = await reset_stale_running_jobs(conn)
+        if n:
+            log.warning("scheduler: reset %d job(s) stuck in 'running' after a restart", n)
+    except Exception:
+        log.exception("scheduler: could not reset stale jobs - continuing")
+
+
 async def _register_scheduled_jobs() -> None:
     """Ensure every project has a daily report job registered.
 
@@ -90,6 +112,7 @@ async def lifespan(app: FastAPI):
     Path(settings.database_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.projects_dir).mkdir(parents=True, exist_ok=True)
     await _mark_stale_runs_failed(settings.database_dir)
+    await _reset_stale_scheduled_jobs()
 
     await _register_scheduled_jobs()
     stop_event = asyncio.Event()
