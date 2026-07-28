@@ -4,6 +4,10 @@
 One row, always id=1: "there is exactly one heartbeat" is a property of the schema
 rather than of the code that writes it.
 """
+import asyncio
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, patch
+
 import pytest
 import pytest_asyncio
 
@@ -45,11 +49,6 @@ async def test_recording_twice_updates_rather_than_accumulating():
         assert await fetch_scheduler_heartbeat(conn) == "2026-07-28T10:01:00"
         async with conn.execute("SELECT COUNT(*) AS n FROM scheduler_heartbeat") as cur:
             assert (await cur.fetchone())["n"] == 1
-
-
-import asyncio
-from unittest.mock import AsyncMock, patch
-from datetime import datetime, timedelta
 
 
 @pytest.mark.asyncio
