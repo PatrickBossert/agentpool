@@ -1524,6 +1524,11 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             last_error   TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (job_name, slug)
         );
+
+        CREATE TABLE IF NOT EXISTS scheduler_heartbeat (
+            id           INTEGER PRIMARY KEY CHECK (id = 1),
+            last_tick_at TEXT NOT NULL
+        );
     """)
     await conn.commit()
 
@@ -2246,6 +2251,29 @@ async def fetch_due_jobs(conn: aiosqlite.Connection, *, now_iso: str) -> list[di
         (now_iso,),
     ) as cur:
         return [dict(row) for row in await cur.fetchall()]
+
+
+async def record_scheduler_heartbeat(conn: aiosqlite.Connection, *, now_iso: str) -> None:
+    """Stamp the scheduler's liveness.
+
+    The heartbeat means "the loop is cycling", not "the last job succeeded" - the
+    caller stamps it even on a pass where a job raised.
+    """
+    await conn.execute(
+        "INSERT INTO scheduler_heartbeat (id, last_tick_at) VALUES (1, ?) "
+        "ON CONFLICT(id) DO UPDATE SET last_tick_at=excluded.last_tick_at",
+        (now_iso,),
+    )
+    await conn.commit()
+
+
+async def fetch_scheduler_heartbeat(conn: aiosqlite.Connection) -> str | None:
+    """The last tick timestamp, or None when the scheduler has never ticked."""
+    async with conn.execute(
+        "SELECT last_tick_at FROM scheduler_heartbeat WHERE id = 1"
+    ) as cur:
+        row = await cur.fetchone()
+    return row["last_tick_at"] if row else None
 
 
 async def mark_job_running(
