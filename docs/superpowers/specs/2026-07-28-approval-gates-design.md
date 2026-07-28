@@ -2,8 +2,15 @@
 
 **Date:** 2026-07-28
 **Status:** Approved for planning
-**Project 1 of 3.** Project 2 computes the differential between commits and enables
-auto-start; project 3 gives Jordan his coverage role. Both are out of scope here.
+
+**Project 1 of 4.** Project 2 makes agent chat an editing surface; project 3 computes the
+differential between commits and enables auto-start; project 4 gives Jordan his coverage
+role. All three are out of scope here.
+
+Chat comes before the differential deliberately. A differential is only worth computing
+once outputs change in small increments, and today the only way to change an output at
+all is to re-run its whole crew. Chat editing is what makes incremental change happen;
+the differential is what makes it cheap downstream.
 
 ## Problem
 
@@ -86,9 +93,12 @@ CREATE TABLE IF NOT EXISTS output_changes (
 );
 ```
 
-**Why the commit is per crew, not per crew run.** A chat edit produces a new output
-version without any run happening, so keying on `crew_run_id` would leave edited work
-uncommittable. A commit covers the current working versions of that crew's outputs -
+**Why the commit is per crew, not per crew run.** Every output version today comes from a
+run, so `crew_run_id` would work - but only until project 2, where a chat edit produces a
+new version with no run attached and run-keyed commits would leave edited work
+permanently uncommittable. Keying on the crew now costs nothing and avoids migrating the
+commit history later. A commit covers the current working versions of that crew's outputs
+-
 one act, however many outputs and however many changes went into them. That matches
 committing "one or more changes" rather than signing off twenty-nine interview scripts
 individually.
@@ -108,21 +118,23 @@ performs it, and both halves are recorded.
 
 | Door | How it arrives | Built in |
 |---|---|---|
-| Agent chat | A message in the crew's chat asking for a change | **This project** |
-| Output tab edit | Direct editing of a rendered output | A later increment, same tables |
-| Reviewer note | A note attached during review | **This project**, as `source='note'` |
+| Reviewer note | A note attached to an output during review | **This project**, as `source='note'` |
+| Agent chat | A message in the crew's chat asking for a change | Project 2, as `source='chat'` |
+| Output tab edit | Direct editing of a rendered output | Later, as `source='edit'` |
 
-Only chat and notes are built here. The output tab's inline editor plugs into the same
-`output_changes` table when it arrives, and is deliberately not attempted now.
+**Only notes are built here.** The table carries `source` from the start so the later
+doors add rows rather than schema, and so the change log is already the single place to
+look before either of them exists.
 
-**Chat becomes an editing surface.** This is the substantive addition, and it is more
-work rather than less: the crew's chat agent gains a tool that writes a new working
-version of an output it owns and records the `output_changes` row. Chat that merely
-discusses the output stays available - the agent applies an edit only when the request
-asks for one.
+**What a note does in this project.** It is recorded, attributed, and fed to the crew's
+next run - `_fetch_revision_notes` (`api/services/run_service.py:50`) already collects
+revision notes for exactly this purpose. So a note in project 1 is consumed by re-running
+the crew. Project 2 is what lets the agent act on a request without a full re-run, which
+is the loop that makes small changes cheap.
 
-**Anyone who can chat can shape the working version; only an approver can commit.** The
-blast radius is bounded by the commit, not by the edit - a draft with a publish step.
+**Only an approver can commit, whoever asked for the changes.** The blast radius is
+bounded by the commit rather than by the edit - a draft with a publish step - and that
+holds however many doors exist.
 
 ---
 
@@ -252,10 +264,10 @@ returns to breathing idle.
 **Backend.** A commit links exactly the current working version of each of the crew's
 outputs, and none belonging to another crew. Readiness is false until every upstream crew
 has a commit and true after; always true for a crew with no dependencies; and unaffected
-by later uncommitted changes upstream. A chat-driven edit creates a new working version
-and an `output_changes` row attributed to the requester, and leaves the previously
-committed version untouched - the invariant the differential depends on. A non-approver
-is refused a commit. The graph has no cycles, and every crew in `_CREW_AGENT_NAMES`
+by later uncommitted changes upstream. A note records an `output_changes` row attributed to
+its author and leaves every committed version untouched - the invariant the differential
+depends on, tested here on the one door that exists so the later doors inherit a rule that
+is already pinned. A non-approver is refused a commit. The graph has no cycles, and every crew in `_CREW_AGENT_NAMES`
 appears in it: a mismatch would strand a crew as permanently unready. Email failure does
 not fail a run.
 
@@ -266,7 +278,7 @@ uncommitted changes shows the count on its commit control.
 
 ## Out of scope
 
-The differential between commits, and auto-start - project 2. Jordan's coverage reporting
-and any communication with actors - project 3. The output tab's inline editor, which will
-write to `output_changes` when built. Delegating or escalating a commit when an approver
-is unavailable. Undoing a commit.
+Agent chat writing outputs - project 2. The differential between commits, and auto-start -
+project 3. Jordan's coverage reporting and any communication with actors - project 4. The
+output tab's inline editor, which will write to `output_changes` when built. Delegating or
+escalating a commit when an approver is unavailable. Undoing a commit.
