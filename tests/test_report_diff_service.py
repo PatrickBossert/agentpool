@@ -42,14 +42,32 @@ def test_issues_are_tracked_separately_from_risks():
 
 
 def test_milestone_rag_changes_are_reported():
-    prev = {"risks": [], "issues": [],
-            "milestones": [{"id": 1, "name": "Discovery", "rag": "green"}]}
-    curr = {"risks": [], "issues": [],
-            "milestones": [{"id": 1, "name": "Discovery", "rag": "amber"}]}
+    """Milestones use the real shape pam_report_service produces: keyed on
+    milestone_key (stable identity), with title as the user-editable label and
+    rag/days_delta appended by the enrichment step."""
+    prev = {"risks": [], "issues": [], "milestones": [
+        {"milestone_key": "discovery", "title": "Discovery", "rag": "green"},
+    ]}
+    curr = {"risks": [], "issues": [], "milestones": [
+        {"milestone_key": "discovery", "title": "Discovery", "rag": "amber"},
+    ]}
     d = diff_reports(prev, curr)
     assert d["milestone_changes"] == [
         {"name": "Discovery", "from": "green", "to": "amber"}
     ]
+
+
+def test_milestone_rename_is_not_reported_as_a_status_change():
+    """title is user-editable; milestone_key is the stable identity. Keying on
+    title would read a rename as one milestone vanishing and another appearing."""
+    prev = {"risks": [], "issues": [], "milestones": [
+        {"milestone_key": "discovery", "title": "Discovery Phase", "rag": "green"},
+    ]}
+    curr = {"risks": [], "issues": [], "milestones": [
+        {"milestone_key": "discovery", "title": "Discovery", "rag": "green"},
+    ]}
+    d = diff_reports(prev, curr)
+    assert d["milestone_changes"] == []
 
 
 def test_summary_reads_as_prose():

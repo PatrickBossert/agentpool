@@ -12,13 +12,16 @@ def _titles(report: dict | None, key: str) -> list[str]:
 
 
 def _milestone_rag(report: dict | None) -> dict:
+    """Key milestones on milestone_key - the stable identity. title is
+    user-editable, so keying on it would read a rename as one milestone
+    disappearing and another appearing."""
     if not report:
         return {}
     out = {}
     for m in report.get("milestones") or []:
-        name = m.get("name")
-        if name:
-            out[name] = m.get("rag")
+        key = m.get("milestone_key")
+        if key:
+            out[key] = {"title": m.get("title"), "rag": m.get("rag")}
     return out
 
 
@@ -41,9 +44,14 @@ def diff_reports(previous: dict | None, current: dict) -> dict:
     milestone_changes = []
     if not is_first:
         prev_rag, curr_rag = _milestone_rag(previous), _milestone_rag(current)
-        for name, rag in curr_rag.items():
-            if name in prev_rag and prev_rag[name] != rag:
-                milestone_changes.append({"name": name, "from": prev_rag[name], "to": rag})
+        for key, curr_entry in curr_rag.items():
+            prev_entry = prev_rag.get(key)
+            if prev_entry and prev_entry["rag"] != curr_entry["rag"]:
+                milestone_changes.append({
+                    "name": curr_entry["title"],
+                    "from": prev_entry["rag"],
+                    "to": curr_entry["rag"],
+                })
 
     def _plural(n: int, word: str) -> str:
         return f"{n} {word}{'' if n == 1 else 's'}"
