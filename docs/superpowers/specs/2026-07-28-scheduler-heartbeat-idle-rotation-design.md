@@ -116,17 +116,32 @@ mounted inside the authenticated layout, holds all timing for this feature:
 
 ### Rotation
 
-`getIdleStatus(key, runIndex)` in `ui/src/components/agentStatus.ts` is unchanged. It
-already derives an activity by hashing `key + runIndex`, so rotation is simply seed
-advancement:
+`getIdleStatus(key, runIndex)` in `ui/src/components/agentStatus.ts` keeps its current
+behaviour and its call signature. A new `getRotatedIdleStatus(key, runIndex, rotation)`
+sits beside it and derives the activity as a **stride walk** over the activity list:
 
-```ts
-getIdleStatus(key, runIndex + rotation)
+```
+index = (base + rotation * stride) mod n
 ```
 
-Because each agent hashes a different key, one shared counter yields a different new
-activity per agent. Where the advanced seed returns the activity already displayed, the
-consumer advances once more - a repeat would read as a missed breath.
+where `n` is the number of activities, `base` is the existing hash of `key + runIndex`,
+and `stride` is a second hash of the same seed, constrained to be coprime with `n`.
+
+Two properties fall out of that constraint, both of which a naive
+`getIdleStatus(key, runIndex + rotation)` fails to give:
+
+- **No activity ever repeats back to back.** A stride coprime with `n` can never be
+  congruent to zero, so consecutive rotations always land on different activities. A
+  repeat would read as a missed breath, and checking for one after the fact needs the
+  previously displayed value - which means either storing it or walking the whole
+  history, and the history grows without bound while the page stays open.
+- **Every activity appears before any repeats.** A coprime stride cycles through the
+  full list, so an agent works through all of them rather than revisiting a favourite.
+
+At `rotation = 0` the expression reduces to `base`, which is exactly what
+`getIdleStatus` returns today - so a freshly loaded board looks identical to the
+current one, and each agent's stride differs, so one shared counter still yields a
+different new activity per agent.
 
 ### Breathing
 
