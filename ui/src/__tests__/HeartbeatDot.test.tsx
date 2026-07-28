@@ -88,6 +88,21 @@ describe('HeartbeatDot panel', () => {
     expect(screen.getByTestId('heartbeat-panel').textContent).toContain('404')
   })
 
+  it('closes on a second click of the dot', async () => {
+    mockedHeartbeat.mockReturnValue(heartbeat())
+    render(<HeartbeatDot />)
+    const trigger = screen.getByTestId('heartbeat-dot-button')
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('heartbeat-panel')).toBeInTheDocument()
+
+    // The document mousedown handler fires first and sees this click as inside the
+    // container (the trigger is inside containerRef), then React's onClick toggles -
+    // so a second click must close, not fight itself back open.
+    await userEvent.click(trigger)
+    expect(screen.queryByTestId('heartbeat-panel')).not.toBeInTheDocument()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('closes on Escape', async () => {
     mockedHeartbeat.mockReturnValue(heartbeat())
     render(<HeartbeatDot />)
