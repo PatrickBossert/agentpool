@@ -34,14 +34,18 @@ describe('FadingText', () => {
   it('keeps showing the old text while fading out', () => {
     const { rerender } = render(<FadingText text="Morning yoga" delayKey="pam" />)
     rerender(<FadingText text="In the sauna" delayKey="pam" />)
-    expect(screen.getByText('Morning yoga')).toBeInTheDocument()
+    const node = screen.getByText('Morning yoga')
+    expect(node).toBeInTheDocument()
+    expect(node.style.opacity).toBe('0')
   })
 
   it('shows the new text once the fade completes', () => {
     const { rerender } = render(<FadingText text="Morning yoga" delayKey="pam" />)
     rerender(<FadingText text="In the sauna" delayKey="pam" />)
     act(() => { vi.advanceTimersByTime(FADE_MS + MAX_DELAY_MS) })
-    expect(screen.getByText('In the sauna')).toBeInTheDocument()
+    const node = screen.getByText('In the sauna')
+    expect(node).toBeInTheDocument()
+    expect(node.style.opacity).toBe('1')
   })
 
   it('swaps instantly under prefers-reduced-motion', () => {

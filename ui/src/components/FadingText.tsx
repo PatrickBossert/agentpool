@@ -49,6 +49,10 @@ export default function FadingText({
     }
 
     setVisible(false)
+    // Wait delay + FADE_MS, not just FADE_MS: the CSS transition-delay below
+    // postpones the fade start by `delay`, so the opacity-0 transition only
+    // finishes at delay + FADE_MS. Swapping the text any earlier would
+    // replace it while it was still fully (or partially) visible.
     timerRef.current = setTimeout(() => {
       setDisplayed(text)
       setVisible(true)
