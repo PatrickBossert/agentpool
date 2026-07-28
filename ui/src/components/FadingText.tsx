@@ -70,7 +70,10 @@ export default function FadingText({
       style={{
         opacity: visible ? 1 : 0,
         transition: reduced ? undefined : `opacity ${FADE_MS}ms ease-in-out`,
-        transitionDelay: reduced ? undefined : `${delay}ms`,
+        // The delay staggers when each card starts fading out, not how long
+        // its breath takes - applying it to the fade-in leg too would leave
+        // the new text invisible for a further `delay`ms after the swap.
+        transitionDelay: reduced ? undefined : `${visible ? 0 : delay}ms`,
       }}
     >
       {displayed}

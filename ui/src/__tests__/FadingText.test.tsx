@@ -56,8 +56,13 @@ describe('FadingText', () => {
   })
 
   it('gives different keys different delays so the board ripples', () => {
-    const { container: a } = render(<FadingText text="x" delayKey="pam" />)
-    const { container: b } = render(<FadingText text="x" delayKey="discovery" />)
+    // The delay only applies to the fade-out leg, so read it while `visible`
+    // is false - on the initial (visible) render it is always 0ms for every
+    // instance and the comparison would pass vacuously.
+    const { container: a, rerender: rerenderA } = render(<FadingText text="x" delayKey="pam" />)
+    const { container: b, rerender: rerenderB } = render(<FadingText text="x" delayKey="discovery" />)
+    rerenderA(<FadingText text="y" delayKey="pam" />)
+    rerenderB(<FadingText text="y" delayKey="discovery" />)
     const delayOf = (c: HTMLElement) =>
       (c.firstElementChild as HTMLElement).style.transitionDelay
     expect(delayOf(a)).not.toEqual(delayOf(b))
