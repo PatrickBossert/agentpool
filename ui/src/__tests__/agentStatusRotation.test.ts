@@ -22,6 +22,8 @@ describe('getRotatedIdleStatus', () => {
   })
 
   it('works through every activity before revisiting one', () => {
+    // 25 is IDLE_STATUSES.length in agentStatus.ts - the array is module-private by
+    // design, so this tracks it manually. Update both together.
     const seen = new Set<string>()
     for (let rotation = 0; rotation < 25; rotation++) {
       seen.add(getRotatedIdleStatus('pam', 0, rotation))
