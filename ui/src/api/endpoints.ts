@@ -225,8 +225,15 @@ export interface SchedulerHeartbeat {
 }
 
 export const systemApi = {
+  // A per-request timeout, not a global one on apiClient - other endpoints in this
+  // app legitimately run long. If the API accepts the connection but never responds
+  // (a hung worker, a proxy holding the request), this turns an indefinitely-pending
+  // "Checking…" button into an axios error with no response, which the classifier
+  // already maps to "unreachable".
   heartbeat: (): Promise<SchedulerHeartbeat> =>
-    apiClient.get<SchedulerHeartbeat>('/system/heartbeat').then((r) => r.data),
+    apiClient
+      .get<SchedulerHeartbeat>('/system/heartbeat', { timeout: 10_000 })
+      .then((r) => r.data),
 }
 
 export const milestonesApi = {
