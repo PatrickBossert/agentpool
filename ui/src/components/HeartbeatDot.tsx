@@ -95,7 +95,7 @@ export default function HeartbeatDot() {
         <div
           id={panelId}
           data-testid="heartbeat-panel"
-          className="absolute top-6 left-0 z-50 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg"
+          className="absolute top-6 right-0 z-50 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg"
         >
           <p className="text-xs font-semibold text-gray-900">{diagnosis.title}</p>
           <p className="text-[11px] text-gray-500 mt-1">{detail}</p>
