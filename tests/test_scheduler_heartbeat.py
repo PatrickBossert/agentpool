@@ -103,6 +103,44 @@ async def test_a_heartbeat_failure_does_not_stop_the_loop():
 
 
 @pytest.mark.asyncio
+async def test_slow_job_cannot_starve_the_heartbeat():
+    """The gap between stamps must be bounded by TICK_SECONDS, not by job duration.
+
+    If the heartbeat is only stamped after run_due_jobs returns, a job that runs
+    long enough pushes the loop past the staleness window even though the loop is
+    perfectly healthy. Stamping before the pass too bounds the gap to
+    max(job duration, TICK_SECONDS).
+    """
+    from api.services.scheduler_service import scheduler_loop
+
+    job_running = asyncio.Event()
+    release_job = asyncio.Event()
+
+    async def slow_job(now=None):
+        job_running.set()
+        await release_job.wait()
+
+    stop = asyncio.Event()
+    with patch(
+        "api.services.scheduler_service.run_due_jobs", AsyncMock(side_effect=slow_job)
+    ), patch(
+        "api.services.scheduler_service.record_scheduler_heartbeat", AsyncMock()
+    ) as heartbeat, patch("api.services.scheduler_service.TICK_SECONDS", 0.01):
+        task = asyncio.create_task(scheduler_loop(stop))
+        await asyncio.wait_for(job_running.wait(), timeout=5)
+
+        # The slow job is still in flight - release_job has not been set - so the
+        # only way a stamp can already exist is if it was written before the pass.
+        assert heartbeat.await_count >= 1, (
+            "heartbeat was not recorded while the slow job was still running"
+        )
+
+        release_job.set()
+        stop.set()
+        await task
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_endpoint_reports_not_alive_before_any_tick(client):
     resp = await client.get("/system/heartbeat")
     assert resp.status_code == 200

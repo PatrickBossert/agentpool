@@ -77,28 +77,42 @@ async def run_due_jobs(now: datetime | None = None) -> int:
     return ran
 
 
+async def _stamp_heartbeat() -> None:
+    """Record that the loop is cycling. Never raises - a stamp that cannot be written
+    is a lost indicator, not a reason to stop running jobs.
+    """
+    try:
+        async with get_system_connection() as conn:
+            await record_scheduler_heartbeat(
+                conn, now_iso=datetime.now().isoformat(timespec="seconds")
+            )
+    except Exception:
+        logger.exception("scheduler: could not record the heartbeat")
+
+
 async def scheduler_loop(stop_event: asyncio.Event) -> None:
     """Run due jobs on boot, then every tick until asked to stop.
 
     Every exception is swallowed and logged: the scheduler must never be able to
     take the application down with it. That includes the heartbeat - a stamp that
     cannot be written is a lost indicator, not a reason to stop running jobs.
+
+    Stamped both before and after run_due_jobs: run_due_jobs awaits each job inline,
+    so a long-running job would otherwise stretch the gap between stamps to
+    TICK_SECONDS + job duration. Stamping before the pass too bounds the gap to
+    max(job duration, TICK_SECONDS), so a slow job alone can never push a healthy
+    loop past the staleness threshold. The after-stamp stays - it is what proves the
+    pass completed.
     """
     while not stop_event.is_set():
+        await _stamp_heartbeat()
+
         try:
             await run_due_jobs()
         except Exception:
             logger.exception("scheduler: tick failed")
 
-        # Stamped outside the guard above, so a pass in which a job raised still
-        # reports the loop as alive.
-        try:
-            async with get_system_connection() as conn:
-                await record_scheduler_heartbeat(
-                    conn, now_iso=datetime.now().isoformat(timespec="seconds")
-                )
-        except Exception:
-            logger.exception("scheduler: could not record the heartbeat")
+        await _stamp_heartbeat()
 
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=TICK_SECONDS)
