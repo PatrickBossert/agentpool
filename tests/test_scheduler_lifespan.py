@@ -1,9 +1,38 @@
 # tests/test_scheduler_lifespan.py
 """Every project gets a report job registered on boot, and the scheduler task is
 started and stopped cleanly with the app."""
+import shutil
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from api.config import get_settings
+
+_SLUGS = ("sched-reg-a", "sched-reg-b")
+
+
+@pytest.fixture(autouse=True)
+def clean():
+    """Remove this file's project databases and directories before and after
+    each test. Without this a leaked sched-reg-* db/project persists on disk
+    across runs and this file relies on test_projects_list.py's blanket *.db
+    cleanup happening to run afterwards (alphabetical ordering) to tidy up -
+    the same fragile-by-accident exposure test_pam_report_job.py had."""
+    settings = get_settings()
+    for slug in _SLUGS:
+        db_path = Path(settings.database_dir) / f"{slug}.db"
+        proj_dir = Path(settings.projects_dir) / slug
+        db_path.unlink(missing_ok=True)
+        if proj_dir.exists():
+            shutil.rmtree(proj_dir)
+    yield
+    for slug in _SLUGS:
+        db_path = Path(settings.database_dir) / f"{slug}.db"
+        proj_dir = Path(settings.projects_dir) / slug
+        db_path.unlink(missing_ok=True)
+        if proj_dir.exists():
+            shutil.rmtree(proj_dir)
 
 
 @pytest.mark.asyncio

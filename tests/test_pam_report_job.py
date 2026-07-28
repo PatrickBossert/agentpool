@@ -1,13 +1,41 @@
 """The job: compute, store for audit, diff against yesterday, notify."""
 import json
+import shutil
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from api.config import get_settings
 from api.services.pam_report_job import JOB_NAME, resolve_recipients
 
 SLUG = "pam-job-test"
+
+_SLUGS = ("pam-job-test", "pam-job-super", "pam-job-first", "pam-job-mail")
+
+
+@pytest.fixture(autouse=True)
+def clean():
+    """Remove this file's project databases and directories before and after
+    each test, so a project created by one run doesn't leak into the next -
+    e.g. a "first run reports no changes" test finding a previous run's
+    report still on disk. Without this the file passes in the full suite only
+    by accident, via test_projects_list.py's blanket *.db cleanup happening
+    to run afterwards alphabetically."""
+    settings = get_settings()
+    for slug in _SLUGS:
+        db_path = Path(settings.database_dir) / f"{slug}.db"
+        proj_dir = Path(settings.projects_dir) / slug
+        db_path.unlink(missing_ok=True)
+        if proj_dir.exists():
+            shutil.rmtree(proj_dir)
+    yield
+    for slug in _SLUGS:
+        db_path = Path(settings.database_dir) / f"{slug}.db"
+        proj_dir = Path(settings.projects_dir) / slug
+        db_path.unlink(missing_ok=True)
+        if proj_dir.exists():
+            shutil.rmtree(proj_dir)
 
 
 def _sh(name, email, *, reviewer=False, approver=False):
