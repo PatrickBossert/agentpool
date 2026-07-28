@@ -31,6 +31,7 @@ export function HeartbeatDot() {
     <span
       data-testid="heartbeat-dot"
       title={title}
+      role="img"
       aria-label={title}
       className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
         status === 'alive' ? 'bg-brand opacity-60' : 'bg-gray-300'
