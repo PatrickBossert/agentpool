@@ -140,11 +140,16 @@ renders it where it renders it today.
 `status === 'alive'`, `bg-gray-300` otherwise. `unknown` continues to render identically
 to `stale`, so a slow first load raises no alarm.
 
-**It becomes a button.** The element changes from `<span role="img">` to `<button>`,
-keeping `data-testid="heartbeat-dot"` and its `title` attribute so hovering still works
-without opening anything. `role="img"` goes, since a button has its own role. It carries
-`aria-expanded`, and `aria-label` and `title` both set to the diagnosis title, so the
-accessible name and the hover tooltip say what the colour means.
+**It becomes a button.** A 6px button is an unreasonably small target, so the visual dot
+becomes a `<span>` *inside* a `<button>` that carries padding - the hit area is roughly
+20px while the mark itself stays 6px and as quiet as it was. `data-testid="heartbeat-dot"`
+therefore stays on the span carrying the colour classes, so the existing colour assertions
+hold unchanged, and the button takes `data-testid="heartbeat-dot-button"`.
+
+The button keeps a `title` attribute so hovering still works without opening anything.
+`role="img"` goes, since a button has its own role. It carries `aria-expanded`, and
+`aria-label` and `title` both set to the diagnosis title, so the accessible name and the
+hover tooltip say what the colour means.
 
 Both strings therefore change wording: today the dot says "The scheduler has not ticked
 yet" in all three non-alive cases. The existing assertion in
