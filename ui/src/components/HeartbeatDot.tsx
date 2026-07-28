@@ -62,7 +62,7 @@ export default function HeartbeatDot() {
 
   const detail = [
     lastTickAt ? `Last tick ${lastTickAt}` : 'No tick recorded',
-    secondsSince === null ? null : `${secondsSince}s ago`,
+    secondsSince === null ? null : `${secondsSince}s ago at last check`,
     diagnosis.httpStatus === null ? null : `HTTP ${diagnosis.httpStatus}`,
   ]
     .filter(Boolean)
