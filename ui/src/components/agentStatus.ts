@@ -394,11 +394,42 @@ const IDLE_STATUSES = [
   'Optimising their sleep',
 ]
 
-export function getIdleStatus(key: string, runIndex = 0): string {
-  const seed = key + runIndex
+function hashSeed(seed: string): number {
   let h = 0
   for (let i = 0; i < seed.length; i++) h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0
-  return IDLE_STATUSES[Math.abs(h) % IDLE_STATUSES.length]
+  return Math.abs(h)
+}
+
+export function getIdleStatus(key: string, runIndex = 0): string {
+  return IDLE_STATUSES[hashSeed(key + runIndex) % IDLE_STATUSES.length]
+}
+
+function gcd(a: number, b: number): number {
+  while (b !== 0) [a, b] = [b, a % b]
+  return a
+}
+
+/**
+ * The activity to show for an idle agent at a given rotation.
+ *
+ * A stride walk rather than seed advancement. Because the stride is coprime with the
+ * list length it can never be congruent to zero, so no activity ever follows itself,
+ * and the walk visits every activity before revisiting one. Checking for a repeat
+ * after the fact would instead need the previously displayed value - which means
+ * either storing it or walking the history, and the history grows without bound while
+ * the page stays open.
+ *
+ * At rotation 0 this reduces to getIdleStatus, so a freshly loaded board is unchanged.
+ */
+export function getRotatedIdleStatus(key: string, runIndex: number, rotation: number): string {
+  const n = IDLE_STATUSES.length
+  if (n < 2) return IDLE_STATUSES[0]
+
+  const base = hashSeed(key + runIndex) % n
+  let stride = 1 + (hashSeed(`${key}${runIndex}:stride`) % (n - 1))
+  while (gcd(stride, n) !== 1) stride = (stride % (n - 1)) + 1
+
+  return IDLE_STATUSES[(base + rotation * stride) % n]
 }
 
 export function inferAgentStatuses(crewKey: string, logs: string[]): AgentStatus[] {
