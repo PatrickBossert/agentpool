@@ -5,6 +5,7 @@ import {
   SchedulerHeartbeatProvider,
   useSchedulerHeartbeat,
   ROTATION_MS,
+  POLL_MS,
 } from '../context/SchedulerHeartbeatContext'
 import { systemApi } from '../api/endpoints'
 
@@ -75,5 +76,38 @@ describe('SchedulerHeartbeatContext', () => {
     await act(async () => { await Promise.resolve() })
     await act(async () => { vi.advanceTimersByTime(ROTATION_MS * 4) })
     expect(screen.getByTestId('probe')).toHaveTextContent('stale:0')
+  })
+
+  it('stops advancing rotation once a later poll reports the scheduler died - proves the interval is torn down, not just paused', async () => {
+    const heartbeatMock = vi.mocked(systemApi.heartbeat)
+    heartbeatMock
+      .mockResolvedValueOnce({ last_tick_at: '2026-07-28T17:00:00', seconds_since: 3, alive: true })
+      .mockResolvedValue({ last_tick_at: '2026-07-28T17:00:00', seconds_since: 9000, alive: false })
+
+    renderProbe()
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('probe')).toHaveTextContent('alive:0')
+
+    // One rotation tick while alive - the interval genuinely exists.
+    await act(async () => { vi.advanceTimersByTime(ROTATION_MS) })
+    expect(screen.getByTestId('probe')).toHaveTextContent('alive:1')
+
+    // Advance to the next POLL_MS boundary, where the mocked heartbeat now
+    // reports the scheduler has died, and flush the resulting microtasks so
+    // the second poll's result lands.
+    await act(async () => {
+      vi.advanceTimersByTime(POLL_MS - ROTATION_MS)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const probe = screen.getByTestId('probe')
+    expect(probe.textContent).toMatch(/^stale:/)
+    const rotationAtTransition = probe.textContent
+
+    // Further time must not move the rotation counter. If the cleanup that
+    // clears the rotation interval were ever dropped, the leaked interval
+    // would keep incrementing here regardless of status.
+    await act(async () => { vi.advanceTimersByTime(ROTATION_MS * 4) })
+    expect(screen.getByTestId('probe')).toHaveTextContent(rotationAtTransition!)
   })
 })

@@ -45,6 +45,9 @@ export function SchedulerHeartbeatProvider({ children }: { children: ReactNode }
         // mean the same thing to a viewer: stop breathing.
         if (cancelled) return
         setStatus('stale')
+        // lastTickAt is deliberately left as the last known-good value on a
+        // failed poll, rather than cleared - a later task's tooltip reads it
+        // to show "last seen at ..." even while the current poll is failing.
       }
     }
 
