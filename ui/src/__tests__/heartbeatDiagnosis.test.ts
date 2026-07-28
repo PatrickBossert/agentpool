@@ -77,6 +77,15 @@ describe('diagnoseError', () => {
     expect(() => diagnoseError('just a string')).not.toThrow()
     expect(diagnoseError('just a string').code).toBe('unexpected')
   })
+
+  it('survives an object with a throwing isAxiosError getter and does not throw', () => {
+    const pathologicalError = {}
+    Object.defineProperty(pathologicalError, 'isAxiosError', {
+      get() { throw new Error('Getter throws') },
+    })
+    expect(() => diagnoseError(pathologicalError)).not.toThrow()
+    expect(diagnoseError(pathologicalError).code).toBe('unexpected')
+  })
 })
 
 describe('STARTING', () => {

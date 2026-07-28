@@ -60,55 +60,68 @@ export function diagnoseResponse(beat: SchedulerHeartbeat): Diagnosis {
   return {
     code: 'stopped',
     title: 'The scheduler has stopped ticking.',
-    action: 'Check the API logs - the scheduler task has died whilst the API is still serving.',
+    action: 'Check the API logs - the scheduler task has died while the API is still serving.',
     httpStatus: 200,
   }
 }
 
 export function diagnoseError(error: unknown): Diagnosis {
-  const status = axios.isAxiosError(error) ? (error.response?.status ?? null) : null
+  try {
+    let status: number | null = null
 
-  if (axios.isAxiosError(error)) {
-    if (status === null) {
-      return {
-        code: 'unreachable',
-        title: 'The API cannot be reached.',
-        action: 'Check the API is running on the expected port.',
-        httpStatus: null,
-      }
-    }
-    if (status === 404) {
-      return {
-        code: 'endpoint-missing',
-        title: 'The API does not have a heartbeat endpoint.',
-        action: 'Restart the API - it is running a build from before this feature.',
-        httpStatus: status,
-      }
-    }
-    if (status === 403) {
-      return {
-        code: 'forbidden',
-        title: 'This account is not permitted to read the heartbeat.',
-        action: 'Sign out and back in.',
-        httpStatus: status,
-      }
-    }
-    if (status >= 500) {
-      return {
-        code: 'server-error',
-        title: 'The API returned an error.',
-        action: 'Check the API logs.',
-        httpStatus: status,
-      }
-    }
-  }
+    if (axios.isAxiosError(error)) {
+      status = error.response?.status ?? null
 
-  // Total fallback. An unrecognised failure carries its own message rather than
-  // being labelled as one of the cases above and sending someone the wrong way.
-  return {
-    code: 'unexpected',
-    title: 'The heartbeat check failed.',
-    action: error instanceof Error ? error.message : String(error),
-    httpStatus: status,
+      if (status === null) {
+        return {
+          code: 'unreachable',
+          title: 'The API cannot be reached.',
+          action: 'Check the API is running on the expected port.',
+          httpStatus: null,
+        }
+      }
+      if (status === 404) {
+        return {
+          code: 'endpoint-missing',
+          title: 'The API does not have a heartbeat endpoint.',
+          action: 'Restart the API - it is running a build from before this feature.',
+          httpStatus: status,
+        }
+      }
+      if (status === 403) {
+        return {
+          code: 'forbidden',
+          title: 'This account is not permitted to read the heartbeat.',
+          action: 'Sign out and back in.',
+          httpStatus: status,
+        }
+      }
+      if (status >= 500) {
+        return {
+          code: 'server-error',
+          title: 'The API returned an error.',
+          action: 'Check the API logs.',
+          httpStatus: status,
+        }
+      }
+    }
+
+    // Total fallback. An unrecognised failure carries its own message rather than
+    // being labelled as one of the cases above and sending someone the wrong way.
+    return {
+      code: 'unexpected',
+      title: 'The heartbeat check failed.',
+      action: error instanceof Error ? error.message : String(error),
+      httpStatus: status,
+    }
+  } catch {
+    // Pathological case: an error object with a throwing getter (e.g., on isAxiosError
+    // or response). Must never throw, whatever is handed to us.
+    return {
+      code: 'unexpected',
+      title: 'The heartbeat check failed.',
+      action: 'An unexpected error occurred while checking the heartbeat.',
+      httpStatus: null,
+    }
   }
 }
