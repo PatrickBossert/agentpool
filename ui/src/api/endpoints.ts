@@ -218,6 +218,17 @@ export const pamReportApi = {
     apiClient.get<PamReport>(`/projects/${slug}/pam-report`).then((r) => r.data),
 }
 
+export interface SchedulerHeartbeat {
+  last_tick_at: string | null
+  seconds_since: number | null
+  alive: boolean
+}
+
+export const systemApi = {
+  heartbeat: (): Promise<SchedulerHeartbeat> =>
+    apiClient.get<SchedulerHeartbeat>('/system/heartbeat').then((r) => r.data),
+}
+
 export const milestonesApi = {
   list: (slug: string): Promise<Milestone[]> =>
     apiClient.get<Milestone[]>(`/projects/${slug}/milestones`).then((r) => r.data),
