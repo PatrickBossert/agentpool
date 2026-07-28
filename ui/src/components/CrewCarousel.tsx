@@ -5,11 +5,13 @@ import type { CrewRun, HumanReview } from '../types'
 import {
   CREW_ORDER, CREW_LABELS, CREW_AGENTS,
   AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME,
-  inferAgentStatuses, getCrewStatus, getIdleStatus,
+  inferAgentStatuses, getCrewStatus, getRotatedIdleStatus,
   type AgentStatus,
 } from './agentStatus'
 import { CREW_ICON_COMPONENT } from './crewIcons'
 import AgentHoverCard from './AgentHoverCard'
+import FadingText from './FadingText'
+import { useSchedulerHeartbeat } from '../context/SchedulerHeartbeatContext'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -75,6 +77,7 @@ interface PamCardProps {
 
 function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReviewCount, runCount, isSelected, isHovered, anotherCardHovered, carouselDragging, onSelect, onRunPipeline, onMouseEnter, onMouseLeave }: PamCardProps) {
   const imageSrc = AGENT_AVATAR_IMAGE['PAM']
+  const { rotation } = useSchedulerHeartbeat()
 
   const borderClass = isSelected
     ? 'border-teal-500 ring-2 ring-teal-400/40 animate-crewGlow'
@@ -90,7 +93,11 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
       ? <span className="text-[10px] font-medium text-green-600 flex items-center gap-1"><CheckCircle2 size={10} />Done</span>
       : orchestrationStatus === 'failed'
         ? <span className="text-[10px] font-medium text-red-500 flex items-center gap-1"><XCircle size={10} />Failed</span>
-        : <span className="text-[10px] font-medium text-gray-400">{getIdleStatus('pam', runCount)}</span>
+        : <FadingText
+            className="text-[10px] font-medium text-gray-400"
+            text={getRotatedIdleStatus('pam', runCount, rotation)}
+            delayKey="pam"
+          />
 
   return (
     <div
@@ -178,6 +185,7 @@ interface CrewCardProps {
 }
 
 function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, isHovered, anotherCardHovered, carouselDragging, logs, anyBusy, onSelect, onRun, onRerun, onMouseEnter, onMouseLeave }: CrewCardProps) {
+  const { rotation } = useSchedulerHeartbeat()
   const status = getCrewStatus(crewRun, isActive, isPipelineActive, isWaiting, isRejected)
   const agents = CREW_AGENTS[crewKey] ?? []
 
@@ -224,7 +232,11 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
     status === 'completed' ? <span className="text-[10px] font-medium text-green-600 flex items-center gap-1"><CheckCircle2 size={10} />Done</span> :
     status === 'failed'    ? <span className="text-[10px] font-medium text-red-500 flex items-center gap-1"><XCircle size={10} />Failed</span> :
     status === 'queued'    ? <span className="text-[10px] font-medium text-gray-400 flex items-center gap-1"><Circle size={10} />Queued</span> :
-                             <span className="text-[10px] font-medium text-gray-300">{getIdleStatus(crewKey, crewRun?.id ?? 0)}</span>
+                             <FadingText
+                               className="text-[10px] font-medium text-gray-300"
+                               text={getRotatedIdleStatus(crewKey, crewRun?.id ?? 0, rotation)}
+                               delayKey={crewKey}
+                             />
 
   const canPlay = !anyBusy && status !== 'running'
   const isSingleAgent = agents.length === 1

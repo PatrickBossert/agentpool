@@ -5,9 +5,11 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { agentChatApi } from '../api/agentChat'
 import type { InjectedDoc, InjectedLink } from '../api/agentChat'
-import { AGENT_AVATAR, AGENT_SKILLS, AGENT_ROLE, CREW_AGENTS, getIdleStatus } from './agentStatus'
+import { AGENT_AVATAR, AGENT_SKILLS, AGENT_ROLE, CREW_AGENTS, getRotatedIdleStatus } from './agentStatus'
 import { bcp47 } from '../utils/holidays'
 import type { CrewRun } from '../types'
+import FadingText from './FadingText'
+import { useSchedulerHeartbeat } from '../context/SchedulerHeartbeatContext'
 
 // Configure marked for inline use - no async, GFM tables and line breaks enabled
 marked.use({ async: false, gfm: true, breaks: true })
@@ -138,6 +140,7 @@ export default function AgentChatDrawer({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const statusScrollRef = useRef<HTMLDivElement>(null)
+  const { rotation } = useSchedulerHeartbeat()
 
   useEffect(() => {
     setMessages([]); setInput(''); setTab('status')
@@ -295,7 +298,10 @@ export default function AgentChatDrawer({
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-gray-50 text-gray-500 border border-gray-200">
-                  {getIdleStatus(agentName ?? 'agent', crewRun?.id ?? 0)}
+                  <FadingText
+                    text={getRotatedIdleStatus(agentName ?? 'agent', crewRun?.id ?? 0, rotation)}
+                    delayKey={agentName ?? 'agent'}
+                  />
                 </span>
               )}
               {crewRun?.started_at && (

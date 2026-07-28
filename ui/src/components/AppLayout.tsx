@@ -8,6 +8,36 @@ import { useAuth } from '../context/AuthContext'
 import NewProjectModal from './NewProjectModal'
 import type { Project } from '../types'
 import logoUrl from '../assets/TR_Logo_strapiline.png'
+import {
+  SchedulerHeartbeatProvider,
+  useSchedulerHeartbeat,
+} from '../context/SchedulerHeartbeatContext'
+
+/**
+ * Ambient scheduler liveness.
+ *
+ * Deliberately quiet: legible to someone who knows the convention, meaningless to a
+ * client in the room. The frozen agent activities are the louder half of the signal.
+ */
+export function HeartbeatDot() {
+  const { status, lastTickAt } = useSchedulerHeartbeat()
+  const title = !lastTickAt
+    ? 'The scheduler has not ticked yet'
+    : status === 'alive'
+      ? `The scheduler last ticked at ${lastTickAt}`
+      : `The scheduler has not ticked since ${lastTickAt}`
+
+  return (
+    <span
+      data-testid="heartbeat-dot"
+      title={title}
+      aria-label={title}
+      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+        status === 'alive' ? 'bg-brand opacity-60' : 'bg-gray-300'
+      }`}
+    />
+  )
+}
 
 export default function AppLayout() {
   const { slug } = useParams<{ slug?: string }>()
@@ -55,6 +85,7 @@ export default function AppLayout() {
       ]
 
   return (
+    <SchedulerHeartbeatProvider>
     <div className="min-h-screen bg-gray-200 flex flex-col">
       {/* Top nav */}
       <header className="bg-white border-b border-gray-200 px-4 h-12 flex items-center gap-6">
@@ -103,6 +134,7 @@ export default function AppLayout() {
               </a>
             </>
           )}
+          <HeartbeatDot />
           <span className="text-xs text-gray-400">{user?.sub}</span>
           <Link
             to="/pitch"
@@ -207,5 +239,6 @@ export default function AppLayout() {
 
       {showModal && <NewProjectModal onClose={() => setShowModal(false)} />}
     </div>
+    </SchedulerHeartbeatProvider>
   )
 }
