@@ -6,39 +6,10 @@ import { useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import { useAuth } from '../context/AuthContext'
 import NewProjectModal from './NewProjectModal'
+import HeartbeatDot from './HeartbeatDot'
 import type { Project } from '../types'
 import logoUrl from '../assets/TR_Logo_strapiline.png'
-import {
-  SchedulerHeartbeatProvider,
-  useSchedulerHeartbeat,
-} from '../context/SchedulerHeartbeatContext'
-
-/**
- * Ambient scheduler liveness.
- *
- * Deliberately quiet: legible to someone who knows the convention, meaningless to a
- * client in the room. The frozen agent activities are the louder half of the signal.
- */
-export function HeartbeatDot() {
-  const { status, lastTickAt } = useSchedulerHeartbeat()
-  const title = !lastTickAt
-    ? 'The scheduler has not ticked yet'
-    : status === 'alive'
-      ? `The scheduler last ticked at ${lastTickAt}`
-      : `The scheduler has not ticked since ${lastTickAt}`
-
-  return (
-    <span
-      data-testid="heartbeat-dot"
-      title={title}
-      role="img"
-      aria-label={title}
-      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-        status === 'alive' ? 'bg-brand opacity-60' : 'bg-gray-300'
-      }`}
-    />
-  )
-}
+import { SchedulerHeartbeatProvider } from '../context/SchedulerHeartbeatContext'
 
 export default function AppLayout() {
   const { slug } = useParams<{ slug?: string }>()
