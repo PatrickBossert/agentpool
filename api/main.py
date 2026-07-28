@@ -1,9 +1,13 @@
 # api/main.py
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.config import get_settings
+from api.services.scheduler_service import scheduler_loop
+import api.services.pam_report_job  # noqa: F401 - registers JOB_REGISTRY["pam_daily_report"]
 from api.routers import projects, run, outputs, ws
 from api.routers import auth as auth_router
 from api.routers import documents as documents_router
@@ -52,13 +56,51 @@ async def _mark_stale_runs_failed(database_dir: str) -> None:
             log.exception("Could not clean up stale runs in %s", db_path.name)
 
 
+async def _register_scheduled_jobs() -> None:
+    """Ensure every project has a daily report job registered.
+
+    Uses an upsert that leaves an existing schedule alone, so restarting does not
+    postpone a job that is already due. Never raises: a scheduling problem must
+    not stop the API from starting.
+    """
+    import logging
+    from datetime import datetime
+
+    from api.database import get_system_connection, upsert_scheduled_job
+    from api.services.pam_report_job import JOB_NAME
+    from api.services.scheduler_service import next_due_at
+
+    log = logging.getLogger(__name__)
+    try:
+        settings = get_settings()
+        due = next_due_at(datetime.now())
+        slugs = [p.stem for p in Path(settings.database_dir).glob("*.db")
+                 if p.name != "system.db"]
+        async with get_system_connection() as conn:
+            for slug in slugs:
+                await upsert_scheduled_job(conn, job_name=JOB_NAME, slug=slug, next_due_at=due)
+        log.info("scheduler: registered the daily report job for %d project(s)", len(slugs))
+    except Exception:
+        log.exception("scheduler: could not register jobs - continuing without them")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     Path(settings.database_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.projects_dir).mkdir(parents=True, exist_ok=True)
     await _mark_stale_runs_failed(settings.database_dir)
+
+    await _register_scheduled_jobs()
+    stop_event = asyncio.Event()
+    scheduler_task = asyncio.create_task(scheduler_loop(stop_event))
+
     yield
+
+    stop_event.set()
+    scheduler_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await scheduler_task
 
 
 app = FastAPI(title="AgentPool API", version="0.1.0", lifespan=lifespan, favicon_url=None)
