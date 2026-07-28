@@ -68,3 +68,19 @@ def test_missing_keys_are_tolerated():
     d = diff_reports({}, {})
     assert d["new_risks"] == []
     assert d["summary"]
+
+
+def test_an_empty_previous_snapshot_is_not_a_first_report():
+    """A stored snapshot that carries no risks is still a real previous state, so
+    everything in today's report is genuinely new relative to it. Only previous
+    being None means 'we have never reported before'."""
+    d = diff_reports({}, _report(risks=["A"], issues=["X"]))
+    assert d["is_first_report"] is False
+    assert d["new_risks"] == ["A"]
+    assert d["new_issues"] == ["X"]
+
+
+def test_summary_pluralises_counts_above_one():
+    d = diff_reports(_report(risks=["A"]), _report(risks=["A", "B", "C"], issues=["X", "Y"]))
+    assert "2 new risks" in d["summary"]
+    assert "2 new issues" in d["summary"]
