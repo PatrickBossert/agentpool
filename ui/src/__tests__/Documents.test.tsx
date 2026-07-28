@@ -39,7 +39,10 @@ function Wrapper() {
 describe('Documents', () => {
   it('shows empty state when no documents', async () => {
     render(<Wrapper />)
-    expect(await screen.findByText(/no documents/i)).toBeInTheDocument()
+    // Match the copy in full - a looser /no documents/i stopped matching when
+    // the word "source" was added, and would silently start matching the
+    // Value Chain page's own empty state if these tests are ever shared.
+    expect(await screen.findByText(/no source documents uploaded yet/i)).toBeInTheDocument()
   })
 
   it('renders file upload input', () => {

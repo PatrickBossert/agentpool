@@ -17,8 +17,12 @@ vi.mock('../api/endpoints', () => ({
         {
           id: 1,
           project_id: 1,
+          // 'completed' rather than 'queued': getCrewStatus derives "queued" from
+          // the orchestration run being active, not from a crew run's own status,
+          // so a queued row on an idle pipeline renders as idle and asserts nothing
+          // about the run. 'completed' maps straight from the row to a badge.
           crew_name: 'discovery',
-          status: 'queued',
+          status: 'completed',
           result_json: null,
           started_at: null,
           finished_at: null,
@@ -54,7 +58,9 @@ describe('Dashboard', () => {
 
   it('shows crew run status when project selected', async () => {
     render(<Wrapper slug="acme-rail" />)
-    expect(await screen.findByText(/discovery/i)).toBeInTheDocument()
-    expect(await screen.findByText(/queued/i)).toBeInTheDocument()
+    // Exact strings, not /discovery/i: the board gained a "Discovery Interviews"
+    // crew alongside "Discovery", so a loose match now finds both.
+    expect(await screen.findByText('Discovery')).toBeInTheDocument()
+    expect(await screen.findByText('Done')).toBeInTheDocument()
   })
 })
