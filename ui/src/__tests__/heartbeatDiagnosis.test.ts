@@ -35,6 +35,11 @@ describe('diagnoseResponse', () => {
     // They imply different actions - that distinction is the point of the feature.
     expect(stopped.action).not.toBe(never.action)
   })
+
+  it('does not read a malformed 200 body as a confident "stopped" diagnosis', () => {
+    expect(diagnoseResponse({} as never).code).toBe('unexpected')
+    expect(diagnoseResponse(undefined as never).code).toBe('unexpected')
+  })
 })
 
 describe('diagnoseError', () => {

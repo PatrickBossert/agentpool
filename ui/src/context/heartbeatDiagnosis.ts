@@ -41,6 +41,14 @@ export const STARTING: Diagnosis = {
 }
 
 export function diagnoseResponse(beat: SchedulerHeartbeat): Diagnosis {
+  if (typeof beat?.alive !== 'boolean') {
+    return {
+      code: 'unexpected',
+      title: 'The heartbeat check failed.',
+      action: 'The endpoint answered with an unrecognised body.',
+      httpStatus: 200,
+    }
+  }
   if (beat.alive) {
     return {
       code: 'ticking',
