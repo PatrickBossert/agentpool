@@ -1,7 +1,8 @@
 // ui/src/context/SchedulerHeartbeatContext.tsx
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { systemApi } from '../api/endpoints'
+import { STARTING, diagnoseError, diagnoseResponse, type Diagnosis } from './heartbeatDiagnosis'
 
 export type HeartbeatStatus = 'unknown' | 'alive' | 'stale'
 
@@ -12,6 +13,9 @@ export interface HeartbeatValue {
   status: HeartbeatStatus
   lastTickAt: string | null
   rotation: number
+  diagnosis: Diagnosis
+  secondsSince: number | null
+  refresh: () => Promise<void>
 }
 
 // Consumers rendered outside the provider degrade to a still board rather than
@@ -20,6 +24,9 @@ const SchedulerHeartbeatContext = createContext<HeartbeatValue>({
   status: 'unknown',
   lastTickAt: null,
   rotation: 0,
+  diagnosis: STARTING,
+  secondsSince: null,
+  refresh: async () => {},
 })
 
 export function useSchedulerHeartbeat(): HeartbeatValue {
@@ -29,35 +36,41 @@ export function useSchedulerHeartbeat(): HeartbeatValue {
 export function SchedulerHeartbeatProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<HeartbeatStatus>('unknown')
   const [lastTickAt, setLastTickAt] = useState<string | null>(null)
+  const [secondsSince, setSecondsSince] = useState<number | null>(null)
+  const [diagnosis, setDiagnosis] = useState<Diagnosis>(STARTING)
   const [rotation, setRotation] = useState(0)
 
-  useEffect(() => {
-    let cancelled = false
+  // A ref rather than a local, so refresh() and the interval share one flag.
+  const cancelledRef = useRef(false)
 
-    async function poll() {
-      try {
-        const beat = await systemApi.heartbeat()
-        if (cancelled) return
-        setStatus(beat.alive ? 'alive' : 'stale')
-        setLastTickAt(beat.last_tick_at)
-      } catch {
-        // An unreachable API is indistinguishable from a stopped clock, and both
-        // mean the same thing to a viewer: stop breathing.
-        if (cancelled) return
-        setStatus('stale')
-        // lastTickAt is deliberately left as the last known-good value on a
-        // failed poll, rather than cleared - a later task's tooltip reads it
-        // to show "last seen at ..." even while the current poll is failing.
-      }
+  const poll = useCallback(async () => {
+    try {
+      const beat = await systemApi.heartbeat()
+      if (cancelledRef.current) return
+      setStatus(beat.alive ? 'alive' : 'stale')
+      setLastTickAt(beat.last_tick_at)
+      setSecondsSince(beat.seconds_since)
+      setDiagnosis(diagnoseResponse(beat))
+    } catch (error) {
+      if (cancelledRef.current) return
+      setStatus('stale')
+      setDiagnosis(diagnoseError(error))
+      // lastTickAt keeps its last known-good value so the panel can still say when
+      // the scheduler was last seen. secondsSince is cleared: its age was measured
+      // against a server that is no longer answering, so it would be a lie.
+      setSecondsSince(null)
     }
+  }, [])
 
+  useEffect(() => {
+    cancelledRef.current = false
     void poll()
     const id = setInterval(() => void poll(), POLL_MS)
     return () => {
-      cancelled = true
+      cancelledRef.current = true
       clearInterval(id)
     }
-  }, [])
+  }, [poll])
 
   useEffect(() => {
     if (status !== 'alive') return
@@ -66,7 +79,9 @@ export function SchedulerHeartbeatProvider({ children }: { children: ReactNode }
   }, [status])
 
   return (
-    <SchedulerHeartbeatContext.Provider value={{ status, lastTickAt, rotation }}>
+    <SchedulerHeartbeatContext.Provider
+      value={{ status, lastTickAt, rotation, diagnosis, secondsSince, refresh: poll }}
+    >
       {children}
     </SchedulerHeartbeatContext.Provider>
   )

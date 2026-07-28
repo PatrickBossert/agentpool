@@ -1,4 +1,5 @@
 import { render, screen, act } from '@testing-library/react'
+import { AxiosError } from 'axios'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import {
@@ -109,5 +110,75 @@ describe('SchedulerHeartbeatContext', () => {
     // would keep incrementing here regardless of status.
     await act(async () => { vi.advanceTimersByTime(ROTATION_MS * 4) })
     expect(screen.getByTestId('probe')).toHaveTextContent(rotationAtTransition!)
+  })
+})
+
+function DiagnosisProbe() {
+  const { diagnosis, refresh } = useSchedulerHeartbeat()
+  return (
+    <div>
+      <span data-testid="code">{diagnosis.code}</span>
+      <button onClick={() => void refresh()}>refresh</button>
+    </div>
+  )
+}
+
+function renderDiagnosisProbe() {
+  return render(
+    <SchedulerHeartbeatProvider>
+      <DiagnosisProbe />
+    </SchedulerHeartbeatProvider>,
+  )
+}
+
+describe('SchedulerHeartbeatContext diagnosis', () => {
+  it('starts as starting, so a slow first load names no fault', () => {
+    vi.mocked(systemApi.heartbeat).mockReturnValue(new Promise(() => {}))
+    renderDiagnosisProbe()
+    expect(screen.getByTestId('code')).toHaveTextContent('starting')
+  })
+
+  it('keeps the reason a poll failed instead of discarding it', async () => {
+    const error = new AxiosError('Request failed')
+    error.response = { status: 404 } as AxiosError['response']
+    vi.mocked(systemApi.heartbeat).mockRejectedValue(error)
+
+    renderDiagnosisProbe()
+    await act(async () => { await Promise.resolve() })
+
+    expect(screen.getByTestId('code')).toHaveTextContent('endpoint-missing')
+  })
+
+  it('recovers to ticking once a poll succeeds again', async () => {
+    const error = new AxiosError('Network Error')
+    vi.mocked(systemApi.heartbeat)
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({
+        last_tick_at: '2026-07-28T17:00:00', seconds_since: 3, alive: true,
+      })
+
+    renderDiagnosisProbe()
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('code')).toHaveTextContent('unreachable')
+
+    await act(async () => { vi.advanceTimersByTime(POLL_MS) })
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('code')).toHaveTextContent('ticking')
+  })
+
+  it('refresh polls straight away rather than waiting for the interval', async () => {
+    vi.mocked(systemApi.heartbeat).mockResolvedValue({
+      last_tick_at: '2026-07-28T17:00:00', seconds_since: 3, alive: true,
+    })
+    renderDiagnosisProbe()
+    await act(async () => { await Promise.resolve() })
+    const afterFirstPoll = vi.mocked(systemApi.heartbeat).mock.calls.length
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'refresh' }).click()
+      await Promise.resolve()
+    })
+
+    expect(vi.mocked(systemApi.heartbeat).mock.calls.length).toBe(afterFirstPoll + 1)
   })
 })
