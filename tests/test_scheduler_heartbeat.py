@@ -49,6 +49,7 @@ async def test_recording_twice_updates_rather_than_accumulating():
 
 import asyncio
 from unittest.mock import AsyncMock, patch
+from datetime import datetime, timedelta
 
 
 @pytest.mark.asyncio
@@ -99,3 +100,45 @@ async def test_a_heartbeat_failure_does_not_stop_the_loop():
         await task
 
     assert run.await_count >= 2, "the loop stopped cycling after a heartbeat failure"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_endpoint_reports_not_alive_before_any_tick(client):
+    resp = await client.get("/system/heartbeat")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"last_tick_at": None, "seconds_since": None, "alive": False}
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_endpoint_reports_alive_for_a_recent_tick(client):
+    recent = (datetime.now() - timedelta(seconds=140)).isoformat(timespec="seconds")
+    async with get_system_connection() as conn:
+        await record_scheduler_heartbeat(conn, now_iso=recent)
+
+    body = (await client.get("/system/heartbeat")).json()
+    assert body["alive"] is True
+    assert body["last_tick_at"] == recent
+    assert 135 <= body["seconds_since"] <= 145
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_endpoint_reports_stale_for_an_old_tick(client):
+    old = (datetime.now() - timedelta(seconds=200)).isoformat(timespec="seconds")
+    async with get_system_connection() as conn:
+        await record_scheduler_heartbeat(conn, now_iso=old)
+
+    assert (await client.get("/system/heartbeat")).json()["alive"] is False
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_endpoint_requires_authentication():
+    """The dashboard is authenticated; liveness should not leak to anyone who asks."""
+    from httpx import ASGITransport, AsyncClient
+
+    from api.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as anon:
+        assert (await anon.get("/system/heartbeat")).status_code in (401, 403)
