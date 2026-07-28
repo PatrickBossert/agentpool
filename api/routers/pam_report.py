@@ -2,9 +2,9 @@
 """
 PAM status report endpoint.
 
-Derives a structured project health report from live DB state — no LLM call.
-All risk and issue judgements are computed from milestones, crew runs, reviews,
-interview sessions, and uploaded documents.
+Exposes Pamela's project health report over HTTP. The derivation itself lives in
+api.services.pam_report_service, so the scheduled daily job and this endpoint
+build the same report from the same code.
 """
 from __future__ import annotations
 from fastapi import APIRouter, Depends

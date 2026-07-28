@@ -28,7 +28,7 @@ JOB_NAME = "pam_daily_report"
 OUTPUT_TYPE = "pam_report"
 DEV_MODE_ADDRESS = "Patrick@FutureEdge.consulting"
 # The multi-valued engagement-role columns, not project_role: one person can be
-# both a recipient and a reviewer, which a single-select role cannot express.
+# both a reviewer and an approver, which a single-select role cannot express.
 REVIEW_FLAGS = ("is_reviewer", "is_approver")
 
 
