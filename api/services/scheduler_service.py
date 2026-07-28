@@ -15,11 +15,12 @@ from api.database import (
     get_system_connection,
     mark_job_finished,
     mark_job_running,
+    record_scheduler_heartbeat,
 )
 
 logger = logging.getLogger(__name__)
 
-TICK_SECONDS = 900          # 15 minutes - a 17:00 job runs by 17:15
+TICK_SECONDS = 60           # heartbeat resolution - a 17:00 job runs by 17:01
 REPORT_HOUR = 17            # server local time
 
 # job_name -> coroutine taking the project slug. Populated by the job modules.
@@ -80,13 +81,25 @@ async def scheduler_loop(stop_event: asyncio.Event) -> None:
     """Run due jobs on boot, then every tick until asked to stop.
 
     Every exception is swallowed and logged: the scheduler must never be able to
-    take the application down with it.
+    take the application down with it. That includes the heartbeat - a stamp that
+    cannot be written is a lost indicator, not a reason to stop running jobs.
     """
     while not stop_event.is_set():
         try:
             await run_due_jobs()
         except Exception:
             logger.exception("scheduler: tick failed")
+
+        # Stamped outside the guard above, so a pass in which a job raised still
+        # reports the loop as alive.
+        try:
+            async with get_system_connection() as conn:
+                await record_scheduler_heartbeat(
+                    conn, now_iso=datetime.now().isoformat(timespec="seconds")
+                )
+        except Exception:
+            logger.exception("scheduler: could not record the heartbeat")
+
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=TICK_SECONDS)
         except asyncio.TimeoutError:

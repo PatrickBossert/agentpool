@@ -45,3 +45,57 @@ async def test_recording_twice_updates_rather_than_accumulating():
         assert await fetch_scheduler_heartbeat(conn) == "2026-07-28T10:01:00"
         async with conn.execute("SELECT COUNT(*) AS n FROM scheduler_heartbeat") as cur:
             assert (await cur.fetchone())["n"] == 1
+
+
+import asyncio
+from unittest.mock import AsyncMock, patch
+
+
+@pytest.mark.asyncio
+async def test_tick_is_one_minute():
+    """The heartbeat is only as good as its resolution."""
+    from api.services import scheduler_service
+    assert scheduler_service.TICK_SECONDS == 60
+
+
+@pytest.mark.asyncio
+async def test_loop_stamps_the_heartbeat_even_when_a_job_raises():
+    """The heartbeat reports that the loop is cycling, not that jobs succeeded.
+
+    A job failing every night must not make the board look dead - that is a
+    different fault, and conflating them would hide both.
+    """
+    from api.services.scheduler_service import scheduler_loop
+
+    stop = asyncio.Event()
+    with patch(
+        "api.services.scheduler_service.run_due_jobs",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    ), patch("api.services.scheduler_service.TICK_SECONDS", 0.01):
+        task = asyncio.create_task(scheduler_loop(stop))
+        await asyncio.sleep(0.1)
+        stop.set()
+        await task
+
+    async with get_system_connection() as conn:
+        assert await fetch_scheduler_heartbeat(conn) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_heartbeat_failure_does_not_stop_the_loop():
+    """The scheduler must never be able to take the application down."""
+    from api.services.scheduler_service import scheduler_loop
+
+    stop = asyncio.Event()
+    with patch(
+        "api.services.scheduler_service.run_due_jobs", AsyncMock()
+    ) as run, patch(
+        "api.services.scheduler_service.record_scheduler_heartbeat",
+        AsyncMock(side_effect=RuntimeError("disk full")),
+    ), patch("api.services.scheduler_service.TICK_SECONDS", 0.01):
+        task = asyncio.create_task(scheduler_loop(stop))
+        await asyncio.sleep(0.1)
+        stop.set()
+        await task
+
+    assert run.await_count >= 2, "the loop stopped cycling after a heartbeat failure"
