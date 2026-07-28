@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '../context/AuthContext'
+import { getRotatedIdleStatus } from '../components/agentStatus'
 import Dashboard from '../pages/Dashboard'
 
 vi.mock('../api/endpoints', () => ({
@@ -61,6 +62,22 @@ describe('Dashboard', () => {
     // Exact strings, not /discovery/i: the board gained a "Discovery Interviews"
     // crew alongside "Discovery", so a loose match now finds both.
     expect(await screen.findByText('Discovery')).toBeInTheDocument()
-    expect(await screen.findByText('Done')).toBeInTheDocument()
+    // A finished crew is indicated by its re-run control, not by a "Done" badge.
+    expect(await screen.findByTitle('Re-run')).toBeInTheDocument()
+  })
+
+  it('lets a finished crew rest instead of announcing it', async () => {
+    render(<Wrapper slug="acme-rail" />)
+    await screen.findByTitle('Re-run')
+    expect(screen.queryByText('Done')).not.toBeInTheDocument()
+  })
+
+  it('returns a finished crew to its breathing idle activity', async () => {
+    render(<Wrapper slug="acme-rail" />)
+    // Dashboard renders outside AppLayout, so there is no SchedulerHeartbeatProvider
+    // and rotation is the context default of 0. With the mocked run's id of 1 the
+    // activity is therefore deterministic.
+    const resting = getRotatedIdleStatus('discovery', 1, 0)
+    expect(await screen.findByText(resting)).toBeInTheDocument()
   })
 })

@@ -1,5 +1,5 @@
 // ui/src/components/CrewCarousel.tsx
-import { Play, RotateCcw, Loader2, CheckCircle2, XCircle, PauseCircle, Circle, GitBranch, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Play, RotateCcw, Loader2, XCircle, PauseCircle, Circle, GitBranch, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRef, useState, useEffect, useCallback } from 'react'
 import type { CrewRun, HumanReview } from '../types'
 import {
@@ -89,15 +89,15 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
 
   const statusChip = isPipelineActive
     ? <span className="text-[10px] font-medium text-teal-600 flex items-center gap-1"><Loader2 size={10} className="animate-spin" />Running</span>
-    : orchestrationStatus === 'completed'
-      ? <span className="text-[10px] font-medium text-green-600 flex items-center gap-1"><CheckCircle2 size={10} />Done</span>
-      : orchestrationStatus === 'failed'
-        ? <span className="text-[10px] font-medium text-red-500 flex items-center gap-1"><XCircle size={10} />Failed</span>
-        : <FadingText
-            className="text-[10px] font-medium text-gray-400"
-            text={getRotatedIdleStatus('pam', runCount, rotation)}
-            delayKey="pam"
-          />
+    // No branch for 'completed' - a finished pipeline returns Pamela to her breathing
+    // activity, and her button's repeat icon carries the fact that it has run.
+    : orchestrationStatus === 'failed'
+      ? <span className="text-[10px] font-medium text-red-500 flex items-center gap-1"><XCircle size={10} />Failed</span>
+      : <FadingText
+          className="text-[10px] font-medium text-gray-400"
+          text={getRotatedIdleStatus('pam', runCount, rotation)}
+          delayKey="pam"
+        />
 
   return (
     <div
@@ -149,12 +149,18 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
           <button
             onClick={e => { e.stopPropagation(); onRunPipeline() }}
             disabled={isPipelineActive || isStarting}
-            title={isPipelineActive || isStarting ? 'Running…' : 'Run all crews'}
+            title={
+              isPipelineActive || isStarting        ? 'Running…' :
+              orchestrationStatus === 'completed'   ? 'Re-run all crews' :
+                                                      'Run all crews'
+            }
             className="w-7 h-7 rounded-full flex items-center justify-center transition-colors disabled:opacity-30 disabled:cursor-not-allowed bg-teal-600 text-white hover:bg-teal-700 flex-shrink-0"
           >
             {isPipelineActive || isStarting
               ? <Loader2 size={11} className="animate-spin" />
-              : <Play size={11} />}
+              : orchestrationStatus === 'completed'
+                ? <RotateCcw size={11} />
+                : <Play size={11} />}
           </button>
         </div>
       </div>
@@ -196,7 +202,10 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
     : isActive
       ? inferAgentStatuses(crewKey, logs)
       : status === 'completed'
-        ? agents.map(() => 'completed' as AgentStatus)
+        // A finished crew rests: its agents read as idle, not as completed. Mapped
+        // explicitly rather than left to fall through, which would paint them as
+        // queued whenever a pipeline happened to be running.
+        ? agents.map(() => 'idle' as AgentStatus)
         : agents.map(() => (isPipelineActive ? 'queued' : 'idle') as AgentStatus)
 
   function handlePlay(e: React.MouseEvent) {
@@ -214,11 +223,11 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
       ? 'border-teal-300'
       : status === 'waiting'
         ? 'border-amber-300'
-        : status === 'completed'
-          ? 'border-green-200'
-          : status === 'failed'
-            ? 'border-red-200'
-            : 'border-gray-200 hover:border-gray-300'
+        // No branch for 'completed' - a finished crew takes the resting border, so the
+        // board settles rather than accumulating green cards.
+        : status === 'failed'
+          ? 'border-red-200'
+          : 'border-gray-200 hover:border-gray-300'
 
   const bgClass = isSelected
     ? 'bg-teal-50/60'
@@ -229,7 +238,6 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
   const statusLabel =
     status === 'running'   ? <span className="text-[10px] font-medium text-teal-600 flex items-center gap-1"><Loader2 size={10} className="animate-spin text-teal-500" />Running</span> :
     status === 'waiting'   ? <span className="text-[10px] font-medium text-amber-600 flex items-center gap-1"><PauseCircle size={10} />Waiting</span> :
-    status === 'completed' ? <span className="text-[10px] font-medium text-green-600 flex items-center gap-1"><CheckCircle2 size={10} />Done</span> :
     status === 'failed'    ? <span className="text-[10px] font-medium text-red-500 flex items-center gap-1"><XCircle size={10} />Failed</span> :
     status === 'queued'    ? <span className="text-[10px] font-medium text-gray-400 flex items-center gap-1"><Circle size={10} />Queued</span> :
                              <FadingText
@@ -301,12 +309,13 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
               status === 'completed' ? 'Re-run' :
                                        'Run'
             }
+            // A finished crew keeps the same green button as one that has never run -
+            // only the icon differs, so the board reads as one resting state and the
+            // icons alone say what has been run.
             className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0 ${
               status === 'running'
                 ? 'bg-teal-50 text-teal-500 border border-teal-200'
-                : status === 'completed'
-                  ? 'bg-white text-gray-400 border border-gray-200 hover:border-teal-300 hover:text-teal-600'
-                  : 'bg-teal-600 text-white hover:bg-teal-700'
+                : 'bg-teal-600 text-white hover:bg-teal-700'
             }`}
           >
             {status === 'running'
