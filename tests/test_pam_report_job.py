@@ -130,3 +130,19 @@ async def test_job_is_registered_with_the_scheduler():
     from api.services import pam_report_job  # noqa: F401 - import registers it
     from api.services.scheduler_service import JOB_REGISTRY
     assert JOB_NAME in JOB_REGISTRY
+
+
+def test_email_links_to_the_pam_report_page_not_the_client_report():
+    """/report renders Report.tsx, the client engagement report - a different
+    document with none of the risks, issues, or change summary the email
+    describes. Pamela's status report is PamReportView, routed at
+    /:slug/pam-report."""
+    from api.services.pam_report_job import _compose_body
+
+    report = {"overall_health": "green", "health_summary": "On track"}
+    change = {"summary": "No change since the previous report.",
+              "new_risks": [], "new_issues": []}
+    body = _compose_body(SLUG, report, change, intended=[], dev_mode=False)
+
+    assert f"/dashboard/{SLUG}/pam-report" in body
+    assert f"/dashboard/{SLUG}/report" not in body

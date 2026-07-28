@@ -91,7 +91,7 @@ async def _send_email(to: list[str], subject: str, body: str) -> None:
 
 def _compose_body(slug: str, report: dict, change: dict, intended: list[str], dev_mode: bool) -> str:
     settings = get_settings()
-    link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/report"
+    link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/pam-report"
     lines = [
         f"Status report for {slug} - {datetime.now().strftime('%d %B %Y')}",
         "",

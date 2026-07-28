@@ -21,6 +21,7 @@ import Assignment from './pages/Assignment'
 import VoiceInterview from './pages/VoiceInterview'
 import Templates from './pages/Templates'
 import Report from './pages/Report'
+import PamReport from './pages/PamReport'
 import Architecture from './pages/Architecture'
 import PitchDeck from './pages/PitchDeck'
 import AdminDashboard from './pages/AdminDashboard'
@@ -82,6 +83,14 @@ export const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <Report />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/:slug/pam-report',
+    element: (
+      <ProtectedRoute>
+        <PamReport />
       </ProtectedRoute>
     ),
   },
