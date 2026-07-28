@@ -16,15 +16,31 @@ export default function HeartbeatDot() {
   const [open, setOpen] = useState(false)
   const [checking, setChecking] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelId = 'heartbeat-panel'
 
   useEffect(() => {
     if (!open) return
 
+    // Focus was inside the panel when it closed, e.g. "Check again" held it - return
+    // focus to the trigger rather than letting it fall to <body>, which would strand
+    // a keyboard or screen-reader user with no sense of where they are in the header.
+    function restoreFocusIfInsidePanel() {
+      if (containerRef.current?.contains(document.activeElement)) {
+        triggerRef.current?.focus()
+      }
+    }
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        restoreFocusIfInsidePanel()
+        setOpen(false)
+      }
     }
     function onPointerDown(event: MouseEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
+      if (!containerRef.current?.contains(event.target as Node)) {
+        restoreFocusIfInsidePanel()
+        setOpen(false)
+      }
     }
 
     document.addEventListener('keydown', onKeyDown)
@@ -55,11 +71,13 @@ export default function HeartbeatDot() {
   return (
     <div ref={containerRef} className="relative flex items-center">
       <button
+        ref={triggerRef}
         type="button"
         data-testid="heartbeat-dot-button"
         title={diagnosis.title}
         aria-label={diagnosis.title}
         aria-expanded={open}
+        aria-controls={panelId}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
         // Padding rather than a bigger dot: the target is comfortable to hit while
         // the mark itself stays as small and quiet as it was.
@@ -75,9 +93,8 @@ export default function HeartbeatDot() {
 
       {open && (
         <div
+          id={panelId}
           data-testid="heartbeat-panel"
-          role="dialog"
-          aria-label="Scheduler status"
           className="absolute top-6 left-0 z-50 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg"
         >
           <p className="text-xs font-semibold text-gray-900">{diagnosis.title}</p>

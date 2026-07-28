@@ -117,4 +117,25 @@ describe('HeartbeatDot panel', () => {
     await userEvent.click(screen.getByRole('button', { name: /check again/i }))
     expect(refresh).toHaveBeenCalledTimes(1)
   })
+
+  it('points aria-controls at the panel it discloses', async () => {
+    mockedHeartbeat.mockReturnValue(heartbeat())
+    render(<HeartbeatDot />)
+    const trigger = screen.getByTestId('heartbeat-dot-button')
+    await userEvent.click(trigger)
+    const panel = screen.getByTestId('heartbeat-panel')
+    expect(panel.id).not.toBe('')
+    expect(trigger).toHaveAttribute('aria-controls', panel.id)
+  })
+
+  it('returns focus to the trigger when Escape closes the panel from inside it', async () => {
+    mockedHeartbeat.mockReturnValue(heartbeat())
+    render(<HeartbeatDot />)
+    const trigger = screen.getByTestId('heartbeat-dot-button')
+    await userEvent.click(trigger)
+    await userEvent.click(screen.getByRole('button', { name: /check again/i }))
+    expect(screen.getByRole('button', { name: /check again/i })).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    expect(document.activeElement).toBe(trigger)
+  })
 })
