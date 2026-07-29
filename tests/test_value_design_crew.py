@@ -74,16 +74,16 @@ def test_pm_task_reads_propositions(mock_llm):
     assert "operation='read'" in task.description
 
 
-def test_pm_task_requests_weights_via_hitl(mock_llm):
+def test_pm_task_has_no_hitl_gate(mock_llm):
+    """The crew finishes rather than blocking on a typed approval."""
     from agents.value_design.portfolio_manager import (
         create_portfolio_manager,
         create_portfolio_manager_task,
     )
     agent = create_portfolio_manager(slug="test", llm=mock_llm, tools=[])
     task = create_portfolio_manager_task(agent=agent, context_tasks=[])
-    assert "HumanInputTool" in task.description
+    assert "HumanInputTool" not in task.description
     assert "weights" in task.description.lower()
-    assert "approved" in task.description
 
 
 def test_pm_task_uses_excel_output_tool(mock_llm):

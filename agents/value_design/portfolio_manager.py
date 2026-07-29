@@ -111,17 +111,11 @@ def create_portfolio_manager_task(agent: Agent, context_tasks: list[Task]) -> Ta
             "\"score_safety\", \"score_performance\", \"total_score\"]\n"
             "    - filename: 'portfolio_register.xlsx'\n"
             "    - agent_name: 'portfolio_manager'\n"
-            "9. Use HumanInputTool with prompt: 'Portfolio register scored and saved to "
-            "outputs/portfolio_register.xlsx. Please review the rankings. "
-            "Reply \"approved\" to proceed, or provide notes.'\n"
-            "10. If revision notes are received, revise scores or ranking and repeat "
-            "steps 7–9. Maximum 3 revision cycles.\n"
         ),
         expected_output=(
             "A JSON portfolio register saved to outputs/portfolio_register.json "
             "and an Excel file at outputs/portfolio_register.xlsx, "
-            "each containing all value propositions ranked by IIRC Six Capitals weighted score. "
-            "Confirmed approved by a human reviewer."
+            "each containing all value propositions ranked by IIRC Six Capitals weighted score."
         ),
         agent=agent,
         context=context_tasks,
