@@ -107,7 +107,7 @@ async def extract_skill(raw_input: str) -> dict:
 BASELINE_SKILLS: list[dict] = [
     # PAM
     {"agents": ["PAM"], "name": "Pipeline Orchestration", "description": "Dispatch crews in strict dependency order: Discovery → Value Chain → Interaction Design → Stakeholder Management → Interview Coordination → Synthesis → Value Propositions → Portfolio → Architecture → Initiatives → Roadmap → Business Plan. Never start a phase until all its upstream prerequisites have been reviewed and approved."},
-    {"agents": ["PAM"], "name": "Phase Gating", "description": "Block every downstream dispatch until the project team explicitly confirms human review. If review is pending, output the review request and halt — never proceed without confirmation."},
+    {"agents": ["PAM"], "name": "Phase Gating", "description": "Produce a clear, self-contained summary at the end of each phase naming what was produced and what a reviewer needs to validate. Do not wait for a response - the platform records the output for review and releases downstream work when an approver commits it."},
     {"agents": ["PAM"], "name": "Schedule Management", "description": "At every orchestration step, compare current progress against the milestone plan. If slippage exceeds one day, flag it with a specific corrective action and a named owner before continuing."},
     {"agents": ["PAM"], "name": "Status Reporting", "description": "When producing a status report, cover all six dimensions in order: RAG health, schedule, per-crew progress, risks, issues, and next actions. Never omit a dimension — an incomplete status report is worse than no report."},
     {"agents": ["PAM"], "name": "Risk Management", "description": "Before each crew dispatch, scan for engagement risks across five areas: knowledge gaps, stakeholder coverage, schedule slippage, review backlogs, and interview completion. Rate every risk and provide a mitigation before continuing."},
@@ -128,7 +128,7 @@ BASELINE_SKILLS: list[dict] = [
         "Interview Coordinator", "Stakeholder Interviewer", "Synthesis Analyst",
         "Value Proposition Generator", "Portfolio Manager", "Enterprise Architect",
         "Initiative Identifier", "Roadmap Generator", "Business Plan Generator",
-    ], "name": "Human Review Gate", "description": "At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed."},
+    ], "name": "Human Review Gate", "description": "At the end of every work phase, write a summary of what was produced and what the reviewer needs to validate, then finish. Approval is recorded outside the run, so there is nothing to wait for."},
     # Interaction Designer
     {"agents": ["Interaction Designer"], "name": "Interview Script Design", "description": "Write one interview script per active L1 and L2 node. L1 scripts must ask strategic 'why' questions aimed at GMs; L2 scripts must ask operational 'how' questions aimed at process managers. Number all questions with n.n.n IDs — never produce an unnumbered question."},
     {"agents": ["Interaction Designer"], "name": "Maturity Questionnaire Design", "description": "For each node, write a five-point maturity questionnaire where level 1 is ad hoc and level 5 is optimised and continuously improving. Align every level descriptor to the configured framework — no descriptor may be written without a traceable standard clause."},
