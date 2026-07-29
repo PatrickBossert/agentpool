@@ -262,6 +262,9 @@ export const commitsApi = {
   submit: (slug: string, crewName: string, notes = ''): Promise<unknown> =>
     apiClient.post(`/projects/${slug}/submissions`, { crew_name: crewName, notes })
       .then((r) => r.data),
+  activate: (slug: string): Promise<{ slug: string; status: string }> =>
+    apiClient.post<{ slug: string; status: string }>(`/projects/${slug}/activate`)
+      .then((r) => r.data),
 }
 
 export const milestonesApi = {

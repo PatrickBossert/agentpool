@@ -102,6 +102,59 @@ function CrewApprovalSection({ slug }: { slug: string }) {
   )
 }
 
+// A project stays 'created' until this is clicked - nothing else in the product calls
+// the activate endpoint. Until it is, Pamela's daily report skips the project entirely.
+// Approvers are already on this page to approve, so the act belongs here too.
+function ActivateProjectControl({ slug }: { slug: string }) {
+  const qc = useQueryClient()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data: status } = useQuery({
+    queryKey: ['status', slug],
+    queryFn: () => projectsApi.status(slug),
+  })
+
+  if (!status || status.project_status === 'active') return null
+
+  async function activate() {
+    setBusy(true)
+    setError(null)
+    try {
+      await commitsApi.activate(slug)
+      await qc.invalidateQueries({ queryKey: ['status', slug] })
+    } catch (err) {
+      console.error(`Activating project "${slug}" failed:`, err)
+      setError('That failed. Only an approver can activate a project.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+      <div>
+        <p className="text-sm text-amber-800">
+          This project is not active yet - Pamela's daily report will not run until it is.
+        </p>
+        {error && (
+          <p role="alert" className="text-xs text-red-600 mt-1">
+            {error}
+          </p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => void activate()}
+        disabled={busy}
+        className="shrink-0 text-xs font-semibold text-white bg-brand hover:bg-brand-dark px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+      >
+        {busy ? 'Activating…' : 'Activate project'}
+      </button>
+    </div>
+  )
+}
+
 function ReviewCard({ review, slug }: { review: HumanReview; slug: string }) {
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -245,6 +298,7 @@ export default function Reviews() {
   return (
     <div className="p-6 space-y-6">
       <h2 className="text-lg font-semibold text-gray-900">Reviews</h2>
+      {slug && <ActivateProjectControl slug={slug} />}
       {slug && <CrewApprovalSection slug={slug} />}
       {isLoading && <p className="text-sm text-gray-400">Loading...</p>}
       {!isLoading && reviews.length === 0 && (
