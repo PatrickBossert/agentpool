@@ -32,16 +32,23 @@ DEV_MODE_ADDRESS = "Patrick@FutureEdge.consulting"
 REVIEW_FLAGS = ("is_reviewer", "is_approver")
 
 
-def resolve_recipients(stakeholders: list[dict], dev_mode: bool) -> tuple[list[str], list[str]]:
-    """Return (actual, intended) email lists.
+def resolve_recipients(
+    stakeholders: list[dict], dev_mode: bool, flags: tuple[str, ...] = REVIEW_FLAGS
+) -> tuple[list[str], list[str]]:
+    """Return (actual, intended) email lists for stakeholders carrying any of `flags`.
 
     In dev mode everything is redirected to one address, but the intended list is
     still computed so the message can say who would have received it. An empty
     intended list stays empty - redirecting nothing must not invent a recipient.
+
+    Defaulting to both review flags keeps the daily report's audience unchanged: it
+    goes to everyone with a governance role, which is what it is for. The crew
+    notifications pass a narrower tuple, because a completed crew concerns reviewers
+    and a submission concerns approvers.
     """
     intended = [
         s["email"] for s in stakeholders
-        if any(s.get(flag) for flag in REVIEW_FLAGS) and (s.get("email") or "").strip()
+        if any(s.get(flag) for flag in flags) and (s.get("email") or "").strip()
     ]
     if not intended:
         return [], []

@@ -4,12 +4,14 @@
 Pamela's remit is project governance - reviewers and approvers. Jordan speaks to the
 actors in the organisation, and not from here.
 
+A completed crew concerns reviewers, who can correct it before it is committed.
+A submission concerns approvers, who must decide whether to accept it. Each
+notification narrows to its own audience via resolve_recipients' flags parameter -
+someone who is both reviewer and approver hears at both moments.
+
+notify_crew_awaiting_commit is called from dispatch_crew and dispatch_agent in
+api/services/run_service.py, immediately after a crew run completes.
 notify_crew_ready_for_approval is called from POST /projects/{slug}/submissions.
-notify_crew_awaiting_commit is not called from anywhere yet. The link it sends points
-reviewers to the reviews page, and that page cannot yet take a commit - wiring this up
-first would tell reviewers to do something they cannot do. This module is correct and
-tested; it is switched back on by the project that gives the reviews page a commit
-control. Do not delete it as dead code.
 """
 from __future__ import annotations
 
@@ -39,83 +41,77 @@ async def _send_email(*, to: list[str], subject: str, body: str) -> None:
         raise RuntimeError(f"Resend returned {resp.status_code}: {resp.text[:200]}")
 
 
+async def _notify(
+    slug: str, crew_name: str, *, flags: tuple[str, ...], subject: str, body_lines: list[str],
+    audience_label: str,
+) -> None:
+    """Shared body for both crew notifications - only the audience, subject and
+    message differ. Never raises - a failed notification must not fail a run or a
+    submission that has already been recorded."""
+    try:
+        async with get_connection(slug) as conn:
+            project = await fetch_project(conn, slug=slug)
+            if not project:
+                return
+            stakeholders = await fetch_stakeholders(conn, project_id=project["id"])
+            # dev_mode lives inside config_json, not as a column - the same read
+            # pam_report_job.py:129 performs.
+            config = json.loads(project.get("config_json") or "{}")
+            dev_mode = bool(config.get("dev_mode", True))
+
+        actual, intended = resolve_recipients(stakeholders, dev_mode, flags=flags)
+        if not actual:
+            return
+
+        lines = list(body_lines)
+        if dev_mode:
+            lines += [
+                "",
+                f"Development mode - this would have gone to: {', '.join(intended) or 'nobody'}",
+            ]
+
+        await _send_email(to=actual, subject=subject, body="\n".join(lines))
+    except Exception:
+        log.exception("could not notify %s about %s", audience_label, crew_name)
+
+
 async def notify_crew_ready_for_approval(slug: str, crew_name: str) -> None:
-    """Tell reviewers and approvers that a crew has been submitted for approval.
+    """Tell approvers that a crew has been submitted for approval.
 
     Called from POST /projects/{slug}/submissions. Never raises - a failed
     notification must not fail a submission that has already been recorded.
     """
-    try:
-        async with get_connection(slug) as conn:
-            project = await fetch_project(conn, slug=slug)
-            if not project:
-                return
-            stakeholders = await fetch_stakeholders(conn, project_id=project["id"])
-            # dev_mode lives inside config_json, not as a column - the same read
-            # pam_report_job.py:129 performs.
-            config = json.loads(project.get("config_json") or "{}")
-            dev_mode = bool(config.get("dev_mode", True))
-
-        actual, intended = resolve_recipients(stakeholders, dev_mode)
-        if not actual:
-            return
-
-        settings = get_settings()
-        link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
-        lines = [
+    settings = get_settings()
+    link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
+    await _notify(
+        slug, crew_name,
+        flags=("is_approver",),
+        subject=f"{slug}: {crew_name} is ready for approval",
+        body_lines=[
             f"{crew_name} has been submitted and is waiting for approval.",
             "",
             f"Review it here: {link}",
-        ]
-        if dev_mode:
-            lines += [
-                "",
-                f"Development mode - this would have gone to: {', '.join(intended) or 'nobody'}",
-            ]
-
-        await _send_email(
-            to=actual,
-            subject=f"{slug}: {crew_name} is ready for approval",
-            body="\n".join(lines),
-        )
-    except Exception:
-        log.exception("could not notify approvers that %s is ready for approval", crew_name)
+        ],
+        audience_label="approvers",
+    )
 
 
 async def notify_crew_awaiting_commit(slug: str, crew_name: str) -> None:
-    """Never raises. A failed notification must not fail a completed run."""
-    try:
-        async with get_connection(slug) as conn:
-            project = await fetch_project(conn, slug=slug)
-            if not project:
-                return
-            stakeholders = await fetch_stakeholders(conn, project_id=project["id"])
-            # dev_mode lives inside config_json, not as a column - the same read
-            # pam_report_job.py:129 performs.
-            config = json.loads(project.get("config_json") or "{}")
-            dev_mode = bool(config.get("dev_mode", True))
+    """Tell reviewers that a crew has finished and is waiting to be committed.
 
-        actual, intended = resolve_recipients(stakeholders, dev_mode)
-        if not actual:
-            return
-
-        settings = get_settings()
-        link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
-        lines = [
+    Called from dispatch_crew and dispatch_agent once a run completes. Never
+    raises - a failed notification must not fail a completed run.
+    """
+    settings = get_settings()
+    link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
+    await _notify(
+        slug, crew_name,
+        flags=("is_reviewer",),
+        subject=f"{slug}: {crew_name} is ready for review",
+        body_lines=[
             f"{crew_name} has finished and its output is waiting to be committed.",
             "",
             f"Review it here: {link}",
-        ]
-        if dev_mode:
-            lines += [
-                "",
-                f"Development mode - this would have gone to: {', '.join(intended) or 'nobody'}",
-            ]
-
-        await _send_email(
-            to=actual,
-            subject=f"{slug}: {crew_name} is ready for review",
-            body="\n".join(lines),
-        )
-    except Exception:
-        log.exception("could not notify reviewers that %s is awaiting commit", crew_name)
+        ],
+        audience_label="reviewers",
+    )
