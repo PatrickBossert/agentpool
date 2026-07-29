@@ -51,12 +51,12 @@ async def _set_dev_mode(slug: str, value: bool) -> None:
 
 
 async def _add_stakeholder(slug: str, name: str, email: str, *, approver: bool) -> None:
-    """Set the review flags directly.
+    """Set the review flags directly via the database.
 
-    `StakeholderIn` (`api/routers/stakeholders.py:23`) has no is_reviewer or is_approver
-    fields, so posting them to the endpoint would silently drop them and every
-    stakeholder would arrive with the column default of 0 - making the assertion below
-    pass for the wrong reason.
+    `StakeholderIn` (`api/routers/stakeholders.py:45-46`) does declare is_reviewer and
+    is_approver, so posting through the endpoint would work too - but going straight to
+    the database keeps this a unit test of commit_notify_service, not of the
+    stakeholders endpoint's auth and validation.
     """
     from api.database import get_connection, fetch_project
     async with get_connection(slug) as conn:
@@ -93,16 +93,26 @@ async def test_notification_goes_to_reviewers_and_approvers_only(client, monkeyp
 
 @pytest.mark.asyncio
 async def test_a_failing_send_does_not_raise(client):
-    """The outputs are the durable record; the email is a notification."""
+    """The outputs are the durable record; the email is a notification.
+
+    A reviewer/approver stakeholder is required here - with no recipients,
+    resolve_recipients returns an empty actual list and notify_crew_awaiting_commit
+    returns before _send_email is ever called, so the mocked failure would never be
+    exercised and the test would prove nothing about the guard.
+    """
     await client.post("/projects", json=PROJECT)
+    await _add_stakeholder("notify-test", "Gov", "gov@example.com", approver=True)
+    await _set_dev_mode("notify-test", False)
 
     from api.services.commit_notify_service import notify_crew_awaiting_commit
 
     with patch(
         "api.services.commit_notify_service._send_email",
         AsyncMock(side_effect=RuntimeError("resend is down")),
-    ):
+    ) as send:
         await notify_crew_awaiting_commit("notify-test", "discovery_mapping")
+
+    assert send.await_count == 1
 
 
 @pytest.mark.asyncio

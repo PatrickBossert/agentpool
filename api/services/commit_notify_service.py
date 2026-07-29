@@ -13,7 +13,7 @@ import httpx
 
 from api.config import get_settings
 from api.database import fetch_project, fetch_stakeholders, get_connection
-from api.services.pam_report_job import DEV_MODE_ADDRESS, resolve_recipients
+from api.services.pam_report_job import resolve_recipients
 
 log = logging.getLogger(__name__)
 
