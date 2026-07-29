@@ -296,7 +296,8 @@ has a commit and true after; always true for a crew with no dependencies; and un
 by later uncommitted changes upstream. A note records an `output_changes` row attributed to
 its author and leaves every committed version untouched - the invariant the differential
 depends on, tested here on the one door that exists so the later doors inherit a rule that
-is already pinned. A non-approver is refused a commit. The graph has no cycles, and every crew in `_CREW_AGENT_NAMES`
+is already pinned. A caller who is neither sysadmin nor an email-matched approver is
+refused with 403, and a stakeholder whose email is empty never matches. The graph has no cycles, and every crew in `_CREW_AGENT_NAMES`
 appears in it: a mismatch would strand a crew as permanently unready. Email failure does
 not fail a run.
 
