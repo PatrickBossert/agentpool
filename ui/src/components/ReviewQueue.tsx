@@ -1,4 +1,13 @@
 // ui/src/components/ReviewQueue.tsx
+//
+// NOT YET RENDERED. Nothing imports this except its own test, and that is deliberate
+// rather than an oversight: the commit backend landed before the surface that exposes
+// it. The live review page is ui/src/pages/Reviews.tsx, which still shows the older
+// per-output HITL list and has no commit control.
+//
+// The wiring project mounts this - or folds its commit section into Reviews.tsx - and
+// re-enables the notification in api/services/commit_notify_service.py at the same
+// time, since that email links reviewers here. Do not delete it as dead code.
 import type { AgentOutput } from '../types'
 import { projectsApi, commitsApi } from '../api/endpoints'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
