@@ -22,9 +22,13 @@ function CrewApprovalRowWithChanges({
   onSubmit: (crewName: string) => void | Promise<void>
   onApprove: (crewName: string) => void | Promise<void>
 }) {
+  // CrewApprovalRow discards this for a working crew (it hard-codes changeCount to 0
+  // until there is something to approve), so fetching it then would be a wasted request
+  // against every in-progress row on every poll.
   const { data: changeCount = 0 } = useQuery({
     queryKey: ['crew-changes', slug, crewName],
     queryFn: () => commitsApi.changeCount(slug, crewName),
+    enabled: state === 'ready',
   })
 
   return (

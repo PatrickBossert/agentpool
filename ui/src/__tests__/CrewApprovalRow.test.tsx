@@ -44,9 +44,38 @@ describe('CrewApprovalRow', () => {
     expect(screen.getByRole('button', { name: /approve/i }).textContent).toContain('3')
   })
 
+  it('does not mention changes on the approve control when there are none', () => {
+    render(row('ready', 0))
+    expect(screen.getByRole('button', { name: /approve/i }).textContent).not.toContain('0 change')
+  })
+
   it('submits the crew it was given', async () => {
     render(row('working'))
     await userEvent.click(screen.getByRole('button', { name: /ready for approval/i }))
     expect(onSubmit).toHaveBeenCalledWith('discovery_mapping')
+  })
+
+  // onSubmit and onApprove reach different endpoints (submissions vs commits), so a
+  // wiring mistake that swapped them - or called both - would leave the loop's two acts
+  // indistinguishable from the outside. Asserting only that onApprove fired would still
+  // pass under such a swap; asserting onSubmit did not is what catches it.
+  it('approves the crew it was given, and does not also submit it', async () => {
+    render(row('ready'))
+    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+    expect(onApprove).toHaveBeenCalledWith('discovery_mapping')
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  // The busy-disable behaviour lives in CommitControl (its `busy` state), but it is
+  // reached here through CrewApprovalRow's wiring, and that is what an approval-loop
+  // regression would actually break - not CommitControl in isolation.
+  it('cannot be double-clicked while a submission is in flight', async () => {
+    let release: () => void = () => {}
+    onSubmit.mockReturnValue(new Promise<void>((r) => { release = r }))
+    render(row('working'))
+    const button = screen.getByRole('button', { name: /ready for approval/i })
+    await userEvent.click(button)
+    expect(button).toBeDisabled()
+    release()
   })
 })
