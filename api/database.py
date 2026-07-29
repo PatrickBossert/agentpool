@@ -85,6 +85,16 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             notes         TEXT NOT NULL DEFAULT ''
         );
 
+        -- One row per act of submitting a crew's work for approval. Parallel to
+        -- approval_commits: together they derive the crew's state.
+        CREATE TABLE IF NOT EXISTS crew_submissions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            crew_name     TEXT NOT NULL,
+            submitted_by  TEXT NOT NULL,
+            submitted_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            notes         TEXT NOT NULL DEFAULT ''
+        );
+
         -- Exactly which output versions a commit froze. Later projects diff
         -- consecutive commits through this table.
         CREATE TABLE IF NOT EXISTS approval_commit_outputs (
@@ -1026,6 +1036,30 @@ async def crew_has_commit(conn: aiosqlite.Connection, *, crew_name: str) -> bool
         "SELECT 1 FROM approval_commits WHERE crew_name=? LIMIT 1", (crew_name,)
     ) as cur:
         return await cur.fetchone() is not None
+
+
+async def insert_crew_submission(
+    conn: aiosqlite.Connection, *, crew_name: str, submitted_by: str, notes: str = ""
+) -> int:
+    """Record that a contributor marked this crew's work ready for approval."""
+    cur = await conn.execute(
+        "INSERT INTO crew_submissions (crew_name, submitted_by, notes) VALUES (?,?,?)",
+        (crew_name, submitted_by, notes),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def latest_submission_at(
+    conn: aiosqlite.Connection, *, crew_name: str
+) -> str | None:
+    """When this crew was last submitted, or None if it never has been."""
+    async with conn.execute(
+        "SELECT MAX(submitted_at) AS at FROM crew_submissions WHERE crew_name=?",
+        (crew_name,),
+    ) as cur:
+        row = await cur.fetchone()
+    return row["at"] if row else None
 
 
 async def latest_commit_at(conn: aiosqlite.Connection, *, crew_name: str) -> str | None:
