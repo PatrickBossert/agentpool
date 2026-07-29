@@ -123,6 +123,57 @@ async def test_somebody_who_is_both_hears_at_both_moments(client):
 
 
 @pytest.mark.asyncio
+async def test_completion_falls_back_to_approvers_when_there_are_no_reviewers(client):
+    """A project whose governing stakeholders are all approvers and no reviewers
+    would otherwise get no completion email at all - nobody would learn the crew
+    finished, nothing would ever be submitted, and the loop would never begin."""
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder(SLUG, "App", "app@example.com", reviewer=False, approver=True)
+    await _set_dev_mode(SLUG, False)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+        await notify_crew_awaiting_commit(SLUG, "discovery_mapping")
+
+    assert send.await_count == 1
+    assert "app@example.com" in send.await_args.kwargs["to"]
+
+
+@pytest.mark.asyncio
+async def test_submission_does_not_fall_back_to_reviewers_when_there_are_no_approvers(client):
+    """The reverse fallback must not apply: if nobody can approve, mailing
+    reviewers instead would not help, so no email should go out at all."""
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder(SLUG, "Rev", "rev@example.com", reviewer=True, approver=False)
+    await _set_dev_mode(SLUG, False)
+
+    from api.services.commit_notify_service import notify_crew_ready_for_approval
+    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+        await notify_crew_ready_for_approval(SLUG, "discovery_mapping")
+
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_completion_notification_unaffected_when_both_flags_are_present(client):
+    """Reviewers present means the fallback never triggers - approvers are not
+    also notified of a completion just because they exist on the project."""
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder(SLUG, "Rev", "rev@example.com", reviewer=True, approver=False)
+    await _add_stakeholder(SLUG, "App", "app@example.com", reviewer=False, approver=True)
+    await _set_dev_mode(SLUG, False)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+        await notify_crew_awaiting_commit(SLUG, "discovery_mapping")
+
+    assert send.await_count == 1
+    to = send.await_args.kwargs["to"]
+    assert "rev@example.com" in to
+    assert "app@example.com" not in to
+
+
+@pytest.mark.asyncio
 async def test_a_submission_notification_failure_does_not_raise(client):
     await client.post("/projects", json=PROJECT)
     await _add_stakeholder(SLUG, "App", "app@example.com", reviewer=False, approver=True)
