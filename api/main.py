@@ -27,6 +27,7 @@ from api.routers import milestones as milestones_router
 from api.routers import pam_report as pam_report_router
 from api.routers import nonworking as nonworking_router
 from api.routers import system as system_router
+from api.routers import commits as commits_router
 
 
 async def _mark_stale_runs_failed(database_dir: str) -> None:
@@ -159,3 +160,4 @@ app.include_router(milestones_router.router)
 app.include_router(pam_report_router.router)
 app.include_router(nonworking_router.router)
 app.include_router(system_router.router)
+app.include_router(commits_router.router)
