@@ -249,6 +249,12 @@ export const commitsApi = {
     apiClient.post<{ released: string[] }>(`/projects/${slug}/commits`, {
       crew_name: crewName, notes,
     }).then((r) => r.data),
+  committedCrews: (slug: string): Promise<string[]> =>
+    apiClient.get<{ crew_name: string }[]>(`/projects/${slug}/commits`)
+      .then((r) => [...new Set(r.data.map((c) => c.crew_name))]),
+  changeCount: (slug: string, crewName: string): Promise<number> =>
+    apiClient.get<unknown[]>(`/projects/${slug}/changes`, { params: { crew_name: crewName } })
+      .then((r) => r.data.length),
 }
 
 export const milestonesApi = {
