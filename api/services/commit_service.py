@@ -10,12 +10,14 @@ import logging
 
 from api.database import (
     fetch_agent_outputs,
+    fetch_output_changes,
     fetch_project,
     fetch_stakeholders,
     fetch_user,
     get_connection,
     get_system_connection,
     insert_approval_commit,
+    insert_output_change,
     link_commit_outputs,
 )
 from api.services.crew_graph import downstream_of, is_crew_ready
@@ -92,3 +94,15 @@ async def commit_crew(
         ]
 
     return {"commit_id": commit_id, "output_ids": output_ids, "released": released}
+
+
+async def changes_for_crew(slug: str, *, crew_name: str) -> list[dict]:
+    """Every change asked of this crew's current outputs, newest first."""
+    agents = set(_CREW_AGENT_NAMES.get(crew_name, []))
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        outputs = await fetch_agent_outputs(conn, project_id=project["id"])
+        output_ids = [
+            o["id"] for o in outputs if o["agent_name"] in agents and o.get("is_current")
+        ]
+        return await fetch_output_changes(conn, output_ids=output_ids)

@@ -6,8 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.auth import check_project_access, require_any_auth
-from api.database import fetch_approval_commits, get_connection, get_db_path
-from api.services.commit_service import caller_may_commit, commit_crew
+from api.database import (
+    fetch_approval_commits,
+    get_connection,
+    get_db_path,
+    insert_output_change,
+)
+from api.services.commit_service import caller_may_commit, changes_for_crew, commit_crew
 from api.services.crew_graph import CREW_DEPENDENCIES, readiness_report
 
 router = APIRouter(prefix="/projects", tags=["commits"])
@@ -16,6 +21,11 @@ router = APIRouter(prefix="/projects", tags=["commits"])
 class CommitRequest(BaseModel):
     crew_name: str
     notes: str = ""
+
+
+class ChangeRequest(BaseModel):
+    output_id: int
+    request: str
 
 
 def _require_project(slug: str) -> None:
@@ -60,3 +70,47 @@ async def get_crew_readiness(slug: str, payload: dict = Depends(require_any_auth
     _require_project(slug)
     async with get_connection(slug) as conn:
         return await readiness_report(conn)
+
+
+@router.post("/{slug}/changes", status_code=201)
+async def create_change(
+    slug: str, req: ChangeRequest, payload: dict = Depends(require_any_auth)
+):
+    """Record a change asked of an output. The only door in this project is a note."""
+    await check_project_access(slug, payload)
+    _require_project(slug)
+
+    async with get_connection(slug) as conn:
+        async with conn.execute(
+            "SELECT 1 FROM agent_outputs WHERE id=?", (req.output_id,)
+        ) as cur:
+            if await cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=422, detail=f"output_id {req.output_id} does not exist"
+                )
+        change_id = await insert_output_change(
+            conn,
+            output_id=req.output_id,
+            requested_by=payload.get("sub", ""),
+            source="note",
+            request=req.request,
+        )
+
+    return {
+        "id": change_id,
+        "output_id": req.output_id,
+        "requested_by": payload.get("sub", ""),
+        "source": "note",
+        "request": req.request,
+    }
+
+
+@router.get("/{slug}/changes")
+async def list_changes(
+    slug: str, crew_name: str, payload: dict = Depends(require_any_auth)
+):
+    await check_project_access(slug, payload)
+    _require_project(slug)
+    if crew_name not in CREW_DEPENDENCIES:
+        raise HTTPException(status_code=422, detail=f"Unknown crew '{crew_name}'")
+    return await changes_for_crew(slug, crew_name=crew_name)
