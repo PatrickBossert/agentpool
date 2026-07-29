@@ -1028,6 +1028,22 @@ async def crew_has_commit(conn: aiosqlite.Connection, *, crew_name: str) -> bool
         return await cur.fetchone() is not None
 
 
+async def latest_commit_at(conn: aiosqlite.Connection, *, crew_name: str) -> str | None:
+    """committed_at of this crew's most recent commit, or None if never committed.
+
+    changes_for_crew uses this to scope the change log to what happened since - the
+    change count must be able to reach zero, which it cannot if every change ever
+    recorded is counted forever.
+    """
+    async with conn.execute(
+        "SELECT committed_at FROM approval_commits WHERE crew_name=? "
+        "ORDER BY committed_at DESC, id DESC LIMIT 1",
+        (crew_name,),
+    ) as cur:
+        row = await cur.fetchone()
+    return row["committed_at"] if row else None
+
+
 async def insert_output_change(
     conn: aiosqlite.Connection,
     *,
@@ -1048,20 +1064,27 @@ async def insert_output_change(
 
 
 async def fetch_output_changes(
-    conn: aiosqlite.Connection, *, output_ids: list[int]
+    conn: aiosqlite.Connection, *, output_ids: list[int], since: str | None = None
 ) -> list[dict]:
     """Changes against these outputs, newest first.
 
     An empty id list returns nothing rather than everything - the alternative is an
     unfiltered query that silently reports the whole project's history.
+
+    `since`, when given, excludes changes recorded at or before that timestamp (an
+    approval_commits.committed_at value) - the crew's change log resets at each
+    commit, since a commit is what a change count of zero is meant to reflect.
     """
     if not output_ids:
         return []
     placeholders = ",".join("?" for _ in output_ids)
-    async with conn.execute(
-        f"SELECT * FROM output_changes WHERE output_id IN ({placeholders}) ORDER BY id DESC",
-        tuple(output_ids),
-    ) as cur:
+    sql = f"SELECT * FROM output_changes WHERE output_id IN ({placeholders})"
+    params: list = list(output_ids)
+    if since is not None:
+        sql += " AND created_at > ?"
+        params.append(since)
+    sql += " ORDER BY id DESC"
+    async with conn.execute(sql, tuple(params)) as cur:
         return [dict(row) for row in await cur.fetchall()]
 
 

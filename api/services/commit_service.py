@@ -19,6 +19,7 @@ from api.database import (
     get_system_connection,
     insert_approval_commit,
     insert_output_change,
+    latest_commit_at,
     link_commit_outputs,
 )
 from api.services.crew_graph import downstream_of, is_crew_ready
@@ -115,7 +116,11 @@ async def commit_crew(
 
 
 async def changes_for_crew(slug: str, *, crew_name: str) -> list[dict]:
-    """Every change asked of this crew's current outputs, newest first."""
+    """The change log since this crew's last commit, newest first.
+
+    Never committed means the whole history so far, which is correct - there is no
+    later point to measure from.
+    """
     agents = set(_CREW_AGENT_NAMES.get(crew_name, []))
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
@@ -123,4 +128,5 @@ async def changes_for_crew(slug: str, *, crew_name: str) -> list[dict]:
         output_ids = [
             o["id"] for o in outputs if o["agent_name"] in agents and o.get("is_current")
         ]
-        return await fetch_output_changes(conn, output_ids=output_ids)
+        since = await latest_commit_at(conn, crew_name=crew_name)
+        return await fetch_output_changes(conn, output_ids=output_ids, since=since)

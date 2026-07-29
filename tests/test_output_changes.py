@@ -122,6 +122,100 @@ async def test_a_note_leaves_committed_versions_untouched(client):
 
 
 @pytest.mark.asyncio
+async def test_with_no_commit_all_changes_are_returned(client):
+    """Never committed means the whole history so far - there is no later point to
+    measure a "since" from."""
+    await client.post("/projects", json=PROJECT)
+    output_id = await _make_output(SLUG, "value_chain_mapper")
+
+    for text in ("first", "second"):
+        await client.post(
+            f"/projects/{SLUG}/changes", json={"output_id": output_id, "request": text}
+        )
+
+    listed = (
+        await client.get(f"/projects/{SLUG}/changes?crew_name=discovery_mapping")
+    ).json()
+    assert [c["request"] for c in listed] == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_a_change_recorded_before_the_commit_is_excluded(client):
+    """Explicit timestamps, not wall-clock order - the DB writes are on the same
+    machine within the same test and could otherwise land in the same second."""
+    await client.post("/projects", json=PROJECT)
+    output_id = await _make_output(SLUG, "value_chain_mapper")
+
+    from api.database import get_connection
+    async with get_connection(SLUG) as conn:
+        await conn.execute(
+            "INSERT INTO output_changes (output_id, requested_by, source, request, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (output_id, "patrick", "note", "before the commit", "2026-01-01 00:00:00"),
+        )
+        await conn.commit()
+
+    resp = await client.post(
+        f"/projects/{SLUG}/commits",
+        json={"crew_name": "discovery_mapping", "notes": ""},
+    )
+    assert resp.status_code == 201
+
+    async with get_connection(SLUG) as conn:
+        # Pin the commit itself to an explicit point after the change above.
+        await conn.execute(
+            "UPDATE approval_commits SET committed_at=? WHERE crew_name=?",
+            ("2026-01-02 00:00:00", "discovery_mapping"),
+        )
+        await conn.commit()
+
+    listed = (
+        await client.get(f"/projects/{SLUG}/changes?crew_name=discovery_mapping")
+    ).json()
+    assert listed == []
+
+
+@pytest.mark.asyncio
+async def test_only_changes_recorded_after_the_commit_are_counted(client):
+    """Both a before- and an after-commit change exist, so this fails under the old
+    "every change ever" behaviour as well as proving the new scoping works."""
+    await client.post("/projects", json=PROJECT)
+    output_id = await _make_output(SLUG, "value_chain_mapper")
+
+    from api.database import get_connection
+    async with get_connection(SLUG) as conn:
+        await conn.execute(
+            "INSERT INTO output_changes (output_id, requested_by, source, request, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (output_id, "patrick", "note", "before the commit", "2026-01-01 00:00:00"),
+        )
+        await conn.commit()
+
+    resp = await client.post(
+        f"/projects/{SLUG}/commits",
+        json={"crew_name": "discovery_mapping", "notes": ""},
+    )
+    assert resp.status_code == 201
+
+    async with get_connection(SLUG) as conn:
+        await conn.execute(
+            "UPDATE approval_commits SET committed_at=? WHERE crew_name=?",
+            ("2026-01-02 00:00:00", "discovery_mapping"),
+        )
+        await conn.execute(
+            "INSERT INTO output_changes (output_id, requested_by, source, request, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (output_id, "patrick", "note", "after the commit", "2026-01-03 00:00:00"),
+        )
+        await conn.commit()
+
+    listed = (
+        await client.get(f"/projects/{SLUG}/changes?crew_name=discovery_mapping")
+    ).json()
+    assert [c["request"] for c in listed] == ["after the commit"]
+
+
+@pytest.mark.asyncio
 async def test_a_change_against_an_unknown_output_is_rejected(client):
     await client.post("/projects", json=PROJECT)
     resp = await client.post(
