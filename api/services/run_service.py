@@ -385,8 +385,6 @@ async def dispatch_crew(slug: str, crew_name: str, run_id: int) -> None:
         await build_and_run_crew(slug, crew_name, run_id)
         async with get_connection(slug) as conn:
             await update_crew_run_status(conn, run_id=run_id, status="completed")
-        from api.services.commit_notify_service import notify_crew_awaiting_commit
-        await notify_crew_awaiting_commit(slug, crew_name)
         # Auto-assign scripts to node templates after interview/questionnaire runs
         if crew_name in _AUTO_ASSIGN_CREWS:
             from api.services.auto_assign_service import (
@@ -558,8 +556,6 @@ async def dispatch_agent(slug: str, agent_key: str, run_id: int) -> None:
         await build_and_run_agent(slug, agent_key, run_id)
         async with get_connection(slug) as conn:
             await update_crew_run_status(conn, run_id=run_id, status="completed")
-        from api.services.commit_notify_service import notify_crew_awaiting_commit
-        await notify_crew_awaiting_commit(slug, crew_label)
         await push_log(slug, json.dumps({"type": "crew_completed", "crew": crew_label, "run_id": run_id}))
     except Exception as e:
         try:

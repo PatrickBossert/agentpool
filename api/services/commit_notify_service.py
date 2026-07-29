@@ -3,6 +3,12 @@
 
 Pamela's remit is project governance - reviewers and approvers. Jordan speaks to the
 actors in the organisation, and not from here.
+
+Not called from anywhere yet. The link it sends points reviewers to the reviews page,
+and that page cannot yet take a commit - wiring this up first would tell reviewers to
+do something they cannot do. This module is correct and tested; it is switched back on
+by the project that gives the reviews page a commit control. Do not delete it as dead
+code.
 """
 from __future__ import annotations
 
