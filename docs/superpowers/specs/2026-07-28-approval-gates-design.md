@@ -296,8 +296,11 @@ the differential.
 
 They are the first genuinely manual artefact, and today they sit outside versioning
 entirely. `replace_stakeholder_assignments` (`api/database.py:1754`) issues a `DELETE`
-followed by re-inserts, keyed on `orchestration_run_id`, driven by a direct
-`PUT /projects/{slug}/assignments`. Three consequences:
+followed by re-inserts, keyed on `orchestration_run_id`. Two separate endpoints write
+them directly - `POST /projects/{slug}/assignment/{orchestration_run_id}`
+(`api/routers/assignment.py:48`) and `PUT /projects/{slug}/stakeholder-assignments`
+(`api/routers/stakeholders.py:121`) - so the migration has two callers to move, not one.
+Three consequences:
 
 - **A commit cannot freeze them.** `approval_commit_outputs` references
   `agent_outputs(id)`; assignments are not agent outputs.
