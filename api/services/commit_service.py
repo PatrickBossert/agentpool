@@ -42,14 +42,17 @@ class CrewRunInProgress(Exception):
         super().__init__(f"Crew '{crew_name}' has a run in progress - cannot commit yet")
 
 
-async def caller_may_commit(slug: str, payload: dict) -> bool:
-    """Whether this caller may commit in this project.
+async def _caller_matches_stakeholder_flag(
+    slug: str, payload: dict, *, flags: tuple[str, ...]
+) -> bool:
+    """Whether this caller matches a stakeholder carrying any of the given flags.
 
-    The intent is that only governing roles commit, but nothing links a login to a
+    The intent is that only governing roles act, but nothing links a login to a
     stakeholder record: the users table is empty and every login is sysadmin. So the
     rule permits the platform operator, and otherwise matches the caller's account
-    email against a stakeholder flagged is_approver. Today the first branch always
-    fires; the restriction becomes real when accounts exist, with no code change.
+    email against a stakeholder flagged with one of `flags`. Today the first branch
+    always fires; the restriction becomes real when accounts exist, with no code
+    change.
     """
     if payload.get("role") == "sysadmin":
         return True
@@ -69,8 +72,30 @@ async def caller_may_commit(slug: str, payload: dict) -> bool:
         stakeholders = await fetch_stakeholders(conn, project_id=project["id"])
 
     return any(
-        ((s.get("email") or "").strip().lower() == email) and s.get("is_approver")
+        ((s.get("email") or "").strip().lower() == email)
+        and any(s.get(flag) for flag in flags)
         for s in stakeholders
+    )
+
+
+async def caller_may_commit(slug: str, payload: dict) -> bool:
+    """Whether this caller may commit in this project.
+
+    Only a stakeholder flagged is_approver may commit - see
+    _caller_matches_stakeholder_flag for the shared lookup and its caveats.
+    """
+    return await _caller_matches_stakeholder_flag(slug, payload, flags=("is_approver",))
+
+
+async def caller_may_submit(slug: str, payload: dict) -> bool:
+    """Whether this caller may mark a crew ready for approval.
+
+    Wider than committing: a contributor who reviews but does not govern may submit.
+    The shape is otherwise identical, and carries the same caveat - the sysadmin
+    branch always fires today because the users table is empty.
+    """
+    return await _caller_matches_stakeholder_flag(
+        slug, payload, flags=("is_reviewer", "is_approver")
     )
 
 

@@ -10,16 +10,30 @@ from api.database import (
     fetch_approval_commits,
     get_connection,
     get_db_path,
+    insert_crew_submission,
     insert_output_change,
     output_exists,
+    set_project_status,
 )
-from api.services.commit_service import CrewRunInProgress, caller_may_commit, changes_for_crew, commit_crew
+from api.services.commit_service import (
+    CrewRunInProgress,
+    caller_may_commit,
+    caller_may_submit,
+    changes_for_crew,
+    commit_crew,
+)
 from api.services.crew_graph import CREW_DEPENDENCIES, readiness_report
+from api.services.crew_state_service import crew_state_report
 
 router = APIRouter(prefix="/projects", tags=["commits"])
 
 
 class CommitRequest(BaseModel):
+    crew_name: str
+    notes: str = ""
+
+
+class SubmissionRequest(BaseModel):
     crew_name: str
     notes: str = ""
 
@@ -58,6 +72,57 @@ async def create_commit(
         )
     except CrewRunInProgress as e:
         raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.post("/{slug}/submissions", status_code=201)
+async def create_submission(
+    slug: str, req: SubmissionRequest, payload: dict = Depends(require_any_auth)
+):
+    """Mark a crew's work ready for approval - and summon the approvers."""
+    from api.services.commit_notify_service import notify_crew_ready_for_approval
+
+    await check_project_access(slug, payload)
+    _require_project(slug)
+
+    if req.crew_name not in CREW_DEPENDENCIES:
+        raise HTTPException(status_code=422, detail=f"Unknown crew '{req.crew_name}'")
+    if not await caller_may_submit(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only a reviewer or approver may submit for approval"
+        )
+
+    async with get_connection(slug) as conn:
+        submission_id = await insert_crew_submission(
+            conn,
+            crew_name=req.crew_name,
+            submitted_by=payload.get("sub", ""),
+            notes=req.notes,
+        )
+
+    await notify_crew_ready_for_approval(slug, req.crew_name)
+    return {"id": submission_id, "crew_name": req.crew_name, "state": "ready"}
+
+
+@router.get("/{slug}/crew-states")
+async def get_crew_states(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
+    _require_project(slug)
+    async with get_connection(slug) as conn:
+        return await crew_state_report(conn)
+
+
+@router.post("/{slug}/activate")
+async def activate_project(slug: str, payload: dict = Depends(require_any_auth)):
+    """Start the project. Until this, Pamela reports nothing."""
+    await check_project_access(slug, payload)
+    _require_project(slug)
+    if not await caller_may_commit(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only an approver may activate a project"
+        )
+    async with get_connection(slug) as conn:
+        await set_project_status(conn, slug=slug, status="active")
+    return {"slug": slug, "status": "active"}
 
 
 @router.get("/{slug}/commits")

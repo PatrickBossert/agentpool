@@ -736,6 +736,14 @@ async def list_projects(conn: aiosqlite.Connection) -> list[dict]:
         return [dict(r) async for r in cur]
 
 
+async def set_project_status(
+    conn: aiosqlite.Connection, *, slug: str, status: str
+) -> None:
+    """Set a project's lifecycle status. Idempotent."""
+    await conn.execute("UPDATE projects SET status=? WHERE slug=?", (status, slug))
+    await conn.commit()
+
+
 async def insert_crew_run(
     conn: aiosqlite.Connection,
     *,
