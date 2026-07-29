@@ -133,8 +133,15 @@ async def test_commit_history_is_returned_newest_first(client):
 
 
 @pytest.mark.asyncio
-async def test_a_non_sysadmin_without_a_matching_approver_is_refused():
-    """The rule that will bite once real accounts exist."""
+async def test_a_role_with_no_project_access_is_refused_before_approval_is_checked():
+    """check_project_access, not caller_may_commit, is what stops this caller.
+
+    A "consultant" role matches none of check_project_access's branches
+    (sysadmin / org_admin-of-this-project / reviewer-with-membership), so it 403s
+    before the handler ever asks whether the caller may commit. This is project-access
+    gating, not the approver rule - see test_caller_may_commit_matches_approver_by_email
+    below for a case that actually reaches caller_may_commit.
+    """
     from httpx import ASGITransport, AsyncClient
 
     from api.auth import create_access_token
@@ -151,3 +158,70 @@ async def test_a_non_sysadmin_without_a_matching_approver_is_refused():
             json={"crew_name": "discovery_mapping", "notes": ""},
         )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_caller_may_commit_matches_approver_by_email(client):
+    """The rule that will bite once real accounts exist.
+
+    A "reviewer" with project membership clears check_project_access, so this
+    exercises caller_may_commit itself: refused while no stakeholder record matches
+    the caller's account email as an approver, then let through once one exists.
+    Proving both halves matters - a caller_may_commit that always returned False
+    would still pass a 403-only test.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from api.auth import create_access_token
+    from api.database import (
+        fetch_project,
+        fetch_user,
+        get_connection,
+        get_system_connection,
+        insert_project_membership,
+        insert_stakeholder,
+        insert_user,
+    )
+    from api.main import app
+
+    await client.post("/projects", json=PROJECT)
+
+    username = "commit-api-reviewer"
+    email = "commit-api-reviewer@example.com"
+    async with get_system_connection() as sys_conn:
+        await insert_user(
+            sys_conn, username=username, email=email, role="reviewer", hashed_pw="x"
+        )
+        user = await fetch_user(sys_conn, username=username)
+        await insert_project_membership(sys_conn, user_id=user["id"], project_slug=SLUG)
+
+    token = create_access_token(username, "reviewer", "test-secret")
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ac:
+        # No stakeholder yet matches this caller's email as an approver.
+        refused = await ac.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+        assert refused.status_code == 403
+
+        # StakeholderIn (the API model) has no is_approver field - it is set
+        # directly in the database, as the endpoint offers no way to set it.
+        async with get_connection(SLUG) as conn:
+            project = await fetch_project(conn, slug=SLUG)
+            await insert_stakeholder(
+                conn,
+                project_id=project["id"],
+                name="Reviewer One",
+                email=email,
+                is_approver=True,
+            )
+
+        allowed = await ac.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+        assert allowed.status_code == 201

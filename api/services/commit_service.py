@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 
 from api.database import (
-    crew_has_commit,
     fetch_agent_outputs,
     fetch_project,
     fetch_stakeholders,
@@ -19,7 +18,7 @@ from api.database import (
     insert_approval_commit,
     link_commit_outputs,
 )
-from api.services.crew_graph import CREW_DEPENDENCIES, downstream_of, is_crew_ready
+from api.services.crew_graph import downstream_of, is_crew_ready
 from api.services.run_service import _CREW_AGENT_NAMES
 
 log = logging.getLogger(__name__)
