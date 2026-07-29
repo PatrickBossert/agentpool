@@ -10,21 +10,34 @@ interface Props {
   outputs: AgentOutput[]
 }
 
-// A single crew awaiting commit. Its outstanding-change count is its own query so that
-// one crew's fetch does not block the others from rendering.
-function CommitRow({
+// A single crew whose readiness qualifies it for a commit row. Its outstanding-change
+// count is its own query so that one crew's fetch does not block the others from
+// rendering.
+//
+// A crew that has never been committed always shows a row - it is waiting on its first
+// release. A crew that has already been committed only shows again once it has
+// accumulated new changes since that commit: repeat commits are allowed (the backend
+// inserts a fresh approval_commits row on every call, with no uniqueness constraint),
+// but there is nothing to commit a second time until something has changed.
+export function CommitRow({
   slug,
   crew,
+  committed,
   onCommit,
 }: {
   slug: string
   crew: string
+  committed: boolean
   onCommit: (crewName: string) => Promise<void>
 }) {
   const { data: changeCount = 0 } = useQuery({
     queryKey: ['crew-changes', slug, crew],
     queryFn: () => commitsApi.changeCount(slug, crew),
   })
+
+  if (committed && changeCount === 0) {
+    return null
+  }
 
   return (
     <div className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-4 py-3">
@@ -49,10 +62,11 @@ export default function ReviewQueue({ slug, outputs }: Props) {
     queryFn: () => commitsApi.committedCrews(slug),
   })
 
-  // Crews whose upstream is ready but not yet committed - those are the ones whose
-  // turn it is for an approver to release.
-  const awaitingCommit = Object.entries(readiness)
-    .filter(([crew, r]) => r.ready && !committed.includes(crew))
+  // Crews whose upstream is ready - candidates for a commit row. Whether a given crew
+  // actually needs one (never committed, or committed but with new changes since) is
+  // decided inside CommitRow itself, which is the only place that knows the change count.
+  const readyCrews = Object.entries(readiness)
+    .filter(([, r]) => r.ready)
     .map(([crew]) => crew)
 
   async function decide(outputId: number, decision: string) {
@@ -67,7 +81,7 @@ export default function ReviewQueue({ slug, outputs }: Props) {
     await qc.invalidateQueries({ queryKey: ['committed-crews', slug] })
   }
 
-  if (pending.length === 0 && awaitingCommit.length === 0) {
+  if (pending.length === 0 && readyCrews.length === 0) {
     return <p className="text-sm text-gray-400">No items pending review.</p>
   }
 
@@ -102,10 +116,16 @@ export default function ReviewQueue({ slug, outputs }: Props) {
           ))}
         </div>
       )}
-      {awaitingCommit.length > 0 && (
+      {readyCrews.length > 0 && (
         <div className="space-y-2">
-          {awaitingCommit.map((crew) => (
-            <CommitRow key={crew} slug={slug} crew={crew} onCommit={commit} />
+          {readyCrews.map((crew) => (
+            <CommitRow
+              key={crew}
+              slug={slug}
+              crew={crew}
+              committed={committed.includes(crew)}
+              onCommit={commit}
+            />
           ))}
         </div>
       )}

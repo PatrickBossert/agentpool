@@ -23,6 +23,10 @@ export default function CommitControl({
     setBusy(true)
     try {
       await onCommit(crewName)
+    } catch (err) {
+      // A rejection (e.g. a 403 from caller_may_commit) would otherwise just
+      // re-enable the button with no sign anything went wrong.
+      console.error(`Commit failed for crew "${crewName}":`, err)
     } finally {
       setBusy(false)
     }
