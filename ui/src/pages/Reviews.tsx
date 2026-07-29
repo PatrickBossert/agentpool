@@ -61,11 +61,19 @@ function CrewApprovalSection({ slug }: { slug: string }) {
     queryFn: () => projectsApi.status(slug),
   })
 
-  const runCrews = new Set((status?.crew_runs ?? []).map((r) => r.crew_name))
+  // Only a completed run produced real output. A run that failed, or is still
+  // running, must not make its crew look ready for approval or ready to submit -
+  // approving a failed crew commits zero outputs and still releases the next crew
+  // on the board as though real work had been approved.
+  const completedRunCrews = new Set(
+    (status?.crew_runs ?? [])
+      .filter((r) => r.status === 'completed')
+      .map((r) => r.crew_name),
+  )
 
   const crews = Object.entries(states).filter(([crew, state]) => {
     if (state === 'committed') return false
-    if (state === 'working' && !runCrews.has(crew)) return false
+    if ((state === 'working' || state === 'ready') && !completedRunCrews.has(crew)) return false
     return true
   })
 
