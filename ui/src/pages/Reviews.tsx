@@ -2,9 +2,101 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { projectsApi } from '../api/endpoints'
+import { projectsApi, commitsApi } from '../api/endpoints'
 import { campaignsApi } from '../api/campaigns'
+import { CrewApprovalRow, type CrewState } from '../components/CrewApprovalRow'
 import type { HumanReview, ReminderEmail } from '../types'
+
+// A single crew's change count, fetched independently so one crew's request does not
+// block the rest of the section from rendering.
+function CrewApprovalRowWithChanges({
+  slug,
+  crewName,
+  state,
+  onSubmit,
+  onApprove,
+}: {
+  slug: string
+  crewName: string
+  state: CrewState
+  onSubmit: (crewName: string) => void | Promise<void>
+  onApprove: (crewName: string) => void | Promise<void>
+}) {
+  const { data: changeCount = 0 } = useQuery({
+    queryKey: ['crew-changes', slug, crewName],
+    queryFn: () => commitsApi.changeCount(slug, crewName),
+  })
+
+  return (
+    <CrewApprovalRow
+      crewName={crewName}
+      state={state}
+      changeCount={changeCount}
+      onSubmit={onSubmit}
+      onApprove={onApprove}
+    />
+  )
+}
+
+// Every crew whose state is working or ready, so a contributor can mark work ready and
+// an approver can approve it from the same place they review everything else.
+//
+// A crew that is working and has never been run has nothing to submit - it is omitted so
+// the section lists work that exists rather than every crew in the graph.
+function CrewApprovalSection({ slug }: { slug: string }) {
+  const qc = useQueryClient()
+
+  const { data: states = {} } = useQuery({
+    queryKey: ['crew-states', slug],
+    queryFn: () => commitsApi.states(slug),
+    refetchInterval: 5000,
+  })
+
+  const { data: status } = useQuery({
+    queryKey: ['status', slug],
+    queryFn: () => projectsApi.status(slug),
+  })
+
+  const runCrews = new Set((status?.crew_runs ?? []).map((r) => r.crew_name))
+
+  const crews = Object.entries(states).filter(([crew, state]) => {
+    if (state === 'committed') return false
+    if (state === 'working' && !runCrews.has(crew)) return false
+    return true
+  })
+
+  async function invalidate() {
+    await qc.invalidateQueries({ queryKey: ['crew-states', slug] })
+    await qc.invalidateQueries({ queryKey: ['crew-readiness', slug] })
+  }
+
+  async function submit(crewName: string) {
+    await commitsApi.submit(slug, crewName)
+    await invalidate()
+  }
+
+  async function approve(crewName: string) {
+    await commitsApi.create(slug, crewName)
+    await invalidate()
+  }
+
+  if (crews.length === 0) return null
+
+  return (
+    <div className="bg-surface rounded-xl border border-gray-200 px-4 py-2">
+      {crews.map(([crew, state]) => (
+        <CrewApprovalRowWithChanges
+          key={crew}
+          slug={slug}
+          crewName={crew}
+          state={state}
+          onSubmit={submit}
+          onApprove={approve}
+        />
+      ))}
+    </div>
+  )
+}
 
 function ReviewCard({ review, slug }: { review: HumanReview; slug: string }) {
   const [notes, setNotes] = useState('')
@@ -149,6 +241,7 @@ export default function Reviews() {
   return (
     <div className="p-6 space-y-6">
       <h2 className="text-lg font-semibold text-gray-900">Reviews</h2>
+      {slug && <CrewApprovalSection slug={slug} />}
       {isLoading && <p className="text-sm text-gray-400">Loading...</p>}
       {!isLoading && reviews.length === 0 && (
         <p className="text-sm text-gray-400">

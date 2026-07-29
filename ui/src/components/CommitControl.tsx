@@ -12,10 +12,12 @@ export default function CommitControl({
   crewName,
   changeCount,
   onCommit,
+  label = 'Commit',
 }: {
   crewName: string
   changeCount: number
   onCommit: (crewName: string) => void | Promise<void>
+  label?: string
 }) {
   const [busy, setBusy] = useState(false)
 
@@ -42,8 +44,8 @@ export default function CommitControl({
       {busy
         ? 'Committing…'
         : changeCount > 0
-          ? `Commit over ${changeCount} change${changeCount === 1 ? '' : 's'}`
-          : 'Commit'}
+          ? `${label} over ${changeCount} change${changeCount === 1 ? '' : 's'}`
+          : label}
     </button>
   )
 }
