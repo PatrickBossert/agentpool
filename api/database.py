@@ -750,6 +750,20 @@ async def fetch_crew_runs(conn: aiosqlite.Connection, *, project_id: int) -> lis
         return [dict(r) async for r in cur]
 
 
+async def crew_is_running(conn: aiosqlite.Connection, *, crew_name: str) -> bool:
+    """Whether this crew has a run currently in flight.
+
+    Committing mid-run freezes whichever output versions happen to be current at
+    that moment - a mix of this run's and the last's - so commit_crew checks this
+    before it writes.
+    """
+    async with conn.execute(
+        "SELECT 1 FROM crew_runs WHERE crew_name=? AND status='running' LIMIT 1",
+        (crew_name,),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
 async def fetch_latest_orchestration_run(
     conn: aiosqlite.Connection, *, project_id: int
 ) -> dict | None:

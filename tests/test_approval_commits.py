@@ -84,6 +84,29 @@ async def test_crew_has_commit_distinguishes_committed_crews(client):
 
 
 @pytest.mark.asyncio
+async def test_crew_is_running_distinguishes_by_crew_and_status(client):
+    await client.post("/projects", json=PROJECT)
+
+    from api.database import (
+        crew_is_running, get_connection, insert_crew_run, fetch_project,
+        update_crew_run_status,
+    )
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        assert await crew_is_running(conn, crew_name="discovery_mapping") is False
+
+        run_id = await insert_crew_run(
+            conn, project_id=project["id"], crew_name="discovery_mapping", status="running"
+        )
+        assert await crew_is_running(conn, crew_name="discovery_mapping") is True
+        # A different crew running says nothing about this one.
+        assert await crew_is_running(conn, crew_name="assessment_design") is False
+
+        await update_crew_run_status(conn, run_id=run_id, status="completed")
+        assert await crew_is_running(conn, crew_name="discovery_mapping") is False
+
+
+@pytest.mark.asyncio
 async def test_a_crew_with_no_outputs_can_still_be_committed(client):
     """Some crews produce no artefact, and readiness asks only whether a commit exists."""
     await client.post("/projects", json=PROJECT)

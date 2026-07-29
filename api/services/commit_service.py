@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from api.database import (
+    crew_is_running,
     fetch_agent_outputs,
     fetch_output_changes,
     fetch_project,
@@ -24,6 +25,20 @@ from api.services.crew_graph import downstream_of, is_crew_ready
 from api.services.run_service import _CREW_AGENT_NAMES
 
 log = logging.getLogger(__name__)
+
+
+class CrewRunInProgress(Exception):
+    """Raised when a commit is attempted while the named crew has a run in flight.
+
+    A commit freezes whichever output versions are current at that moment; taken
+    mid-run it would freeze a mix of this run's outputs and the last's. The router
+    translates this to 409 Conflict - the caller should retry once the run finishes,
+    not treat the request as malformed.
+    """
+
+    def __init__(self, crew_name: str):
+        self.crew_name = crew_name
+        super().__init__(f"Crew '{crew_name}' has a run in progress - cannot commit yet")
 
 
 async def caller_may_commit(slug: str, payload: dict) -> bool:
@@ -69,6 +84,9 @@ async def commit_crew(
     agents = set(_CREW_AGENT_NAMES.get(crew_name, []))
 
     async with get_connection(slug) as conn:
+        if await crew_is_running(conn, crew_name=crew_name):
+            raise CrewRunInProgress(crew_name)
+
         project = await fetch_project(conn, slug=slug)
         outputs = await fetch_agent_outputs(conn, project_id=project["id"])
         output_ids = [

@@ -95,6 +95,65 @@ async def test_a_crew_released_only_when_its_last_upstream_lands(client):
 
 
 @pytest.mark.asyncio
+async def test_committing_a_crew_whose_run_is_still_going_is_refused_with_409(client):
+    """A commit freezes whichever outputs are current at that moment. Taken mid-run,
+    it would freeze a mix of this run's outputs and the last's - a temporary state
+    the caller should retry after, hence 409 rather than 422."""
+    await client.post("/projects", json=PROJECT)
+
+    from api.database import fetch_project, get_connection, insert_crew_run
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        await insert_crew_run(
+            conn, project_id=project["id"], crew_name="discovery_mapping", status="running"
+        )
+
+    resp = await client.post(
+        "/projects/commit-api-test/commits",
+        json={"crew_name": "discovery_mapping", "notes": ""},
+    )
+    assert resp.status_code == 409
+    assert "discovery_mapping" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_the_same_commit_succeeds_once_the_run_has_completed(client):
+    await client.post("/projects", json=PROJECT)
+
+    from api.database import fetch_project, get_connection, insert_crew_run, update_crew_run_status
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        run_id = await insert_crew_run(
+            conn, project_id=project["id"], crew_name="discovery_mapping", status="running"
+        )
+        await update_crew_run_status(conn, run_id=run_id, status="completed")
+
+    resp = await client.post(
+        "/projects/commit-api-test/commits",
+        json={"crew_name": "discovery_mapping", "notes": ""},
+    )
+    assert resp.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_a_different_crew_running_does_not_block_this_commit(client):
+    await client.post("/projects", json=PROJECT)
+
+    from api.database import fetch_project, get_connection, insert_crew_run
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        await insert_crew_run(
+            conn, project_id=project["id"], crew_name="assessment_design", status="running"
+        )
+
+    resp = await client.post(
+        "/projects/commit-api-test/commits",
+        json={"crew_name": "discovery_mapping", "notes": ""},
+    )
+    assert resp.status_code == 201
+
+
+@pytest.mark.asyncio
 async def test_an_unknown_crew_is_rejected(client):
     await client.post("/projects", json=PROJECT)
     resp = await client.post(

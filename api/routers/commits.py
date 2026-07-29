@@ -13,7 +13,7 @@ from api.database import (
     insert_output_change,
     output_exists,
 )
-from api.services.commit_service import caller_may_commit, changes_for_crew, commit_crew
+from api.services.commit_service import CrewRunInProgress, caller_may_commit, changes_for_crew, commit_crew
 from api.services.crew_graph import CREW_DEPENDENCIES, readiness_report
 
 router = APIRouter(prefix="/projects", tags=["commits"])
@@ -49,12 +49,15 @@ async def create_commit(
             status_code=403, detail="Only an approver may commit this crew's output"
         )
 
-    return await commit_crew(
-        slug,
-        crew_name=req.crew_name,
-        committed_by=payload.get("sub", ""),
-        notes=req.notes,
-    )
+    try:
+        return await commit_crew(
+            slug,
+            crew_name=req.crew_name,
+            committed_by=payload.get("sub", ""),
+            notes=req.notes,
+        )
+    except CrewRunInProgress as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.get("/{slug}/commits")
