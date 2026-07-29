@@ -276,6 +276,44 @@ uncommitted changes shows the count on its commit control.
 
 ---
 
+## Constraints on later projects
+
+These are decided here so that projects 2, 3, and 4 do not each invent their own answer.
+Nothing in this section is built in project 1.
+
+### The versioned artefact is the source of truth
+
+Every surface that mutates state - a crew run, agent chat, a manual edit grid - produces
+a **new version of a versioned artefact**. A live table holding current state is a
+projection of that version, never a second place where the state also lives.
+
+The alternative - extending commits to freeze each auxiliary table one at a time - is
+cheaper per table and worse forever: every new kind of state needs its own link table, its
+own diff, and its own audit story, and any one that is forgotten becomes a silent hole in
+the differential.
+
+### Stakeholder assignments must move onto the version model before project 4
+
+They are the first genuinely manual artefact, and today they sit outside versioning
+entirely. `replace_stakeholder_assignments` (`api/database.py:1754`) issues a `DELETE`
+followed by re-inserts, keyed on `orchestration_run_id`, driven by a direct
+`PUT /projects/{slug}/assignments`. Three consequences:
+
+- **A commit cannot freeze them.** `approval_commit_outputs` references
+  `agent_outputs(id)`; assignments are not agent outputs.
+- **A differential cannot see them.** Project 3 diffs consecutive commits, so an
+  assignment change would trigger nothing downstream - silently.
+- **Nobody is logged.** The destructive replace keeps no history, so "who assigned this
+  stakeholder to this node, and when" is unanswerable. That sits badly beside this
+  project's rule that every change records who asked for it.
+
+Assigning stakeholders to value-chain-aligned interviews is substantially manual work, and
+it is Jordan's core job in project 4. The migration - assignments becoming a versioned
+output with the live table rebuilt from it - is a prerequisite of that project, not part
+of it.
+
+---
+
 ## Out of scope
 
 Agent chat writing outputs - project 2. The differential between commits, and auto-start -
