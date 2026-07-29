@@ -292,6 +292,39 @@ cheaper per table and worse forever: every new kind of state needs its own link 
 own diff, and its own audit story, and any one that is forgotten becomes a silent hole in
 the differential.
 
+### Identity, meaning, and order are three separate attributes
+
+Value chain activities carry stable `Ln.n.n` IDs that are never reused - deactivation
+sets `active: false` rather than deleting, so identity survives through stakeholder
+assignments, interviews, synthesis, value propositions, and initiatives. That rule holds
+and must keep holding.
+
+**Display sequence is a separate attribute and is currently missing.** The registry
+carries only `id`, `label`, `level`, `active`, and `parent_id`; order is derived by
+numerically sorting the ID segments in `sortByActivityId`, duplicated in
+`ui/src/pages/ValueChain.tsx:16` and `ui/src/components/tabs/MayaSetupTab.tsx:10`. Order
+and identity are therefore the same thing today.
+
+That has no representation for the case that will arise: a new L3 activity inserted
+*before* an existing one takes a higher unused ID and must display earlier. Both
+renderers would place it last, and being duplicated, they would have to be corrected
+together.
+
+When this is built:
+
+- **Sequence is per parent, not global.** Siblings order within their parent. A global
+  ordinal would require rewriting much of the registry on every insertion.
+- **Assign sparsely** - 100, 200, 300 - so inserting between two siblings picks an
+  intermediate value rather than renumbering. At 79 activities, renumbering on exhaustion
+  is a rare and cheap operation.
+- **Inactive activities keep their sequence**, so reactivating one restores its position.
+- **A change of sequence is presentational.** Project 3's differential must classify it
+  as such and pass nothing downstream: reordering the display must never cause interviews
+  to be redesigned. Additions, relabelling, and deactivation remain substantive.
+
+Not built in project 1. Recorded here because every later project reads the registry, and
+a differential that cannot tell a move from an edit is worse than no differential.
+
 ### Stakeholder assignments must move onto the version model before project 4
 
 They are the first genuinely manual artefact, and today they sit outside versioning
