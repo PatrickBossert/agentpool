@@ -42,13 +42,19 @@ async def _send_email(*, to: list[str], subject: str, body: str) -> None:
 
 
 async def _notify(
-    slug: str, crew_name: str, *, flags: tuple[str, ...], subject: str, body_lines: list[str],
+    slug: str, crew_name: str, *, flags: tuple[str, ...], subject: str, intro: str,
     audience_label: str,
 ) -> None:
     """Shared body for both crew notifications - only the audience, subject and
-    message differ. Never raises - a failed notification must not fail a run or a
-    submission that has already been recorded."""
+    intro line differ. Never raises - a failed notification must not fail a run or
+    a submission that has already been recorded. Link construction lives inside
+    this try too: get_settings() is a call that can raise, and it must not escape
+    into the caller's own error handling (dispatch_crew/dispatch_agent would
+    otherwise overwrite a just-recorded status="completed" with status="failed")."""
     try:
+        settings = get_settings()
+        link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
+
         async with get_connection(slug) as conn:
             project = await fetch_project(conn, slug=slug)
             if not project:
@@ -63,7 +69,7 @@ async def _notify(
         if not actual:
             return
 
-        lines = list(body_lines)
+        lines = [intro, "", f"Review it here: {link}"]
         if dev_mode:
             lines += [
                 "",
@@ -81,17 +87,11 @@ async def notify_crew_ready_for_approval(slug: str, crew_name: str) -> None:
     Called from POST /projects/{slug}/submissions. Never raises - a failed
     notification must not fail a submission that has already been recorded.
     """
-    settings = get_settings()
-    link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
     await _notify(
         slug, crew_name,
         flags=("is_approver",),
         subject=f"{slug}: {crew_name} is ready for approval",
-        body_lines=[
-            f"{crew_name} has been submitted and is waiting for approval.",
-            "",
-            f"Review it here: {link}",
-        ],
+        intro=f"{crew_name} has been submitted and is waiting for approval.",
         audience_label="approvers",
     )
 
@@ -102,16 +102,10 @@ async def notify_crew_awaiting_commit(slug: str, crew_name: str) -> None:
     Called from dispatch_crew and dispatch_agent once a run completes. Never
     raises - a failed notification must not fail a completed run.
     """
-    settings = get_settings()
-    link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
     await _notify(
         slug, crew_name,
         flags=("is_reviewer",),
         subject=f"{slug}: {crew_name} is ready for review",
-        body_lines=[
-            f"{crew_name} has finished and its output is waiting to be committed.",
-            "",
-            f"Review it here: {link}",
-        ],
+        intro=f"{crew_name} has finished and its output is waiting to be committed.",
         audience_label="reviewers",
     )

@@ -134,3 +134,27 @@ async def test_a_submission_notification_failure_does_not_raise(client):
         AsyncMock(side_effect=RuntimeError("resend is down")),
     ):
         await notify_crew_ready_for_approval(SLUG, "discovery_mapping")
+
+
+@pytest.mark.asyncio
+async def test_a_broken_settings_lookup_does_not_raise_either(client):
+    """The "never raises" guarantee has to cover more than _send_email failing.
+
+    Link construction (get_settings().public_url) happens before any DB work, and
+    a failure there must be caught by the same try as everything else - not
+    escape into dispatch_crew/dispatch_agent's own except block, where it would
+    overwrite a just-recorded status="completed" with status="failed"."""
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder(SLUG, "Rev", "rev@example.com", reviewer=True, approver=False)
+    await _add_stakeholder(SLUG, "App", "app@example.com", reviewer=False, approver=True)
+    await _set_dev_mode(SLUG, False)
+
+    from api.services.commit_notify_service import (
+        notify_crew_awaiting_commit, notify_crew_ready_for_approval,
+    )
+    with patch(
+        "api.services.commit_notify_service.get_settings",
+        side_effect=RuntimeError("settings unavailable"),
+    ):
+        await notify_crew_awaiting_commit(SLUG, "discovery_mapping")
+        await notify_crew_ready_for_approval(SLUG, "discovery_mapping")
