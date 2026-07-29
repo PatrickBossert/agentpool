@@ -125,6 +125,20 @@ def _compose_body(slug: str, report: dict, change: dict, intended: list[str], de
 
 async def run_pam_daily_report(slug: str) -> None:
     """Generate, store and send Pamela's report for one project."""
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+    if not project:
+        logger.warning("pam report job: project %s not found - skipping", slug)
+        return
+    if project.get("status") != "active":
+        # A project still in setup (e.g. 'created', awaiting approval) has
+        # nothing worth reporting on yet - and checking this before
+        # build_pam_report avoids doing that work for every skipped project.
+        logger.info(
+            "pam report job: project %s is not active - skipping", slug
+        )
+        return
+
     report = await build_pam_report(slug)
 
     async with get_connection(slug) as conn:

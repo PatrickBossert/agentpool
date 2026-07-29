@@ -87,6 +87,9 @@ async def test_job_stores_the_report_as_a_current_versioned_output(client):
     await client.post("/projects", json={
         "client_slug": SLUG, "llm_mode": "standard", "sector": "rail",
     })
+    from api.database import get_connection, set_project_status
+    async with get_connection(SLUG) as conn:
+        await set_project_status(conn, slug=SLUG, status="active")
     from api.services.pam_report_job import run_pam_daily_report
 
     with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock):
@@ -105,6 +108,9 @@ async def test_second_run_supersedes_the_first(client):
     await client.post("/projects", json={
         "client_slug": "pam-job-super", "llm_mode": "standard", "sector": "rail",
     })
+    from api.database import get_connection, set_project_status
+    async with get_connection("pam-job-super") as conn:
+        await set_project_status(conn, slug="pam-job-super", status="active")
     from api.services.pam_report_job import run_pam_daily_report
 
     with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock):
@@ -125,6 +131,9 @@ async def test_first_run_reports_no_changes(client):
     await client.post("/projects", json={
         "client_slug": "pam-job-first", "llm_mode": "standard", "sector": "rail",
     })
+    from api.database import get_connection, set_project_status
+    async with get_connection("pam-job-first") as conn:
+        await set_project_status(conn, slug="pam-job-first", status="active")
     from api.services.pam_report_job import run_pam_daily_report
 
     with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock):
@@ -143,6 +152,9 @@ async def test_email_failure_does_not_lose_the_report(client):
     await client.post("/projects", json={
         "client_slug": "pam-job-mail", "llm_mode": "standard", "sector": "rail",
     })
+    from api.database import get_connection, set_project_status
+    async with get_connection("pam-job-mail") as conn:
+        await set_project_status(conn, slug="pam-job-mail", status="active")
     from api.services.pam_report_job import run_pam_daily_report
 
     with patch("api.services.pam_report_job._send_email",
@@ -174,3 +186,50 @@ def test_email_links_to_the_pam_report_page_not_the_client_report():
 
     assert f"/dashboard/{SLUG}/pam-report" in body
     assert f"/dashboard/{SLUG}/report" not in body
+
+
+@pytest.mark.asyncio
+async def test_an_inactive_project_produces_no_report(client):
+    """A project still in setup should not generate reports or mail.
+
+    A fresh project has no reviewer/approver stakeholders, so the send would
+    be skipped anyway once recipients are resolved - asserting only on
+    send.await_count would pass even without the guard. Asserting that no
+    pam_report output was even stored is what actually exercises the guard.
+    """
+    await client.post("/projects", json={
+        "client_slug": SLUG, "llm_mode": "standard", "sector": "rail",
+    })  # status defaults to 'created'
+
+    from api.services.pam_report_job import run_pam_daily_report
+    with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock) as send:
+        await run_pam_daily_report(SLUG)
+
+    assert send.await_count == 0
+
+    from api.database import fetch_agent_outputs, fetch_project, get_connection
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        outputs = await fetch_agent_outputs(conn, project_id=project["id"])
+    assert not any(o["output_type"] == "pam_report" for o in outputs)
+
+
+@pytest.mark.asyncio
+async def test_an_active_project_still_produces_a_report(client):
+    """The guard must not stop the thing it is guarding."""
+    await client.post("/projects", json={
+        "client_slug": SLUG, "llm_mode": "standard", "sector": "rail",
+    })
+    from api.database import get_connection, set_project_status
+    async with get_connection(SLUG) as conn:
+        await set_project_status(conn, slug=SLUG, status="active")
+
+    from api.services.pam_report_job import run_pam_daily_report
+    with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock):
+        await run_pam_daily_report(SLUG)
+
+    from api.database import fetch_agent_outputs, fetch_project
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        outputs = await fetch_agent_outputs(conn, project_id=project["id"])
+    assert any(o["output_type"] == "pam_report" for o in outputs)
