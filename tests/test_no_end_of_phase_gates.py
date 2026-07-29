@@ -5,9 +5,24 @@ Approval is recorded in approval_commits, outside the run. An agent instructed t
 HumanInputTool and wait for "approved" blocks for up to 24 hours and then proceeds on
 the string "timeout" as though it had an answer.
 """
+import re
 from pathlib import Path
 
 import pytest
+
+_ADJACENT_LITERALS = re.compile(r'"\s*\n\s*"')
+
+
+def _join_adjacent_literals(text: str) -> str:
+    """Join adjacent Python string literals so a phrase split across them is searchable.
+
+    A prompt written across two literals hides the phrase we search for - the closing
+    quote, the newline, and the indentation all sit between "call " and the tool name.
+    Two modules do this (enterprise_architect, synthesis_analyst), which is why a raw
+    substring check missed them on this file's first pass.
+    """
+    return _ADJACENT_LITERALS.sub("", text)
+
 
 GATED = [
     "discovery/value_chain_mapper",
@@ -34,7 +49,20 @@ KEEPS_A_GENUINE_USE = [
 
 
 def _source(module: str) -> str:
-    return Path("agents", f"{module}.py").read_text()
+    """Source with adjacent string literals joined, so a phrase split across a line
+    break in the Python source is still visible to a plain substring search."""
+    raw = Path("agents", f"{module}.py").read_text()
+    return _join_adjacent_literals(raw)
+
+
+def test_join_adjacent_literals_reveals_a_split_phrase():
+    """Prove the normaliser actually joins what a raw read would keep apart."""
+    split_source = (
+        '            "revise and call "\n'
+        '            "HumanInputTool again.\\n"\n'
+    )
+    assert "call humaninputtool again" not in split_source.lower()
+    assert "call humaninputtool again" in _join_adjacent_literals(split_source).lower()
 
 
 @pytest.mark.parametrize("module", GATED)
