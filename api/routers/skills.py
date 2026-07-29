@@ -19,6 +19,23 @@ from api.services.skills_service import check_specificity, extract_skill, extrac
 router = APIRouter(tags=["skills"])
 
 
+# Descriptions as they stood before the end-of-phase gating was removed. Seeding
+# replaces a stored description only when it still matches one of these exactly - a
+# description anybody has edited through the Role & Skills tab is theirs to keep.
+_SUPERSEDED_DESCRIPTIONS: dict[str, str] = {
+    "phase gating": (
+        "Block every downstream dispatch until the project team explicitly confirms "
+        "human review. If review is pending, output the review request and halt — "
+        "never proceed without confirmation."
+    ),
+    "human review gate": (
+        "At the end of every work phase, pause and request human review. Write a clear "
+        "summary of what was produced and what the reviewer needs to validate. Do not "
+        "allow downstream crews to proceed until review is confirmed."
+    ),
+}
+
+
 # ── Request models ─────────────────────────────────────────────────────────────
 
 class SkillCreate(BaseModel):
@@ -234,6 +251,9 @@ async def seed_baseline(
             if new_agents:
                 merged = existing_skill["agents"] + new_agents
                 await update_skill(conn, skill_id=existing_skill["id"], agents=merged)
+            superseded = _SUPERSEDED_DESCRIPTIONS.get(key)
+            if superseded is not None and existing_skill.get("description") == superseded:
+                await update_skill(conn, skill_id=existing_skill["id"], description=item["description"])
             continue
         skill_id = await insert_skill(
             conn,
