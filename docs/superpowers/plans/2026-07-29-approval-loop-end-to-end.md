@@ -948,7 +948,7 @@ git commit -m "feat: crews finish rather than blocking for a typed approval"
 - [ ] **Step 1: Write the failing tests**
 
 Create `tests/test_skill_description_migration.py`. The seeding route is
-`POST /admin/skills/seed` (`api/routers/skills.py:203`), sysadmin-only, which the shared
+`POST /admin/skills/seed` (`api/routers/skills.py:205`), sysadmin-only, which the shared
 `client` fixture already satisfies. It writes to `system.db`, so these tests clean up the
 two skill rows rather than a project database.
 
