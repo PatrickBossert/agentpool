@@ -42,14 +42,9 @@ def create_value_lever_analyst_task(
             "   Order levers by value_impact (high first), then by effort (low first).\n"
             "5. Use SQLiteStateTool with operation='write', key='value_levers', "
             "agent_name='value_lever_analyst' to save the JSON array.\n"
-            "6. Use HumanInputTool with prompt: 'Please review the value levers analysis saved at "
-            "outputs/value_levers.json. Reply \"approved\" to conclude the Discovery phase, "
-            "or provide notes.'\n"
-            "7. If revision notes are received, revise and call HumanInputTool again (maximum 3 times).\n"
         ),
         expected_output=(
-            "A JSON value levers analysis saved to outputs/value_levers.json "
-            "and confirmed approved by a human reviewer. "
+            "A JSON value levers analysis saved to outputs/value_levers.json. "
             "Analysis must contain at least 3 levers each with lever, description, value_impact, "
             "effort, related_requirements, and evidence fields."
         ),

@@ -97,11 +97,6 @@ def create_initiative_identifier_task(
             "architectural, operating_model.\n"
             "11. Use SQLiteStateTool with operation='write', key='initiative_register', "
             "agent_name='initiative_identifier' to save the JSON array.\n"
-            "12. Use HumanInputTool with prompt: 'Please review the initiative register saved at "
-            "outputs/initiative_register.json. Reply \"approved\" to conclude the Architecture "
-            "phase, or provide notes.'\n"
-            "13. If revision notes are received, revise and call HumanInputTool again. "
-            "Maximum 3 revision cycles.\n"
         ),
         expected_output=(
             "A JSON initiative register saved to outputs/initiative_register.json "
@@ -109,8 +104,7 @@ def create_initiative_identifier_task(
             "each with id, title, description, proposition_ids, capability_uplifts "
             "(with dimension and description), initiative_type (enabler or change_activity), "
             "enabler_dependencies, change_dependencies, complexity_score, complexity_rationale, "
-            "cost_estimate (low, high, currency, rationale), and related_requirements. "
-            "Confirmed approved by a human reviewer."
+            "cost_estimate (low, high, currency, rationale), and related_requirements."
         ),
         agent=agent,
         context=context_tasks,

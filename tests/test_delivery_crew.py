@@ -99,7 +99,8 @@ def test_rg_task_calls_html_roadmap_tool(mock_llm):
     assert "HtmlRoadmapTool" in task.description
 
 
-def test_rg_task_has_hitl(mock_llm):
+def test_rg_task_has_no_hitl_gate(mock_llm):
+    """The crew finishes rather than blocking on a typed approval."""
     from agents.delivery.roadmap_generator import (
         create_roadmap_generator,
         create_roadmap_generator_task,
@@ -111,8 +112,7 @@ def test_rg_task_has_hitl(mock_llm):
         stakeholder_groups=_STAKEHOLDER_GROUPS,
         roadmap_time_axis=_TIME_AXIS,
     )
-    assert "HumanInputTool" in task.description
-    assert "approved" in task.description
+    assert "HumanInputTool" not in task.description
 
 
 def test_rg_task_embeds_config_values(mock_llm):
@@ -184,15 +184,15 @@ def test_vi_task_embeds_client_and_sector(mock_llm):
     assert "utilities" in task.description
 
 
-def test_vi_task_has_hitl(mock_llm):
+def test_vi_task_has_no_hitl_gate(mock_llm):
+    """The crew finishes rather than blocking on a typed approval."""
     from agents.delivery.visual_illustrator import (
         create_visual_illustrator,
         create_visual_illustrator_task,
     )
     agent = create_visual_illustrator(slug="test", llm=mock_llm, tools=[])
     task = create_visual_illustrator_task(agent=agent, sector="energy", client_name="Acme")
-    assert "HumanInputTool" in task.description
-    assert "approved" in task.description
+    assert "HumanInputTool" not in task.description
 
 
 # ── Crew wiring ───────────────────────────────────────────────────────────────

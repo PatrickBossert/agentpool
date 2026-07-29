@@ -107,18 +107,12 @@ def create_roadmap_generator_task(
             "   - roadmap_data: the assembled JSON object\n"
             "   - filename: 'roadmap.html'\n"
             "   - agent_name: 'roadmap_generator'\n"
-            "10. Use HumanInputTool with prompt: 'Please review the roadmap at "
-            "outputs/roadmap.html and the underlying data at outputs/roadmap_data.json. "
-            "Reply \"approved\" to conclude Delivery Planning, or provide revision notes.'\n"
-            "11. If revision notes are received, revise the roadmap data and repeat "
-            "steps 8–10. Maximum 3 revision cycles.\n"
         ),
         expected_output=(
             "A JSON roadmap saved to outputs/roadmap_data.json and a visual roadmap "
             "saved to outputs/roadmap.html, containing all initiatives sequenced into "
             "time periods with value streams, stakeholder group rows, capability builds, "
-            "and benefits (value lever names + value estimate). "
-            "Confirmed approved by a human reviewer."
+            "and benefits (value lever names + value estimate)."
         ),
         agent=agent,
     )

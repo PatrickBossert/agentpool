@@ -141,19 +141,13 @@ def create_visual_illustrator_task(
             "agent_name='visual_illustrator' to save the JSON object.\n"
             "9. Use FileWriteTool with filename='illustration_briefs.json', "
             "agent_name='visual_illustrator', and content as the JSON string.\n"
-            "10. Use HumanInputTool with prompt: 'Illustration briefs have been written "
-            "to outputs/illustration_briefs.json. Please review the briefs and reply "
-            '\"approved\" to conclude, or provide revision notes for any specific brief.\'\\n'
-            "11. If revision notes are received, revise the relevant briefs and repeat "
-            "steps 8–10. Maximum 2 revision cycles.\n"
         ),
         expected_output=(
             "A JSON file at outputs/illustration_briefs.json containing one illustration "
             "brief per output type — vision (value chain), value proposition vignettes "
             "(one per proposition), architecture schematic, roadmap, operating model change "
             "initiatives, and future state operating model. Each brief contains a complete, "
-            "context-grounded image generation prompt and a structured elements object. "
-            "Confirmed approved by a human reviewer."
+            "context-grounded image generation prompt and a structured elements object."
         ),
         agent=agent,
     )

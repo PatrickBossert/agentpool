@@ -73,17 +73,12 @@ def create_value_proposition_generator_task(agent: Agent) -> Task:
             "risk_reduction, experience. A beneficiary may have multiple benefit_types.\n"
             "7. Use SQLiteStateTool with operation='write', key='propositions', "
             "agent_name='value_proposition_generator' to save the JSON array.\n"
-            "8. Use HumanInputTool with prompt: 'Please review the value propositions saved at "
-            "outputs/propositions.json. Reply \"approved\" to proceed to portfolio scoring, "
-            "or provide revision notes.'\n"
-            "9. If revision notes are received (not 'approved'), revise the propositions and "
-            "call HumanInputTool again. Repeat at most 3 times total.\n"
         ),
         expected_output=(
             "A JSON array of 3–7 value propositions saved to outputs/propositions.json, "
             "each with id, title, change_articulation, activity_refs, beneficiaries, "
             "impacted_stakeholder_groups, value_estimate, value_estimate_rationale, and "
-            "supporting_evidence. Confirmed approved by a human reviewer."
+            "supporting_evidence."
         ),
         agent=agent,
     )

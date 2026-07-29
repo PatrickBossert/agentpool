@@ -60,19 +60,12 @@ def create_enterprise_architect_task(agent: Agent) -> Task:
             "filename='architecture_technology_layer', agent_name='enterprise_architect'.\n"
             "   - Organisation layer: graph TB diagram showing hierarchy. "
             "filename='architecture_org_layer', agent_name='enterprise_architect'.\n"
-            "8. Use HumanInputTool with prompt: 'Please review the architecture register saved at "
-            "outputs/architecture_register.json and the three Mermaid diagrams "
-            "(architecture_data_layer.md, architecture_technology_layer.md, architecture_org_layer.md). "
-            "Reply \"approved\" to proceed to initiative identification, or provide notes.'\n"
-            "9. If revision notes are received, revise the register and diagrams and call "
-            "HumanInputTool again. Maximum 3 revision cycles.\n"
         ),
         expected_output=(
             "A JSON architecture register with data_layer, technology_layer, and organisation_layer "
             "saved to outputs/architecture_register.json. "
             "Three Mermaid diagrams saved to outputs/architecture_data_layer.md, "
-            "outputs/architecture_technology_layer.md, and outputs/architecture_org_layer.md. "
-            "Confirmed approved by a human reviewer."
+            "outputs/architecture_technology_layer.md, and outputs/architecture_org_layer.md."
         ),
         agent=agent,
     )

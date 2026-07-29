@@ -72,15 +72,16 @@ def test_bpg_task_has_context_gathering_hitl(mock_llm):
     assert "organisation name" in task.description.lower()
 
 
-def test_bpg_task_has_review_hitl(mock_llm):
-    """Second HumanInputTool call asks for approval of generated artefacts."""
+def test_bpg_task_has_no_review_gate(mock_llm):
+    """The second HumanInputTool call — the end-of-phase approval gate — is gone.
+    Approval is now recorded outside the run, in approval_commits."""
     from agents.business_plan.business_plan_generator import (
         create_business_plan_generator,
         create_business_plan_generator_task,
     )
     agent = create_business_plan_generator(slug="test", llm=mock_llm, tools=[])
     task = create_business_plan_generator_task(agent=agent)
-    assert "approved" in task.description
+    assert "approved" not in task.description.lower()
 
 
 # ── Crew wiring ───────────────────────────────────────────────────────────────

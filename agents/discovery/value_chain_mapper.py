@@ -128,11 +128,7 @@ def create_value_chain_mapper_task(
             "7. Use SQLiteStateTool with operation='write', key='value_chain_summary', "
             "agent_name='value_chain_mapper' to save a brief JSON summary: "
             "{\"activities\": [list of key activities identified], \"sector\": \"...\"}.\n"
-            "8. Use HumanInputTool with prompt: 'Please review the value chain diagram. "
-            "Reply \"approved\" to proceed, or provide revision notes.'\n"
-            "9. If revision notes are received (response is not 'approved'), revise the diagram "
-            "and call HumanInputTool again. Repeat at most 3 times total.\n"
-            "10. Once the diagram is approved, use SQLiteStateTool with operation='write', "
+            "8. Use SQLiteStateTool with operation='write', "
             "key='value_chain_tree', agent_name='value_chain_mapper' to save the value chain as a "
             "structured JSON tree. EVERY L1, L2 and L3 node MUST include an 'id' field — reuse "
             "existing IDs from step 0 for matching activities, assign new sequential IDs for new ones. "
@@ -158,7 +154,7 @@ def create_value_chain_mapper_task(
             "Use client-specific labels. L1 = primary value stream (owned by senior leader e.g. GM), "
             "L2 = process stage (owned by process stage manager), L3 = specific activity. "
             "Children arrays are optional — include them only where sub-stages are known.\n"
-            "11. Use DeriveRegistryTool with agent_name='value_chain_mapper' to automatically "
+            "9. Use DeriveRegistryTool with agent_name='value_chain_mapper' to automatically "
             "derive value_chain_registry from the tree you just wrote. "
             "This creates the permanent flat ID ledger — activities in the tree are marked "
             "active=true, and any entries that existed in a previous registry but are absent "
@@ -169,8 +165,7 @@ def create_value_chain_mapper_task(
             "A Mermaid value chain diagram saved to outputs/value_chain.md, "
             "a JSON summary saved via SQLiteStateTool, "
             "a structured JSON tree with stable IDs saved to key='value_chain_tree', "
-            "an updated activity registry saved to key='value_chain_registry', "
-            "and confirmation that the diagram has been approved by a human reviewer."
+            "and an updated activity registry saved to key='value_chain_registry'."
         ),
         agent=agent,
     )

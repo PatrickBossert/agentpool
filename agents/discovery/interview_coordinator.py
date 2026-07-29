@@ -90,15 +90,10 @@ def create_interview_coordinator_task(
             "3. Assemble all session entries into a JSON array called interview_plan.\n"
             "4. Use SQLiteStateTool with operation='write', key='interview_plan', "
             "agent_name='interview_coordinator' to save the array.\n"
-            "5. Use HumanInputTool with prompt: 'Please review the interview plan. "
-            "Reply \"approved\" to proceed, or provide revision notes.'\n"
-            "6. If revision notes are received, revise the plan and call HumanInputTool again. "
-            "Repeat at most 3 times total.\n"
         ),
         expected_output=(
             "A JSON interview_plan array saved via SQLiteStateTool, containing one session entry "
-            "per assigned stakeholder with session_token and voice_config. Confirmed approved by "
-            "a human reviewer."
+            "per assigned stakeholder with session_token and voice_config."
         ),
         agent=agent,
         context=context,

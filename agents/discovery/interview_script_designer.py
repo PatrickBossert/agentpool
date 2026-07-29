@@ -124,16 +124,10 @@ def create_interview_script_designer_task(
             "   }\n"
             "5. Use SQLiteStateTool with operation='write', key='interview_scripts', "
             "agent_name='interview_script_designer' to save the complete JSON object.\n"
-            "6. Use HumanInputTool with prompt: 'Please review the interview scripts saved at "
-            "outputs/interview_scripts.json. Reply \"approved\" to proceed, or provide revision "
-            "notes.'\n"
-            "7. If revision notes are received, revise the scripts and call HumanInputTool again. "
-            "Repeat at most 3 times total.\n"
         ),
         expected_output=(
             "A JSON object saved to outputs/interview_scripts.json containing one structured "
-            "interview script per value chain node, keyed by node_label. Confirmed approved "
-            "by a human reviewer."
+            "interview script per value chain node, keyed by node_label."
         ),
         agent=agent,
     )

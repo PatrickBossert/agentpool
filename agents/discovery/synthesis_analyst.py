@@ -59,19 +59,12 @@ def create_synthesis_analyst_task(
             "\"supporting_requirement_ids\": [\"REQ-001\"]}\n"
             "8. Use SQLiteStateTool with operation='write', key='value_levers', "
             "agent_name='synthesis_analyst' to save the value levers array.\n"
-            "9. Use HumanInputTool with prompt: 'Please review the synthesis outputs: "
-            "outputs/activity_insights.json, outputs/requirements.json, "
-            "outputs/value_levers.json. Reply \"approved\" to proceed to Value Design, "
-            "or provide revision notes.'\n"
-            "10. If revision notes are received, revise the relevant outputs and call "
-            "HumanInputTool again. Repeat at most 3 times total.\n"
         ),
         expected_output=(
             "Three JSON files saved via SQLiteStateTool: "
             "activity_insights (per-node actors/needs/frustrations), "
             "requirements (requirements register), "
-            "value_levers (value lever register). "
-            "Confirmed approved by a human reviewer."
+            "value_levers (value lever register)."
         ),
         agent=agent,
         context=context_tasks,

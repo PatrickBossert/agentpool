@@ -78,21 +78,12 @@ def create_business_plan_generator_task(agent: Agent) -> Task:
             "   - period_duration_months: inferred from roadmap_data.time_axis\n"
             "   - filename: 'cost_benefit_model.xlsx'\n"
             "   - agent_name: 'business_plan_generator'\n\n"
-            "8. Use HumanInputTool with prompt: 'Please review the outputs:\n"
-            "   outputs/business_plan.docx\n"
-            "   outputs/executive_presentation.pptx\n"
-            "   outputs/cost_benefit_model.xlsx\n"
-            "   Reply \"approved\" to conclude Business Plan generation, or provide "
-            "revision notes.'\n\n"
-            "9. If revision notes are received, revise the content and repeat steps 5-8. "
-            "Maximum 3 revision cycles.\n"
         ),
         expected_output=(
             "Three artefacts saved to the outputs directory: "
             "business_plan.docx (6-section word document), "
             "executive_presentation.pptx (8-10 slide deck), "
-            "cost_benefit_model.xlsx (3-sheet financial model with NPV, IRR, max borrowing). "
-            "Confirmed approved by a human reviewer."
+            "cost_benefit_model.xlsx (3-sheet financial model with NPV, IRR, max borrowing)."
         ),
         agent=agent,
     )

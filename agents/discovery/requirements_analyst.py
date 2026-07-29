@@ -41,13 +41,9 @@ def create_requirements_analyst_task(
             "   Number requirements sequentially from REQ-001. Deduplicate overlapping requirements.\n"
             "5. Use SQLiteStateTool with operation='write', key='requirements', "
             "agent_name='requirements_analyst' to save the JSON array.\n"
-            "6. Use HumanInputTool with prompt: 'Please review the requirements register saved at "
-            "outputs/requirements.json. Reply \"approved\" to proceed, or provide notes.'\n"
-            "7. If revision notes are received, revise and call HumanInputTool again (maximum 3 times).\n"
         ),
         expected_output=(
-            "A JSON requirements register saved to outputs/requirements.json "
-            "and confirmed approved by a human reviewer. "
+            "A JSON requirements register saved to outputs/requirements.json. "
             "Register must contain at least 3 requirements with id, description, source, "
             "priority, value_chain_activity, and acceptance_criteria fields."
         ),

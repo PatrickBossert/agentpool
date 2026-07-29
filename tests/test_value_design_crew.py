@@ -44,15 +44,15 @@ def test_vpg_task_writes_propositions(mock_llm):
     assert "operation='write'" in task.description
 
 
-def test_vpg_task_has_hitl(mock_llm):
+def test_vpg_task_has_no_hitl_gate(mock_llm):
+    """The crew finishes rather than blocking on a typed approval."""
     from agents.value_design.value_proposition_generator import (
         create_value_proposition_generator,
         create_value_proposition_generator_task,
     )
     agent = create_value_proposition_generator(slug="test", llm=mock_llm, tools=[])
     task = create_value_proposition_generator_task(agent=agent)
-    assert "HumanInputTool" in task.description
-    assert "approved" in task.description
+    assert "HumanInputTool" not in task.description
 
 
 # ── Portfolio Manager ─────────────────────────────────────────────────────────

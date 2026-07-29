@@ -52,15 +52,15 @@ def test_ea_task_renders_three_mermaid_diagrams(mock_llm):
     assert "architecture_org_layer" in task.description
 
 
-def test_ea_task_has_hitl(mock_llm):
+def test_ea_task_has_no_hitl_gate(mock_llm):
+    """The crew finishes rather than blocking on a typed approval."""
     from agents.architecture.enterprise_architect import (
         create_enterprise_architect,
         create_enterprise_architect_task,
     )
     agent = create_enterprise_architect(slug="test", llm=mock_llm, tools=[])
     task = create_enterprise_architect_task(agent=agent)
-    assert "HumanInputTool" in task.description
-    assert "approved" in task.description
+    assert "HumanInputTool" not in task.description
 
 
 # ── Initiative Identifier ─────────────────────────────────────────────────────
@@ -94,15 +94,15 @@ def test_ii_task_writes_initiative_register(mock_llm):
     assert "operation='write'" in task.description
 
 
-def test_ii_task_has_hitl(mock_llm):
+def test_ii_task_has_no_hitl_gate(mock_llm):
+    """The crew finishes rather than blocking on a typed approval."""
     from agents.architecture.initiative_identifier import (
         create_initiative_identifier,
         create_initiative_identifier_task,
     )
     agent = create_initiative_identifier(slug="test", llm=mock_llm, tools=[])
     task = create_initiative_identifier_task(agent=agent, context_tasks=[])
-    assert "HumanInputTool" in task.description
-    assert "approved" in task.description
+    assert "HumanInputTool" not in task.description
 
 
 def test_ii_task_covers_all_categories(mock_llm):
