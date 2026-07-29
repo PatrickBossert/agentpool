@@ -432,6 +432,17 @@ export function getRotatedIdleStatus(key: string, runIndex: number, rotation: nu
   return IDLE_STATUSES[(base + rotation * stride) % n]
 }
 
+/**
+ * The Ready label, or null when the crew's own status should speak instead.
+ *
+ * Ready is a resting state, so anything actually happening - or anything broken -
+ * outranks it. A running crew that is also ready is simply running.
+ */
+export function crewStatusLabel(status: AgentStatus | CrewStatus, ready: boolean): string | null {
+  if (!ready) return null
+  return status === 'idle' ? 'Ready to run' : null
+}
+
 export function inferAgentStatuses(crewKey: string, logs: string[]): AgentStatus[] {
   const agents = CREW_AGENTS[crewKey] ?? []
   const joined = logs.join('\n').toLowerCase()

@@ -236,6 +236,21 @@ export const systemApi = {
       .then((r) => r.data),
 }
 
+export interface CrewReadiness {
+  ready: boolean
+  waiting_on: string[]
+}
+
+export const commitsApi = {
+  readiness: (slug: string): Promise<Record<string, CrewReadiness>> =>
+    apiClient.get<Record<string, CrewReadiness>>(`/projects/${slug}/crew-readiness`)
+      .then((r) => r.data),
+  create: (slug: string, crewName: string, notes = ''): Promise<{ released: string[] }> =>
+    apiClient.post<{ released: string[] }>(`/projects/${slug}/commits`, {
+      crew_name: crewName, notes,
+    }).then((r) => r.data),
+}
+
 export const milestonesApi = {
   list: (slug: string): Promise<Milestone[]> =>
     apiClient.get<Milestone[]>(`/projects/${slug}/milestones`).then((r) => r.data),

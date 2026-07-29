@@ -2,10 +2,11 @@
 import { Play, RotateCcw, Loader2, XCircle, PauseCircle, Circle, GitBranch, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRef, useState, useEffect, useCallback } from 'react'
 import type { CrewRun, HumanReview } from '../types'
+import type { CrewReadiness } from '../api/endpoints'
 import {
   CREW_ORDER, CREW_LABELS, CREW_AGENTS,
   AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME,
-  inferAgentStatuses, getCrewStatus, getRotatedIdleStatus,
+  inferAgentStatuses, getCrewStatus, getRotatedIdleStatus, crewStatusLabel,
   type AgentStatus,
 } from './agentStatus'
 import { CREW_ICON_COMPONENT } from './crewIcons'
@@ -183,6 +184,7 @@ interface CrewCardProps {
   carouselDragging: boolean
   logs: string[]
   anyBusy: boolean
+  readiness?: Record<string, CrewReadiness>
   onSelect: () => void
   onRun: (crewKey: string) => void
   onRerun: (crewKey: string) => void
@@ -190,10 +192,11 @@ interface CrewCardProps {
   onMouseLeave: () => void
 }
 
-function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, isHovered, anotherCardHovered, carouselDragging, logs, anyBusy, onSelect, onRun, onRerun, onMouseEnter, onMouseLeave }: CrewCardProps) {
+function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, isHovered, anotherCardHovered, carouselDragging, logs, anyBusy, readiness, onSelect, onRun, onRerun, onMouseEnter, onMouseLeave }: CrewCardProps) {
   const { rotation } = useSchedulerHeartbeat()
   const status = getCrewStatus(crewRun, isActive, isPipelineActive, isWaiting, isRejected)
   const agents = CREW_AGENTS[crewKey] ?? []
+  const isReady = readiness?.[crewKey]?.ready ?? false
 
   const faceSize = computeFaceSize(agents.length)
 
@@ -227,7 +230,9 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
         // board settles rather than accumulating green cards.
         : status === 'failed'
           ? 'border-red-200'
-          : 'border-gray-200 hover:border-gray-300'
+          : isReady
+            ? 'border-brand/40'
+            : 'border-gray-200 hover:border-gray-300'
 
   const bgClass = isSelected
     ? 'bg-teal-50/60'
@@ -240,11 +245,15 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
     status === 'waiting'   ? <span className="text-[10px] font-medium text-amber-600 flex items-center gap-1"><PauseCircle size={10} />Waiting</span> :
     status === 'failed'    ? <span className="text-[10px] font-medium text-red-500 flex items-center gap-1"><XCircle size={10} />Failed</span> :
     status === 'queued'    ? <span className="text-[10px] font-medium text-gray-400 flex items-center gap-1"><Circle size={10} />Queued</span> :
-                             <FadingText
-                               className="text-[10px] font-medium text-gray-300"
-                               text={getRotatedIdleStatus(crewKey, crewRun?.id ?? 0, rotation)}
-                               delayKey={crewKey}
-                             />
+                             crewStatusLabel(status, isReady)
+                               ? <span className="text-[10px] font-semibold text-brand">
+                                   {crewStatusLabel(status, isReady)}
+                                 </span>
+                               : <FadingText
+                                   className="text-[10px] font-medium text-gray-300"
+                                   text={getRotatedIdleStatus(crewKey, crewRun?.id ?? 0, rotation)}
+                                   delayKey={crewKey}
+                                 />
 
   const canPlay = !anyBusy && status !== 'running'
   const isSingleAgent = agents.length === 1
@@ -343,6 +352,7 @@ export interface CrewCarouselProps {
   onRunCrew: (crewKey: string) => void
   onRerunCrew: (crewKey: string) => void
   runningCrew?: string | null
+  readiness?: Record<string, CrewReadiness>
   // PAM card props
   onRunPipeline: () => void
   isPipelineStarting?: boolean
@@ -351,7 +361,7 @@ export interface CrewCarouselProps {
 
 export default function CrewCarousel({
   crewRuns, isPipelineActive, logs, hitlReviews = [], rejectedCrews = new Set(),
-  selectedCrew, onSelectCrew, onRunCrew, onRerunCrew, runningCrew,
+  selectedCrew, onSelectCrew, onRunCrew, onRerunCrew, runningCrew, readiness,
   onRunPipeline, isPipelineStarting = false, orchestrationStatus = null,
 }: CrewCarouselProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -503,6 +513,7 @@ export default function CrewCarousel({
             carouselDragging={isDragging}
             logs={logs}
             anyBusy={anyBusy}
+            readiness={readiness}
             onSelect={() => { if (!didDrag.current) onSelectCrew(crewKey) }}
             onRun={onRunCrew}
             onRerun={onRerunCrew}

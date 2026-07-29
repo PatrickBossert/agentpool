@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { PauseCircle, Trash2, ArrowRight, AlertTriangle, Clock, CalendarDays } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { projectsApi, milestonesApi } from '../api/endpoints'
+import { projectsApi, milestonesApi, commitsApi } from '../api/endpoints'
 import type { Milestone } from '../types'
 import CrewCarousel from '../components/CrewCarousel'
 import AgentDetailPanel from '../components/AgentDetailPanel'
@@ -139,6 +139,13 @@ export default function Dashboard() {
     queryKey: ['settings', slug],
     queryFn: () => projectsApi.getSettings(slug!),
     enabled: !!slug,
+  })
+
+  const { data: readiness } = useQuery({
+    queryKey: ['crew-readiness', slug],
+    queryFn: () => commitsApi.readiness(slug!),
+    enabled: !!slug,
+    refetchInterval: 5_000,
   })
 
   const runMutation = useMutation({
@@ -303,6 +310,7 @@ export default function Dashboard() {
               onRunCrew={handleRunCrew}
               onRerunCrew={setRerunCrew}
               runningCrew={runningCrew}
+              readiness={readiness}
               onRunPipeline={() => runMutation.mutate()}
               isPipelineStarting={runMutation.isPending}
               orchestrationStatus={orch?.status ?? null}
