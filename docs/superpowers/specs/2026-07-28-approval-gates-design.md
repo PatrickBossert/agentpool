@@ -140,10 +140,39 @@ holds however many doors exist.
 
 ## Committing
 
-`POST /projects/{slug}/commits` with `{ crew_name, notes }`, restricted to stakeholders
-flagged `is_approver`. It writes an `approval_commits` row attributed to the caller's JWT
-`sub`, links the current working version of every output belonging to that crew, and
-returns the crews the commit made ready.
+`POST /projects/{slug}/commits` with `{ crew_name, notes }`. It writes an
+`approval_commits` row attributed to the caller's JWT `sub`, links the current working
+version of every output belonging to that crew, and returns the crews the commit made
+ready.
+
+### Who may commit, and what that means today
+
+The intent is that only governing roles commit. The identity model cannot yet express
+that, and the spec says so rather than implying an enforcement that does not exist:
+
+- The `users` table is **empty**. Every login goes through `ADMIN_USERNAME` /
+  `ADMIN_PASSWORD` and yields a JWT of `sub=admin`, `role=sysadmin`.
+- Stakeholders live in the project database, keyed by email. In `sp-gs-am` one approver
+  has no email at all.
+- Nothing links the two. The only plausible join is `users.email` to
+  `stakeholders.email`.
+
+So the rule is written to be correct now and to tighten by itself later, with no code
+change:
+
+1. `role == 'sysadmin'` is permitted - the platform operator.
+2. Otherwise, resolve the caller's `sub` to `users.email`, and permit only if a
+   stakeholder in this project has that email, non-empty and matched case-insensitively,
+   with `is_approver = 1`.
+3. Anything else is refused with 403.
+
+**Today rule 1 always fires, because the only login is sysadmin.** The restriction becomes
+real the moment per-user accounts exist for the approvers, and a stakeholder with no email
+can never be matched under rule 2 - Dougie McCrone would need an email address before he
+could commit under his own account.
+
+Attribution is unaffected and works from the start: every commit records who made it,
+which is what the audit trail needs.
 
 **Which outputs belong to a crew:** those whose `agent_outputs.agent_name` is in
 `_CREW_AGENT_NAMES[crew_name]` (`api/services/run_service.py:18`) and whose `is_current`
