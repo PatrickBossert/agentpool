@@ -78,6 +78,20 @@ async def test_changes_are_listed_for_the_crew_that_owns_the_output(client):
     assert [c["request"] for c in listed] == ["mine"]
 
 
+async def _snapshot(conn, output_id: int) -> tuple[dict, list[dict]]:
+    """The identifying content a note must leave untouched: the output's own
+    row (version, file_path) and every commit/output link that names it."""
+    async with conn.execute(
+        "SELECT id, version, file_path FROM agent_outputs WHERE id=?", (output_id,)
+    ) as cur:
+        output_row = dict(await cur.fetchone())
+    async with conn.execute(
+        "SELECT commit_id, output_id FROM approval_commit_outputs ORDER BY commit_id, output_id"
+    ) as cur:
+        links = [dict(r) for r in await cur.fetchall()]
+    return output_row, links
+
+
 @pytest.mark.asyncio
 async def test_a_note_leaves_committed_versions_untouched(client):
     """The invariant later projects' differential depends on."""
@@ -88,18 +102,23 @@ async def test_a_note_leaves_committed_versions_untouched(client):
         f"/projects/{SLUG}/commits",
         json={"crew_name": "discovery_mapping", "notes": ""},
     )
+
+    from api.database import get_connection
+    async with get_connection(SLUG) as conn:
+        before_output, before_links = await _snapshot(conn, output_id)
+
+    assert before_links == [{"commit_id": before_links[0]["commit_id"], "output_id": output_id}]
+
     await client.post(
         f"/projects/{SLUG}/changes",
         json={"output_id": output_id, "request": "later thought"},
     )
 
-    from api.database import get_connection
     async with get_connection(SLUG) as conn:
-        async with conn.execute(
-            "SELECT output_id FROM approval_commit_outputs"
-        ) as cur:
-            frozen = [r["output_id"] for r in await cur.fetchall()]
-    assert frozen == [output_id]
+        after_output, after_links = await _snapshot(conn, output_id)
+
+    assert after_output == before_output
+    assert after_links == before_links
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from api.database import (
     get_connection,
     get_db_path,
     insert_output_change,
+    output_exists,
 )
 from api.services.commit_service import caller_may_commit, changes_for_crew, commit_crew
 from api.services.crew_graph import CREW_DEPENDENCIES, readiness_report
@@ -81,13 +82,10 @@ async def create_change(
     _require_project(slug)
 
     async with get_connection(slug) as conn:
-        async with conn.execute(
-            "SELECT 1 FROM agent_outputs WHERE id=?", (req.output_id,)
-        ) as cur:
-            if await cur.fetchone() is None:
-                raise HTTPException(
-                    status_code=422, detail=f"output_id {req.output_id} does not exist"
-                )
+        if not await output_exists(conn, output_id=req.output_id):
+            raise HTTPException(
+                status_code=422, detail=f"output_id {req.output_id} does not exist"
+            )
         change_id = await insert_output_change(
             conn,
             output_id=req.output_id,

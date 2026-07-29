@@ -773,6 +773,13 @@ async def insert_agent_output(conn: aiosqlite.Connection, *, project_id: int, ag
     return cur.lastrowid
 
 
+async def output_exists(conn: aiosqlite.Connection, *, output_id: int) -> bool:
+    async with conn.execute(
+        "SELECT 1 FROM agent_outputs WHERE id=?", (output_id,)
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
 async def fetch_agent_outputs(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
     async with conn.execute(
         """
