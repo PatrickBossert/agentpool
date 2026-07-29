@@ -76,6 +76,34 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             reviewed_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- One row per act of committing: what a governing role signed off, and when.
+        CREATE TABLE IF NOT EXISTS approval_commits (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            crew_name     TEXT NOT NULL,
+            committed_by  TEXT NOT NULL,
+            committed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            notes         TEXT NOT NULL DEFAULT ''
+        );
+
+        -- Exactly which output versions a commit froze. Later projects diff
+        -- consecutive commits through this table.
+        CREATE TABLE IF NOT EXISTS approval_commit_outputs (
+            commit_id  INTEGER NOT NULL REFERENCES approval_commits(id),
+            output_id  INTEGER NOT NULL REFERENCES agent_outputs(id),
+            PRIMARY KEY (commit_id, output_id)
+        );
+
+        -- Every change asked of an output, however it was asked for.
+        CREATE TABLE IF NOT EXISTS output_changes (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            output_id     INTEGER NOT NULL REFERENCES agent_outputs(id),
+            requested_by  TEXT NOT NULL,
+            source        TEXT NOT NULL,
+            request       TEXT NOT NULL,
+            summary       TEXT NOT NULL DEFAULT '',
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS client_documents (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id   INTEGER NOT NULL REFERENCES projects(id),
@@ -928,6 +956,92 @@ async def update_review(
     )
     await conn.commit()
     return cur.rowcount > 0
+
+
+async def insert_approval_commit(
+    conn: aiosqlite.Connection, *, crew_name: str, committed_by: str, notes: str = ""
+) -> int:
+    """Record that a crew's outputs were committed. Never undone - a later commit
+    supersedes it, and the history is the audit trail."""
+    cur = await conn.execute(
+        "INSERT INTO approval_commits (crew_name, committed_by, notes) VALUES (?,?,?)",
+        (crew_name, committed_by, notes),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def link_commit_outputs(
+    conn: aiosqlite.Connection, *, commit_id: int, output_ids: list[int]
+) -> None:
+    """Freeze these output versions against a commit. An empty list is valid - some
+    crews produce no artefact."""
+    for output_id in output_ids:
+        await conn.execute(
+            "INSERT OR IGNORE INTO approval_commit_outputs (commit_id, output_id) VALUES (?,?)",
+            (commit_id, output_id),
+        )
+    await conn.commit()
+
+
+async def fetch_approval_commits(
+    conn: aiosqlite.Connection, *, crew_name: str | None = None
+) -> list[dict]:
+    """Commit history, newest first. Filtered to one crew when named."""
+    if crew_name is None:
+        sql, params = "SELECT * FROM approval_commits ORDER BY id DESC", ()
+    else:
+        sql, params = (
+            "SELECT * FROM approval_commits WHERE crew_name=? ORDER BY id DESC",
+            (crew_name,),
+        )
+    async with conn.execute(sql, params) as cur:
+        return [dict(row) for row in await cur.fetchall()]
+
+
+async def crew_has_commit(conn: aiosqlite.Connection, *, crew_name: str) -> bool:
+    """Whether this crew has ever been committed - the unit readiness is computed from."""
+    async with conn.execute(
+        "SELECT 1 FROM approval_commits WHERE crew_name=? LIMIT 1", (crew_name,)
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+async def insert_output_change(
+    conn: aiosqlite.Connection,
+    *,
+    output_id: int,
+    requested_by: str,
+    source: str,
+    request: str,
+    summary: str = "",
+) -> int:
+    """Record a change asked of an output: who asked, through which door, for what."""
+    cur = await conn.execute(
+        "INSERT INTO output_changes (output_id, requested_by, source, request, summary) "
+        "VALUES (?,?,?,?,?)",
+        (output_id, requested_by, source, request, summary),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_output_changes(
+    conn: aiosqlite.Connection, *, output_ids: list[int]
+) -> list[dict]:
+    """Changes against these outputs, newest first.
+
+    An empty id list returns nothing rather than everything - the alternative is an
+    unfiltered query that silently reports the whole project's history.
+    """
+    if not output_ids:
+        return []
+    placeholders = ",".join("?" for _ in output_ids)
+    async with conn.execute(
+        f"SELECT * FROM output_changes WHERE output_id IN ({placeholders}) ORDER BY id DESC",
+        tuple(output_ids),
+    ) as cur:
+        return [dict(row) for row in await cur.fetchall()]
 
 
 async def delete_hitl_review(
