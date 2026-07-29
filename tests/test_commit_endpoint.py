@@ -267,8 +267,10 @@ async def test_caller_may_commit_matches_approver_by_email(client):
         )
         assert refused.status_code == 403
 
-        # StakeholderIn (the API model) has no is_approver field - it is set
-        # directly in the database, as the endpoint offers no way to set it.
+        # StakeholderIn (api/routers/stakeholders.py:45-46) does declare is_reviewer
+        # and is_approver, so posting through the endpoint would work too - but going
+        # straight to the database keeps this a unit test of caller_may_commit, not
+        # of the stakeholders endpoint's auth and validation.
         async with get_connection(SLUG) as conn:
             project = await fetch_project(conn, slug=SLUG)
             await insert_stakeholder(
