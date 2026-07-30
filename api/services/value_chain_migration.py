@@ -1,0 +1,145 @@
+# api/services/value_chain_migration.py
+"""Recovering the model from a Mermaid diagram and the flat registry.
+
+The diagram carries real attribution as CSS classes with a colour scheme. Mermaid's node
+ids bear no relation to registry IDs, so a node is matched to a registry entry by its
+label - the one fragile step in this whole project, which is why an unmatched entry falls
+back to a dominant party rather than failing or being reported for remediation. A complete,
+correctable chart beats an incomplete one with a to-do list.
+
+Pure: takes a registry dict and the Mermaid text, returns a model.
+"""
+from __future__ import annotations
+
+import re
+
+from api.services.value_chain_model import COLUMN_STEP, empty_model
+
+# NodeId["Some label"]:::className  - the label may be quoted or bare.
+_NODE = re.compile(r'\w+\s*\[\s*"?(?P<label>[^"\]]+?)"?\s*\]\s*:::\s*(?P<cls>\w+)')
+# classDef name fill:#rrggbb,...
+_CLASSDEF = re.compile(r"classDef\s+(?P<cls>\w+)\s+.*?fill:\s*(?P<colour>#[0-9a-fA-F]{3,8})")
+
+
+def normalise_label(label: str) -> str:
+    """Trimmed, case-folded, whitespace-collapsed - the form labels are matched on."""
+    return re.sub(r"\s+", " ", label).strip().casefold()
+
+
+def parse_mermaid_attribution(mermaid: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Returns (normalised label -> class name, class name -> colour)."""
+    labels = {
+        normalise_label(m.group("label")): m.group("cls")
+        for m in _NODE.finditer(mermaid)
+    }
+    colours = {
+        m.group("cls"): m.group("colour").lower()
+        for m in _CLASSDEF.finditer(mermaid)
+    }
+    return labels, colours
+
+
+def _dominant(counts: dict[str, int]) -> str | None:
+    """The most common party, ties broken by name ascending so this is deterministic."""
+    if not counts:
+        return None
+    best = max(counts.values())
+    return sorted(p for p, n in counts.items() if n == best)[0]
+
+
+def migrate(registry: dict, mermaid: str) -> dict:
+    """Build the model. Idempotent: the same inputs always give the same output."""
+    label_to_class, class_to_colour = parse_mermaid_attribution(mermaid)
+    entries = registry.get("activities", [])
+
+    model = empty_model()
+
+    # Only classes that carry a colour become parties - a class used but never defined is
+    # a broken diagram, not a party.
+    model["parties"] = [
+        {"id": cls, "label": cls, "colour": colour}
+        for cls, colour in sorted(class_to_colour.items())
+        if cls in set(label_to_class.values())
+    ]
+    known_parties = {p["id"] for p in model["parties"]}
+
+    model["segments"] = [
+        {"id": e["id"], "label": e["label"], "description": ""}
+        for e in entries
+        if e.get("level") == "L1"
+    ]
+    model["activities"] = [
+        {"id": e["id"], "segment_id": e.get("parent_id"), "label": e["label"],
+         "description": "", "active": bool(e.get("active", True))}
+        for e in entries
+        if e.get("level") == "L2"
+    ]
+    activity_segment = {a["id"]: a["segment_id"] for a in model["activities"]}
+
+    l3s = [e for e in entries if e.get("level") == "L3"]
+
+    # First pass: whatever attribution the diagram states.
+    stated: dict[str, str] = {}
+    for entry in l3s:
+        cls = label_to_class.get(normalise_label(entry["label"]))
+        if cls in known_parties:
+            stated[entry["id"]] = cls
+
+    # Counts for the fallback cascade, from stated attribution only.
+    per_segment: dict[str, dict[str, int]] = {}
+    project_counts: dict[str, int] = {}
+    for entry in l3s:
+        party = stated.get(entry["id"])
+        if party is None:
+            continue
+        segment = activity_segment.get(entry.get("parent_id"))
+        per_segment.setdefault(segment, {}).setdefault(party, 0)
+        per_segment[segment][party] += 1
+        project_counts[party] = project_counts.get(party, 0) + 1
+
+    project_dominant = _dominant(project_counts)
+
+    # Second pass: assign every task a party, recording whether it was stated or derived.
+    derived_pairs: set[tuple[str, str]] = set()
+    stated_pairs: set[tuple[str, str]] = set()
+
+    for entry in l3s:
+        activity_id = entry.get("parent_id")
+        segment = activity_segment.get(activity_id)
+        party = stated.get(entry["id"])
+        was_stated = party is not None
+        if party is None:
+            party = _dominant(per_segment.get(segment, {})) or project_dominant
+        if party is None:
+            # Nothing in the project is attributed - a fresh project with no diagram to
+            # recover from. Tasks are dropped rather than invented, and the agent's own
+            # structured output supplies the model instead.
+            continue
+
+        model["tasks"].append({
+            "id": entry["id"], "activity_id": activity_id, "party_id": party,
+            "label": entry["label"], "description": "",
+            "active": bool(entry.get("active", True)),
+        })
+        (stated_pairs if was_stated else derived_pairs).add((activity_id, party))
+
+    # Contributions are derived from task attribution, one per (activity, party) seen.
+    # A pair with any stated task counts as stated - the diagram said so for part of it.
+    columns: dict[tuple[str, str], int] = {}
+    for activity_id, party in sorted(stated_pairs | derived_pairs):
+        segment = activity_segment.get(activity_id)
+        used = [
+            col for (seg, prt), col in columns.items()
+            if prt == party and activity_segment.get(seg) == segment
+        ]
+        column = (max(used) + COLUMN_STEP) if used else COLUMN_STEP
+        columns[(activity_id, party)] = column
+        model["contributions"].append({
+            "activity_id": activity_id,
+            "party_id": party,
+            "column": column,
+            "description": "",
+            "attribution": "stated" if (activity_id, party) in stated_pairs else "derived",
+        })
+
+    return model
