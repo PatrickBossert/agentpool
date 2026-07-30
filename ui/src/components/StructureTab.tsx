@@ -2,7 +2,7 @@
 // The Structure tab: the value chain model, the edits held against it, and the controls
 // that commit them. Lifted out of ValueChain.tsx, which holds three unrelated tabs and had
 // grown past the point where one more feature could be added to it safely.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { valueChainApi } from '../api/endpoints'
@@ -68,6 +68,16 @@ export function StructureTab({ slug }: { slug: string }) {
     if (model && !hasUnsavedChanges) setEditedModel(model)
   }, [model, hasUnsavedChanges])
 
+  // The working copy as it stands right now, readable from an async callback. A save's
+  // onSuccess is created with the working copy as it was when Save was pressed and cannot
+  // see a keystroke that landed during the round trip, so it needs this to tell the two
+  // apart. Written from an effect rather than during render, so it is always the committed
+  // value by the time any settled request reads it.
+  const latestEdit = useRef<ValueChainModel | null>(null)
+  useEffect(() => {
+    latestEdit.current = editedModel
+  }, [editedModel])
+
   function handleModelChange(updated: ValueChainModel) {
     setEditedModel(updated)
     setHasUnsavedChanges(true)
@@ -93,13 +103,20 @@ export function StructureTab({ slug }: { slug: string }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedContribution])
 
+  // The working copy is passed in as the mutation variable rather than read from the
+  // closure, so onSuccess can compare what was actually sent against what the working copy
+  // is now. Every operation in valueChainModel returns a fresh object, so reference
+  // inequality is exactly the test for "an edit landed while this request was in flight" -
+  // and in that case the unsaved flag must stay set, or the reseed effect above would
+  // overwrite the edit with the server model the request predates.
   const saveModelMutation = useMutation({
-    mutationFn: () => valueChainApi.save(slug, editedModel, changeSummary),
-    onSuccess: () => {
-      setHasUnsavedChanges(false)
+    mutationFn: (sent: ValueChainModel | null) => valueChainApi.save(slug, sent, changeSummary),
+    onSuccess: (_result, sent) => {
       setSaveProblems(null)
-      setChangeSummary('')
       qc.invalidateQueries({ queryKey: ['value-chain-model', slug] })
+      if (latestEdit.current !== sent) return
+      setHasUnsavedChanges(false)
+      setChangeSummary('')
     },
     onError: (e: unknown) => {
       if (axios.isAxiosError(e) && e.response?.status === 422) {
@@ -168,7 +185,7 @@ export function StructureTab({ slug }: { slug: string }) {
               />
               <button
                 type="button"
-                onClick={() => saveModelMutation.mutate()}
+                onClick={() => saveModelMutation.mutate(editedModel)}
                 disabled={!hasUnsavedChanges || saveModelMutation.isPending}
                 className="px-4 py-2 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm font-medium rounded"
               >

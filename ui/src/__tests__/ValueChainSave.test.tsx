@@ -102,6 +102,32 @@ describe('ValueChain save', () => {
       expect(screen.queryByTestId('unsaved-changes')).not.toBeInTheDocument()
     })
   })
+
+  // Only the Save button is disabled while the request is in flight - the description
+  // inputs, the drag handles and the party menus all stay live. The request carries the
+  // working copy as it stood when Save was pressed, so anything typed after that was never
+  // sent; clearing the unsaved flag on success then let the reseed effect overwrite the
+  // working copy with the pre-keystroke server model, and the UI reported success.
+  it('keeps an edit typed while a save is in flight, and still calls it unsaved', async () => {
+    let release: (result: { output_id: number }) => void = () => {}
+    vi.mocked(valueChainApi.save).mockImplementation(
+      () => new Promise((resolve) => { release = resolve }),
+    )
+
+    const field = await editDescriptionAndOpenStructureTab()
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await userEvent.type(field, ' again')
+
+    release({ output_id: 1 })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+    })
+
+    expect((screen.getByTestId('description-1.1-sp') as HTMLInputElement).value).toBe(
+      'first more again',
+    )
+    expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
+  })
 })
 
 describe('unsaved edits across a tab change', () => {
