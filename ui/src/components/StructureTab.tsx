@@ -79,6 +79,17 @@ export function StructureTab({ slug }: { slug: string }) {
     setSelectedContribution({ activityId, partyId })
   }
 
+  // Escape closes the panel from anywhere on the page, not just while it has focus -
+  // so the listener lives on the window, not the dialog element.
+  useEffect(() => {
+    if (!selectedContribution) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setSelectedContribution(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedContribution])
+
   const saveModelMutation = useMutation({
     mutationFn: () => valueChainApi.save(slug, editedModel, changeSummary),
     onSuccess: () => {
@@ -135,8 +146,8 @@ export function StructureTab({ slug }: { slug: string }) {
       {modelLoading && <p className="text-sm text-muted">Loading…</p>}
 
       {!modelLoading && editedModel && (
-        <div className="flex flex-col lg:flex-row gap-6 items-start">
-          <div className="flex-1 min-w-0">
+        <div className="flex flex-col gap-6 items-start">
+          <div className="flex-1 min-w-0 w-full">
             <ValueChainGrid
               model={editedModel}
               onChange={handleModelChange}
@@ -179,26 +190,16 @@ export function StructureTab({ slug }: { slug: string }) {
             )}
           </div>
 
-          {/* Side panel: a contribution's tasks and its activity's propositions, in place
-              of a pop-up - selected from the table on the left. */}
-          <div className="w-full lg:w-80 flex-shrink-0">
-            {selectedContribution ? (
-              <ContributionPanel
-                model={editedModel}
-                activityId={selectedContribution.activityId}
-                partyId={selectedContribution.partyId}
-              />
-            ) : (
-              <div
-                data-testid="contribution-panel-placeholder"
-                className="bg-surface-card rounded-xl p-4 text-center"
-              >
-                <p className="text-muted text-sm">
-                  Select a contribution to see its tasks and propositions.
-                </p>
-              </div>
-            )}
-          </div>
+          {/* A contribution's tasks and its activity's propositions, opened from the
+              table on the left as a dialog rather than a permanent side panel. */}
+          {selectedContribution && (
+            <ContributionPanel
+              model={editedModel}
+              activityId={selectedContribution.activityId}
+              partyId={selectedContribution.partyId}
+              onClose={() => setSelectedContribution(null)}
+            />
+          )}
         </div>
       )}
 

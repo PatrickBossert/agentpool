@@ -16,7 +16,10 @@ import type { ValueChainModel } from '../utils/valueChainModel'
 const { MODEL } = vi.hoisted(() => ({
   MODEL: {
     model_version: 1,
-    parties: [{ id: 'sp', label: 'SP-GS', colour: '#1a5276' }],
+    parties: [
+      { id: 'sp', label: 'SP-GS', colour: '#1a5276' },
+      { id: 'iss', label: 'ISS', colour: '#7d3c98' },
+    ],
     segments: [{ id: '1', label: 'PROPERTY', description: '' }],
     activities: [
       { id: '1.1', segment_id: '1', label: 'Reactive', description: '', active: true },
@@ -24,10 +27,12 @@ const { MODEL } = vi.hoisted(() => ({
     ],
     contributions: [
       { activity_id: '1.1', party_id: 'sp', column: 10, description: 'first', attribution: 'stated' },
+      { activity_id: '1.1', party_id: 'iss', column: 15, description: 'joint', attribution: 'stated' },
       { activity_id: '1.2', party_id: 'sp', column: 20, description: 'second', attribution: 'stated' },
     ],
     tasks: [
       { id: 't1', activity_id: '1.1', party_id: 'sp', label: 'Log the fault', description: 'Raise a ticket' },
+      { id: 't2', activity_id: '1.1', party_id: 'iss', label: 'Execute repair', description: 'Fix on site' },
     ],
     propositions: [
       { id: 'p1', activity_id: '1.1', description: 'Faster turnaround', party_id: 'sp' },
@@ -69,12 +74,6 @@ async function openStructureTab() {
 }
 
 describe('ValueChain contribution panel wiring', () => {
-  it('shows a sensible placeholder before anything is selected', async () => {
-    await openStructureTab()
-    expect(screen.getByTestId('contribution-panel-placeholder')).toBeInTheDocument()
-    expect(screen.queryByTestId('contribution-panel')).not.toBeInTheDocument()
-  })
-
   it('selecting a cell in the table shows that contribution in the panel', async () => {
     await openStructureTab()
 
@@ -116,5 +115,44 @@ describe('ValueChain contribution panel wiring', () => {
     expect(field).toHaveValue('first more')
     // Typing must never have been intercepted by a selection handler swallowing keys.
     expect(screen.queryByTestId('contribution-panel')).not.toBeInTheDocument()
+  })
+
+  it('opens as a dialog when a card header is activated', async () => {
+    render(<Wrapper />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('Log the fault')
+  })
+
+  it('closes on the close control', async () => {
+    render(<Wrapper />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    await userEvent.click(screen.getByTestId('close-contribution-panel'))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('closes on Escape', async () => {
+    render(<Wrapper />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it("shows the tasks of the party whose card was opened, not the other party's", async () => {
+    // Tasks belong to the contribution, so opening ISS's card on a jointly-delivered
+    // activity must not show SP-GS's tasks.
+    render(<Wrapper />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('Log the fault')
+    expect(dialog).not.toHaveTextContent('Execute repair')
   })
 })
