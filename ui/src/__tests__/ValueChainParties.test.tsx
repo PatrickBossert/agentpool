@@ -26,6 +26,9 @@ const MODEL: ValueChainModel = {
   tasks: [
     { activity_id: '1.2', party_id: 'sp', id: '1.2.1', label: 'Raise works order' },
     { activity_id: '1.2', party_id: 'sp', id: '1.2.2', label: 'Approve spend' },
+    // Same activity, a different party - this is what gives the removal test the power to
+    // tell "deleted sp's tasks" apart from "deleted every task on the activity".
+    { activity_id: '1.2', party_id: 'iss', id: '1.2.3', label: 'Inspect the site' },
   ],
   propositions: [],
   links: [],
@@ -120,6 +123,9 @@ describe('removing a party', () => {
 
     expect(screen.queryByTestId('card-1.2-sp')).not.toBeInTheDocument()
     expect(latest.tasks.filter((t) => t.party_id === 'sp')).toHaveLength(0)
+    // iss's task on the same activity must survive - proves the deletion is scoped to the
+    // removed party's contribution, not to every task on the activity.
+    expect(latest.tasks.some((t) => t.id === '1.2.3')).toBe(true)
     expect(latest.contributions.filter((c) => c.activity_id === '1.2')).toHaveLength(1)
   })
 
@@ -135,5 +141,41 @@ describe('removing a party', () => {
 
     expect(latest).toEqual(afterAdd)
     expect(screen.getByTestId('card-1.2-sp')).toBeInTheDocument()
+  })
+})
+
+describe('the party menu', () => {
+  it("opening one card's menu does not open another's", async () => {
+    render(<Stateful />)
+    await userEvent.click(screen.getByTestId('party-menu-1.1-sp'))
+    expect(screen.getByTestId('add-party-1.1-sp-iss')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+
+    expect(screen.getByTestId('add-party-1.2-sp-iss')).toBeInTheDocument()
+    expect(screen.queryByTestId('add-party-1.1-sp-iss')).not.toBeInTheDocument()
+  })
+})
+
+describe('the removal dialog', () => {
+  it("names the reopened card's party and activity, not the cancelled one's", async () => {
+    render(<Stateful />)
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+    await userEvent.click(screen.getByTestId('add-party-1.2-sp-iss'))
+
+    // Request removal of sp, see its details, then cancel without confirming.
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+    await userEvent.click(screen.getByTestId('remove-party-1.2-sp'))
+    expect(screen.getByRole('dialog')).toHaveTextContent('SP-GS')
+    await userEvent.click(screen.getByTestId('cancel-remove'))
+
+    // Request removal of a different card - the dialog must not carry over the first
+    // request's details.
+    await userEvent.click(screen.getByTestId('party-menu-1.2-iss'))
+    await userEvent.click(screen.getByTestId('remove-party-1.2-iss'))
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('ISS')
+    expect(dialog).not.toHaveTextContent('SP-GS')
   })
 })

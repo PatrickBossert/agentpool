@@ -4,7 +4,10 @@
 // from Task 8 - the party menu. A handler on the card itself would fire on every
 // interaction with any of them, and one placed above the input would swallow keystrokes
 // typed into it.
-import { useState } from 'react'
+//
+// The party menu's open/closed state lives in the grid, not here, keyed on this card's
+// (activityId, partyId) - one open menu at a time across the whole grid, so opening
+// another card's menu closes this one rather than leaving both showing at once.
 import { ChevronLeft, ChevronRight, ListTree, Lightbulb, Sparkles, Users } from 'lucide-react'
 
 import {
@@ -29,6 +32,8 @@ export function ContributionCard({
   selected,
   onSelect,
   onRequestRemove,
+  menuOpen = false,
+  onToggleMenu,
 }: {
   model: ValueChainModel
   activity: ValueChainActivity
@@ -37,10 +42,11 @@ export function ContributionCard({
   selected?: boolean
   onSelect?: (activityId: string, partyId: string) => void
   onRequestRemove?: (activityId: string, partyId: string) => void
+  menuOpen?: boolean
+  onToggleMenu?: () => void
 }) {
   const { activity_id: activityId, party_id: partyId } = contribution
   const editable = !!onChange
-  const [menuOpen, setMenuOpen] = useState(false)
   const available = partiesNotContributing(model, activityId)
   const lastOne = isLastContribution(model, activityId)
 
@@ -158,7 +164,7 @@ export function ContributionCard({
             data-testid={`party-menu-${activityId}-${partyId}`}
             aria-label={`Parties for ${activity.label}`}
             aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
+            onClick={() => onToggleMenu?.()}
             className="flex items-center gap-1 text-xs text-secondary hover:text-brand"
           >
             <Users className="w-3 h-3" aria-hidden="true" />
@@ -179,7 +185,7 @@ export function ContributionCard({
                     data-testid={`add-party-${activityId}-${partyId}-${party.id}`}
                     onClick={() => {
                       onChange!(addParty(model, activityId, party.id))
-                      setMenuOpen(false)
+                      onToggleMenu?.()
                     }}
                     className="block w-full text-left text-xs text-primary px-1 py-1 hover:text-brand"
                   >
@@ -195,7 +201,7 @@ export function ContributionCard({
                 aria-describedby={lastOne ? `remove-why-${activityId}-${partyId}` : undefined}
                 onClick={() => {
                   onRequestRemove?.(activityId, partyId)
-                  setMenuOpen(false)
+                  onToggleMenu?.()
                 }}
                 className="block w-full text-left text-xs px-1 py-1 mt-1 border-t border-surface text-red-400 disabled:text-muted"
               >

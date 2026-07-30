@@ -49,6 +49,12 @@ export function ValueChainGrid({
     activityId: string
     partyId: string
   } | null>(null)
+  // Which card's party menu is open, if any - one at a time across the whole grid, keyed
+  // on the contribution's identity rather than the card holding its own boolean, so
+  // opening a second card's menu closes the first instead of leaving both open.
+  const [openMenu, setOpenMenu] = useState<{ activityId: string; partyId: string } | null>(
+    null,
+  )
 
   if (model.segments.length === 0) {
     return (
@@ -214,6 +220,16 @@ export function ValueChainGrid({
                             onSelect={onSelect}
                             onRequestRemove={(activityId, partyId) =>
                               setPendingRemoval({ activityId, partyId })
+                            }
+                            menuOpen={
+                              openMenu?.activityId === activity.id && openMenu?.partyId === party.id
+                            }
+                            onToggleMenu={() =>
+                              setOpenMenu((current) =>
+                                current?.activityId === activity.id && current?.partyId === party.id
+                                  ? null
+                                  : { activityId: activity.id, partyId: party.id },
+                              )
                             }
                             selected={
                               selected?.activityId === activity.id &&
