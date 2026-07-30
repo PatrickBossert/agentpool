@@ -53,7 +53,9 @@ def get_tools_for_agent(
             TavilySearchTool(),
             WebFetchTool(),
             ChromaQueryTool(slug=slug, sector=sector),
-            MermaidRenderTool(slug=slug),
+            # No MermaidRenderTool: this agent emits the structured value chain model, and
+            # holding the tool would let it write a value_chain_v<n>.md whatever the task
+            # asks for. The Enterprise Architect below keeps it.
             SQLiteStateTool(slug=slug),
             DeriveRegistryTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),

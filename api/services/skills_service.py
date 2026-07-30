@@ -120,7 +120,10 @@ BASELINE_SKILLS: list[dict] = [
     {"agents": ["Value Chain Mapper", "Requirements Analyst"], "name": "Document Ingestion", "description": "Before producing any output, read all uploaded client documents in full. Capture exact terminology the client uses — do not paraphrase. Flag every named system, process, or entity for inclusion in the analysis."},
     {"agents": ["Value Chain Mapper", "Value Lever Analyst", "Requirements Analyst", "Enterprise Architect"], "name": "Web Search", "description": "Validate your outputs against peer organisations and published benchmarks. Cite the source and date for every external data point — never assert a benchmark without attribution."},
     {"agents": ["Value Chain Mapper", "Value Lever Analyst", "Requirements Analyst", "Enterprise Architect"], "name": "Semantic Search", "description": "Query the vector knowledge base before making any claim about the organisation. If relevant prior outputs exist, ground your work in them rather than starting from first principles."},
-    {"agents": ["Value Chain Mapper", "Enterprise Architect"], "name": "Diagram Rendering", "description": "Produce a valid Mermaid diagram alongside every JSON output. Validate the syntax before writing the file — a diagram with syntax errors must not be included in the output."},
+    # The Value Chain Mapper emits the structured model, not a rendering - this skill would
+    # tell it to write a diagram alongside it, which is what the model replaced. The
+    # Enterprise Architect stays: that agent legitimately still produces diagrams.
+    {"agents": ["Enterprise Architect"], "name": "Diagram Rendering", "description": "Produce a valid Mermaid diagram alongside every JSON output. Validate the syntax before writing the file — a diagram with syntax errors must not be included in the output."},
     # Human Review Gate — shared across all agents that gate on human approval
     {"agents": [
         "Value Chain Mapper", "Interaction Designer", "Stakeholder Manager",

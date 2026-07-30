@@ -3,6 +3,10 @@
 
 Leave him emitting Mermaid and his next run overwrites the model with a rendering, and the
 editor has nothing to edit.
+
+Three separate paths can each tell him to draw one, so all three are checked here: the task
+text, the approved skills injected into that text by run_service, and the tools he holds. A
+test that greps only the task description cannot see the other two.
 """
 from unittest.mock import MagicMock
 
@@ -13,6 +17,14 @@ from agents.discovery.value_chain_mapper import (
     create_value_chain_mapper,
     create_value_chain_mapper_task,
 )
+from agents.tools.registry import get_tools_for_agent
+from api.services.skills_service import BASELINE_SKILLS
+
+MAPPER = "Value Chain Mapper"
+
+
+def _skills_for(display_name: str) -> list[dict]:
+    return [s for s in BASELINE_SKILLS if display_name in s["agents"]]
 
 
 @pytest.fixture
@@ -70,3 +82,37 @@ def test_the_task_ties_model_ids_to_the_registry(task_text):
     assert "l1 registry entry becomes a segment" in task_text
     assert "l2 entry becomes an activity" in task_text
     assert "l3 entry becomes a task" in task_text
+
+
+def test_the_mapper_holds_no_tool_that_can_render_a_diagram():
+    """The task text is only one of the paths. Leave him the tool and he can still write a
+    value_chain_v13.md whatever the task says, which is the outcome this branch exists to
+    prevent."""
+    tools = get_tools_for_agent("value_chain_mapper", slug="t", sector="transport")
+    offenders = [
+        type(tool).__name__ for tool in tools
+        if "mermaid" in type(tool).__name__.lower()
+        or "mermaid" in (getattr(tool, "name", "") or "").lower()
+    ]
+    assert offenders == [], f"still holds {offenders}"
+
+
+def test_no_seeded_skill_tells_the_mapper_to_produce_a_diagram():
+    """run_service injects every approved skill for a crew's agents into the task text as
+    "AGENT SKILLS (apply these capabilities in your work)", so a skill saying "produce a
+    valid Mermaid diagram alongside every JSON output" instructs him regardless of what the
+    task itself asks for."""
+    offenders = [
+        s["name"] for s in _skills_for(MAPPER)
+        if any(word in s["description"].lower() for word in ("mermaid", "diagram", "flowchart"))
+    ]
+    assert offenders == [], f"skills still ask for a diagram: {offenders}"
+
+
+def test_the_enterprise_architect_keeps_diagram_rendering():
+    """Guards the correction against overreach - that agent legitimately still draws."""
+    architect = [s["name"] for s in _skills_for("Enterprise Architect")]
+    assert "Diagram Rendering" in architect
+
+    tools = get_tools_for_agent("enterprise_architect", slug="t", sector="transport")
+    assert any("mermaid" in type(tool).__name__.lower() for tool in tools)

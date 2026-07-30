@@ -36,6 +36,21 @@ _SUPERSEDED_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+# Agent lists as they shipped, for skills whose assignments have since been narrowed.
+# Seeding merges agents into an existing skill but never removes one, so a correction that
+# takes an agent off a skill would otherwise never reach an already-seeded database. The
+# stored list is replaced with the baseline's only when it still matches one of these
+# exactly - order-insensitively, since assignments are a set rather than a sequence. Any
+# list somebody has changed through the Role & Skills tab is theirs to keep, and a second
+# run is a no-op because the corrected list no longer matches.
+_SUPERSEDED_AGENTS: dict[str, list[str]] = {
+    # SP22a: the Value Chain Mapper emits the structured model, not a rendering, so an
+    # instruction to produce a Mermaid diagram alongside it defeats the point. The
+    # Enterprise Architect keeps the skill.
+    "diagram rendering": ["Value Chain Mapper", "Enterprise Architect"],
+}
+
+
 # ── Request models ─────────────────────────────────────────────────────────────
 
 class SkillCreate(BaseModel):
@@ -247,10 +262,18 @@ async def seed_baseline(
         key = item["name"].lower()
         if key in existing_names:
             existing_skill = existing_names[key]
-            new_agents = [a for a in item["agents"] if a not in existing_skill["agents"]]
-            if new_agents:
-                merged = existing_skill["agents"] + new_agents
-                await update_skill(conn, skill_id=existing_skill["id"], agents=merged)
+            superseded_agents = _SUPERSEDED_AGENTS.get(key)
+            if superseded_agents is not None and sorted(existing_skill["agents"]) == sorted(
+                superseded_agents
+            ):
+                # Still exactly the list as it shipped, so narrow it to the baseline's -
+                # the one case where seeding removes an agent rather than merging.
+                await update_skill(conn, skill_id=existing_skill["id"], agents=item["agents"])
+            else:
+                new_agents = [a for a in item["agents"] if a not in existing_skill["agents"]]
+                if new_agents:
+                    merged = existing_skill["agents"] + new_agents
+                    await update_skill(conn, skill_id=existing_skill["id"], agents=merged)
             superseded = _SUPERSEDED_DESCRIPTIONS.get(key)
             if superseded is not None and existing_skill.get("description") == superseded:
                 await update_skill(conn, skill_id=existing_skill["id"], description=item["description"])
