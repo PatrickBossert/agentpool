@@ -81,30 +81,38 @@ def validate_model(model: dict) -> list[str]:
         party_id = contribution.get("party_id")
         column = contribution.get("column")
 
-        if activity_id not in activity_segment:
+        # Each check below is independent and always runs, so a record with several
+        # defects at once (say, an unknown party and an invalid attribution) reports
+        # both rather than only whichever is checked first. Only the cell-overlap check
+        # genuinely depends on activity, party, and column all having resolved.
+        activity_known = activity_id in activity_segment
+        party_known = party_id in party_ids
+        column_known = isinstance(column, int)
+
+        if not activity_known:
             problems.append(f"contribution names unknown activity {activity_id}")
-            continue
-        if party_id not in party_ids:
+        if not party_known:
             problems.append(f"contribution names unknown party {party_id}")
-            continue
-        if not isinstance(column, int):
+        if not column_known:
             problems.append(
                 f"contribution {contribution_key(activity_id, party_id)} has no column"
             )
-            continue
         if contribution.get("attribution") not in _ATTRIBUTIONS:
             problems.append(
                 f"contribution {contribution_key(activity_id, party_id)} has attribution "
                 f"{contribution.get('attribution')!r}, expected one of {_ATTRIBUTIONS}"
             )
 
-        cell = (activity_segment[activity_id], party_id, column)
-        if cell in seen_cells:
-            problems.append(
-                f"two contributions occupy column {column} in party {party_id}'s lane"
-            )
-        seen_cells.add(cell)
-        contribution_ids.add((activity_id, party_id))
+        if activity_known and party_known:
+            contribution_ids.add((activity_id, party_id))
+
+        if activity_known and party_known and column_known:
+            cell = (activity_segment[activity_id], party_id, column)
+            if cell in seen_cells:
+                problems.append(
+                    f"two contributions occupy column {column} in party {party_id}'s lane"
+                )
+            seen_cells.add(cell)
 
     for task in model.get("tasks", []):
         pair = (task.get("activity_id"), task.get("party_id"))

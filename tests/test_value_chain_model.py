@@ -56,8 +56,29 @@ def test_a_complete_model_is_valid():
 
 
 def test_two_parties_may_occupy_the_same_column():
-    """Same activity, same column, different lanes - concurrent delivery. The whole point."""
-    assert validate_model(_model()) == []
+    """Same activity, same column, different lanes - concurrent delivery. The whole point.
+
+    Starts from one party's contribution, then adds a second party at the same column, and
+    checks the model stays valid at each step. This would fail if the uniqueness key ever
+    dropped the party and started comparing columns alone.
+    """
+    m = empty_model()
+    m["parties"] = [{"id": "sp-gs", "label": "SP-GS", "colour": "#1a5276"}]
+    m["segments"] = [{"id": "1", "label": "PROPERTY", "description": ""}]
+    m["activities"] = [{"id": "1.1", "segment_id": "1", "label": "A",
+                        "description": "", "active": True}]
+    m["contributions"] = [
+        {"activity_id": "1.1", "party_id": "sp-gs", "column": 10,
+         "description": "", "attribution": "stated"},
+    ]
+    assert validate_model(m) == []
+
+    m["parties"].append({"id": "iss", "label": "ISS", "colour": "#c0392b"})
+    m["contributions"].append(
+        {"activity_id": "1.1", "party_id": "iss", "column": 10,
+         "description": "", "attribution": "stated"}
+    )
+    assert validate_model(m) == []
 
 
 def test_a_contribution_naming_an_unknown_activity_is_invalid():
@@ -122,6 +143,16 @@ def test_every_level_accepts_a_description():
     m["contributions"][0]["description"] = "Raises and approves the order"
     m["tasks"][0]["description"] = "Via Tririga"
     assert validate_model(m) == []
+
+
+def test_a_contribution_with_two_defects_reports_both():
+    """Independent checks - an unknown party must not swallow an invalid attribution."""
+    m = _model()
+    m["contributions"][0]["party_id"] = "nobody"
+    m["contributions"][0]["attribution"] = "guessed"
+    problems = validate_model(m)
+    assert any("nobody" in p for p in problems)
+    assert any("guessed" in p for p in problems)
 
 
 def test_contribution_key_is_the_composite():
