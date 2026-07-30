@@ -97,15 +97,33 @@ endpoints are not both present is rejected rather than stored dangling.
 Without this the next Alex run overwrites the model with a diagram and the editor has
 nothing to edit.
 
-### Mermaid becomes a derived view
+### The Mermaid rendering goes, and is not replaced in 3a
 
-The diagram tab keeps working by **generating** Mermaid from the model, including
-regenerating the party colour classes so the chart looks as it does today.
+The Diagram tab is removed, along with `ValueChain.tsx`'s `mermaid` import and its
+fence-extraction regex.
 
-This is deliberate on two counts. It exercises the model hard - a model that cannot produce
-the existing diagram is incomplete, and that failure surfaces immediately rather than in
-3b. And when the grid of cards arrives it replaces a *projection* rather than a source, so
-nothing about the model has to change to accommodate it.
+An earlier draft of this design generated Mermaid *from* the model, as a cheap test that the
+model was complete. That reasoning does not survive scrutiny: today's chart is a
+`flowchart LR` with nested subgraphs forced into approximating swimlanes, so "can the model
+reproduce it?" would test fidelity to a distortion, and would let accidents of that
+representation leak into the model as requirements. A test against a bad target is worse
+than no test.
+
+**Completeness is asserted on the model directly instead** - that it carries lanes, sparse
+columns, gaps, links, descriptions at every level, and the two counts the cards will show.
+Those are assertions on data, and they do not require anything to be drawn.
+
+Keeping the *stored* Mermaid on the tab as a fallback was also rejected: the moment anybody
+edits the model the chart disagrees with it, and a chart contradicting the data is worse
+than no chart.
+
+**Accepted cost:** there is no visual chart between 3a and 3b. The Structure table is the
+view and the editor in that window.
+
+**Do not remove the `mermaid` package.** `ui/src/components/ReviewDialog.tsx:86` imports it
+dynamically - `(await import('mermaid')).default` - to render fences in review content, and
+a static search for `from 'mermaid'` does not find that. There is also a backend
+`MermaidRenderTool`. Only ValueChain's use of it is being removed.
 
 ---
 
@@ -173,9 +191,8 @@ stable IDs, so a second run finds every activity, contribution and task already 
 
 ## The table editor
 
-A new **Structure** tab on the value chain page, alongside the existing Setup, Diagram, and
-Templates tabs. Diagram stays, now rendering Mermaid generated from the model; Setup and
-Templates are untouched.
+A new **Structure** tab on the value chain page, replacing the removed Diagram tab. Setup
+and Templates are untouched.
 
 - One table per segment. Rows are party lanes; columns are sequence positions; a cell holds
   a contribution.
@@ -205,8 +222,11 @@ The migration carries the risk, so it is tested hardest:
 - Label matching normalises whitespace and case, and a label differing only by those
   still matches.
 
-Round-tripping proves the model is complete: the generated Mermaid renders, and its
-generated `classDef` colours match the three originals.
+Completeness is asserted on the model rather than through a rendering: every contribution
+has a lane and a column; columns within a segment are unique per lane; every task belongs to
+a contribution that exists; every link's endpoints both exist; and every level accepts a
+description. Together these are what the grid in 3b will need, so a gap surfaces now rather
+than after the grid is built on top.
 
 The editor: editing a description persists it; moving a contribution changes only its
 column; an empty column renders as a gap rather than collapsing; a derived attribution is
@@ -214,7 +234,8 @@ marked and a stated one is not.
 
 ## Out of scope
 
-The grid of cards, drag-and-drop, connector arrows, and pop-ups - 3b. Migrating
+The grid of cards, drag-and-drop, connector arrows, and pop-ups - 3b, which is also when a
+visual chart returns. Any replacement rendering in the interim. Migrating
 `stakeholder_assignments` onto contributions, which project 4 requires. Any change to what
 Maya does with the new structure, or to what Casey can now contrast between parties -
 both become possible here and are built later. Editing segment or party membership.
