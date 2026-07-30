@@ -343,9 +343,13 @@ def test_the_real_project_still_migrates_with_every_activity_contributed():
     import json
     from api.services.value_chain_model import validate_model
 
-    outputs = Path("projects/sp-gs-am/outputs")
-    registry = json.loads((outputs / "value_chain_registry.json").read_text())
-    mermaid = (outputs / "value_chain_v12.md").read_text()
+    registry_path = Path("projects/sp-gs-am/outputs/value_chain_registry.json")
+    mermaid_path = Path("projects/sp-gs-am/outputs/value_chain_v12.md")
+    if not registry_path.exists() or not mermaid_path.exists():
+        pytest.skip("sp-gs-am fixtures not present in this checkout")
+
+    registry = json.loads(registry_path.read_text())
+    mermaid = mermaid_path.read_text()
 
     model = migrate(registry, mermaid)
 

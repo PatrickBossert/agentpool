@@ -28,15 +28,21 @@ function sortByActivityId(assignments: NodeTemplateAssignment[]): NodeTemplateAs
 }
 
 // A refused migration carries the reason it was refused - which registry levels were found
-// where L1 was expected - and that message is the only route to correcting the registry, so
-// it is shown rather than flattened into "Migration failed".
+// where L1 was expected, or that no party attribution could be recovered at all - and that
+// message is the only route to correcting the registry or diagram, so it is shown rather
+// than flattened into "Migration failed". The server reports this the same structured way
+// PUT /value-chain-model already does for a save refusal: {"problems": [...]}, not a bare
+// string - see saveProblems below, which reads the same shape.
 function migrationErrorMessage(error: unknown): string {
   if (!axios.isAxiosError(error)) return 'Migration failed. Try again.'
   if (error.response?.status === 404) {
     return 'No existing diagram was found to migrate from - run the Value Chain Mapper first.'
   }
-  const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail
-  if (error.response?.status === 422 && typeof detail === 'string' && detail) return detail
+  if (error.response?.status === 422) {
+    const detail = (error.response.data as { detail?: unknown } | undefined)?.detail
+    const problems = (detail as { problems?: unknown } | undefined)?.problems
+    if (Array.isArray(problems) && problems.length > 0) return problems.join(' ')
+  }
   return 'Migration failed. Try again.'
 }
 

@@ -66,5 +66,8 @@ async def migrate_value_chain_model(
     except ValueError as e:
         # A registry that yields nothing, or a model that fails validation - either way the
         # inputs are wrong rather than missing, and the message says what was expected and
-        # what was found so the registry can be corrected and the migration retried.
-        raise HTTPException(status_code=422, detail=str(e))
+        # what was found so the registry can be corrected and the migration retried. Same
+        # {"problems": [...]} shape PUT /value-chain-model already uses for its own 422, so
+        # a client handles both refusals identically rather than one being a string and the
+        # other a list.
+        raise HTTPException(status_code=422, detail={"problems": [str(e)]})

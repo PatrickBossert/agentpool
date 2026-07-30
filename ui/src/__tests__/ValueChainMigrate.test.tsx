@@ -78,16 +78,20 @@ describe('ValueChain migration result', () => {
 
   it('reports a refused migration with the reason the server gave', async () => {
     // The registry's levels were not L1/L2/L3, so the migration produced nothing and was
-    // refused rather than saved as an empty model.
+    // refused rather than saved as an empty model. The server reports this the same
+    // {"problems": [...]} shape PUT /value-chain-model already uses for a save refusal.
     vi.mocked(valueChainApi.migrate).mockRejectedValue(
       Object.assign(new Error('Unprocessable'), {
         isAxiosError: true,
         response: {
           status: 422,
           data: {
-            detail:
-              'expected at least one L1 entry to become a segment, and found none: ' +
-              "3 registry entries carry levels ''",
+            detail: {
+              problems: [
+                'expected at least one L1 entry to become a segment, and found none: ' +
+                  "3 registry entries carry levels ''",
+              ],
+            },
           },
         },
       }),

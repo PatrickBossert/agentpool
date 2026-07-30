@@ -121,6 +121,48 @@ async def test_a_registry_that_yields_no_segments_is_refused_not_saved(client):
 
 
 @pytest.mark.asyncio
+async def test_a_registry_with_no_recoverable_attribution_is_refused_not_saved(client):
+    """The diagram carries no colour classes at all, so migrate()'s dominant-party cascade
+    has nothing to fall back on and every activity arrives with zero contributions - the
+    same defect validate_model now rejects once per activity. Refusing once, naming the
+    cause, beats showing that identical complaint for every activity in the registry (17 of
+    them, for the real sp-gs-am project)."""
+    await client.post("/projects", json=PROJECT)
+    outputs = Path(get_settings().projects_dir) / SLUG / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / "value_chain_registry.json").write_text(json.dumps(REGISTRY))
+    (outputs / "value_chain_v1.md").write_text('```mermaid\nflowchart LR\n  A["x"]\n```')
+
+    resp = await client.post(f"/projects/{SLUG}/value-chain-model/migrate")
+    assert resp.status_code == 422
+    problems = resp.json()["detail"]["problems"]
+    assert len(problems) == 1
+    assert "attribution" in problems[0]
+
+    # Persists nothing: no model exists to retrieve, and a corrected diagram still migrates.
+    assert (await client.get(f"/projects/{SLUG}/value-chain-model")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_refused_migrations_422_carries_problems_as_a_list(client):
+    """Same {"problems": [...]} shape PUT /value-chain-model already returns for its own
+    422 (test_the_endpoint_reports_validation_problems_rather_than_saving in
+    test_value_chain_store.py), so a client handles a migration refusal and a save refusal
+    identically rather than one being a joined string and the other a list."""
+    await client.post("/projects", json=PROJECT)
+    outputs = Path(get_settings().projects_dir) / SLUG / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / "value_chain_registry.json").write_text(json.dumps(UNLEVELLED_REGISTRY))
+    (outputs / "value_chain_v1.md").write_text(MERMAID)
+
+    resp = await client.post(f"/projects/{SLUG}/value-chain-model/migrate")
+    assert resp.status_code == 422
+    problems = resp.json()["detail"]["problems"]
+    assert isinstance(problems, list)
+    assert len(problems) == 1
+
+
+@pytest.mark.asyncio
 async def test_a_refused_migration_persists_nothing(client):
     """The refusal is only useful if the project can still migrate once its registry is
     corrected - which needs no model to have been saved by the refused attempt."""

@@ -150,6 +150,21 @@ async def migrate_project(slug: str, *, saved_by: str) -> dict:
             "Correct the registry's level values to L1, L2 and L3, then migrate again."
         )
 
+    # A diagram with no recoverable colour attribution leaves every activity with zero
+    # contributions - the same problem validate_model now catches per activity, but naming
+    # it once here beats reporting it once per activity (17 identical complaints for the
+    # real sp-gs-am project's activity count, and none of them says why). The cascade in
+    # migrate() already tried the dominant party at every level and found nothing, so there
+    # is genuinely nothing left to recover - only a crew run supplies attribution from here.
+    if entries and not model["contributions"]:
+        raise ValueError(
+            "no party attribution could be recovered from the diagram: "
+            f"{len(entries)} registry entries produced {len(model['segments'])} segments "
+            f"and {len(model['activities'])} activities, but 0 contributions, so no "
+            "activity could be placed in a lane. Run the crew that builds the value chain "
+            "model instead of migrating this project."
+        )
+
     await save_model(
         slug, model, saved_by=saved_by, summary="migrated from the Mermaid diagram"
     )
