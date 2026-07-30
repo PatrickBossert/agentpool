@@ -154,3 +154,106 @@ export interface ValueChainSelection {
   activityId: string
   partyId: string
 }
+
+// A contribution's identity is the composite (activity_id, party_id) - deliberately not a
+// new ID space needing its own never-reuse discipline. This is also the React key for a
+// card: keying on column instead lets a move change which contribution sits behind a key,
+// and React then reuses a dirty input against the wrong one.
+export function contributionKey(activityId: string, partyId: string): string {
+  return `${activityId}@${partyId}`
+}
+
+function find(model: ValueChainModel, activityId: string, partyId: string) {
+  return model.contributions.find(
+    (c) => c.activity_id === activityId && c.party_id === partyId,
+  )
+}
+
+// Attributing a further party to an activity needs no new ID and does not touch the
+// activity's own ID or its parentage. The new contribution takes the same column as an
+// existing one, because two contributions of one activity in the same column mean the
+// parties act concurrently - the reasonable default for "both of these parties do this".
+// Dragging it aside afterwards turns it into a handoff.
+export function addParty(
+  model: ValueChainModel,
+  activityId: string,
+  partyId: string,
+): ValueChainModel {
+  const next = structuredClone(model)
+  if (find(next, activityId, partyId)) return next
+
+  const sibling = next.contributions.find((c) => c.activity_id === activityId)
+  next.contributions.push({
+    activity_id: activityId,
+    party_id: partyId,
+    column: sibling ? sibling.column : COLUMN_STEP,
+    description: '',
+    // A person attributing an activity is stating it. Only migration produces 'derived'.
+    attribution: 'stated',
+  })
+  return next
+}
+
+// Tasks are keyed (activity_id, party_id), so they belong to the contribution rather than
+// to the activity. Removing the contribution without them leaves tasks that validate_model
+// rejects - "task X belongs to contribution Y, which does not exist" - so they go together.
+// Propositions attach to the activity and are left alone.
+export function removeParty(
+  model: ValueChainModel,
+  activityId: string,
+  partyId: string,
+): ValueChainModel {
+  const next = structuredClone(model)
+  next.contributions = next.contributions.filter(
+    (c) => !(c.activity_id === activityId && c.party_id === partyId),
+  )
+  next.tasks = next.tasks.filter(
+    (t) => !(t.activity_id === activityId && t.party_id === partyId),
+  )
+  return next
+}
+
+// An activity with no contribution appears in no lane, so it vanishes from the grid while
+// remaining in model.activities, with no way to recover it. validate_model rejects that
+// state; this is what lets the UI refuse before offering the action.
+export function isLastContribution(model: ValueChainModel, activityId: string): boolean {
+  return model.contributions.filter((c) => c.activity_id === activityId).length <= 1
+}
+
+// A derived attribution is the migration's guess. Someone checking the guess and saying so
+// is the act that resolves it - without this the marker stays on forever and stops meaning
+// anything. There is no reverse operation: nothing turns a stated attribution into a guess.
+export function confirmAttribution(
+  model: ValueChainModel,
+  activityId: string,
+  partyId: string,
+): ValueChainModel {
+  const next = structuredClone(model)
+  const contribution = find(next, activityId, partyId)
+  if (contribution) contribution.attribution = 'stated'
+  return next
+}
+
+export function taskCount(
+  model: ValueChainModel,
+  activityId: string,
+  partyId: string,
+): number {
+  return model.tasks.filter(
+    (t) => t.activity_id === activityId && t.party_id === partyId,
+  ).length
+}
+
+export function propositionCount(model: ValueChainModel, activityId: string): number {
+  return model.propositions.filter((p) => p.activity_id === activityId).length
+}
+
+export function partiesNotContributing(
+  model: ValueChainModel,
+  activityId: string,
+): ValueChainParty[] {
+  const contributing = new Set(
+    model.contributions.filter((c) => c.activity_id === activityId).map((c) => c.party_id),
+  )
+  return model.parties.filter((p) => !contributing.has(p.id))
+}

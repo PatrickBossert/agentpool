@@ -6,6 +6,14 @@ import {
   columnRange,
   moveContribution,
   updateDescription,
+  addParty,
+  removeParty,
+  confirmAttribution,
+  contributionKey,
+  taskCount,
+  propositionCount,
+  partiesNotContributing,
+  isLastContribution,
   type ValueChainModel,
 } from '../utils/valueChainModel'
 
@@ -126,5 +134,138 @@ describe('updateDescription', () => {
 describe('COLUMN_STEP', () => {
   it('is ten, matching the backend', () => {
     expect(COLUMN_STEP).toBe(10)
+  })
+})
+
+function jointModel(): ValueChainModel {
+  const m = model()
+  m.tasks = [
+    { activity_id: '1.2', party_id: 'sp', id: '1.2.1', label: 'Raise works order' },
+    { activity_id: '1.2', party_id: 'sp', id: '1.2.2', label: 'Approve spend' },
+  ]
+  m.propositions = [{ id: 'p1', activity_id: '1.2', description: 'Paperless works orders' }]
+  return m
+}
+
+describe('contributionKey', () => {
+  it('is the composite identity, not a new ID space', () => {
+    expect(contributionKey('1.1.2', 'sp')).toBe('1.1.2@sp')
+  })
+})
+
+describe('addParty', () => {
+  it('adds a contribution at the same column, because same column means concurrent', () => {
+    const next = addParty(model(), '1.2', 'iss')
+    const added = next.contributions.find((c) => c.activity_id === '1.2' && c.party_id === 'iss')!
+    expect(added.column).toBe(20)
+  })
+
+  it('marks a human-created contribution stated, never derived', () => {
+    // Only migration produces derived. A person attributing an activity is stating it.
+    const next = addParty(model(), '1.2', 'iss')
+    expect(next.contributions.find((c) => c.party_id === 'iss')!.attribution).toBe('stated')
+  })
+
+  it('leaves the existing contribution untouched', () => {
+    const next = addParty(model(), '1.2', 'iss')
+    expect(next.contributions.find((c) => c.activity_id === '1.2' && c.party_id === 'sp')).toEqual(
+      model().contributions[1],
+    )
+  })
+
+  it('does nothing when that party already contributes', () => {
+    const next = addParty(model(), '1.2', 'sp')
+    expect(next.contributions.filter((c) => c.activity_id === '1.2')).toHaveLength(1)
+  })
+
+  it('does not mutate the model it was given', () => {
+    const before = model()
+    const snapshot = structuredClone(before)
+    addParty(before, '1.2', 'iss')
+    expect(before).toEqual(snapshot)
+  })
+})
+
+describe('removeParty', () => {
+  it('removes the contribution and its tasks together', () => {
+    // validate_model rejects a task whose contribution does not exist, so leaving the tasks
+    // behind would turn into a 422 discovered long after the decision was made.
+    const next = removeParty(jointModel(), '1.2', 'sp')
+    expect(next.contributions.filter((c) => c.activity_id === '1.2')).toHaveLength(0)
+    expect(next.tasks.filter((t) => t.activity_id === '1.2' && t.party_id === 'sp')).toHaveLength(0)
+  })
+
+  it("leaves another party's tasks on the same activity alone", () => {
+    const m = jointModel()
+    m.contributions.push({ activity_id: '1.2', party_id: 'iss', column: 20, attribution: 'stated' })
+    m.tasks.push({ activity_id: '1.2', party_id: 'iss', id: '1.2.7', label: 'Execute repair' })
+    const next = removeParty(m, '1.2', 'sp')
+    expect(next.tasks.map((t) => t.id)).toEqual(['1.2.7'])
+  })
+
+  it("leaves the activity's propositions alone, because they attach to the activity", () => {
+    const m = jointModel()
+    m.contributions.push({ activity_id: '1.2', party_id: 'iss', column: 20, attribution: 'stated' })
+    const next = removeParty(m, '1.2', 'sp')
+    expect(next.propositions).toHaveLength(1)
+  })
+
+  it('does not mutate the model it was given', () => {
+    const before = jointModel()
+    const snapshot = structuredClone(before)
+    removeParty(before, '1.2', 'sp')
+    expect(before).toEqual(snapshot)
+  })
+})
+
+describe('isLastContribution', () => {
+  it('is true when the activity has exactly one contribution', () => {
+    expect(isLastContribution(model(), '1.2')).toBe(true)
+  })
+
+  it('is false when two parties contribute', () => {
+    expect(isLastContribution(addParty(model(), '1.2', 'iss'), '1.2')).toBe(false)
+  })
+})
+
+describe('confirmAttribution', () => {
+  it('promotes derived to stated', () => {
+    const next = confirmAttribution(model(), '1.3', 'sp')
+    expect(next.contributions.find((c) => c.activity_id === '1.3')!.attribution).toBe('stated')
+  })
+
+  it('changes nothing else on the contribution', () => {
+    const next = confirmAttribution(model(), '1.3', 'sp')
+    expect(next.contributions.find((c) => c.activity_id === '1.3')).toEqual({
+      ...model().contributions[2],
+      attribution: 'stated',
+    })
+  })
+
+  it('does not mutate the model it was given', () => {
+    const before = model()
+    const snapshot = structuredClone(before)
+    confirmAttribution(before, '1.3', 'sp')
+    expect(before).toEqual(snapshot)
+  })
+})
+
+describe('counts and available parties', () => {
+  it("counts only that contribution's tasks", () => {
+    const m = jointModel()
+    m.contributions.push({ activity_id: '1.2', party_id: 'iss', column: 20, attribution: 'stated' })
+    m.tasks.push({ activity_id: '1.2', party_id: 'iss', id: '1.2.7' })
+    expect(taskCount(m, '1.2', 'sp')).toBe(2)
+    expect(taskCount(m, '1.2', 'iss')).toBe(1)
+  })
+
+  it('counts propositions per activity, shared across its parties', () => {
+    expect(propositionCount(jointModel(), '1.2')).toBe(1)
+    expect(propositionCount(jointModel(), '1.1')).toBe(0)
+  })
+
+  it('lists only parties not already contributing to that activity', () => {
+    expect(partiesNotContributing(model(), '1.2').map((p) => p.id)).toEqual(['iss'])
+    expect(partiesNotContributing(addParty(model(), '1.2', 'iss'), '1.2')).toEqual([])
   })
 })
