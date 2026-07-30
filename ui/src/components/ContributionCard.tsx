@@ -12,6 +12,7 @@ import { ChevronLeft, ChevronRight, ListTree, Lightbulb, Sparkles, Users } from 
 
 import {
   addParty,
+  addPartyBlock,
   confirmAttribution,
   isLastContribution,
   moveContribution,
@@ -178,20 +179,42 @@ export function ContributionCard({
                   Every party already contributes to this activity.
                 </p>
               ) : (
-                available.map((party) => (
-                  <button
-                    key={party.id}
-                    type="button"
-                    data-testid={`add-party-${activityId}-${partyId}-${party.id}`}
-                    onClick={() => {
-                      onChange!(addParty(model, activityId, party.id))
-                      onToggleMenu?.()
-                    }}
-                    className="block w-full text-left text-xs text-primary px-1 py-1 hover:text-brand"
-                  >
-                    Add {party.label}
-                  </button>
-                ))
+                available.map((party) => {
+                  // A party that already occupies the column this contribution would take
+                  // cannot be added: the grid renders one card per cell, so the new card
+                  // would not appear at all and every save would then be refused. Refused
+                  // here instead, naming the conflict - the same shape as Remove this party.
+                  const block = addPartyBlock(model, activityId, party.id)
+                  const blocker = block
+                    ? model.activities.find((a) => a.id === block.activityId)
+                    : undefined
+                  const whyId = `add-why-${activityId}-${partyId}-${party.id}`
+                  return (
+                    <div key={party.id}>
+                      <button
+                        type="button"
+                        data-testid={`add-party-${activityId}-${partyId}-${party.id}`}
+                        disabled={!!block}
+                        aria-describedby={block ? whyId : undefined}
+                        onClick={() => {
+                          onChange!(addParty(model, activityId, party.id))
+                          onToggleMenu?.()
+                        }}
+                        className="block w-full text-left text-xs text-primary px-1 py-1 hover:text-brand disabled:text-muted disabled:hover:text-muted"
+                      >
+                        Add {party.label}
+                      </button>
+                      {block && (
+                        <p id={whyId} className="text-muted text-xs px-1">
+                          {party.label} already has{' '}
+                          {blocker?.label ?? block.activityId} in column {block.column} of
+                          this segment - one party cannot hold two positions in one column.
+                          Move that card first.
+                        </p>
+                      )}
+                    </div>
+                  )
+                })
               )}
 
               <button

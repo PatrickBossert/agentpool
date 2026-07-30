@@ -187,6 +187,86 @@ describe('addParty', () => {
   })
 })
 
+// Every test above adds iss to an activity in a fixture where iss has no other contribution
+// at all, so "takes the sibling's column blindly" and "takes it only when it is free" give
+// the same answer. This fixture is the one that can tell them apart: the party being added
+// already contributes to a *different* activity in the same segment, at exactly the column
+// its new contribution would take.
+function collidingModel(): ValueChainModel {
+  const m = model()
+  m.contributions.push({
+    activity_id: '1.3', party_id: 'iss', column: 20, description: 'partner', attribution: 'stated',
+  })
+  return m
+}
+
+describe('addParty when the column is already taken in that party lane', () => {
+  it('refuses rather than hiding a card behind another', () => {
+    // The grid renders one card per (lane, column), so a second contribution in an occupied
+    // cell never appears - the only trace is the lane count going up - and every save is
+    // then refused with a 422 naming a column, not an activity, with the offending card
+    // nowhere on screen to correct.
+    const next = addParty(collidingModel(), '1.2', 'iss')
+    expect(next.contributions.filter((c) => c.activity_id === '1.2' && c.party_id === 'iss'))
+      .toHaveLength(0)
+  })
+
+  it("never puts two of one party's contributions in one column of a segment", () => {
+    const next = addParty(collidingModel(), '1.2', 'iss')
+    const cells = next.contributions.map((c) => `${c.party_id}@${c.column}`)
+    expect(new Set(cells).size).toBe(cells.length)
+  })
+
+  it('does not silently relocate to the next free column', () => {
+    // Relocating would fabricate a handoff claim nobody made - offset columns mean a
+    // handoff, which is exactly the false claim the column semantics exist to prevent.
+    const next = addParty(collidingModel(), '1.2', 'iss')
+    expect(next.contributions).toHaveLength(collidingModel().contributions.length)
+  })
+
+  it('still adds the party when that column is free in its lane', () => {
+    // Guards the refusal against overreach: iss sits at 20, so joining 1.1 at 10 is fine.
+    const next = addParty(collidingModel(), '1.1', 'iss')
+    expect(next.contributions.find((c) => c.activity_id === '1.1' && c.party_id === 'iss')!.column)
+      .toBe(10)
+  })
+
+  it('refuses when the no-sibling fallback column is taken in that lane', () => {
+    // An activity carrying no contribution at all falls back to COLUMN_STEP, which can
+    // collide the same way. validate_model rejects such an activity, but a crew-written
+    // model reaches the grid without passing validate_model at all.
+    const m = model()
+    m.activities.push({ id: '1.4', segment_id: '1', label: 'Handover' })
+    m.contributions.push({ activity_id: '1.1', party_id: 'iss', column: 10, attribution: 'stated' })
+    const next = addParty(m, '1.4', 'iss')
+    expect(next.contributions.filter((c) => c.activity_id === '1.4')).toHaveLength(0)
+  })
+})
+
+describe('addParty when the activity already has contributions at several columns', () => {
+  // .find() picked whichever sibling came first in the array, so the answer depended on
+  // array order - which a save and reload can change. The rule is the lowest column: the
+  // point at which the activity begins.
+  function handoffModel(): ValueChainModel {
+    const m = model()
+    m.parties.push({ id: 'dxi', label: 'DXI' })
+    m.contributions.push({ activity_id: '1.2', party_id: 'iss', column: 40, attribution: 'stated' })
+    return m
+  }
+
+  it('joins at the lowest of the sibling columns, not partway through the handoff', () => {
+    const next = addParty(handoffModel(), '1.2', 'dxi')
+    expect(next.contributions.find((c) => c.party_id === 'dxi')!.column).toBe(20)
+  })
+
+  it('gives the same column whatever order the contributions are stored in', () => {
+    const reversed = handoffModel()
+    reversed.contributions.reverse()
+    expect(addParty(reversed, '1.2', 'dxi').contributions.find((c) => c.party_id === 'dxi')!.column)
+      .toBe(20)
+  })
+})
+
 describe('removeParty', () => {
   it('removes the contribution and its tasks together', () => {
     // validate_model rejects a task whose contribution does not exist, so leaving the tasks

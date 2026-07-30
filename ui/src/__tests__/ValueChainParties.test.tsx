@@ -72,6 +72,77 @@ describe('adding a party', () => {
   })
 })
 
+// The sp-gs-am case, compressed: sp holds columns 10 and 20 of segment 1, and partner ISS
+// has been dragged to column 20 to claim concurrency with sp's activity there. Adding sp to
+// ISS's activity would put a second sp contribution in column 20, where the grid renders one
+// card per cell - so the new card would never appear, and every save afterwards would be
+// refused with a 422 naming column 20 and no activity.
+const COLLIDING: ValueChainModel = {
+  model_version: 1,
+  parties: [
+    { id: 'sp', label: 'SP-GS' },
+    { id: 'iss', label: 'ISS' },
+  ],
+  segments: [{ id: '1', label: 'Property Value Chain' }],
+  activities: [
+    { id: '1.1', segment_id: '1', label: 'Strategy' },
+    { id: '1.3', segment_id: '1', label: 'Planned Maintenance' },
+    { id: '1.5', segment_id: '1', label: 'Reactive Repair' },
+  ],
+  contributions: [
+    { activity_id: '1.1', party_id: 'sp', column: 10, description: '', attribution: 'stated' },
+    { activity_id: '1.3', party_id: 'sp', column: 20, description: '', attribution: 'stated' },
+    { activity_id: '1.5', party_id: 'iss', column: 20, description: '', attribution: 'stated' },
+  ],
+  tasks: [],
+  propositions: [],
+  links: [],
+}
+
+function StatefulColliding() {
+  const [model, setModel] = useState(COLLIDING)
+  latest = model
+  return <ValueChainGrid model={model} onChange={setModel} />
+}
+
+describe('adding a party that already occupies that column', () => {
+  it('offers the entry disabled rather than creating a card that renders nowhere', async () => {
+    render(<StatefulColliding />)
+    await userEvent.click(screen.getByTestId('party-menu-1.5-iss'))
+
+    expect(screen.getByTestId('add-party-1.5-iss-sp')).toBeDisabled()
+  })
+
+  it('says which activity of that party is in the way, and in which column', async () => {
+    render(<StatefulColliding />)
+    await userEvent.click(screen.getByTestId('party-menu-1.5-iss'))
+
+    expect(screen.getByTestId('add-party-1.5-iss-sp')).toHaveAccessibleDescription(
+      /Planned Maintenance.*column 20/i,
+    )
+  })
+
+  it('adds nothing when the disabled entry is clicked anyway', async () => {
+    render(<StatefulColliding />)
+    await userEvent.click(screen.getByTestId('party-menu-1.5-iss'))
+    await userEvent.click(screen.getByTestId('add-party-1.5-iss-sp'))
+
+    expect(screen.queryByTestId('card-1.5-sp')).not.toBeInTheDocument()
+    expect(latest.contributions.filter((c) => c.party_id === 'sp')).toHaveLength(2)
+    // The lane count is the only thing that moved when the card was hidden, so it is what
+    // proves nothing was added behind the scenes.
+    expect(screen.getByTestId('lane-count-sp')).toHaveTextContent('2')
+  })
+
+  it('leaves an entry whose column is free enabled', async () => {
+    // Guards the refusal against overreach: nothing of iss sits in column 10.
+    render(<StatefulColliding />)
+    await userEvent.click(screen.getByTestId('party-menu-1.1-sp'))
+
+    expect(screen.getByTestId('add-party-1.1-sp-iss')).toBeEnabled()
+  })
+})
+
 describe('confirming a derived attribution', () => {
   it('offers Confirm on a derived contribution only', () => {
     render(<Stateful />)

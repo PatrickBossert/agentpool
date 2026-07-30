@@ -51,7 +51,7 @@ export interface ValueChainProposition {
   party_id?: string
 }
 
-// Links aren't rendered by this read-only table; keep the shape loose.
+// Links aren't rendered by the grid; keep the shape loose.
 export type ValueChainLink = Record<string, unknown>
 
 export interface ValueChainModel {
@@ -93,16 +93,48 @@ export function columnRange(usedColumns: number[]): number[] {
   return range
 }
 
+// THE LANE-UNIQUENESS INVARIANT, which every mutation below must hold: no two
+// contributions of the same party within the same segment share a column. A lane is one
+// party's row within one segment, and the grid renders one card per (lane, column) cell -
+// so a second contribution in an occupied cell simply never appears, while validate_model
+// still counts it and refuses every subsequent save.
+//
+// "Within the same segment" is load-bearing, not decoration: columns restart at 10 in every
+// segment, so an unscoped occupant search would reach into a neighbouring segment and yank
+// a card out of it.
+function segmentIdOf(model: ValueChainModel, activityId: string): string | undefined {
+  return model.activities.find((a) => a.id === activityId)?.segment_id
+}
+
+// Whatever already sits in one column of one party's lane, other than the named activity's
+// own contribution. The single place the invariant's scope is expressed, so a mutation
+// cannot hold a subtly different version of it.
+function laneOccupant(
+  model: ValueChainModel,
+  activityId: string,
+  partyId: string,
+  column: number,
+): ValueChainContribution | undefined {
+  const segmentId = segmentIdOf(model, activityId)
+  const segmentActivityIds = new Set(
+    model.activities.filter((a) => a.segment_id === segmentId).map((a) => a.id),
+  )
+  return model.contributions.find(
+    (c) =>
+      c.party_id === partyId &&
+      segmentActivityIds.has(c.activity_id) &&
+      c.activity_id !== activityId &&
+      c.column === column,
+  )
+}
+
 // Moving a contribution changes only .column fields - never an activity, party,
-// description, attribution or anything else. The invariant this must hold: after any
-// move, no two contributions of the same party within the same segment share a column.
-// The target is the adjacent step (column ± COLUMN_STEP). If another contribution in the
-// same lane and segment already sits there, the two exchange columns - each keeps every
-// other field - otherwise the mover simply takes the target. A move into an empty column
-// steps into the gap rather than jumping over it: a gap is a real position, not blank
-// space, so leapfrogging past one to the next occupied column would silently discard it.
-// "Lane" is scoped to the party's row within the segment the moved activity belongs to,
-// matching how the table itself groups contributions into rows.
+// description, attribution or anything else. The target is the adjacent step
+// (column ± COLUMN_STEP). If another contribution in the same lane and segment already
+// sits there, the two exchange columns - each keeps every other field - otherwise the mover
+// simply takes the target, which holds the lane-uniqueness invariant above. A move into an
+// empty column steps into the gap rather than jumping over it: a gap is a real position, not
+// blank space, so leapfrogging past one to the next occupied column would silently discard it.
 export function moveContribution(
   model: ValueChainModel,
   activityId: string,
@@ -110,25 +142,11 @@ export function moveContribution(
   direction: 'left' | 'right',
 ): ValueChainModel {
   const next = structuredClone(model)
-  const contribution = next.contributions.find(
-    (c) => c.activity_id === activityId && c.party_id === partyId,
-  )
+  const contribution = find(next, activityId, partyId)
   if (!contribution) return next
 
-  const activity = next.activities.find((a) => a.id === activityId)
-  const segmentActivityIds = new Set(
-    next.activities.filter((a) => a.segment_id === activity?.segment_id).map((a) => a.id),
-  )
-
   const target = contribution.column + (direction === 'right' ? COLUMN_STEP : -COLUMN_STEP)
-
-  const occupant = next.contributions.find(
-    (c) =>
-      c.party_id === partyId &&
-      segmentActivityIds.has(c.activity_id) &&
-      c.activity_id !== activityId &&
-      c.column === target,
-  )
+  const occupant = laneOccupant(next, activityId, partyId, target)
 
   if (occupant) occupant.column = contribution.column
   contribution.column = target
@@ -137,9 +155,8 @@ export function moveContribution(
 }
 
 // Dragging lands on an arbitrary column rather than the adjacent step, so this is its own
-// operation - but it holds the same invariant as moveContribution: after any move, no two
-// contributions of the same party within a segment share a column. If the target is taken,
-// the two exchange columns; otherwise the mover simply takes it.
+// operation - but it holds the same lane-uniqueness invariant. If the target is taken, the
+// two exchange columns; otherwise the mover simply takes it.
 export function moveToColumn(
   model: ValueChainModel,
   activityId: string,
@@ -150,17 +167,7 @@ export function moveToColumn(
   const contribution = find(next, activityId, partyId)
   if (!contribution || contribution.column === column) return next
 
-  const activity = next.activities.find((a) => a.id === activityId)
-  const segmentActivityIds = new Set(
-    next.activities.filter((a) => a.segment_id === activity?.segment_id).map((a) => a.id),
-  )
-  const occupant = next.contributions.find(
-    (c) =>
-      c.party_id === partyId &&
-      segmentActivityIds.has(c.activity_id) &&
-      c.activity_id !== activityId &&
-      c.column === column,
-  )
+  const occupant = laneOccupant(next, activityId, partyId, column)
 
   if (occupant) occupant.column = contribution.column
   contribution.column = column
@@ -174,9 +181,7 @@ export function updateDescription(
   description: string,
 ): ValueChainModel {
   const next = structuredClone(model)
-  const contribution = next.contributions.find(
-    (c) => c.activity_id === activityId && c.party_id === partyId,
-  )
+  const contribution = find(next, activityId, partyId)
   if (contribution) contribution.description = description
   return next
 }
@@ -200,11 +205,55 @@ function find(model: ValueChainModel, activityId: string, partyId: string) {
   )
 }
 
+// The column a further party's contribution to this activity would take: the lowest column
+// any party already contributing to it occupies, or COLUMN_STEP when none does.
+//
+// Same column as a sibling, because two contributions of one activity in the same column
+// mean the parties act concurrently - the reasonable default for "both of these parties do
+// this". Dragging it aside afterwards turns it into a handoff.
+//
+// The lowest, specifically, when the activity already runs across several columns as a
+// handoff. Taking whichever sibling came first in the array made the answer depend on
+// storage order, which a save and reload can change; and the lowest column is where the
+// activity begins, so it is the only choice that does not implicitly claim the joining
+// party comes in partway through someone else's handoff.
+export function addPartyColumn(model: ValueChainModel, activityId: string): number {
+  const columns = model.contributions
+    .filter((c) => c.activity_id === activityId)
+    .map((c) => c.column)
+  return columns.length > 0 ? Math.min(...columns) : COLUMN_STEP
+}
+
+// What stops a party being added to an activity, if anything: the party's own existing
+// contribution already sitting in the column the new one would take, within that segment.
+// Adding anyway would break the lane-uniqueness invariant, and the grid would render only
+// one of the two - so the new card would not appear at all, and every save from then on
+// would be refused with a 422 naming a column rather than an activity.
+//
+// Exposed so the UI can refuse before offering the action, the way Remove this party
+// already does, rather than letting a person discover it at save time.
+export interface AddPartyBlock {
+  column: number
+  /** The party's other activity already occupying that column of its lane. */
+  activityId: string
+}
+
+export function addPartyBlock(
+  model: ValueChainModel,
+  activityId: string,
+  partyId: string,
+): AddPartyBlock | null {
+  if (find(model, activityId, partyId)) return null
+  const column = addPartyColumn(model, activityId)
+  const occupant = laneOccupant(model, activityId, partyId, column)
+  return occupant ? { column, activityId: occupant.activity_id } : null
+}
+
 // Attributing a further party to an activity needs no new ID and does not touch the
-// activity's own ID or its parentage. The new contribution takes the same column as an
-// existing one, because two contributions of one activity in the same column mean the
-// parties act concurrently - the reasonable default for "both of these parties do this".
-// Dragging it aside afterwards turns it into a handoff.
+// activity's own ID or its parentage. It refuses outright when the column is already taken
+// in the new party's lane - it does not relocate to the next free column, because offset
+// columns mean a handoff and inventing one would fabricate a claim nobody made, which is
+// exactly the false claim the column semantics exist to prevent.
 export function addParty(
   model: ValueChainModel,
   activityId: string,
@@ -212,12 +261,12 @@ export function addParty(
 ): ValueChainModel {
   const next = structuredClone(model)
   if (find(next, activityId, partyId)) return next
+  if (addPartyBlock(next, activityId, partyId)) return next
 
-  const sibling = next.contributions.find((c) => c.activity_id === activityId)
   next.contributions.push({
     activity_id: activityId,
     party_id: partyId,
-    column: sibling ? sibling.column : COLUMN_STEP,
+    column: addPartyColumn(next, activityId),
     description: '',
     // A person attributing an activity is stating it. Only migration produces 'derived'.
     attribution: 'stated',
