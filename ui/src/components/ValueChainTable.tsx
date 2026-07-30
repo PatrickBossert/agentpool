@@ -78,8 +78,14 @@ function columnRange(usedColumns: number[]): number[] {
   return range
 }
 
-// Moving a contribution changes only its own column - never its activity, party,
-// description, attribution or anything else, and never another contribution's column.
+// Moving a contribution changes only .column fields - never an activity, party,
+// description, attribution or anything else. The invariant this must hold: after any
+// move, no two contributions of the same party within the same segment share a column.
+// The target is the adjacent step (column ± COLUMN_STEP). If another contribution in the
+// same lane and segment already sits there, the two exchange columns - each keeps every
+// other field - otherwise the mover simply takes the target. A move into an empty column
+// steps into the gap rather than jumping over it: a gap is a real position, not blank
+// space, so leapfrogging past one to the next occupied column would silently discard it.
 // "Lane" is scoped to the party's row within the segment the moved activity belongs to,
 // matching how the table itself groups contributions into rows.
 function moveContribution(
@@ -98,24 +104,19 @@ function moveContribution(
   const segmentActivityIds = new Set(
     next.activities.filter((a) => a.segment_id === activity?.segment_id).map((a) => a.id),
   )
-  const laneColumns = next.contributions
-    .filter(
-      (c) =>
-        c.party_id === partyId &&
-        segmentActivityIds.has(c.activity_id) &&
-        c.activity_id !== activityId,
-    )
-    .map((c) => c.column)
 
-  if (direction === 'right') {
-    const beyond = laneColumns.filter((col) => col > contribution.column)
-    const nextOccupied = beyond.length > 0 ? Math.min(...beyond) : undefined
-    contribution.column = (nextOccupied ?? contribution.column) + COLUMN_STEP
-  } else {
-    const before = laneColumns.filter((col) => col < contribution.column)
-    const prevOccupied = before.length > 0 ? Math.max(...before) : undefined
-    contribution.column = (prevOccupied ?? contribution.column) - COLUMN_STEP
-  }
+  const target = contribution.column + (direction === 'right' ? COLUMN_STEP : -COLUMN_STEP)
+
+  const occupant = next.contributions.find(
+    (c) =>
+      c.party_id === partyId &&
+      segmentActivityIds.has(c.activity_id) &&
+      c.activity_id !== activityId &&
+      c.column === target,
+  )
+
+  if (occupant) occupant.column = contribution.column
+  contribution.column = target
 
   return next
 }
