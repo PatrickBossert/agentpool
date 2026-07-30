@@ -80,12 +80,19 @@ def test_discovery_mapping_crew_has_one_task():
     assert len(crew.tasks) == 1
 
 
-def test_discovery_mapping_crew_task_mentions_value_chain_model():
-    """The crew's task now asks Alex to save the structured model, not the old Mermaid tree."""
+def test_discovery_mapping_crew_task_mentions_value_chain_model_and_tree():
+    """Alex now saves the structured model, but keeps saving the tree and derived registry
+    too - DeriveRegistryTool is deterministic code that guarantees IDs are never reused, and
+    an LLM instruction cannot replace that guarantee. Losing either the model or the tree
+    step here means either the editor has nothing to edit, or the ID ledger silently stops
+    being maintained."""
     from agents.crews.discovery_mapping_crew import create_discovery_mapping_crew
     mock_llm = MagicMock(spec=LLM)
     with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
         crew = create_discovery_mapping_crew(
             slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
         )
-    assert "value_chain_model" in crew.tasks[0].description
+    description = crew.tasks[0].description
+    assert "value_chain_model" in description
+    assert "value_chain_tree" in description
+    assert "DeriveRegistryTool" in description
