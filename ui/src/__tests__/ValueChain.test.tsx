@@ -10,6 +10,13 @@ vi.mock('../api/endpoints', () => ({
   projectsApi: {
     valueChain: vi.fn().mockResolvedValue([]),
   },
+  valueChainApi: {
+    get: vi.fn().mockRejectedValue(
+      Object.assign(new Error('Not Found'), { response: { status: 404 }, isAxiosError: true }),
+    ),
+    save: vi.fn(),
+    migrate: vi.fn(),
+  },
 }))
 
 function Wrapper() {
@@ -35,13 +42,13 @@ describe('ValueChain', () => {
     expect(await screen.findByRole('heading', { name: 'Value Chain' })).toBeInTheDocument()
   })
 
-  it('shows awaiting agents message when no data', async () => {
+  it('offers to migrate the existing diagram when no model has been saved', async () => {
     render(<Wrapper />)
-    // The page opens on the Setup tab and only switches to Diagram by itself once
+    // The page opens on the Setup tab and only switches to Structure by itself once
     // outputs exist, so with none the empty state has to be navigated to.
-    await userEvent.click(await screen.findByRole('button', { name: 'Diagram' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
     expect(
-      await screen.findByText(/awaiting value chain mapper output/i),
+      await screen.findByRole('button', { name: /migrate from the existing diagram/i }),
     ).toBeInTheDocument()
   })
 })

@@ -283,3 +283,13 @@ export const milestonesApi = {
   remove: (slug: string, id: number): Promise<void> =>
     apiClient.delete(`/projects/${slug}/milestones/${id}`).then(() => undefined),
 }
+
+export const valueChainApi = {
+  get: (slug: string): Promise<{ model: unknown }> =>
+    apiClient.get(`/projects/${slug}/value-chain-model`).then((r) => r.data),
+  save: (slug: string, model: unknown, summary = ''): Promise<{ output_id: number }> =>
+    apiClient.put(`/projects/${slug}/value-chain-model`, { model, summary })
+      .then((r) => r.data),
+  migrate: (slug: string): Promise<{ created: boolean }> =>
+    apiClient.post(`/projects/${slug}/value-chain-model/migrate`).then((r) => r.data),
+}

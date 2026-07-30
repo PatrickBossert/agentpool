@@ -1,17 +1,14 @@
 // ui/src/pages/ValueChain.tsx
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import mermaid from 'mermaid'
-import { projectsApi } from '../api/endpoints'
+import axios from 'axios'
+import { projectsApi, valueChainApi } from '../api/endpoints'
 import { listTemplates } from '../api/templates'
 import { listNodeTemplates, putNodeTemplate, publishNodeTemplate } from '../api/nodeTemplates'
-import { useAuth } from '../context/AuthContext'
-import { downloadOutput } from '../utils/download'
 import InterviewTemplateEditor from '../components/InterviewTemplateEditor'
+import { ValueChainTable, type ValueChainModel } from '../components/ValueChainTable'
 import type { ProjectSettings, DiscoveryLink, ClientDocument, NodeTemplateAssignment, TemplateListItem } from '../types'
-
-mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict' })
 
 function sortByActivityId(assignments: NodeTemplateAssignment[]): NodeTemplateAssignment[] {
   return [...assignments].sort((a, b) => {
@@ -31,7 +28,6 @@ function sortByActivityId(assignments: NodeTemplateAssignment[]): NodeTemplateAs
 
 export default function ValueChain() {
   const { slug } = useParams<{ slug: string }>()
-  const { token } = useAuth()
   const qc = useQueryClient()
 
   // ── Setup tab state ──────────────────────────────────────────
@@ -114,52 +110,32 @@ export default function ValueChain() {
     )
   }
 
-  // ── Diagram tab state ────────────────────────────────────────
+  // ── Structure tab state ──────────────────────────────────────
   const { data: outputs = [], isLoading } = useQuery({
     queryKey: ['value-chain', slug],
     queryFn: () => projectsApi.valueChain(slug!),
     enabled: !!slug,
   })
 
-  const latest = outputs[0] ?? null
-
-  const { data: contentData, isLoading: contentLoading, isError: contentError } = useQuery({
-    queryKey: ['outputContent', slug, latest?.id],
-    queryFn: () => projectsApi.getOutputContent(slug!, latest!.id),
-    enabled: !!slug && !!latest,
+  const {
+    data: modelData,
+    isLoading: modelLoading,
+    isError: modelIsError,
+    error: modelError,
+  } = useQuery({
+    queryKey: ['value-chain-model', slug],
+    queryFn: () => valueChainApi.get(slug!),
+    enabled: !!slug,
+    retry: false,
   })
 
-  const svgContainerRef = useRef<HTMLDivElement>(null)
-  const mountKey = useRef(Math.random().toString(36).slice(2))
-  const [renderError, setRenderError] = useState(false)
+  const modelMissing = modelIsError && axios.isAxiosError(modelError) && modelError.response?.status === 404
+  const model = (modelData?.model ?? null) as ValueChainModel | null
 
-  useEffect(() => {
-    if (!contentData?.content || !svgContainerRef.current) return
-    let cancelled = false
-    const container = svgContainerRef.current
-    setRenderError(false)
-    ;(async () => {
-      try {
-        const renderId = 'vc-' + mountKey.current + '-' + (latest?.id ?? 0) + '-' + Date.now()
-        const raw = contentData.content
-        const fenceMatch = raw.match(/```(?:mermaid)?\s*([\s\S]+?)```/)
-        const diagram = fenceMatch ? fenceMatch[1].trim() : raw.trim()
-        const { svg } = await mermaid.render(renderId, diagram)
-        if (cancelled) return
-        // text/html handles <br> inside <foreignObject> (strict mode); image/svg+xml rejects it
-        const htmlDoc = new DOMParser().parseFromString(svg, 'text/html')
-        const svgEl = htmlDoc.querySelector('svg')
-        if (!svgEl) throw new Error('No SVG element in Mermaid output')
-        container.replaceChildren(svgEl)
-      } catch {
-        if (!cancelled) setRenderError(true)
-        if (!cancelled) container.replaceChildren()
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [contentData?.content, latest?.id])
+  const migrateMutation = useMutation({
+    mutationFn: () => valueChainApi.migrate(slug!),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['value-chain-model', slug] }),
+  })
 
   // ── Templates tab state ──────────────────────────────────────
   const [nodeAssignments, setNodeAssignments] = useState<NodeTemplateAssignment[]>([])
@@ -167,11 +143,11 @@ export default function ValueChain() {
   const [questionnaireTemplates, setQuestionnaireTemplates] = useState<TemplateListItem[]>([])
 
   // ── Tab ──────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'setup' | 'diagram' | 'templates'>('setup')
+  const [activeTab, setActiveTab] = useState<'setup' | 'structure' | 'templates'>('setup')
 
-  // Switch to Diagram tab automatically once outputs are known to exist
+  // Switch to the Structure tab automatically once outputs are known to exist
   useEffect(() => {
-    if (!isLoading && outputs.length > 0) setActiveTab('diagram')
+    if (!isLoading && outputs.length > 0) setActiveTab('structure')
   }, [isLoading, outputs.length])
 
   // Fetch templates data when Templates tab is active
@@ -231,7 +207,7 @@ export default function ValueChain() {
 
       {/* Tab strip */}
       <div className="flex border-b border-gray-200 mb-6">
-        {(['setup', 'diagram', 'templates'] as const).map((tab) => (
+        {(['setup', 'structure', 'templates'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -241,7 +217,7 @@ export default function ValueChain() {
                 : 'text-gray-400 border-transparent hover:text-gray-700'
             }`}
           >
-            {tab === 'setup' ? 'Setup' : tab === 'diagram' ? 'Diagram' : 'Templates'}
+            {tab === 'setup' ? 'Setup' : tab === 'structure' ? 'Structure' : 'Templates'}
           </button>
         ))}
       </div>
@@ -522,51 +498,38 @@ export default function ValueChain() {
         />
       )}
 
-      {/* ── Diagram tab ───────────────────────────────────────── */}
-      {activeTab === 'diagram' && (
+      {/* ── Structure tab ─────────────────────────────────────── */}
+      {activeTab === 'structure' && (
         <>
-          {isLoading && <p className="text-sm text-gray-400">Loading…</p>}
+          {modelLoading && <p className="text-sm text-gray-400">Loading…</p>}
 
-          {!isLoading && outputs.length === 0 && (
+          {!modelLoading && model && <ValueChainTable model={model} />}
+
+          {!modelLoading && modelMissing && (
             <div className="bg-surface-card rounded-xl p-8 text-center">
-              <p className="text-gray-400 text-sm">Awaiting Value Chain Mapper output.</p>
-              <p className="text-gray-400 text-xs mt-2">
-                Run the Discovery crew to generate the value chain analysis.
+              <p className="text-gray-400 text-sm mb-4">
+                No value chain model has been saved for this project yet.
               </p>
+              <button
+                type="button"
+                onClick={() => migrateMutation.mutate()}
+                disabled={migrateMutation.isPending}
+                className="px-4 py-2 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm font-medium rounded"
+              >
+                {migrateMutation.isPending ? 'Migrating…' : 'Migrate from the existing diagram'}
+              </button>
+              {migrateMutation.isError && (
+                <p className="text-red-400 text-xs mt-3">
+                  {axios.isAxiosError(migrateMutation.error) && migrateMutation.error.response?.status === 404
+                    ? 'No existing diagram was found to migrate from - run the Value Chain Mapper first.'
+                    : 'Migration failed. Try again.'}
+                </p>
+              )}
             </div>
           )}
 
-          {latest && (
-            <div className="bg-surface-card rounded-xl p-4">
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-sm text-gray-900">{latest.agent_name}</span>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-gray-400">
-                    v{latest.version} · {latest.review_status}
-                  </span>
-                  <button
-                    onClick={() =>
-                      downloadOutput(
-                        slug!,
-                        latest.id,
-                        latest.file_path.split('/').pop() ?? latest.output_type,
-                        token!,
-                      ).catch(console.error)
-                    }
-                    className="text-xs text-brand hover:text-brand-dark transition-colors"
-                  >
-                    ↓ Download
-                  </button>
-                </div>
-              </div>
-              {contentLoading && <p className="text-sm text-gray-400">Rendering diagram…</p>}
-              {contentError && !contentLoading && (
-                <p className="text-sm text-red-400">Failed to load diagram.</p>
-              )}
-              {renderError && <p className="text-sm text-red-400">Invalid diagram source.</p>}
-              {/* SVG inserted here via DOMParser + replaceChildren */}
-              <div ref={svgContainerRef} className="overflow-auto" />
-            </div>
+          {!modelLoading && modelIsError && !modelMissing && (
+            <p className="text-sm text-red-400">Failed to load the value chain model.</p>
           )}
         </>
       )}
