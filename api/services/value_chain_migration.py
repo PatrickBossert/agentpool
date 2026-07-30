@@ -39,6 +39,38 @@ def parse_mermaid_attribution(mermaid: str) -> tuple[dict[str, str], dict[str, s
     return labels, colours
 
 
+# Stands in for a non-numeric ID part so it sorts last within its position, rather than
+# raising - a malformed ID must not stop a whole project migrating.
+_UNORDERABLE = 10**9
+
+
+def _id_order(activity_id: str) -> tuple[int, ...]:
+    """The ID's numeric parts, so "1.10" sorts after "1.9" rather than before it."""
+    return tuple(
+        int(part) if part.isdigit() else _UNORDERABLE
+        for part in str(activity_id).split(".")
+    )
+
+
+def _columns_by_activity(activities: list[dict]) -> dict[str, int]:
+    """Each activity's column, from its position in its segment's numeric ID order.
+
+    The column belongs to the activity, not to a lane, and every contribution of that
+    activity takes it. That is what makes the layout a readable claim rather than
+    decoration: two parties contributing to one activity land in the same column, which the
+    design reads as concurrent delivery, and an activity a party does not touch leaves a gap
+    in that party's lane, which is what a gap means. A per-lane counter instead claims a
+    partner's fifth activity happens alongside the client's first.
+    """
+    columns: dict[str, int] = {}
+    segments = {a.get("segment_id") for a in activities}
+    for segment in segments:
+        in_segment = [a for a in activities if a.get("segment_id") == segment]
+        for position, activity in enumerate(sorted(in_segment, key=lambda a: _id_order(a["id"]))):
+            columns[activity["id"]] = (position + 1) * COLUMN_STEP
+    return columns
+
+
 def _dominant(counts: dict[str, int]) -> str | None:
     """The most common party, ties broken by name ascending so this is deterministic."""
     if not counts:
@@ -125,19 +157,12 @@ def migrate(registry: dict, mermaid: str) -> dict:
 
     # Contributions are derived from task attribution, one per (activity, party) seen.
     # A pair with any stated task counts as stated - the diagram said so for part of it.
-    columns: dict[tuple[str, str], int] = {}
+    columns = _columns_by_activity(model["activities"])
     for activity_id, party in sorted(stated_pairs | derived_pairs):
-        segment = activity_segment.get(activity_id)
-        used = [
-            col for (seg, prt), col in columns.items()
-            if prt == party and activity_segment.get(seg) == segment
-        ]
-        column = (max(used) + COLUMN_STEP) if used else COLUMN_STEP
-        columns[(activity_id, party)] = column
         model["contributions"].append({
             "activity_id": activity_id,
             "party_id": party,
-            "column": column,
+            "column": columns[activity_id],
             "description": "",
             "attribution": "stated" if (activity_id, party) in stated_pairs else "derived",
         })

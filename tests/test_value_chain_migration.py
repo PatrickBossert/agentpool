@@ -176,11 +176,93 @@ def test_a_tie_is_broken_by_party_name_ascending():
     assert orphan["party_id"] == "partnerISS"
 
 
-def test_columns_are_assigned_in_steps_per_lane():
+def test_columns_are_assigned_in_steps_of_ten():
     model = migrate(REGISTRY, MERMAID)
     for contribution in model["contributions"]:
         assert contribution["column"] % COLUMN_STEP == 0
         assert contribution["column"] >= COLUMN_STEP
+
+
+def test_every_contribution_of_one_activity_shares_the_activity_column():
+    """Two contributions of the same activity in the same column mean the parties act
+    concurrently. A per-lane counter would put ISS's part of 1.1 in its own lane's first
+    column regardless of where 1.1 sits, so the two would only coincide by luck."""
+    model = migrate(REGISTRY, MERMAID)
+    columns = {c["column"] for c in model["contributions"] if c["activity_id"] == "1.1"}
+    assert len(columns) == 1, "one activity's contributions must share one column"
+
+
+def test_a_column_is_the_activity_position_in_its_segment():
+    """The sequence is the activity order, so an activity's column is fixed by where it
+    sits in its segment rather than by how many contributions a lane already holds."""
+    registry = {
+        "activities": [
+            {"id": "1", "label": "PROPERTY", "level": "L1", "active": True},
+            {"id": "1.1", "label": "A", "level": "L2", "active": True, "parent_id": "1"},
+            {"id": "1.2", "label": "B", "level": "L2", "active": True, "parent_id": "1"},
+            {"id": "1.1.1", "label": "Raise works order", "level": "L3", "active": True,
+             "parent_id": "1.1"},
+            {"id": "1.2.1", "label": "Execute repair", "level": "L3", "active": True,
+             "parent_id": "1.2"},
+        ],
+    }
+    model = migrate(registry, MERMAID)
+    by_activity = {c["activity_id"]: c["column"] for c in model["contributions"]}
+    assert by_activity == {"1.1": 10, "1.2": 20}
+
+
+def test_a_partner_delivered_activity_keeps_its_sequence_position():
+    """Real-shaped: one segment of six activities where the fifth is the partner's. The
+    partner's contribution belongs at the fifth column, and the client's sixth activity at
+    the sixth - not the partner resetting to the first column of its own lane while the
+    client's sixth slides into the fifth. Getting this wrong claims the partner's work
+    happens concurrently with the client's first activity, which is a false statement about
+    how the work is delivered.
+    """
+    activities = [{"id": "1", "label": "PROPERTY", "level": "L1", "active": True}]
+    for n in range(1, 7):
+        activities.append(
+            {"id": f"1.{n}", "label": f"Activity {n}", "level": "L2", "active": True,
+             "parent_id": "1"}
+        )
+        # Only the fifth activity is delivered by the partner.
+        label = "Execute repair" if n == 5 else "Raise works order"
+        activities.append(
+            {"id": f"1.{n}.1", "label": label, "level": "L3", "active": True,
+             "parent_id": f"1.{n}"}
+        )
+
+    model = migrate({"activities": activities}, MERMAID)
+    placed = {
+        (c["party_id"], c["activity_id"]): c["column"] for c in model["contributions"]
+    }
+    assert placed == {
+        ("sp", "1.1"): 10,
+        ("sp", "1.2"): 20,
+        ("sp", "1.3"): 30,
+        ("sp", "1.4"): 40,
+        ("partnerISS", "1.5"): 50,
+        ("sp", "1.6"): 60,
+    }
+
+
+def test_columns_order_activities_numerically_not_lexically():
+    """'1.10' comes after '1.9'. Sorting the IDs as strings would place it second and shift
+    every later activity's column by one position."""
+    activities = [{"id": "1", "label": "SEG", "level": "L1", "active": True}]
+    for n in (1, 2, 9, 10):
+        activities.append(
+            {"id": f"1.{n}", "label": f"Activity {n}", "level": "L2", "active": True,
+             "parent_id": "1"}
+        )
+        activities.append(
+            {"id": f"1.{n}.1", "label": "Raise works order", "level": "L3", "active": True,
+             "parent_id": f"1.{n}"}
+        )
+
+    model = migrate({"activities": activities}, MERMAID)
+    by_activity = {c["activity_id"]: c["column"] for c in model["contributions"]}
+    assert by_activity == {"1.1": 10, "1.2": 20, "1.9": 30, "1.10": 40}
 
 
 def test_descriptions_migrate_empty():
