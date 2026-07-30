@@ -129,10 +129,27 @@ async def migrate_project(slug: str, *, saved_by: str) -> dict:
 
     from api.services.value_chain_migration import migrate
 
-    model = migrate(
-        json.loads(registry_path.read_text()),
-        mermaid_paths[-1].read_text(),
-    )
+    registry = json.loads(registry_path.read_text())
+    model = migrate(registry, mermaid_paths[-1].read_text())
+
+    # An empty model is perfectly valid - validate_model has nothing to object to - so it
+    # used to save as v1 and report success. The page then said no value chain had been
+    # mapped, the Migrate button was gone because a model existed, and every retry was
+    # refused 409: a one-way trapdoor. Refusing before anything is written leaves the
+    # project able to migrate once its registry is corrected. A registry with no entries at
+    # all is a different case and stays allowed - there is genuinely nothing to migrate.
+    entries = registry.get("activities", [])
+    if entries and not model["segments"]:
+        levels = sorted({repr(e.get("level", "")) for e in entries})
+        raise ValueError(
+            "expected at least one L1 entry to become a segment, and found none: "
+            f"{len(entries)} registry entries carry levels {', '.join(levels)}, "
+            f"which produced {len(model['segments'])} segments, "
+            f"{len(model['activities'])} activities and "
+            f"{len(model['contributions'])} contributions. "
+            "Correct the registry's level values to L1, L2 and L3, then migrate again."
+        )
+
     await save_model(
         slug, model, saved_by=saved_by, summary="migrated from the Mermaid diagram"
     )

@@ -284,12 +284,26 @@ export const milestonesApi = {
     apiClient.delete(`/projects/${slug}/milestones/${id}`).then(() => undefined),
 }
 
+// What the migration recovered. Shown on the page so a thin result - a registry that
+// yielded almost nothing - is visible rather than reported as a bare success.
+export interface ValueChainMigrationResult {
+  created: boolean
+  counts: {
+    parties: number
+    segments: number
+    activities: number
+    contributions: number
+    tasks: number
+    derived: number
+  }
+}
+
 export const valueChainApi = {
   get: (slug: string): Promise<{ model: unknown }> =>
     apiClient.get(`/projects/${slug}/value-chain-model`).then((r) => r.data),
   save: (slug: string, model: unknown, summary = ''): Promise<{ output_id: number }> =>
     apiClient.put(`/projects/${slug}/value-chain-model`, { model, summary })
       .then((r) => r.data),
-  migrate: (slug: string): Promise<{ created: boolean }> =>
+  migrate: (slug: string): Promise<ValueChainMigrationResult> =>
     apiClient.post(`/projects/${slug}/value-chain-model/migrate`).then((r) => r.data),
 }

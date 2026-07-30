@@ -63,3 +63,8 @@ async def migrate_value_chain_model(
         raise HTTPException(status_code=409, detail=str(e))
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        # A registry that yields nothing, or a model that fails validation - either way the
+        # inputs are wrong rather than missing, and the message says what was expected and
+        # what was found so the registry can be corrected and the migration retried.
+        raise HTTPException(status_code=422, detail=str(e))

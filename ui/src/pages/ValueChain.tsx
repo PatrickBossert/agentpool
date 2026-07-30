@@ -27,6 +27,19 @@ function sortByActivityId(assignments: NodeTemplateAssignment[]): NodeTemplateAs
   })
 }
 
+// A refused migration carries the reason it was refused - which registry levels were found
+// where L1 was expected - and that message is the only route to correcting the registry, so
+// it is shown rather than flattened into "Migration failed".
+function migrationErrorMessage(error: unknown): string {
+  if (!axios.isAxiosError(error)) return 'Migration failed. Try again.'
+  if (error.response?.status === 404) {
+    return 'No existing diagram was found to migrate from - run the Value Chain Mapper first.'
+  }
+  const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail
+  if (error.response?.status === 422 && typeof detail === 'string' && detail) return detail
+  return 'Migration failed. Try again.'
+}
+
 export default function ValueChain() {
   const { slug } = useParams<{ slug: string }>()
   const qc = useQueryClient()
@@ -559,6 +572,27 @@ export default function ValueChain() {
       {/* ── Structure tab ─────────────────────────────────────── */}
       {activeTab === 'structure' && (
         <>
+          {/* What the migration actually recovered. A bare "success" hid a registry that
+              yielded almost nothing, so the counts are shown rather than assumed. */}
+          {migrateMutation.data && (
+            <div
+              data-testid="migration-counts"
+              className="mb-4 bg-surface-card border border-surface rounded p-3"
+            >
+              <p className="text-primary text-xs font-medium mb-1">
+                Migrated from the existing diagram
+              </p>
+              <p className="text-secondary text-xs">
+                {migrateMutation.data.counts.segments} segments,{' '}
+                {migrateMutation.data.counts.activities} activities,{' '}
+                {migrateMutation.data.counts.contributions} contributions,{' '}
+                {migrateMutation.data.counts.tasks} tasks across{' '}
+                {migrateMutation.data.counts.parties} parties -{' '}
+                {migrateMutation.data.counts.derived} attributed by inference.
+              </p>
+            </div>
+          )}
+
           {modelLoading && <p className="text-sm text-muted">Loading…</p>}
 
           {!modelLoading && editedModel && (
@@ -643,11 +677,7 @@ export default function ValueChain() {
                 {migrateMutation.isPending ? 'Migrating…' : 'Migrate from the existing diagram'}
               </button>
               {migrateMutation.isError && (
-                <p className="text-red-400 text-xs mt-3">
-                  {axios.isAxiosError(migrateMutation.error) && migrateMutation.error.response?.status === 404
-                    ? 'No existing diagram was found to migrate from - run the Value Chain Mapper first.'
-                    : 'Migration failed. Try again.'}
-                </p>
+                <p className="text-red-400 text-xs mt-3">{migrationErrorMessage(migrateMutation.error)}</p>
               )}
             </div>
           )}

@@ -84,6 +84,77 @@ async def test_migration_without_source_files_reports_that_clearly(client):
     assert resp.status_code == 404
 
 
+# A registry whose levels are not the literal "L1"/"L2"/"L3" the migration matches on.
+# agents/tools/derive_registry.py defaults a missing level to "", so this is reachable
+# rather than hypothetical.
+UNLEVELLED_REGISTRY = {
+    "schema_version": 2,
+    "activities": [
+        {"id": "1", "label": "PROPERTY", "level": "", "active": True},
+        {"id": "1.1", "label": "Reactive Maintenance", "level": "", "active": True,
+         "parent_id": "1"},
+        {"id": "1.1.1", "label": "Raise works order", "level": "", "active": True,
+         "parent_id": "1.1"},
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_a_registry_that_yields_no_segments_is_refused_not_saved(client):
+    """An empty model passes validation, so saving it reported success and then showed "No
+    value chain has been mapped yet" - with the Migrate button gone, because a model now
+    existed, and every retry refused 409. A one-way trapdoor with no route out.
+    """
+    await client.post("/projects", json=PROJECT)
+    outputs = Path(get_settings().projects_dir) / SLUG / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / "value_chain_registry.json").write_text(json.dumps(UNLEVELLED_REGISTRY))
+    (outputs / "value_chain_v1.md").write_text(MERMAID)
+
+    resp = await client.post(f"/projects/{SLUG}/value-chain-model/migrate")
+    assert resp.status_code == 422
+    detail = str(resp.json()["detail"]).lower()
+    # The message has to say what was expected and what was found, or a person reading it
+    # has no idea the registry's levels are the problem.
+    assert "l1" in detail
+    assert "3 registry entries" in detail
+
+
+@pytest.mark.asyncio
+async def test_a_refused_migration_persists_nothing(client):
+    """The refusal is only useful if the project can still migrate once its registry is
+    corrected - which needs no model to have been saved by the refused attempt."""
+    await client.post("/projects", json=PROJECT)
+    outputs = Path(get_settings().projects_dir) / SLUG / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / "value_chain_registry.json").write_text(json.dumps(UNLEVELLED_REGISTRY))
+    (outputs / "value_chain_v1.md").write_text(MERMAID)
+
+    assert (await client.post(f"/projects/{SLUG}/value-chain-model/migrate")).status_code == 422
+    assert (await client.get(f"/projects/{SLUG}/value-chain-model")).status_code == 404
+
+    # Correct the registry's levels and the project migrates - no 409, nothing to undo.
+    (outputs / "value_chain_registry.json").write_text(json.dumps(REGISTRY))
+    retry = await client.post(f"/projects/{SLUG}/value-chain-model/migrate")
+    assert retry.status_code == 200
+    assert retry.json()["counts"]["segments"] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_empty_registry_is_not_treated_as_a_failed_migration(client):
+    """A registry with no entries at all has nothing to migrate, which is a different thing
+    from a registry full of entries that produced nothing."""
+    await client.post("/projects", json=PROJECT)
+    outputs = Path(get_settings().projects_dir) / SLUG / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / "value_chain_registry.json").write_text(json.dumps({"activities": []}))
+    (outputs / "value_chain_v1.md").write_text(MERMAID)
+
+    resp = await client.post(f"/projects/{SLUG}/value-chain-model/migrate")
+    assert resp.status_code == 200
+    assert resp.json()["counts"]["segments"] == 0
+
+
 def _mermaid_for(party: str, colour: str) -> str:
     """A minimal single-node diagram, attributing 'Raise works order' to `party` - so the
     migrated task's party_id reveals which version file the migration actually opened."""
