@@ -26,6 +26,8 @@ const MODEL: ValueChainModel = {
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
     valueChain: vi.fn().mockResolvedValue([]),
+    getSettings: vi.fn().mockResolvedValue({}),
+    documents: vi.fn().mockResolvedValue([]),
   },
   valueChainApi: {
     get: vi.fn(),
@@ -99,5 +101,34 @@ describe('ValueChain save', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('unsaved-changes')).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('unsaved edits across a tab change', () => {
+  // The Structure tab holds the working copy, the unsaved-changes flag, the change summary
+  // and the selected contribution. Rendering it conditionally on the active tab unmounts it,
+  // so one click on Setup discarded a drag, an added party and every description edit with
+  // no warning at all - beforeunload does not fire on a tab change, and the unmount
+  // unregisters it anyway.
+  it('keeps a description edit when Setup is visited and Structure is returned to', async () => {
+    await editDescriptionAndOpenStructureTab()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Structure' }))
+
+    const field = (await screen.findByTestId('description-1.1-sp')) as HTMLInputElement
+    expect(field.value).toBe('first more')
+  })
+
+  it('still reports the edit as unsaved after the round trip through Setup', async () => {
+    // Losing the indicator is worse than losing the edit: it says the working copy matches
+    // the server when it does not.
+    await editDescriptionAndOpenStructureTab()
+    expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Structure' }))
+
+    expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
   })
 })

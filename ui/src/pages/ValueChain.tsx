@@ -477,7 +477,15 @@ export default function ValueChain() {
         />
       )}
 
-      {activeTab === 'structure' && <StructureTab slug={slug!} />}
+      {/* Hidden rather than unmounted. The Structure tab holds the working copy, the
+          unsaved-changes flag, the change summary and the selected contribution, so
+          rendering it conditionally on activeTab threw all four away on a click of Setup -
+          a drag, an added party, a confirmed attribution and every description edit gone
+          without warning, since beforeunload does not fire on a tab change and the unmount
+          unregistered it anyway. Kept mounted, its state simply outlives the trip. */}
+      <div hidden={activeTab !== 'structure'}>
+        <StructureTab slug={slug!} />
+      </div>
     </div>
   )
 }

@@ -52,8 +52,11 @@ export function StructureTab({ slug }: { slug: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['value-chain-model', slug] }),
   })
 
-  // Edits are held here, in the page, and only committed to the server by the Save
+  // Edits are held here, in this component, and only committed to the server by the Save
   // control - never per-keystroke, so the version history and change log stay meaningful.
+  // Nothing outside persists a draft, so this state IS the draft: ValueChain.tsx therefore
+  // keeps this component mounted and merely hides it when another tab is active. Render it
+  // conditionally and a tab change unmounts it, silently discarding every unsaved edit.
   const [editedModel, setEditedModel] = useState<ValueChainModel | null>(null)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [changeSummary, setChangeSummary] = useState('')
