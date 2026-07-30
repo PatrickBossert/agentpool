@@ -134,12 +134,21 @@ function updateDescription(
   return next
 }
 
+export interface ValueChainSelection {
+  activityId: string
+  partyId: string
+}
+
 export function ValueChainTable({
   model,
   onChange,
+  selected,
+  onSelect,
 }: {
   model: ValueChainModel
   onChange?: (model: ValueChainModel) => void
+  selected?: ValueChainSelection | null
+  onSelect?: (activityId: string, partyId: string) => void
 }) {
   if (model.segments.length === 0) {
     return (
@@ -195,15 +204,39 @@ export function ValueChainTable({
                             ? model.activities.find((a) => a.id === contribution.activity_id)
                             : undefined
 
+                          const isSelected =
+                            !!contribution &&
+                            selected?.activityId === contribution.activity_id &&
+                            selected?.partyId === contribution.party_id
+
                           return (
                             <td
                               key={column}
                               data-testid={`cell-${party.id}-${column}`}
-                              className="py-2 px-3 align-top border-l border-surface min-w-[10rem]"
+                              className={`py-2 px-3 align-top border-l border-surface min-w-[10rem] ${
+                                isSelected ? 'bg-brand/5' : ''
+                              }`}
                             >
                               {contribution && activity && (
                                 <div>
-                                  <p className="font-medium text-primary">{activity.label}</p>
+                                  {/* Selecting is its own control, separate from the description
+                                      field below - so typing a description never bubbles into a
+                                      selection handler, and selecting never steals input focus. */}
+                                  {onSelect ? (
+                                    <button
+                                      type="button"
+                                      data-testid={`select-${activity.id}-${party.id}`}
+                                      aria-pressed={isSelected}
+                                      onClick={() => onSelect(activity.id, party.id)}
+                                      className={`block text-left font-medium rounded outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+                                        isSelected ? 'text-brand' : 'text-primary hover:text-brand'
+                                      }`}
+                                    >
+                                      {activity.label}
+                                    </button>
+                                  ) : (
+                                    <p className="font-medium text-primary">{activity.label}</p>
+                                  )}
                                   {onChange ? (
                                     <input
                                       type="text"

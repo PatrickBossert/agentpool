@@ -7,7 +7,8 @@ import { projectsApi, valueChainApi } from '../api/endpoints'
 import { listTemplates } from '../api/templates'
 import { listNodeTemplates, putNodeTemplate, publishNodeTemplate } from '../api/nodeTemplates'
 import InterviewTemplateEditor from '../components/InterviewTemplateEditor'
-import { ValueChainTable, type ValueChainModel } from '../components/ValueChainTable'
+import { ValueChainTable, type ValueChainModel, type ValueChainSelection } from '../components/ValueChainTable'
+import { ContributionPanel } from '../components/ContributionPanel'
 import type { ProjectSettings, DiscoveryLink, ClientDocument, NodeTemplateAssignment, TemplateListItem } from '../types'
 
 function sortByActivityId(assignments: NodeTemplateAssignment[]): NodeTemplateAssignment[] {
@@ -154,6 +155,14 @@ export default function ValueChain() {
     setEditedModel(updated)
     setHasUnsavedChanges(true)
     setSaveProblems(null)
+  }
+
+  // The table owns editing; the page owns which contribution is selected, since the panel
+  // that shows it lives outside the table.
+  const [selectedContribution, setSelectedContribution] = useState<ValueChainSelection | null>(null)
+
+  function handleSelectContribution(activityId: string, partyId: string) {
+    setSelectedContribution({ activityId, partyId })
   }
 
   const saveModelMutation = useMutation({
@@ -553,43 +562,71 @@ export default function ValueChain() {
           {modelLoading && <p className="text-sm text-muted">Loading…</p>}
 
           {!modelLoading && editedModel && (
-            <>
-              <ValueChainTable model={editedModel} onChange={handleModelChange} />
-
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                <input
-                  type="text"
-                  value={changeSummary}
-                  onChange={(e) => setChangeSummary(e.target.value)}
-                  placeholder="Summary of this change (optional)"
-                  className="flex-1 min-w-[16rem] max-w-md bg-surface-raised border border-surface rounded px-3 py-2 text-sm text-primary placeholder-muted outline-none focus:border-brand"
+            <div className="flex flex-col lg:flex-row gap-6 items-start">
+              <div className="flex-1 min-w-0">
+                <ValueChainTable
+                  model={editedModel}
+                  onChange={handleModelChange}
+                  selected={selectedContribution}
+                  onSelect={handleSelectContribution}
                 />
-                <button
-                  type="button"
-                  onClick={() => saveModelMutation.mutate()}
-                  disabled={!hasUnsavedChanges || saveModelMutation.isPending}
-                  className="px-4 py-2 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm font-medium rounded"
-                >
-                  {saveModelMutation.isPending ? 'Saving…' : 'Save'}
-                </button>
-                {hasUnsavedChanges && !saveModelMutation.isPending && (
-                  <span data-testid="unsaved-changes" className="text-secondary text-xs">
-                    Unsaved changes
-                  </span>
+
+                <div className="mt-6 flex flex-wrap items-center gap-3">
+                  <input
+                    type="text"
+                    value={changeSummary}
+                    onChange={(e) => setChangeSummary(e.target.value)}
+                    placeholder="Summary of this change (optional)"
+                    className="flex-1 min-w-[16rem] max-w-md bg-surface-raised border border-surface rounded px-3 py-2 text-sm text-primary placeholder-muted outline-none focus:border-brand"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => saveModelMutation.mutate()}
+                    disabled={!hasUnsavedChanges || saveModelMutation.isPending}
+                    className="px-4 py-2 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm font-medium rounded"
+                  >
+                    {saveModelMutation.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  {hasUnsavedChanges && !saveModelMutation.isPending && (
+                    <span data-testid="unsaved-changes" className="text-secondary text-xs">
+                      Unsaved changes
+                    </span>
+                  )}
+                </div>
+
+                {saveProblems && (
+                  <div className="mt-3 bg-surface-card border border-surface rounded p-3">
+                    <p className="text-primary text-xs font-medium mb-1">Could not save:</p>
+                    <ul className="list-disc list-inside text-xs text-red-400 space-y-0.5">
+                      {saveProblems.map((problem, i) => (
+                        <li key={i}>{problem}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
 
-              {saveProblems && (
-                <div className="mt-3 bg-surface-card border border-surface rounded p-3">
-                  <p className="text-primary text-xs font-medium mb-1">Could not save:</p>
-                  <ul className="list-disc list-inside text-xs text-red-400 space-y-0.5">
-                    {saveProblems.map((problem, i) => (
-                      <li key={i}>{problem}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
+              {/* Side panel: a contribution's tasks and its activity's propositions, in place
+                  of a pop-up - selected from the table on the left. */}
+              <div className="w-full lg:w-80 flex-shrink-0">
+                {selectedContribution ? (
+                  <ContributionPanel
+                    model={editedModel}
+                    activityId={selectedContribution.activityId}
+                    partyId={selectedContribution.partyId}
+                  />
+                ) : (
+                  <div
+                    data-testid="contribution-panel-placeholder"
+                    className="bg-surface-card rounded-xl p-4 text-center"
+                  >
+                    <p className="text-muted text-sm">
+                      Select a contribution to see its tasks and propositions.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {!modelLoading && modelMissing && (
