@@ -65,16 +65,29 @@ export interface ValueChainModel {
 
 const COLUMN_STEP = 10
 
-// Columns are sparse, assigned in steps of ten. The union of columns actually used by
-// lanes in a segment defines a range; every step within that range renders, whether or
-// not a contribution occupies it, so a gap between two used columns stays visible rather
-// than collapsing away.
+// Columns are sparse, assigned in steps of ten. The range is built from the columns
+// actually used by lanes in a segment, with the steps between them filled in, so a gap
+// between two used columns stays visible rather than collapsing away.
+//
+// It cannot be generated as min, min+10, min+20… : columns are sparse precisely so that
+// inserting between two neighbours picks an intermediate value rather than renumbering the
+// segment, so a column that is not congruent to the minimum modulo ten is expected. Such a
+// column used to fall outside the sequence and render nowhere - invisible and uneditable,
+// while still present in the saved model and still counted by validation. Every occupied
+// column therefore appears exactly once, in order, whatever its value.
 function columnRange(usedColumns: number[]): number[] {
-  if (usedColumns.length === 0) return []
-  const min = Math.min(...usedColumns)
-  const max = Math.max(...usedColumns)
-  const range: number[] = []
-  for (let column = min; column <= max; column += COLUMN_STEP) range.push(column)
+  const used = Array.from(new Set(usedColumns)).sort((a, b) => a - b)
+  if (used.length === 0) return []
+
+  const range: number[] = [used[0]]
+  for (const column of used.slice(1)) {
+    // Fill the whole steps between the previous occupied column and this one; each is a
+    // real position that happens to be unoccupied, which is what a gap is.
+    for (let filler = range[range.length - 1] + COLUMN_STEP; filler < column; filler += COLUMN_STEP) {
+      range.push(filler)
+    }
+    range.push(column)
+  }
   return range
 }
 
