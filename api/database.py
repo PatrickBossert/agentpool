@@ -805,6 +805,25 @@ async def insert_agent_output(conn: aiosqlite.Connection, *, project_id: int, ag
     return cur.lastrowid
 
 
+async def set_current_output(conn: aiosqlite.Connection, *, project_id: int,
+                              output_type: str, output_id: int) -> None:
+    """Mark one output as the current version of its type, superseding the rest.
+
+    Used when a new version is saved for an output type that keeps a single "current"
+    row per project (e.g. the value chain model) - the new row becomes current and every
+    other version of the same type falls out of currency in the same commit.
+    """
+    await conn.execute(
+        "UPDATE agent_outputs SET is_current=0 "
+        "WHERE project_id=? AND output_type=? AND id<>?",
+        (project_id, output_type, output_id),
+    )
+    await conn.execute(
+        "UPDATE agent_outputs SET is_current=1 WHERE id=?", (output_id,),
+    )
+    await conn.commit()
+
+
 async def output_exists(conn: aiosqlite.Connection, *, output_id: int) -> bool:
     async with conn.execute(
         "SELECT 1 FROM agent_outputs WHERE id=?", (output_id,)
