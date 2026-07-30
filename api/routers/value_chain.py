@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from api.auth import check_project_access, require_any_auth
 from api.database import get_db_path
 from api.services.value_chain_model import validate_model
-from api.services.value_chain_store import load_model, save_model
+from api.services.value_chain_store import load_model, migrate_project, save_model
 
 router = APIRouter(prefix="/projects", tags=["value-chain"])
 
@@ -49,3 +49,17 @@ async def put_value_chain_model(
         slug, body.model, saved_by=payload.get("sub", ""), summary=body.summary
     )
     return {"output_id": output_id}
+
+
+@router.post("/{slug}/value-chain-model/migrate")
+async def migrate_value_chain_model(
+    slug: str, payload: dict = Depends(require_any_auth)
+):
+    await check_project_access(slug, payload)
+    _require_project(slug)
+    try:
+        return await migrate_project(slug, saved_by=payload.get("sub", ""))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))

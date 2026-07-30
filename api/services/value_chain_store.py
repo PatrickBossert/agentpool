@@ -8,6 +8,7 @@ the source of truth, and a committed version is never modified.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from api.config import get_settings
@@ -97,3 +98,54 @@ async def save_model(slug: str, model: dict, *, saved_by: str, summary: str) -> 
         )
 
     return output_id
+
+
+async def migrate_project(slug: str, *, saved_by: str) -> dict:
+    """Build the model from this project's registry and its latest Mermaid output.
+
+    Refuses when a model already exists: re-running would discard whatever anybody has
+    edited since, and migration is a one-off recovery rather than a repeatable import.
+    """
+    if await load_model(slug) is not None:
+        raise FileExistsError("a value chain model already exists for this project")
+
+    outputs = _outputs_dir(slug)
+    registry_path = outputs / "value_chain_registry.json"
+    # Sort numerically on the version suffix - lexical order would put v9 after v12, and
+    # the real sp-gs-am project already has a v12, so this matters immediately. A filename
+    # that matches the glob but carries no numeric suffix (e.g. a hand-renamed backup)
+    # cannot be placed in that ordering, so it is excluded from the candidates rather than
+    # crashing the sort or being guessed at as "latest".
+    candidates = []
+    for path in outputs.glob("value_chain_v*.md"):
+        match = re.search(r"_v(\d+)", path.name)
+        if match:
+            candidates.append((int(match.group(1)), path))
+    mermaid_paths = [path for _, path in sorted(candidates)]
+    if not registry_path.exists() or not mermaid_paths:
+        raise FileNotFoundError(
+            "need value_chain_registry.json and a value_chain_v*.md to migrate"
+        )
+
+    from api.services.value_chain_migration import migrate
+
+    model = migrate(
+        json.loads(registry_path.read_text()),
+        mermaid_paths[-1].read_text(),
+    )
+    await save_model(
+        slug, model, saved_by=saved_by, summary="migrated from the Mermaid diagram"
+    )
+    return {
+        "created": True,
+        "counts": {
+            "parties": len(model["parties"]),
+            "segments": len(model["segments"]),
+            "activities": len(model["activities"]),
+            "contributions": len(model["contributions"]),
+            "tasks": len(model["tasks"]),
+            "derived": sum(
+                1 for c in model["contributions"] if c["attribution"] == "derived"
+            ),
+        },
+    }
