@@ -22,8 +22,14 @@ const MODEL: ValueChainModel = {
     { activity_id: '1.1', party_id: 'sp', column: 10, description: 'first', attribution: 'stated' },
     { activity_id: '1.2', party_id: 'sp', column: 20, description: 'second', attribution: 'stated' },
     { activity_id: '1.5', party_id: 'iss', column: 40, description: 'partner', attribution: 'derived' },
+    // 1.1 is jointly delivered: iss contributes to it too, at its own column. Without this,
+    // no fixture can tell a correct cross-lane refusal apart from a bug that reaches for
+    // party.id instead of the dragged party - moveToColumn no-ops either way when there is
+    // no contribution to find, so the two behaviours look identical unless a real
+    // same-activity contribution exists on the other side to be wrongly moved.
+    { activity_id: '1.1', party_id: 'iss', column: 50, description: 'joint', attribution: 'stated' },
   ],
-  tasks: [],
+  tasks: [{ activity_id: '1.1', party_id: 'iss', id: 't-iss-1.1', label: 'Coordinate access' }],
   propositions: [],
   links: [],
 }
@@ -77,7 +83,7 @@ describe('dragging a card', () => {
     expect(columnOf('card-1.2-sp')).toBe(10)
   })
 
-  it("refuses a drop into another party's lane", () => {
+  it("refuses a drop into another party's empty lane cell", () => {
     // A contribution's identity is (activity, party). Dropping across lanes would not
     // reposition it - it would replace it with a different contribution and orphan its
     // tasks. Re-attribution is the party menu's job, explicitly.
@@ -87,7 +93,21 @@ describe('dragging a card', () => {
     fireEvent.drop(screen.getByTestId('cell-iss-30'), { dataTransfer: dt })
 
     expect(columnOf('card-1.1-sp')).toBe(10)
-    expect(screen.queryByTestId('card-1.1-iss')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cell-iss-30').children.length).toBe(0)
+  })
+
+  it("leaves the other party's contribution to the same activity untouched on a cross-lane drop", () => {
+    // 1.1 is jointly delivered by sp and iss. This is the fixture that can actually fail:
+    // a bug that passes the target cell's party into moveToColumn instead of the dragged
+    // party would find iss's real contribution to 1.1 here and move or swap it, rather than
+    // silently no-opping the way it would against an activity iss has no stake in.
+    render(<Stateful />)
+    const dt = dataTransfer()
+    fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-iss-50'), { dataTransfer: dt })
+
+    expect(columnOf('card-1.1-sp')).toBe(10)
+    expect(columnOf('card-1.1-iss')).toBe(50)
   })
 
   it('carries the description with the card rather than leaving it behind', () => {
@@ -107,5 +127,61 @@ describe('dragging a card', () => {
   it('does not make cards draggable when read-only', () => {
     render(<ValueChainGrid model={MODEL} />)
     expect(screen.getByTestId('card-header-1.1-sp')).not.toHaveAttribute('draggable', 'true')
+  })
+
+  it('ignores a drop with no payload, because nothing was ever dragged from this grid', () => {
+    // An unrelated drag (a file, text from elsewhere) ending up over a grid cell is
+    // reachable in a real browser - getData then returns '' for a key nobody set.
+    render(<Stateful />)
+    const dt = dataTransfer()
+    fireEvent.drop(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+
+    expect(columnOf('card-1.1-sp')).toBe(10)
+    expect(screen.getByTestId('cell-sp-30').children.length).toBe(0)
+  })
+
+  it('ignores a drop naming an activity that does not exist', () => {
+    render(<Stateful />)
+    const dt = dataTransfer()
+    dt.setData('contributionActivityId', 'does-not-exist')
+    dt.setData('contributionPartyId', 'sp')
+    fireEvent.drop(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+
+    expect(columnOf('card-1.1-sp')).toBe(10)
+    expect(screen.getByTestId('cell-sp-30').children.length).toBe(0)
+  })
+})
+
+describe('drag-over visual cue', () => {
+  // Cells are 13rem wide beside a 10rem gutter, and a gap is a meaningful position of its
+  // own - so a person dragging has no way to tell which column they are over without a
+  // cue. Only a cell that would actually accept the drop should show it: highlighting a
+  // cell in another party's lane would promise a drop it is going to refuse.
+  it("highlights a cell in the dragged card's own lane", () => {
+    render(<Stateful />)
+    const dt = dataTransfer()
+    fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
+    fireEvent.dragOver(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+
+    expect(screen.getByTestId('cell-sp-30')).toHaveClass('border-brand')
+  })
+
+  it("does not highlight a cell in another party's lane", () => {
+    render(<Stateful />)
+    const dt = dataTransfer()
+    fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
+    fireEvent.dragOver(screen.getByTestId('cell-iss-30'), { dataTransfer: dt })
+
+    expect(screen.getByTestId('cell-iss-30')).not.toHaveClass('border-brand')
+  })
+
+  it('clears the cue once the pointer leaves the cell', () => {
+    render(<Stateful />)
+    const dt = dataTransfer()
+    fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
+    fireEvent.dragOver(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+    fireEvent.dragLeave(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+
+    expect(screen.getByTestId('cell-sp-30')).not.toHaveClass('border-brand')
   })
 })

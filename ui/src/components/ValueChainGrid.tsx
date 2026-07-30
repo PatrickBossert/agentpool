@@ -9,6 +9,8 @@
 //
 // Every cell renders whether occupied or not, so a gap is a real position - and, from Task
 // 6, a real drop target - rather than an absence.
+import { useState } from 'react'
+
 import {
   columnRange,
   contributionKey,
@@ -32,6 +34,14 @@ export function ValueChainGrid({
   selected?: ValueChainSelection | null
   onSelect?: (activityId: string, partyId: string) => void
 }) {
+  // Which party is currently being dragged, and which cell the pointer is over - both
+  // derived here, at the grid, rather than read fresh from dataTransfer in every cell's
+  // onDragOver. A cell only shows the "this will accept the drop" cue when its own lane
+  // matches the dragged party, which needs the dragged party known before the pointer ever
+  // reaches a given cell.
+  const [draggingParty, setDraggingParty] = useState<string | null>(null)
+  const [hoverCell, setHoverCell] = useState<{ partyId: string; column: number } | null>(null)
+
   if (model.segments.length === 0) {
     return (
       <div data-testid="value-chain-empty" className="bg-surface-card rounded-xl p-8 text-center">
@@ -41,7 +51,15 @@ export function ValueChainGrid({
   }
 
   return (
-    <div className="space-y-8">
+    <div
+      className="space-y-8"
+      onDragStart={
+        onChange
+          ? (e) => setDraggingParty(e.dataTransfer.getData('contributionPartyId'))
+          : undefined
+      }
+      onDragEnd={onChange ? () => setDraggingParty(null) : undefined}
+    >
       {model.segments.map((segment) => {
         const activityIds = new Set(
           model.activities.filter((a) => a.segment_id === segment.id).map((a) => a.id),
@@ -124,31 +142,53 @@ export function ValueChainGrid({
                       ? model.activities.find((a) => a.id === contribution.activity_id)
                       : undefined
 
+                    // A cell only invites a drop when it is in the dragged card's own lane -
+                    // highlighting a foreign lane would promise a drop the guard below is
+                    // going to refuse anyway.
+                    const acceptsDrag = draggingParty === party.id
+                    const isDragOver =
+                      acceptsDrag && hoverCell?.partyId === party.id && hoverCell?.column === column
+
                     return (
                       <div
                         key={`cell-${party.id}-${column}`}
                         data-testid={`cell-${party.id}-${column}`}
-                        className="min-h-[5rem] rounded-lg border border-dashed border-surface"
+                        className={`min-h-[5rem] rounded-lg border border-dashed transition-colors ${
+                          isDragOver ? 'border-brand bg-brand/5' : 'border-surface'
+                        }`}
                         style={{ gridColumn: index + 2, gridRow: laneIndex + 2 }}
                         onDragOver={
                           onChange
                             ? (e) => {
+                                if (!acceptsDrag) return
                                 e.preventDefault()
                                 e.dataTransfer.dropEffect = 'move'
+                                setHoverCell({ partyId: party.id, column })
                               }
+                            : undefined
+                        }
+                        onDragLeave={
+                          onChange
+                            ? () =>
+                                setHoverCell((current) =>
+                                  current?.partyId === party.id && current?.column === column
+                                    ? null
+                                    : current,
+                                )
                             : undefined
                         }
                         onDrop={
                           onChange
                             ? (e) => {
                                 e.preventDefault()
+                                setHoverCell(null)
                                 const activityId = e.dataTransfer.getData('contributionActivityId')
                                 const draggedParty = e.dataTransfer.getData('contributionPartyId')
                                 // A card may only land in its own lane: a contribution's
                                 // identity is (activity, party), so a cross-lane drop would
                                 // change what it is rather than where it sits.
                                 if (!activityId || draggedParty !== party.id) return
-                                onChange(moveToColumn(model, activityId, party.id, column))
+                                onChange(moveToColumn(model, activityId, draggedParty, column))
                               }
                             : undefined
                         }
