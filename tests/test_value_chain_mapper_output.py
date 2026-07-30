@@ -84,6 +84,29 @@ def test_the_task_ties_model_ids_to_the_registry(task_text):
     assert "l3 entry becomes a task" in task_text
 
 
+def test_the_task_requires_every_activity_to_carry_a_contribution(task_text):
+    """api/services/value_chain_model.py's validate_model refuses a model in which an
+    activity carries no contribution, but the mapper writes its model through SQLiteStateTool
+    rather than save_model, so nothing checks this on the way in. Such an activity belongs to
+    no party's lane, so the grid renders it nowhere - and every save from then on is refused,
+    naming an activity that appears on screen nowhere.
+
+    No UI mutation can reach this state (removeParty is gated by isLastContribution) and the
+    migration cascade closes the other route, so the crew path is the only one left open.
+    """
+    assert "at least one contribution" in task_text
+    assert "activity with no contribution" in task_text
+
+
+def test_the_task_requires_one_party_not_to_repeat_a_column_within_a_segment(task_text):
+    """The grid renders one card per (party lane, column) cell, so a second contribution of
+    the same party at the same column of the same segment never appears at all - and every
+    save is then refused with "two contributions occupy column N in party P's lane"."""
+    assert "must not repeat a column" in task_text
+    assert "same party" in task_text
+    assert "same segment" in task_text
+
+
 def test_the_mapper_holds_no_tool_that_can_render_a_diagram():
     """The task text is only one of the paths. Leave him the tool and he can still write a
     value_chain_v13.md whatever the task says, which is the outcome this branch exists to
