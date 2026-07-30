@@ -136,6 +136,37 @@ export function moveContribution(
   return next
 }
 
+// Dragging lands on an arbitrary column rather than the adjacent step, so this is its own
+// operation - but it holds the same invariant as moveContribution: after any move, no two
+// contributions of the same party within a segment share a column. If the target is taken,
+// the two exchange columns; otherwise the mover simply takes it.
+export function moveToColumn(
+  model: ValueChainModel,
+  activityId: string,
+  partyId: string,
+  column: number,
+): ValueChainModel {
+  const next = structuredClone(model)
+  const contribution = find(next, activityId, partyId)
+  if (!contribution || contribution.column === column) return next
+
+  const activity = next.activities.find((a) => a.id === activityId)
+  const segmentActivityIds = new Set(
+    next.activities.filter((a) => a.segment_id === activity?.segment_id).map((a) => a.id),
+  )
+  const occupant = next.contributions.find(
+    (c) =>
+      c.party_id === partyId &&
+      segmentActivityIds.has(c.activity_id) &&
+      c.activity_id !== activityId &&
+      c.column === column,
+  )
+
+  if (occupant) occupant.column = contribution.column
+  contribution.column = column
+  return next
+}
+
 export function updateDescription(
   model: ValueChainModel,
   activityId: string,

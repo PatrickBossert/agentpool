@@ -44,6 +44,14 @@ export function ContributionCard({
         <button
           type="button"
           data-testid={`card-header-${activityId}-${partyId}`}
+          draggable={editable}
+          onDragStart={(e) => {
+            // The payload carries the lane so the drop target can refuse a cross-lane drop
+            // without needing any shared state.
+            e.dataTransfer.setData('contributionActivityId', activityId)
+            e.dataTransfer.setData('contributionPartyId', partyId)
+            e.dataTransfer.effectAllowed = 'move'
+          }}
           onClick={() => onSelect?.(activityId, partyId)}
           onKeyDown={(e) => {
             if (!editable) return

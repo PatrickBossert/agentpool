@@ -12,6 +12,7 @@
 import {
   columnRange,
   contributionKey,
+  moveToColumn,
   type ValueChainModel,
   type ValueChainSelection,
 } from '../utils/valueChainModel'
@@ -129,6 +130,28 @@ export function ValueChainGrid({
                         data-testid={`cell-${party.id}-${column}`}
                         className="min-h-[5rem] rounded-lg border border-dashed border-surface"
                         style={{ gridColumn: index + 2, gridRow: laneIndex + 2 }}
+                        onDragOver={
+                          onChange
+                            ? (e) => {
+                                e.preventDefault()
+                                e.dataTransfer.dropEffect = 'move'
+                              }
+                            : undefined
+                        }
+                        onDrop={
+                          onChange
+                            ? (e) => {
+                                e.preventDefault()
+                                const activityId = e.dataTransfer.getData('contributionActivityId')
+                                const draggedParty = e.dataTransfer.getData('contributionPartyId')
+                                // A card may only land in its own lane: a contribution's
+                                // identity is (activity, party), so a cross-lane drop would
+                                // change what it is rather than where it sits.
+                                if (!activityId || draggedParty !== party.id) return
+                                onChange(moveToColumn(model, activityId, party.id, column))
+                              }
+                            : undefined
+                        }
                       >
                         {contribution && activity && (
                           // Keyed on the contribution's identity, never on the column. Key

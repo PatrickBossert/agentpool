@@ -5,6 +5,7 @@ import {
   COLUMN_STEP,
   columnRange,
   moveContribution,
+  moveToColumn,
   updateDescription,
   addParty,
   removeParty,
@@ -267,5 +268,47 @@ describe('counts and available parties', () => {
   it('lists only parties not already contributing to that activity', () => {
     expect(partiesNotContributing(model(), '1.2').map((p) => p.id)).toEqual(['iss'])
     expect(partiesNotContributing(addParty(model(), '1.2', 'iss'), '1.2')).toEqual([])
+  })
+})
+
+describe('moveToColumn', () => {
+  it('takes an empty column', () => {
+    const next = moveToColumn(model(), '1.1', 'sp', 40)
+    expect(next.contributions.find((c) => c.activity_id === '1.1')!.column).toBe(40)
+  })
+
+  it('exchanges columns with an occupant, changing nothing else on either side', () => {
+    const next = moveToColumn(model(), '1.1', 'sp', 30)
+    expect(next.contributions.find((c) => c.activity_id === '1.1')).toEqual({
+      ...model().contributions[0], column: 30,
+    })
+    expect(next.contributions.find((c) => c.activity_id === '1.3')).toEqual({
+      ...model().contributions[2], column: 10,
+    })
+  })
+
+  it('leaves every column in the lane distinct, wherever the card lands', () => {
+    for (const target of [10, 20, 30, 40, 15]) {
+      const columns = moveToColumn(model(), '1.1', 'sp', target).contributions.map((c) => c.column)
+      expect(new Set(columns).size).toBe(columns.length)
+    }
+  })
+
+  it('is a no-op when the card is already there', () => {
+    expect(moveToColumn(model(), '1.1', 'sp', 10)).toEqual(model())
+  })
+
+  it('ignores an occupant in another party lane', () => {
+    const m = model()
+    m.contributions.push({ activity_id: '1.2', party_id: 'iss', column: 40, attribution: 'stated' })
+    const next = moveToColumn(m, '1.1', 'sp', 40)
+    expect(next.contributions.find((c) => c.party_id === 'iss')!.column).toBe(40)
+  })
+
+  it('does not mutate the model it was given', () => {
+    const before = model()
+    const snapshot = structuredClone(before)
+    moveToColumn(before, '1.1', 'sp', 40)
+    expect(before).toEqual(snapshot)
   })
 })
