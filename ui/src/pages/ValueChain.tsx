@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { projectsApi } from '../api/endpoints'
+import { projectsApi, valueChainApi } from '../api/endpoints'
 import { listTemplates } from '../api/templates'
 import { listNodeTemplates, putNodeTemplate, publishNodeTemplate } from '../api/nodeTemplates'
 import InterviewTemplateEditor from '../components/InterviewTemplateEditor'
@@ -110,10 +110,27 @@ export default function ValueChain() {
   }
 
   // ── Structure tab state ──────────────────────────────────────
+  // The legacy route into the Structure tab: GET /projects/{slug}/value-chain is filtered to
+  // output_type="value_chain", which only MermaidRenderTool writes.
   const { data: outputs = [], isLoading } = useQuery({
     queryKey: ['value-chain', slug],
     queryFn: () => projectsApi.valueChain(slug!),
     enabled: !!slug,
+  })
+
+  // The other route: the structured model. MermaidRenderTool is registered for
+  // enterprise_architect alone now - value_chain_mapper carries an explicit comment saying it
+  // was removed - so a project mapped by a fresh crew run has a model and no legacy output at
+  // all, and would never have opened on Structure while the switch keyed on outputs.
+  //
+  // Options mirror StructureTab's exactly, retry included. Two observers of one query key
+  // with different retry settings change the query's real retry behaviour depending on which
+  // of them happened to trigger the fetch.
+  const { isSuccess: modelExists } = useQuery({
+    queryKey: ['value-chain-model', slug],
+    queryFn: () => valueChainApi.get(slug!),
+    enabled: !!slug,
+    retry: false,
   })
 
   // ── Templates tab state ──────────────────────────────────────
@@ -124,10 +141,14 @@ export default function ValueChain() {
   // ── Tab ──────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'setup' | 'structure' | 'templates'>('setup')
 
-  // Switch to the Structure tab automatically once outputs are known to exist
+  // Switch to the Structure tab automatically once either route into it is known to exist.
+  // An OR, deliberately, not a replacement: keying only on the model would stop a legacy
+  // project with a diagram and no model from opening on Structure, and "Migrate from the
+  // existing diagram" only exists inside that tab, so there would be nothing to find.
   useEffect(() => {
-    if (!isLoading && outputs.length > 0) setActiveTab('structure')
-  }, [isLoading, outputs.length])
+    if (isLoading) return
+    if (outputs.length > 0 || modelExists) setActiveTab('structure')
+  }, [isLoading, outputs.length, modelExists])
 
   // Fetch templates data when Templates tab is active
   useEffect(() => {
