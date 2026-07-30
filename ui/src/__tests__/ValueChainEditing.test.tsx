@@ -3,7 +3,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-import { ValueChainTable, type ValueChainModel } from '../components/ValueChainTable'
+import { ValueChainGrid } from '../components/ValueChainGrid'
+import type { ValueChainModel } from '../utils/valueChainModel'
 
 const MODEL: ValueChainModel = {
   model_version: 1,
@@ -67,7 +68,7 @@ function StatefulTable({
 }) {
   const [model, setModel] = useState(initial)
   return (
-    <ValueChainTable
+    <ValueChainGrid
       model={model}
       onChange={(updated) => {
         setModel(updated)
@@ -81,7 +82,7 @@ function fieldValue(activityId: string, partyId: string): string {
   return (screen.getByTestId(`description-${activityId}-${partyId}`) as HTMLInputElement).value
 }
 
-describe('ValueChainTable editing', () => {
+describe('ValueChainGrid editing', () => {
   it('reports an edited description without mutating the model it was given', async () => {
     const original = structuredClone(MODEL)
     // MODEL itself is handed in, not a clone, so the no-mutation assertion below still has
@@ -120,7 +121,7 @@ describe('ValueChainTable editing', () => {
     const originalOther = structuredClone(
       MODEL.contributions.find((c) => c.activity_id === '1.2')!,
     )
-    render(<ValueChainTable model={MODEL} onChange={onChange} />)
+    render(<ValueChainGrid model={MODEL} onChange={onChange} />)
     await userEvent.click(screen.getByTestId('move-right-1.1-sp'))
 
     const latest = onChange.mock.calls.at(-1)![0] as ValueChainModel
@@ -134,7 +135,7 @@ describe('ValueChainTable editing', () => {
   })
 
   it('moving right in a three-column lane never collides two contributions onto one column', async () => {
-    render(<ValueChainTable model={THREE_COLUMN_MODEL} onChange={onChange} />)
+    render(<ValueChainGrid model={THREE_COLUMN_MODEL} onChange={onChange} />)
     await userEvent.click(screen.getByTestId('move-right-1.1-sp'))
 
     const latest = onChange.mock.calls.at(-1)![0] as ValueChainModel
@@ -145,7 +146,7 @@ describe('ValueChainTable editing', () => {
   })
 
   it('moving left in a three-column lane never collides two contributions onto one column', async () => {
-    render(<ValueChainTable model={THREE_COLUMN_MODEL} onChange={onChange} />)
+    render(<ValueChainGrid model={THREE_COLUMN_MODEL} onChange={onChange} />)
     await userEvent.click(screen.getByTestId('move-left-1.3-sp'))
 
     const latest = onChange.mock.calls.at(-1)![0] as ValueChainModel
@@ -186,7 +187,11 @@ describe('ValueChainTable editing', () => {
   })
 
   it('is read-only when no onChange is given', () => {
-    render(<ValueChainTable model={MODEL} />)
-    expect(screen.queryByTestId('description-1.1-sp')).not.toBeInTheDocument()
+    // The card keeps the field in the document with a readonly attribute rather than
+    // omitting it - the table used to omit it outright, but the grid needs the field
+    // present so a reader can still see the description text.
+    render(<ValueChainGrid model={MODEL} />)
+    expect(screen.queryByTestId('move-right-1.1-sp')).not.toBeInTheDocument()
+    expect(screen.getByTestId('description-1.1-sp')).toHaveAttribute('readonly')
   })
 })

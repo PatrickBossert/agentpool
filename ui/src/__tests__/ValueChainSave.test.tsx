@@ -10,7 +10,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '../context/AuthContext'
 import ValueChain from '../pages/ValueChain'
 import { valueChainApi } from '../api/endpoints'
-import type { ValueChainModel } from '../components/ValueChainTable'
+import type { ValueChainModel } from '../utils/valueChainModel'
 
 const MODEL: ValueChainModel = {
   model_version: 1,

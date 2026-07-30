@@ -9,7 +9,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '../context/AuthContext'
 import ValueChain from '../pages/ValueChain'
-import type { ValueChainModel } from '../components/ValueChainTable'
+import type { ValueChainModel } from '../utils/valueChainModel'
 
 // vi.mock factories are hoisted above the top of the file, so the fixture has to be
 // built inside vi.hoisted rather than referenced as a plain top-level const.
@@ -65,7 +65,7 @@ function Wrapper() {
 async function openStructureTab() {
   render(<Wrapper />)
   await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
-  await screen.findByTestId('select-1.1-sp')
+  await screen.findByTestId('card-header-1.1-sp')
 }
 
 describe('ValueChain contribution panel wiring', () => {
@@ -78,7 +78,7 @@ describe('ValueChain contribution panel wiring', () => {
   it('selecting a cell in the table shows that contribution in the panel', async () => {
     await openStructureTab()
 
-    await userEvent.click(screen.getByTestId('select-1.1-sp'))
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
 
     const panel = screen.getByTestId('contribution-panel')
     expect(panel).toHaveTextContent('Log the fault')
@@ -90,7 +90,7 @@ describe('ValueChain contribution panel wiring', () => {
   it('is keyboard reachable: focusing and activating the select control with the keyboard selects it', async () => {
     await openStructureTab()
 
-    const selectControl = screen.getByTestId('select-1.1-sp')
+    const selectControl = screen.getByTestId('card-header-1.1-sp')
     selectControl.focus()
     await userEvent.keyboard('{Enter}')
 
@@ -100,7 +100,7 @@ describe('ValueChain contribution panel wiring', () => {
   it('shows the empty state, not a blank region, for a contribution with no tasks', async () => {
     await openStructureTab()
 
-    await userEvent.click(screen.getByTestId('select-1.2-sp'))
+    await userEvent.click(screen.getByTestId('card-header-1.2-sp'))
 
     const panel = screen.getByTestId('contribution-panel')
     expect(panel).toHaveTextContent(/no tasks recorded/i)

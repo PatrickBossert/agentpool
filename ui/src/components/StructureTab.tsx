@@ -6,7 +6,8 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { valueChainApi } from '../api/endpoints'
-import { ValueChainTable, type ValueChainModel, type ValueChainSelection } from './ValueChainTable'
+import type { ValueChainModel, ValueChainSelection } from '../utils/valueChainModel'
+import { ValueChainGrid } from './ValueChainGrid'
 import { ContributionPanel } from './ContributionPanel'
 
 // A refused migration carries the reason it was refused - which registry levels were found
@@ -136,7 +137,7 @@ export function StructureTab({ slug }: { slug: string }) {
       {!modelLoading && editedModel && (
         <div className="flex flex-col lg:flex-row gap-6 items-start">
           <div className="flex-1 min-w-0">
-            <ValueChainTable
+            <ValueChainGrid
               model={editedModel}
               onChange={handleModelChange}
               selected={selectedContribution}

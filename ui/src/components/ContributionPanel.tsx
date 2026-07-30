@@ -3,7 +3,7 @@
 // Read-only detail for one selected contribution: the tasks that belong to it, plus the
 // propositions that attach to its activity as a whole. Editing these arrives with the
 // grid in a later project - this panel only ever reads the model it is given.
-import type { ValueChainModel } from './ValueChainTable'
+import type { ValueChainModel } from '../utils/valueChainModel'
 
 export interface ContributionPanelProps {
   model: ValueChainModel
