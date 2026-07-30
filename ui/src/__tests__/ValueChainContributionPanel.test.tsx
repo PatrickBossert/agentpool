@@ -80,7 +80,7 @@ describe('ValueChain contribution panel wiring', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('selecting a cell in the table shows that contribution in the panel', async () => {
+  it('selecting a card in the grid shows that contribution in the panel', async () => {
     await openStructureTab()
 
     await userEvent.click(screen.getByTestId('card-header-1.1-sp'))

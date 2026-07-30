@@ -84,8 +84,8 @@ export function StructureTab({ slug }: { slug: string }) {
     setSaveProblems(null)
   }
 
-  // The table owns editing; the page owns which contribution is selected, since the panel
-  // that shows it lives outside the table.
+  // The grid owns editing; this tab owns which contribution is selected, since the panel
+  // that shows it is rendered outside the grid.
   const [selectedContribution, setSelectedContribution] = useState<ValueChainSelection | null>(null)
 
   function handleSelectContribution(activityId: string, partyId: string) {
@@ -210,8 +210,8 @@ export function StructureTab({ slug }: { slug: string }) {
             )}
           </div>
 
-          {/* A contribution's tasks and its activity's propositions, opened from the
-              table on the left as a dialog rather than a permanent side panel. */}
+          {/* A contribution's tasks and its activity's propositions, opened from a card in
+              the grid as a centred modal rather than a permanent side panel. */}
           {selectedContribution && (
             <ContributionPanel
               model={editedModel}
