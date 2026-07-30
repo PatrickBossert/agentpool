@@ -1,12 +1,18 @@
 // ui/src/components/ContributionCard.tsx
-// One party's contribution to one activity, as a card. Three sibling controls, never
-// nested: the header (focus, move, open), the description input, and - from Task 8 - the
-// party menu. A handler on the card itself would fire on every interaction with any of
-// them, and one placed above the input would swallow keystrokes typed into it.
-import { ChevronLeft, ChevronRight, ListTree, Lightbulb, Sparkles } from 'lucide-react'
+// One party's contribution to one activity, as a card. Four sibling controls, never
+// nested: the header (focus, move, open), the description input, the counts row, and -
+// from Task 8 - the party menu. A handler on the card itself would fire on every
+// interaction with any of them, and one placed above the input would swallow keystrokes
+// typed into it.
+import { useState } from 'react'
+import { ChevronLeft, ChevronRight, ListTree, Lightbulb, Sparkles, Users } from 'lucide-react'
 
 import {
+  addParty,
+  confirmAttribution,
+  isLastContribution,
   moveContribution,
+  partiesNotContributing,
   propositionCount,
   taskCount,
   updateDescription,
@@ -22,6 +28,7 @@ export function ContributionCard({
   onChange,
   selected,
   onSelect,
+  onRequestRemove,
 }: {
   model: ValueChainModel
   activity: ValueChainActivity
@@ -29,9 +36,13 @@ export function ContributionCard({
   onChange?: (model: ValueChainModel) => void
   selected?: boolean
   onSelect?: (activityId: string, partyId: string) => void
+  onRequestRemove?: (activityId: string, partyId: string) => void
 }) {
   const { activity_id: activityId, party_id: partyId } = contribution
   const editable = !!onChange
+  const [menuOpen, setMenuOpen] = useState(false)
+  const available = partiesNotContributing(model, activityId)
+  const lastOne = isLastContribution(model, activityId)
 
   return (
     <div
@@ -77,6 +88,17 @@ export function ContributionCard({
             <Sparkles className="w-3 h-3" aria-hidden="true" />
             Derived
           </span>
+        )}
+
+        {contribution.attribution === 'derived' && editable && (
+          <button
+            type="button"
+            data-testid={`confirm-attribution-${activityId}-${partyId}`}
+            onClick={() => onChange!(confirmAttribution(model, activityId, partyId))}
+            className="text-xs text-brand shrink-0"
+          >
+            Confirm
+          </button>
         )}
       </div>
 
@@ -128,6 +150,67 @@ export function ContributionCard({
           </span>
         )}
       </div>
+
+      {editable && (
+        <div className="mt-2 relative">
+          <button
+            type="button"
+            data-testid={`party-menu-${activityId}-${partyId}`}
+            aria-label={`Parties for ${activity.label}`}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+            className="flex items-center gap-1 text-xs text-secondary hover:text-brand"
+          >
+            <Users className="w-3 h-3" aria-hidden="true" />
+            Parties
+          </button>
+
+          {menuOpen && (
+            <div className="absolute z-10 mt-1 bg-surface-raised rounded-lg p-2 shadow-lg min-w-[12rem]">
+              {available.length === 0 ? (
+                <p className="text-muted text-xs italic px-1 py-1">
+                  Every party already contributes to this activity.
+                </p>
+              ) : (
+                available.map((party) => (
+                  <button
+                    key={party.id}
+                    type="button"
+                    data-testid={`add-party-${activityId}-${partyId}-${party.id}`}
+                    onClick={() => {
+                      onChange!(addParty(model, activityId, party.id))
+                      setMenuOpen(false)
+                    }}
+                    className="block w-full text-left text-xs text-primary px-1 py-1 hover:text-brand"
+                  >
+                    Add {party.label}
+                  </button>
+                ))
+              )}
+
+              <button
+                type="button"
+                data-testid={`remove-party-${activityId}-${partyId}`}
+                disabled={lastOne}
+                aria-describedby={lastOne ? `remove-why-${activityId}-${partyId}` : undefined}
+                onClick={() => {
+                  onRequestRemove?.(activityId, partyId)
+                  setMenuOpen(false)
+                }}
+                className="block w-full text-left text-xs px-1 py-1 mt-1 border-t border-surface text-red-400 disabled:text-muted"
+              >
+                Remove this party
+              </button>
+              {lastOne && (
+                <p id={`remove-why-${activityId}-${partyId}`} className="text-muted text-xs px-1">
+                  The only party on this activity - removing it would make the activity
+                  disappear from the chain.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -15,6 +15,7 @@ import {
   columnRange,
   contributionKey,
   moveToColumn,
+  removeParty,
   type ValueChainModel,
   type ValueChainSelection,
 } from '../utils/valueChainModel'
@@ -41,6 +42,13 @@ export function ValueChainGrid({
   // reaches a given cell.
   const [draggingParty, setDraggingParty] = useState<string | null>(null)
   const [hoverCell, setHoverCell] = useState<{ partyId: string; column: number } | null>(null)
+  // The party a card asked to remove, pending confirmation. Held here rather than in the
+  // card because the card cannot know the cost of removal in isolation - only the grid,
+  // which has the whole model, can name the tasks that would go with it.
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    activityId: string
+    partyId: string
+  } | null>(null)
 
   if (model.segments.length === 0) {
     return (
@@ -204,6 +212,9 @@ export function ValueChainGrid({
                             contribution={contribution}
                             onChange={onChange}
                             onSelect={onSelect}
+                            onRequestRemove={(activityId, partyId) =>
+                              setPendingRemoval({ activityId, partyId })
+                            }
                             selected={
                               selected?.activityId === activity.id &&
                               selected?.partyId === party.id
@@ -219,6 +230,75 @@ export function ValueChainGrid({
           </section>
         )
       })}
+
+      {pendingRemoval && (() => {
+        const activity = model.activities.find((a) => a.id === pendingRemoval.activityId)
+        const party = model.parties.find((p) => p.id === pendingRemoval.partyId)
+        const doomed = model.tasks.filter(
+          (t) =>
+            t.activity_id === pendingRemoval.activityId &&
+            t.party_id === pendingRemoval.partyId,
+        )
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Confirm removal"
+              className="bg-surface-raised rounded-xl max-w-md w-full p-5"
+            >
+              <h3 className="text-sm font-medium text-primary">
+                Remove {party?.label} from {activity?.label}?
+              </h3>
+              {/* Tasks belong to the contribution, so they go with it. Saying how many, and
+                  which, is what makes this a decision rather than a surprise. */}
+              {doomed.length > 0 && (
+                <>
+                  <p className="mt-2 text-xs text-secondary">
+                    {party?.label} owns {doomed.length} task
+                    {doomed.length === 1 ? '' : 's'} here. Removing the party deletes them.
+                  </p>
+                  <ul className="mt-2 text-xs text-muted space-y-1">
+                    {doomed.map((task) => (
+                      <li key={task.id}>
+                        <span className="font-mono">{task.id}</span> {task.label ?? ''}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <p className="mt-3 text-xs text-muted">
+                The saved version is unchanged until you save, so this can be reverted.
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="cancel-remove"
+                  onClick={() => setPendingRemoval(null)}
+                  className="text-xs text-secondary px-3 py-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  data-testid="confirm-remove"
+                  onClick={() => {
+                    onChange!(
+                      removeParty(model, pendingRemoval.activityId, pendingRemoval.partyId),
+                    )
+                    setPendingRemoval(null)
+                  }}
+                  className="text-xs bg-brand text-white rounded px-3 py-1"
+                >
+                  {doomed.length > 0
+                    ? `Remove and delete ${doomed.length}`
+                    : 'Remove'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
