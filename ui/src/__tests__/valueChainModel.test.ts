@@ -351,6 +351,59 @@ describe('counts and available parties', () => {
   })
 })
 
+// Every other fixture in this file and in the component tests has exactly one segment, so
+// nothing proved that moveContribution and moveToColumn scope their occupant search to the
+// moved card's own segment. Columns restart at 10 in every segment, so deleting that scoping
+// would let a move in one segment reach into another and yank a card out of it - and no
+// single-segment fixture can tell the two apart.
+function twoSegmentModel(): ValueChainModel {
+  return {
+    model_version: 1,
+    parties: [{ id: 'sp', label: 'SP-GS' }],
+    segments: [
+      { id: '1', label: 'Property Value Chain' },
+      { id: '2', label: 'Corporate Services' },
+    ],
+    activities: [
+      { id: '1.1', segment_id: '1', label: 'Strategy' },
+      { id: '1.2', segment_id: '1', label: 'Acquisition' },
+      { id: '2.1', segment_id: '2', label: 'Finance' },
+      { id: '2.2', segment_id: '2', label: 'People' },
+    ],
+    contributions: [
+      { activity_id: '1.1', party_id: 'sp', column: 10, description: 'one at ten', attribution: 'stated' },
+      { activity_id: '1.2', party_id: 'sp', column: 20, description: 'one at twenty', attribution: 'stated' },
+      { activity_id: '2.1', party_id: 'sp', column: 10, description: 'two at ten', attribution: 'stated' },
+      { activity_id: '2.2', party_id: 'sp', column: 30, description: 'two at thirty', attribution: 'stated' },
+    ],
+    tasks: [],
+    propositions: [],
+    links: [],
+  }
+}
+
+describe("a move is scoped to the moved card's own segment", () => {
+  it('leaves the first segment untouched when a card in the second moves onto a shared column number', () => {
+    // sp holds column 20 in segment 1 and nothing at 20 in segment 2, so moving 2.1 right
+    // from 10 to 20 must find no occupant at all - 1.2 is in a different lane row entirely.
+    const next = moveContribution(twoSegmentModel(), '2.1', 'sp', 'right')
+    expect(next.contributions.find((c) => c.activity_id === '2.1')!.column).toBe(20)
+    expect(next.contributions.filter((c) => c.activity_id.startsWith('1.'))).toEqual(
+      twoSegmentModel().contributions.filter((c) => c.activity_id.startsWith('1.')),
+    )
+  })
+
+  it('does not drag a card out of another segment when the target column is free in its own', () => {
+    // Column 20 is free in segment 2 and occupied by 1.2 in segment 1. Dragging 2.2 to 20
+    // must simply take it - not exchange columns with 1.2, which is not in this lane row and
+    // would be pulled from 20 to 30, a change nobody asked for in a segment nobody touched.
+    const next = moveToColumn(twoSegmentModel(), '2.2', 'sp', 20)
+    expect(next.contributions.find((c) => c.activity_id === '2.2')!.column).toBe(20)
+    expect(next.contributions.find((c) => c.activity_id === '1.2')!.column).toBe(20)
+    expect(next.contributions.find((c) => c.activity_id === '1.1')!.column).toBe(10)
+  })
+})
+
 describe('moveToColumn', () => {
   it('takes an empty column', () => {
     const next = moveToColumn(model(), '1.1', 'sp', 40)
