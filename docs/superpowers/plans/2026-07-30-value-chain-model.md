@@ -463,8 +463,10 @@ from api.services.value_chain_migration import (
 )
 from api.services.value_chain_model import COLUMN_STEP, validate_model
 
-MERMAID = """```mermaid
-flowchart LR
+# No ``` fence wrapper: the parser regexes over the text and never needs one, and a
+# fence marker at column 0 inside this code block would break markdown tooling that
+# extracts tasks by heading.
+MERMAID = """flowchart LR
   subgraph P["PROPERTY"]
     A["Raise works order"]:::sp
     B["Execute repair"]:::partnerISS
@@ -473,7 +475,7 @@ flowchart LR
   classDef sp         fill:#1a5276,color:#fff,stroke:#1a5276
   classDef partnerISS fill:#c0392b,color:#fff,stroke:#922b21
   classDef partnerDXI fill:#27ae60,color:#fff,stroke:#1e8449
-```"""
+"""
 
 REGISTRY = {
     "schema_version": 2,
@@ -623,7 +625,7 @@ def test_migration_is_idempotent():
 
 def test_a_registry_with_no_mermaid_attribution_migrates_without_parties():
     """A fresh project has nothing to recover, and that is not an error."""
-    model = migrate(REGISTRY, "```mermaid\nflowchart LR\n  A[\"x\"]\n```")
+    model = migrate(REGISTRY, 'flowchart LR\n  A["x"]')
     assert model["parties"] == []
     assert model["contributions"] == []
     assert validate_model(model) == []
