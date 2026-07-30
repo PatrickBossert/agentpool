@@ -125,8 +125,11 @@ describe('dragging a card', () => {
   })
 
   it('does not make cards draggable when read-only', () => {
+    // draggable="false", not merely "not true": the attribute being absent altogether would
+    // satisfy not.toHaveAttribute('draggable', 'true') while telling us nothing. React does
+    // render it, so the honest assertion is on its value.
     render(<ValueChainGrid model={MODEL} />)
-    expect(screen.getByTestId('card-header-1.1-sp')).not.toHaveAttribute('draggable', 'true')
+    expect(screen.getByTestId('card-header-1.1-sp')).toHaveAttribute('draggable', 'false')
   })
 
   it('ignores a drop with no payload, because nothing was ever dragged from this grid', () => {
@@ -170,8 +173,13 @@ describe('drag-over visual cue', () => {
     render(<Stateful />)
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
-    fireEvent.dragOver(screen.getByTestId('cell-iss-30'), { dataTransfer: dt })
 
+    // Positive anchor first. Without it a cue mechanism broken everywhere would satisfy the
+    // assertion below, which is exactly what "absent" proves nothing about on its own.
+    fireEvent.dragOver(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+    expect(screen.getByTestId('cell-sp-30')).toHaveClass('border-brand')
+
+    fireEvent.dragOver(screen.getByTestId('cell-iss-30'), { dataTransfer: dt })
     expect(screen.getByTestId('cell-iss-30')).not.toHaveClass('border-brand')
   })
 
@@ -179,9 +187,13 @@ describe('drag-over visual cue', () => {
     render(<Stateful />)
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
-    fireEvent.dragOver(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
-    fireEvent.dragLeave(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
 
+    fireEvent.dragOver(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+    // The cue must exist between the dragOver and the dragLeave, or the assertion after the
+    // dragLeave says nothing about clearing - only that the cue was never there.
+    expect(screen.getByTestId('cell-sp-30')).toHaveClass('border-brand')
+
+    fireEvent.dragLeave(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
     expect(screen.getByTestId('cell-sp-30')).not.toHaveClass('border-brand')
   })
 })

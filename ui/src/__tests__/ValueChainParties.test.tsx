@@ -179,9 +179,9 @@ describe('removing a party', () => {
     await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
     await userEvent.click(screen.getByTestId('remove-party-1.2-sp'))
 
-    const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveTextContent('2')
-    expect(dialog).toHaveTextContent(/task/i)
+    // The sentence, not a bare '2'. The dialog also lists task IDs 1.2.1 and 1.2.2, which
+    // both contain "2", so toHaveTextContent('2') could not fail whatever the count said.
+    expect(screen.getByRole('dialog')).toHaveTextContent(/owns 2 tasks here/i)
   })
 
   it('removes the contribution and its tasks together on confirm', async () => {
