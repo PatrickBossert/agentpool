@@ -127,6 +127,28 @@ a static search for `from 'mermaid'` does not find that. There is also a backend
 
 ---
 
+## Where the model lives, and how an edit persists
+
+The model is a JSON artefact at `projects/<slug>/outputs/value_chain_model_v<n>.json`,
+recorded in `agent_outputs` with `output_type='value_chain_model'` - the same versioned
+mechanism every other output uses.
+
+**An edit produces a new working version, not an in-place write.** Saving from the Structure
+tab writes the next version file, inserts an `agent_outputs` row, supersedes the previous
+`is_current`, and records an `output_changes` row with `source='edit'` naming who asked and
+what changed. That is exactly the versioning discipline already recorded: the versioned
+artefact is the source of truth, an edit never touches a committed version, and every
+change is attributed.
+
+**Saving is explicit, not per-keystroke.** A Save control commits the batch of edits made
+since the last save. Writing a version file per keystroke would bury the change log in
+noise and make the differential in project 7 useless - a hundred single-character versions
+tell you nothing about what changed. Unsaved edits are held in the editor and discarded on
+navigation, with the usual warning.
+
+This also means the value chain participates in the approval loop for free: edit, save,
+mark ready, approve.
+
 ## Migration
 
 Existing IDs survive absolutely, with their parentage. Nothing is renumbered.
