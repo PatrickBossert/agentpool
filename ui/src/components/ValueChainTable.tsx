@@ -242,7 +242,12 @@ export function ValueChainTable({
                                     <input
                                       type="text"
                                       data-testid={`description-${activity.id}-${party.id}`}
-                                      defaultValue={contribution.description ?? ''}
+                                      // Controlled, not defaultValue. Cells are keyed by
+                                      // column, so a move hands this same input node to a
+                                      // different contribution - an uncontrolled field
+                                      // would keep the old text, show it against the wrong
+                                      // activity, and let the next keystroke save it there.
+                                      value={contribution.description ?? ''}
                                       onChange={(e) =>
                                         onChange(
                                           updateDescription(model, activity.id, party.id, e.target.value),

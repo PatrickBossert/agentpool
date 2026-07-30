@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -54,10 +55,39 @@ const DERIVED_MODEL: ValueChainModel = {
 const onChange = vi.fn()
 beforeEach(() => onChange.mockReset())
 
+// The page lifts the working copy into state and feeds it straight back in, so a test that
+// only inspects onChange's argument never sees what a person would actually be looking at.
+// This harness reproduces that loop, which is the only way to assert on the rendered fields.
+function StatefulTable({
+  initial,
+  onModelChange,
+}: {
+  initial: ValueChainModel
+  onModelChange?: (model: ValueChainModel) => void
+}) {
+  const [model, setModel] = useState(initial)
+  return (
+    <ValueChainTable
+      model={model}
+      onChange={(updated) => {
+        setModel(updated)
+        onModelChange?.(updated)
+      }}
+    />
+  )
+}
+
+function fieldValue(activityId: string, partyId: string): string {
+  return (screen.getByTestId(`description-${activityId}-${partyId}`) as HTMLInputElement).value
+}
+
 describe('ValueChainTable editing', () => {
   it('reports an edited description without mutating the model it was given', async () => {
     const original = structuredClone(MODEL)
-    render(<ValueChainTable model={MODEL} onChange={onChange} />)
+    // MODEL itself is handed in, not a clone, so the no-mutation assertion below still has
+    // something to catch. The field is controlled, so typing has to be fed back through
+    // state or the value it displays never advances past the first keystroke.
+    render(<StatefulTable initial={MODEL} onModelChange={onChange} />)
 
     const field = screen.getByTestId('description-1.1-sp')
     await userEvent.clear(field)
@@ -71,7 +101,7 @@ describe('ValueChainTable editing', () => {
   })
 
   it('editing a derived contribution never promotes its attribution to stated', async () => {
-    render(<ValueChainTable model={DERIVED_MODEL} onChange={onChange} />)
+    render(<StatefulTable initial={DERIVED_MODEL} onModelChange={onChange} />)
 
     const field = screen.getByTestId('description-1.1-sp')
     await userEvent.clear(field)
@@ -123,6 +153,36 @@ describe('ValueChainTable editing', () => {
       .filter((c) => c.party_id === 'sp')
       .map((c) => c.column)
     expect(new Set(spColumns).size).toBe(spColumns.length)
+  })
+
+  it('shows each description against its own contribution after a move', async () => {
+    // Cells are keyed by column, so a move hands the same input DOM node to a different
+    // contribution. An uncontrolled field keeps whatever was typed into it and the
+    // descriptions swap on screen while the model stays right - and the next keystroke in
+    // either field then writes one contribution's text over the other's.
+    render(<StatefulTable initial={structuredClone(MODEL)} />)
+
+    const field = screen.getByTestId('description-1.1-sp')
+    await userEvent.clear(field)
+    await userEvent.type(field, 'revised')
+    await userEvent.click(screen.getByTestId('move-right-1.1-sp'))
+
+    expect(fieldValue('1.1', 'sp')).toBe('revised')
+    expect(fieldValue('1.2', 'sp')).toBe('second')
+  })
+
+  it('writes a further keystroke after a move to the contribution being typed into', async () => {
+    render(<StatefulTable initial={structuredClone(MODEL)} />)
+
+    const field = screen.getByTestId('description-1.1-sp')
+    await userEvent.clear(field)
+    await userEvent.type(field, 'revised')
+    await userEvent.click(screen.getByTestId('move-right-1.1-sp'))
+    await userEvent.type(screen.getByTestId('description-1.2-sp'), 'X')
+
+    // 1.2's own text gains the keystroke; 1.1's is untouched.
+    expect(fieldValue('1.2', 'sp')).toBe('secondX')
+    expect(fieldValue('1.1', 'sp')).toBe('revised')
   })
 
   it('is read-only when no onChange is given', () => {
