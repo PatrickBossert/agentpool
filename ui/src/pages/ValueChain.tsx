@@ -137,6 +137,55 @@ export default function ValueChain() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['value-chain-model', slug] }),
   })
 
+  // Edits are held here, in the page, and only committed to the server by the Save
+  // control - never per-keystroke, so the version history and change log stay meaningful.
+  const [editedModel, setEditedModel] = useState<ValueChainModel | null>(null)
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [changeSummary, setChangeSummary] = useState('')
+  const [saveProblems, setSaveProblems] = useState<string[] | null>(null)
+
+  // Reseed the working copy from the server whenever a fresh model arrives and there is
+  // nothing unsaved to lose - covers first load and the refetch after a successful save.
+  useEffect(() => {
+    if (model && !hasUnsavedChanges) setEditedModel(model)
+  }, [model, hasUnsavedChanges])
+
+  function handleModelChange(updated: ValueChainModel) {
+    setEditedModel(updated)
+    setHasUnsavedChanges(true)
+    setSaveProblems(null)
+  }
+
+  const saveModelMutation = useMutation({
+    mutationFn: () => valueChainApi.save(slug!, editedModel, changeSummary),
+    onSuccess: () => {
+      setHasUnsavedChanges(false)
+      setSaveProblems(null)
+      setChangeSummary('')
+      qc.invalidateQueries({ queryKey: ['value-chain-model', slug] })
+    },
+    onError: (e: unknown) => {
+      if (axios.isAxiosError(e) && e.response?.status === 422) {
+        const problems = (e.response.data as { detail?: { problems?: string[] } } | undefined)?.detail?.problems
+        setSaveProblems(problems && problems.length > 0 ? problems : ['The value chain model could not be saved.'])
+      } else {
+        setSaveProblems(['Failed to save changes. Try again.'])
+      }
+    },
+  })
+
+  // Unsaved edits are discarded on navigation - the usual browser warning is the only
+  // safeguard, since there is nowhere else in this app that persists a draft.
+  useEffect(() => {
+    function warnBeforeUnload(e: BeforeUnloadEvent) {
+      if (!hasUnsavedChanges) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [hasUnsavedChanges])
+
   // ── Templates tab state ──────────────────────────────────────
   const [nodeAssignments, setNodeAssignments] = useState<NodeTemplateAssignment[]>([])
   const [interviewTemplates, setInterviewTemplates] = useState<TemplateListItem[]>([])
@@ -501,13 +550,51 @@ export default function ValueChain() {
       {/* ── Structure tab ─────────────────────────────────────── */}
       {activeTab === 'structure' && (
         <>
-          {modelLoading && <p className="text-sm text-gray-400">Loading…</p>}
+          {modelLoading && <p className="text-sm text-muted">Loading…</p>}
 
-          {!modelLoading && model && <ValueChainTable model={model} />}
+          {!modelLoading && editedModel && (
+            <>
+              <ValueChainTable model={editedModel} onChange={handleModelChange} />
+
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                <input
+                  type="text"
+                  value={changeSummary}
+                  onChange={(e) => setChangeSummary(e.target.value)}
+                  placeholder="Summary of this change (optional)"
+                  className="flex-1 min-w-[16rem] max-w-md bg-surface-raised border border-surface rounded px-3 py-2 text-sm text-primary placeholder-muted outline-none focus:border-brand"
+                />
+                <button
+                  type="button"
+                  onClick={() => saveModelMutation.mutate()}
+                  disabled={!hasUnsavedChanges || saveModelMutation.isPending}
+                  className="px-4 py-2 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm font-medium rounded"
+                >
+                  {saveModelMutation.isPending ? 'Saving…' : 'Save'}
+                </button>
+                {hasUnsavedChanges && !saveModelMutation.isPending && (
+                  <span data-testid="unsaved-changes" className="text-secondary text-xs">
+                    Unsaved changes
+                  </span>
+                )}
+              </div>
+
+              {saveProblems && (
+                <div className="mt-3 bg-surface-card border border-surface rounded p-3">
+                  <p className="text-primary text-xs font-medium mb-1">Could not save:</p>
+                  <ul className="list-disc list-inside text-xs text-red-400 space-y-0.5">
+                    {saveProblems.map((problem, i) => (
+                      <li key={i}>{problem}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
 
           {!modelLoading && modelMissing && (
             <div className="bg-surface-card rounded-xl p-8 text-center">
-              <p className="text-gray-400 text-sm mb-4">
+              <p className="text-muted text-sm mb-4">
                 No value chain model has been saved for this project yet.
               </p>
               <button
