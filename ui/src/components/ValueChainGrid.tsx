@@ -9,7 +9,7 @@
 //
 // Every cell renders whether occupied or not, so a gap is a real position - and, from Task
 // 6, a real drop target - rather than an absence.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   columnRange,
@@ -19,7 +19,7 @@ import {
   type ValueChainModel,
   type ValueChainSelection,
 } from '../utils/valueChainModel'
-import { ContributionCard } from './ContributionCard'
+import { ContributionCard, partyMenuButtonId } from './ContributionCard'
 
 const GUTTER = '10rem'
 const COLUMN_WIDTH = '13rem'
@@ -55,6 +55,18 @@ export function ValueChainGrid({
   const [openMenu, setOpenMenu] = useState<{ activityId: string; partyId: string } | null>(
     null,
   )
+
+  // The removal dialog is modal and covers the whole grid, so a keyboard-only user landed
+  // nowhere when it opened. Focus moves into it on open, and back to the card's Parties
+  // button on close - not to the Remove entry that opened it, which lives inside the menu
+  // that closes as part of making the request. Deliberately not a focus trap.
+  const removalDialog = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!pendingRemoval) return
+    const { activityId, partyId } = pendingRemoval
+    removalDialog.current?.focus()
+    return () => document.getElementById(partyMenuButtonId(activityId, partyId))?.focus()
+  }, [pendingRemoval])
 
   if (model.segments.length === 0) {
     return (
@@ -258,10 +270,12 @@ export function ValueChainGrid({
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
             <div
+              ref={removalDialog}
               role="dialog"
               aria-modal="true"
               aria-label="Confirm removal"
-              className="bg-surface-raised rounded-xl max-w-md w-full p-5"
+              tabIndex={-1}
+              className="bg-surface-raised rounded-xl max-w-md w-full p-5 outline-none"
             >
               <h3 className="text-sm font-medium text-primary">
                 Remove {party?.label} from {activity?.label}?

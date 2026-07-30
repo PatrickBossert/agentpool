@@ -4,6 +4,7 @@
 // propositions that attach to its activity as a whole. Editing these arrives with the
 // grid in a later project - this panel only ever reads the model it is given. Rendered as
 // a modal dialog by the Structure tab, which owns whether it is mounted at all.
+import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import type { ValueChainModel } from '../utils/valueChainModel'
 
@@ -28,6 +29,18 @@ export function ContributionPanel({
   const tasks = model.tasks.filter((t) => t.activity_id === activityId && t.party_id === partyId)
   const propositions = model.propositions.filter((p) => p.activity_id === activityId)
 
+  // This is a modal dialog covering the whole grid, so a keyboard-only user landed nowhere
+  // when it opened and nowhere useful when it closed. Focus moves in on open and back to
+  // whatever had it on close - which is the card header that opened this, since selecting a
+  // contribution is what mounts the panel. Deliberately not a focus trap: Escape closes from
+  // anywhere, and the cost of a home-made trap is higher than what it buys here.
+  const dialog = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    dialog.current?.focus()
+    return () => opener?.focus?.()
+  }, [])
+
   return (
     <div
       data-testid="contribution-panel-backdrop"
@@ -35,11 +48,18 @@ export function ContributionPanel({
       onClick={onClose}
     >
       <div
+        ref={dialog}
         role="dialog"
         aria-modal="true"
-        aria-label={`${activityId} detail`}
+        // The activity's label, not its bare ID - "1.1 detail" told a screen reader nothing.
+        aria-label={
+          party
+            ? `${activity?.label ?? activityId} - ${party.label} detail`
+            : `${activity?.label ?? activityId} detail`
+        }
+        tabIndex={-1}
         data-testid="contribution-panel"
-        className="bg-surface-raised rounded-xl max-w-lg w-full max-h-[80vh] overflow-y-auto p-5"
+        className="bg-surface-raised rounded-xl max-w-lg w-full max-h-[80vh] overflow-y-auto p-5 outline-none"
         // The backdrop closes on click; the dialog itself must not, or every interaction
         // inside it would dismiss the thing being interacted with.
         onClick={(e) => e.stopPropagation()}

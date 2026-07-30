@@ -188,3 +188,31 @@ describe('ValueChain contribution panel wiring', () => {
     expect(dialog).not.toHaveTextContent('Execute repair')
   })
 })
+
+// The panel is a modal dialog covering the whole grid. A keyboard-only user landed nowhere
+// when it opened, and nowhere useful when it closed. A full focus trap is out of scope.
+describe('the contribution panel and the keyboard', () => {
+  it('names the activity in its accessible name, not only its ID', async () => {
+    // "1.1 detail" is what a screen reader announced. The activity's label is in scope.
+    await openStructureTab()
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+
+    expect(screen.getByRole('dialog')).toHaveAccessibleName(/Reactive/)
+  })
+
+  it('moves focus into the dialog when it opens', async () => {
+    await openStructureTab()
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+
+    expect(screen.getByTestId('contribution-panel')).toHaveFocus()
+  })
+
+  it('returns focus to the card that opened it when it closes', async () => {
+    await openStructureTab()
+    const opener = screen.getByTestId('card-header-1.1-sp')
+    await userEvent.click(opener)
+    await userEvent.click(screen.getByTestId('close-contribution-panel'))
+
+    expect(opener).toHaveFocus()
+  })
+})

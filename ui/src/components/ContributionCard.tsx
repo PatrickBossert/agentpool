@@ -25,6 +25,14 @@ import {
   type ValueChainModel,
 } from '../utils/valueChainModel'
 
+// The removal dialog has to hand focus back to something when it closes, and the Remove
+// entry that opened it lives inside the menu, which closes as part of making the request.
+// This button is the control still standing, so the grid needs to be able to find it - hence
+// a real id rather than a test id.
+export function partyMenuButtonId(activityId: string, partyId: string): string {
+  return `party-menu-button-${activityId}-${partyId}`
+}
+
 export function ContributionCard({
   model,
   activity,
@@ -162,6 +170,7 @@ export function ContributionCard({
         <div className="mt-2 relative">
           <button
             type="button"
+            id={partyMenuButtonId(activityId, partyId)}
             data-testid={`party-menu-${activityId}-${partyId}`}
             aria-label={`Parties for ${activity.label}`}
             aria-expanded={menuOpen}

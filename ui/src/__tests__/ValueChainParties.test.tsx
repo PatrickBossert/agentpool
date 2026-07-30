@@ -228,6 +228,34 @@ describe('the party menu', () => {
   })
 })
 
+// Same gap as the contribution panel: a modal dialog covering the whole grid that a
+// keyboard-only user was never moved into, and was left nowhere useful by. A full focus trap
+// is out of scope.
+describe('the removal dialog and the keyboard', () => {
+  async function openRemovalDialog() {
+    render(<Stateful />)
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+    await userEvent.click(screen.getByTestId('add-party-1.2-sp-iss'))
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+    await userEvent.click(screen.getByTestId('remove-party-1.2-sp'))
+  }
+
+  it('moves focus into the dialog when it opens', async () => {
+    await openRemovalDialog()
+
+    expect(screen.getByRole('dialog')).toHaveFocus()
+  })
+
+  it("returns focus to the card's Parties control when it closes", async () => {
+    // Not to the Remove entry that opened it: that lives inside the menu, which closes as
+    // part of making the request, so the menu button is the control still standing.
+    await openRemovalDialog()
+    await userEvent.click(screen.getByTestId('cancel-remove'))
+
+    expect(screen.getByTestId('party-menu-1.2-sp')).toHaveFocus()
+  })
+})
+
 describe('the removal dialog', () => {
   it("names the reopened card's party and activity, not the cancelled one's", async () => {
     render(<Stateful />)
