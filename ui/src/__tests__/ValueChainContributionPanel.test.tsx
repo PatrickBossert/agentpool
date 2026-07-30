@@ -74,6 +74,12 @@ async function openStructureTab() {
 }
 
 describe('ValueChain contribution panel wiring', () => {
+  it('shows no dialog before a contribution is selected', async () => {
+    await openStructureTab()
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('selecting a cell in the table shows that contribution in the panel', async () => {
     await openStructureTab()
 
@@ -139,9 +145,35 @@ describe('ValueChain contribution panel wiring', () => {
     render(<Wrapper />)
     await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
     await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
     await userEvent.keyboard('{Escape}')
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('closes when the backdrop is clicked', async () => {
+    render(<Wrapper />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('contribution-panel-backdrop'))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('stays open when something inside the dialog body is clicked', async () => {
+    render(<Wrapper />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    // A real, non-interactive element inside the dialog body - not the close control,
+    // which would close it regardless of whether propagation was stopped.
+    await userEvent.click(screen.getByRole('heading', { name: 'Tasks' }))
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it("shows the tasks of the party whose card was opened, not the other party's", async () => {
