@@ -92,26 +92,32 @@ def test_a_contribution_recovered_from_a_class_is_stated():
     assert "sp" in stated
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Contradicts test_a_tie_is_broken_by_party_name_ascending. Both tests build a "
-        "single-segment registry with one sp-labelled task, one partnerISS-labelled task "
-        "and one orphan, against the same Mermaid text - so stated counts are identically "
-        "{'sp': 1, 'partnerISS': 1} in both. Per the documented rule ('ties broken by "
-        "party name ascending'), sorted(['sp', 'partnerISS'])[0] == 'partnerISS' in both "
-        "cases, matching the sibling test. This test's comment ('sp holds the most "
-        "attributed tasks') is factually wrong for this fixture - it is a 1-1 tie, not a "
-        "majority - so its assertion cannot hold without breaking the sibling test's. "
-        "Kept verbatim per the task brief rather than edited, and marked xfail rather than "
-        "silently skipped or forced to pass by weakening the tie-break rule."
-    ),
-)
 def test_an_unmatched_task_takes_the_segments_dominant_party_and_is_marked_derived():
-    """'Unmentioned task' appears in no Mermaid node, so it falls back."""
-    model = migrate(REGISTRY, MERMAID)
+    """'Unmentioned task' appears in no Mermaid node, so it falls back to the segment's
+    dominant party. The fixture must give segment 1 a genuine majority rather than a tie -
+    a tied fixture would test the tie-break rule (covered separately below), not this one.
+    A local registry is used, with a second L3 task also labelled "Raise works order" so it
+    matches the same MERMAID `sp` node, rather than mutating the shared REGISTRY.
+    """
+    registry = {
+        "activities": [
+            {"id": "1", "label": "PROPERTY", "level": "L1", "active": True},
+            {"id": "1.1", "label": "Reactive Maintenance", "level": "L2", "active": True,
+             "parent_id": "1"},
+            {"id": "1.1.1", "label": "Raise works order", "level": "L3", "active": True,
+             "parent_id": "1.1"},
+            {"id": "1.1.2", "label": "Execute repair", "level": "L3", "active": True,
+             "parent_id": "1.1"},
+            {"id": "1.1.4", "label": "Raise works order", "level": "L3", "active": True,
+             "parent_id": "1.1"},
+            {"id": "1.1.3", "label": "Unmentioned task", "level": "L3", "active": True,
+             "parent_id": "1.1"},
+        ],
+    }
+    model = migrate(registry, MERMAID)
     unmatched = next(t for t in model["tasks"] if t["id"] == "1.1.3")
-    # sp holds the most attributed tasks in segment 1, so it wins.
+    # sp now genuinely holds the most attributed tasks in segment 1 (2 vs partnerISS's 1),
+    # so it wins outright - not by tie-break.
     assert unmatched["party_id"] == "sp"
     derived = {
         (c["activity_id"], c["party_id"])
