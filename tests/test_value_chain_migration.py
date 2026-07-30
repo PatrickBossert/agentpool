@@ -276,11 +276,82 @@ def test_migration_is_idempotent():
 
 
 def test_a_registry_with_no_mermaid_attribution_migrates_without_parties():
-    """A fresh project has nothing to recover, and that is not an error."""
+    """A fresh project has nothing to recover, so migrate() does not invent attribution -
+    no parties, no contributions. That result is no longer reported as a valid model,
+    though: an activity with nothing to attribute it to is exactly the bad state the "every
+    activity needs a contribution" rule exists to catch (see test_value_chain_model.py),
+    not an exception to it. The activity simply cannot be migrated cleanly; a person must
+    supply attribution before the model is usable."""
     model = migrate(REGISTRY, "```mermaid\nflowchart LR\n  A[\"x\"]\n```")
     assert model["parties"] == []
     assert model["contributions"] == []
+    assert any("no contribution" in p for p in validate_model(model))
+
+
+def test_an_activity_with_no_tasks_still_gets_a_contribution():
+    """Contributions are derived from task attribution, so an L2 with no L3 children got
+    none at all - which validate_model now rejects. The cascade already exists for a node
+    whose label cannot be matched; a childless activity is the same problem with no node to
+    match, so it takes the same answer and is marked derived."""
+    registry = {"activities": [
+        {"id": "1", "label": "Segment", "level": "L1", "active": True},
+        {"id": "1.1", "label": "Has tasks", "level": "L2", "active": True, "parent_id": "1"},
+        {"id": "1.2", "label": "No tasks", "level": "L2", "active": True, "parent_id": "1"},
+        {"id": "1.1.1", "label": "A task", "level": "L3", "active": True, "parent_id": "1.1"},
+    ]}
+    mermaid = (
+        "```mermaid\nflowchart LR\n"
+        '  A["A task"]:::sp\n'
+        "  classDef sp fill:#1a5276\n"
+        "```"
+    )
+
+    model = migrate(registry, mermaid)
+
+    childless = [c for c in model["contributions"] if c["activity_id"] == "1.2"]
+    assert len(childless) == 1
+    assert childless[0]["party_id"] == "sp"
+    assert childless[0]["attribution"] == "derived"
+
+
+def test_a_childless_activity_keeps_its_sequence_column():
+    """Its column comes from its position in the segment's numeric ID order like any other
+    activity, so it does not pile onto a neighbour's column."""
+    registry = {"activities": [
+        {"id": "1", "label": "Segment", "level": "L1", "active": True},
+        {"id": "1.1", "label": "Has tasks", "level": "L2", "active": True, "parent_id": "1"},
+        {"id": "1.2", "label": "No tasks", "level": "L2", "active": True, "parent_id": "1"},
+        {"id": "1.1.1", "label": "A task", "level": "L3", "active": True, "parent_id": "1.1"},
+    ]}
+    mermaid = (
+        "```mermaid\nflowchart LR\n"
+        '  A["A task"]:::sp\n'
+        "  classDef sp fill:#1a5276\n"
+        "```"
+    )
+
+    model = migrate(registry, mermaid)
+    by_activity = {c["activity_id"]: c["column"] for c in model["contributions"]}
+
+    assert by_activity == {"1.1": 10, "1.2": 20}
+
+
+def test_the_real_project_still_migrates_with_every_activity_contributed():
+    """sp-gs-am has no childless activity, so this guards against the fix changing what
+    already worked - and against the new validate_model rule rejecting the real model."""
+    from pathlib import Path
+    import json
+    from api.services.value_chain_model import validate_model
+
+    outputs = Path("projects/sp-gs-am/outputs")
+    registry = json.loads((outputs / "value_chain_registry.json").read_text())
+    mermaid = (outputs / "value_chain_v12.md").read_text()
+
+    model = migrate(registry, mermaid)
+
     assert validate_model(model) == []
+    contributed = {c["activity_id"] for c in model["contributions"]}
+    assert contributed == {a["id"] for a in model["activities"]}
 
 
 def test_the_real_project_migrates_cleanly():

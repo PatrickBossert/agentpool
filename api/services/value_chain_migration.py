@@ -155,6 +155,22 @@ def migrate(registry: dict, mermaid: str) -> dict:
         })
         (stated_pairs if was_stated else derived_pairs).add((activity_id, party))
 
+    # An activity with no L3 children got no task, and contributions are built from task
+    # attribution - so it got no contribution either, which validate_model now rejects
+    # because such an activity appears in no lane and vanishes from the grid. The cascade
+    # already answers "which party, when nothing states one" for an unmatched node; a
+    # childless activity is the same question with no node at all, so it takes the same
+    # answer, and lands in derived_pairs because nothing stated it.
+    contributed = {activity_id for activity_id, _ in stated_pairs | derived_pairs}
+    for activity in model["activities"]:
+        if activity["id"] in contributed:
+            continue
+        party = _dominant(per_segment.get(activity["segment_id"], {})) or project_dominant
+        if party is not None:
+            # None means nothing in the project is attributed at all - a fresh project with
+            # no diagram to recover from, where the tasks were dropped for the same reason.
+            derived_pairs.add((activity["id"], party))
+
     # Contributions are derived from task attribution, one per (activity, party) seen.
     # A pair with any stated task counts as stated - the diagram said so for part of it.
     columns = _columns_by_activity(model["activities"])

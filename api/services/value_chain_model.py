@@ -114,6 +114,17 @@ def validate_model(model: dict) -> list[str]:
                 )
             seen_cells.add(cell)
 
+    # An activity with no contribution belongs to no lane, so it disappears from the grid
+    # while remaining in model["activities"] - and nothing in the UI can bring it back.
+    # This became reachable when removing a party's contribution became possible.
+    contributed_activity_ids = {activity_id for activity_id, _ in contribution_ids}
+    for activity in model.get("activities", []):
+        if activity.get("id") not in contributed_activity_ids:
+            problems.append(
+                f"activity {activity.get('id')} has no contribution - it would not appear "
+                "in the grid and could not be recovered"
+            )
+
     for task in model.get("tasks", []):
         pair = (task.get("activity_id"), task.get("party_id"))
         if pair not in contribution_ids:

@@ -172,6 +172,33 @@ def test_next_column_starts_at_the_step_and_then_advances():
     assert next_column(m, "1", "sp-gs") == 50
 
 
+def test_an_activity_with_no_contribution_is_a_problem():
+    """Such an activity appears in no lane, so it vanishes from the grid while staying in
+    model["activities"] - and nothing in the UI can bring it back. It validates cleanly
+    today, which is what makes it a trap rather than an error."""
+    model = empty_model()
+    model["segments"] = [{"id": "1", "label": "Segment"}]
+    model["parties"] = [{"id": "sp", "label": "SP-GS"}]
+    model["activities"] = [
+        {"id": "1.1", "segment_id": "1", "label": "Has one"},
+        {"id": "1.2", "segment_id": "1", "label": "Has none"},
+    ]
+    model["contributions"] = [
+        {"activity_id": "1.1", "party_id": "sp", "column": 10, "attribution": "stated"},
+    ]
+
+    problems = validate_model(model)
+
+    assert any("1.2" in p and "no contribution" in p for p in problems)
+    assert not any("1.1" in p for p in problems)
+
+
+def test_an_empty_model_is_still_valid():
+    """The rule must not fire on a model with no activities at all - that is the state a
+    fresh project is in, and empty_model() is what the store writes first."""
+    assert validate_model(empty_model()) == []
+
+
 def test_next_column_is_per_lane_not_per_segment():
     """ISS starting fresh gets the first column even though SP-GS is at 40."""
     m = empty_model()
