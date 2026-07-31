@@ -1,5 +1,6 @@
 // ui/src/__tests__/Reviews.test.tsx
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Reviews from '../pages/Reviews'
@@ -7,6 +8,7 @@ import Reviews from '../pages/Reviews'
 const statusMock = vi.fn()
 const statesMock = vi.fn()
 const activateMock = vi.fn()
+const createMock = vi.fn()
 
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
@@ -16,7 +18,7 @@ vi.mock('../api/endpoints', () => ({
   commitsApi: {
     states: (...args: unknown[]) => statesMock(...args),
     changeCount: vi.fn().mockResolvedValue(0),
-    create: vi.fn(),
+    create: (...args: unknown[]) => createMock(...args),
     submit: vi.fn(),
     activate: (...args: unknown[]) => activateMock(...args),
   },
@@ -69,8 +71,32 @@ beforeEach(() => {
   statusMock.mockReset()
   statesMock.mockReset()
   activateMock.mockReset()
+  createMock.mockReset()
   statesMock.mockResolvedValue({})
+  createMock.mockResolvedValue({
+    commit_id: 1,
+    started: [],
+    skipped: [],
+    waiting: [],
+    inactive: false,
+  })
 })
+
+// An approvable crew: its run completed, and its state is ready. Both are required -
+// CrewApprovalSection omits a crew whose only run failed or is still going.
+function anApprovableCrew() {
+  statusMock.mockResolvedValue(
+    baseStatus({
+      project_status: 'active',
+      crew_runs: [crewRun('discovery_mapping', 'completed')],
+    }),
+  )
+  statesMock.mockResolvedValue({ discovery_mapping: 'ready' })
+}
+
+async function approve() {
+  await userEvent.click(await screen.findByRole('button', { name: /approve/i }))
+}
 
 describe('Reviews - activate project control', () => {
   it('offers to activate a project that is not active', async () => {
@@ -101,6 +127,78 @@ describe('Reviews - activate project control', () => {
     const banner = await screen.findByText(/not active/i)
     expect(banner).toHaveTextContent(/next crew/i)
     expect(banner).toHaveTextContent(/daily report/i)
+  })
+})
+
+describe('Reviews - what an approval did', () => {
+  it('names the crew the approval started', async () => {
+    anApprovableCrew()
+    createMock.mockResolvedValue({
+      commit_id: 1,
+      started: [{ crew: 'assessment_design', run_id: 7 }],
+      skipped: [],
+      waiting: [],
+      inactive: false,
+    })
+    renderReviews()
+    await approve()
+    expect(await screen.findByText(/started assessment design/i)).toBeInTheDocument()
+  })
+
+  it('says a skipped crew was already running and must be re-run', async () => {
+    // The case a reviewer currently cannot tell from a successful start. The in-flight
+    // run does not include what was just approved, so silence here loses their changes.
+    anApprovableCrew()
+    createMock.mockResolvedValue({
+      commit_id: 1,
+      started: [],
+      skipped: ['assessment_design'],
+      waiting: [],
+      inactive: false,
+    })
+    renderReviews()
+    await approve()
+    const line = await screen.findByText(/already running/i)
+    expect(line).toHaveTextContent(/assessment design/i)
+    expect(line).toHaveTextContent(/re-run/i)
+  })
+
+  it('names the approval a waiting crew is still short of', async () => {
+    anApprovableCrew()
+    createMock.mockResolvedValue({
+      commit_id: 1,
+      started: [],
+      skipped: [],
+      waiting: [{ crew: 'discovery_interviews', waiting_on: ['stakeholder_management'] }],
+      inactive: false,
+    })
+    renderReviews()
+    await approve()
+    const line = await screen.findByText(/discovery interviews/i)
+    expect(line).toHaveTextContent(/stakeholder management/i)
+  })
+
+  it('says why nothing started when the project is not active', async () => {
+    anApprovableCrew()
+    createMock.mockResolvedValue({
+      commit_id: 1,
+      started: [],
+      skipped: [],
+      waiting: [],
+      inactive: true,
+    })
+    renderReviews()
+    await approve()
+    const line = await screen.findByText(/nothing started/i)
+    expect(line).toHaveTextContent(/not active/i)
+  })
+
+  it('shows nothing before an approval is made', async () => {
+    anApprovableCrew()
+    renderReviews()
+    await screen.findByText('Ready for approval')
+    expect(screen.queryByText(/already running/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/nothing follows/i)).not.toBeInTheDocument()
   })
 })
 

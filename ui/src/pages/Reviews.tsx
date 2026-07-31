@@ -2,9 +2,12 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { CircleCheck, Clock, PauseCircle, Play, RotateCcw } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { projectsApi, commitsApi } from '../api/endpoints'
 import { campaignsApi } from '../api/campaigns'
 import { CrewApprovalRow, type CrewState } from '../components/CrewApprovalRow'
+import { CREW_LABELS } from '../components/agentStatus'
 import type { HumanReview, ReminderEmail } from '../types'
 
 // A single crew's change count, fetched independently so one crew's request does not
@@ -42,6 +45,84 @@ function CrewApprovalRowWithChanges({
   )
 }
 
+type CommitOutcome = Awaited<ReturnType<typeof commitsApi.create>>
+
+function crewLabel(crew: string) {
+  return CREW_LABELS[crew] ?? crew
+}
+
+function joinLabels(crews: string[]) {
+  const labels = crews.map(crewLabel)
+  if (labels.length < 2) return labels.join('')
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+}
+
+// What the approval just did. Without it the row flips to Approved and nothing else is
+// said, so a start, a skip and a project-wide suppression all look identical from here.
+//
+// The skip is the one that costs something: the in-flight run read its inputs before this
+// approval landed, so it does not contain what was just approved and has to be re-run.
+// `waiting` is what makes an approval that started nothing legible - it names the approval
+// still needed rather than leaving the reviewer to work it out.
+function ApprovalOutcome({ outcome }: { outcome: CommitOutcome }) {
+  const lines: { Icon: LucideIcon; tone: string; text: string }[] = []
+
+  if (outcome.inactive) {
+    lines.push({
+      Icon: PauseCircle,
+      tone: 'text-amber-700',
+      text:
+        'Nothing started - this project is not active yet. The approval is recorded; ' +
+        'activate the project to let the next crew run.',
+    })
+  }
+
+  if (outcome.started.length > 0) {
+    lines.push({
+      Icon: Play,
+      tone: 'text-secondary',
+      text: `Started ${joinLabels(outcome.started.map((s) => s.crew))}.`,
+    })
+  }
+
+  if (outcome.skipped.length > 0) {
+    lines.push({
+      Icon: RotateCcw,
+      tone: 'text-amber-700',
+      text:
+        `${joinLabels(outcome.skipped)} was already running, so this approval is not in ` +
+        'it - re-run it once the current run finishes.',
+    })
+  }
+
+  for (const item of outcome.waiting) {
+    lines.push({
+      Icon: Clock,
+      tone: 'text-muted',
+      text: `${crewLabel(item.crew)} still needs ${joinLabels(item.waiting_on)}.`,
+    })
+  }
+
+  if (lines.length === 0) {
+    lines.push({
+      Icon: CircleCheck,
+      tone: 'text-muted',
+      text: 'Approved. No crew follows this one.',
+    })
+  }
+
+  return (
+    <div className="bg-surface-raised border border-gray-200 rounded-xl px-4 py-3 space-y-1.5">
+      {lines.map(({ Icon, tone, text }) => (
+        <p key={text} className={`flex items-start gap-2 text-xs ${tone}`}>
+          <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{text}</span>
+        </p>
+      ))}
+    </div>
+  )
+}
+
 // Every crew whose state is working or ready, so a contributor can mark work ready and
 // an approver can approve it from the same place they review everything else.
 //
@@ -49,6 +130,7 @@ function CrewApprovalRowWithChanges({
 // the section lists work that exists rather than every crew in the graph.
 function CrewApprovalSection({ slug }: { slug: string }) {
   const qc = useQueryClient()
+  const [outcome, setOutcome] = useState<CommitOutcome | null>(null)
 
   const { data: states = {} } = useQuery({
     queryKey: ['crew-states', slug],
@@ -88,24 +170,31 @@ function CrewApprovalSection({ slug }: { slug: string }) {
   }
 
   async function approve(crewName: string) {
-    await commitsApi.create(slug, crewName)
+    // Set before invalidating: the refetch drops this crew's row from the section, and
+    // the outcome is the only thing left saying what the approval did.
+    setOutcome(await commitsApi.create(slug, crewName))
     await invalidate()
   }
 
-  if (crews.length === 0) return null
+  if (crews.length === 0 && !outcome) return null
 
   return (
-    <div className="bg-surface rounded-xl border border-gray-200 px-4 py-2">
-      {crews.map(([crew, state]) => (
-        <CrewApprovalRowWithChanges
-          key={crew}
-          slug={slug}
-          crewName={crew}
-          state={state}
-          onSubmit={submit}
-          onApprove={approve}
-        />
-      ))}
+    <div className="space-y-3">
+      {crews.length > 0 && (
+        <div className="bg-surface rounded-xl border border-gray-200 px-4 py-2">
+          {crews.map(([crew, state]) => (
+            <CrewApprovalRowWithChanges
+              key={crew}
+              slug={slug}
+              crewName={crew}
+              state={state}
+              onSubmit={submit}
+              onApprove={approve}
+            />
+          ))}
+        </div>
+      )}
+      {outcome && <ApprovalOutcome outcome={outcome} />}
     </div>
   )
 }
