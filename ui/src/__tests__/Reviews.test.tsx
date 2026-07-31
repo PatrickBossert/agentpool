@@ -193,6 +193,18 @@ describe('Reviews - what an approval did', () => {
     expect(line).toHaveTextContent(/not active/i)
   })
 
+  it('does not claim anything about a start that failed outright', async () => {
+    // The router reports only that auto-start failed - it cannot know what was started,
+    // what is waiting, or whether the project is active, so it says none of those.
+    anApprovableCrew()
+    createMock.mockResolvedValue({ commit_id: 1, autostart_failed: true })
+    renderReviews()
+    await approve()
+    const line = await screen.findByText(/could not be started/i)
+    expect(line).toHaveTextContent(/approval is recorded/i)
+    expect(screen.queryByText(/nothing follows/i)).not.toBeInTheDocument()
+  })
+
   it('shows nothing before an approval is made', async () => {
     anApprovableCrew()
     renderReviews()

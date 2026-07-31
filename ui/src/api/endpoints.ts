@@ -249,12 +249,16 @@ export const commitsApi = {
     slug: string,
     crewName: string,
     notes = '',
+    // Every field but commit_id is absent when autostart_failed is set: the endpoint
+    // knows only that starting the next crew raised, not what was started, what is
+    // waiting, or whether the project is active.
   ): Promise<{
     commit_id: number
-    started: { crew: string; run_id: number }[]
-    skipped: string[]
-    waiting: { crew: string; waiting_on: string[] }[]
-    inactive: boolean
+    started?: { crew: string; run_id: number }[]
+    skipped?: string[]
+    waiting?: { crew: string; waiting_on: string[] }[]
+    inactive?: boolean
+    autostart_failed?: boolean
   }> =>
     apiClient.post(`/projects/${slug}/commits`, {
       crew_name: crewName, notes,

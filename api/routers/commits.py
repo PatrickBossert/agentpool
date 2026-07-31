@@ -86,7 +86,11 @@ async def create_commit(
         )
     except Exception:
         _log.exception("Auto-start after committing %s on %s failed", req.crew_name, slug)
-        started = {"started": [], "skipped": [], "waiting": [], "inactive": False}
+        # Only the failure is known. Three empty lists with inactive=False would assert
+        # that the project is active and that nothing is waiting on an approval - neither
+        # of which was established, because the call that would have established them is
+        # what raised. A crew may even have been started before it did.
+        started = {"autostart_failed": True}
 
     return {**result, **started}
 

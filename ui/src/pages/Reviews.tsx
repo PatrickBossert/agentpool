@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { CircleCheck, Clock, PauseCircle, Play, RotateCcw } from 'lucide-react'
+import { AlertTriangle, CircleCheck, Clock, PauseCircle, Play, RotateCcw } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { projectsApi, commitsApi } from '../api/endpoints'
 import { campaignsApi } from '../api/campaigns'
@@ -67,6 +67,22 @@ function joinLabels(crews: string[]) {
 function ApprovalOutcome({ outcome }: { outcome: CommitOutcome }) {
   const lines: { Icon: LucideIcon; tone: string; text: string }[] = []
 
+  if (outcome.autostart_failed) {
+    // The endpoint reports nothing else in this case, so neither does this - saying
+    // "nothing is waiting" or "nothing follows" here would be inventing an answer.
+    return (
+      <div className="bg-surface-raised border border-gray-200 rounded-xl px-4 py-3">
+        <p className="flex items-start gap-2 text-xs text-red-600">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+          <span>
+            The next crew could not be started. The approval is recorded - check the crew
+            board before assuming anything is running.
+          </span>
+        </p>
+      </div>
+    )
+  }
+
   if (outcome.inactive) {
     lines.push({
       Icon: PauseCircle,
@@ -77,25 +93,29 @@ function ApprovalOutcome({ outcome }: { outcome: CommitOutcome }) {
     })
   }
 
-  if (outcome.started.length > 0) {
+  const started = outcome.started ?? []
+  const skipped = outcome.skipped ?? []
+  const waiting = outcome.waiting ?? []
+
+  if (started.length > 0) {
     lines.push({
       Icon: Play,
       tone: 'text-secondary',
-      text: `Started ${joinLabels(outcome.started.map((s) => s.crew))}.`,
+      text: `Started ${joinLabels(started.map((s) => s.crew))}.`,
     })
   }
 
-  if (outcome.skipped.length > 0) {
+  if (skipped.length > 0) {
     lines.push({
       Icon: RotateCcw,
       tone: 'text-amber-700',
       text:
-        `${joinLabels(outcome.skipped)} was already running, so this approval is not in ` +
+        `${joinLabels(skipped)} was already running, so this approval is not in ` +
         'it - re-run it once the current run finishes.',
     })
   }
 
-  for (const item of outcome.waiting) {
+  for (const item of waiting) {
     lines.push({
       Icon: Clock,
       tone: 'text-muted',

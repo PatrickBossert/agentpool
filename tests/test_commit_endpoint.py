@@ -165,6 +165,14 @@ async def test_the_commit_lands_even_when_starting_raises(client):
     commits = await client.get("/projects/commit-api-test/commits")
     assert len(commits.json()) == 1
 
+    # And it says so. Reporting three empty lists with inactive=False would assert that
+    # the project is active and that no crew is waiting - neither of which is known when
+    # the call that would have established them is what raised.
+    body = resp.json()
+    assert body["autostart_failed"] is True
+    assert "inactive" not in body
+    assert "waiting" not in body
+
 
 @pytest.mark.asyncio
 async def test_committing_a_crew_whose_run_is_still_going_is_refused_with_409(client):
