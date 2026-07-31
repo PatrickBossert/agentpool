@@ -28,9 +28,9 @@ PROJECT = {
 
 @pytest.fixture(autouse=True)
 def clean():
-    # Each test commits against the same slug, and readiness/"released" assertions
-    # depend on that project starting with no prior commits - so the db is wiped
-    # before and after every test, mirroring tests/test_approval_commits.py.
+    # Each test commits against the same slug, and the readiness and auto-start
+    # assertions depend on that project starting with no prior commits or runs - so the
+    # db is wiped before and after every test, mirroring tests/test_approval_commits.py.
     settings = get_settings()
     db_path = Path(settings.database_dir) / f"{SLUG}.db"
     db_path.unlink(missing_ok=True)
@@ -70,7 +70,7 @@ async def test_committing_freezes_only_that_crews_outputs(client):
 
 
 @pytest.mark.asyncio
-async def test_committing_starts_the_crew_it_released(client):
+async def test_committing_starts_the_crew_below_it(client):
     await client.post("/projects", json=PROJECT)
     await client.post("/projects/commit-api-test/activate")
 
