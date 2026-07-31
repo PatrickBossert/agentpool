@@ -14,6 +14,21 @@ from api.database import fetch_project, get_connection, insert_crew_run
 from api.services.crew_graph import classify_downstream
 from api.services.run_service import dispatch_crew
 
+# Crews that only PAM may dispatch, whatever the approval graph says about them.
+#
+# Do not delete this without reading api/services/run_service.py:147-166.
+# build_and_run_crew enforces two preconditions for discovery_interviews that the
+# approval graph knows nothing about: interview_method must be 'agent', and the
+# crew_runs row must carry an orchestration_run_id, which only PAM's orchestration
+# ever sets - insert_crew_run leaves it NULL. So an auto-started discovery_interviews
+# raises "crew_run N has no orchestration_run_id" the moment it is built, flips to
+# failed, and mails the approver that the crew they just approved has died. That
+# would happen on every commit of stakeholder_management, on an ordinary step, with
+# no way to opt out. It is reported as waiting on PAM rather than silently dropped,
+# so a reviewer wondering why nothing started is told what it is actually blocked on.
+# Those guards in build_and_run_crew are correct; this is the exclusion they imply.
+_PAM_DISPATCHED_ONLY: frozenset[str] = frozenset({"discovery_interviews"})
+
 
 async def start_ready_downstream(
     slug: str, crew_name: str, *, committed_by: str
@@ -25,6 +40,9 @@ async def start_ready_downstream(
     still needs. `inactive` is True when the project has not been activated, in which
     case nothing is started and the other three lists are empty - the ready crews are
     deliberately not reported as waiting, because they are not waiting on an upstream.
+
+    A crew in `_PAM_DISPATCHED_ONLY` is never started here however ready it looks; it is
+    moved into `waiting` naming PAM as what it needs.
     """
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
@@ -38,8 +56,16 @@ async def start_ready_downstream(
 
         classified = await classify_downstream(conn, crew_name=crew_name)
 
-        started = []
+        waiting = list(classified["waiting"])
+        startable = []
         for crew in classified["ready"]:
+            if crew in _PAM_DISPATCHED_ONLY:
+                waiting.append({"crew": crew, "waiting_on": ["PAM orchestration"]})
+            else:
+                startable.append(crew)
+
+        started = []
+        for crew in startable:
             run_id = await insert_crew_run(
                 conn, project_id=project["id"], crew_name=crew, status="running"
             )
@@ -60,6 +86,6 @@ async def start_ready_downstream(
     return {
         "started": started,
         "skipped": classified["running"],
-        "waiting": classified["waiting"],
+        "waiting": waiting,
         "inactive": False,
     }

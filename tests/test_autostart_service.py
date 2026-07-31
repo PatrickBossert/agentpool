@@ -114,6 +114,41 @@ async def test_a_crew_with_an_uncommitted_upstream_is_waiting_not_started(client
 
 
 @pytest.mark.asyncio
+async def test_committing_the_last_upstream_does_not_auto_start_discovery_interviews(client):
+    """discovery_interviews is PAM-dispatched only, so readiness alone must not start it.
+
+    Both its upstreams are committed here, which is exactly the state classify_downstream
+    calls ready. Starting it would insert a run with a NULL orchestration_run_id, which
+    build_and_run_crew refuses - the run would flip to failed and the failure notice would
+    tell the approver that the crew they just approved had died, every single time.
+    """
+    await client.post("/projects", json=PROJECT)
+    await _activate(SLUG)
+    async with get_connection(SLUG) as conn:
+        await insert_approval_commit(
+            conn, crew_name="assessment_design", committed_by="a", notes=""
+        )
+        await insert_approval_commit(
+            conn, crew_name="stakeholder_management", committed_by="a", notes=""
+        )
+
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()) as dispatch:
+        result = await start_ready_downstream(
+            SLUG, "stakeholder_management", committed_by="a"
+        )
+
+    assert result["started"] == []
+    assert dispatch.await_count == 0
+    waiting = {w["crew"]: w["waiting_on"] for w in result["waiting"]}
+    assert "discovery_interviews" in waiting
+
+    async with get_connection(SLUG) as conn:
+        project_row = await fetch_project(conn, slug=SLUG)
+        runs = await fetch_crew_runs(conn, project_id=project_row["id"])
+    assert runs == []
+
+
+@pytest.mark.asyncio
 async def test_a_running_crew_is_skipped_and_named(client):
     await client.post("/projects", json=PROJECT)
     await _activate(SLUG)
