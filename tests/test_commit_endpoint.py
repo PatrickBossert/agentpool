@@ -6,10 +6,12 @@ empty and every login is sysadmin. The rule is written so it is correct now and
 tightens by itself once per-user accounts exist.
 """
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from api.config import get_settings
+from api.database import get_connection
 
 SLUG = "commit-api-test"
 PROJECT = {
@@ -68,30 +70,100 @@ async def test_committing_freezes_only_that_crews_outputs(client):
 
 
 @pytest.mark.asyncio
-async def test_committing_reports_the_crews_it_released(client):
+async def test_committing_starts_the_crew_it_released(client):
     await client.post("/projects", json=PROJECT)
-    resp = await client.post(
-        "/projects/commit-api-test/commits",
-        json={"crew_name": "discovery_mapping", "notes": ""},
-    )
-    assert resp.json()["released"] == ["assessment_design"]
+    await client.post("/projects/commit-api-test/activate")
+
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()):
+        resp = await client.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+
+    started = [s["crew"] for s in resp.json()["started"]]
+    assert started == ["assessment_design"]
 
 
 @pytest.mark.asyncio
-async def test_a_crew_released_only_when_its_last_upstream_lands(client):
+async def test_a_second_commit_starts_the_downstream_crew_again(client):
+    """The behaviour this project exists for. The old `released` field reported a crew
+    only the first time it became ready, so approving a revision started nothing."""
+    await client.post("/projects", json=PROJECT)
+    await client.post("/projects/commit-api-test/activate")
+
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()):
+        first = await client.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+        # The first start leaves assessment_design running, which would mask the second
+        # commit as a skip rather than a start. Clear it, as a finished run would.
+        async with get_connection("commit-api-test") as conn:
+            await conn.execute(
+                "UPDATE crew_runs SET status='completed' WHERE crew_name='assessment_design'"
+            )
+            await conn.commit()
+        second = await client.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+
+    assert [s["crew"] for s in first.json()["started"]] == ["assessment_design"]
+    assert [s["crew"] for s in second.json()["started"]] == ["assessment_design"]
+
+
+@pytest.mark.asyncio
+async def test_a_crew_waiting_on_another_upstream_is_reported_not_started(client):
     """discovery_interviews needs both assessment_design and stakeholder_management."""
     await client.post("/projects", json=PROJECT)
-    first = await client.post(
-        "/projects/commit-api-test/commits",
-        json={"crew_name": "assessment_design", "notes": ""},
-    )
-    assert "discovery_interviews" not in first.json()["released"]
+    await client.post("/projects/commit-api-test/activate")
 
-    second = await client.post(
-        "/projects/commit-api-test/commits",
-        json={"crew_name": "stakeholder_management", "notes": ""},
-    )
-    assert "discovery_interviews" in second.json()["released"]
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()):
+        resp = await client.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "assessment_design", "notes": ""},
+        )
+
+    waiting = {w["crew"]: w["waiting_on"] for w in resp.json()["waiting"]}
+    assert waiting["discovery_interviews"] == ["stakeholder_management"]
+
+
+@pytest.mark.asyncio
+async def test_an_inactive_project_commits_without_starting_anything(client):
+    """The commit must still land - only the start is suppressed."""
+    await client.post("/projects", json=PROJECT)
+
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()):
+        resp = await client.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+
+    body = resp.json()
+    assert resp.status_code == 201
+    assert body["inactive"] is True
+    assert body["started"] == []
+    assert isinstance(body["commit_id"], int)
+
+
+@pytest.mark.asyncio
+async def test_the_commit_lands_even_when_starting_raises(client):
+    """An approval that was recorded stays recorded whatever happens next."""
+    await client.post("/projects", json=PROJECT)
+    await client.post("/projects/commit-api-test/activate")
+
+    with patch(
+        "api.routers.commits.start_ready_downstream",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        resp = await client.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+
+    assert resp.status_code == 201
+    commits = await client.get("/projects/commit-api-test/commits")
+    assert len(commits.json()) == 1
 
 
 @pytest.mark.asyncio

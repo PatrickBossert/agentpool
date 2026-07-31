@@ -90,6 +90,16 @@ describe('Reviews - activate project control', () => {
     await screen.findByText(/no pending reviews/i)
     expect(screen.queryByRole('button', { name: /activate project/i })).not.toBeInTheDocument()
   })
+
+  it('says an inactive project will not start the next crew', async () => {
+    // The banner previously claimed Pamela's daily report would not run, which was never
+    // true - no activation gate exists in the report service.
+    statusMock.mockResolvedValue(baseStatus({ project_status: 'created' }))
+    renderReviews()
+    const banner = await screen.findByText(/not active/i)
+    expect(banner).toHaveTextContent(/next crew/i)
+    expect(banner).not.toHaveTextContent(/daily report/i)
+  })
 })
 
 describe('Reviews - failed and in-progress runs are not offered for approval', () => {

@@ -245,8 +245,18 @@ export const commitsApi = {
   readiness: (slug: string): Promise<Record<string, CrewReadiness>> =>
     apiClient.get<Record<string, CrewReadiness>>(`/projects/${slug}/crew-readiness`)
       .then((r) => r.data),
-  create: (slug: string, crewName: string, notes = ''): Promise<{ released: string[] }> =>
-    apiClient.post<{ released: string[] }>(`/projects/${slug}/commits`, {
+  create: (
+    slug: string,
+    crewName: string,
+    notes = '',
+  ): Promise<{
+    commit_id: number
+    started: { crew: string; run_id: number }[]
+    skipped: string[]
+    waiting: { crew: string; waiting_on: string[] }[]
+    inactive: boolean
+  }> =>
+    apiClient.post(`/projects/${slug}/commits`, {
       crew_name: crewName, notes,
     }).then((r) => r.data),
   committedCrews: (slug: string): Promise<string[]> =>

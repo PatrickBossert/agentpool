@@ -1,6 +1,8 @@
 # api/routers/commits.py
-"""Committing crew output, and reading what that released."""
+"""Committing crew output, and starting whatever it makes ready."""
 from __future__ import annotations
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -15,6 +17,7 @@ from api.database import (
     output_exists,
     set_project_status,
 )
+from api.services.autostart_service import start_ready_downstream
 from api.services.commit_service import (
     CrewRunInProgress,
     caller_may_commit,
@@ -24,6 +27,8 @@ from api.services.commit_service import (
 )
 from api.services.crew_graph import CREW_DEPENDENCIES, readiness_report
 from api.services.crew_state_service import crew_state_report
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["commits"])
 
@@ -64,7 +69,7 @@ async def create_commit(
         )
 
     try:
-        return await commit_crew(
+        result = await commit_crew(
             slug,
             crew_name=req.crew_name,
             committed_by=payload.get("sub", ""),
@@ -72,6 +77,18 @@ async def create_commit(
         )
     except CrewRunInProgress as e:
         raise HTTPException(status_code=409, detail=str(e))
+
+    # After the commit, never before. The approval is recorded; a failure to start the
+    # next crew must not unwind it, so this cannot raise into the response.
+    try:
+        started = await start_ready_downstream(
+            slug, req.crew_name, committed_by=payload.get("sub", "")
+        )
+    except Exception:
+        _log.exception("Auto-start after committing %s on %s failed", req.crew_name, slug)
+        started = {"started": [], "skipped": [], "waiting": [], "inactive": False}
+
+    return {**result, **started}
 
 
 @router.post("/{slug}/submissions", status_code=201)

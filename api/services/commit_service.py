@@ -2,7 +2,8 @@
 """Committing a crew's outputs, and deciding who may.
 
 Committing is the one act that is not a change: it does not mutate an output, it fixes
-the current version, attributes it, and releases the crews downstream.
+the current version and attributes it. Starting whatever crew that makes ready is the
+caller's business - see api.services.autostart_service.
 """
 from __future__ import annotations
 
@@ -22,7 +23,6 @@ from api.database import (
     latest_commit_at,
     link_commit_outputs,
 )
-from api.services.crew_graph import downstream_of, is_crew_ready
 from api.services.run_service import _CREW_AGENT_NAMES
 
 log = logging.getLogger(__name__)
@@ -102,10 +102,10 @@ async def caller_may_submit(slug: str, payload: dict) -> bool:
 async def commit_crew(
     slug: str, *, crew_name: str, committed_by: str, notes: str
 ) -> dict:
-    """Freeze this crew's current outputs and report the crews it released.
+    """Freeze this crew's current outputs.
 
-    "Released" means newly ready: a crew that was already ready before this commit is
-    not reported, so the caller can react to what actually changed.
+    This fixes the current output versions and attributes the approval; what happens
+    downstream of it is the caller's business, not this function's.
     """
     agents = set(_CREW_AGENT_NAMES.get(crew_name, []))
 
@@ -121,23 +121,12 @@ async def commit_crew(
             if o["agent_name"] in agents and o.get("is_current")
         ]
 
-        candidates = downstream_of(crew_name)
-        was_ready = {
-            c: await is_crew_ready(conn, crew_name=c) for c in candidates
-        }
-
         commit_id = await insert_approval_commit(
             conn, crew_name=crew_name, committed_by=committed_by, notes=notes
         )
         await link_commit_outputs(conn, commit_id=commit_id, output_ids=output_ids)
 
-        released = [
-            c
-            for c in candidates
-            if not was_ready[c] and await is_crew_ready(conn, crew_name=c)
-        ]
-
-    return {"commit_id": commit_id, "output_ids": output_ids, "released": released}
+    return {"commit_id": commit_id, "output_ids": output_ids}
 
 
 async def changes_for_crew(slug: str, *, crew_name: str) -> list[dict]:
