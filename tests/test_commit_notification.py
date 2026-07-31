@@ -180,6 +180,31 @@ async def test_a_failed_run_with_no_trigger_notifies_reviewers_only(client):
 
 
 @pytest.mark.asyncio
+async def test_a_triggered_by_that_is_not_an_address_does_not_cost_reviewers_their_notice(
+    client,
+):
+    """The only production caller passes the JWT's `sub`, which is a username.
+
+    Resend rejects a request whose `to` list holds a malformed entry, so a username
+    reaching the recipient list loses everyone their notification, not just the person
+    it names. The extra recipient is dropped instead.
+    """
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder(SLUG, "Actor", "actor@example.com", approver=True)
+    await _set_dev_mode(SLUG, False)
+
+    from api.services.commit_notify_service import notify_crew_failed
+
+    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+        await notify_crew_failed(SLUG, "assessment_design", triggered_by="admin")
+
+    assert send.await_count == 1
+    recipients = send.await_args.kwargs["to"]
+    assert "actor@example.com" in recipients
+    assert "admin" not in recipients
+
+
+@pytest.mark.asyncio
 async def test_a_failing_send_does_not_mask_the_run_failure(client):
     """dispatch_crew re-raises the original exception after calling this. If notification
     raised, a mail error would replace the real run error."""

@@ -172,6 +172,54 @@ async def test_a_running_crew_is_skipped_and_named(client):
 
 
 @pytest.mark.asyncio
+async def test_the_dispatched_run_carries_the_approvers_address_not_their_username(client):
+    """`committed_by` is the JWT's `sub`, a username - and it ends up in Resend's `to`
+    list. It must be resolved to an address before it gets there."""
+    from api.database import get_system_connection, insert_user
+
+    username = "autostart-approver"
+    async with get_system_connection() as sys_conn:
+        await insert_user(
+            sys_conn,
+            username=username,
+            email="autostart-approver@example.com",
+            role="reviewer",
+            hashed_pw="x",
+        )
+
+    await client.post("/projects", json=PROJECT)
+    await _activate(SLUG)
+    async with get_connection(SLUG) as conn:
+        await insert_approval_commit(
+            conn, crew_name="discovery_mapping", committed_by=username, notes=""
+        )
+
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()) as dispatch:
+        await start_ready_downstream(SLUG, "discovery_mapping", committed_by=username)
+
+    assert dispatch.call_args.kwargs["triggered_by"] == "autostart-approver@example.com"
+
+
+@pytest.mark.asyncio
+async def test_a_committer_with_no_resolvable_address_is_dropped_rather_than_passed_on(
+    client,
+):
+    """A malformed recipient makes Resend reject the whole request, which would cost the
+    reviewers their notice as well. Better one person unnotified than everyone."""
+    await client.post("/projects", json=PROJECT)
+    await _activate(SLUG)
+    async with get_connection(SLUG) as conn:
+        await insert_approval_commit(
+            conn, crew_name="discovery_mapping", committed_by="ghost", notes=""
+        )
+
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()) as dispatch:
+        await start_ready_downstream(SLUG, "discovery_mapping", committed_by="ghost")
+
+    assert dispatch.call_args.kwargs["triggered_by"] is None
+
+
+@pytest.mark.asyncio
 async def test_an_inactive_project_starts_nothing_and_says_why(client):
     """Every project in this codebase is 'created' until an approver activates it, so this
     is the state auto-start meets first. The ready crew must NOT be reported as waiting -

@@ -10,7 +10,13 @@ from __future__ import annotations
 
 import asyncio
 
-from api.database import fetch_project, get_connection, insert_crew_run
+from api.database import (
+    fetch_project,
+    fetch_user,
+    get_connection,
+    get_system_connection,
+    insert_crew_run,
+)
 from api.services.crew_graph import classify_downstream
 from api.services.run_service import dispatch_crew
 
@@ -28,6 +34,25 @@ from api.services.run_service import dispatch_crew
 # so a reviewer wondering why nothing started is told what it is actually blocked on.
 # Those guards in build_and_run_crew are correct; this is the exclusion they imply.
 _PAM_DISPATCHED_ONLY: frozenset[str] = frozenset({"discovery_interviews"})
+
+
+async def _notification_address(committed_by: str) -> str | None:
+    """The approver's email address, or None when the name does not resolve to one.
+
+    `committed_by` is the JWT's `sub`, which is a **username** (api/auth.py:26), not an
+    address - and it is handed to dispatch_crew as `triggered_by`, which notify_crew_failed
+    puts straight into Resend's `to` list. A malformed entry there rejects the entire
+    request, so a username would cost the reviewers their notification as well as the
+    approver theirs. api/services/commit_service.py:60-62 already resolves `sub` this way.
+
+    An unresolvable name is dropped rather than passed on: one person missing a notice is
+    a smaller harm than everybody missing one.
+    """
+    if not committed_by:
+        return None
+    async with get_system_connection() as sys_conn:
+        user = await fetch_user(sys_conn, username=committed_by)
+    return ((user or {}).get("email") or "").strip() or None
 
 
 async def start_ready_downstream(
@@ -73,13 +98,14 @@ async def start_ready_downstream(
 
     # Dispatch outside the connection: a crew run is minutes of work, and holding the
     # project's connection open for it would block every other write to this project.
+    triggered_by = await _notification_address(committed_by) if started else None
     for entry in started:
         asyncio.create_task(
             dispatch_crew(
                 slug=slug,
                 crew_name=entry["crew"],
                 run_id=entry["run_id"],
-                triggered_by=committed_by,
+                triggered_by=triggered_by,
             )
         )
 

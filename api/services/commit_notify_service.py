@@ -61,7 +61,10 @@ async def _notify(
     whatever stakeholder flags produced - used by notify_crew_failed to reach
     whoever's approval triggered the run, in addition to reviewers. Subject to
     the same dev_mode routing as everyone else: in dev mode it is folded into the
-    "would have gone to" list rather than sent to directly."""
+    "would have gone to" list rather than sent to directly. Anything that is not
+    an address is discarded before it reaches the recipient list: Resend rejects
+    the whole request when one entry is malformed, so a stray username would take
+    the reviewers' notification down with it."""
     try:
         settings = get_settings()
         link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
@@ -79,6 +82,13 @@ async def _notify(
         actual, intended = resolve_recipients(stakeholders, dev_mode, flags=flags)
         if not actual and fallback_flags:
             actual, intended = resolve_recipients(stakeholders, dev_mode, flags=fallback_flags)
+
+        if extra_recipient and "@" not in extra_recipient:
+            log.warning(
+                "discarding extra recipient %r for %s: not an address",
+                extra_recipient, crew_name,
+            )
+            extra_recipient = None
 
         if extra_recipient and extra_recipient not in intended:
             intended = [*intended, extra_recipient]
