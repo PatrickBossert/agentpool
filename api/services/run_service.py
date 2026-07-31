@@ -378,7 +378,9 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
 _AUTO_ASSIGN_CREWS = {"discovery_interviews", "questionnaire_builder", "assessment_design"}
 
 
-async def dispatch_crew(slug: str, crew_name: str, run_id: int) -> None:
+async def dispatch_crew(
+    slug: str, crew_name: str, run_id: int, *, triggered_by: str | None = None
+) -> None:
     """Entry point called by asyncio.create_task. Runs the named crew and updates status."""
     try:
         await push_log(slug, json.dumps({"type": "crew_started", "crew": crew_name, "run_id": run_id}))
@@ -410,6 +412,10 @@ async def dispatch_crew(slug: str, crew_name: str, run_id: int) -> None:
         except Exception:
             pass  # Best-effort — don't mask the original exception
         await push_log(slug, json.dumps({"type": "crew_failed", "crew": crew_name, "error": str(e)}))
+
+        from api.services.commit_notify_service import notify_crew_failed
+        await notify_crew_failed(slug, crew_name, triggered_by=triggered_by)
+
         raise
 
 

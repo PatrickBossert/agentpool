@@ -22,7 +22,7 @@ import httpx
 
 from api.config import get_settings
 from api.database import fetch_project, fetch_stakeholders, get_connection
-from api.services.pam_report_job import resolve_recipients
+from api.services.pam_report_job import DEV_MODE_ADDRESS, resolve_recipients
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ async def _send_email(*, to: list[str], subject: str, body: str) -> None:
 async def _notify(
     slug: str, crew_name: str, *, flags: tuple[str, ...], subject: str, intro: str,
     audience_label: str, fallback_flags: tuple[str, ...] | None = None,
+    extra_recipient: str | None = None,
 ) -> None:
     """Shared body for both crew notifications - only the audience, subject and
     intro line differ. Never raises - a failed notification must not fail a run or
@@ -54,7 +55,13 @@ async def _notify(
 
     fallback_flags: if the primary flags resolve to nobody, try this audience
     instead rather than notify nobody. Only the completion notification passes
-    this - see notify_crew_awaiting_commit for why."""
+    this - see notify_crew_awaiting_commit for why.
+
+    extra_recipient: an address to add to the flag-resolved audience, on top of
+    whatever stakeholder flags produced - used by notify_crew_failed to reach
+    whoever's approval triggered the run, in addition to reviewers. Subject to
+    the same dev_mode routing as everyone else: in dev mode it is folded into the
+    "would have gone to" list rather than sent to directly."""
     try:
         settings = get_settings()
         link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
@@ -72,6 +79,14 @@ async def _notify(
         actual, intended = resolve_recipients(stakeholders, dev_mode, flags=flags)
         if not actual and fallback_flags:
             actual, intended = resolve_recipients(stakeholders, dev_mode, flags=fallback_flags)
+
+        if extra_recipient and extra_recipient not in intended:
+            intended = [*intended, extra_recipient]
+            if dev_mode:
+                actual = [DEV_MODE_ADDRESS]
+            elif extra_recipient not in actual:
+                actual = [*actual, extra_recipient]
+
         if not actual:
             return
 
@@ -124,5 +139,28 @@ async def notify_crew_awaiting_commit(slug: str, crew_name: str) -> None:
         fallback_flags=("is_approver",),
         subject=f"{slug}: {crew_name} is ready for review",
         intro=f"{crew_name} has finished and its output is waiting to be committed.",
+        audience_label="reviewers",
+    )
+
+
+async def notify_crew_failed(
+    slug: str, crew_name: str, *, triggered_by: str | None
+) -> None:
+    """Tell reviewers - and whoever's approval started it - that a run failed.
+
+    Project 1 deliberately sends nothing when an approval lands, on the grounds that the
+    next crew starting is the signal. If that crew then dies, the signal was false, and
+    the person holding a wrong belief is the one who approved. They are notified in
+    addition to reviewers, who would otherwise wait for output that is not coming.
+
+    Never raises: dispatch_crew re-raises the original run failure after calling this, and
+    a mail error must not replace the real one.
+    """
+    await _notify(
+        slug, crew_name,
+        flags=("is_reviewer",),
+        extra_recipient=triggered_by,
+        subject=f"{slug}: {crew_name} failed",
+        intro=f"{crew_name} started but did not finish. Nothing is in flight for it now.",
         audience_label="reviewers",
     )
