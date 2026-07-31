@@ -2,7 +2,7 @@
 """Committing a crew's outputs, and deciding who may.
 
 Committing is the one act that is not a change: it does not mutate an output, it fixes
-the current version and attributes it. Starting whatever crew that makes ready is the
+the current version and attributes it. Starting whatever crews that makes ready is the
 caller's business - see api.services.autostart_service.
 """
 from __future__ import annotations
