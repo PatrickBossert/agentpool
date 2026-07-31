@@ -47,6 +47,23 @@ _SNAKE_TO_DISPLAY: dict[str, str] = {
 }
 
 
+# Config keys a crew cannot run without, in the order their absence should be reported.
+#
+# build_and_run_crew raises below when one of these is empty. api/services/autostart_service.py
+# reads the same map before it inserts a run, so an approval reports the crew as waiting on
+# its configuration instead of starting a run that is certain to fail and mailing the
+# approver that the crew they just approved has died. One map, read by both, so the check
+# and the enforcement cannot drift apart.
+REQUIRED_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
+    "delivery": ("value_stream_labels", "stakeholder_groups"),
+}
+
+
+def missing_config_keys(config: dict, crew_name: str) -> list[str]:
+    """Which of this crew's required config keys are absent or empty, in declared order."""
+    return [key for key in REQUIRED_CONFIG_KEYS.get(crew_name, ()) if not config.get(key)]
+
+
 async def _fetch_revision_notes(slug: str, crew_name: str) -> str:
     """Return any pending revision notes for the crew's current outputs, or ''."""
     agent_names = set(_CREW_AGENT_NAMES.get(crew_name, []))
@@ -291,13 +308,13 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         crew = create_architecture_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
 
     elif crew_name == "delivery":
+        missing = missing_config_keys(config, "delivery")
+        if missing:
+            named = ", ".join(repr(key) for key in missing)
+            raise ValueError(f"Project config is missing {named} - required for Delivery crew")
         value_stream_labels = config.get("value_stream_labels", [])
         stakeholder_groups = config.get("stakeholder_groups", [])
         roadmap_time_axis = config.get("roadmap_time_axis", "quarters")
-        if not value_stream_labels:
-            raise ValueError("Project config is missing 'value_stream_labels' — required for Delivery crew")
-        if not stakeholder_groups:
-            raise ValueError("Project config is missing 'stakeholder_groups' — required for Delivery crew")
         from agents.crews.delivery_crew import create_delivery_crew
         crew = create_delivery_crew(
             slug=slug,

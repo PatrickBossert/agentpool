@@ -116,10 +116,15 @@ function ApprovalOutcome({ outcome }: { outcome: CommitOutcome }) {
   }
 
   for (const item of waiting) {
+    // A reason is given when the blocker is not an approval at all - Pamela dispatching
+    // the crew herself, or configuration the project has never been given. Waiting for
+    // an upstream approval is the ordinary case and names the crew instead.
     lines.push({
       Icon: Clock,
       tone: 'text-muted',
-      text: `${crewLabel(item.crew)} still needs ${joinLabels(item.waiting_on)}.`,
+      text: item.reason
+        ? `${crewLabel(item.crew)} did not start. ${item.reason}`
+        : `${crewLabel(item.crew)} still needs ${joinLabels(item.waiting_on)}.`,
     })
   }
 

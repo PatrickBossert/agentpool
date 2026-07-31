@@ -178,6 +178,31 @@ describe('Reviews - what an approval did', () => {
     expect(line).toHaveTextContent(/stakeholder management/i)
   })
 
+  it('gives the reason when a crew is blocked by something other than an approval', async () => {
+    // Delivery cannot run without configuration the product never collects, so no
+    // approval will release it - waiting_on would be empty and the reviewer none the
+    // wiser. The reason is what tells them what to actually go and do.
+    anApprovableCrew()
+    createMock.mockResolvedValue({
+      commit_id: 1,
+      started: [],
+      skipped: [],
+      waiting: [
+        {
+          crew: 'delivery',
+          waiting_on: [],
+          reason: "It needs the project's value streams and stakeholder groups to be set first.",
+        },
+      ],
+      inactive: false,
+    })
+    renderReviews()
+    await approve()
+    const line = await screen.findByText(/value streams/i)
+    expect(line).toHaveTextContent(/delivery/i)
+    expect(line).toHaveTextContent(/stakeholder groups/i)
+  })
+
   it('says why nothing started when the project is not active', async () => {
     anApprovableCrew()
     createMock.mockResolvedValue({

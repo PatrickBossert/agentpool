@@ -37,6 +37,16 @@ PROJECT = {
     "slack_channel": "",
 }
 
+# What NewProjectModal actually creates: it collects client_slug, sector and llm_mode and
+# nothing else, and api/models.py defaults both of Delivery's required keys to []. Two of
+# the three live project databases look exactly like this.
+UNCONFIGURED_SLUG = "autostart-unconfigured"
+UNCONFIGURED_PROJECT = {
+    "client_slug": UNCONFIGURED_SLUG,
+    "llm_mode": "standard",
+    "sector": "transport",
+}
+
 
 @pytest.fixture(autouse=True)
 def clean():
@@ -44,11 +54,16 @@ def clean():
     # depend on that project starting with no prior commits or runs - so the db is
     # wiped before and after every test, mirroring tests/test_commit_endpoint.py.
     settings = get_settings()
-    db_path = Path(settings.database_dir) / f"{SLUG}.db"
-    db_path.unlink(missing_ok=True)
+    db_paths = [
+        Path(settings.database_dir) / f"{SLUG}.db",
+        Path(settings.database_dir) / f"{UNCONFIGURED_SLUG}.db",
+    ]
+    for path in db_paths:
+        path.unlink(missing_ok=True)
     yield
     get_settings.cache_clear()
-    db_path.unlink(missing_ok=True)
+    for path in db_paths:
+        path.unlink(missing_ok=True)
 
 
 async def _activate(slug: str) -> None:
@@ -139,13 +154,73 @@ async def test_committing_the_last_upstream_does_not_auto_start_discovery_interv
 
     assert result["started"] == []
     assert dispatch.await_count == 0
-    waiting = {w["crew"]: w["waiting_on"] for w in result["waiting"]}
-    assert "discovery_interviews" in waiting
+    entry = next(w for w in result["waiting"] if w["crew"] == "discovery_interviews")
+    # waiting_on holds crew slugs and nothing else - PAM is not a crew, so the
+    # explanation goes in `reason`, where the page can render it as a sentence.
+    assert entry["waiting_on"] == []
+    assert "Pamela" in entry["reason"]
 
     async with get_connection(SLUG) as conn:
         project_row = await fetch_project(conn, slug=SLUG)
         runs = await fetch_crew_runs(conn, project_id=project_row["id"])
     assert runs == []
+
+
+@pytest.mark.asyncio
+async def test_committing_architecture_does_not_start_an_unconfigured_delivery(client):
+    """Delivery raises unless value_stream_labels and stakeholder_groups are set.
+
+    NewProjectModal collects neither, and both default to [] - so on a project created
+    through the product, approving Architecture would start Delivery, build_and_run_crew
+    would raise "Project config is missing 'value_stream_labels'", the run would be
+    marked failed, and the approver would be mailed that the crew they just approved had
+    died. C1's failure mode, on an ordinary step.
+    """
+    await client.post("/projects", json=UNCONFIGURED_PROJECT)
+    await _activate(UNCONFIGURED_SLUG)
+    async with get_connection(UNCONFIGURED_SLUG) as conn:
+        await insert_approval_commit(
+            conn, crew_name="architecture", committed_by="a", notes=""
+        )
+
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()) as dispatch:
+        result = await start_ready_downstream(
+            UNCONFIGURED_SLUG, "architecture", committed_by="a"
+        )
+
+    assert result["started"] == []
+    assert dispatch.await_count == 0
+    entry = next(w for w in result["waiting"] if w["crew"] == "delivery")
+    assert entry["waiting_on"] == []
+    assert "value streams" in entry["reason"]
+    assert "stakeholder groups" in entry["reason"]
+
+    async with get_connection(UNCONFIGURED_SLUG) as conn:
+        project_row = await fetch_project(conn, slug=UNCONFIGURED_SLUG)
+        runs = await fetch_crew_runs(conn, project_id=project_row["id"])
+    assert runs == []
+
+
+@pytest.mark.asyncio
+async def test_committing_architecture_does_start_a_configured_delivery(client):
+    """The half that stops this becoming a blanket exclusion.
+
+    Unlike discovery_interviews, Delivery auto-starts perfectly well once the project
+    carries the two keys it needs. Withholding it from a configured project would be a
+    regression, not a fix.
+    """
+    await client.post("/projects", json=PROJECT)
+    await _activate(SLUG)
+    async with get_connection(SLUG) as conn:
+        await insert_approval_commit(
+            conn, crew_name="architecture", committed_by="a", notes=""
+        )
+
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()):
+        result = await start_ready_downstream(SLUG, "architecture", committed_by="a")
+
+    assert [s["crew"] for s in result["started"]] == ["delivery"]
+    assert not any(w["crew"] == "delivery" for w in result["waiting"])
 
 
 @pytest.mark.asyncio

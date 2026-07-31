@@ -256,7 +256,10 @@ export const commitsApi = {
     commit_id: number
     started?: { crew: string; run_id: number }[]
     skipped?: string[]
-    waiting?: { crew: string; waiting_on: string[] }[]
+    // waiting_on holds crew slugs only. A blocker that is not an approval - Pamela
+    // dispatching the crew, or missing project configuration - arrives as `reason`
+    // with waiting_on empty.
+    waiting?: { crew: string; waiting_on: string[]; reason?: string }[]
     inactive?: boolean
     autostart_failed?: boolean
   }> =>

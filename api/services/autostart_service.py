@@ -9,6 +9,8 @@ run finishing, and one approval can start at most the crews directly below it.
 from __future__ import annotations
 
 import asyncio
+import logging
+from pathlib import Path
 
 from api.database import (
     fetch_project,
@@ -17,8 +19,11 @@ from api.database import (
     get_system_connection,
     insert_crew_run_if_not_running,
 )
+from api.config import get_settings, load_project_config
 from api.services.crew_graph import classify_downstream
-from api.services.run_service import dispatch_crew
+from api.services.run_service import dispatch_crew, missing_config_keys
+
+log = logging.getLogger(__name__)
 
 # Crews that only PAM may dispatch, whatever the approval graph says about them.
 #
@@ -34,6 +39,42 @@ from api.services.run_service import dispatch_crew
 # so a reviewer wondering why nothing started is told what it is actually blocked on.
 # Those guards in build_and_run_crew are correct; this is the exclusion they imply.
 _PAM_DISPATCHED_ONLY: frozenset[str] = frozenset({"discovery_interviews"})
+
+_PAM_REASON = (
+    "Pamela starts it as part of an orchestration run, not from an approval."
+)
+
+# Config keys named for the person who has to go and set them, rather than for whoever
+# reads the stack trace. A key with no entry here is reported by its own name, which is
+# worse copy but never wrong.
+_CONFIG_LABELS: dict[str, str] = {
+    "value_stream_labels": "value streams",
+    "stakeholder_groups": "stakeholder groups",
+}
+
+
+def _config_reason(missing: list[str]) -> str:
+    labels = [_CONFIG_LABELS.get(key, key) for key in missing]
+    if len(labels) > 1:
+        named = f"{', '.join(labels[:-1])} and {labels[-1]}"
+    else:
+        named = labels[0]
+    return f"It needs the project's {named} to be set first."
+
+
+def _project_config(slug: str) -> dict | None:
+    """This project's config.yaml, or None when it cannot be read.
+
+    None means "not checked", not "nothing missing". A project whose config.yaml is
+    unreadable has a problem no approval can diagnose - every crew in it would fail, not
+    just the ones with required keys - so the start is left to proceed exactly as it did
+    before, rather than reporting a specific missing setting that was never established.
+    """
+    try:
+        return load_project_config(Path(get_settings().projects_dir) / slug)
+    except Exception:
+        log.warning("could not read config.yaml for %s - config checks skipped", slug)
+        return None
 
 
 async def _notification_address(committed_by: str) -> str | None:
@@ -66,8 +107,11 @@ async def start_ready_downstream(
     case nothing is started and the other three lists are empty - the ready crews are
     deliberately not reported as waiting, because they are not waiting on an upstream.
 
-    A crew in `_PAM_DISPATCHED_ONLY` is never started here however ready it looks; it is
-    moved into `waiting` naming PAM as what it needs.
+    A `waiting` entry carries either `waiting_on` - crew slugs, and only ever crew slugs -
+    or a `reason` in prose for a blocker that is not an approval at all. Two produce a
+    reason: a crew in `_PAM_DISPATCHED_ONLY`, which no approval can ever start, and one
+    whose required configuration (`REQUIRED_CONFIG_KEYS` in run_service) is unset, which
+    would otherwise be started and fail on the spot.
 
     `skipped` also absorbs a crew whose run appeared between the classification and the
     insert - insert_crew_run_if_not_running declines it, and a declined insert means the
@@ -87,11 +131,23 @@ async def start_ready_downstream(
 
         waiting = list(classified["waiting"])
         startable = []
+        config = _project_config(slug)
         for crew in classified["ready"]:
             if crew in _PAM_DISPATCHED_ONLY:
-                waiting.append({"crew": crew, "waiting_on": ["PAM orchestration"]})
-            else:
-                startable.append(crew)
+                waiting.append({"crew": crew, "waiting_on": [], "reason": _PAM_REASON})
+                continue
+            # Delivery is the milder case of the same class as discovery_interviews: it
+            # cannot run without configuration the product never collects, but unlike
+            # discovery_interviews it runs perfectly once that configuration exists. So
+            # the precondition is checked rather than the crew excluded - a project that
+            # has its value streams set still gets its Delivery crew started.
+            missing = missing_config_keys(config, crew) if config is not None else []
+            if missing:
+                waiting.append(
+                    {"crew": crew, "waiting_on": [], "reason": _config_reason(missing)}
+                )
+                continue
+            startable.append(crew)
 
         started = []
         skipped = list(classified["running"])
