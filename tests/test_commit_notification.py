@@ -216,9 +216,12 @@ async def test_a_failing_send_does_not_mask_the_run_failure(client):
     with patch(
         "api.services.commit_notify_service._send_email",
         AsyncMock(side_effect=RuntimeError("resend down")),
-    ):
+    ) as send:
         await notify_crew_failed(SLUG, "assessment_design", triggered_by="gov@example.com")
-    # No exception escaping is the assertion.
+
+    # No exception escaping is the assertion - but it holds vacuously unless the send was
+    # actually attempted, as it would be if the audience resolved to nobody.
+    assert send.await_count == 1
 
 
 @pytest.mark.asyncio
