@@ -91,14 +91,16 @@ describe('Reviews - activate project control', () => {
     expect(screen.queryByRole('button', { name: /activate project/i })).not.toBeInTheDocument()
   })
 
-  it('says an inactive project will not start the next crew', async () => {
-    // The banner previously claimed Pamela's daily report would not run, which was never
-    // true - no activation gate exists in the report service.
+  it('names both consequences of leaving a project inactive', async () => {
+    // Two separate gates read projects.status, and the banner is the only place either is
+    // explained: api/services/pam_report_job.py:133 skips the daily report, and
+    // api/services/autostart_service.py suppresses the auto-start. Naming only one leaves
+    // an approver believing the other still works.
     statusMock.mockResolvedValue(baseStatus({ project_status: 'created' }))
     renderReviews()
     const banner = await screen.findByText(/not active/i)
     expect(banner).toHaveTextContent(/next crew/i)
-    expect(banner).not.toHaveTextContent(/daily report/i)
+    expect(banner).toHaveTextContent(/daily report/i)
   })
 })
 

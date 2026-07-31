@@ -111,8 +111,11 @@ function CrewApprovalSection({ slug }: { slug: string }) {
 }
 
 // A project stays 'created' until this is clicked - nothing else in the product calls
-// the activate endpoint. Until it is, approving a crew's output records the approval but
-// starts nothing. Approvers are already on this page to approve, so the act belongs here too.
+// the activate endpoint. Two things read projects.status, and both are off until then:
+// Pamela's daily report skips an inactive project (api/services/pam_report_job.py:133),
+// and approving a crew's output records the approval but starts nothing
+// (api/services/autostart_service.py). Approvers are already on this page to approve, so
+// the act belongs here too.
 function ActivateProjectControl({ slug }: { slug: string }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
@@ -143,8 +146,8 @@ function ActivateProjectControl({ slug }: { slug: string }) {
     <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
       <div>
         <p className="text-sm text-amber-800">
-          This project is not active yet - approving output will not start the next crew
-          until it is.
+          This project is not active yet - approving output will not start the next crew,
+          and Pamela's daily report will not run, until it is.
         </p>
         {error && (
           <p role="alert" className="text-xs text-red-600 mt-1">

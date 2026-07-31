@@ -99,11 +99,14 @@ needed next rather than leaving the reviewer to guess.
 
 ### Only an inactive project suppresses a start
 
-`projects.status` is set by `POST /projects/{slug}/activate` and **read by nothing** -
-project 1's spec said the daily report would skip inactive projects, and no such check was
-built. This gives the column the job it was created for: an inactive project's commits land
-and start nothing, and activating it is what makes the pipeline flow. It makes "the
-approver activates it and it starts to breathe" literally true.
+`projects.status` is set by `POST /projects/{slug}/activate` and is already read in one
+place: `api/services/pam_report_job.py:133` skips `run_pam_daily_report` for any project
+whose status is not `active`. (An earlier draft of this section claimed the column was read
+by nothing. That was wrong - it came from a grep for `!= 'active'` in single quotes, and
+that line uses double quotes.) Auto-start becomes the second reader, so an inactive
+project's commits land and start nothing, and activating it is what makes the pipeline
+flow. It makes "the approver activates it and it starts to breathe" literally true - and
+activating a project now switches on both consequences, not one.
 
 There is no per-commit opt-out. It would put a decision on the common path for a case
 already constrained by something else - committing crew A starts crew B, and B running then
@@ -205,4 +208,5 @@ Differentials - project 7, which makes the re-run this project enables cheap by 
 downstream work to what actually changed. Until then a re-run is a full re-run. Jordan's
 coverage role, interview delivery, and Casey's synthesis, all unchanged in the roadmap. Any
 queue or cancellation mechanism for crew runs. Reading `projects.status` anywhere other than
-auto-start - the daily report's activation gate remains unbuilt and is not addressed here.
+auto-start - the daily report's activation gate is already built and lives in
+`api/services/pam_report_job.py:133`, so it needs nothing here.

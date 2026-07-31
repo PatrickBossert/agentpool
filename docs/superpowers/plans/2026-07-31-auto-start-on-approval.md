@@ -525,7 +525,7 @@ git commit -m "feat: start the ready downstream crews when an approval lands"
 
 **`released` is replaced, not supplemented.** It reports crews made ready for the first time, is returned by the endpoint, is typed in the frontend client, and is consumed by nothing. Two overlapping fields where one is dead is a trap for the next reader. `commit_crew` keeps `commit_id` and `output_ids` and loses `released`, along with the `candidates` / `was_ready` computation that fed it.
 
-**The banner currently states something untrue.** `ui/src/pages/Reviews.tsx:113-114` and its rendered copy both claim Pamela's daily report will not run until the project is activated. There is no such gate - `pam_report_service.py` has no status check, and no `'active'` comparison exists anywhere in `api/`. Correct the claim to the consequence that this project makes real: an inactive project's approvals do not start the next crew.
+**The banner names one consequence and must name two.** `ui/src/pages/Reviews.tsx:113-114` and its rendered copy say Pamela's daily report will not run until the project is activated. **That is true** - `api/services/pam_report_job.py:133` returns early from `run_pam_daily_report` when `project.get("status") != "active"`, and it predates this branch. (An earlier draft of this plan claimed no such gate existed; that came from a grep for `!= 'active'` in single quotes, while the line uses double quotes.) Keep the daily report clause and **add** the consequence this project makes real: an inactive project's approvals do not start the next crew either.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -636,13 +636,13 @@ The last test decides a real question: **a failure to start must not fail the re
 Then in `ui/src/__tests__/Reviews.test.tsx`, add:
 
 ```tsx
-  it('says an inactive project will not start the next crew', async () => {
-    // The banner previously claimed Pamela's daily report would not run, which was never
-    // true - no activation gate exists in the report service.
+  it('names both consequences of leaving a project inactive', async () => {
+    // Two gates read projects.status - the daily report's, in pam_report_job.py, and the
+    // auto-start's - and the banner is the only place either is explained.
     render(<Wrapper />)
     const banner = await screen.findByText(/not active/i)
     expect(banner).toHaveTextContent(/next crew/i)
-    expect(banner).not.toHaveTextContent(/daily report/i)
+    expect(banner).toHaveTextContent(/daily report/i)
   })
 ```
 
@@ -714,14 +714,14 @@ In `ui/src/api/endpoints.ts`, replace the commit response type:
   }> =>
 ```
 
-In `ui/src/pages/Reviews.tsx`, correct the banner copy and the comment above `ActivateProjectControl`. The rendered sentence becomes:
+In `ui/src/pages/Reviews.tsx`, extend the banner copy and the comment above `ActivateProjectControl`. The rendered sentence becomes:
 
 ```tsx
-          This project is not active yet - approving output will not start the next crew
-          until it is.
+          This project is not active yet - approving output will not start the next crew,
+          and Pamela's daily report will not run, until it is.
 ```
 
-and the comment's second sentence becomes: `// Until it is, approving a crew's output records the approval but starts nothing.`
+and the comment names both readers of `projects.status`: `pam_report_job.py` for the daily report, `autostart_service.py` for the start.
 
 - [ ] **Step 6: Run both suites and the type check**
 
