@@ -342,16 +342,26 @@ async def test_a_crew_finishing_starts_nothing_further(client):
 
     This version calls dispatch_crew directly (the entry point asyncio.create_task
     actually schedules) and lets it run its real success path, with only
-    build_and_run_crew (no CrewAI) and the awaiting-commit notification (no email)
-    replaced. If dispatch_crew's completion path ever grew an auto-commit or an
-    auto-start, this would catch it: either a new approval_commits row would appear,
-    or a new crew_runs row for stakeholder_management would - stakeholder_management
-    being what a commit to assessment_design would release.
+    build_and_run_crew (no CrewAI), the awaiting-commit notification (no email) and the
+    two auto-assign passes (which are in _AUTO_ASSIGN_CREWS for assessment_design and
+    would otherwise run for real, leaving this test's behaviour resting on their early
+    return continuing to hold) replaced.
+
+    **assessment_design is committed by the fixture, deliberately.** Without that commit,
+    a dispatch_crew that had grown `await start_ready_downstream(...)` would find
+    stakeholder_management blocked on an uncommitted assessment_design, classify it
+    waiting, and start nothing - so the assertions would hold on the broken
+    implementation and the test would prove nothing. With it, stakeholder_management is
+    genuinely ready at the moment of completion, and only a cascade-free completion path
+    leaves it unstarted. The commit assertion is therefore "no *additional* commit".
     """
     await client.post("/projects", json=PROJECT)
     await _activate(SLUG)
     async with get_connection(SLUG) as conn:
         project_row = await fetch_project(conn, slug=SLUG)
+        await insert_approval_commit(
+            conn, crew_name="assessment_design", committed_by="a", notes=""
+        )
         run_id = await insert_crew_run(
             conn,
             project_id=project_row["id"],
@@ -363,6 +373,10 @@ async def test_a_crew_finishing_starts_nothing_further(client):
         "api.services.run_service.build_and_run_crew", AsyncMock(return_value="ok")
     ), patch(
         "api.services.commit_notify_service.notify_crew_awaiting_commit", AsyncMock()
+    ), patch(
+        "api.services.auto_assign_service.auto_assign_interview_scripts", AsyncMock()
+    ), patch(
+        "api.services.auto_assign_service.auto_assign_questionnaire_scripts", AsyncMock()
     ):
         await dispatch_crew(slug=SLUG, crew_name="assessment_design", run_id=run_id)
 
@@ -371,6 +385,9 @@ async def test_a_crew_finishing_starts_nothing_further(client):
         runs = await fetch_crew_runs(conn, project_id=project_row["id"])
         commits = await fetch_approval_commits(conn)
 
-    assert commits == []
+    # The success path ran to the end - without this, every assertion below could hold
+    # because dispatch_crew fell over before reaching anything that might cascade.
+    assert [r["status"] for r in runs if r["id"] == run_id] == ["completed"]
+    assert [c["crew_name"] for c in commits] == ["assessment_design"]
     assert [r["crew_name"] for r in runs] == ["assessment_design"]
     assert not any(r["crew_name"] == "stakeholder_management" for r in runs)
