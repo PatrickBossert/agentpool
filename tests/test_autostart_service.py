@@ -14,6 +14,7 @@ import pytest
 
 from api.config import get_settings
 from api.database import (
+    fetch_approval_commits,
     fetch_crew_runs,
     fetch_project,
     get_connection,
@@ -22,6 +23,7 @@ from api.database import (
     set_project_status,
 )
 from api.services.autostart_service import start_ready_downstream
+from api.services.run_service import dispatch_crew
 
 SLUG = "autostart-test"
 PROJECT = {
@@ -180,28 +182,48 @@ async def test_an_active_project_reports_inactive_false(client):
 
 @pytest.mark.asyncio
 async def test_a_crew_finishing_starts_nothing_further(client):
-    """Cascade safety, as a test rather than an argument. A crew completing does not
-    commit anything, so a single approval can start at most the crews directly below it
-    and can never chain onwards on its own. Here: start assessment_design by committing
-    its upstream, mark it completed as a finished run would, and assert that nothing
-    downstream of it - stakeholder_management - was started by that completion."""
+    """Cascade safety, exercised at its actual source.
+
+    This is a property of dispatch_crew's success path, not of start_ready_downstream:
+    a crew completing must not commit anything or start anything, which is why one
+    approval can start at most the crews directly below it and never chains onwards
+    on its own. An earlier version of this test drove the completion by issuing a raw
+    UPDATE against crew_runs and then asserting nothing had started - but nothing in
+    the codebase listens for a crew_runs status change, so that assertion held for any
+    implementation, including a broken one; it proved only that SQL does not invoke
+    Python.
+
+    This version calls dispatch_crew directly (the entry point asyncio.create_task
+    actually schedules) and lets it run its real success path, with only
+    build_and_run_crew (no CrewAI) and the awaiting-commit notification (no email)
+    replaced. If dispatch_crew's completion path ever grew an auto-commit or an
+    auto-start, this would catch it: either a new approval_commits row would appear,
+    or a new crew_runs row for stakeholder_management would - stakeholder_management
+    being what a commit to assessment_design would release.
+    """
     await client.post("/projects", json=PROJECT)
     await _activate(SLUG)
     async with get_connection(SLUG) as conn:
-        await insert_approval_commit(
-            conn, crew_name="discovery_mapping", committed_by="a", notes=""
+        project_row = await fetch_project(conn, slug=SLUG)
+        run_id = await insert_crew_run(
+            conn,
+            project_id=project_row["id"],
+            crew_name="assessment_design",
+            status="running",
         )
 
-    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()):
-        await start_ready_downstream(SLUG, "discovery_mapping", committed_by="a")
+    with patch(
+        "api.services.run_service.build_and_run_crew", AsyncMock(return_value="ok")
+    ), patch(
+        "api.services.commit_notify_service.notify_crew_awaiting_commit", AsyncMock()
+    ):
+        await dispatch_crew(slug=SLUG, crew_name="assessment_design", run_id=run_id)
 
     async with get_connection(SLUG) as conn:
-        await conn.execute(
-            "UPDATE crew_runs SET status='completed' WHERE crew_name='assessment_design'"
-        )
-        await conn.commit()
         project_row = await fetch_project(conn, slug=SLUG)
         runs = await fetch_crew_runs(conn, project_id=project_row["id"])
+        commits = await fetch_approval_commits(conn)
 
+    assert commits == []
     assert [r["crew_name"] for r in runs] == ["assessment_design"]
     assert not any(r["crew_name"] == "stakeholder_management" for r in runs)

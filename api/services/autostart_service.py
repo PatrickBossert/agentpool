@@ -28,6 +28,11 @@ async def start_ready_downstream(
     """
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
+        # A nonexistent project folds into the same branch as an inactive one. This
+        # function only ever runs after a commit has already been recorded against
+        # `slug`, which requires the project to exist, so `not project` is not a case
+        # any caller can reach in practice - but treating it as "inactive" rather than
+        # raising keeps this function total over its inputs.
         if not project or project.get("status") != "active":
             return {"started": [], "skipped": [], "waiting": [], "inactive": True}
 
