@@ -9,9 +9,14 @@ A submission concerns approvers, who must decide whether to accept it. Each
 notification narrows to its own audience via resolve_recipients' flags parameter -
 someone who is both reviewer and approver hears at both moments.
 
+A failed run concerns reviewers too - they are waiting for output that is not coming -
+and additionally whoever's approval started it, who would otherwise believe work is in
+flight. That one names a specific address on top of the flag-resolved audience.
+
 notify_crew_awaiting_commit is called from dispatch_crew and dispatch_agent in
 api/services/run_service.py, immediately after a crew run completes.
 notify_crew_ready_for_approval is called from POST /projects/{slug}/submissions.
+notify_crew_failed is called from dispatch_crew's failure path, before it re-raises.
 """
 from __future__ import annotations
 
