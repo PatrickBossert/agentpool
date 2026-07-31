@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import aiosqlite
 
-from api.database import crew_has_commit
+from api.database import crew_has_commit, crew_is_running
 
 # Each crew maps to the crews that must be committed before it may run.
 # Alex -> Maya -> Jordan: stakeholder_management follows assessment_design, because
@@ -60,3 +60,38 @@ async def readiness_report(conn: aiosqlite.Connection) -> dict[str, dict]:
         }
         for crew, upstreams in CREW_DEPENDENCIES.items()
     }
+
+
+async def classify_downstream(
+    conn: aiosqlite.Connection, *, crew_name: str
+) -> dict[str, list]:
+    """Sort every crew directly downstream of this one into ready, running, or waiting.
+
+    Readiness is a state, not a transition. `commit_crew`'s older `released` list reported
+    a crew only the first time it became ready, which meant a revision approved later
+    started nothing - the first pass through the pipeline ran itself and every subsequent
+    change was manual. Asking "is it ready" rather than "did it just become ready" is what
+    makes re-approval re-run the crew below.
+
+    A ready crew that is already running is reported as running, never as both: the caller
+    starts everything in `ready`, and two concurrent runs of one crew would both write
+    versioned outputs.
+    """
+    ready: list[str] = []
+    running: list[str] = []
+    waiting: list[dict] = []
+
+    for crew in downstream_of(crew_name):
+        blocking = [
+            upstream
+            for upstream in CREW_DEPENDENCIES.get(crew, [])
+            if not await crew_has_commit(conn, crew_name=upstream)
+        ]
+        if blocking:
+            waiting.append({"crew": crew, "waiting_on": blocking})
+        elif await crew_is_running(conn, crew_name=crew):
+            running.append(crew)
+        else:
+            ready.append(crew)
+
+    return {"ready": ready, "running": running, "waiting": waiting}
