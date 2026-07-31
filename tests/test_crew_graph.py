@@ -12,7 +12,6 @@ from api.services.crew_graph import (
     CREW_DEPENDENCIES,
     classify_downstream,
     downstream_of,
-    is_crew_ready,
     readiness_report,
 )
 
@@ -83,7 +82,8 @@ async def test_a_crew_with_no_dependencies_is_always_ready(client):
     await client.post("/projects", json=PROJECT)
     from api.database import get_connection
     async with get_connection("graph-test") as conn:
-        assert await is_crew_ready(conn, crew_name="discovery_mapping") is True
+        report = await readiness_report(conn)
+    assert report["discovery_mapping"]["ready"] is True
 
 
 @pytest.mark.asyncio
@@ -93,17 +93,22 @@ async def test_a_crew_waits_until_every_upstream_is_committed(client):
 
     async with get_connection("graph-test") as conn:
         # discovery_interviews needs assessment_design AND stakeholder_management.
-        assert await is_crew_ready(conn, crew_name="discovery_interviews") is False
+        before = await readiness_report(conn)
 
         await insert_approval_commit(
             conn, crew_name="assessment_design", committed_by="admin"
         )
-        assert await is_crew_ready(conn, crew_name="discovery_interviews") is False
+        halfway = await readiness_report(conn)
 
         await insert_approval_commit(
             conn, crew_name="stakeholder_management", committed_by="admin"
         )
-        assert await is_crew_ready(conn, crew_name="discovery_interviews") is True
+        after = await readiness_report(conn)
+
+    assert before["discovery_interviews"]["ready"] is False
+    assert halfway["discovery_interviews"]["ready"] is False
+    assert halfway["discovery_interviews"]["waiting_on"] == ["stakeholder_management"]
+    assert after["discovery_interviews"]["ready"] is True
 
 
 @pytest.mark.asyncio

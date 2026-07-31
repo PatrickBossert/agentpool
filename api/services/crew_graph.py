@@ -35,21 +35,18 @@ def downstream_of(crew_name: str) -> list[str]:
     ]
 
 
-async def is_crew_ready(conn: aiosqlite.Connection, *, crew_name: str) -> bool:
-    """True when every upstream crew has been committed at least once.
-
-    Later uncommitted changes upstream do not un-arm a crew: readiness was released by
-    a commit, and that release stands. The next upstream commit releases the next
-    increment.
-    """
-    for upstream in CREW_DEPENDENCIES.get(crew_name, []):
-        if not await crew_has_commit(conn, crew_name=upstream):
-            return False
-    return True
-
-
 async def readiness_report(conn: aiosqlite.Connection) -> dict[str, dict]:
-    """Per crew: whether it is ready, and which upstream crews it is still waiting on."""
+    """Per crew: whether it is ready, and which upstream crews it is still waiting on.
+
+    Ready means every upstream crew has been committed at least once. Later uncommitted
+    changes upstream do not un-arm a crew: readiness was released by a commit, and that
+    release stands. The next upstream commit releases the next increment.
+
+    A single-crew `is_crew_ready` stood here until its last production caller - the
+    `released` computation in commit_crew - was deleted. `classify_downstream` answers
+    the same question for the crews below one crew, and this answers it for the whole
+    graph; a third form of the same loop is not worth keeping alive for tests only.
+    """
     committed = {
         crew: await crew_has_commit(conn, crew_name=crew) for crew in CREW_DEPENDENCIES
     }
