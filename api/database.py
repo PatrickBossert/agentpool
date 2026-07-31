@@ -761,6 +761,37 @@ async def insert_crew_run(
     return cur.lastrowid
 
 
+async def insert_crew_run_if_not_running(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    crew_name: str,
+    orchestration_run_id: int | None = None,
+) -> int | None:
+    """Insert a running crew_run row, unless this crew already has one.
+
+    Returns the new run's id, or None when a running row already existed and nothing
+    was inserted.
+
+    The condition is inside the INSERT rather than in a read before it. Auto-start
+    classifies a downstream crew as ready and then inserts, with several awaits in
+    between; two approvers committing the same upstream inside that window would both
+    see "not running" and both insert, leaving two concurrent runs of one crew writing
+    versioned outputs. A single statement is evaluated under SQLite's write lock, so
+    only one of them can win.
+    """
+    cur = await conn.execute(
+        "INSERT INTO crew_runs (project_id, crew_name, status, started_at, orchestration_run_id) "
+        "SELECT ?, ?, 'running', CURRENT_TIMESTAMP, ? "
+        "WHERE NOT EXISTS ("
+        "  SELECT 1 FROM crew_runs WHERE crew_name=? AND status='running'"
+        ")",
+        (project_id, crew_name, orchestration_run_id, crew_name),
+    )
+    await conn.commit()
+    return cur.lastrowid if cur.rowcount else None
+
+
 async def fetch_crew_runs(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
     async with conn.execute(
         "SELECT * FROM crew_runs WHERE project_id=? ORDER BY created_at DESC", (project_id,)

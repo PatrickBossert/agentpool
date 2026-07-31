@@ -15,7 +15,7 @@ from api.database import (
     fetch_user,
     get_connection,
     get_system_connection,
-    insert_crew_run,
+    insert_crew_run_if_not_running,
 )
 from api.services.crew_graph import classify_downstream
 from api.services.run_service import dispatch_crew
@@ -68,6 +68,10 @@ async def start_ready_downstream(
 
     A crew in `_PAM_DISPATCHED_ONLY` is never started here however ready it looks; it is
     moved into `waiting` naming PAM as what it needs.
+
+    `skipped` also absorbs a crew whose run appeared between the classification and the
+    insert - insert_crew_run_if_not_running declines it, and a declined insert means the
+    same thing to the reviewer as a crew that was already running when it was classified.
     """
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
@@ -90,10 +94,19 @@ async def start_ready_downstream(
                 startable.append(crew)
 
         started = []
+        skipped = list(classified["running"])
         for crew in startable:
-            run_id = await insert_crew_run(
-                conn, project_id=project["id"], crew_name=crew, status="running"
+            run_id = await insert_crew_run_if_not_running(
+                conn, project_id=project["id"], crew_name=crew
             )
+            if run_id is None:
+                # Another approval started this crew between classify_downstream's read
+                # and this insert. The insert declines rather than duplicating the run,
+                # and the crew is reported skipped for the same reason as one that was
+                # already running when it was classified - it is running, and this
+                # approval is not in it.
+                skipped.append(crew)
+                continue
             started.append({"crew": crew, "run_id": run_id})
 
     # Dispatch outside the connection: a crew run is minutes of work, and holding the
@@ -111,7 +124,7 @@ async def start_ready_downstream(
 
     return {
         "started": started,
-        "skipped": classified["running"],
+        "skipped": skipped,
         "waiting": waiting,
         "inactive": False,
     }

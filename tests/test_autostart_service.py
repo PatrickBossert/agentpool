@@ -220,6 +220,70 @@ async def test_a_committer_with_no_resolvable_address_is_dropped_rather_than_pas
 
 
 @pytest.mark.asyncio
+async def test_a_running_crew_cannot_receive_a_second_run_row(client):
+    """The condition has to live inside the INSERT, not in a read that precedes it.
+
+    Two approvers committing the same upstream within the check-then-insert window both
+    classify the crew below as ready and both insert, producing two concurrent runs
+    writing versioned outputs for one crew - the failure the `skipped` state only
+    prevents in the sequential case.
+    """
+    from api.database import insert_crew_run_if_not_running
+
+    await client.post("/projects", json=PROJECT)
+    async with get_connection(SLUG) as conn:
+        project_row = await fetch_project(conn, slug=SLUG)
+        first = await insert_crew_run_if_not_running(
+            conn, project_id=project_row["id"], crew_name="assessment_design"
+        )
+        second = await insert_crew_run_if_not_running(
+            conn, project_id=project_row["id"], crew_name="assessment_design"
+        )
+        runs = await fetch_crew_runs(conn, project_id=project_row["id"])
+
+    assert isinstance(first, int)
+    assert second is None
+    assert [r["crew_name"] for r in runs] == ["assessment_design"]
+
+
+@pytest.mark.asyncio
+async def test_a_crew_that_starts_running_after_classification_is_reported_skipped(client):
+    """The race as start_ready_downstream sees it.
+
+    classify_downstream is patched to report a crew that is in fact already running, which
+    is exactly what the real one returns when the run appears after its read and before
+    the insert. Nothing may be started, and the crew must be named in `skipped` rather
+    than silently vanishing from the report.
+    """
+    await client.post("/projects", json=PROJECT)
+    await _activate(SLUG)
+    async with get_connection(SLUG) as conn:
+        project_row = await fetch_project(conn, slug=SLUG)
+        await insert_crew_run(
+            conn,
+            project_id=project_row["id"],
+            crew_name="assessment_design",
+            status="running",
+        )
+
+    stale = AsyncMock(
+        return_value={"ready": ["assessment_design"], "running": [], "waiting": []}
+    )
+    with patch("api.services.autostart_service.dispatch_crew", AsyncMock()) as dispatch, \
+            patch("api.services.autostart_service.classify_downstream", stale):
+        result = await start_ready_downstream(SLUG, "discovery_mapping", committed_by="a")
+
+    assert result["started"] == []
+    assert result["skipped"] == ["assessment_design"]
+    assert dispatch.await_count == 0
+
+    async with get_connection(SLUG) as conn:
+        project_row = await fetch_project(conn, slug=SLUG)
+        runs = await fetch_crew_runs(conn, project_id=project_row["id"])
+    assert len(runs) == 1
+
+
+@pytest.mark.asyncio
 async def test_an_inactive_project_starts_nothing_and_says_why(client):
     """Every project in this codebase is 'created' until an approver activates it, so this
     is the state auto-start meets first. The ready crew must NOT be reported as waiting -
