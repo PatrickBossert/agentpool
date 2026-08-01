@@ -229,6 +229,10 @@ async def test_the_notification_links_to_the_crew_it_is_about(client):
     """Three notices are built at three call sites, so the crew is asserted per notice
     rather than once - a link carrying the wrong crew is worse than one carrying none.
 
+    The whole path is asserted, not the query string in pieces: a regression to
+    /{slug}/reviews?crew=...&tab=output carries both parameters and would satisfy a pair of
+    substring checks while landing the reader on the review queue instead of the agent.
+
     approver=True here (not False): notify_crew_awaiting_commit's audience is
     is_reviewer, falling back to is_approver only when there is no reviewer at all. A
     stakeholder created with approver=False is neither (reviewer defaults to approver -
@@ -244,8 +248,7 @@ async def test_the_notification_links_to_the_crew_it_is_about(client):
         await notify_crew_awaiting_commit(SLUG, "assessment_design")
 
     body = send.await_args.kwargs["body"]
-    assert "crew=assessment_design" in body
-    assert "tab=output" in body
+    assert f"/dashboard/{SLUG}?crew=assessment_design&tab=output" in body
 
 
 @pytest.mark.asyncio
@@ -262,8 +265,7 @@ async def test_the_approval_notification_links_to_the_crew_it_is_about(client):
         await notify_crew_ready_for_approval(SLUG, "stakeholder_management")
 
     body = send.await_args.kwargs["body"]
-    assert "crew=stakeholder_management" in body
-    assert "tab=output" in body
+    assert f"/dashboard/{SLUG}?crew=stakeholder_management&tab=output" in body
 
 
 @pytest.mark.asyncio
@@ -280,8 +282,7 @@ async def test_the_failure_notification_links_to_the_crew_it_is_about(client):
         await notify_crew_failed(SLUG, "discovery_interviews", triggered_by=None)
 
     body = send.await_args.kwargs["body"]
-    assert "crew=discovery_interviews" in body
-    assert "tab=output" in body
+    assert f"/dashboard/{SLUG}?crew=discovery_interviews&tab=output" in body
 
 
 @pytest.mark.asyncio
