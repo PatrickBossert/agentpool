@@ -96,15 +96,29 @@ Nothing on it is genuinely cross-agent once the interview model is applied:
 | Tab today | New home |
 |---|---|
 | Structure | Alex's `CREW_OUTPUT_EDITOR` - `StructureTab.tsx` moves as-is |
-| Setup - brief, standards, documents, questionnaire preferences | Alex's `CREW_SETUP_OVERRIDE` |
-| Templates - interview instruments per level | Maya's Setup tab |
+| Setup | **Deleted.** It duplicates `AlexSetupTab` exactly - see below |
+| Templates - per-node template assignment | Maya's Setup tab, unchanged |
 
-Templates settles as Maya's because the instruments are **per-level configuration**: an
-interview script is generated for every node by applying its level's instrument, so the
-instrument is chosen three times rather than assigned seventy-nine times. Configuration
-belongs in Setup; the generated interviews are output and belong in her Output tab. See the
-cardinalities recorded in the interview coverage model: activity to script is 1:1, activity
-to stakeholders is 1:many with a party.
+**The Setup tab is a duplicate, not a migration.** `ui/src/components/tabs/AlexSetupTab.tsx`
+already exists as Alex's `CREW_SETUP_OVERRIDE` and already saves the identical field set:
+`discovery_brief`, `discovery_document_ids`, `discovery_links`, `standards_references`,
+`preferred_questionnaire_sections`, `preferred_questions_per_section`. The same configuration
+has been editable in two places. Nothing moves; the page's copy goes.
+
+**Templates is per-node assignment, and moves as-is.** It maps database-stored interview and
+questionnaire templates onto individual nodes (`NodeTemplateAssignment`). The interview
+coverage model supersedes that mechanism - a script is generated for every node by applying
+its **level's** instrument, so the instrument is chosen three times rather than assigned
+seventy-nine times - but that generation is not built. Removing a working feature before its
+replacement exists would take away control with nothing to fill the gap, so it moves into
+Maya's Setup tab unchanged and is deleted when the 1:1 generation lands. At that point it is
+a deletion rather than a regression.
+
+**Maya's level instruments are already in her Setup tab and are not touched here.**
+`MayaSetupTab.tsx` holds L0/L1/L2/L3 with approach, structure notes and section lists - as
+hard-coded literals, one annotated "9 fixed sections — not customisable". Making them
+tweakable per project needs a schema, persistence, an API and an editor, which is its own
+project. See Out of scope.
 
 `/dashboard/{slug}/value-chain` **redirects** to the Dashboard with Alex selected rather
 than 404ing, so existing bookmarks and links in already-sent email still land somewhere
@@ -200,8 +214,11 @@ has run. Do that first, or the first thing seen after this work will look like a
 ## Out of scope
 
 Building editors for agents other than Alex - the structure arrives for all, the editors
-arrive one at a time. Fixing Maya's output-key sprawl at source, which belongs with the
-interview generation work. The capability model - mapping systems and data onto
+arrive one at a time. **Making Maya's level instruments editable per project**, which the
+user has asked for and which needs a schema, persistence, an API and an editor UI - a project
+in its own right, not a sub-task of this one. Fixing Maya's output-key sprawl at source, and
+the 1:1 script generation that would retire the node-assignment table, both of which belong
+with the interview generation work. The capability model - mapping systems and data onto
 contributions - which is banked separately. Any change to what the Reviews page shows, as
 opposed to what links to it. Roadmap project 4, Jordan's coverage role, which this makes
 easier but does not begin.
