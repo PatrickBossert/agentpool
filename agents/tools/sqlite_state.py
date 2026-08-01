@@ -1,10 +1,29 @@
 # agents/tools/sqlite_state.py
 import json
 from pathlib import Path
+from typing import Callable
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from api.config import get_settings
 from agents.tools._db import insert_agent_output_sync, latest_output_path
+
+
+# Keys whose content is checked before it is stored. The tool returns a string and CrewAI
+# hands that back to the agent, so refusing a write and returning the problems lets the
+# agent correct itself inside the same run - rather than the fault surfacing days later
+# through a Save button that appears to do nothing.
+#
+# This does not replace save_model's validation: a person editing in the grid can also
+# construct an invalid model, and that path must keep refusing. The two guard different
+# writers.
+def _validate_value_chain_model(parsed: dict) -> list[str]:
+    from api.services.value_chain_model import validate_model
+    return validate_model(parsed)
+
+
+_VALIDATORS: dict[str, Callable[[dict], list[str]]] = {
+    "value_chain_model": _validate_value_chain_model,
+}
 
 
 class SQLiteStateToolInput(BaseModel):
@@ -37,11 +56,19 @@ class SQLiteStateTool(BaseTool):
         file_path = outputs_dir / f"{key}.json"
 
         if operation == "write":
-            # Validate JSON
             try:
-                json.loads(value)
+                parsed = json.loads(value)
             except json.JSONDecodeError as e:
                 return f"Error: value is not valid JSON — {e}"
+
+            validator = _VALIDATORS.get(key)
+            if validator is not None:
+                problems = validator(parsed)
+                if problems:
+                    return (
+                        f"Error: {key} was not written - it is structurally invalid. "
+                        f"Fix these and write it again: " + "; ".join(problems)
+                    )
             try:
                 file_path.write_text(value)
                 insert_agent_output_sync(
