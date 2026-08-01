@@ -52,8 +52,12 @@ describe('ValueChainGrid layout', () => {
     expect(screen.getByTestId('segment-band-1')).toHaveTextContent('Property Value Chain')
   })
 
-  it("shows each lane's party and its contribution count for the segment", () => {
-    render(<ValueChainGrid model={MODEL} />)
+  it("shows each lane's party and its contribution count for the whole chain", () => {
+    // A single-segment fixture cannot discriminate a whole-chain count from a per-segment
+    // one - they agree whenever there is only one segment to count. TWO_SEGMENTS has sp
+    // contributing in both segment 1 (1.1) and segment 2 (2.1), so a per-segment count
+    // would read 1 in either segment's row while the whole-chain count reads 2.
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
     expect(screen.getByTestId('lane-sp')).toHaveTextContent('SP-GS')
     expect(screen.getByTestId('lane-iss')).toHaveTextContent('ISS')
     expect(screen.getByTestId('lane-count-sp')).toHaveTextContent('2')
@@ -359,5 +363,14 @@ describe('zoom', () => {
     render(<ValueChainGrid model={TWO_SEGMENTS} />)
     for (let i = 0; i < 10; i++) fireEvent.click(screen.getByTestId('zoom-out'))
     expect(screen.getByTestId('zoom-level')).toHaveTextContent('40%')
+  })
+
+  it('does not zoom above the ceiling', () => {
+    // Mirrors the floor test above: repeated 0.2 addition drifts in floating point just as
+    // repeated subtraction does, so an off-by-a-fraction zoom could equally overshoot or
+    // never reach ZOOM_MAX (1.4).
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    for (let i = 0; i < 10; i++) fireEvent.click(screen.getByTestId('zoom-in'))
+    expect(screen.getByTestId('zoom-level')).toHaveTextContent('140%')
   })
 })
