@@ -804,16 +804,28 @@ export interface AgentDetailPanelProps {
   isPipelineActive: boolean
   hitlReviews?: HumanReview[]
   locale?: string
+  // The tab named in a notification link (Dashboard's `?tab=`). Must win over whatever this
+  // browser last had saved, or an approver whose last visit ended on Chat lands on Chat no
+  // matter what the email said.
+  initialTab?: string
+}
+
+function isTab(value: string | undefined): value is Tab {
+  return value === 'output' || value === 'status' || value === 'chat' || value === 'setup' || value === 'skills'
 }
 
 export default function AgentDetailPanel({
   slug, crewKey, crewRun, outputs, logs, isPipelineActive, hitlReviews = [], locale = 'GB',
+  initialTab,
 }: AgentDetailPanelProps) {
   const navigate = useNavigate()
   const { user } = useAuth()
 
   const tabKey = user?.sub ? `ap_panel_tab:${user.sub}:${slug}:${crewKey}` : null
   const [tab, setTab] = useState<Tab>(() => {
+    // A deep link from a notification must beat whatever tab this browser last used, or an
+    // approver who ended their last visit on Chat lands on Chat however the email was written.
+    if (isTab(initialTab)) return initialTab
     if (tabKey) {
       const saved = localStorage.getItem(tabKey)
       if (saved === 'output' || saved === 'status' || saved === 'chat' || saved === 'setup' || saved === 'skills') return saved
@@ -899,7 +911,10 @@ export default function AgentDetailPanel({
   ]
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 bg-white rounded-xl border border-gray-200 overflow-hidden">
+    <div
+      className="flex flex-col flex-1 min-h-0 bg-white rounded-xl border border-gray-200 overflow-hidden"
+      data-testid={`selected-crew-${crewKey}`}
+    >
 
       {/* Panel header */}
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-100 flex-shrink-0 bg-gray-50/50">
@@ -937,6 +952,7 @@ export default function AgentDetailPanel({
           <button
             key={t.key}
             onClick={() => { setTab(t.key); if (tabKey) localStorage.setItem(tabKey, t.key) }}
+            data-testid={tab === t.key ? `active-tab-${t.key}` : undefined}
             className={`flex-1 py-2 text-xs font-semibold transition-colors ${
               tab === t.key
                 ? 'text-teal-700 border-b-2 border-teal-600 bg-teal-50/30'

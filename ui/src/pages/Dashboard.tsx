@@ -1,6 +1,6 @@
 // ui/src/pages/Dashboard.tsx
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { PauseCircle, Trash2, ArrowRight, AlertTriangle, Clock, CalendarDays } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { projectsApi, milestonesApi, commitsApi } from '../api/endpoints'
@@ -105,7 +105,15 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const logs = useWebSocket(slug)
 
-  const [selectedCrew, setSelectedCrew] = useState<string>('PAM')
+  // A notification email names both the crew and the tab it wants the reader to land on
+  // (see api/services/commit_notify_service.py). `?crew=` seeds the initial selection here;
+  // `?tab=` is handed to the panel below as a prop that must override its own saved tab -
+  // see AgentDetailPanel's initialTab for why that override matters.
+  const [searchParams] = useSearchParams()
+  const crewFromUrl = searchParams.get('crew')
+  const tabFromUrl = searchParams.get('tab') ?? undefined
+
+  const [selectedCrew, setSelectedCrew] = useState<string>(crewFromUrl || 'PAM')
 
   const { data: status } = useQuery({
     queryKey: ['status', slug],
@@ -328,6 +336,7 @@ export default function Dashboard() {
               isPipelineActive={isPipelineActive}
               hitlReviews={hitlReviews}
               locale={settings?.locale}
+              initialTab={tabFromUrl}
             />
           </div>
         </div>

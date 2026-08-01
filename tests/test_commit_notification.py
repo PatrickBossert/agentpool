@@ -225,6 +225,66 @@ async def test_a_failing_send_does_not_mask_the_run_failure(client):
 
 
 @pytest.mark.asyncio
+async def test_the_notification_links_to_the_crew_it_is_about(client):
+    """Three notices are built at three call sites, so the crew is asserted per notice
+    rather than once - a link carrying the wrong crew is worse than one carrying none.
+
+    approver=True here (not False): notify_crew_awaiting_commit's audience is
+    is_reviewer, falling back to is_approver only when there is no reviewer at all. A
+    stakeholder created with approver=False is neither (reviewer defaults to approver -
+    see _add_stakeholder's docstring), so _send_email would never be reached and the
+    assertions below would never run."""
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder(SLUG, "Actor", "actor@example.com", approver=True)
+    await _set_dev_mode(SLUG, False)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+
+    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+        await notify_crew_awaiting_commit(SLUG, "assessment_design")
+
+    body = send.await_args.kwargs["body"]
+    assert "crew=assessment_design" in body
+    assert "tab=output" in body
+
+
+@pytest.mark.asyncio
+async def test_the_approval_notification_links_to_the_crew_it_is_about(client):
+    """Same claim as above, for notify_crew_ready_for_approval's own call site - a separate
+    _notify() invocation with its own link construction in scope."""
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder(SLUG, "Gov", "gov@example.com", approver=True)
+    await _set_dev_mode(SLUG, False)
+
+    from api.services.commit_notify_service import notify_crew_ready_for_approval
+
+    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+        await notify_crew_ready_for_approval(SLUG, "stakeholder_management")
+
+    body = send.await_args.kwargs["body"]
+    assert "crew=stakeholder_management" in body
+    assert "tab=output" in body
+
+
+@pytest.mark.asyncio
+async def test_the_failure_notification_links_to_the_crew_it_is_about(client):
+    """Same claim again, for notify_crew_failed's call site - reviewers reading a failure
+    notice need to land on the crew that failed, not a generic reviews list."""
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder(SLUG, "Actor", "actor@example.com", approver=True)
+    await _set_dev_mode(SLUG, False)
+
+    from api.services.commit_notify_service import notify_crew_failed
+
+    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+        await notify_crew_failed(SLUG, "discovery_interviews", triggered_by=None)
+
+    body = send.await_args.kwargs["body"]
+    assert "crew=discovery_interviews" in body
+    assert "tab=output" in body
+
+
+@pytest.mark.asyncio
 async def test_a_successful_run_still_sends_the_completion_notice_not_a_failure_one(client):
     await client.post("/projects", json=PROJECT)
     # A reviewer, so the completion notice actually has a recipient to inspect.

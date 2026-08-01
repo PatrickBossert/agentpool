@@ -72,7 +72,10 @@ async def _notify(
     the reviewers' notification down with it."""
     try:
         settings = get_settings()
-        link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/reviews"
+        link = (
+            f"{settings.public_url.rstrip('/')}/dashboard/{slug}"
+            f"?crew={crew_name}&tab=output"
+        )
 
         async with get_connection(slug) as conn:
             project = await fetch_project(conn, slug=slug)
