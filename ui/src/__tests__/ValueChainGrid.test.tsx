@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -300,26 +300,37 @@ describe('a cell holding more than one contribution', () => {
   })
 })
 
-describe('the live sp-gs-am fixture', () => {
-  // This is the actual collision that made the model unsaveable: five real activities from
-  // value_chain_mapper's output landed on segment 5, party GSUK, column 10. Exercising the
-  // real file, not a contrived stand-in, is what proves this fixes the reported case rather
-  // than just the synthetic one above.
-  const FIXTURE_PATH = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../../projects/sp-gs-am/outputs/value_chain_model_v2.json',
-  )
+// This is the actual collision that made the model unsaveable: five real activities from
+// value_chain_mapper's output landed on segment 5, party GSUK, column 10. Exercising the real
+// file, not a contrived stand-in, is what proves this fixes the reported case rather than just
+// the synthetic one above.
+//
+// projects/ is gitignored, so this fixture is not guaranteed to exist in every checkout - a
+// fresh clone or CI would otherwise hit ENOENT from readFileSync and fail outright. Skipped
+// rather than failed when absent, named the same way tests/test_value_chain_migration.py
+// names its skip for the same fixture.
+const SP_GS_AM_FIXTURE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../projects/sp-gs-am/outputs/value_chain_model_v2.json',
+)
+const SP_GS_AM_FIXTURE_PRESENT = existsSync(SP_GS_AM_FIXTURE_PATH)
 
-  it('renders every card of the real five-way collision in segment 5, column 10', () => {
-    const raw = JSON.parse(readFileSync(FIXTURE_PATH, 'utf-8'))
-    const model: ValueChainModel = { model_version: 1, ...raw }
-    render(<ValueChainGrid model={model} />)
+describe.skipIf(!SP_GS_AM_FIXTURE_PRESENT)(
+  SP_GS_AM_FIXTURE_PRESENT
+    ? 'the live sp-gs-am fixture'
+    : 'the live sp-gs-am fixture (skipped: sp-gs-am fixture not present in this checkout)',
+  () => {
+    it('renders every card of the real five-way collision in segment 5, column 10', () => {
+      const raw = JSON.parse(readFileSync(SP_GS_AM_FIXTURE_PATH, 'utf-8'))
+      const model: ValueChainModel = { model_version: 1, ...raw }
+      render(<ValueChainGrid model={model} />)
 
-    const cell = screen.getByTestId('cell-5-GSUK-10')
-    const cards = [...cell.querySelectorAll('[data-testid^="card-"]')].filter(
-      (el) => !el.getAttribute('data-testid')?.startsWith('card-header-'),
-    )
-    expect(cards).toHaveLength(5)
-    expect(screen.getByTestId('cell-overlap-5-GSUK-10')).toHaveTextContent('5')
-  })
-})
+      const cell = screen.getByTestId('cell-5-GSUK-10')
+      const cards = [...cell.querySelectorAll('[data-testid^="card-"]')].filter(
+        (el) => !el.getAttribute('data-testid')?.startsWith('card-header-'),
+      )
+      expect(cards).toHaveLength(5)
+      expect(screen.getByTestId('cell-overlap-5-GSUK-10')).toHaveTextContent('5')
+    })
+  },
+)
