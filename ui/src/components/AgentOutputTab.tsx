@@ -63,17 +63,21 @@ export function AgentOutputTab({ slug, crewKey, outputs }: AgentOutputTabProps) 
     >
       {Editor ? (
         <Editor slug={slug} />
-      ) : (
+      ) : current ? (
+        // `current` is narrowed here by this ternary, not by the comment above - reordering
+        // the guard or this branch can no longer produce a runtime crash the compiler stays
+        // silent about. Reaching Editor-less with no current is impossible (the early return
+        // above already covers `!current && !Editor`), so there is deliberately no third arm.
         <div
           data-testid="primary-output-readonly"
           className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3 space-y-1"
         >
-          <p className="text-xs font-semibold text-gray-700">{current!.file_path}</p>
+          <p className="text-xs font-semibold text-gray-700">{current.file_path}</p>
           <p className="text-[11px] text-gray-400">
             No editor registered for this output yet. See the Status tab for its version history.
           </p>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

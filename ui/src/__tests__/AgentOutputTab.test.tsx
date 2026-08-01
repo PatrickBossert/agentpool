@@ -139,4 +139,18 @@ describe('AgentOutputTab', () => {
       await screen.findByRole('button', { name: /migrate from the existing diagram/i }),
     ).toBeInTheDocument()
   })
+
+  // The wrapper's data-version spread is conditional on `current` - nothing to report when
+  // only the editor mounted via the !current path above. A future edit that swapped it back
+  // to an unconditional `String(current?.version)` would silently reintroduce the literal
+  // string "undefined" as the attribute's value, and every other test here would stay green
+  // because none of them look at this attribute when there is no current row.
+  it('sets no data-version attribute when the editor mounts with no current row', () => {
+    const outputs: AgentOutput[] = [{
+      id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain',
+      version: 3, is_current: true, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'a.md',
+    }]
+    renderOutputTab({ outputs })
+    expect(screen.getByTestId('primary-output-value_chain_model')).not.toHaveAttribute('data-version')
+  })
 })
