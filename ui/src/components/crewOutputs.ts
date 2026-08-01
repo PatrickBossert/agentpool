@@ -6,13 +6,15 @@
 // PAM is deliberately absent - its Output tab is an Overview rendering PamReportView, not a
 // versioned artefact, so it has no primary to declare and keeps its own branch.
 export const CREW_OUTPUT_TYPE: Record<string, string> = {
-  discovery_mapping:    'value_chain',
-  value_design:         'value_propositions',
-  architecture:         'architecture',
-  delivery:             'roadmap',
-  business_plan:        'business_plan',
-  discovery:            'discovery',
-  discovery_interviews: 'interview_synthesis',
+  discovery_mapping:      'value_chain',
+  assessment_design:      'interview_scripts',
+  value_design:           'value_propositions',
+  architecture:           'architecture',
+  delivery:               'roadmap',
+  business_plan:          'business_plan',
+  discovery:              'discovery',
+  stakeholder_management: 'stakeholder_engagement_plan',
+  discovery_interviews:   'interview_synthesis',
 }
 
 // SQLite timestamps use a space separator; convert to ISO 'T' so Date parses correctly in

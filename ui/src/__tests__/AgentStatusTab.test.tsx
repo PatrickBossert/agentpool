@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import { AgentStatusTab } from '../components/AgentStatusTab'
+import type { CrewStatus } from '../components/agentStatus'
 import type { AgentOutput, CrewRun } from '../types'
 
 vi.mock('../api/endpoints', () => ({
@@ -16,17 +17,18 @@ vi.mock('../api/endpoints', () => ({
 
 const OUTPUTS: AgentOutput[] = [
   { id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain',
-    version: 3, is_current: 1, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'a.json' },
+    version: 3, is_current: true, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'a.json' },
   { id: 2, agent_name: 'value_chain_mapper', output_type: 'value_chain',
-    version: 2, is_current: 0, review_status: 'approved', created_at: '2026-07-31 10:00:00', file_path: 'b.json' },
+    version: 2, is_current: false, review_status: 'approved', created_at: '2026-07-31 10:00:00', file_path: 'b.json' },
   { id: 3, agent_name: 'value_chain_mapper', output_type: 'value_chain_registry',
-    version: 13, is_current: 1, review_status: 'approved', created_at: '2026-08-01 09:00:00', file_path: 'c.json' },
+    version: 13, is_current: true, review_status: 'approved', created_at: '2026-08-01 09:00:00', file_path: 'c.json' },
 ]
 
 function renderStatusTab(overrides: {
   crewRun?: CrewRun
   outputs?: AgentOutput[]
   primaryModel?: { segments: unknown[]; activities: unknown[]; contributions: unknown[]; tasks: unknown[] }
+  crewStatus?: CrewStatus
 } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -38,6 +40,7 @@ function renderStatusTab(overrides: {
         outputs={overrides.outputs ?? OUTPUTS}
         statusEvents={[]}
         primaryModel={overrides.primaryModel}
+        crewStatus={overrides.crewStatus ?? 'idle'}
       />
     </QueryClientProvider>,
   )
@@ -90,5 +93,19 @@ describe('AgentStatusTab', () => {
     expect(card).toHaveTextContent('17 activities')
     expect(card).toHaveTextContent('17 contributions')
     expect(card).toHaveTextContent('59 tasks')
+  })
+
+  it('does not show the working placeholder for a run waiting on a human, even though its row still says running', () => {
+    // This product is built around review gates: the run row stays 'running' while a crew is
+    // paused for HITL review, and only the resolved crewStatus (which factors in the waiting
+    // set) can tell the two apart.
+    const run: CrewRun = {
+      id: 1, project_id: 1, crew_name: 'discovery_mapping', status: 'running',
+      result_json: null, started_at: '2026-08-01 10:00:00', finished_at: null,
+      created_at: '2026-08-01 10:00:00',
+    }
+    renderStatusTab({ crewRun: run, crewStatus: 'waiting' })
+    expect(screen.queryByText(/is working/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/no activity yet/i)).toBeInTheDocument()
   })
 })

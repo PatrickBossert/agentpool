@@ -16,6 +16,7 @@ import {
 import { projectsApi } from '../api/endpoints'
 import { MermaidThumbnail, DiagramLightbox } from './ReviewDialog'
 import { CREW_LABELS, CREW_DOWNSTREAM, CREW_AGENTS, AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME } from './agentStatus'
+import type { CrewStatus } from './agentStatus'
 import { CREW_OUTPUT_TYPE, parseDbDate } from './crewOutputs'
 import { bcp47 } from '../utils/holidays'
 import type { AgentOutput, CrewRun } from '../types'
@@ -535,10 +536,14 @@ export interface AgentStatusTabProps {
   statusEvents: StatusEvent[]
   locale?: string
   primaryModel?: PrimaryModelCounts
+  // The resolved status (factoring in isPipelineActive and, crucially, isWaiting), not just
+  // crewRun.status - a run row can still say 'running' while the crew is paused on a human
+  // review gate, and only the resolved status can tell the two states apart.
+  crewStatus: CrewStatus
 }
 
 export function AgentStatusTab({
-  slug, crewKey, crewRun, outputs, statusEvents, locale = 'GB', primaryModel,
+  slug, crewKey, crewRun, outputs, statusEvents, locale = 'GB', primaryModel, crewStatus,
 }: AgentStatusTabProps) {
   const agents = CREW_AGENTS[crewKey] ?? []
   const primaryAgent = agents[0] ?? ''
@@ -546,7 +551,7 @@ export function AgentStatusTab({
   const primaryHumanName = AGENT_HUMAN_NAME[primaryAgent] ?? primaryAgent
   const firstName = primaryHumanName.split(' ')[0]
 
-  const isRunning = crewRun?.status === 'running'
+  const isRunning = crewStatus === 'running'
 
   // The primary type's full version list, then every other output type this crew has
   // produced grouped by type - both act on a version rather than the current artefact, so

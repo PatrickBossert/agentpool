@@ -993,6 +993,7 @@ export default function AgentDetailPanel({
             outputs={crewOutputs}
             statusEvents={statusEvents}
             locale={locale}
+            crewStatus={crewStatus}
           />
         </div>
       )}

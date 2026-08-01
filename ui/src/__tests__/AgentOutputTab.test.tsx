@@ -22,11 +22,11 @@ vi.mock('../api/endpoints', () => ({
 // task - a later task moves it to 'value_chain_model').
 const OUTPUTS: AgentOutput[] = [
   { id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain',
-    version: 3, is_current: 1, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'a.json' },
+    version: 3, is_current: true, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'a.json' },
   { id: 2, agent_name: 'value_chain_mapper', output_type: 'value_chain',
-    version: 2, is_current: 0, review_status: 'approved', created_at: '2026-07-31 10:00:00', file_path: 'b.json' },
+    version: 2, is_current: false, review_status: 'approved', created_at: '2026-07-31 10:00:00', file_path: 'b.json' },
   { id: 3, agent_name: 'value_chain_mapper', output_type: 'value_chain_registry',
-    version: 13, is_current: 1, review_status: 'approved', created_at: '2026-08-01 09:00:00', file_path: 'c.json' },
+    version: 13, is_current: true, review_status: 'approved', created_at: '2026-08-01 09:00:00', file_path: 'c.json' },
 ]
 
 function renderOutputTab(overrides: { crewKey?: string; outputs?: AgentOutput[] } = {}) {
@@ -74,5 +74,21 @@ describe('AgentOutputTab', () => {
   it('shows an empty state when the crew has no output of its primary type', () => {
     renderOutputTab({ outputs: [] })
     expect(screen.getByTestId('no-primary-output')).toBeInTheDocument()
+  })
+
+  it('does not show the empty state for a crew whose primary type has an output', () => {
+    // Regression case: every fixture above uses a crew already present in CREW_OUTPUT_TYPE,
+    // which is exactly why a crew missing from that map (assessment_design and
+    // stakeholder_management both were) rendered the empty state unconditionally despite
+    // having real outputs. stakeholder_management's primary is 'stakeholder_engagement_plan' -
+    // verified against agentStatus.ts's own description of the Stakeholder Manager agent as
+    // "the authoritative record of programme health".
+    const outputs: AgentOutput[] = [{
+      id: 4, agent_name: 'stakeholder_manager', output_type: 'stakeholder_engagement_plan',
+      version: 1, is_current: true, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'plan.json',
+    }]
+    renderOutputTab({ crewKey: 'stakeholder_management', outputs })
+    expect(screen.queryByTestId('no-primary-output')).not.toBeInTheDocument()
+    expect(screen.getByTestId('primary-output-stakeholder_engagement_plan')).toBeInTheDocument()
   })
 })

@@ -41,8 +41,7 @@ export interface AgentOutput {
   file_path: string
   version: number
   review_status: string
-  // SQLite stores this as 0/1; the API layer does not coerce it, so callers see either shape.
-  is_current: boolean | number
+  is_current: boolean
   reviewer_notes?: string | null
   revision_notes?: string | null
   created_at: string
