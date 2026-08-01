@@ -981,13 +981,16 @@ export default function AgentDetailPanel({
       {tab === 'output' && crewKey === 'PAM' && <PamReportView slug={slug} />}
 
       {/* ── OUTPUT TAB ─────────────────────────────────────────────────────────── */}
-      {/* Hidden rather than unmounted, unlike every other tab below. A registered
-          CREW_OUTPUT_EDITOR (StructureTab, for now) can hold a working copy that only Save
-          commits to the server - see StructureTab.tsx's own comment on why nothing else
-          persists a draft. Rendering this branch conditionally on `tab === 'output'` unmounts
-          it on every click of Status, Chat, Setup or Skills, discarding that draft with no
-          warning (beforeunload does not fire on an in-panel tab change). The other four tabs
-          hold no state of their own that a remount would lose, so only this one needs it. */}
+      {/* Hidden rather than unmounted, as the Setup tab below also is. A registered
+          CREW_OUTPUT_EDITOR (StructureTab, for now) holds a working copy that only Save
+          commits to the server. Rendering this branch conditionally on `tab === 'output'`
+          unmounts it on every click of Status, Chat, Setup or Skills, discarding that draft
+          with no warning - beforeunload does not fire on an in-panel tab change, so there is
+          nothing to catch it.
+
+          Status, Chat and Skills stay conditional: their state is either derived from props
+          or, in Chat's case, held here in the panel rather than in the branch, so a remount
+          costs nothing but a refetch. */}
       {crewKey !== 'PAM' && (
         <div hidden={tab !== 'output'} className="flex-1 overflow-y-auto p-4 space-y-2">
           <AgentOutputTab slug={slug} crewKey={crewKey} outputs={crewOutputs} locale={locale} />
@@ -1127,60 +1130,63 @@ export default function AgentDetailPanel({
       )}
 
       {/* ── SETUP TAB ──────────────────────────────────────────────────────────── */}
-      {tab === 'setup' && (
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {(() => {
-            const SetupOverride = CREW_SETUP_OVERRIDE[crewKey]
-            if (SetupOverride) return <SetupOverride slug={slug} />
+      {/* Hidden rather than unmounted, for the same reason the Output tab is. Every
+          CREW_SETUP_OVERRIDE is a form whose fields are React state committed only by an
+          explicit Save - AlexSetupTab alone holds ten pieces of it - so rendering this branch
+          on `tab === 'setup'` threw away a half-typed discovery brief the moment the user
+          clicked Output to check something, silently and with nothing to catch it. */}
+      <div hidden={tab !== 'setup'} className="flex-1 overflow-y-auto p-4 space-y-4">
+        {(() => {
+          const SetupOverride = CREW_SETUP_OVERRIDE[crewKey]
+          if (SetupOverride) return <SetupOverride slug={slug} />
 
-            // Default: reads/produces metadata
-            return crewMeta ? (
-              <>
-                {crewMeta.note && (
-                  <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
-                    <p className="text-[11px] text-blue-700 leading-relaxed">{crewMeta.note}</p>
-                  </div>
-                )}
-
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Reads</p>
-                  <ul className="space-y-1">
-                    {crewMeta.reads.map((item, i) => (
-                      <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
-                        <ArrowRight size={11} className="text-gray-300 mt-0.5 flex-shrink-0" />
-                        <span className="font-mono text-[11px]">{item}</span>
-                      </li>
-                    ))}
-                  </ul>
+          // Default: reads/produces metadata
+          return crewMeta ? (
+            <>
+              {crewMeta.note && (
+                <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
+                  <p className="text-[11px] text-blue-700 leading-relaxed">{crewMeta.note}</p>
                 </div>
+              )}
 
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Produces</p>
-                  <ul className="space-y-1">
-                    {crewMeta.produces.map((item, i) => (
-                      <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
-                        <ArrowLeft size={11} className="text-teal-400 mt-0.5 flex-shrink-0" />
-                        <span className="font-mono text-[11px]">{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Reads</p>
+                <ul className="space-y-1">
+                  {crewMeta.reads.map((item, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
+                      <ArrowRight size={11} className="text-gray-300 mt-0.5 flex-shrink-0" />
+                      <span className="font-mono text-[11px]">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
 
-                {crewMeta.configPage && (
-                  <button
-                    onClick={() => navigate(`/${slug}/${crewMeta!.configPage}`)}
-                    className="inline-flex items-center gap-1.5 text-xs font-medium text-teal-600 hover:text-teal-700 border border-teal-200 rounded-lg px-3 py-1.5 hover:bg-teal-50 transition-colors"
-                  >
-                    <><Settings size={13} /> {crewMeta.configLabel}</>
-                  </button>
-                )}
-              </>
-            ) : (
-              <p className="text-xs text-gray-400 text-center py-12">No setup information available.</p>
-            )
-          })()}
-        </div>
-      )}
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Produces</p>
+                <ul className="space-y-1">
+                  {crewMeta.produces.map((item, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
+                      <ArrowLeft size={11} className="text-teal-400 mt-0.5 flex-shrink-0" />
+                      <span className="font-mono text-[11px]">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {crewMeta.configPage && (
+                <button
+                  onClick={() => navigate(`/${slug}/${crewMeta!.configPage}`)}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-teal-600 hover:text-teal-700 border border-teal-200 rounded-lg px-3 py-1.5 hover:bg-teal-50 transition-colors"
+                >
+                  <><Settings size={13} /> {crewMeta.configLabel}</>
+                </button>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-gray-400 text-center py-12">No setup information available.</p>
+          )
+        })()}
+      </div>
 
       {/* ── ROLE & SKILLS TAB ──────────────────────────────────────────────────── */}
       {tab === 'skills' && (

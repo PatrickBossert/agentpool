@@ -7,6 +7,7 @@
 // and the panel's own filtering is where Maya's entire Output tab went missing. Every
 // assertion here therefore mounts AgentDetailPanel and reads what a user would actually see.
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -30,6 +31,9 @@ vi.mock('../api/endpoints', () => ({
     review: vi.fn(),
     revertOutput: vi.fn(),
     getInterviewScripts: vi.fn().mockResolvedValue({}),
+    getSettings: vi.fn().mockResolvedValue({}),
+    updateSettings: vi.fn(),
+    documents: vi.fn().mockResolvedValue([]),
   },
   valueChainApi: {
     get: vi.fn().mockResolvedValue({ model: null }),
@@ -188,5 +192,26 @@ describe('AgentDetailPanel - Status tab', () => {
     renderPanel({ initialTab: 'status' })
     await screen.findByTestId('output-version-3')
     expect(screen.queryByTestId('output-summary')).not.toBeInTheDocument()
+  })
+})
+
+describe('AgentDetailPanel - unsaved work across a tab change', () => {
+  // beforeunload does not fire on an in-panel tab change, so a tab that holds a draft and is
+  // rendered conditionally loses it the moment another tab is clicked, silently and with no
+  // warning. Alex's Setup holds ten pieces of form state committed only by an explicit Save;
+  // Avery's and Taylor's do the same.
+  it('keeps a typed Setup brief when the user visits Output and comes back', async () => {
+    const user = userEvent.setup()
+    renderPanel({ crewKey: 'discovery_mapping', outputs: ALEX_OUTPUTS, initialTab: 'setup' })
+
+    const brief = await screen.findByPlaceholderText(/The client operates primarily/i)
+    await user.type(brief, 'Focus on depot operations')
+
+    // The Output tab's label carries a count badge, so its accessible name is "Output 1".
+    await user.click(screen.getByRole('button', { name: /^Output/ }))
+    await user.click(screen.getByRole('button', { name: /^Setup$/ }))
+
+    expect(await screen.findByPlaceholderText(/The client operates primarily/i))
+      .toHaveValue('Focus on depot operations')
   })
 })
