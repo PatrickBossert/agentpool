@@ -73,7 +73,7 @@ def validate_model(model: dict) -> list[str]:
                 f"{activity.get('segment_id')}"
             )
 
-    seen_cells: set[tuple[str, str, int]] = set()
+    cell_occupants: dict[tuple[str, str, int], list[str]] = {}
     contribution_ids: set[tuple[str, str]] = set()
 
     for contribution in model.get("contributions", []):
@@ -108,11 +108,18 @@ def validate_model(model: dict) -> list[str]:
 
         if activity_known and party_known and column_known:
             cell = (activity_segment[activity_id], party_id, column)
-            if cell in seen_cells:
-                problems.append(
-                    f"two contributions occupy column {column} in party {party_id}'s lane"
-                )
-            seen_cells.add(cell)
+            cell_occupants.setdefault(cell, []).append(str(activity_id))
+
+    # One problem per over-occupied cell, naming every activity in it. The previous form
+    # appended a message each time a cell repeated, so five contributions in one cell
+    # produced four identical messages that named none of the five - and the reader's next
+    # action is to go and move those activities.
+    for (segment_id, party_id, column), occupants in cell_occupants.items():
+        if len(occupants) > 1:
+            problems.append(
+                f"{len(occupants)} contributions occupy column {column} in party "
+                f"{party_id}'s lane in segment {segment_id}: {', '.join(sorted(occupants))}"
+            )
 
     # An activity with no contribution belongs to no lane, so it disappears from the grid
     # while remaining in model["activities"] - and nothing in the UI can bring it back.

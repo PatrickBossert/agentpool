@@ -212,3 +212,81 @@ def test_next_column_is_per_lane_not_per_segment():
     m["contributions"] = [{"activity_id": "1.1", "party_id": "sp-gs", "column": 40,
                            "description": "", "attribution": "stated"}]
     assert next_column(m, "1", "iss") == COLUMN_STEP
+
+
+def test_a_collision_names_every_activity_in_the_cell():
+    """A person reading this next has to go and move those activities, so the message
+    has to say which. The old wording named none of them."""
+    model = empty_model()
+    model["segments"] = [{"id": "1", "label": "Segment"}]
+    model["parties"] = [{"id": "sp", "label": "SP-GS"}]
+    model["activities"] = [
+        {"id": "1.1", "segment_id": "1", "label": "A"},
+        {"id": "1.2", "segment_id": "1", "label": "B"},
+        {"id": "1.3", "segment_id": "1", "label": "C"},
+    ]
+    model["contributions"] = [
+        {"activity_id": a, "party_id": "sp", "column": 10, "attribution": "stated"}
+        for a in ("1.1", "1.2", "1.3")
+    ]
+
+    problems = validate_model(model)
+
+    collision = [p for p in problems if "column 10" in p]
+    assert len(collision) == 1, f"expected one message for one cell, got {collision}"
+    for activity in ("1.1", "1.2", "1.3"):
+        assert activity in collision[0]
+
+
+def test_two_separate_collisions_are_two_problems():
+    """One message per over-occupied cell, not one per model."""
+    model = empty_model()
+    model["segments"] = [{"id": "1", "label": "Segment"}]
+    model["parties"] = [{"id": "sp", "label": "SP-GS"}, {"id": "iss", "label": "ISS"}]
+    model["activities"] = [
+        {"id": f"1.{n}", "segment_id": "1", "label": str(n)} for n in range(1, 5)
+    ]
+    model["contributions"] = [
+        {"activity_id": "1.1", "party_id": "sp", "column": 10, "attribution": "stated"},
+        {"activity_id": "1.2", "party_id": "sp", "column": 10, "attribution": "stated"},
+        {"activity_id": "1.3", "party_id": "iss", "column": 20, "attribution": "stated"},
+        {"activity_id": "1.4", "party_id": "iss", "column": 20, "attribution": "stated"},
+    ]
+
+    problems = validate_model(model)
+
+    assert len([p for p in problems if "occupy" in p]) == 2
+
+
+def test_a_valid_model_reports_no_collision():
+    """The positive anchor - without it, reporting nothing ever would pass the tests above."""
+    model = empty_model()
+    model["segments"] = [{"id": "1", "label": "Segment"}]
+    model["parties"] = [{"id": "sp", "label": "SP-GS"}]
+    model["activities"] = [
+        {"id": "1.1", "segment_id": "1", "label": "A"},
+        {"id": "1.2", "segment_id": "1", "label": "B"},
+    ]
+    model["contributions"] = [
+        {"activity_id": "1.1", "party_id": "sp", "column": 10, "attribution": "stated"},
+        {"activity_id": "1.2", "party_id": "sp", "column": 20, "attribution": "stated"},
+    ]
+
+    assert validate_model(model) == []
+
+
+def test_the_real_agent_written_model_reports_its_five_way_collision():
+    """The model that prompted this work. Five activities on one column in segment 5."""
+    from pathlib import Path
+    import json
+
+    path = Path("projects/sp-gs-am/outputs/value_chain_model_v2.json")
+    if not path.exists():
+        pytest.skip("sp-gs-am fixtures not present in this checkout")
+
+    problems = validate_model(json.loads(path.read_text()))
+
+    collision = [p for p in problems if "occupy" in p]
+    assert len(collision) == 1
+    for activity in ("5.1", "5.2", "5.3", "5.4", "5.5"):
+        assert activity in collision[0]
