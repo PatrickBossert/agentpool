@@ -346,7 +346,13 @@ def test_the_real_project_still_migrates_with_every_activity_contributed():
     registry_path = Path("projects/sp-gs-am/outputs/value_chain_registry.json")
     mermaid_path = Path("projects/sp-gs-am/outputs/value_chain_v12.md")
     if not registry_path.exists() or not mermaid_path.exists():
-        pytest.skip("sp-gs-am fixtures not present in this checkout")
+        pytest.skip(
+            "projects/sp-gs-am/outputs/value_chain_registry.json is absent because a live "
+            "crew run renamed it to value_chain_registry_v1.json, which holds different data "
+            "(5 segments / 24 activities, not this test's 3 / 17) and is not a drop-in "
+            "substitute - do not repoint this path at it. The real fix is a committed "
+            "fixture under tests/fixtures/; until then this regression test is dark."
+        )
 
     registry = json.loads(registry_path.read_text())
     mermaid = mermaid_path.read_text()
@@ -366,7 +372,14 @@ def test_the_real_project_migrates_cleanly():
     registry_path = Path("projects/sp-gs-am/outputs/value_chain_registry.json")
     mermaid_path = Path("projects/sp-gs-am/outputs/value_chain_v12.md")
     if not registry_path.exists() or not mermaid_path.exists():
-        pytest.skip("sp-gs-am fixtures not present in this checkout")
+        pytest.skip(
+            "projects/sp-gs-am/outputs/value_chain_registry.json is absent because a live "
+            "crew run renamed it to value_chain_registry_v1.json, which holds different data "
+            "(5 segments / 24 activities where this test asserts 3 / 17 / 59 tasks) and is "
+            "not a drop-in substitute - do not repoint this path at it or adjust the "
+            "assertions. The real fix is a committed fixture under tests/fixtures/; until "
+            "then this regression test is dark."
+        )
 
     registry = json.loads(registry_path.read_text())
     model = migrate(registry, mermaid_path.read_text())
