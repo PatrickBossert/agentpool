@@ -252,6 +252,18 @@ describe('dragging across segments', () => {
     expect(screen.getByTestId('cell-2-sp-20')).toContainElement(screen.getByTestId('card-2.1-sp'))
   })
 
+  it("does not highlight a same-party cell in another segment, because the drop would be refused", () => {
+    // acceptsDrag checked only the dragged card's party, not its segment, so hovering a
+    // same-party cell in a different segment showed the "will accept" cue and then the
+    // guard above silently refused the drop anyway - a promise the cue should never make.
+    render(<StatefulTwoSegments />)
+    const dt = dataTransfer()
+    fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
+    fireEvent.dragOver(screen.getByTestId('cell-2-sp-20'), { dataTransfer: dt })
+
+    expect(screen.getByTestId('cell-2-sp-20')).not.toHaveClass('border-brand')
+  })
+
   it('still exchanges columns within the dragged card\'s own segment', () => {
     // Guards the refusal against overreach: a drop that stays inside segment 1 must still
     // work, or the first test could be satisfied by refusing every drop.

@@ -52,6 +52,7 @@ export function ValueChainGrid({
   // matches the dragged party, which needs the dragged party known before the pointer ever
   // reaches a given cell.
   const [draggingParty, setDraggingParty] = useState<string | null>(null)
+  const [draggingSegment, setDraggingSegment] = useState<string | null>(null)
   const [hoverCell, setHoverCell] = useState<{
     segmentId: string
     partyId: string
@@ -127,10 +128,20 @@ export function ValueChainGrid({
       className="space-y-8"
       onDragStart={
         onChange
-          ? (e) => setDraggingParty(e.dataTransfer.getData('contributionPartyId'))
+          ? (e) => {
+              setDraggingParty(e.dataTransfer.getData('contributionPartyId'))
+              setDraggingSegment(segmentOf(e.dataTransfer.getData('contributionActivityId')) ?? null)
+            }
           : undefined
       }
-      onDragEnd={onChange ? () => setDraggingParty(null) : undefined}
+      onDragEnd={
+        onChange
+          ? () => {
+              setDraggingParty(null)
+              setDraggingSegment(null)
+            }
+          : undefined
+      }
     >
       <div className="flex items-center gap-2">
         <button
@@ -223,10 +234,11 @@ export function ValueChainGrid({
                   (contrib) => contrib.column === c.column && segmentOf(contrib.activity_id) === c.segmentId,
                 )
 
-                // A cell only invites a drop when it is in the dragged card's own lane -
-                // highlighting a foreign lane would promise a drop the guard below is
-                // going to refuse anyway.
-                const acceptsDrag = draggingParty === party.id
+                // A cell only invites a drop when it is in the dragged card's own lane and
+                // own segment - the drop guard below refuses both a cross-lane and a
+                // cross-segment drop, so highlighting either would promise a drop that
+                // refusal is going to undo.
+                const acceptsDrag = draggingParty === party.id && draggingSegment === c.segmentId
                 const isDragOver =
                   acceptsDrag &&
                   hoverCell?.segmentId === c.segmentId &&
