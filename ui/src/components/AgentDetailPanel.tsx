@@ -177,29 +177,6 @@ function parseStatusEvents(logs: string[], crewKey: string): StatusEvent[] {
 // 'state' outputs are internal agent state snapshots (SQLiteStateTool) - not user deliverables
 const INTERNAL_OUTPUT_TYPES = new Set(['state'])
 
-// Output types the raw file list should not show for a given crew.
-//
-// PREFIXES - already rendered by the crew's own panel further down the tab, so
-// listing them again shows the same content twice: once readably, once as a
-// cryptic file name like `interview_scripts_l2_1`.
-//
-// SUFFIXES - not that crew's deliverable at all. Maya Patel's
-// *_interview_summaries are synthesis of interview results, which is Casey Liu's
-// job; they were removed from her task, but historical rows stay in the database
-// for audit and the list shows every version, not just current ones.
-const CREW_HIDDEN_OUTPUT_PREFIXES: Record<string, string[]> = {
-  assessment_design: ['interview_scripts'],
-}
-
-const CREW_HIDDEN_OUTPUT_SUFFIXES: Record<string, string[]> = {
-  assessment_design: ['interview_summaries'],
-}
-
-function isHiddenFromOutputList(crewKey: string, outputType: string): boolean {
-  return (CREW_HIDDEN_OUTPUT_PREFIXES[crewKey] ?? []).some(p => outputType.startsWith(p))
-      || (CREW_HIDDEN_OUTPUT_SUFFIXES[crewKey] ?? []).some(sfx => outputType.endsWith(sfx))
-}
-
 // ── Markdown bubble ────────────────────────────────────────────────────────────
 
 function MessageBubble({
@@ -875,12 +852,15 @@ export default function AgentDetailPanel({
   const crewStatus = getCrewStatus(crewRun, isActive, isPipelineActive, isWaiting)
   const statusEvents = parseStatusEvents(logs, crewKey)
 
-  // Outputs for this crew - match stored snake_case agent_name, exclude internal state snapshots
+  // Outputs for this crew - match stored snake_case agent_name, exclude internal state
+  // snapshots. Deliberately unfiltered beyond that: the per-crew hiding rule is a decision
+  // about what the Status tab's *non-primary* list is worth showing, and it lives there
+  // (AgentStatusTab.tsx). Applying it here instead removed Maya's declared primary
+  // ('interview_scripts' matches her own hidden prefix) before either tab could look for it,
+  // emptying her Output tab and her version history at once.
   const agentKeys = new Set(agents.map(agentKey))
   const crewOutputs = outputs
-    .filter(o => agentKeys.has(o.agent_name)
-      && !INTERNAL_OUTPUT_TYPES.has(o.output_type)
-      && !isHiddenFromOutputList(crewKey, o.output_type))
+    .filter(o => agentKeys.has(o.agent_name) && !INTERNAL_OUTPUT_TYPES.has(o.output_type))
     .sort((a, b) => parseDbDate(b.created_at).getTime() - parseDbDate(a.created_at).getTime())
 
   const crewMeta = CREW_META[crewKey]

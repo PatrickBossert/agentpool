@@ -51,6 +51,28 @@ function outputLabel(outputType: string): string {
   return OUTPUT_TYPE_LABELS[outputType] ?? outputType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
+// Output types this tab's non-primary list should not show for a given crew.
+//
+// Declaring a primary (CREW_OUTPUT_TYPE) states positively what the Output tab is for; this
+// list survives only for what Status then chooses to list beside it, and applies to nothing
+// else. It used to run over the whole crew output array in AgentDetailPanel, which meant a
+// crew whose primary matched its own hidden prefix - Maya's did - lost the artefact its
+// Output tab exists to show.
+//
+// Only suffixes remain. Maya Patel's *_interview_summaries are a synthesis of interview
+// results, which is Casey Liu's job; they were removed from her task, but historical rows
+// stay in the database for audit and this list shows every version, not just current ones.
+// The old `interview_scripts` prefix entry is gone deliberately: her twenty script siblings
+// are an instruction-following defect to be fixed at source, and listing them here is more
+// honest than hiding them.
+const CREW_HIDDEN_OUTPUT_SUFFIXES: Record<string, string[]> = {
+  assessment_design: ['interview_summaries'],
+}
+
+function isHiddenFromStatusList(crewKey: string, outputType: string): boolean {
+  return (CREW_HIDDEN_OUTPUT_SUFFIXES[crewKey] ?? []).some(sfx => outputType.endsWith(sfx))
+}
+
 // value_chain stays here: legacy diagram outputs from before the value chain model existed
 // still exist in real projects and still render correctly as diagrams in this Status tab's
 // version list. value_chain_model is JSON with no fence, so it is deliberately absent.
@@ -566,6 +588,7 @@ export function AgentStatusTab({
   const nonPrimaryByType = new Map<string, AgentOutput[]>()
   for (const o of outputs) {
     if (o.output_type === primaryType) continue
+    if (isHiddenFromStatusList(crewKey, o.output_type)) continue
     if (!nonPrimaryByType.has(o.output_type)) {
       nonPrimaryByType.set(o.output_type, [])
       nonPrimaryTypes.push(o.output_type)
