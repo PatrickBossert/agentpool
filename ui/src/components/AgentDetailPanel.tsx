@@ -993,7 +993,7 @@ export default function AgentDetailPanel({
           costs nothing but a refetch. */}
       {crewKey !== 'PAM' && (
         <div hidden={tab !== 'output'} className="flex-1 overflow-y-auto p-4 space-y-2">
-          <AgentOutputTab slug={slug} crewKey={crewKey} outputs={crewOutputs} locale={locale} />
+          <AgentOutputTab slug={slug} crewKey={crewKey} outputs={crewOutputs} />
           {/* Crew-specific extra output content (interview sessions, visual artefacts, etc.) */}
           {(() => {
             const OutputExtra = CREW_OUTPUT_EXTRA[crewKey]

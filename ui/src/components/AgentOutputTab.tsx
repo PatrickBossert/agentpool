@@ -13,7 +13,6 @@ export interface AgentOutputTabProps {
   slug: string
   crewKey: string
   outputs: AgentOutput[]
-  locale?: string
 }
 
 export function AgentOutputTab({ slug, crewKey, outputs }: AgentOutputTabProps) {
