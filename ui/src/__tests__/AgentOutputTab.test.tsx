@@ -26,12 +26,13 @@ vi.mock('../api/endpoints', () => ({
 // distinguish "shows the primary" from "shows everything it has", so this fixture is the
 // minimum that discriminates.
 //
-// discovery_mapping's primary type is 'value_chain' (CREW_OUTPUT_TYPE, unrepointed by this
-// task - a later task moves it to 'value_chain_model').
+// discovery_mapping's primary type is 'value_chain_model' (CREW_OUTPUT_TYPE) - repointed
+// from the retired 'value_chain' Mermaid diagram now that the value chain has its own
+// structured model and grid editor.
 const OUTPUTS: AgentOutput[] = [
-  { id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain',
+  { id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain_model',
     version: 3, is_current: true, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'a.json' },
-  { id: 2, agent_name: 'value_chain_mapper', output_type: 'value_chain',
+  { id: 2, agent_name: 'value_chain_mapper', output_type: 'value_chain_model',
     version: 2, is_current: false, review_status: 'approved', created_at: '2026-07-31 10:00:00', file_path: 'b.json' },
   { id: 3, agent_name: 'value_chain_mapper', output_type: 'value_chain_registry',
     version: 13, is_current: true, review_status: 'approved', created_at: '2026-08-01 09:00:00', file_path: 'c.json' },
@@ -53,13 +54,13 @@ function renderOutputTab(overrides: { crewKey?: string; outputs?: AgentOutput[] 
 describe('AgentOutputTab', () => {
   it('renders the declared primary output and not the others', () => {
     renderOutputTab()
-    expect(screen.getByTestId('primary-output-value_chain')).toBeInTheDocument()
+    expect(screen.getByTestId('primary-output-value_chain_model')).toBeInTheDocument()
     expect(screen.queryByTestId('primary-output-value_chain_registry')).not.toBeInTheDocument()
   })
 
   it('renders only the current version, not the version history', () => {
     renderOutputTab()
-    expect(screen.getByTestId('primary-output-value_chain')).toHaveAttribute('data-version', '3')
+    expect(screen.getByTestId('primary-output-value_chain_model')).toHaveAttribute('data-version', '3')
     expect(screen.queryByTestId('output-version-2')).not.toBeInTheDocument()
   })
 
@@ -105,9 +106,14 @@ describe('AgentOutputTab', () => {
   // project with a diagram and no model". The old page auto-switched its own Structure tab
   // on whenever a legacy `value_chain` output existed; there is no such switch to test any
   // more, because Alex's Output tab renders StructureTab directly whenever the primary
-  // output row exists at all. This is the same case exercised end to end: a legacy diagram
-  // output with no saved model still reaches the migrate affordance.
-  it("renders Alex's Structure editor, migrate affordance included, for a legacy diagram output with no saved model", async () => {
+  // output row exists at all.
+  //
+  // discovery_mapping's primary type is now 'value_chain_model' rather than the retired
+  // `value_chain` diagram, so what reaches the Editor here is a current *model* output row -
+  // e.g. one whose file went missing from disk after a save - not a legacy diagram. The
+  // scenario being guarded is unchanged: whenever StructureTab's own GET 404s, the migrate
+  // affordance still has to be reachable through the Output tab rather than swallowed by it.
+  it("renders Alex's Structure editor, migrate affordance included, when the saved model can't be loaded", async () => {
     renderOutputTab()
     expect(
       await screen.findByRole('button', { name: /migrate from the existing diagram/i }),

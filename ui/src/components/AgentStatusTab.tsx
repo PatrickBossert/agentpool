@@ -51,7 +51,10 @@ function outputLabel(outputType: string): string {
   return OUTPUT_TYPE_LABELS[outputType] ?? outputType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
-const MERMAID_OUTPUT_TYPES = new Set(['value_chain', 'architecture', 'roadmap'])
+// value_chain stays here: legacy diagram outputs from before the value chain model existed
+// still exist in real projects and still render correctly as diagrams in this Status tab's
+// version list. value_chain_model is JSON with no fence, so it is deliberately absent.
+export const MERMAID_OUTPUT_TYPES = new Set(['value_chain', 'architecture', 'roadmap'])
 
 // ── Value-chain diagram parser ─────────────────────────────────────────────────
 

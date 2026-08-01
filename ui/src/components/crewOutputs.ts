@@ -6,7 +6,7 @@
 // PAM is deliberately absent - its Output tab is an Overview rendering PamReportView, not a
 // versioned artefact, so it has no primary to declare and keeps its own branch.
 export const CREW_OUTPUT_TYPE: Record<string, string> = {
-  discovery_mapping:      'value_chain',
+  discovery_mapping:      'value_chain_model',
   assessment_design:      'interview_scripts',
   value_design:           'value_propositions',
   architecture:           'architecture',

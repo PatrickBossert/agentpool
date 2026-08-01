@@ -63,12 +63,11 @@ function Wrapper() {
   )
 }
 
-// discovery_mapping's primary output type is still 'value_chain' in this task (see
-// AgentOutputTab.test.tsx's own note - a later task repoints it to 'value_chain_model'), so
-// a current output of that type is what makes AgentOutputTab hand off to the registered
+// discovery_mapping's primary output type is 'value_chain_model' (CREW_OUTPUT_TYPE), so a
+// current output of that type is what makes AgentOutputTab hand off to the registered
 // editor (StructureTab) at all.
 const PANEL_OUTPUTS: AgentOutput[] = [{
-  id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain',
+  id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain_model',
   version: 1, is_current: true, review_status: 'approved',
   created_at: '2026-08-01 10:00:00', file_path: 'value_chain.json',
 }]
