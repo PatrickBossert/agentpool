@@ -197,3 +197,70 @@ describe('drag-over visual cue', () => {
     expect(screen.getByTestId('cell-1-sp-30')).not.toHaveClass('border-brand')
   })
 })
+
+// One continuous grid makes another segment's cell reachable by drag for the first time -
+// before this task each segment was its own grid, so there was nothing to drop onto. A
+// contribution's segment comes from its activity, and moveToColumn writes only .column, so
+// an unguarded drop across segments would not reposition the card - it would set the column
+// field to a number that happens to match, while the contribution stays recorded under its
+// original activity's segment. That is a silent, unpredictable result, not a repositioning.
+const TWO_SEGMENTS: ValueChainModel = {
+  model_version: 1,
+  parties: [{ id: 'sp', label: 'SP-GS' }],
+  segments: [
+    { id: '1', label: 'Property' },
+    { id: '2', label: 'Fleet' },
+  ],
+  activities: [
+    { id: '1.1', segment_id: '1', label: 'Strategy' },
+    { id: '1.2', segment_id: '1', label: 'Acquisition' },
+    { id: '1.3', segment_id: '1', label: 'Disposal' },
+    { id: '2.1', segment_id: '2', label: 'Maintenance' },
+  ],
+  contributions: [
+    { activity_id: '1.1', party_id: 'sp', column: 10, attribution: 'stated' },
+    { activity_id: '1.2', party_id: 'sp', column: 20, attribution: 'stated' },
+    { activity_id: '1.3', party_id: 'sp', column: 30, attribution: 'stated' },
+    // Segment 2's column 20 shares its numeric value with segment 1's own column 20 (1.2's).
+    // That is the discriminating case: a guard that only compares column numbers would find
+    // 1.2 as the "occupant" and swap 1.1 onto it - a visible move, in segment 1, nowhere near
+    // where the card was actually dropped. A target column with no counterpart anywhere in
+    // segment 1 could not tell that bug apart from a correct refusal.
+    { activity_id: '2.1', party_id: 'sp', column: 20, attribution: 'stated' },
+  ],
+  tasks: [],
+  propositions: [],
+  links: [],
+}
+
+function StatefulTwoSegments() {
+  const [model, setModel] = useState(TWO_SEGMENTS)
+  return <ValueChainGrid model={model} onChange={setModel} />
+}
+
+describe('dragging across segments', () => {
+  it("refuses a drop onto another segment's cell, even one sharing its column number", () => {
+    render(<StatefulTwoSegments />)
+    const dt = dataTransfer()
+    fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-2-sp-20'), { dataTransfer: dt })
+
+    // Nothing moved: not the dragged card, not the card that a column-only check would have
+    // mistaken for occupying the target, and not the segment 2 card the drop landed on.
+    expect(columnOf('card-1.1-sp')).toBe(10)
+    expect(columnOf('card-1.2-sp')).toBe(20)
+    expect(screen.getByTestId('cell-2-sp-20')).toContainElement(screen.getByTestId('card-2.1-sp'))
+  })
+
+  it('still exchanges columns within the dragged card\'s own segment', () => {
+    // Guards the refusal against overreach: a drop that stays inside segment 1 must still
+    // work, or the first test could be satisfied by refusing every drop.
+    render(<StatefulTwoSegments />)
+    const dt = dataTransfer()
+    fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-1-sp-30'), { dataTransfer: dt })
+
+    expect(columnOf('card-1.1-sp')).toBe(30)
+    expect(columnOf('card-1.3-sp')).toBe(10)
+  })
+})

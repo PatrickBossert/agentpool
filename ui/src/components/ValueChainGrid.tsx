@@ -225,6 +225,14 @@ export function ValueChainGrid({
                             // identity is (activity, party), so a cross-lane drop would
                             // change what it is rather than where it sits.
                             if (!activityId || draggedParty !== party.id) return
+                            // A card may only land within its own segment: its segment
+                            // comes from its activity, and moveToColumn writes only the
+                            // .column field, so a cross-segment drop would not reposition
+                            // the contribution - it would re-parent the activity under a
+                            // numeric coincidence while leaving it recorded in the segment
+                            // it was dragged from, reappearing somewhere the drop never
+                            // touched. Reuses segmentOf rather than a second lookup.
+                            if (segmentOf(activityId) !== c.segmentId) return
                             onChange(moveToColumn(model, activityId, draggedParty, c.column))
                           }
                         : undefined
