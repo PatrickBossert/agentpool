@@ -22,7 +22,17 @@ export function AgentOutputTab({ slug, crewKey, outputs }: AgentOutputTabProps) 
     ? outputs.find(o => o.output_type === primaryType && o.is_current)
     : undefined
 
-  if (!current) {
+  // Absent from CREW_OUTPUT_EDITOR is the default, not a special case - every crew arrives
+  // here read-only until a bespoke editor is registered for it.
+  const Editor = CREW_OUTPUT_EDITOR[crewKey]
+
+  // A registered editor owns its own empty state - StructureTab's migrate prompt is exactly
+  // this for discovery_mapping, and it is the only route to the migrate endpoint now that the
+  // standalone value chain page is retired. A project with a legacy diagram and no migrated
+  // model has no *current* row of the primary type, so mounting the editor here rather than
+  // gating on `current` is what lets it reach that prompt at all. The no-outputs empty state
+  // below is reserved for crews with no editor and nothing to show read-only.
+  if (!current && !Editor) {
     const agents = CREW_AGENTS[crewKey] ?? []
     const primaryAgent = agents[0] ?? ''
     const primaryAvatar = AGENT_AVATAR[primaryAgent] ?? { gradient: 'from-gray-400 to-gray-600' }
@@ -46,12 +56,11 @@ export function AgentOutputTab({ slug, crewKey, outputs }: AgentOutputTabProps) 
     )
   }
 
-  // Absent from CREW_OUTPUT_EDITOR is the default, not a special case - every crew arrives
-  // here read-only until a bespoke editor is registered for it.
-  const Editor = CREW_OUTPUT_EDITOR[crewKey]
-
   return (
-    <div data-testid={`primary-output-${primaryType}`} data-version={String(current.version)}>
+    <div
+      data-testid={`primary-output-${primaryType}`}
+      {...(current ? { 'data-version': String(current.version) } : {})}
+    >
       {Editor ? (
         <Editor slug={slug} />
       ) : (
@@ -59,7 +68,7 @@ export function AgentOutputTab({ slug, crewKey, outputs }: AgentOutputTabProps) 
           data-testid="primary-output-readonly"
           className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3 space-y-1"
         >
-          <p className="text-xs font-semibold text-gray-700">{current.file_path}</p>
+          <p className="text-xs font-semibold text-gray-700">{current!.file_path}</p>
           <p className="text-[11px] text-gray-400">
             No editor registered for this output yet. See the Status tab for its version history.
           </p>

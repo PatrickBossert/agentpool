@@ -81,8 +81,11 @@ describe('AgentOutputTab', () => {
     expect(screen.getByTestId('primary-output-readonly')).toBeInTheDocument()
   })
 
-  it('shows an empty state when the crew has no output of its primary type', () => {
-    renderOutputTab({ outputs: [] })
+  it('shows the empty state for a crew with no registered editor and no current output', () => {
+    // The negative half of the editor-mounts-regardless-of-current rule below: without this,
+    // always mounting an editor would satisfy that test and quietly remove the empty state
+    // everywhere, including for every crew that has no editor to fall back on.
+    renderOutputTab({ crewKey: 'discovery', outputs: [] })
     expect(screen.getByTestId('no-primary-output')).toBeInTheDocument()
   })
 
@@ -105,14 +108,31 @@ describe('AgentOutputTab', () => {
   // Migrated from the retired ValueChain.test.tsx - "opens on Structure for a legacy
   // project with a diagram and no model". The old page auto-switched its own Structure tab
   // on whenever a legacy `value_chain` output existed; there is no such switch to test any
-  // more, because Alex's Output tab renders StructureTab directly whenever the primary
-  // output row exists at all.
-  //
-  // discovery_mapping's primary type is now 'value_chain_model' rather than the retired
-  // `value_chain` diagram, so what reaches the Editor here is a current *model* output row -
-  // e.g. one whose file went missing from disk after a save - not a legacy diagram. The
-  // scenario being guarded is unchanged: whenever StructureTab's own GET 404s, the migrate
-  // affordance still has to be reachable through the Output tab rather than swallowed by it.
+  // more, because Alex's Output tab now mounts a registered editor whenever one exists,
+  // whether or not a current row of the primary type ('value_chain_model') is present. A
+  // registered editor owns its own empty state - StructureTab's migrate prompt is exactly
+  // that - so this project, which has only the legacy diagram and no migrated model, still
+  // reaches the migrate control rather than being stopped at "No outputs yet" before the
+  // editor ever mounts. That control is the only route to the migrate endpoint now that the
+  // standalone value chain page is retired, so a project in this state must not be stranded.
+  it("renders Alex's Structure editor, migrate affordance included, for a legacy diagram output with no saved model", async () => {
+    const outputs: AgentOutput[] = [{
+      id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain',
+      version: 3, is_current: true, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'a.md',
+    }]
+    renderOutputTab({ outputs })
+    expect(
+      await screen.findByRole('button', { name: /migrate from the existing diagram/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('no-primary-output')).not.toBeInTheDocument()
+  })
+
+  // A different way to reach the same prompt: here the primary row does exist - a model was
+  // saved at some point - but its file is missing (StructureTab's GET still 404s, per the
+  // shared mock above), rather than no model ever having been saved. Kept alongside the test
+  // above because the two fail for different reasons: that one exercises the `!current`
+  // path added by the editor-mounts-regardless-of-current fix, this one exercises the
+  // pre-existing `current` path, which the fix must leave working exactly as before.
   it("renders Alex's Structure editor, migrate affordance included, when the saved model can't be loaded", async () => {
     renderOutputTab()
     expect(
