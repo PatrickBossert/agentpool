@@ -75,8 +75,9 @@ describe('AgentOutputTab', () => {
     // The case that proves this is a default and not a special case for Alex. Only
     // discovery_mapping has a registered editor (StructureTab) as of this task, so any other
     // crew - 'discovery' here, simply because it differs from the one above - still takes
-    // this path.
-    const outputs: AgentOutput[] = [{ ...OUTPUTS[0], agent_name: 'synthesis_analyst', output_type: 'discovery' }]
+    // this path. 'value_levers' is that crew's declared primary and is written by
+    // value_lever_analyst (agents/discovery/value_lever_analyst.py).
+    const outputs: AgentOutput[] = [{ ...OUTPUTS[0], agent_name: 'value_lever_analyst', output_type: 'value_levers' }]
     renderOutputTab({ crewKey: 'discovery', outputs })
     expect(screen.getByTestId('primary-output-readonly')).toBeInTheDocument()
   })

@@ -25,6 +25,9 @@ import type { StatusEvent } from './AgentDetailPanel'
 // Human-readable labels for output_type values stored in the DB
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   value_chain:                      'Value Chain',
+  value_chain_model:                'Value Chain Model',
+  // WordOutputTool records its output as 'docx'; the fallback label would read "Docx".
+  docx:                             'Business Plan Document',
   interview_scripts:                'Interview Scripts',
   l0_interview_summaries:           'L0 Board Summaries',
   l1_interview_summaries:           'L1 GM Summaries',
