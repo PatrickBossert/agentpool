@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { useState } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -244,5 +248,78 @@ describe('the continuous chain', () => {
     expect(screen.getByTestId('lane-iss')).toBeInTheDocument()
     expect(screen.getByTestId('cell-2-iss-10')).toBeInTheDocument()
     expect(screen.getByTestId('cell-2-iss-10')).toHaveTextContent('')
+  })
+})
+
+describe('a cell holding more than one contribution', () => {
+  const COLLIDED: ValueChainModel = {
+    ...TWO_SEGMENTS,
+    activities: [
+      { id: '1.1', segment_id: '1', label: 'A' },
+      { id: '1.2', segment_id: '1', label: 'B' },
+      { id: '1.3', segment_id: '1', label: 'C' },
+    ],
+    contributions: [
+      { activity_id: '1.1', party_id: 'sp', column: 10, attribution: 'stated' },
+      { activity_id: '1.2', party_id: 'sp', column: 10, attribution: 'stated' },
+      { activity_id: '1.3', party_id: 'sp', column: 10, attribution: 'stated' },
+    ],
+  }
+
+  it('renders every card in the cell, not just the first', () => {
+    // Assert the count. "a card renders" is true of the broken behaviour too.
+    //
+    // Excludes card-header-* deliberately: ContributionCard's own header testid
+    // (card-header-ACT-PARTY) also starts with "card-", so the unqualified prefix
+    // selector matches both the card and its header and would double-count every
+    // occupant regardless of whether this bug is fixed. Confirmed against today's
+    // single-card baseline, which already returns 2 matches, not 1.
+    render(<ValueChainGrid model={COLLIDED} />)
+    const cell = screen.getByTestId('cell-1-sp-10')
+    const cards = [...cell.querySelectorAll('[data-testid^="card-"]')].filter(
+      (el) => !el.getAttribute('data-testid')?.startsWith('card-header-'),
+    )
+    expect(cards).toHaveLength(3)
+  })
+
+  it('marks how many share the cell', () => {
+    render(<ValueChainGrid model={COLLIDED} />)
+    expect(screen.getByTestId('cell-overlap-1-sp-10')).toHaveTextContent('3')
+  })
+
+  it('leaves each card individually draggable so the stack can be pulled apart', () => {
+    render(<ValueChainGrid model={COLLIDED} onChange={() => {}} />)
+    for (const id of ['1.1', '1.2', '1.3']) {
+      expect(screen.getByTestId(`card-header-${id}-sp`)).toHaveAttribute('draggable', 'true')
+    }
+  })
+
+  it('shows no overlap marker when a cell holds one contribution', () => {
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    expect(screen.queryByTestId('cell-overlap-1-sp-10')).not.toBeInTheDocument()
+  })
+})
+
+describe('the live sp-gs-am fixture', () => {
+  // This is the actual collision that made the model unsaveable: five real activities from
+  // value_chain_mapper's output landed on segment 5, party GSUK, column 10. Exercising the
+  // real file, not a contrived stand-in, is what proves this fixes the reported case rather
+  // than just the synthetic one above.
+  const FIXTURE_PATH = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../../projects/sp-gs-am/outputs/value_chain_model_v2.json',
+  )
+
+  it('renders every card of the real five-way collision in segment 5, column 10', () => {
+    const raw = JSON.parse(readFileSync(FIXTURE_PATH, 'utf-8'))
+    const model: ValueChainModel = { model_version: 1, ...raw }
+    render(<ValueChainGrid model={model} />)
+
+    const cell = screen.getByTestId('cell-5-GSUK-10')
+    const cards = [...cell.querySelectorAll('[data-testid^="card-"]')].filter(
+      (el) => !el.getAttribute('data-testid')?.startsWith('card-header-'),
+    )
+    expect(cards).toHaveLength(5)
+    expect(screen.getByTestId('cell-overlap-5-GSUK-10')).toHaveTextContent('5')
   })
 })

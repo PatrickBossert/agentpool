@@ -167,12 +167,14 @@ export function ValueChainGrid({
                 </span>
               </div>,
               ...columns.map((c, index) => {
-                const contribution = laneContributions.find(
+                // A cell may resolve to more than one contribution - the model is what says
+                // so, not a rendering bug, and hiding all but the first would make the
+                // remaining contributions both invisible and undraggable at once. Every
+                // occupant renders, stacked with an offset, so each stays clickable and
+                // draggable and the stack can be pulled apart.
+                const occupants = laneContributions.filter(
                   (contrib) => contrib.column === c.column && segmentOf(contrib.activity_id) === c.segmentId,
                 )
-                const activity = contribution
-                  ? model.activities.find((a) => a.id === contribution.activity_id)
-                  : undefined
 
                 // A cell only invites a drop when it is in the dragged card's own lane -
                 // highlighting a foreign lane would promise a drop the guard below is
@@ -188,7 +190,7 @@ export function ValueChainGrid({
                   <div
                     key={`cell-${c.segmentId}-${party.id}-${c.column}`}
                     data-testid={`cell-${c.segmentId}-${party.id}-${c.column}`}
-                    className={`min-h-[5rem] rounded-lg border border-dashed transition-colors ${
+                    className={`relative min-h-[5rem] rounded-lg border border-dashed transition-colors ${
                       isDragOver ? 'border-brand bg-brand/5' : 'border-surface'
                     }`}
                     style={{ gridColumn: index + 2, gridRow: laneIndex + 3 }}
@@ -238,35 +240,73 @@ export function ValueChainGrid({
                         : undefined
                     }
                   >
-                    {contribution && activity && (
-                      // Keyed on the contribution's identity, never on the column. Key
-                      // on column and a move changes which contribution sits behind a
-                      // key, so React reuses a dirty input against the wrong one.
-                      <ContributionCard
-                        key={contributionKey(activity.id, party.id)}
-                        model={model}
-                        activity={activity}
-                        contribution={contribution}
-                        onChange={onChange}
-                        onSelect={onSelect}
-                        onRequestRemove={(activityId, partyId) =>
-                          setPendingRemoval({ activityId, partyId })
-                        }
-                        menuOpen={
-                          openMenu?.activityId === activity.id && openMenu?.partyId === party.id
-                        }
-                        onToggleMenu={() =>
-                          setOpenMenu((current) =>
-                            current?.activityId === activity.id && current?.partyId === party.id
-                              ? null
-                              : { activityId: activity.id, partyId: party.id },
-                          )
-                        }
-                        selected={
-                          selected?.activityId === activity.id && selected?.partyId === party.id
-                        }
-                      />
+                    {occupants.length > 1 && (
+                      // Amber is this codebase's warning convention. The number is the
+                      // count sharing the cell, not a rank - a person decides which
+                      // contribution belongs where; this only says a decision is owed.
+                      <span
+                        data-testid={`cell-overlap-${c.segmentId}-${party.id}-${c.column}`}
+                        className="absolute top-0 right-0 z-10 flex items-center justify-center w-4 h-4 rounded-full bg-amber-500 text-[10px] font-medium text-white"
+                        title={`${occupants.length} contributions share this cell - drag each to reposition`}
+                      >
+                        {occupants.length}
+                      </span>
                     )}
+                    {occupants.map((occupant, occupantIndex) => {
+                      const activity = model.activities.find(
+                        (a) => a.id === occupant.activity_id,
+                      )
+                      if (!activity) return null
+                      return (
+                        // Keyed on the contribution's identity, never on the column or
+                        // its index in this list. Key on either of those and a move
+                        // changes which contribution sits behind a key, so React reuses
+                        // a dirty input against the wrong one.
+                        //
+                        // The first occupant sits in normal flow, sizing the cell; every
+                        // later one is offset diagonally over it, and stacked higher in
+                        // z-order, so a person can still see and reach each header to
+                        // drag it apart - the model owns the overlap, not this offset.
+                        <div
+                          key={contributionKey(activity.id, party.id)}
+                          className={occupantIndex === 0 ? 'relative' : 'relative -mt-16'}
+                          style={{
+                            zIndex: occupantIndex + 1,
+                            transform:
+                              occupantIndex > 0
+                                ? `translate(${occupantIndex * 0.5}rem, ${occupantIndex * 0.5}rem)`
+                                : undefined,
+                          }}
+                        >
+                          <ContributionCard
+                            model={model}
+                            activity={activity}
+                            contribution={occupant}
+                            onChange={onChange}
+                            onSelect={onSelect}
+                            onRequestRemove={(activityId, partyId) =>
+                              setPendingRemoval({ activityId, partyId })
+                            }
+                            menuOpen={
+                              openMenu?.activityId === activity.id &&
+                              openMenu?.partyId === party.id
+                            }
+                            onToggleMenu={() =>
+                              setOpenMenu((current) =>
+                                current?.activityId === activity.id &&
+                                current?.partyId === party.id
+                                  ? null
+                                  : { activityId: activity.id, partyId: party.id },
+                              )
+                            }
+                            selected={
+                              selected?.activityId === activity.id &&
+                              selected?.partyId === party.id
+                            }
+                          />
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               }),
