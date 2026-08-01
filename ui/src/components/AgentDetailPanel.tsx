@@ -83,8 +83,8 @@ const CREW_META: Record<string, CrewMeta> = {
   discovery_mapping: {
     reads: ['Uploaded documents', 'Discovery settings (sector, standards)', 'Existing registry (for iteration)'],
     produces: ['value_chain_registry.json', 'value_chain_tree.json', 'value_chain_summary.txt'],
-    configPage: 'value-chain',
-    configLabel: 'Configure in Value Chain → Setup',
+    // No configPage: it pointed at the retired /:slug/value-chain page, and this crew has a
+    // CREW_SETUP_OVERRIDE (AlexSetupTab) that replaces the block the button lives in anyway.
     note: 'Re-running will preserve existing IDs and extend the registry - existing downstream artefacts reference these IDs.',
   },
   assessment_design: {
