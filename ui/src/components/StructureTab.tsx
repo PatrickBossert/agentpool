@@ -29,7 +29,7 @@ function migrationErrorMessage(error: unknown): string {
   return 'Migration failed. Try again.'
 }
 
-export function StructureTab({ slug }: { slug: string }) {
+export default function StructureTab({ slug }: { slug: string }) {
   const qc = useQueryClient()
 
   const {

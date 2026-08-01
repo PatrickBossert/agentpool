@@ -3,12 +3,14 @@
 // Covers the Save control's contract with the backend: every problem in a 422 response
 // must be shown, not just the first, and the "unsaved changes" indicator must track the
 // real state of the working copy - present after an edit, gone after a successful save.
+//
+// Migrated from mounting the retired ValueChain page to mounting StructureTab directly -
+// StructureTab is now registered as Alex's Output tab editor (CREW_OUTPUT_EDITOR in
+// AgentDetailPanel.tsx), so there is no more "Structure" tab button to click into first.
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AuthProvider } from '../context/AuthContext'
-import ValueChain from '../pages/ValueChain'
+import StructureTab from '../components/StructureTab'
 import { valueChainApi } from '../api/endpoints'
 import type { ValueChainModel } from '../utils/valueChainModel'
 
@@ -24,11 +26,6 @@ const MODEL: ValueChainModel = {
 }
 
 vi.mock('../api/endpoints', () => ({
-  projectsApi: {
-    valueChain: vi.fn().mockResolvedValue([]),
-    getSettings: vi.fn().mockResolvedValue({}),
-    documents: vi.fn().mockResolvedValue([]),
-  },
   valueChainApi: {
     get: vi.fn(),
     save: vi.fn(),
@@ -40,20 +37,13 @@ function Wrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return (
     <QueryClientProvider client={qc}>
-      <AuthProvider>
-        <MemoryRouter initialEntries={['/acme-rail/value-chain']}>
-          <Routes>
-            <Route path="/:slug/value-chain" element={<ValueChain />} />
-          </Routes>
-        </MemoryRouter>
-      </AuthProvider>
+      <StructureTab slug="acme-rail" />
     </QueryClientProvider>
   )
 }
 
-async function editDescriptionAndOpenStructureTab() {
+async function editDescription() {
   render(<Wrapper />)
-  await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
   const field = await screen.findByTestId('description-1.1-sp')
   await userEvent.type(field, ' more')
   return field
@@ -83,7 +73,7 @@ describe('ValueChain save', () => {
       }),
     )
 
-    await editDescriptionAndOpenStructureTab()
+    await editDescription()
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByText(/two contributions occupy column 20/)).toBeInTheDocument()
@@ -93,7 +83,7 @@ describe('ValueChain save', () => {
   it('shows the unsaved-changes indicator after an edit and clears it once saved', async () => {
     vi.mocked(valueChainApi.save).mockResolvedValue({ output_id: 1 })
 
-    await editDescriptionAndOpenStructureTab()
+    await editDescription()
     expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -114,7 +104,7 @@ describe('ValueChain save', () => {
       () => new Promise((resolve) => { release = resolve }),
     )
 
-    const field = await editDescriptionAndOpenStructureTab()
+    const field = await editDescription()
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
     await userEvent.type(field, ' again')
 
@@ -130,31 +120,15 @@ describe('ValueChain save', () => {
   })
 })
 
-describe('unsaved edits across a tab change', () => {
-  // The Structure tab holds the working copy, the unsaved-changes flag, the change summary
-  // and the selected contribution. Rendering it conditionally on the active tab unmounts it,
-  // so one click on Setup discarded a drag, an added party and every description edit with
-  // no warning at all - beforeunload does not fire on a tab change, and the unmount
-  // unregisters it anyway.
-  it('keeps a description edit when Setup is visited and Structure is returned to', async () => {
-    await editDescriptionAndOpenStructureTab()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Structure' }))
-
-    const field = (await screen.findByTestId('description-1.1-sp')) as HTMLInputElement
-    expect(field.value).toBe('first more')
-  })
-
-  it('still reports the edit as unsaved after the round trip through Setup', async () => {
-    // Losing the indicator is worse than losing the edit: it says the working copy matches
-    // the server when it does not.
-    await editDescriptionAndOpenStructureTab()
-    expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Structure' }))
-
-    expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
-  })
-})
+// The two tests formerly here - "keeps a description edit when Setup is visited and
+// Structure is returned to" and "still reports the edit as unsaved after the round trip
+// through Setup" - exercised the old ValueChain page's `hidden` (not unmounted) rendering
+// of the Structure tab, which is what let a person switch to Setup and back without losing
+// the working copy. That switch was internal to the retired page; StructureTab has no
+// sibling Setup/Structure toggle of its own to move the test onto.
+//
+// The same concern now sits one level up: AgentDetailPanel.tsx conditionally renders each
+// of its own tabs with `{tab === 'output' && ...}` rather than hiding them, so navigating
+// from Output to another panel tab and back unmounts StructureTab and discards its working
+// copy exactly as the removed comment in StructureTab.tsx warns against. That is a real gap,
+// not something this migration can paper over with a same-shape test - see the task report.

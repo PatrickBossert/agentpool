@@ -25,6 +25,7 @@ import PamReportView, { PamCrewStatusDetail } from './PamReportView'
 import { AgentOutputTab } from './AgentOutputTab'
 import { AgentStatusTab } from './AgentStatusTab'
 import type { CrewRun, AgentOutput, HumanReview } from '../types'
+import StructureTab from './StructureTab'
 import AlexSetupTab from './tabs/AlexSetupTab'
 import MayaSetupTab from './tabs/MayaSetupTab'
 import TaylorSetupTab from './tabs/TaylorSetupTab'
@@ -57,7 +58,9 @@ const CREW_OUTPUT_EXTRA: Partial<Record<string, SlotFC>> = {
 // The bespoke editor for an agent's primary output. An agent absent from this map renders
 // its primary read-only - the structure arrives for every agent, the editors arrive one at
 // a time.
-export const CREW_OUTPUT_EDITOR: Partial<Record<string, SlotFC>> = {}
+export const CREW_OUTPUT_EDITOR: Partial<Record<string, SlotFC>> = {
+  discovery_mapping: StructureTab,
+}
 
 marked.use({ async: false, gfm: true, breaks: true })
 

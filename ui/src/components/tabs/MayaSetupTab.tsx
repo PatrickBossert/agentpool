@@ -1,11 +1,14 @@
 // ui/src/components/tabs/MayaSetupTab.tsx
-// Maya's Setup tab: interview programme reference and value chain node coverage
+// Maya's Setup tab: interview programme reference, value chain node coverage, and manual
+// node template assignment (moved from the retired Value Chain page's Templates tab)
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Info, X } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
-import { listNodeTemplates } from '../../api/nodeTemplates'
-import type { NodeTemplateAssignment } from '../../types'
+import { listTemplates } from '../../api/templates'
+import { listNodeTemplates, putNodeTemplate, publishNodeTemplate } from '../../api/nodeTemplates'
+import InterviewTemplateEditor from '../InterviewTemplateEditor'
+import type { NodeTemplateAssignment, TemplateListItem } from '../../types'
 
 function sortByActivityId(assignments: NodeTemplateAssignment[]): NodeTemplateAssignment[] {
   return [...assignments].sort((a, b) => {
@@ -375,6 +378,17 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
   const [loading, setLoading] = useState(true)
   const [inspectCode, setInspectCode] = useState<string | null>(null)
 
+  // ── Node template assignment — moved from the old Value Chain page's Templates
+  // tab. Per-level generation is meant to supersede this eventually, but that
+  // generation does not exist yet, so manual assignment stays the only route to
+  // control until it does. Kept as its own state, separate from nodeAssignments
+  // above, since the two sections were independent on the old page and merging
+  // them is out of scope for a faithful move. ────────────────────────────────
+  const [templateAssignments, setTemplateAssignments] = useState<NodeTemplateAssignment[]>([])
+  const [interviewTemplates, setInterviewTemplates] = useState<TemplateListItem[]>([])
+  const [questionnaireTemplates, setQuestionnaireTemplates] = useState<TemplateListItem[]>([])
+  const [editingNode, setEditingNode] = useState<NodeTemplateAssignment | null>(null)
+
   const { data: settings } = useQuery({
     queryKey: ['settings', slug],
     queryFn: () => projectsApi.getSettings(slug),
@@ -388,6 +402,56 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [slug])
+
+  useEffect(() => {
+    if (!slug) return
+    Promise.all([
+      listNodeTemplates(slug),
+      listTemplates('interview'),
+      listTemplates('questionnaire'),
+    ]).then(([assignments, interviewTpls, questionnaireTpls]) => {
+      setTemplateAssignments(sortByActivityId(assignments))
+      setInterviewTemplates(interviewTpls)
+      setQuestionnaireTemplates(questionnaireTpls)
+    }).catch(console.error)
+  }, [slug])
+
+  async function handleTemplateChange(
+    nodeLabel: string,
+    field: 'interview_template_id' | 'questionnaire_template_id',
+    value: number | null,
+  ) {
+    const current = templateAssignments.find((a) => a.node_label === nodeLabel)
+    const updated: NodeTemplateAssignment = current
+      ? { ...current, [field]: value }
+      : { node_label: nodeLabel, activity_id: null, interview_template_id: null, questionnaire_template_id: null, [field]: value }
+
+    setTemplateAssignments((prev) =>
+      prev.some((a) => a.node_label === nodeLabel)
+        ? prev.map((a) => (a.node_label === nodeLabel ? updated : a))
+        : [...prev, updated],
+    )
+
+    try {
+      await putNodeTemplate(slug, nodeLabel, {
+        interview_template_id: updated.interview_template_id,
+        questionnaire_template_id: updated.questionnaire_template_id,
+      })
+    } catch (e) {
+      console.error('Auto-save failed', e)
+    }
+  }
+
+  async function handlePublish(nodeLabel: string) {
+    const name = window.prompt(`Template name for "${nodeLabel}":`)
+    if (!name || !name.trim()) return
+    try {
+      await publishNodeTemplate(slug, nodeLabel, { name: name.trim(), description: '' })
+    } catch (e) {
+      console.error('Publish failed', e)
+      alert('Publish failed - check that the interview script has been generated for this node.')
+    }
+  }
 
   const standardsRefs = settings?.standards_references
 
@@ -500,6 +564,128 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
           </p>
         </div>
       </div>
+
+      {/* Node Template Assignment — moved from the old Value Chain page's Templates
+          tab, unchanged. Assigns a saved interview or questionnaire template to a
+          specific node, overriding the generated default above. Per-level generation
+          is meant to replace this eventually, but that generation does not exist
+          yet, so this stays the only way to assign templates. */}
+      <div>
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Node Template Assignment</p>
+        <p className="text-[11px] text-gray-400 mb-3">
+          Assign interview and questionnaire templates to each value chain node. Changes save automatically.
+        </p>
+
+        {templateAssignments.length === 0 ? (
+          <p className="text-xs text-gray-400 italic py-4">
+            Run the Value Chain crew first to generate nodes.
+          </p>
+        ) : (
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-gray-400">
+                  <th className="pb-1.5 pr-2 font-medium w-10">#</th>
+                  <th className="pb-1.5 pr-3 font-medium">Node</th>
+                  <th className="pb-1.5 pr-3 font-medium">Interview Template</th>
+                  <th className="pb-1.5 pr-3 font-medium">Questionnaire Template</th>
+                  <th className="pb-1.5 pr-3 font-medium">Publish</th>
+                  <th className="pb-1.5 font-medium">Script</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {templateAssignments.map((assignment) => {
+                  const isL1 = assignment.level === 'L1'
+                  return (
+                    <tr key={assignment.node_label} className={isL1 ? 'bg-gray-50' : ''}>
+                      <td className="py-2 pr-2 font-mono text-[10px] text-gray-400 whitespace-nowrap">
+                        {assignment.activity_id ?? '-'}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <div className={isL1 ? 'font-semibold text-gray-900 text-xs' : 'font-medium text-gray-700 text-xs'}>
+                          {assignment.node_label}
+                        </div>
+                        {isL1 && (
+                          <span className="text-[9px] text-brand bg-brand/10 px-1.5 py-0.5 rounded font-medium">L1 Leadership</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <select
+                          value={assignment.interview_template_id ?? ''}
+                          onChange={(e) =>
+                            handleTemplateChange(
+                              assignment.node_label,
+                              'interview_template_id',
+                              e.target.value ? Number(e.target.value) : null,
+                            )
+                          }
+                          className="bg-white border border-gray-200 rounded px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand w-full max-w-[10rem]"
+                        >
+                          <option value="">- None -</option>
+                          {interviewTemplates.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <select
+                          value={assignment.questionnaire_template_id ?? ''}
+                          onChange={(e) =>
+                            handleTemplateChange(
+                              assignment.node_label,
+                              'questionnaire_template_id',
+                              e.target.value ? Number(e.target.value) : null,
+                            )
+                          }
+                          className="bg-white border border-gray-200 rounded px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand w-full max-w-[10rem]"
+                        >
+                          <option value="">- None -</option>
+                          {questionnaireTemplates.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <button
+                          type="button"
+                          onClick={() => handlePublish(assignment.node_label)}
+                          className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-[11px] rounded transition-colors"
+                        >
+                          Publish
+                        </button>
+                      </td>
+                      <td className="py-2">
+                        {!isL1 && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingNode(assignment)}
+                            className="px-2.5 py-1 border border-gray-200 hover:border-brand hover:text-brand text-gray-500 text-[11px] rounded transition-colors"
+                          >
+                            Edit Script
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {editingNode && (
+        <InterviewTemplateEditor
+          slug={slug}
+          nodeLabel={editingNode.node_label}
+          activityId={editingNode.activity_id}
+          onClose={() => setEditingNode(null)}
+        />
+      )}
 
     </div>
   )

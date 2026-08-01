@@ -1,18 +1,16 @@
 // ui/src/__tests__/ValueChainMigrate.test.tsx
+//
+// Migrated from mounting the retired ValueChain page (`../pages/ValueChain`) to mounting
+// StructureTab directly. StructureTab is now registered as Alex's Output tab editor
+// (CREW_OUTPUT_EDITOR['discovery_mapping'] in AgentDetailPanel.tsx), so there is no more
+// "Structure" tab button to click into first - the component under test IS the tab content.
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AuthProvider } from '../context/AuthContext'
-import ValueChain from '../pages/ValueChain'
+import StructureTab from '../components/StructureTab'
 import { valueChainApi } from '../api/endpoints'
 
 vi.mock('../api/endpoints', () => ({
-  projectsApi: {
-    valueChain: vi.fn().mockResolvedValue([]),
-    getSettings: vi.fn().mockResolvedValue({}),
-    documents: vi.fn().mockResolvedValue([]),
-  },
   valueChainApi: {
     get: vi.fn(),
     save: vi.fn(),
@@ -35,24 +33,23 @@ function Wrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return (
     <QueryClientProvider client={qc}>
-      <AuthProvider>
-        <MemoryRouter initialEntries={['/acme-rail/value-chain']}>
-          <Routes>
-            <Route path="/:slug/value-chain" element={<ValueChain />} />
-          </Routes>
-        </MemoryRouter>
-      </AuthProvider>
+      <StructureTab slug="acme-rail" />
     </QueryClientProvider>
   )
 }
 
-async function openStructureAndMigrate() {
-  render(<Wrapper />)
-  await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
-  await userEvent.click(
-    await screen.findByRole('button', { name: /migrate from the existing diagram/i }),
-  )
-}
+// Moved from ValueChain.test.tsx - "offers to migrate the existing diagram when no model
+// has been saved". The old page hid Structure behind a tab switch and only opened on it
+// once a legacy diagram or model was known to exist; the editor now IS the Output tab's
+// entire content, so the button is simply there as soon as the model 404s.
+describe('the migrate affordance', () => {
+  it('shows the migrate button when no model has been saved for the project', async () => {
+    render(<Wrapper />)
+    expect(
+      await screen.findByRole('button', { name: /migrate from the existing diagram/i }),
+    ).toBeInTheDocument()
+  })
+})
 
 describe('ValueChain migration result', () => {
   it('shows what the migration produced, so a thin result is visible rather than silent', async () => {
@@ -68,7 +65,10 @@ describe('ValueChain migration result', () => {
       },
     })
 
-    await openStructureAndMigrate()
+    render(<Wrapper />)
+    await userEvent.click(
+      await screen.findByRole('button', { name: /migrate from the existing diagram/i }),
+    )
 
     const summary = await screen.findByTestId('migration-counts')
     expect(summary.textContent).toMatch(/3 segments/)
@@ -97,7 +97,10 @@ describe('ValueChain migration result', () => {
       }),
     )
 
-    await openStructureAndMigrate()
+    render(<Wrapper />)
+    await userEvent.click(
+      await screen.findByRole('button', { name: /migrate from the existing diagram/i }),
+    )
 
     expect(await screen.findByText(/expected at least one L1 entry/i)).toBeInTheDocument()
   })

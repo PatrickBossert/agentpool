@@ -1,14 +1,16 @@
 // ui/src/__tests__/ValueChainContributionPanel.test.tsx
 //
-// Exercises the contribution panel through the rendered page, not by mounting it
+// Exercises the contribution panel through StructureTab, not by mounting ContributionPanel
 // directly - a test that only rendered ContributionPanel with hand-supplied props would
 // still pass even if nothing in the app ever selected a contribution for it to show.
+//
+// Migrated from mounting the retired ValueChain page to mounting StructureTab directly -
+// StructureTab is now registered as Alex's Output tab editor (CREW_OUTPUT_EDITOR in
+// AgentDetailPanel.tsx), so there is no more "Structure" tab button to click into first.
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AuthProvider } from '../context/AuthContext'
-import ValueChain from '../pages/ValueChain'
+import StructureTab from '../components/StructureTab'
 import type { ValueChainModel } from '../utils/valueChainModel'
 
 // vi.mock factories are hoisted above the top of the file, so the fixture has to be
@@ -42,9 +44,6 @@ const { MODEL } = vi.hoisted(() => ({
 }))
 
 vi.mock('../api/endpoints', () => ({
-  projectsApi: {
-    valueChain: vi.fn().mockResolvedValue([]),
-  },
   valueChainApi: {
     get: vi.fn().mockResolvedValue({ model: MODEL }),
     save: vi.fn(),
@@ -56,20 +55,13 @@ function Wrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return (
     <QueryClientProvider client={qc}>
-      <AuthProvider>
-        <MemoryRouter initialEntries={['/acme-rail/value-chain']}>
-          <Routes>
-            <Route path="/:slug/value-chain" element={<ValueChain />} />
-          </Routes>
-        </MemoryRouter>
-      </AuthProvider>
+      <StructureTab slug="acme-rail" />
     </QueryClientProvider>
   )
 }
 
 async function openStructureTab() {
   render(<Wrapper />)
-  await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
   await screen.findByTestId('card-header-1.1-sp')
 }
 
@@ -124,8 +116,7 @@ describe('ValueChain contribution panel wiring', () => {
   })
 
   it('opens as a dialog when a card header is activated', async () => {
-    render(<Wrapper />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await openStructureTab()
     await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
 
     const dialog = screen.getByRole('dialog')
@@ -133,8 +124,7 @@ describe('ValueChain contribution panel wiring', () => {
   })
 
   it('closes on the close control', async () => {
-    render(<Wrapper />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await openStructureTab()
     await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
     await userEvent.click(screen.getByTestId('close-contribution-panel'))
 
@@ -142,8 +132,7 @@ describe('ValueChain contribution panel wiring', () => {
   })
 
   it('closes on Escape', async () => {
-    render(<Wrapper />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await openStructureTab()
     await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
 
@@ -153,8 +142,7 @@ describe('ValueChain contribution panel wiring', () => {
   })
 
   it('closes when the backdrop is clicked', async () => {
-    render(<Wrapper />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await openStructureTab()
     await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
 
@@ -164,8 +152,7 @@ describe('ValueChain contribution panel wiring', () => {
   })
 
   it('stays open when something inside the dialog body is clicked', async () => {
-    render(<Wrapper />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await openStructureTab()
     await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
 
@@ -179,8 +166,7 @@ describe('ValueChain contribution panel wiring', () => {
   it("shows the tasks of the party whose card was opened, not the other party's", async () => {
     // Tasks belong to the contribution, so opening ISS's card on a jointly-delivered
     // activity must not show SP-GS's tasks.
-    render(<Wrapper />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Structure' }))
+    await openStructureTab()
     await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
 
     const dialog = screen.getByRole('dialog')

@@ -1,12 +1,11 @@
 // ui/src/router.tsx
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { createBrowserRouter, Navigate, useParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useAuth } from './context/AuthContext'
 import AppLayout from './components/AppLayout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Documents from './pages/Documents'
-import ValueChain from './pages/ValueChain'
 import Roadmap from './pages/Roadmap'
 import RunDetail from './pages/RunDetail'
 import Settings from './pages/Settings'
@@ -49,7 +48,19 @@ function AdminRoute({ children, allow }: { children: ReactNode; allow: Role[] })
   return <>{children}</>
 }
 
-export const router = createBrowserRouter([
+// The value chain page was retired - its Structure tab lives in Alex's Output tab now.
+// Notification emails already sent and bookmarks made before the retirement still point at
+// this route, so it redirects rather than 404s, landing on the same place a fresh
+// notification link would: Alex selected, on his Output tab.
+function ValueChainRedirect() {
+  const { slug } = useParams<{ slug: string }>()
+  return <Navigate to={`/${slug}?crew=discovery_mapping&tab=output`} replace />
+}
+
+// The route array, exported so it can be mounted inside a MemoryRouter/createMemoryRouter in
+// tests - createBrowserRouter itself cannot be. `router` below is built from this and stays
+// the only thing anything outside this file imports.
+export const routes = [
   {
     path: '/login',
     element: <Login />,
@@ -105,7 +116,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: ':slug', element: <Dashboard /> },
       { path: ':slug/discovery', element: <Discovery /> },
-      { path: ':slug/value-chain', element: <ValueChain /> },
+      { path: ':slug/value-chain', element: <ValueChainRedirect /> },
       { path: ':slug/value-propositions', element: <ValuePropositions /> },
       { path: ':slug/roadmap', element: <Roadmap /> },
       { path: ':slug/stakeholders', element: <Stakeholders /> },
@@ -179,4 +190,6 @@ export const router = createBrowserRouter([
       },
     ],
   },
-], { basename: '/dashboard' })
+]
+
+export const router = createBrowserRouter(routes, { basename: '/dashboard' })

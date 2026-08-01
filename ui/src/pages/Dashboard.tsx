@@ -210,7 +210,7 @@ export default function Dashboard() {
   )
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex flex-col flex-1 min-h-0" data-testid="dashboard">
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100 bg-white flex-shrink-0 flex-wrap">

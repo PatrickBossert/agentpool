@@ -12,6 +12,14 @@ vi.mock('../api/endpoints', () => ({
     review: vi.fn(),
     revertOutput: vi.fn(),
   },
+  // discovery_mapping's registered editor (StructureTab) queries this directly, so it has to
+  // be mocked here too now that CREW_OUTPUT_EDITOR is no longer empty - an unmocked call
+  // would reach for `.get` on `undefined`.
+  valueChainApi: {
+    get: vi.fn().mockRejectedValue(Object.assign(new Error('Not Found'), { response: { status: 404 }, isAxiosError: true })),
+    save: vi.fn(),
+    migrate: vi.fn(),
+  },
 }))
 
 // Two output types, one primary and one not. A crew with a single output type cannot
@@ -63,9 +71,10 @@ describe('AgentOutputTab', () => {
   })
 
   it("renders an agent's primary read-only when it has no declared editor", () => {
-    // The case that proves this is a default and not a special case for Alex. CREW_OUTPUT_EDITOR
-    // is empty in this task, so every crew - not just one without a bespoke editor - takes this
-    // path; 'discovery' is picked here simply because it is a different crew to the one above.
+    // The case that proves this is a default and not a special case for Alex. Only
+    // discovery_mapping has a registered editor (StructureTab) as of this task, so any other
+    // crew - 'discovery' here, simply because it differs from the one above - still takes
+    // this path.
     const outputs: AgentOutput[] = [{ ...OUTPUTS[0], agent_name: 'synthesis_analyst', output_type: 'discovery' }]
     renderOutputTab({ crewKey: 'discovery', outputs })
     expect(screen.getByTestId('primary-output-readonly')).toBeInTheDocument()
@@ -90,5 +99,18 @@ describe('AgentOutputTab', () => {
     renderOutputTab({ crewKey: 'stakeholder_management', outputs })
     expect(screen.queryByTestId('no-primary-output')).not.toBeInTheDocument()
     expect(screen.getByTestId('primary-output-stakeholder_engagement_plan')).toBeInTheDocument()
+  })
+
+  // Migrated from the retired ValueChain.test.tsx - "opens on Structure for a legacy
+  // project with a diagram and no model". The old page auto-switched its own Structure tab
+  // on whenever a legacy `value_chain` output existed; there is no such switch to test any
+  // more, because Alex's Output tab renders StructureTab directly whenever the primary
+  // output row exists at all. This is the same case exercised end to end: a legacy diagram
+  // output with no saved model still reaches the migrate affordance.
+  it("renders Alex's Structure editor, migrate affordance included, for a legacy diagram output with no saved model", async () => {
+    renderOutputTab()
+    expect(
+      await screen.findByRole('button', { name: /migrate from the existing diagram/i }),
+    ).toBeInTheDocument()
   })
 })
