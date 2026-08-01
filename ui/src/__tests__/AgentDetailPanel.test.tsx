@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import AgentDetailPanel from '../components/AgentDetailPanel'
+import { valueChainApi } from '../api/endpoints'
 import type { AgentOutput } from '../types'
 
 vi.mock('../context/AuthContext', () => ({
@@ -97,7 +98,28 @@ function renderPanel(overrides: {
   )
 }
 
-beforeEach(() => localStorage.clear())
+// Alex's fixture: the value chain model that only the panel can put in front of the Status
+// tab, plus a primary output row so the crew is not in its empty state.
+const ALEX_MODEL = {
+  model_version: 1,
+  parties: [{ id: 'p1' }],
+  segments: [{ id: 's1' }, { id: 's2' }, { id: 's3' }],
+  activities: new Array(17).fill(0).map((_, i) => ({ id: `a${i}` })),
+  contributions: new Array(17).fill(0).map((_, i) => ({ activity_id: `a${i}` })),
+  tasks: new Array(59).fill(0).map((_, i) => ({ id: `t${i}` })),
+  propositions: [],
+  links: [],
+}
+
+const ALEX_OUTPUTS: AgentOutput[] = [
+  { id: 10, agent_name: 'value_chain_mapper', output_type: 'value_chain_model',
+    version: 2, is_current: true, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'model_v2.json' },
+]
+
+beforeEach(() => {
+  localStorage.clear()
+  vi.mocked(valueChainApi.get).mockResolvedValue({ model: null })
+})
 
 describe('AgentDetailPanel - Output tab', () => {
   it("shows Maya's primary artefact rather than the empty state", async () => {
@@ -124,5 +146,28 @@ describe('AgentDetailPanel - Status tab', () => {
     renderPanel({ initialTab: 'status' })
     await screen.findByTestId('output-type-interview_scripts_l2_1')
     expect(screen.queryByTestId('output-type-l1_interview_summaries')).not.toBeInTheDocument()
+  })
+
+  // Driven through the panel deliberately. AgentStatusTab's own test supplies primaryModel
+  // itself, so it stayed green while no production caller ever passed the prop - the summary
+  // card, the prop and its counts type were all unreachable.
+  it("summarises Alex's value chain model, which only the panel can supply", async () => {
+    vi.mocked(valueChainApi.get).mockResolvedValue({ model: ALEX_MODEL })
+    renderPanel({ crewKey: 'discovery_mapping', outputs: ALEX_OUTPUTS, initialTab: 'status' })
+
+    const card = await screen.findByTestId('output-summary')
+    expect(card).toHaveTextContent('3 segments')
+    expect(card).toHaveTextContent('17 activities')
+    expect(card).toHaveTextContent('17 contributions')
+    expect(card).toHaveTextContent('59 tasks')
+  })
+
+  it('shows no summary card for a crew whose primary is not a countable model', async () => {
+    // The card is Alex's alone until another crew's artefact grows counts of its own; without
+    // this, passing every crew the value chain model would satisfy the test above.
+    vi.mocked(valueChainApi.get).mockResolvedValue({ model: ALEX_MODEL })
+    renderPanel({ initialTab: 'status' })
+    await screen.findByTestId('output-version-3')
+    expect(screen.queryByTestId('output-summary')).not.toBeInTheDocument()
   })
 })

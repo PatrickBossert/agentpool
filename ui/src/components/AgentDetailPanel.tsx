@@ -23,7 +23,8 @@ import { CREW_ICON_COMPONENT } from './crewIcons'
 import AgentHoverCard from './AgentHoverCard'
 import PamReportView, { PamCrewStatusDetail } from './PamReportView'
 import { AgentOutputTab } from './AgentOutputTab'
-import { AgentStatusTab } from './AgentStatusTab'
+import { AgentStatusTab, type PrimaryModelCounts } from './AgentStatusTab'
+import { valueChainApi } from '../api/endpoints'
 import type { CrewRun, AgentOutput, HumanReview } from '../types'
 import StructureTab from './StructureTab'
 import AlexSetupTab from './tabs/AlexSetupTab'
@@ -865,6 +866,24 @@ export default function AgentDetailPanel({
 
   const crewMeta = CREW_META[crewKey]
 
+  // Status' output summary card counts what is *in* the current artefact, which means it
+  // needs the fetched model rather than the output row describing it - and only this panel
+  // sits above both tabs, so only this panel can hand it over.
+  //
+  // Same key, queryFn and retry as StructureTab's own query (StructureTab.tsx), which is
+  // mounted in the hidden Output branch below whenever this crew is Alex's, so this observer
+  // normally reads a cache entry that is already warm. The options must not diverge: two
+  // observers of one key with different retry settings give the query whichever behaviour
+  // belongs to whoever triggered the fetch. `enabled` is the one deliberate narrowing - no
+  // other crew has an editor that wants this model, so no other crew should fetch it.
+  const { data: valueChainData } = useQuery({
+    queryKey: ['value-chain-model', slug],
+    queryFn: () => valueChainApi.get(slug),
+    enabled: !!slug && crewKey === 'discovery_mapping',
+    retry: false,
+  })
+  const primaryModel = (valueChainData?.model ?? undefined) as PrimaryModelCounts | undefined
+
   async function sendChat() {
     if (!chatInput.trim() || chatLoading) return
     const text = chatInput.trim()
@@ -999,6 +1018,7 @@ export default function AgentDetailPanel({
             outputs={crewOutputs}
             statusEvents={statusEvents}
             locale={locale}
+            primaryModel={primaryModel}
             crewStatus={crewStatus}
           />
         </div>

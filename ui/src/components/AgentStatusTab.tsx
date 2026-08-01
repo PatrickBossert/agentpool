@@ -547,7 +547,7 @@ function OutputItem({ slug, output, crewKey, allCrewOutputs, locale = 'GB' }: {
 // (currently only the value chain). Deliberately looser than the full ValueChainModel shape
 // - this only ever reads array lengths, so it should not also enforce every element's
 // invariants.
-interface PrimaryModelCounts {
+export interface PrimaryModelCounts {
   segments: unknown[]
   activities: unknown[]
   contributions: unknown[]
