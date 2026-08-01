@@ -40,16 +40,18 @@
 
 **Why the split.** `AgentDetailPanel.tsx` is 1745 lines and this makes Status substantially bigger. Extracting the two tab bodies is the same move that took `StructureTab` out of `ValueChain.tsx` on the previous branch. Without it the file lands past 2000 lines and the next change to it is worse than this one.
 
-**Task order.** The maps and the extraction come first (Tasks 1-2) so later tasks have somewhere to plug into. The value chain dissolution (Task 3) needs the editor slot to exist. The Dashboard preview (Task 4) and the deep links (Task 5) are independent of each other and could swap.
+**Task order.** The panel split comes first (Task 1) so later tasks have somewhere to plug into. The value chain dissolution (Task 2) needs the editor slot to exist. The Dashboard preview (Task 3) and the deep links (Task 4) are independent of each other and could swap.
+
+**Task 1 is deliberately one task, not two.** It extracts both tab bodies and rehomes every assertion it displaces. Splitting it would leave the suite red between the halves, and a reviewer cannot meaningfully approve the Output half while rejecting the Status half - neither works alone. It carries **one commit**, taken once the suite is green.
 
 ---
 
-## Task 1: Declare the primary output, and split the Output tab out
+## Task 1: Split the panel into an Output tab and a Status tab
 
 **Files:**
-- Create: `ui/src/components/AgentOutputTab.tsx`
-- Modify: `ui/src/components/AgentDetailPanel.tsx`
-- Test: `ui/src/__tests__/AgentOutputTab.test.tsx`
+- Create: `ui/src/components/crewOutputs.ts`, `ui/src/components/AgentOutputTab.tsx`, `ui/src/components/AgentStatusTab.tsx`
+- Modify: `ui/src/components/AgentDetailPanel.tsx`, `ui/src/components/ReviewDialog.tsx`
+- Test: `ui/src/__tests__/AgentOutputTab.test.tsx`, `ui/src/__tests__/AgentStatusTab.test.tsx`, plus any existing test whose assertions this displaces
 
 **Interfaces:**
 - Produces: `CREW_OUTPUT_TYPE` relocated to `ui/src/components/crewOutputs.ts` and re-exported from `ReviewDialog.tsx`; `CREW_OUTPUT_EDITOR: Partial<Record<string, SlotFC>>` exported from `AgentDetailPanel.tsx` beside the existing `CREW_SETUP_OVERRIDE` and `CREW_OUTPUT_EXTRA`; `AgentOutputTab({ slug, crewKey, outputs, locale })`.
@@ -147,7 +149,7 @@ export const CREW_OUTPUT_TYPE: Record<string, string> = {
 
 Move the constant as-is and re-export it from `ReviewDialog.tsx` so that file's existing
 importers keep working. **Leave `discovery_mapping: 'value_chain'` alone in this task** -
-Task 4 repoints it, and changing it here would make Task 4's failing test pass before it is
+Task 3 repoints it, and changing it here would make Task 4's failing test pass before it is
 written.
 
 Then in `AgentDetailPanel.tsx`, beside `CREW_SETUP_OVERRIDE` and `CREW_OUTPUT_EXTRA`, add
@@ -160,13 +162,13 @@ only the editor map:
 export const CREW_OUTPUT_EDITOR: Partial<Record<string, SlotFC>> = {}
 ```
 
-It is deliberately empty here; Task 3 registers Alex's. Leaving it empty is what makes the
+It is deliberately empty here; Task 2 registers Alex's. Leaving it empty is what makes the
 read-only fallback test meaningful.
 
 **Note for the tests in this task:** because `discovery_mapping` still maps to
 `'value_chain'` until Task 4, the fixture's primary type is `'value_chain'`, not
 `'value_chain_model'`. Use whichever the map actually holds when you write the test - a test
-asserting the post-Task-4 value would fail for the wrong reason.
+asserting the post-Task-3 value would fail for the wrong reason.
 
 - [ ] **Step 4: Create the component**
 
@@ -196,16 +198,9 @@ Leave the `tab === 'output' && crewKey === 'PAM'` branch untouched.
 Run: `cd ui && npx vitest run && npx tsc --noEmit`
 Expected: the new file's tests pass and `tsc` is clean. **Existing tests that assert on the old Output tab's version list will fail** - that is expected, and Task 2 is where those assertions move. If a failing test asserts something that should survive, fix it here and say so; if it asserts the old structure, note it and leave it for Task 2 rather than deleting it.
 
-- [ ] **Step 7: Commit**
-
-```bash
-git add ui/src/components/AgentOutputTab.tsx ui/src/components/AgentDetailPanel.tsx ui/src/__tests__/AgentOutputTab.test.tsx
-git commit -m "feat: the Output tab shows one declared primary artefact"
-```
-
 ---
 
-## Task 2: Move the history into the Status tab
+### Part B of Task 1: move the history into the Status tab
 
 **Files:**
 - Create: `ui/src/components/AgentStatusTab.tsx`
@@ -213,7 +208,7 @@ git commit -m "feat: the Output tab shows one declared primary artefact"
 - Test: `ui/src/__tests__/AgentStatusTab.test.tsx`
 
 **Interfaces:**
-- Consumes: `CREW_OUTPUT_TYPE` from `ui/src/components/crewOutputs.ts` (Task 1).
+- Consumes: `CREW_OUTPUT_TYPE` from `ui/src/components/crewOutputs.ts` (Part A above).
 - Produces: `AgentStatusTab({ slug, crewKey, crewRun, outputs, statusEvents, locale, primaryModel })`, where `primaryModel` is the already-fetched artefact when the crew's primary is a structured model and `undefined` otherwise - it is what the summary card counts, and passing it rather than refetching is what stops the count disagreeing with the artefact.
 
 **This task must be lossless.** Every control that exists today has to exist afterwards and still work. The list, named individually rather than counted so a silent drop is a failure rather than a gap in a total: the **version list**, the **thumbnail**, **revert**, **reject**, **revise**, and the lazy content load behind them. They come from `OutputItem`, which splits here - its editor path is gone, its version-acting path moves.
@@ -331,13 +326,14 @@ Expected: all passing, `tsc` clean. Report the count against the 216 baseline.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ui/src/components/AgentStatusTab.tsx ui/src/components/AgentDetailPanel.tsx ui/src/__tests__/AgentStatusTab.test.tsx
-git commit -m "feat: the Status tab holds runs, versions and the actions that act on them"
+git add ui/src/components/crewOutputs.ts ui/src/components/AgentOutputTab.tsx ui/src/components/AgentStatusTab.tsx ui/src/components/AgentDetailPanel.tsx ui/src/components/ReviewDialog.tsx ui/src/__tests__/AgentOutputTab.test.tsx ui/src/__tests__/AgentStatusTab.test.tsx
+# plus every existing test file whose assertions you rehomed - list them explicitly
+git commit -m "feat: split the agent panel into an Output tab and a Status tab"
 ```
 
 ---
 
-## Task 3: Dissolve the value chain page
+## Task 2: Dissolve the value chain page
 
 **Files:**
 - Modify: `ui/src/components/AgentDetailPanel.tsx` - register Alex's editor
@@ -384,7 +380,7 @@ describe('the retired value chain route', () => {
 
 **`router.tsx` exports only `router`, built with `createBrowserRouter`**, so it cannot be mounted inside a `MemoryRouter`. Extract the route array into an exported `routes` constant and build the browser router from it, leaving `router` exported exactly as before so nothing that imports it changes. The test then does `createMemoryRouter(routes, { initialEntries: ['/dashboard/acme/value-chain'] })` and renders `<RouterProvider router={...} />`.
 
-That extraction is the smallest change that makes routing testable at all, and both this task and Task 5 need it.
+That extraction is the smallest change that makes routing testable at all, and both this task and Task 4 need it.
 
 `data-testid="dashboard"` may not exist on the Dashboard yet; add it if not.
 
@@ -432,7 +428,7 @@ git commit -m "feat: dissolve the value chain page into Alex's and Maya's tabs"
 
 ---
 
-## Task 4: Point the Dashboard preview at the model
+## Task 3: Point the Dashboard preview at the model
 
 **Files:**
 - Modify: `ui/src/components/ReviewDialog.tsx` - `CREW_OUTPUT_TYPE`
@@ -494,7 +490,7 @@ git commit -m "fix: preview the value chain model rather than the retired diagra
 
 ---
 
-## Task 5: Land a notification on the agent's Output tab
+## Task 4: Land a notification on the agent's Output tab
 
 **Files:**
 - Modify: `ui/src/pages/Dashboard.tsx` - read `crew` and `tab` from the URL
@@ -654,6 +650,6 @@ had none of the routes merged since. If the routes are missing again, that is wh
 ## Notes carried from the previous three branches
 
 - **Fixture sizing.** An agent with exactly one output type cannot distinguish "shows the primary" from "shows everything it has". Every test of the primary-output rule uses a fixture with at least two types, one primary and one not. The last three branches shipped six defects hidden by fixtures too small to tell the correct implementation from the bug.
-- **Absence needs a positive anchor.** Task 4's "does not draw the model as a diagram" is paired with "still draws the ones that really are diagrams" - without it, emptying the whole set would pass.
-- **A move is not a rewrite.** Tasks 2 and 3 move substantial blocks. A faithful move is reviewable; a move plus an improvement is not. Note anything that reads awkwardly in its new home rather than fixing it in the same commit.
-- **Migrated assertions get listed.** Tasks 2 and 3 both relocate existing tests. Report every assertion moved and where it went - a control dropped in a large diff is invisible otherwise.
+- **Absence needs a positive anchor.** Task 3's "does not draw the model as a diagram" is paired with "still draws the ones that really are diagrams" - without it, emptying the whole set would pass.
+- **A move is not a rewrite.** Tasks 1 and 2 move substantial blocks. A faithful move is reviewable; a move plus an improvement is not. Note anything that reads awkwardly in its new home rather than fixing it in the same commit.
+- **Migrated assertions get listed.** Tasks 1 and 2 both relocate existing tests. Report every assertion moved and where it went - a control dropped in a large diff is invisible otherwise.
