@@ -11,6 +11,7 @@
 // Every cell renders whether occupied or not, so a gap is a real position - and, from Task
 // 6, a real drop target - rather than an absence.
 import { useEffect, useRef, useState } from 'react'
+import { Minus, Plus } from 'lucide-react'
 
 import {
   chainColumns,
@@ -24,6 +25,15 @@ import { ContributionCard, partyMenuButtonId } from './ContributionCard'
 
 const GUTTER = '10rem'
 const COLUMN_WIDTH = '13rem'
+
+// 325rem of chain at full size cannot be taken in at a glance, so zoom is a scale on the
+// grid itself rather than a way of hiding parts of it - a person can stand back to see the
+// whole shape, then step back in to work a segment. Rounded to one decimal place on every
+// step because repeated 0.2 subtraction drifts in floating point (1 - 0.2 - 0.2 - 0.2 is
+// not exactly 0.4) and an off-by-a-fraction zoom would never reach the floor.
+const ZOOM_STEP = 0.2
+const ZOOM_MIN = 0.4
+const ZOOM_MAX = 1.4
 
 export function ValueChainGrid({
   model,
@@ -60,6 +70,14 @@ export function ValueChainGrid({
   const [openMenu, setOpenMenu] = useState<{ activityId: string; partyId: string } | null>(
     null,
   )
+
+  // The grid, not the page, scales - the entity column and segment band are inside the
+  // transformed element, so they shrink with the chain rather than drifting out of line
+  // with it. The scroll container that wraps it is untransformed, so scrolling still works
+  // in real (unscaled) pixels at any zoom level.
+  const [zoom, setZoom] = useState(1)
+  const zoomOut = () => setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - ZOOM_STEP) * 10) / 10))
+  const zoomIn = () => setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + ZOOM_STEP) * 10) / 10))
 
   // The removal dialog is modal and covers the whole grid, so a keyboard-only user landed
   // nowhere when it opened. Focus moves into it on open, and back to the card's Parties
@@ -114,11 +132,40 @@ export function ValueChainGrid({
       }
       onDragEnd={onChange ? () => setDraggingParty(null) : undefined}
     >
-      <section data-testid="chain-grid" className="overflow-x-auto">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          data-testid="zoom-out"
+          onClick={zoomOut}
+          disabled={zoom <= ZOOM_MIN}
+          aria-label="Zoom out"
+          className="p-1 rounded border border-surface text-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Minus className="w-4 h-4" />
+        </button>
+        <span data-testid="zoom-level" className="w-12 text-center text-xs text-muted font-mono">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          type="button"
+          data-testid="zoom-in"
+          onClick={zoomIn}
+          disabled={zoom >= ZOOM_MAX}
+          aria-label="Zoom in"
+          className="p-1 rounded border border-surface text-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+      </div>
+
+      <section className="overflow-x-auto">
         <div
+          data-testid="chain-grid"
           className="grid gap-2 items-start"
           style={{
             gridTemplateColumns: `${GUTTER} repeat(${columns.length}, minmax(${COLUMN_WIDTH}, 1fr))`,
+            transform: `scale(${zoom})`,
+            transformOrigin: 'top left',
           }}
         >
           {/* Row 1: a band per segment, spanning that segment's own columns. Row 2: a

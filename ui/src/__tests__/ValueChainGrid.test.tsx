@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { useState } from 'react'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect } from 'vitest'
 
@@ -334,3 +334,30 @@ describe.skipIf(!SP_GS_AM_FIXTURE_PRESENT)(
     })
   },
 )
+
+describe('zoom', () => {
+  it('starts at 100%', () => {
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    expect(screen.getByTestId('zoom-level')).toHaveTextContent('100%')
+  })
+
+  it('scales the grid down when zoomed out', () => {
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    fireEvent.click(screen.getByTestId('zoom-out'))
+    expect(screen.getByTestId('chain-grid')).toHaveStyle({ transform: 'scale(0.8)' })
+  })
+
+  it('keeps cards interactive after zooming', () => {
+    // A test asserting only the style would pass on a grid that scaled itself out of use.
+    render(<ValueChainGrid model={TWO_SEGMENTS} onChange={() => {}} />)
+    fireEvent.click(screen.getByTestId('zoom-out'))
+    expect(screen.getByTestId('card-header-1.1-sp')).toHaveAttribute('draggable', 'true')
+    expect(screen.getByTestId('description-1.1-sp')).not.toHaveAttribute('readonly')
+  })
+
+  it('does not zoom below the floor', () => {
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    for (let i = 0; i < 10; i++) fireEvent.click(screen.getByTestId('zoom-out'))
+    expect(screen.getByTestId('zoom-level')).toHaveTextContent('40%')
+  })
+})
