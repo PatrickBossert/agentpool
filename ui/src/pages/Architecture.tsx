@@ -595,7 +595,7 @@ export default function Architecture() {
                 ['/', 'Dashboard', 'Protected', 'Project list or selected project overview'],
                 ['/:slug', 'Dashboard', 'Protected', 'Project dashboard with neural agent tree'],
                 ['/:slug/discovery', 'Discovery', 'Protected', 'Discovery Interviews tab + Layer Map tab'],
-                ['/:slug/value-chain', 'ValueChain', 'Protected', 'Setup tab (config) + Diagram tab (Mermaid)'],
+                ['/:slug/value-chain', 'ValueChainRedirect', 'Protected', 'Retired page - redirects to the dashboard with Alex selected on his Output tab'],
                 ['/:slug/value-propositions', 'ValuePropositions', 'Protected', 'Portfolio register with IIRC radar chart'],
                 ['/:slug/roadmap', 'Roadmap', 'Protected', 'Timeline tab + Gantt tab + Initiative Register tab'],
                 ['/:slug/business-plan', 'BusinessPlan', 'Protected', 'Financial metrics + output download cards'],
