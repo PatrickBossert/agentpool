@@ -378,7 +378,7 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
   const [loading, setLoading] = useState(true)
   const [inspectCode, setInspectCode] = useState<string | null>(null)
 
-  // ── Node template assignment — moved from the old Value Chain page's Templates
+  // ── Node template assignment - moved from the old Value Chain page's Templates
   // tab. Per-level generation is meant to supersede this eventually, but that
   // generation does not exist yet, so manual assignment stays the only route to
   // control until it does. Kept as its own state, separate from nodeAssignments
@@ -565,7 +565,7 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
         </div>
       </div>
 
-      {/* Node Template Assignment — moved from the old Value Chain page's Templates
+      {/* Node Template Assignment - moved from the old Value Chain page's Templates
           tab, unchanged. Assigns a saved interview or questionnaire template to a
           specific node, overriding the generated default above. Per-level generation
           is meant to replace this eventually, but that generation does not exist
