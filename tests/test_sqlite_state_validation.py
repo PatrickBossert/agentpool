@@ -133,6 +133,62 @@ def test_an_invalid_model_writes_no_file():
     assert row_count == 0
 
 
+def test_a_json_array_is_refused_not_thrown():
+    """validate_model assumes a dict and calls .get unconditionally, so a JSON array
+    parses cleanly but must not reach the validator raw - it should be refused with
+    the same Error: shape as any other structurally invalid write, not crash the tool."""
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="value_chain_model",
+        agent_name="value_chain_mapper", value="[]",
+    )
+
+    assert result.startswith("Error:")
+    assert "Written to" not in result
+
+    from api.config import get_settings
+    outputs_dir = Path(get_settings().projects_dir) / SLUG / "outputs"
+    assert list(outputs_dir.glob("value_chain_model*.json")) == []
+
+    db_path = Path(get_settings().database_dir) / f"{SLUG}.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM agent_outputs WHERE output_type=?",
+            ("value_chain_model",),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert row_count == 0
+
+
+def test_a_json_scalar_is_refused_not_thrown():
+    """Same guard, a bare JSON string this time - null and numbers take the same path."""
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="value_chain_model",
+        agent_name="value_chain_mapper", value="null",
+    )
+
+    assert result.startswith("Error:")
+    assert "Written to" not in result
+
+    from api.config import get_settings
+    outputs_dir = Path(get_settings().projects_dir) / SLUG / "outputs"
+    assert list(outputs_dir.glob("value_chain_model*.json")) == []
+
+    db_path = Path(get_settings().database_dir) / f"{SLUG}.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM agent_outputs WHERE output_type=?",
+            ("value_chain_model",),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert row_count == 0
+
+
 def test_a_key_with_no_validator_is_written_unchanged():
     """The tool stays general - only registered keys are checked."""
     tool = SQLiteStateTool(slug=SLUG)

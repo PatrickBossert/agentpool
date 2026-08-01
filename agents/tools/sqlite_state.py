@@ -63,6 +63,12 @@ class SQLiteStateTool(BaseTool):
 
             validator = _VALIDATORS.get(key)
             if validator is not None:
+                if not isinstance(parsed, dict):
+                    return (
+                        f"Error: {key} was not written - it is structurally invalid. "
+                        f"Fix these and write it again: value must be a JSON object, "
+                        f"got {type(parsed).__name__}."
+                    )
                 problems = validator(parsed)
                 if problems:
                     return (
