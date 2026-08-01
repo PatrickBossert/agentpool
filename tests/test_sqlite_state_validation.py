@@ -5,6 +5,7 @@ The tool returns a string and CrewAI hands that back to the agent, so a refusal 
 names the problems is something the agent can act on inside the same run.
 """
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -16,11 +17,39 @@ SLUG = "sqlite-state-validation-test"
 
 @pytest.fixture(autouse=True)
 def clean(tmp_path, monkeypatch):
-    """Point the tool at a temporary projects directory so nothing touches real data."""
+    """Point the tool at its own temporary projects and database directories, with the
+    minimal schema insert_agent_output_sync needs for SLUG to already exist as a project.
+
+    Both directories live under this test's own tmp_path so nothing touches real data and
+    ordering against other test files cannot matter - in particular test_projects_api.py's
+    autouse fixture rmtree's the shared /tmp/agentpool_test before each of its own tests,
+    and runs alphabetically before this file, so relying on that shared directory would be
+    order-dependent.
+    """
     from api.config import get_settings
 
     get_settings.cache_clear()
     monkeypatch.setenv("PROJECTS_DIR", str(tmp_path))
+
+    db_dir = tmp_path / "data"
+    db_dir.mkdir()
+    monkeypatch.setenv("DATABASE_DIR", str(db_dir))
+
+    conn = sqlite3.connect(str(db_dir / f"{SLUG}.db"))
+    conn.execute("CREATE TABLE projects (id INTEGER PRIMARY KEY, slug TEXT)")
+    # Mirrors api/database.py including migration-added columns
+    conn.execute(
+        "CREATE TABLE agent_outputs ("
+        " id INTEGER PRIMARY KEY, project_id INTEGER, agent_name TEXT,"
+        " output_type TEXT, file_path TEXT, version INTEGER,"
+        " review_status TEXT DEFAULT 'pending', revision_notes TEXT,"
+        " is_current INTEGER NOT NULL DEFAULT 1,"
+        " created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.execute("INSERT INTO projects (id, slug) VALUES (1, ?)", (SLUG,))
+    conn.commit()
+    conn.close()
+
     yield
     get_settings.cache_clear()
 
