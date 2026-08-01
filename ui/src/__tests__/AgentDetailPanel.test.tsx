@@ -133,6 +133,24 @@ describe('AgentDetailPanel - Output tab', () => {
   })
 })
 
+describe('AgentDetailPanel - the Output branch is hidden, not unmounted', () => {
+  // getByTestId ignores visibility, so every assertion that only reaches for the Output
+  // content would stay green if `hidden={tab !== 'output'}` were inverted - the tab would
+  // render nothing at all and 245 tests would say nothing. Both halves are needed: asserting
+  // only that it is visible on Output would pass if the attribute were dropped entirely.
+  it('shows the Output content while the Output tab is selected', async () => {
+    renderPanel({ initialTab: 'output' })
+    expect(await screen.findByTestId('primary-output-interview_scripts')).toBeVisible()
+  })
+
+  it('keeps it mounted but out of sight while another tab is selected', async () => {
+    renderPanel({ initialTab: 'status' })
+    const output = await screen.findByTestId('primary-output-interview_scripts')
+    expect(output).toBeInTheDocument()
+    expect(output).not.toBeVisible()
+  })
+})
+
 describe('AgentDetailPanel - the empty state', () => {
   it('stays away when the crew has an extra panel to show instead', async () => {
     // The old condition was `crewOutputs.length === 0 && !CREW_OUTPUT_EXTRA[crewKey]`; the
