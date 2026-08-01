@@ -15,10 +15,14 @@ vi.mock('../api/endpoints', () => ({
   },
 }))
 
+// discovery_mapping's declared primary is 'value_chain_model', not the retired 'value_chain'
+// Mermaid diagram. With the wrong type here every assertion below was exercising the
+// non-primary branch while claiming to test the primary one, and the primary version-history
+// block had no coverage at all.
 const OUTPUTS: AgentOutput[] = [
-  { id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain',
+  { id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain_model',
     version: 3, is_current: true, review_status: 'approved', created_at: '2026-08-01 10:00:00', file_path: 'a.json' },
-  { id: 2, agent_name: 'value_chain_mapper', output_type: 'value_chain',
+  { id: 2, agent_name: 'value_chain_mapper', output_type: 'value_chain_model',
     version: 2, is_current: false, review_status: 'approved', created_at: '2026-07-31 10:00:00', file_path: 'b.json' },
   { id: 3, agent_name: 'value_chain_mapper', output_type: 'value_chain_registry',
     version: 13, is_current: true, review_status: 'approved', created_at: '2026-08-01 09:00:00', file_path: 'c.json' },
@@ -50,6 +54,14 @@ describe('AgentStatusTab', () => {
   it('lists prior versions of the primary output', () => {
     renderStatusTab()
     expect(screen.getByTestId('output-version-2')).toBeInTheDocument()
+  })
+
+  it('lists them under the primary version history, not as just another output type', () => {
+    // OutputItem renders identically in both blocks, so every assertion above holds whichever
+    // one the fixture lands in - and with a fixture whose type is not the declared primary,
+    // they were all landing in the non-primary block. Only the heading tells the two apart.
+    renderStatusTab()
+    expect(screen.getByText(/Version history . 2/)).toBeInTheDocument()
   })
 
   it('lists non-primary output types, which the Output tab does not show', () => {
