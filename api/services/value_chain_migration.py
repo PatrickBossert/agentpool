@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from api.services.value_chain_model import COLUMN_STEP, empty_model
+from api.services.value_chain_model import COLUMN_STEP, empty_model, id_order
 
 # NodeId["Some label"]:::className  - the label may be quoted or bare.
 _NODE = re.compile(r'\w+\s*\[\s*"?(?P<label>[^"\]]+?)"?\s*\]\s*:::\s*(?P<cls>\w+)')
@@ -39,19 +39,6 @@ def parse_mermaid_attribution(mermaid: str) -> tuple[dict[str, str], dict[str, s
     return labels, colours
 
 
-# Stands in for a non-numeric ID part so it sorts last within its position, rather than
-# raising - a malformed ID must not stop a whole project migrating.
-_UNORDERABLE = 10**9
-
-
-def _id_order(activity_id: str) -> tuple[int, ...]:
-    """The ID's numeric parts, so "1.10" sorts after "1.9" rather than before it."""
-    return tuple(
-        int(part) if part.isdigit() else _UNORDERABLE
-        for part in str(activity_id).split(".")
-    )
-
-
 def _columns_by_activity(activities: list[dict]) -> dict[str, int]:
     """Each activity's column, from its position in its segment's numeric ID order.
 
@@ -66,7 +53,7 @@ def _columns_by_activity(activities: list[dict]) -> dict[str, int]:
     segments = {a.get("segment_id") for a in activities}
     for segment in segments:
         in_segment = [a for a in activities if a.get("segment_id") == segment]
-        for position, activity in enumerate(sorted(in_segment, key=lambda a: _id_order(a["id"]))):
+        for position, activity in enumerate(sorted(in_segment, key=lambda a: id_order(a["id"]))):
             columns[activity["id"]] = (position + 1) * COLUMN_STEP
     return columns
 

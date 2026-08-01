@@ -239,18 +239,26 @@ def test_a_collision_names_every_activity_in_the_cell():
 
 
 def test_two_separate_collisions_are_two_problems():
-    """One message per over-occupied cell, not one per model."""
+    """One message per over-occupied cell, not one per model.
+
+    One cell holds three contributions, not two: with exactly two occupants per cell, the
+    old "append on the second occupant" logic also produces one message per cell, so it
+    cannot tell the fix apart from the bug it replaces. A third occupant in one cell makes
+    the old logic append twice for that cell alone, giving three messages overall instead
+    of two.
+    """
     model = empty_model()
     model["segments"] = [{"id": "1", "label": "Segment"}]
     model["parties"] = [{"id": "sp", "label": "SP-GS"}, {"id": "iss", "label": "ISS"}]
     model["activities"] = [
-        {"id": f"1.{n}", "segment_id": "1", "label": str(n)} for n in range(1, 5)
+        {"id": f"1.{n}", "segment_id": "1", "label": str(n)} for n in range(1, 6)
     ]
     model["contributions"] = [
         {"activity_id": "1.1", "party_id": "sp", "column": 10, "attribution": "stated"},
         {"activity_id": "1.2", "party_id": "sp", "column": 10, "attribution": "stated"},
-        {"activity_id": "1.3", "party_id": "iss", "column": 20, "attribution": "stated"},
+        {"activity_id": "1.3", "party_id": "sp", "column": 10, "attribution": "stated"},
         {"activity_id": "1.4", "party_id": "iss", "column": 20, "attribution": "stated"},
+        {"activity_id": "1.5", "party_id": "iss", "column": 20, "attribution": "stated"},
     ]
 
     problems = validate_model(model)
@@ -273,6 +281,28 @@ def test_a_valid_model_reports_no_collision():
     ]
 
     assert validate_model(model) == []
+
+
+def test_collision_names_activities_in_numeric_not_lexical_order():
+    """"5.9" must sort before "5.10" - a plain string sort would place "5.10" first, in a
+    message whose whole purpose is helping someone find and move those activities."""
+    model = empty_model()
+    model["segments"] = [{"id": "5", "label": "Segment"}]
+    model["parties"] = [{"id": "sp", "label": "SP-GS"}]
+    model["activities"] = [
+        {"id": "5.9", "segment_id": "5", "label": "Nine"},
+        {"id": "5.10", "segment_id": "5", "label": "Ten"},
+    ]
+    model["contributions"] = [
+        {"activity_id": a, "party_id": "sp", "column": 10, "attribution": "stated"}
+        for a in ("5.10", "5.9")
+    ]
+
+    problems = validate_model(model)
+
+    collision = [p for p in problems if "occupy" in p]
+    assert len(collision) == 1
+    assert collision[0].index("5.9") < collision[0].index("5.10")
 
 
 def test_the_real_agent_written_model_reports_its_five_way_collision():

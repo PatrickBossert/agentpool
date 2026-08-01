@@ -18,6 +18,24 @@ COLUMN_STEP = 10
 
 _ATTRIBUTIONS = ("stated", "derived")
 
+# Stands in for a non-numeric ID part so it sorts last within its position, rather than
+# raising - a malformed ID must not stop a whole project migrating or a collision message
+# from being produced.
+_UNORDERABLE = 10**9
+
+
+def id_order(activity_id: str) -> tuple[int, ...]:
+    """The ID's numeric parts, so "1.10" sorts after "1.9" rather than before it.
+
+    Shared by this module (ordering the activities named in a collision message) and
+    value_chain_migration.py (ordering activities into columns) - one implementation so the
+    two never disagree about what "1.10" means relative to "1.9".
+    """
+    return tuple(
+        int(part) if part.isdigit() else _UNORDERABLE
+        for part in str(activity_id).split(".")
+    )
+
 
 def empty_model() -> dict:
     return {
@@ -113,12 +131,16 @@ def validate_model(model: dict) -> list[str]:
     # One problem per over-occupied cell, naming every activity in it. The previous form
     # appended a message each time a cell repeated, so five contributions in one cell
     # produced four identical messages that named none of the five - and the reader's next
-    # action is to go and move those activities.
+    # action is to go and move those activities. Sorted by id_order rather than left in
+    # discovery order, or as plain strings, so the list reads in a stable, predictable
+    # order ("5.9" before "5.10") regardless of which contribution happened to be recorded
+    # first.
     for (segment_id, party_id, column), occupants in cell_occupants.items():
         if len(occupants) > 1:
+            ordered = sorted(occupants, key=id_order)
             problems.append(
                 f"{len(occupants)} contributions occupy column {column} in party "
-                f"{party_id}'s lane in segment {segment_id}: {', '.join(sorted(occupants))}"
+                f"{party_id}'s lane in segment {segment_id}: {', '.join(ordered)}"
             )
 
     # An activity with no contribution belongs to no lane, so it disappears from the grid
