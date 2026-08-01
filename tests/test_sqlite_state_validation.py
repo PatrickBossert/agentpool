@@ -99,7 +99,15 @@ def test_an_invalid_model_is_refused_and_the_problems_are_returned():
 
 
 def test_an_invalid_model_writes_no_file():
-    """Refusing but writing anyway would be worse than not checking at all."""
+    """Refusing but writing anyway would be worse than not checking at all.
+
+    A successful write is immediately renamed by insert_agent_output_sync to a
+    versioned name (value_chain_model_v1.json), so the unsuffixed path is absent
+    whether the write was refused or whether it succeeded and got renamed out from
+    under it - asserting on that one path alone proves nothing. Assert on evidence a
+    successful write actually leaves behind instead: no file under any name for this
+    key, and no agent_outputs row recording it.
+    """
     model = _valid_model()
     model["contributions"][0]["attribution"] = "guessed"
 
@@ -110,8 +118,19 @@ def test_an_invalid_model_writes_no_file():
     )
 
     from api.config import get_settings
-    path = Path(get_settings().projects_dir) / SLUG / "outputs" / "value_chain_model.json"
-    assert not path.exists()
+    outputs_dir = Path(get_settings().projects_dir) / SLUG / "outputs"
+    assert list(outputs_dir.glob("value_chain_model*.json")) == []
+
+    db_path = Path(get_settings().database_dir) / f"{SLUG}.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM agent_outputs WHERE output_type=?",
+            ("value_chain_model",),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert row_count == 0
 
 
 def test_a_key_with_no_validator_is_written_unchanged():
