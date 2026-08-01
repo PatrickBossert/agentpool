@@ -68,7 +68,7 @@ describe('dragging a card', () => {
     render(<Stateful />)
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
-    fireEvent.drop(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-1-sp-30'), { dataTransfer: dt })
 
     expect(columnOf('card-1.1-sp')).toBe(30)
   })
@@ -77,7 +77,7 @@ describe('dragging a card', () => {
     render(<Stateful />)
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
-    fireEvent.drop(screen.getByTestId('cell-sp-20'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-1-sp-20'), { dataTransfer: dt })
 
     expect(columnOf('card-1.1-sp')).toBe(20)
     expect(columnOf('card-1.2-sp')).toBe(10)
@@ -90,10 +90,10 @@ describe('dragging a card', () => {
     render(<Stateful />)
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
-    fireEvent.drop(screen.getByTestId('cell-iss-30'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-1-iss-30'), { dataTransfer: dt })
 
     expect(columnOf('card-1.1-sp')).toBe(10)
-    expect(screen.getByTestId('cell-iss-30').children.length).toBe(0)
+    expect(screen.getByTestId('cell-1-iss-30').children.length).toBe(0)
   })
 
   it("leaves the other party's contribution to the same activity untouched on a cross-lane drop", () => {
@@ -104,7 +104,7 @@ describe('dragging a card', () => {
     render(<Stateful />)
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
-    fireEvent.drop(screen.getByTestId('cell-iss-50'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-1-iss-50'), { dataTransfer: dt })
 
     expect(columnOf('card-1.1-sp')).toBe(10)
     expect(columnOf('card-1.1-iss')).toBe(50)
@@ -114,7 +114,7 @@ describe('dragging a card', () => {
     render(<Stateful />)
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
-    fireEvent.drop(screen.getByTestId('cell-sp-20'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-1-sp-20'), { dataTransfer: dt })
 
     expect(
       (screen.getByTestId('description-1.1-sp') as HTMLInputElement).value,
@@ -137,10 +137,10 @@ describe('dragging a card', () => {
     // reachable in a real browser - getData then returns '' for a key nobody set.
     render(<Stateful />)
     const dt = dataTransfer()
-    fireEvent.drop(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-1-sp-30'), { dataTransfer: dt })
 
     expect(columnOf('card-1.1-sp')).toBe(10)
-    expect(screen.getByTestId('cell-sp-30').children.length).toBe(0)
+    expect(screen.getByTestId('cell-1-sp-30').children.length).toBe(0)
   })
 
   it('ignores a drop naming an activity that does not exist', () => {
@@ -148,10 +148,10 @@ describe('dragging a card', () => {
     const dt = dataTransfer()
     dt.setData('contributionActivityId', 'does-not-exist')
     dt.setData('contributionPartyId', 'sp')
-    fireEvent.drop(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+    fireEvent.drop(screen.getByTestId('cell-1-sp-30'), { dataTransfer: dt })
 
     expect(columnOf('card-1.1-sp')).toBe(10)
-    expect(screen.getByTestId('cell-sp-30').children.length).toBe(0)
+    expect(screen.getByTestId('cell-1-sp-30').children.length).toBe(0)
   })
 })
 
@@ -164,9 +164,9 @@ describe('drag-over visual cue', () => {
     render(<Stateful />)
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
-    fireEvent.dragOver(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+    fireEvent.dragOver(screen.getByTestId('cell-1-sp-30'), { dataTransfer: dt })
 
-    expect(screen.getByTestId('cell-sp-30')).toHaveClass('border-brand')
+    expect(screen.getByTestId('cell-1-sp-30')).toHaveClass('border-brand')
   })
 
   it("does not highlight a cell in another party's lane", () => {
@@ -176,11 +176,11 @@ describe('drag-over visual cue', () => {
 
     // Positive anchor first. Without it a cue mechanism broken everywhere would satisfy the
     // assertion below, which is exactly what "absent" proves nothing about on its own.
-    fireEvent.dragOver(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
-    expect(screen.getByTestId('cell-sp-30')).toHaveClass('border-brand')
+    fireEvent.dragOver(screen.getByTestId('cell-1-sp-30'), { dataTransfer: dt })
+    expect(screen.getByTestId('cell-1-sp-30')).toHaveClass('border-brand')
 
-    fireEvent.dragOver(screen.getByTestId('cell-iss-30'), { dataTransfer: dt })
-    expect(screen.getByTestId('cell-iss-30')).not.toHaveClass('border-brand')
+    fireEvent.dragOver(screen.getByTestId('cell-1-iss-30'), { dataTransfer: dt })
+    expect(screen.getByTestId('cell-1-iss-30')).not.toHaveClass('border-brand')
   })
 
   it('clears the cue once the pointer leaves the cell', () => {
@@ -188,12 +188,12 @@ describe('drag-over visual cue', () => {
     const dt = dataTransfer()
     fireEvent.dragStart(screen.getByTestId('card-header-1.1-sp'), { dataTransfer: dt })
 
-    fireEvent.dragOver(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
+    fireEvent.dragOver(screen.getByTestId('cell-1-sp-30'), { dataTransfer: dt })
     // The cue must exist between the dragOver and the dragLeave, or the assertion after the
     // dragLeave says nothing about clearing - only that the cue was never there.
-    expect(screen.getByTestId('cell-sp-30')).toHaveClass('border-brand')
+    expect(screen.getByTestId('cell-1-sp-30')).toHaveClass('border-brand')
 
-    fireEvent.dragLeave(screen.getByTestId('cell-sp-30'), { dataTransfer: dt })
-    expect(screen.getByTestId('cell-sp-30')).not.toHaveClass('border-brand')
+    fireEvent.dragLeave(screen.getByTestId('cell-1-sp-30'), { dataTransfer: dt })
+    expect(screen.getByTestId('cell-1-sp-30')).not.toHaveClass('border-brand')
   })
 })

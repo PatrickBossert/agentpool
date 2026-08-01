@@ -57,7 +57,7 @@ describe('adding a party', () => {
     await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
     await userEvent.click(screen.getByTestId('add-party-1.2-sp-iss'))
 
-    expect(screen.getByTestId('cell-iss-20')).toContainElement(screen.getByTestId('card-1.2-iss'))
+    expect(screen.getByTestId('cell-1-iss-20')).toContainElement(screen.getByTestId('card-1.2-iss'))
   })
 
   it('marks the new contribution stated, because a person stated it', async () => {

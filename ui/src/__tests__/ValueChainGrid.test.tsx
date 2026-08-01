@@ -43,9 +43,9 @@ function fieldValue(activityId: string, partyId: string): string {
 }
 
 describe('ValueChainGrid layout', () => {
-  it('names the segment in a left gutter, not as a heading', () => {
+  it('names the segment in a band above its columns, not as a heading', () => {
     render(<ValueChainGrid model={MODEL} />)
-    expect(screen.getByTestId('segment-gutter-1')).toHaveTextContent('Property Value Chain')
+    expect(screen.getByTestId('segment-band-1')).toHaveTextContent('Property Value Chain')
   })
 
   it("shows each lane's party and its contribution count for the segment", () => {
@@ -59,7 +59,7 @@ describe('ValueChainGrid layout', () => {
   it('labels every column with its position number, so a gap is legible as a position', () => {
     render(<ValueChainGrid model={MODEL} />)
     for (const column of [10, 20, 30, 40]) {
-      expect(screen.getByTestId(`column-header-${column}`)).toHaveTextContent(String(column))
+      expect(screen.getByTestId(`column-header-1-${column}`)).toHaveTextContent(String(column))
     }
   })
 
@@ -67,9 +67,9 @@ describe('ValueChainGrid layout', () => {
     render(<ValueChainGrid model={MODEL} />)
     // Column 30 is occupied by nobody: SP-GS stops at 20 and ISS starts at 40. It must
     // still exist in both lanes, because the gap is what shows the handoff.
-    expect(screen.getByTestId('cell-sp-30')).toBeInTheDocument()
-    expect(screen.getByTestId('cell-sp-30')).toHaveTextContent('')
-    expect(screen.getByTestId('cell-iss-30')).toBeInTheDocument()
+    expect(screen.getByTestId('cell-1-sp-30')).toBeInTheDocument()
+    expect(screen.getByTestId('cell-1-sp-30')).toHaveTextContent('')
+    expect(screen.getByTestId('cell-1-iss-30')).toBeInTheDocument()
   })
 
   it('renders a column that is not a multiple of ten', () => {
@@ -80,7 +80,7 @@ describe('ValueChainGrid layout', () => {
       activity_id: '1.2', party_id: 'iss', column: 15, attribution: 'stated',
     })
     render(<ValueChainGrid model={model} />)
-    expect(screen.getByTestId('cell-iss-15')).toBeInTheDocument()
+    expect(screen.getByTestId('cell-1-iss-15')).toBeInTheDocument()
     expect(screen.getByTestId('card-1.2-iss')).toBeInTheDocument()
   })
 
@@ -93,8 +93,8 @@ describe('ValueChainGrid layout', () => {
       activity_id: '1.1', party_id: 'iss', column: 10, description: 'joint', attribution: 'stated',
     })
     render(<ValueChainGrid model={shared} />)
-    expect(screen.getByTestId('cell-sp-10')).toHaveTextContent('Strategy')
-    expect(screen.getByTestId('cell-iss-10')).toHaveTextContent('Strategy')
+    expect(screen.getByTestId('cell-1-sp-10')).toHaveTextContent('Strategy')
+    expect(screen.getByTestId('cell-1-iss-10')).toHaveTextContent('Strategy')
     expect(screen.getByTestId('card-1.1-sp')).toBeInTheDocument()
     expect(screen.getByTestId('card-1.1-iss')).toBeInTheDocument()
   })
@@ -183,12 +183,66 @@ describe('ValueChainGrid editing', () => {
     const field = screen.getByTestId('description-1.1-sp')
     await userEvent.click(field)
     await userEvent.keyboard('{ArrowRight}{ArrowRight}')
-    expect(screen.getByTestId('cell-sp-10')).toContainElement(screen.getByTestId('card-1.1-sp'))
+    expect(screen.getByTestId('cell-1-sp-10')).toContainElement(screen.getByTestId('card-1.1-sp'))
   })
 
   it('is read-only when no onChange is given', () => {
     render(<ValueChainGrid model={MODEL} />)
     expect(screen.queryByTestId('move-right-1.1-sp')).not.toBeInTheDocument()
     expect(screen.getByTestId('description-1.1-sp')).toHaveAttribute('readonly')
+  })
+})
+
+const TWO_SEGMENTS: ValueChainModel = {
+  model_version: 1,
+  parties: [
+    { id: 'sp', label: 'SP-GS', colour: '#1a5276' },
+    { id: 'iss', label: 'ISS', colour: '#c0392b' },
+  ],
+  segments: [
+    { id: '1', label: 'Property' },
+    { id: '2', label: 'Fleet' },
+  ],
+  activities: [
+    { id: '1.1', segment_id: '1', label: 'Strategy' },
+    { id: '1.2', segment_id: '1', label: 'Acquisition' },
+    { id: '2.1', segment_id: '2', label: 'Maintenance' },
+  ],
+  contributions: [
+    { activity_id: '1.1', party_id: 'sp', column: 10, attribution: 'stated' },
+    { activity_id: '1.2', party_id: 'iss', column: 20, attribution: 'stated' },
+    // Segment 2's column 10 is a DIFFERENT physical column from segment 1's.
+    { activity_id: '2.1', party_id: 'sp', column: 10, attribution: 'stated' },
+  ],
+  tasks: [], propositions: [], links: [],
+}
+
+describe('the continuous chain', () => {
+  it('renders one grid for the whole chain, not one per segment', () => {
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    expect(screen.getAllByTestId(/^chain-grid$/)).toHaveLength(1)
+  })
+
+  it('names each segment in a band above its own columns', () => {
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    expect(screen.getByTestId('segment-band-1')).toHaveTextContent('Property')
+    expect(screen.getByTestId('segment-band-2')).toHaveTextContent('Fleet')
+  })
+
+  it('keeps two segments’ column 10 as two distinct cells', () => {
+    // A single-segment fixture cannot tell a correct implementation from one that keys
+    // cells on column alone - both put one card in one place.
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    expect(screen.getByTestId('cell-1-sp-10')).toContainElement(screen.getByTestId('card-1.1-sp'))
+    expect(screen.getByTestId('cell-2-sp-10')).toContainElement(screen.getByTestId('card-2.1-sp'))
+  })
+
+  it('gives every party a row across the whole chain, even where it does nothing', () => {
+    // ISS contributes only in segment 1. The per-segment grids gave it no row in segment 2
+    // at all; here its absence is visible as empty cells.
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    expect(screen.getByTestId('lane-iss')).toBeInTheDocument()
+    expect(screen.getByTestId('cell-2-iss-10')).toBeInTheDocument()
+    expect(screen.getByTestId('cell-2-iss-10')).toHaveTextContent('')
   })
 })

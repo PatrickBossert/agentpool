@@ -337,3 +337,28 @@ export function partiesNotContributing(
   )
   return model.parties.filter((p) => !contributing.has(p.id))
 }
+
+// Every occupied column across the whole chain, ordered by segment order then by column
+// value, with the gaps inside each segment filled as columnRange does.
+//
+// This is what makes one continuous grid possible without touching the model: segment 1's
+// column 10 and segment 2's column 10 become different entries, so they render as different
+// physical columns while the uniqueness rule - no two contributions of one party within one
+// segment share a column - keeps exactly its current meaning.
+export function chainColumns(
+  model: ValueChainModel,
+): { segmentId: string; column: number }[] {
+  const out: { segmentId: string; column: number }[] = []
+  for (const segment of model.segments) {
+    const activityIds = new Set(
+      model.activities.filter(a => a.segment_id === segment.id).map(a => a.id),
+    )
+    const used = model.contributions
+      .filter(c => activityIds.has(c.activity_id))
+      .map(c => c.column)
+    for (const column of columnRange(used)) {
+      out.push({ segmentId: segment.id, column })
+    }
+  }
+  return out
+}
