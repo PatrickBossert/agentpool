@@ -328,12 +328,14 @@ function OutputItem({ slug, output, crewKey, allCrewOutputs, locale = 'GB' }: {
         </div>
       )}
 
-      {/* Agent's summary of changes made in this version */}
+      {/* Agent's summary of changes made in this version. Teal, not blue: the agent reporting
+          what it did is neither a warning (the amber revision-request block above) nor an
+          error, and blue-* is not a colour this product uses. */}
       {output.revision_notes && (
-        <div className="px-3 py-2 bg-blue-50/60 border-t border-blue-100">
-          <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-widest mb-1">Changes in this version</p>
+        <div className="px-3 py-2 bg-teal-50/60 border-t border-teal-100">
+          <p className="text-[10px] font-semibold text-teal-600 uppercase tracking-widest mb-1">Changes in this version</p>
           <div
-            className="text-[11px] text-blue-800 leading-relaxed prose prose-sm max-w-none [&_ul]:mt-0.5 [&_li]:my-0 [&_p]:my-0.5 [&_p]:text-[11px] [&_li]:text-[11px]"
+            className="text-[11px] text-teal-800 leading-relaxed prose prose-sm max-w-none [&_ul]:mt-0.5 [&_li]:my-0 [&_p]:my-0.5 [&_p]:text-[11px] [&_li]:text-[11px]"
             dangerouslySetInnerHTML={{
               __html: DOMPurify.sanitize(
                 marked.parse(output.revision_notes, { async: false }) as string
