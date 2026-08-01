@@ -129,6 +129,25 @@ describe('AgentDetailPanel - Output tab', () => {
   })
 })
 
+describe('AgentDetailPanel - the empty state', () => {
+  it('stays away when the crew has an extra panel to show instead', async () => {
+    // The old condition was `crewOutputs.length === 0 && !CREW_OUTPUT_EXTRA[crewKey]`; the
+    // second clause was lost in the move. Without it the three crews with an extra render
+    // "No outputs yet / Run this crew to see results here" directly above a populated panel.
+    // discovery_interviews has AveryOutputExtra and no output row of its primary type here.
+    renderPanel({ crewKey: 'discovery_interviews', outputs: [] })
+    expect(await screen.findByTestId('selected-crew-discovery_interviews')).toBeInTheDocument()
+    expect(screen.queryByTestId('no-primary-output')).not.toBeInTheDocument()
+  })
+
+  it('still appears for a crew with nothing at all to show', async () => {
+    // The negative half: 'architecture' has neither an editor nor an extra, so suppressing
+    // the empty state everywhere would not satisfy this.
+    renderPanel({ crewKey: 'architecture', outputs: [] })
+    expect(await screen.findByTestId('no-primary-output')).toBeVisible()
+  })
+})
+
 describe('AgentDetailPanel - Status tab', () => {
   it("lists Maya's primary version history, which the panel's own filter used to empty", async () => {
     renderPanel({ initialTab: 'status' })

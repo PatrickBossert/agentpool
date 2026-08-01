@@ -6,7 +6,7 @@
 // version* rather than on the current artefact, so they live in Status.
 import { CREW_AGENTS, AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME } from './agentStatus'
 import { CREW_OUTPUT_TYPE } from './crewOutputs'
-import { CREW_OUTPUT_EDITOR } from './AgentDetailPanel'
+import { CREW_OUTPUT_EDITOR, CREW_OUTPUT_EXTRA } from './AgentDetailPanel'
 import type { AgentOutput } from '../types'
 
 export interface AgentOutputTabProps {
@@ -33,6 +33,15 @@ export function AgentOutputTab({ slug, crewKey, outputs }: AgentOutputTabProps) 
   // gating on `current` is what lets it reach that prompt at all. The no-outputs empty state
   // below is reserved for crews with no editor and nothing to show read-only.
   if (!current && !Editor) {
+    // A CREW_OUTPUT_EXTRA counts as something to show, for the same reason an editor does:
+    // the panel renders it immediately below this component, so the empty state would print
+    // "No outputs yet / Run this crew to see results here" directly on top of Maya's twenty
+    // scripts or Avery's interview sessions. The old Output tab guarded on exactly this
+    // (`crewOutputs.length === 0 && !CREW_OUTPUT_EXTRA[crewKey]`) and the clause was lost in
+    // the move. Returning early rather than falling through keeps the invariant the render
+    // below relies on: past this point, Editor-less always means there is a current row.
+    if (CREW_OUTPUT_EXTRA[crewKey]) return null
+
     const agents = CREW_AGENTS[crewKey] ?? []
     const primaryAgent = agents[0] ?? ''
     const primaryAvatar = AGENT_AVATAR[primaryAgent] ?? { gradient: 'from-gray-400 to-gray-600' }

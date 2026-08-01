@@ -49,8 +49,10 @@ const CREW_SETUP_OVERRIDE: Partial<Record<string, SlotFC>> = {
   discovery_interviews:   AverySetupTab,
 }
 
-// Rendered after the DB output list in the Output tab
-const CREW_OUTPUT_EXTRA: Partial<Record<string, SlotFC>> = {
+// Rendered after the primary artefact in the Output tab. Exported because AgentOutputTab's
+// empty state has to know a crew has one of these: "No outputs yet" printed directly above a
+// populated interview-sessions or scripts panel is wrong on its face.
+export const CREW_OUTPUT_EXTRA: Partial<Record<string, SlotFC>> = {
   assessment_design:    MayaOutputExtra,
   discovery_interviews: AveryOutputExtra,
   delivery:             LucaOutputExtra,
