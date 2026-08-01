@@ -62,10 +62,15 @@ land in Status, visible rather than hidden, which is more honest than today's ru
 the **read-only** render in this project, not an editor - Alex's grid is the only editor
 built here, and Maya's is the first case that proves the read-only default works.
 
-**PAM is exempt.** Its Output tab is labelled Overview and renders `PamReportView`, not an
-artefact with versions - there is no primary output to declare and no editor to give it. It
-keeps its existing special case in the tab strip and its own Status branch. Every rule below
-is about crews that produce versioned outputs.
+**PAM is exempt for now, not permanently.** Its Output tab is labelled Overview and renders
+`PamReportView`, not an artefact with versions, so there is no primary output to declare and
+no editor to give it. It keeps its existing special case in the tab strip and its own Status
+branch, and every rule below is about crews that produce versioned outputs.
+
+The intended direction is that PAM's report eventually gains an editor of its own - a
+manually written section added before the report goes out to stakeholders. That is exactly
+the shape this design establishes, an artefact edited in its Output tab, so PAM joins the
+rule later rather than needing an exception carved for it. Left as-is here.
 
 **The Chat, Setup and Skills tabs are untouched**, except that Alex's Setup gains a
 `CREW_SETUP_OVERRIDE` and Maya's gains the interview instruments.
