@@ -9,10 +9,14 @@
 // AgentDetailPanel.tsx), so there is no more "Structure" tab button to click into first.
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import StructureTab from '../components/StructureTab'
+import AgentDetailPanel from '../components/AgentDetailPanel'
+import { AuthProvider } from '../context/AuthContext'
 import { valueChainApi } from '../api/endpoints'
 import type { ValueChainModel } from '../utils/valueChainModel'
+import type { AgentOutput } from '../types'
 
 const MODEL: ValueChainModel = {
   model_version: 1,
@@ -31,6 +35,23 @@ vi.mock('../api/endpoints', () => ({
     save: vi.fn(),
     migrate: vi.fn(),
   },
+  // Needed only by the AgentDetailPanel-mounted tests below - AlexSetupTab (Alex's Setup tab)
+  // reads project settings and documents when the panel's Setup tab is visited.
+  projectsApi: {
+    getSettings: vi.fn().mockResolvedValue({}),
+    documents: vi.fn().mockResolvedValue([]),
+    updateSettings: vi.fn(),
+  },
+}))
+
+// AgentDetailPanel loads chat history unconditionally on mount, regardless of which tab is
+// active, so this has to be mocked for the AgentDetailPanel-mounted tests below even though
+// none of them touch Chat.
+vi.mock('../api/agentChat', () => ({
+  agentChatApi: {
+    getHistory: vi.fn().mockResolvedValue([]),
+    clearHistory: vi.fn().mockResolvedValue(undefined),
+  },
 }))
 
 function Wrapper() {
@@ -38,6 +59,36 @@ function Wrapper() {
   return (
     <QueryClientProvider client={qc}>
       <StructureTab slug="acme-rail" />
+    </QueryClientProvider>
+  )
+}
+
+// discovery_mapping's primary output type is still 'value_chain' in this task (see
+// AgentOutputTab.test.tsx's own note - a later task repoints it to 'value_chain_model'), so
+// a current output of that type is what makes AgentOutputTab hand off to the registered
+// editor (StructureTab) at all.
+const PANEL_OUTPUTS: AgentOutput[] = [{
+  id: 1, agent_name: 'value_chain_mapper', output_type: 'value_chain',
+  version: 1, is_current: true, review_status: 'approved',
+  created_at: '2026-08-01 10:00:00', file_path: 'value_chain.json',
+}]
+
+function PanelWrapper() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return (
+    <QueryClientProvider client={qc}>
+      <AuthProvider>
+        <MemoryRouter>
+          <AgentDetailPanel
+            slug="acme-rail"
+            crewKey="discovery_mapping"
+            crewRun={undefined}
+            outputs={PANEL_OUTPUTS}
+            logs={[]}
+            isPipelineActive={false}
+          />
+        </MemoryRouter>
+      </AuthProvider>
     </QueryClientProvider>
   )
 }
@@ -120,15 +171,47 @@ describe('ValueChain save', () => {
   })
 })
 
-// The two tests formerly here - "keeps a description edit when Setup is visited and
-// Structure is returned to" and "still reports the edit as unsaved after the round trip
-// through Setup" - exercised the old ValueChain page's `hidden` (not unmounted) rendering
-// of the Structure tab, which is what let a person switch to Setup and back without losing
-// the working copy. That switch was internal to the retired page; StructureTab has no
-// sibling Setup/Structure toggle of its own to move the test onto.
-//
-// The same concern now sits one level up: AgentDetailPanel.tsx conditionally renders each
-// of its own tabs with `{tab === 'output' && ...}` rather than hiding them, so navigating
-// from Output to another panel tab and back unmounts StructureTab and discards its working
-// copy exactly as the removed comment in StructureTab.tsx warns against. That is a real gap,
-// not something this migration can paper over with a same-shape test - see the task report.
+// The two tests below - "keeps a description edit when Setup is visited and Output is
+// returned to" and "still reports the edit as unsaved after the round trip through Setup" -
+// exercised the old ValueChain page's `hidden` (not unmounted) rendering of the Structure
+// tab, which is what let a person switch to Setup and back without losing the working copy.
+// That switch was internal to the retired page, so they can't be moved onto StructureTab
+// itself - it has no sibling Setup/Structure toggle of its own any more. The concern they
+// guard against now sits one level up, at AgentDetailPanel's own Output/Status/Chat/Setup/
+// Skills tabs, so that is where they are re-anchored: AgentDetailPanel.tsx's Output branch
+// is kept mounted and merely hidden (`hidden={tab !== 'output'}`) rather than conditionally
+// rendered, specifically so this pair keeps passing.
+describe('unsaved Structure edits across an AgentDetailPanel tab change', () => {
+  async function editDescriptionInThePanel() {
+    render(<PanelWrapper />)
+    const field = await screen.findByTestId('description-1.1-sp')
+    await userEvent.type(field, ' more')
+    return field
+  }
+
+  it('keeps a description edit when Setup is visited and Output is returned to', async () => {
+    await editDescriptionInThePanel()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
+    // Proves the click actually navigated, not just that nothing crashed - Setup's own
+    // content (Alex's Research Brief section) has to be on screen before switching back.
+    await screen.findByText('Research Brief')
+    await userEvent.click(screen.getByRole('button', { name: /^Output/ }))
+
+    const field = (await screen.findByTestId('description-1.1-sp')) as HTMLInputElement
+    expect(field.value).toBe('first more')
+  })
+
+  it('still reports the edit as unsaved after the round trip through Setup', async () => {
+    // Losing the indicator is worse than losing the edit: it says the working copy matches
+    // the server when it does not.
+    await editDescriptionInThePanel()
+    expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
+    await screen.findByText('Research Brief')
+    await userEvent.click(screen.getByRole('button', { name: /^Output/ }))
+
+    expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
+  })
+})

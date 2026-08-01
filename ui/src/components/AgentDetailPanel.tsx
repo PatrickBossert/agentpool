@@ -964,8 +964,15 @@ export default function AgentDetailPanel({
       {tab === 'output' && crewKey === 'PAM' && <PamReportView slug={slug} />}
 
       {/* ── OUTPUT TAB ─────────────────────────────────────────────────────────── */}
-      {tab === 'output' && crewKey !== 'PAM' && (
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+      {/* Hidden rather than unmounted, unlike every other tab below. A registered
+          CREW_OUTPUT_EDITOR (StructureTab, for now) can hold a working copy that only Save
+          commits to the server - see StructureTab.tsx's own comment on why nothing else
+          persists a draft. Rendering this branch conditionally on `tab === 'output'` unmounts
+          it on every click of Status, Chat, Setup or Skills, discarding that draft with no
+          warning (beforeunload does not fire on an in-panel tab change). The other four tabs
+          hold no state of their own that a remount would lose, so only this one needs it. */}
+      {crewKey !== 'PAM' && (
+        <div hidden={tab !== 'output'} className="flex-1 overflow-y-auto p-4 space-y-2">
           <AgentOutputTab slug={slug} crewKey={crewKey} outputs={crewOutputs} locale={locale} />
           {/* Crew-specific extra output content (interview sessions, visual artefacts, etc.) */}
           {(() => {

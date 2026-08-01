@@ -7,7 +7,7 @@
 import { render, screen } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { AuthProvider } from '../context/AuthContext'
 import { routes } from '../router'
 
@@ -26,6 +26,37 @@ vi.mock('../api/endpoints', () => ({
     readiness: vi.fn().mockResolvedValue({}),
   },
 }))
+
+// Vitest's jsdom environment copies Node's real fetch/Request onto the test window (jsdom
+// implements neither), but leaves jsdom's own AbortController/AbortSignal in place (jsdom
+// does implement those, for XMLHttpRequest.abort()). The two are different classes from
+// different realms, so Node's real Request constructor - which strictly checks `signal
+// instanceof <its own AbortSignal>` - rejects a signal made by jsdom's AbortController with
+// "Expected signal to be an instance of AbortSignal". createMemoryRouter/createBrowserRouter
+// build one of these Request objects on every navigation, including the plain client-side
+// <Navigate> this route issues, so this file - the only one in the suite using a data router
+// - hits it. No route in this app defines a loader, so nothing here needs real fetch Request
+// semantics; stubbed only for this file's globalThis, restored after, so a future test that
+// does exercise real Fetch semantics through a loader fails on its own terms rather than
+// inheriting a stand-in nobody expected to find here.
+class PermissiveRequest {
+  url: string
+  method: string
+  signal?: AbortSignal
+  constructor(input: string | URL, init: RequestInit = {}) {
+    this.url = String(input)
+    this.method = init.method ?? 'GET'
+    this.signal = init.signal ?? undefined
+  }
+}
+
+beforeAll(() => {
+  vi.stubGlobal('Request', PermissiveRequest)
+})
+
+afterAll(() => {
+  vi.unstubAllGlobals()
+})
 
 // ProtectedRoute only checks for a truthy token - AppLayout and Dashboard both read `user`
 // with optional chaining throughout, so an unparsed/absent user does not crash the tree.
