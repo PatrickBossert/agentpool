@@ -112,16 +112,27 @@ without the tool knowing about any of them specifically.
 construct an invalid model, and that path must keep refusing. Two checks on one rule is
 correct here: they guard different writers.
 
-### Save says what is wrong, where you can see it
+### Save says what is wrong, in words worth reading
 
-The 422 carries `{"problems": [...]}` and the Structure tab already renders the list. Whether
-it is visible at the moment of pressing Save is what failed here. The problems must appear
-next to the control that was pressed, and must name the activities involved - "two
-contributions occupy column 10 in party GSUK's lane" does not say which two, and with five
-colliding it says it four times.
+The 422 carries `{"problems": [...]}`, and `StructureTab.tsx:203` already renders the list
+thirteen lines below the Save button. **The problems are displayed.** An earlier draft of
+this section claimed they were not; that was wrong.
 
-Improve the message to name the activity IDs. The reader's next action is to find and move
-them, and the message should tell them where to look.
+What fails is the wording. Five colliding contributions produce **four** identical messages -
+the first occupant is never reported - and not one of them names an activity:
+
+> two contributions occupy column 10 in party GSUK's lane
+
+The reader's next action is to find those activities and move them, and the message tells
+them neither which nor how many. Reported once per over-occupied cell, naming every activity
+in it, it becomes something to act on rather than something to decode.
+
+**One thing to confirm with the person who hit this**, because it changes nothing in this
+design but would change what else needs fixing: the Save control is `disabled` when
+`hasUnsavedChanges` is false. If the button was disabled rather than firing and failing, the
+edit never registered as a change, which is a different defect from an unhelpful message.
+The stacked-card work below makes that far less likely, since it was probably an attempt to
+move a card that was not visible.
 
 ---
 
