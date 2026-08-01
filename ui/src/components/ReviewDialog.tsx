@@ -6,7 +6,12 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { projectsApi, skillNotesApi } from '../api/endpoints'
 import { AGENT_RUN_KEYS, AGENT_HUMAN_NAME } from './agentStatus'
+import { CREW_OUTPUT_TYPE } from './crewOutputs'
 import type { HumanReview, AgentOutput } from '../types'
+
+// Re-exported so existing importers of CREW_OUTPUT_TYPE from this file keep working now that
+// it lives in crewOutputs.ts, shared with the agent panel's Output tab.
+export { CREW_OUTPUT_TYPE }
 
 /** Strip 'Please review…' header and 'Reply approved…' footer from HITL prompts. */
 function stripHitlBoilerplate(prompt: string): string {
@@ -31,17 +36,6 @@ function MarkdownBody({ text }: { text: string }) {
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
-}
-
-// Maps crew_name → the output_type that crew produces (for inline preview)
-const CREW_OUTPUT_TYPE: Record<string, string> = {
-  discovery_mapping:    'value_chain',
-  value_design:         'value_propositions',
-  architecture:         'architecture',
-  delivery:             'roadmap',
-  business_plan:        'business_plan',
-  discovery:            'discovery',
-  discovery_interviews: 'interview_synthesis',
 }
 
 const CREW_LABEL: Record<string, string> = {
