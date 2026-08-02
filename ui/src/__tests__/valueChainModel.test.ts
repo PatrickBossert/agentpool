@@ -11,7 +11,7 @@ import {
   removeParty,
   confirmAttribution,
   contributionKey,
-  taskCount,
+  contributionTasks,
   propositionCount,
   partiesNotContributing,
   isLastContribution,
@@ -332,12 +332,15 @@ describe('confirmAttribution', () => {
 })
 
 describe('counts and available parties', () => {
-  it("counts only that contribution's tasks", () => {
+  it("returns only that contribution's tasks", () => {
     const m = jointModel()
     m.contributions.push({ activity_id: '1.2', party_id: 'iss', column: 20, attribution: 'stated' })
     m.tasks.push({ activity_id: '1.2', party_id: 'iss', id: '1.2.7' })
-    expect(taskCount(m, '1.2', 'sp')).toBe(2)
-    expect(taskCount(m, '1.2', 'iss')).toBe(1)
+    expect(contributionTasks(m, '1.2', 'sp')).toHaveLength(2)
+    expect(contributionTasks(m, '1.2', 'iss')).toHaveLength(1)
+    // The identity, not just the count: a filter on activity alone would return three here
+    // and still satisfy neither length above by accident.
+    expect(contributionTasks(m, '1.2', 'iss').map((t) => t.id)).toEqual(['1.2.7'])
   })
 
   it('counts propositions per activity, shared across its parties', () => {

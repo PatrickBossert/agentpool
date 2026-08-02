@@ -8,17 +8,17 @@
 // The party menu's open/closed state lives in the grid, not here, keyed on this card's
 // (activityId, partyId) - one open menu at a time across the whole grid, so opening
 // another card's menu closes this one rather than leaving both showing at once.
-import { ChevronLeft, ChevronRight, ListTree, Lightbulb, Sparkles, Users } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Lightbulb, Sparkles, Users } from 'lucide-react'
 
 import {
   addParty,
   addPartyBlock,
   confirmAttribution,
+  contributionTasks,
   isLastContribution,
   moveContribution,
   partiesNotContributing,
   propositionCount,
-  taskCount,
   updateDescription,
   type ValueChainActivity,
   type ValueChainContribution,
@@ -49,7 +49,7 @@ export function ContributionCard({
   contribution: ValueChainContribution
   onChange?: (model: ValueChainModel) => void
   selected?: boolean
-  onSelect?: (activityId: string, partyId: string) => void
+  onSelect?: (activityId: string, partyId: string, taskId?: string) => void
   onRequestRemove?: (activityId: string, partyId: string) => void
   menuOpen?: boolean
   onToggleMenu?: () => void
@@ -58,6 +58,7 @@ export function ContributionCard({
   const editable = !!onChange
   const available = partiesNotContributing(model, activityId)
   const lastOne = isLastContribution(model, activityId)
+  const tasks = contributionTasks(model, activityId, partyId)
 
   return (
     <div
@@ -133,10 +134,6 @@ export function ContributionCard({
       />
 
       <div className="mt-2 flex items-center gap-3 text-xs text-muted">
-        <span data-testid={`task-count-${activityId}-${partyId}`} className="flex items-center gap-1">
-          <ListTree className="w-3 h-3" aria-hidden="true" />
-          {taskCount(model, activityId, partyId)}
-        </span>
         <span data-testid={`proposition-count-${activityId}`} className="flex items-center gap-1">
           <Lightbulb className="w-3 h-3" aria-hidden="true" />
           {propositionCount(model, activityId)}
@@ -165,6 +162,27 @@ export function ContributionCard({
           </span>
         )}
       </div>
+
+      {tasks.length > 0 && (
+        <ul data-testid={`task-list-${activityId}-${partyId}`} className="mt-2 space-y-1">
+          {tasks.map((task) => (
+            <li key={task.id}>
+              <button
+                type="button"
+                data-testid={`task-line-${task.id}-${partyId}`}
+                onClick={() => onSelect?.(activityId, partyId, task.id)}
+                className="flex w-full items-baseline gap-2 text-left text-xs text-secondary hover:text-brand"
+              >
+                <span className="font-mono text-muted shrink-0">{task.id}</span>
+                {/* No task in the live model carries a label - only a description - while
+                    every task in the test fixtures carries a label and no description. Both
+                    shapes are real, so both render, and the number leads either way. */}
+                <span className="truncate">{task.label ?? task.description ?? ''}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {editable && (
         <div className="mt-2 relative">

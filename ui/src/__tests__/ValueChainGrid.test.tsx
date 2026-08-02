@@ -160,12 +160,43 @@ describe('ContributionCard content', () => {
     expect(card).toHaveTextContent('Strategy')
   })
 
-  it('shows the task and proposition counts, including a zero', () => {
+  it('shows the proposition count, including a zero', () => {
     render(<ValueChainGrid model={MODEL} />)
-    expect(screen.getByTestId('task-count-1.1-sp')).toHaveTextContent('2')
     expect(screen.getByTestId('proposition-count-1.1')).toHaveTextContent('1')
     // A zero is information: it says this activity has no propositions recorded.
-    expect(screen.getByTestId('task-count-1.2-sp')).toHaveTextContent('0')
+    // Propositions keep a count rather than a list because one attaches to the activity as
+    // a whole, so listing them per card would repeat the same proposition across every
+    // party in that column.
+    expect(screen.getByTestId('proposition-count-1.2')).toHaveTextContent('0')
+  })
+
+  it("lists a contribution's n.n.n activities, rather than counting them", () => {
+    render(<ValueChainGrid model={MODEL} />)
+    // Assert the count of lines. "a task line renders" is also true of an implementation
+    // that renders only the first of the two.
+    expect(screen.getAllByTestId(/^task-line-.*-sp$/)).toHaveLength(2)
+    expect(screen.getByTestId('task-line-1.1.1-sp')).toHaveTextContent('1.1.1')
+    expect(screen.getByTestId('task-line-1.1.1-sp')).toHaveTextContent('Set strategy')
+  })
+
+  it('renders no task list for a contribution with no activities mapped', () => {
+    render(<ValueChainGrid model={MODEL} />)
+    expect(screen.getByTestId('task-list-1.1-sp')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-list-1.2-sp')).toBeNull()
+  })
+
+  it('reports the clicked activity upwards, not just its contribution', async () => {
+    const seen: Array<[string, string, string | undefined]> = []
+    render(<ValueChainGrid model={MODEL} onSelect={(a, p, t) => seen.push([a, p, t])} />)
+    await userEvent.click(screen.getByTestId('task-line-1.1.2-sp'))
+    expect(seen).toEqual([['1.1', 'sp', '1.1.2']])
+  })
+
+  it('reports no activity when the card header is clicked', async () => {
+    const seen: Array<[string, string, string | undefined]> = []
+    render(<ValueChainGrid model={MODEL} onSelect={(a, p, t) => seen.push([a, p, t])} />)
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+    expect(seen).toEqual([['1.1', 'sp', undefined]])
   })
 
   it('marks a derived attribution and leaves a stated one unmarked', () => {

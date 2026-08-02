@@ -189,6 +189,10 @@ export function updateDescription(
 export interface ValueChainSelection {
   activityId: string
   partyId: string
+  // Set when the selection came from clicking one n.n.n activity on a card, so the detail
+  // dialog can open on that activity. Absent when the card header opened it, which selects
+  // the contribution without singling out any of its activities.
+  taskId?: string
 }
 
 // A contribution's identity is the composite (activity_id, party_id) - deliberately not a
@@ -314,14 +318,15 @@ export function confirmAttribution(
   return next
 }
 
-export function taskCount(
+// The tasks belonging to one contribution. A task's owner is the composite
+// (activity_id, party_id) - the same identity the contribution itself carries, so a task
+// filtered on activity alone would pick up every party's work on that activity.
+export function contributionTasks(
   model: ValueChainModel,
   activityId: string,
   partyId: string,
-): number {
-  return model.tasks.filter(
-    (t) => t.activity_id === activityId && t.party_id === partyId,
-  ).length
+): ValueChainTask[] {
+  return model.tasks.filter((t) => t.activity_id === activityId && t.party_id === partyId)
 }
 
 export function propositionCount(model: ValueChainModel, activityId: string): number {
