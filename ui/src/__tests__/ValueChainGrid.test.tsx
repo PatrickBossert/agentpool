@@ -52,6 +52,15 @@ describe('ValueChainGrid layout', () => {
     expect(screen.getByTestId('segment-band-1')).toHaveTextContent('Property Value Chain')
   })
 
+  it('leads the segment band with the segment number', () => {
+    render(<ValueChainGrid model={TWO_SEGMENTS} />)
+    // TWO_SEGMENTS' segment labels are 'Property' and 'Fleet'. Neither contains a digit,
+    // so a substring match on the number genuinely discriminates here - it cannot pass on
+    // the label alone, which is what the existing band tests assert.
+    expect(screen.getByTestId('segment-band-1')).toHaveTextContent('1')
+    expect(screen.getByTestId('segment-band-2')).toHaveTextContent('2')
+  })
+
   it("shows each lane's party and its contribution count for the whole chain", () => {
     // A single-segment fixture cannot discriminate a whole-chain count from a per-segment
     // one - they agree whenever there is only one segment to count. TWO_SEGMENTS has sp

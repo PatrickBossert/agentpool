@@ -189,6 +189,7 @@ export function ValueChainGrid({
               className="text-sm font-medium text-secondary uppercase tracking-wide pb-2"
               style={{ gridColumn: `${b.start + 2} / span ${b.span}`, gridRow: 1 }}
             >
+              <span className="font-mono">{b.segmentId}</span>{' '}
               {model.segments.find((s) => s.id === b.segmentId)?.label}
             </div>
           ))}
