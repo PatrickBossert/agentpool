@@ -79,7 +79,7 @@ function StatefulTable({
 }
 
 function fieldValue(activityId: string, partyId: string): string {
-  return (screen.getByTestId(`description-${activityId}-${partyId}`) as HTMLInputElement).value
+  return (screen.getByTestId(`description-${activityId}-${partyId}`) as HTMLTextAreaElement).value
 }
 
 describe('ValueChainGrid editing', () => {

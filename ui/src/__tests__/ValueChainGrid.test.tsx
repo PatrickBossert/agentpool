@@ -43,7 +43,7 @@ function Stateful({ initial = MODEL }: { initial?: ValueChainModel }) {
 }
 
 function fieldValue(activityId: string, partyId: string): string {
-  return (screen.getByTestId(`description-${activityId}-${partyId}`) as HTMLInputElement).value
+  return (screen.getByTestId(`description-${activityId}-${partyId}`) as HTMLTextAreaElement).value
 }
 
 describe('ValueChainGrid layout', () => {
@@ -111,6 +111,44 @@ describe('ValueChainGrid layout', () => {
     const empty: ValueChainModel = { ...MODEL, segments: [], activities: [], contributions: [] }
     render(<ValueChainGrid model={empty} />)
     expect(screen.getByTestId('value-chain-empty')).toBeInTheDocument()
+  })
+
+  it('gives an unselected card a visible edge, so one card separates from the next', () => {
+    render(<ValueChainGrid model={MODEL} onSelect={() => {}} />)
+    // The defect was border-transparent: a card had a border box with no visible edge, so
+    // it read as a floating patch of surface. Asserting only that a *selected* card is
+    // border-brand passes on that broken behaviour, so the unselected case is the one that
+    // has to be asserted.
+    expect(screen.getByTestId('card-1.1-sp')).toHaveClass('border-surface')
+    expect(screen.getByTestId('card-1.1-sp')).not.toHaveClass('border-transparent')
+  })
+
+  it('marks selection by the border colour, not by the border appearing', () => {
+    render(
+      <ValueChainGrid
+        model={MODEL}
+        onSelect={() => {}}
+        selected={{ activityId: '1.1', partyId: 'sp' }}
+      />,
+    )
+    expect(screen.getByTestId('card-1.1-sp')).toHaveClass('border-brand')
+    // The neighbour still has an edge - selection changed a colour, it did not add an edge.
+    expect(screen.getByTestId('card-1.2-sp')).toHaveClass('border-surface')
+  })
+
+  it('shows the description over three lines rather than one', () => {
+    render(<ValueChainGrid model={MODEL} onSelect={() => {}} />)
+    const field = screen.getByTestId('description-1.1-sp')
+    expect(field.tagName).toBe('TEXTAREA')
+    expect(field).toHaveAttribute('rows', '3')
+  })
+
+  it('keeps the description controlled after becoming a textarea', async () => {
+    // The element changed; the SP22a defence must not have. A textarea rendered with
+    // defaultValue would pass the tagName test above and silently corrupt saved data.
+    render(<Stateful />)
+    await userEvent.type(screen.getByTestId('description-1.1-sp'), '!')
+    expect(fieldValue('1.1', 'sp')).toBe('first!')
   })
 })
 

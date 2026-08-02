@@ -117,10 +117,10 @@ describe('dragging a card', () => {
     fireEvent.drop(screen.getByTestId('cell-1-sp-20'), { dataTransfer: dt })
 
     expect(
-      (screen.getByTestId('description-1.1-sp') as HTMLInputElement).value,
+      (screen.getByTestId('description-1.1-sp') as HTMLTextAreaElement).value,
     ).toBe('first')
     expect(
-      (screen.getByTestId('description-1.2-sp') as HTMLInputElement).value,
+      (screen.getByTestId('description-1.2-sp') as HTMLTextAreaElement).value,
     ).toBe('second')
   })
 

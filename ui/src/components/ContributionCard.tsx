@@ -63,7 +63,7 @@ export function ContributionCard({
     <div
       data-testid={`card-${activityId}-${partyId}`}
       className={`bg-surface-card rounded-lg p-3 border ${
-        selected ? 'border-brand' : 'border-transparent'
+        selected ? 'border-brand' : 'border-surface'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -117,11 +117,11 @@ export function ContributionCard({
         )}
       </div>
 
-      <input
-        type="text"
+      <textarea
         data-testid={`description-${activityId}-${partyId}`}
+        rows={3}
         // Controlled, never defaultValue. Cards key on the contribution's identity so a
-        // move cannot put a different contribution behind an existing input node, and this
+        // move cannot put a different contribution behind an existing field node, and this
         // is the second defence on the same defect - it silently corrupted saved data.
         value={contribution.description ?? ''}
         readOnly={!editable}
@@ -129,7 +129,7 @@ export function ContributionCard({
         onChange={(e) =>
           onChange?.(updateDescription(model, activityId, partyId, e.target.value))
         }
-        className="mt-2 w-full bg-surface rounded px-2 py-1 text-xs text-secondary"
+        className="mt-2 w-full bg-surface rounded px-2 py-1 text-xs text-secondary resize-none"
       />
 
       <div className="mt-2 flex items-center gap-3 text-xs text-muted">
