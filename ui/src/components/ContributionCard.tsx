@@ -177,7 +177,14 @@ export function ContributionCard({
                 {/* No task in the live model carries a label - only a description - while
                     every task in the test fixtures carries a label and no description. Both
                     shapes are real, so both render, and the number leads either way. */}
-                <span className="truncate">{task.label ?? task.description ?? ''}</span>
+                {/* min-w-0 is what makes truncate work at all here. A flex item's
+                    min-width defaults to auto, so it refuses to shrink below its content -
+                    and truncate sets white-space: nowrap, making that content the full
+                    unwrapped string. Without min-w-0 the line does not ellipsis, it
+                    overflows, and a 199-character task description prises the card open. */}
+                <span className="truncate min-w-0">
+                  {task.label ?? task.description ?? ''}
+                </span>
               </button>
             </li>
           ))}

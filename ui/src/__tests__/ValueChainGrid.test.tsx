@@ -188,6 +188,18 @@ describe('ContributionCard content', () => {
     expect(screen.getByTestId('task-line-1.1.1-sp')).toHaveTextContent('Set strategy')
   })
 
+  it('keeps a long activity line inside the card rather than letting it overflow', () => {
+    const wordy = structuredClone(MODEL)
+    wordy.tasks[0].label = 'A'.repeat(200)
+    render(<ValueChainGrid model={wordy} />)
+    // jsdom does no layout, so this asserts the mechanism rather than a measured width.
+    // Both classes are needed together: truncate alone is inert on a flex item, whose
+    // min-width defaults to auto and so refuses to shrink below its nowrap content.
+    const line = screen.getByTestId('task-line-1.1.1-sp').querySelector('span:last-child')!
+    expect(line.className).toContain('truncate')
+    expect(line.className).toContain('min-w-0')
+  })
+
   it('renders no task list for a contribution with no activities mapped', () => {
     render(<ValueChainGrid model={MODEL} />)
     expect(screen.getByTestId('task-list-1.1-sp')).toBeInTheDocument()
