@@ -121,11 +121,18 @@ Three description rows plus up to three task lines makes every card taller. Cell
 grid row share a row height, so a party's row still reads straight across - the row is simply
 taller, which costs vertical space and nothing else.
 
-The collision stacking at `ValueChainGrid.tsx:319` pulls each occupant up by a hard-coded
-`-mt-16`, a magic number coupled to the old card height and flagged as such in SP23c's final
-review. With taller cards that offset no longer lands where it was drawn for. It must be
-derived from the card rather than restated, or a 3-deep collision will overlap in a way that
-hides the drag handles the stacking exists to expose.
+The collision stacking at `ValueChainGrid.tsx:331` puts the first occupant in normal flow and
+pulls each later one up by a hard-coded `-mt-16`, a magic number coupled to the old card
+height and flagged as such in SP23c's final review. The pull-up is 4rem against a card that is
+about to become roughly three times that, so **the cascade's step is whatever is left over
+after the subtraction** - it grows with the card. A 3-deep collision would then make its whole
+row about three cards tall, and every other row in the grid shares that height.
+
+Later occupants become absolutely positioned within the cell, which is already `relative`,
+at a step that is stated rather than left over. The cell's height is then set by its first
+occupant regardless of how many share it, and the coupling to card height is gone rather than
+re-tuned. The step's job is to leave each buried card's header reachable, so that - not a
+number - is what the test asserts.
 
 ---
 
