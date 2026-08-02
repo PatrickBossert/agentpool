@@ -364,6 +364,33 @@ describe('a cell holding more than one contribution', () => {
     expect(cards).toHaveLength(3)
   })
 
+  it('stacks colliding cards without the cell growing with the stack', () => {
+    render(<ValueChainGrid model={COLLIDED} />)
+    const cell = screen.getByTestId('cell-1-sp-10')
+    // The card-header-* exclusion is not optional: ContributionCard's own header testid
+    // also starts with "card-", so the unqualified prefix selector matches both the card
+    // and its header and would return six elements for three occupants. The sibling test
+    // above carries the same filter for the same reason.
+    const wrappers = [...cell.querySelectorAll('[data-testid^="card-"]')]
+      .filter((el) => !el.getAttribute('data-testid')?.startsWith('card-header-'))
+      .map((card) => card.parentElement as HTMLElement)
+    expect(wrappers).toHaveLength(3)
+
+    // Only the first occupant sits in flow, so the cell is one card tall whatever the
+    // stack depth. jsdom does no layout, so this asserts the mechanism that produces that
+    // - the buried cards are taken out of flow - rather than a measured height, which
+    // would read 0 here whether the fix is present or not.
+    expect(wrappers[0].className).toContain('relative')
+    expect(wrappers[0].className).not.toContain('absolute')
+    expect(wrappers[1].className).toContain('absolute')
+    expect(wrappers[2].className).toContain('absolute')
+
+    // Each buried card is stepped down by a distinct amount, so its header - the drag
+    // handle the stacking exists to keep reachable - is not hidden under its neighbour's.
+    expect(wrappers[1].style.top).toBeTruthy()
+    expect(wrappers[1].style.top).not.toBe(wrappers[2].style.top)
+  })
+
   it('marks how many share the cell', () => {
     render(<ValueChainGrid model={COLLIDED} />)
     expect(screen.getByTestId('cell-overlap-1-sp-10')).toHaveTextContent('3')

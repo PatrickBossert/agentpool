@@ -35,6 +35,13 @@ const ZOOM_STEP = 0.2
 const ZOOM_MIN = 0.4
 const ZOOM_MAX = 1.4
 
+// How far each buried card in a collision is stepped down. Its job is to leave the card
+// beneath it showing its number and label line - the header, which is the drag handle that
+// pulls the stack apart. Stated here rather than derived from the card's height, which is
+// what the previous -mt-16 did by subtraction and which therefore changed every time the
+// card did.
+const STACK_STEP_REM = 2
+
 export function ValueChainGrid({
   model,
   onChange,
@@ -323,19 +330,25 @@ export function ValueChainGrid({
                         // changes which contribution sits behind a key, so React reuses
                         // a dirty input against the wrong one.
                         //
-                        // The first occupant sits in normal flow, sizing the cell; every
-                        // later one is offset diagonally over it, and stacked higher in
-                        // z-order, so a person can still see and reach each header to
-                        // drag it apart - the model owns the overlap, not this offset.
+                        // The first occupant sits in normal flow and alone sizes the cell;
+                        // every later one is taken out of flow and stepped diagonally over
+                        // it, stacked higher in z-order, so a person can still see and
+                        // reach each header to drag it apart - the model owns the overlap,
+                        // not this offset. Out of flow rather than pulled up by a negative
+                        // margin: that margin was subtracted from the card's height, so the
+                        // step it produced was the leftover and grew every time the card
+                        // did, and a 3-deep collision made its whole row three cards tall.
                         <div
                           key={contributionKey(activity.id, party.id)}
-                          className={occupantIndex === 0 ? 'relative' : 'relative -mt-16'}
+                          className={occupantIndex === 0 ? 'relative' : 'absolute inset-x-0'}
                           style={{
                             zIndex: occupantIndex + 1,
-                            transform:
+                            top:
                               occupantIndex > 0
-                                ? `translate(${occupantIndex * 0.5}rem, ${occupantIndex * 0.5}rem)`
+                                ? `${occupantIndex * STACK_STEP_REM}rem`
                                 : undefined,
+                            marginLeft:
+                              occupantIndex > 0 ? `${occupantIndex * 0.5}rem` : undefined,
                           }}
                         >
                           <ContributionCard
