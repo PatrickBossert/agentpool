@@ -219,6 +219,7 @@ export default function StructureTab({ slug }: { slug: string }) {
               model={editedModel}
               activityId={selectedContribution.activityId}
               partyId={selectedContribution.partyId}
+              highlightTaskId={selectedContribution.taskId}
               onClose={() => setSelectedContribution(null)}
             />
           )}

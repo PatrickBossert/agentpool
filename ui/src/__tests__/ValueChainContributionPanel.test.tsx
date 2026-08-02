@@ -32,9 +32,16 @@ const { MODEL } = vi.hoisted(() => ({
       { activity_id: '1.1', party_id: 'iss', column: 15, description: 'joint', attribution: 'stated' },
       { activity_id: '1.2', party_id: 'sp', column: 20, description: 'second', attribution: 'stated' },
     ],
+    // SP-GS gets three tasks deliberately. A one-task contribution cannot tell "highlights
+    // the activity you clicked" from "highlights the first activity" - they are the same
+    // one - so the highlight tests click the middle of three. t2 carries no label, which is
+    // the shape every task in the live model has; the others carry one, which is the shape
+    // every other fixture has. Both must render with the number leading.
     tasks: [
       { id: 't1', activity_id: '1.1', party_id: 'sp', label: 'Log the fault', description: 'Raise a ticket' },
-      { id: 't2', activity_id: '1.1', party_id: 'iss', label: 'Execute repair', description: 'Fix on site' },
+      { id: 't2', activity_id: '1.1', party_id: 'sp', description: 'Assess the damage' },
+      { id: 't3', activity_id: '1.1', party_id: 'sp', label: 'Close the job', description: 'Sign off' },
+      { id: 't4', activity_id: '1.1', party_id: 'iss', label: 'Execute repair', description: 'Fix on site' },
     ],
     propositions: [
       { id: 'p1', activity_id: '1.1', description: 'Faster turnaround', party_id: 'sp' },
@@ -173,6 +180,48 @@ describe('ValueChain contribution panel wiring', () => {
     expect(dialog).toHaveTextContent('Log the fault')
     expect(dialog).not.toHaveTextContent('Execute repair')
   })
+
+  it('opens on the activity clicked from a card, not on the first one', async () => {
+    await openStructureTab()
+
+    // The middle of three, deliberately: clicking either end would pass against an
+    // implementation that always highlights the first.
+    await userEvent.click(screen.getByTestId('task-line-t2-sp'))
+
+    expect(screen.getByTestId('task-t2')).toHaveClass('border-brand')
+    expect(screen.getByTestId('task-t1')).not.toHaveClass('border-brand')
+    expect(screen.getByTestId('task-t3')).not.toHaveClass('border-brand')
+  })
+
+  it('highlights nothing when the dialog was opened from the card header', async () => {
+    await openStructureTab()
+
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+
+    for (const id of ['task-t1', 'task-t2', 'task-t3']) {
+      expect(screen.getByTestId(id)).not.toHaveClass('border-brand')
+    }
+  })
+
+  it('leads each activity with its number, then its label when there is one', async () => {
+    await openStructureTab()
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+
+    // t1 has a label. The old `label ?? id` fallback rendered the label alone and dropped
+    // the number - invisible only for as long as no task carries a label.
+    expect(screen.getByTestId('task-t1')).toHaveTextContent('t1')
+    expect(screen.getByTestId('task-t1')).toHaveTextContent('Log the fault')
+    // t2 has none: the number still leads, and the description follows it.
+    expect(screen.getByTestId('task-t2')).toHaveTextContent('t2')
+    expect(screen.getByTestId('task-t2')).toHaveTextContent('Assess the damage')
+  })
+
+  it('leads the dialog heading with the activity number', async () => {
+    await openStructureTab()
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+
+    expect(screen.getByRole('heading', { name: /^1\.1 Reactive/ })).toBeInTheDocument()
+  })
 })
 
 // The panel is a modal dialog covering the whole grid. A keyboard-only user landed nowhere
@@ -197,6 +246,20 @@ describe('the contribution panel and the keyboard', () => {
     await openStructureTab()
     const opener = screen.getByTestId('card-header-1.1-sp')
     await userEvent.click(opener)
+    await userEvent.click(screen.getByTestId('close-contribution-panel'))
+
+    expect(opener).toHaveFocus()
+  })
+
+  it('returns focus to the activity line that opened it, the second way in', async () => {
+    // The whole chain in one test: card task line -> onSelect's third argument ->
+    // selection.taskId -> the panel's highlightTaskId. Each half is unit-tested
+    // elsewhere; only this fails if the two halves are wired to different names.
+    await openStructureTab()
+    const opener = screen.getByTestId('task-line-t2-sp')
+    await userEvent.click(opener)
+    expect(screen.getByTestId('task-t2')).toHaveClass('border-brand')
+
     await userEvent.click(screen.getByTestId('close-contribution-panel'))
 
     expect(opener).toHaveFocus()

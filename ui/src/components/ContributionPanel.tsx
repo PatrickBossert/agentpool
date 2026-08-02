@@ -12,12 +12,16 @@ export interface ContributionPanelProps {
   model: ValueChainModel
   activityId: string
   partyId: string
+  // Set when the dialog was opened by clicking one n.n.n activity on a card. Absent when
+  // the card header opened it, in which case nothing is highlighted.
+  highlightTaskId?: string
 }
 
 export function ContributionPanel({
   model,
   activityId,
   partyId,
+  highlightTaskId,
   onClose,
 }: ContributionPanelProps & { onClose: () => void }) {
   const activity = model.activities.find((a) => a.id === activityId)
@@ -40,6 +44,15 @@ export function ContributionPanel({
     dialog.current?.focus()
     return () => opener?.focus?.()
   }, [])
+
+  // A contribution's activities can run past the fold of a scrolling dialog, so the one
+  // that was clicked is brought into view rather than merely coloured somewhere below.
+  const highlighted = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    // Optional call: jsdom does not implement scrollIntoView. This is presentation, so a
+    // test environment without it should do nothing rather than throw.
+    highlighted.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [highlightTaskId])
 
   return (
     <div
@@ -66,7 +79,8 @@ export function ContributionPanel({
       >
         <div className="flex items-start justify-between gap-4">
           <h4 className="text-sm font-medium text-primary">
-            {activity?.label ?? activityId}
+            <span className="font-mono text-muted">{activityId}</span>{' '}
+            {activity?.label ?? ''}
             {party && <span className="text-muted font-normal"> - {party.label}</span>}
           </h4>
           <button
@@ -89,12 +103,28 @@ export function ContributionPanel({
             <p className="text-muted text-xs italic">No tasks recorded for this contribution yet.</p>
           ) : (
             <ul className="space-y-2">
-              {tasks.map((task) => (
-                <li key={task.id} data-testid={`task-${task.id}`}>
-                  <p className="text-sm font-medium text-primary">{task.label ?? task.id}</p>
-                  {task.description && <p className="text-muted text-xs">{task.description}</p>}
-                </li>
-              ))}
+              {tasks.map((task) => {
+                const isHighlighted = task.id === highlightTaskId
+                return (
+                  <li
+                    key={task.id}
+                    ref={isHighlighted ? highlighted : undefined}
+                    data-testid={`task-${task.id}`}
+                    // border-transparent is right here and wrong on a card: these are list
+                    // rows where a resting edge would be noise, and the border exists only
+                    // to carry the highlight.
+                    className={`rounded border p-2 ${
+                      isHighlighted ? 'border-brand' : 'border-transparent'
+                    }`}
+                  >
+                    <p className="text-sm font-medium text-primary">
+                      <span className="font-mono text-muted">{task.id}</span>
+                      {task.label ? ` ${task.label}` : ''}
+                    </p>
+                    {task.description && <p className="text-muted text-xs">{task.description}</p>}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>
