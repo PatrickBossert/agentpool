@@ -63,12 +63,18 @@ def test_the_task_explains_a_contribution(task_text):
 
 
 def test_the_task_explains_the_column_step_of_10_rule(task_text):
-    """A bare 'column' mention isn't enough - Alex must know columns step by 10 and what a
-    shared vs. an offset column between two contributions of the same activity means."""
+    """A bare 'column' mention isn't enough - Alex must know columns step by 10, and that a
+    column belongs to the activity rather than to each party's reading of it.
+
+    This previously also required the prompt to explain 'concurrently' and 'handoff' as the
+    meanings of a shared versus an offset column between two contributions of the same
+    activity. That distinction no longer exists: validate_model refuses an activity split
+    across columns, so a handoff between parties is two activities, and a prompt still
+    teaching the offset would produce models the write tool rejects.
+    """
     assert "steps of 10" in task_text
     assert "10, 20, 30" in task_text
-    assert "concurrently" in task_text, "does not explain what a shared column means"
-    assert "handoff" in task_text, "does not explain what an offset column means"
+    assert "same column" in task_text, "does not say an activity's contributions share one"
 
 
 def test_the_task_ties_model_ids_to_the_registry(task_text):
@@ -139,3 +145,43 @@ def test_the_enterprise_architect_keeps_diagram_rendering():
 
     tools = get_tools_for_agent("enterprise_architect", slug="t", sector="transport")
     assert any("mermaid" in type(tool).__name__.lower() for tool in tools)
+
+
+# ---------------------------------------------------------------------------
+# Where the instructions conflicted with what validation now enforces.
+#
+# Prompt tests are brittle and most wording does not deserve one. These do: two of the five
+# defects in the run that rebuilt the whole chain were the prompt being *obeyed*. It
+# described segments as process stages, and it told the agent that offset columns between
+# two parties on one activity mean a handoff - which validate_model now refuses, so leaving
+# it in place would have the agent writing models the tool rejects, in a loop it could not
+# escape by following its instructions.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def raw_task_text() -> str:
+    """The description with its case intact - some of these rules are shouted."""
+    agent = create_value_chain_mapper(slug="t", llm=MagicMock(spec=LLM), tools=[])
+    return create_value_chain_mapper_task(agent=agent).description
+
+
+def test_the_task_does_not_instruct_the_handoff_that_validation_refuses(raw_task_text):
+    assert "handoff from one party to the next" not in raw_task_text
+
+
+def test_the_task_states_that_one_activity_has_one_column(raw_task_text):
+    assert "same column" in raw_task_text
+    # Named as validation names it, so a refusal the agent reads matches a rule it was given.
+    assert "split across columns" in raw_task_text
+
+
+def test_segments_are_described_as_value_chains_not_process_stages(raw_task_text):
+    # The exact wording that produced the rebuild. If it returns, so does the defect.
+    assert "Acquisition, Delivery, Monitoring" not in raw_task_text
+
+
+def test_the_task_still_forbids_a_party_repeating_a_column(raw_task_text):
+    # The two column rules are different and both hold. Replacing one with the other would
+    # trade this defect for the collision that made the model unsaveable.
+    assert "MUST NOT repeat a column" in raw_task_text
