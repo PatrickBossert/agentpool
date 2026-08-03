@@ -112,6 +112,27 @@ class DeriveRegistryTool(BaseTool):
         new_activities.sort(key=_sort_key)
 
         registry = {"schema_version": 2, "activities": new_activities}
+
+        # This tool writes through insert_agent_output_sync rather than SQLiteStateTool, so
+        # the write-path validator never sees it - which made this the one door through
+        # which the ID ledger could still be rewritten. An id present in both the old
+        # registry and the new tree silently took the tree's label, which is how a single
+        # id came to mean one activity on one run and a different one on the next.
+        #
+        # Same rule as the tool's own check, one implementation: the ledger may grow and
+        # may retire, but may not redefine or forget.
+        from api.services.value_chain_model import validate_registry_succession
+
+        problems = validate_registry_succession(
+            {"activities": list(old_entries.values())}, registry
+        )
+        if problems:
+            return (
+                "Error: the registry was not written - the tree redefines IDs the registry "
+                "has already assigned. Give the new thing an unused number and derive "
+                "again: " + "; ".join(problems)
+            )
+
         try:
             registry_path.write_text(json.dumps(registry, indent=2))
             insert_agent_output_sync(

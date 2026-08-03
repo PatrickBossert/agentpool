@@ -147,18 +147,22 @@ def test_derive_registry_parent_id_set(project_dir):
 
 def test_derive_registry_marks_removed_as_inactive(project_dir):
     base, slug = project_dir
+    # The labels match between registry and tree deliberately. They used to differ - "Old
+    # L1" against "New L1" - which was incidental scaffolding, since this test asserts only
+    # the active flags. Relabelling an existing id is now refused as a redefinition, so a
+    # fixture that relabels would fail here for a reason this test is not about.
     old_registry = {
         "schema_version": 2,
         "activities": [
-            {"id": "1", "label": "Old L1", "level": "L1", "active": True},
-            {"id": "1.1", "label": "Old L2", "level": "L2", "parent_id": "1", "active": True},
+            {"id": "1", "label": "Kept L1", "level": "L1", "active": True},
+            {"id": "1.1", "label": "Kept L2", "level": "L2", "parent_id": "1", "active": True},
             {"id": "OLD", "label": "Removed", "level": "L2", "parent_id": "1", "active": True},
         ]
     }
     (base / "projects" / slug / "outputs" / "value_chain_registry.json").write_text(json.dumps(old_registry))
     # New tree does NOT contain "OLD"
-    new_tree = [{"id": "1", "label": "New L1", "level": "L1", "children": [
-        {"id": "1.1", "label": "New L2", "level": "L2"}
+    new_tree = [{"id": "1", "label": "Kept L1", "level": "L1", "children": [
+        {"id": "1.1", "label": "Kept L2", "level": "L2"}
     ]}]
     (base / "projects" / slug / "outputs" / "value_chain_tree.json").write_text(json.dumps(new_tree))
     from agents.tools.derive_registry import DeriveRegistryTool
@@ -220,3 +224,65 @@ def test_derive_registry_preserves_history_across_runs(project_dir):
     by_id = {a["id"]: a for a in _read_registry(base, slug)["activities"]}
     assert by_id["1"]["active"] is True
     assert by_id["1.1"]["active"] is False, "history lost between runs"
+
+
+def test_derive_registry_refuses_a_tree_that_redefines_a_registered_id(project_dir):
+    """DeriveRegistryTool writes through insert_agent_output_sync, not SQLiteStateTool, so
+    the write-path validator never sees it. That made this the one door through which the
+    ID ledger could still be rewritten - which is how a single id came to mean
+    'Fleet Strategy & Policy Setting' on one run and 'Multi-Year Work Packaging' on the
+    next, after which every model check passed against the ledger that run had replaced.
+    """
+    base, slug = project_dir
+    outputs = base / "projects" / slug / "outputs"
+    from agents.tools.derive_registry import DeriveRegistryTool
+
+    def _run_with(tree):
+        (outputs / "value_chain_tree.json").write_text(json.dumps(tree))
+        with patch("agents.tools.derive_registry.get_settings") as m_s, \
+             patch("agents.tools._db.get_settings") as m_db:
+            m_s.return_value.projects_dir = str(base / "projects")
+            m_db.return_value.database_dir = str(base / "data")
+            return DeriveRegistryTool(slug=slug)._run()
+
+    _run_with([{"id": "1", "label": "Property", "level": "L1", "children": [
+        {"id": "1.1", "label": "Fleet Strategy & Policy Setting", "level": "L2"}
+    ]}])
+
+    result = _run_with([{"id": "1", "label": "Property", "level": "L1", "children": [
+        {"id": "1.1", "label": "Multi-Year Work Packaging", "level": "L2"}
+    ]}])
+
+    assert "Error" in result
+    # Both meanings, because the correction is to give the new thing a different id, and
+    # the agent cannot do that without being told what the id already means.
+    assert "Fleet Strategy & Policy Setting" in result
+    assert "Multi-Year Work Packaging" in result
+    # And the ledger on disk still says what it said.
+    by_id = {a["id"]: a for a in _read_registry(base, slug)["activities"]}
+    assert by_id["1.1"]["label"] == "Fleet Strategy & Policy Setting"
+
+
+def test_derive_registry_still_accepts_a_tree_that_only_grows(project_dir):
+    base, slug = project_dir
+    outputs = base / "projects" / slug / "outputs"
+    from agents.tools.derive_registry import DeriveRegistryTool
+
+    def _run_with(tree):
+        (outputs / "value_chain_tree.json").write_text(json.dumps(tree))
+        with patch("agents.tools.derive_registry.get_settings") as m_s, \
+             patch("agents.tools._db.get_settings") as m_db:
+            m_s.return_value.projects_dir = str(base / "projects")
+            m_db.return_value.database_dir = str(base / "data")
+            return DeriveRegistryTool(slug=slug)._run()
+
+    _run_with([{"id": "1", "label": "Property", "level": "L1", "children": [
+        {"id": "1.1", "label": "Strategy", "level": "L2"}
+    ]}])
+    result = _run_with([{"id": "1", "label": "Property", "level": "L1", "children": [
+        {"id": "1.1", "label": "Strategy", "level": "L2"},
+        {"id": "1.2", "label": "Acquisition", "level": "L2"},
+    ]}])
+
+    assert "Error" not in result
+    assert {"1", "1.1", "1.2"} <= {a["id"] for a in _read_registry(base, slug)["activities"]}

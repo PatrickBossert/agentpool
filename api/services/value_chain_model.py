@@ -117,6 +117,45 @@ def validate_against_registry(model: dict, registry: dict) -> list[str]:
     return problems
 
 
+def validate_registry_succession(current: dict, proposed: dict) -> list[str]:
+    """Every way a proposed registry would break the meanings the current one records.
+
+    validate_against_registry is only as good as the ledger it reads, and the agent writing
+    the model can write the ledger too - which is how fourteen IDs were reused in one run
+    while every model check passed against the registry that same run had just replaced.
+
+    Growth is free: a new id is a new thing. Retirement is free too, as long as the meaning
+    is kept - `active: false` with the same label and level. What is refused is redefining
+    an id, moving it to another level, or dropping it altogether. Dropping is the worst of
+    the three: the ledger forgets the meaning, and nothing then stops the number being
+    handed to something else later.
+    """
+    problems: list[str] = []
+    proposed_entries = {e.get("id"): e for e in proposed.get("activities", [])}
+
+    for entry in current.get("activities", []):
+        entry_id = entry.get("id")
+        successor = proposed_entries.get(entry_id)
+        if successor is None:
+            problems.append(
+                f"id {entry_id} ({entry.get('label')!r}) is in the registry and missing "
+                "from this one - retire it with active: false rather than dropping it, so "
+                "the number is never handed to anything else"
+            )
+            continue
+        if successor.get("level") != entry.get("level"):
+            problems.append(
+                f"id {entry_id} is registered as a {entry.get('level')} and this makes it "
+                f"a {successor.get('level')} - use an unused id for the new thing"
+            )
+        elif entry.get("label") and successor.get("label") != entry.get("label"):
+            problems.append(
+                f"id {entry_id} already means {entry.get('label')!r} and cannot be "
+                f"redefined as {successor.get('label')!r} - take the next unused number"
+            )
+    return problems
+
+
 def validate_model(model: dict) -> list[str]:
     """Every problem with this model, as readable sentences. Empty means valid.
 

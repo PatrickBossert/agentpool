@@ -14,6 +14,7 @@ from api.services.value_chain_model import (
     empty_model,
     next_column,
     validate_against_registry,
+    validate_registry_succession,
     validate_model,
 )
 
@@ -475,3 +476,67 @@ def test_a_task_carrying_no_label_is_not_reported_as_renamed():
         {"id": "1.1.1", "activity_id": "1.1", "party_id": "GSUK", "description": "Set it up"}
     ]
     assert validate_against_registry(model, registry) == []
+
+
+# ---------------------------------------------------------------------------
+# Registry succession.
+#
+# validate_against_registry is only as good as the ledger it reads, and the agent that
+# writes the model can also write the ledger. Run 14 got away with fourteen reused IDs by
+# writing a fresh registry: nothing objected, and every later check was then vacuous.
+# ---------------------------------------------------------------------------
+
+
+def test_an_unchanged_registry_is_accepted():
+    current = _registry(("1", "Property", "L1"), ("1.1", "Strategy", "L2"))
+    assert validate_registry_succession(current, current) == []
+
+
+def test_adding_an_entry_is_accepted_so_the_chain_can_grow():
+    current = _registry(("1", "Property", "L1"))
+    proposed = _registry(("1", "Property", "L1"), ("1.1", "Strategy", "L2"))
+    assert validate_registry_succession(current, proposed) == []
+
+
+def test_redefining_a_registered_id_is_refused():
+    current = _registry(("2.1", "Fleet Strategy & Policy Setting", "L2"))
+    proposed = _registry(("2.1", "Multi-Year Work Packaging", "L2"))
+    problems = validate_registry_succession(current, proposed)
+    assert len(problems) == 1
+    assert "2.1" in problems[0]
+    assert "Fleet Strategy & Policy Setting" in problems[0]
+    assert "Multi-Year Work Packaging" in problems[0]
+
+
+def test_moving_a_registered_id_to_another_level_is_refused():
+    current = _registry(("1.1", "Strategy", "L2"))
+    proposed = _registry(("1.1", "Strategy", "L3"))
+    problems = validate_registry_succession(current, proposed)
+    assert any("1.1" in p and "L2" in p and "L3" in p for p in problems)
+
+
+def test_dropping_a_registered_id_is_refused_rather_than_silently_forgotten():
+    # A dropped id is worse than a redefined one: the ledger forgets the meaning, and
+    # nothing then stops the number being handed to something else next time.
+    current = _registry(("1.1", "Strategy", "L2"), ("1.2", "Acquisition", "L2"))
+    proposed = _registry(("1.1", "Strategy", "L2"))
+    problems = validate_registry_succession(current, proposed)
+    assert len(problems) == 1
+    assert "1.2" in problems[0]
+    assert "active" in problems[0]
+
+
+def test_retiring_an_entry_is_accepted_when_its_meaning_is_kept():
+    current = _registry(("1.2", "Acquisition", "L2"))
+    proposed = {
+        "schema_version": 2,
+        "activities": [
+            {"id": "1.2", "label": "Acquisition", "level": "L2", "active": False}
+        ],
+    }
+    assert validate_registry_succession(current, proposed) == []
+
+
+def test_a_first_registry_is_accepted_because_there_is_nothing_to_succeed():
+    proposed = _registry(("1", "Property", "L1"))
+    assert validate_registry_succession({"activities": []}, proposed) == []

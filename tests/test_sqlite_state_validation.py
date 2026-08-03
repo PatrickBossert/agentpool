@@ -295,3 +295,88 @@ def test_a_model_is_written_when_no_registry_exists_yet():
     )
 
     assert "Written to" in result
+
+
+def _registry_payload(*entries: tuple[str, str, str], active: bool = True) -> str:
+    return json.dumps(
+        {
+            "schema_version": 2,
+            "activities": [
+                {"id": i, "label": l, "level": v, "active": active} for i, l, v in entries
+            ],
+        }
+    )
+
+
+def _write_registry_payload(tool: SQLiteStateTool, payload: str) -> str:
+    return tool._run(
+        operation="write", key="value_chain_registry",
+        agent_name="value_chain_mapper", value=payload,
+    )
+
+
+def _no_registry_written_since(before: int) -> bool:
+    from api.config import get_settings
+
+    conn = sqlite3.connect(str(Path(get_settings().database_dir) / f"{SLUG}.db"))
+    try:
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM agent_outputs WHERE output_type=?",
+            ("value_chain_registry",),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return rows == before
+
+
+def test_a_registry_redefining_a_registered_id_is_refused():
+    """The ledger is the ID authority, and the agent that writes the model writes it too.
+
+    Left unchecked, the model validator is only as good as a file the same run can replace
+    - which is exactly how fourteen IDs were reused while every model check passed.
+    """
+    tool = SQLiteStateTool(slug=SLUG)
+    _write_registry_payload(tool, _registry_payload(("2.1", "Fleet Strategy", "L2")))
+
+    result = _write_registry_payload(
+        tool, _registry_payload(("2.1", "Multi-Year Work Packaging", "L2"))
+    )
+
+    assert "Written to" not in result
+    assert "Fleet Strategy" in result and "Multi-Year Work Packaging" in result
+    assert _no_registry_written_since(1)
+
+
+def test_a_registry_dropping_a_registered_id_is_refused():
+    tool = SQLiteStateTool(slug=SLUG)
+    _write_registry_payload(
+        tool, _registry_payload(("1.1", "Strategy", "L2"), ("1.2", "Acquisition", "L2"))
+    )
+
+    result = _write_registry_payload(tool, _registry_payload(("1.1", "Strategy", "L2")))
+
+    assert "Written to" not in result
+    assert "1.2" in result
+    assert _no_registry_written_since(1)
+
+
+def test_a_registry_that_grows_and_retires_is_written():
+    tool = SQLiteStateTool(slug=SLUG)
+    _write_registry_payload(tool, _registry_payload(("1.1", "Strategy", "L2")))
+
+    grown = json.dumps(
+        {
+            "schema_version": 2,
+            "activities": [
+                {"id": "1.1", "label": "Strategy", "level": "L2", "active": False},
+                {"id": "1.2", "label": "Acquisition", "level": "L2", "active": True},
+            ],
+        }
+    )
+    assert "Written to" in _write_registry_payload(tool, grown)
+
+
+def test_a_first_registry_is_written_because_there_is_nothing_to_succeed():
+    tool = SQLiteStateTool(slug=SLUG)
+    result = _write_registry_payload(tool, _registry_payload(("1", "Property", "L1")))
+    assert "Written to" in result

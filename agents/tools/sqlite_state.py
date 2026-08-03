@@ -25,23 +25,41 @@ def _validate_value_chain_model(parsed: dict, slug: str) -> list[str]:
     # itself is pure and the load happens here. Every stable ID shared by the migrated model
     # and the agent's rebuild had been reused for a different activity, 14 of 14, under an
     # instruction that forbade it.
+    problems.extend(validate_against_registry(parsed, _current_registry(slug)))
+    return problems
+
+
+def _current_registry(slug: str) -> dict:
+    """The registry in force, or an empty ledger when there is none yet."""
     settings = get_settings()
-    registry_path = latest_output_path(
+    path = latest_output_path(
         Path(settings.projects_dir) / slug / "outputs" / "value_chain_registry.json"
     )
-    if registry_path is not None:
-        try:
-            registry = json.loads(registry_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            # A registry that cannot be read is not a reason to refuse a model - that would
-            # block every write on a corrupt sidecar. The structural checks above still ran.
-            registry = {}
-        problems.extend(validate_against_registry(parsed, registry))
-    return problems
+    if path is None:
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        # A registry that cannot be read is not a reason to refuse a write - that would
+        # block everything on a corrupt sidecar.
+        return {}
+
+
+def _validate_value_chain_registry(parsed: dict, slug: str) -> list[str]:
+    """The ledger may grow and may retire, but may not redefine or forget.
+
+    Without this the model check is only as good as a file the same agent can replace in
+    the same run: fourteen IDs were reused in one run precisely by writing a fresh registry
+    first, after which every model check passed against it.
+    """
+    from api.services.value_chain_model import validate_registry_succession
+
+    return validate_registry_succession(_current_registry(slug), parsed)
 
 
 _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
     "value_chain_model": _validate_value_chain_model,
+    "value_chain_registry": _validate_value_chain_registry,
 }
 
 
