@@ -138,7 +138,24 @@ export function ValueChainGrid({
         // Only the parties that contribute in this chain. A party absent from it has no
         // row here: the view is for flow and who does what, in what order, and an
         // always-empty lane serves neither.
-        lanes: model.parties.filter((p) => partyIds.has(p.id)),
+        //
+        // Ordered by where each party's work starts, so the lanes read down in the order
+        // the chain runs - the reader's eye goes top-left to bottom-right and follows the
+        // flow. Not by contribution count, which would be a popularity ordering rather
+        // than a positional one, and not by declaration order: the recovered model lists
+        // the custodian last, which would bury the party that opens all three chains.
+        // Ties keep declaration order, so parties starting together stay put.
+        lanes: model.parties
+          .filter((p) => partyIds.has(p.id))
+          .map((party, order) => ({
+            party,
+            order,
+            start: Math.min(
+              ...contributions.filter((c) => c.party_id === party.id).map((c) => c.column),
+            ),
+          }))
+          .sort((a, b) => a.start - b.start || a.order - b.order)
+          .map((entry) => entry.party),
       }
     })
     .filter((chain) => chain.lanes.length > 0)

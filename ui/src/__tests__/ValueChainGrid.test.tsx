@@ -601,3 +601,59 @@ describe('the card shows, the dialog edits', () => {
     expect(seen).toEqual([['1.1', 'sp']])
   })
 })
+
+describe('lane order follows the flow', () => {
+  // A chain where the party doing MOST of the work is not the party that starts it.
+  // "Most contributions first" and "earliest column first" disagree here, which is the
+  // point: with GS UK doing most of every real chain they would otherwise always agree.
+  const LATE_MAJORITY: ValueChainModel = {
+    model_version: 1,
+    parties: [
+      { id: 'BUSY', label: 'Busy' },
+      { id: 'FIRST', label: 'First' },
+    ],
+    segments: [{ id: '1', label: 'Property' }],
+    activities: [
+      { id: '1.1', segment_id: '1', label: 'Opening' },
+      { id: '1.2', segment_id: '1', label: 'Middle' },
+      { id: '1.3', segment_id: '1', label: 'Later' },
+    ],
+    contributions: [
+      { activity_id: '1.1', party_id: 'FIRST', column: 10, attribution: 'stated' },
+      { activity_id: '1.2', party_id: 'BUSY', column: 20, attribution: 'stated' },
+      { activity_id: '1.3', party_id: 'BUSY', column: 30, attribution: 'stated' },
+    ],
+    tasks: [], propositions: [], links: [],
+  }
+
+  it('puts the party whose work starts earliest at the top of the chain', () => {
+    render(<ValueChainGrid model={LATE_MAJORITY} />)
+    const lanes = screen.getAllByTestId(/^lane-1-/).map((el) => el.getAttribute('data-testid'))
+    // FIRST holds one contribution to BUSY's two, and is declared second in the model, so
+    // neither contribution count nor declaration order would put it first.
+    expect(lanes).toEqual(['lane-1-FIRST', 'lane-1-BUSY'])
+  })
+
+  it('keeps the model order for parties that start at the same column', () => {
+    const tied = structuredClone(LATE_MAJORITY)
+    tied.contributions[1].column = 10
+    render(<ValueChainGrid model={tied} />)
+    const lanes = screen.getAllByTestId(/^lane-1-/).map((el) => el.getAttribute('data-testid'))
+    expect(lanes).toEqual(['lane-1-BUSY', 'lane-1-FIRST'])
+  })
+
+  it('leads every chain with GS UK on the recovered shape', () => {
+    // The recovered model declares parties in the order the migration left them - DXI,
+    // ISS, GSUK - so GS UK is LAST in the array despite being the custodian in all three
+    // chains. Using THREE_CHAINS as declared would pass without any ordering at all.
+    const recovered = structuredClone(THREE_CHAINS)
+    recovered.parties = [
+      recovered.parties[2], recovered.parties[1], recovered.parties[0],
+    ]
+    render(<ValueChainGrid model={recovered} />)
+    for (const id of ['1', '2', '3']) {
+      const first = screen.getAllByTestId(new RegExp(`^lane-${id}-`))[0]
+      expect(first).toHaveAttribute('data-testid', `lane-${id}-GSUK`)
+    }
+  })
+})
