@@ -9,7 +9,14 @@ the rules that were broken enforceable rather than merely instructed.
 ## Problem
 
 Run 14 rebuilt the value chain from scratch and re-conceived L1 from **which value chain** to
-**which process stage**. One decision, five consequences, all confirmed against the files:
+**which process stage**. One decision, five consequences, all confirmed against the files.
+
+**The instruction told him to.** `value_chain_mapper.py:95` defines segments as *"the primary
+value chain lanes (e.g. Strategy/Planning, Acquisition, Delivery, Monitoring/Review)"* - which
+is a list of process stages. And `:113-116` tells him that offset columns between two parties
+on one activity *"mean a handoff from one party to the next"*, which is precisely the
+staggering this design forbids. So two of the five symptoms are the prompt being followed, not
+ignored; only the ID reuse and the column collision are violations of what he was told.
 
 | | v1 (migrated) | v2 (run 14) |
 |---|---|---|
