@@ -131,7 +131,7 @@ describe('adding a party that already occupies that column', () => {
     expect(latest.contributions.filter((c) => c.party_id === 'sp')).toHaveLength(2)
     // The lane count is the only thing that moved when the card was hidden, so it is what
     // proves nothing was added behind the scenes.
-    expect(screen.getByTestId('lane-count-sp')).toHaveTextContent('2')
+    expect(screen.getByTestId('lane-count-1-sp')).toHaveTextContent('2')
   })
 
   it('leaves an entry whose column is free enabled', async () => {

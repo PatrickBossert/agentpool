@@ -1,7 +1,12 @@
 // ui/src/components/ValueChainGrid.tsx
-// One continuous CSS Grid for the whole chain: rows are party lanes spanning every segment,
-// columns are chainColumns(model) - every segment's sparse column positions laid end to end -
-// and a card sits at an explicit gridColumn/gridRow.
+// One CSS Grid per value chain, stacked vertically. Within a chain, rows are the party
+// lanes that contribute to it, columns are that chain's own sparse positions, and a card
+// sits at an explicit gridColumn/gridRow.
+//
+// Per chain rather than one continuous run, which is what this was until the three chains
+// came back: laid end to end, seeing Fleet means scrolling past the whole of Property, and
+// a party's lane spans chains it has nothing to do with. There is no shared column axis and
+// so no column ruler - a stage in one chain has no counterpart in another.
 //
 // The layout mechanism is the point. Snapping needs no implementation because a grid cell
 // is the only place a card can be - there are no arbitrary coordinates to snap from, and
@@ -14,7 +19,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Minus, Plus } from 'lucide-react'
 
 import {
-  chainColumns,
+  columnRange,
   contributionKey,
   moveToColumn,
   removeParty,
@@ -107,28 +112,36 @@ export function ValueChainGrid({
     )
   }
 
-  const columns = chainColumns(model)
-
-  // chainColumns emits every column of a segment consecutively, so a run is a contiguous
-  // slice. Grouping rather than counting per segment keeps the band aligned even if a segment
-  // contributes no columns at all - it simply produces no band.
-  const bands: { segmentId: string; start: number; span: number }[] = []
-  columns.forEach((c, i) => {
-    const last = bands[bands.length - 1]
-    if (last && last.segmentId === c.segmentId) last.span += 1
-    else bands.push({ segmentId: c.segmentId, start: i, span: 1 })
-  })
-
-  // activity id -> segment id. A cell must scope by segment or segment 1's column 10 and
-  // segment 2's column 10 collapse into one.
+  // activity id -> segment id. A cell must scope by segment, or chain 1's column 10 and
+  // chain 2's column 10 collapse into one.
   const segmentOf = (activityId: string) =>
     model.activities.find((a) => a.id === activityId)?.segment_id
 
-  // Every party contributing somewhere in the chain gets a row spanning the whole chain -
-  // not every party on the roster. A party with no contribution anywhere would be an
-  // always-empty row, which is noise rather than information.
-  const contributingPartyIds = new Set(model.contributions.map((c) => c.party_id))
-  const lanes = model.parties.filter((p) => contributingPartyIds.has(p.id))
+  // One block per chain, stacked. Laid side by side on a single horizontal run - which is
+  // what a shared column axis produces - seeing Fleet means scrolling past the whole of
+  // Property, and one party's lane spans all three chains at once. That is meaningless
+  // when the chains have different parties: ISS maintains property and DXI maintains
+  // fleet, so neither belongs in the other's chain even as an empty row.
+  const chains = model.segments
+    .map((segment) => {
+      const contributions = model.contributions.filter(
+        (c) => segmentOf(c.activity_id) === segment.id,
+      )
+      const partyIds = new Set(contributions.map((c) => c.party_id))
+      return {
+        segment,
+        contributions,
+        // Each chain's columns start again at its own first. They are not slices of a
+        // shared axis - a stage in one chain has no counterpart in another, which is why
+        // there is no column ruler and no stage heading.
+        columns: columnRange(contributions.map((c) => c.column)),
+        // Only the parties that contribute in this chain. A party absent from it has no
+        // row here: the view is for flow and who does what, in what order, and an
+        // always-empty lane serves neither.
+        lanes: model.parties.filter((p) => partyIds.has(p.id)),
+      }
+    })
+    .filter((chain) => chain.lanes.length > 0)
 
   return (
     <div
@@ -176,9 +189,22 @@ export function ValueChainGrid({
         </button>
       </div>
 
-      <section className="overflow-x-auto">
+      {chains.map(({ segment, contributions, columns, lanes }) => (
+        <section key={`chain-${segment.id}`} className="space-y-2">
+          {/* The chain's name sits above its own block rather than inside the grid: with
+              one grid per chain there is nothing to span, and no column ruler beneath it -
+              a stage in one chain has no counterpart in another, so a shared heading row
+              would assert an alignment that does not exist. */}
+          <h3
+            data-testid={`segment-band-${segment.id}`}
+            className="text-sm font-medium text-secondary uppercase tracking-wide"
+          >
+            <span className="font-mono">{segment.id}</span> {segment.label}
+          </h3>
+
+          <div className="overflow-x-auto">
         <div
-          data-testid="chain-grid"
+          data-testid={`chain-grid-${segment.id}`}
           className="grid gap-2 items-start"
           style={{
             gridTemplateColumns: `${GUTTER} repeat(${columns.length}, minmax(${COLUMN_WIDTH}, 1fr))`,
@@ -186,39 +212,14 @@ export function ValueChainGrid({
             transformOrigin: 'top left',
           }}
         >
-          {/* Row 1: a band per segment, spanning that segment's own columns. Row 2: a
-              header per column, labelled with the model's real column value, which is what
-              makes a gap legible as a position rather than as whitespace. */}
-          {bands.map((b) => (
-            <div
-              key={`band-${b.segmentId}`}
-              data-testid={`segment-band-${b.segmentId}`}
-              className="text-sm font-medium text-secondary uppercase tracking-wide pb-2"
-              style={{ gridColumn: `${b.start + 2} / span ${b.span}`, gridRow: 1 }}
-            >
-              <span className="font-mono">{b.segmentId}</span>{' '}
-              {model.segments.find((s) => s.id === b.segmentId)?.label}
-            </div>
-          ))}
-          {columns.map((c, index) => (
-            <div
-              key={`${c.segmentId}-${c.column}`}
-              data-testid={`column-header-${c.segmentId}-${c.column}`}
-              className="text-xs text-muted font-mono pb-2 border-b border-surface"
-              style={{ gridColumn: index + 2, gridRow: 2 }}
-            >
-              {c.column}
-            </div>
-          ))}
-
           {lanes.map((party, laneIndex) => {
-            const laneContributions = model.contributions.filter((c) => c.party_id === party.id)
+            const laneContributions = contributions.filter((c) => c.party_id === party.id)
             return [
               <div
                 key={`lane-${party.id}`}
-                data-testid={`lane-${party.id}`}
+                data-testid={`lane-${segment.id}-${party.id}`}
                 className="flex items-center gap-2 text-sm font-medium text-primary py-2"
-                style={{ gridColumn: 1, gridRow: laneIndex + 3 }}
+                style={{ gridColumn: 1, gridRow: laneIndex + 1 }}
               >
                 {party.colour && (
                   <span
@@ -228,46 +229,46 @@ export function ValueChainGrid({
                   />
                 )}
                 <span>{party.label}</span>
-                <span data-testid={`lane-count-${party.id}`} className="text-muted text-xs">
+                <span data-testid={`lane-count-${segment.id}-${party.id}`} className="text-muted text-xs">
                   {laneContributions.length}
                 </span>
               </div>,
-              ...columns.map((c, index) => {
+              ...columns.map((column, index) => {
                 // A cell may resolve to more than one contribution - the model is what says
                 // so, not a rendering bug, and hiding all but the first would make the
                 // remaining contributions both invisible and undraggable at once. Every
                 // occupant renders, stacked with an offset, so each stays clickable and
                 // draggable and the stack can be pulled apart.
-                const occupants = laneContributions.filter(
-                  (contrib) => contrib.column === c.column && segmentOf(contrib.activity_id) === c.segmentId,
-                )
+                // laneContributions is already scoped to this chain, so the column alone
+                // identifies the cell - no second segment check is needed here.
+                const occupants = laneContributions.filter((contrib) => contrib.column === column)
 
                 // A cell only invites a drop when it is in the dragged card's own lane and
                 // own segment - the drop guard below refuses both a cross-lane and a
                 // cross-segment drop, so highlighting either would promise a drop that
                 // refusal is going to undo.
-                const acceptsDrag = draggingParty === party.id && draggingSegment === c.segmentId
+                const acceptsDrag = draggingParty === party.id && draggingSegment === segment.id
                 const isDragOver =
                   acceptsDrag &&
-                  hoverCell?.segmentId === c.segmentId &&
+                  hoverCell?.segmentId === segment.id &&
                   hoverCell?.partyId === party.id &&
-                  hoverCell?.column === c.column
+                  hoverCell?.column === column
 
                 return (
                   <div
-                    key={`cell-${c.segmentId}-${party.id}-${c.column}`}
-                    data-testid={`cell-${c.segmentId}-${party.id}-${c.column}`}
+                    key={`cell-${segment.id}-${party.id}-${column}`}
+                    data-testid={`cell-${segment.id}-${party.id}-${column}`}
                     className={`relative min-h-[5rem] rounded-lg border border-dashed transition-colors ${
                       isDragOver ? 'border-brand bg-brand/5' : 'border-surface'
                     }`}
-                    style={{ gridColumn: index + 2, gridRow: laneIndex + 3 }}
+                    style={{ gridColumn: index + 2, gridRow: laneIndex + 1 }}
                     onDragOver={
                       onChange
                         ? (e) => {
                             if (!acceptsDrag) return
                             e.preventDefault()
                             e.dataTransfer.dropEffect = 'move'
-                            setHoverCell({ segmentId: c.segmentId, partyId: party.id, column: c.column })
+                            setHoverCell({ segmentId: segment.id, partyId: party.id, column: column })
                           }
                         : undefined
                     }
@@ -275,9 +276,9 @@ export function ValueChainGrid({
                       onChange
                         ? () =>
                             setHoverCell((current) =>
-                              current?.segmentId === c.segmentId &&
+                              current?.segmentId === segment.id &&
                               current?.partyId === party.id &&
-                              current?.column === c.column
+                              current?.column === column
                                 ? null
                                 : current,
                             )
@@ -301,8 +302,8 @@ export function ValueChainGrid({
                             // numeric coincidence while leaving it recorded in the segment
                             // it was dragged from, reappearing somewhere the drop never
                             // touched. Reuses segmentOf rather than a second lookup.
-                            if (segmentOf(activityId) !== c.segmentId) return
-                            onChange(moveToColumn(model, activityId, draggedParty, c.column))
+                            if (segmentOf(activityId) !== segment.id) return
+                            onChange(moveToColumn(model, activityId, draggedParty, column))
                           }
                         : undefined
                     }
@@ -312,7 +313,7 @@ export function ValueChainGrid({
                       // count sharing the cell, not a rank - a person decides which
                       // contribution belongs where; this only says a decision is owed.
                       <span
-                        data-testid={`cell-overlap-${c.segmentId}-${party.id}-${c.column}`}
+                        data-testid={`cell-overlap-${segment.id}-${party.id}-${column}`}
                         className="absolute top-0 right-0 z-10 flex items-center justify-center w-4 h-4 rounded-full bg-amber-500 text-[10px] font-medium text-white"
                         title={`${occupants.length} contributions share this cell - drag each to reposition`}
                       >
@@ -385,8 +386,10 @@ export function ValueChainGrid({
               }),
             ]
           })}
-        </div>
-      </section>
+            </div>
+          </div>
+        </section>
+      ))}
 
       {pendingRemoval && (() => {
         const activity = model.activities.find((a) => a.id === pendingRemoval.activityId)

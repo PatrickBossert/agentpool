@@ -61,23 +61,16 @@ describe('ValueChainGrid layout', () => {
     expect(screen.getByTestId('segment-band-2')).toHaveTextContent('2')
   })
 
-  it("shows each lane's party and its contribution count for the whole chain", () => {
-    // A single-segment fixture cannot discriminate a whole-chain count from a per-segment
-    // one - they agree whenever there is only one segment to count. TWO_SEGMENTS has sp
-    // contributing in both segment 1 (1.1) and segment 2 (2.1), so a per-segment count
-    // would read 1 in either segment's row while the whole-chain count reads 2.
+  it("shows each lane's party and its contribution count within that chain", () => {
+    // Deliberately the opposite of what this asserted before the chains were separated.
+    // A lane belongs to one chain now, so its count is that chain's - sp contributes once
+    // in chain 1 and once in chain 2, and each lane says 1 rather than both saying 2.
+    // A single-chain fixture cannot tell the two readings apart, so this uses TWO_SEGMENTS.
     render(<ValueChainGrid model={TWO_SEGMENTS} />)
-    expect(screen.getByTestId('lane-sp')).toHaveTextContent('SP-GS')
-    expect(screen.getByTestId('lane-iss')).toHaveTextContent('ISS')
-    expect(screen.getByTestId('lane-count-sp')).toHaveTextContent('2')
-    expect(screen.getByTestId('lane-count-iss')).toHaveTextContent('1')
-  })
-
-  it('labels every column with its position number, so a gap is legible as a position', () => {
-    render(<ValueChainGrid model={MODEL} />)
-    for (const column of [10, 20, 30, 40]) {
-      expect(screen.getByTestId(`column-header-1-${column}`)).toHaveTextContent(String(column))
-    }
+    expect(screen.getByTestId('lane-1-sp')).toHaveTextContent('SP-GS')
+    expect(screen.getByTestId('lane-1-iss')).toHaveTextContent('ISS')
+    expect(screen.getByTestId('lane-count-1-sp')).toHaveTextContent('1')
+    expect(screen.getByTestId('lane-count-2-sp')).toHaveTextContent('1')
   })
 
   it('renders an unoccupied column as an empty cell rather than collapsing it', () => {
@@ -315,12 +308,7 @@ const TWO_SEGMENTS: ValueChainModel = {
   tasks: [], propositions: [], links: [],
 }
 
-describe('the continuous chain', () => {
-  it('renders one grid for the whole chain, not one per segment', () => {
-    render(<ValueChainGrid model={TWO_SEGMENTS} />)
-    expect(screen.getAllByTestId(/^chain-grid$/)).toHaveLength(1)
-  })
-
+describe('a chain block', () => {
   it('names each segment in a band above its own columns', () => {
     render(<ValueChainGrid model={TWO_SEGMENTS} />)
     expect(screen.getByTestId('segment-band-1')).toHaveTextContent('Property')
@@ -335,14 +323,6 @@ describe('the continuous chain', () => {
     expect(screen.getByTestId('cell-2-sp-10')).toContainElement(screen.getByTestId('card-2.1-sp'))
   })
 
-  it('gives every party a row across the whole chain, even where it does nothing', () => {
-    // ISS contributes only in segment 1. The per-segment grids gave it no row in segment 2
-    // at all; here its absence is visible as empty cells.
-    render(<ValueChainGrid model={TWO_SEGMENTS} />)
-    expect(screen.getByTestId('lane-iss')).toBeInTheDocument()
-    expect(screen.getByTestId('cell-2-iss-10')).toBeInTheDocument()
-    expect(screen.getByTestId('cell-2-iss-10')).toHaveTextContent('')
-  })
 })
 
 describe('a cell holding more than one contribution', () => {
@@ -465,7 +445,7 @@ describe('zoom', () => {
   it('scales the grid down when zoomed out', () => {
     render(<ValueChainGrid model={TWO_SEGMENTS} />)
     fireEvent.click(screen.getByTestId('zoom-out'))
-    expect(screen.getByTestId('chain-grid')).toHaveStyle({ transform: 'scale(0.8)' })
+    expect(screen.getByTestId('chain-grid-1')).toHaveStyle({ transform: 'scale(0.8)' })
   })
 
   it('keeps cards interactive after zooming', () => {
@@ -489,5 +469,93 @@ describe('zoom', () => {
     render(<ValueChainGrid model={TWO_SEGMENTS} />)
     for (let i = 0; i < 10; i++) fireEvent.click(screen.getByTestId('zoom-in'))
     expect(screen.getByTestId('zoom-level')).toHaveTextContent('140%')
+  })
+})
+
+// Three genuine value chains with different parties in each. A fixture where every party
+// contributes everywhere cannot tell "lanes for the parties in this chain" from "lanes for
+// every party", and a single-chain fixture cannot tell a stacked layout from a side-by-side
+// one - the two questions this block exists to answer.
+const THREE_CHAINS: ValueChainModel = {
+  model_version: 1,
+  parties: [
+    { id: 'GSUK', label: 'GS UK', colour: '#1a5276' },
+    { id: 'ISS', label: 'ISS', colour: '#c0392b' },
+    { id: 'DXI', label: 'DXI', colour: '#27ae60' },
+  ],
+  segments: [
+    { id: '1', label: 'Property' },
+    { id: '2', label: 'Fleet' },
+    { id: '3', label: 'Support Services' },
+  ],
+  activities: [
+    { id: '1.1', segment_id: '1', label: 'Strategy' },
+    { id: '1.2', segment_id: '1', label: 'Works Delivery' },
+    { id: '2.1', segment_id: '2', label: 'Fleet Strategy' },
+    { id: '2.2', segment_id: '2', label: 'Fleet Maintenance' },
+    { id: '3.1', segment_id: '3', label: 'Technology' },
+  ],
+  contributions: [
+    { activity_id: '1.1', party_id: 'GSUK', column: 10, attribution: 'stated' },
+    { activity_id: '1.2', party_id: 'ISS', column: 20, attribution: 'stated' },
+    { activity_id: '2.1', party_id: 'GSUK', column: 10, attribution: 'stated' },
+    { activity_id: '2.2', party_id: 'DXI', column: 20, attribution: 'stated' },
+    { activity_id: '3.1', party_id: 'GSUK', column: 10, attribution: 'stated' },
+  ],
+  tasks: [], propositions: [], links: [],
+}
+
+describe('the chains stack', () => {
+  it('renders one block per chain, each with its own columns', () => {
+    render(<ValueChainGrid model={THREE_CHAINS} />)
+    for (const id of ['1', '2', '3']) {
+      expect(screen.getByTestId(`chain-grid-${id}`)).toBeInTheDocument()
+    }
+    // Not one continuous run: side by side, Fleet sits beyond the whole of Property.
+    expect(screen.queryByTestId('chain-grid')).toBeNull()
+  })
+
+  it('gives a chain lanes only for the parties that contribute in it', () => {
+    render(<ValueChainGrid model={THREE_CHAINS} />)
+    expect(screen.getByTestId('lane-1-ISS')).toBeInTheDocument()
+    // ISS does no fleet work. An empty lane would say so, and the decision is that it
+    // should not be said - this view is for flow and who does what, in what order.
+    expect(screen.queryByTestId('lane-2-ISS')).toBeNull()
+    expect(screen.queryByTestId('lane-3-ISS')).toBeNull()
+    expect(screen.getByTestId('lane-2-DXI')).toBeInTheDocument()
+    expect(screen.queryByTestId('lane-1-DXI')).toBeNull()
+    // GS UK is in all three, so a lane per chain rather than one spanning them.
+    for (const id of ['1', '2', '3']) {
+      expect(screen.getByTestId(`lane-${id}-GSUK`)).toBeInTheDocument()
+    }
+  })
+
+  it('names each chain above its own block, number first', () => {
+    render(<ValueChainGrid model={THREE_CHAINS} />)
+    expect(screen.getByTestId('segment-band-2')).toHaveTextContent('2')
+    expect(screen.getByTestId('segment-band-2')).toHaveTextContent('Fleet')
+  })
+
+  it('columns restart at the left in every chain', () => {
+    render(<ValueChainGrid model={THREE_CHAINS} />)
+    // Each chain has its own column 10. Side by side these would be one physical column
+    // per chain laid end to end; stacked, each chain starts again at its own first.
+    for (const id of ['1', '2', '3']) {
+      expect(screen.getByTestId(`cell-${id}-GSUK-10`)).toBeInTheDocument()
+    }
+  })
+
+  it('shows no column ruler, while still rendering an unoccupied column as a gap', () => {
+    // The ruler goes; the gap does not. A column nobody occupies is a real position in the
+    // flow, and removing the header must not remove the cell.
+    const gapped = structuredClone(THREE_CHAINS)
+    gapped.activities.push({ id: '1.3', segment_id: '1', label: 'Later' })
+    gapped.contributions.push({
+      activity_id: '1.3', party_id: 'GSUK', column: 30, attribution: 'stated',
+    })
+    render(<ValueChainGrid model={gapped} />)
+    expect(screen.queryAllByTestId(/^column-header-/)).toHaveLength(0)
+    expect(screen.getByTestId('cell-1-GSUK-20')).toBeInTheDocument()
+    expect(screen.getByTestId('cell-1-GSUK-20')).toHaveTextContent('')
   })
 })
