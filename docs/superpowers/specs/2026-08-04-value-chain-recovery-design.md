@@ -158,6 +158,44 @@ never an existing ID carrying a new label.
 Without it, "review and add detail" can renumber the chain a third time. The instruction-only
 discipline has now failed on IDs, on column uniqueness, and on the L1 axis, in a single run.
 
+### Card presentation
+
+The cards are washed out: `bg-surface-card` is `#ffffff` and the page `surface.DEFAULT` is
+`#f9fafb`, a two per cent difference, and SP24a's resting border is `border-surface` - which
+resolves to that same page background. **The card's edge is currently drawn in the colour of
+the thing it is meant to separate from.** The palette has no border token at all and no dark
+mode, so there is nothing in the scale to draw an edge with.
+
+- A `surface.border` token is added and the card uses it, with a shadow. Selection continues
+  to change the border's **colour** rather than adding an edge, which was SP24a's rule and
+  remains right.
+- **Cards are a fixed, uniform height** - a two-line header, three description lines, three
+  activity lines and the controls row. Uniform height is what lets a party's row read
+  straight across; today the tallest card in a row sets every cell's height.
+- **At most three `n.n.n` activities are listed.** Where there are more, the remainder is
+  **counted, not silently dropped** - a bare truncation reads as "this contribution has three
+  activities", which is a false statement rather than a shortened one. No contribution in the
+  current model has more than three, so this is a guard rather than a common case.
+
+### The card shows, the dialog edits
+
+Selection of an individual activity **moves off the card and into the dialog**. The card's
+activity lines become plain text: number, then the opening of the label or description.
+
+A **pencil control** on the card opens the dialog, which becomes editable - the `n.n` stage
+and its `n.n.n` activities can both be changed there. It is the single way in; the card header
+keeps drag and keyboard movement and no longer opens anything. *(If you want the header to
+keep opening the dialog as well, say so - it is one line, and I have chosen the single entry
+point because two controls opening one dialog invites the question of how they differ.)*
+
+**The parties editor stays on the card**, where the lane it acts on is visible.
+
+This **removes part of SP24a**, shipped two days ago: the card's activity lines were clickable
+and carried a `taskId` up through `onSelect` so the dialog could open highlighted on the one
+clicked. With the lines no longer interactive that plumbing has no producer, so it goes rather
+than lingering as unreachable code. Recording it as a decision, not an oversight - the
+mechanism worked, and the interaction model changed out from under it.
+
 ---
 
 ## What this does not change
@@ -189,6 +227,23 @@ rendering of collisions, the contribution model, or the API.
   lanes for all parties" give the same answer.
 - No column header renders the raw position, and an unoccupied column between two occupied
   ones still renders as an empty cell. Removing the ruler must not remove the gap.
+
+**Card presentation:**
+- The card's resting border is not the page background colour. Asserting that *some* border
+  class is present is what let the current defect through - SP24a's test asserted
+  `border-surface` and passed while the edge was invisible. The assertion has to be that the
+  border differs from `surface.DEFAULT`.
+- Two cards with different amounts of content have the same height. A fixture where both
+  contributions carry one activity and a short description cannot distinguish a fixed height
+  from a coincidence.
+- A contribution with five activities renders three lines and states that two more exist. The
+  count is the assertion - "renders three lines" alone is equally true of silent truncation.
+
+**The card shows, the dialog edits:**
+- The card's activity lines are not interactive: no button, no handler.
+- The pencil opens the dialog; the card header does not.
+- An activity's label edited in the dialog reaches the model, and the field is controlled -
+  the same `defaultValue` defence that guards the card's description guards this one.
 
 **ID enforcement:**
 - A model reusing an existing ID for a different label is refused, and the returned string
