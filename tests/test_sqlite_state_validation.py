@@ -214,3 +214,84 @@ def test_the_real_agent_written_model_would_have_been_refused():
 
     assert "Written to" not in result
     assert "5.1" in result
+
+
+def _no_model_written() -> tuple[list, int]:
+    """The evidence a refused write leaves: no file under any name, and no output row."""
+    from api.config import get_settings
+
+    outputs_dir = Path(get_settings().projects_dir) / SLUG / "outputs"
+    files = list(outputs_dir.glob("value_chain_model*.json"))
+
+    conn = sqlite3.connect(str(Path(get_settings().database_dir) / f"{SLUG}.db"))
+    try:
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM agent_outputs WHERE output_type=?",
+            ("value_chain_model",),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return files, rows
+
+
+def _write_registry(tool: SQLiteStateTool, label: str) -> None:
+    """Register 1.1 as meaning `label`, through the tool so the _vN rename happens."""
+    tool._run(
+        operation="write",
+        key="value_chain_registry",
+        agent_name="value_chain_mapper",
+        value=json.dumps(
+            {
+                "schema_version": 2,
+                "activities": [
+                    {"id": "1", "label": "Segment", "level": "L1", "active": True},
+                    {"id": "1.1", "label": label, "level": "L2", "active": True,
+                     "parent_id": "1"},
+                ],
+            }
+        ),
+    )
+
+
+def test_a_model_reusing_a_registered_id_is_refused_and_no_row_is_recorded():
+    """The registry is the ID authority. 1.1 already means one thing; a model arriving
+    with a different label for it is renaming a stable ID, which is what happened 14
+    times in one run under an instruction that forbade it."""
+    tool = SQLiteStateTool(slug=SLUG)
+    _write_registry(tool, "Fleet Strategy & Policy Setting")
+
+    result = tool._run(
+        operation="write", key="value_chain_model",
+        agent_name="value_chain_mapper", value=json.dumps(_valid_model()),
+    )
+
+    assert "Written to" not in result
+    # Both labels: the agent's correction is to take a different id for the new thing,
+    # and it cannot do that without being told what the id already means.
+    assert "Fleet Strategy & Policy Setting" in result
+    assert "1.1" in result
+    files, rows = _no_model_written()
+    assert files == [] and rows == 0
+
+
+def test_a_model_agreeing_with_the_registry_is_written():
+    tool = SQLiteStateTool(slug=SLUG)
+    _write_registry(tool, "A")
+
+    result = tool._run(
+        operation="write", key="value_chain_model",
+        agent_name="value_chain_mapper", value=json.dumps(_valid_model()),
+    )
+
+    assert "Written to" in result
+
+
+def test_a_model_is_written_when_no_registry_exists_yet():
+    """A first run has nothing to check against and must not be blocked by its absence."""
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="value_chain_model",
+        agent_name="value_chain_mapper", value=json.dumps(_valid_model()),
+    )
+
+    assert "Written to" in result

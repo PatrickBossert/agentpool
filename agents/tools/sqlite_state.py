@@ -16,12 +16,31 @@ from agents.tools._db import insert_agent_output_sync, latest_output_path
 # This does not replace save_model's validation: a person editing in the grid can also
 # construct an invalid model, and that path must keep refusing. The two guard different
 # writers.
-def _validate_value_chain_model(parsed: dict) -> list[str]:
-    from api.services.value_chain_model import validate_model
-    return validate_model(parsed)
+def _validate_value_chain_model(parsed: dict, slug: str) -> list[str]:
+    from api.services.value_chain_model import validate_against_registry, validate_model
+
+    problems = validate_model(parsed)
+
+    # The registry is the ID authority, and it lives on disk - which is why the comparison
+    # itself is pure and the load happens here. Every stable ID shared by the migrated model
+    # and the agent's rebuild had been reused for a different activity, 14 of 14, under an
+    # instruction that forbade it.
+    settings = get_settings()
+    registry_path = latest_output_path(
+        Path(settings.projects_dir) / slug / "outputs" / "value_chain_registry.json"
+    )
+    if registry_path is not None:
+        try:
+            registry = json.loads(registry_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            # A registry that cannot be read is not a reason to refuse a model - that would
+            # block every write on a corrupt sidecar. The structural checks above still ran.
+            registry = {}
+        problems.extend(validate_against_registry(parsed, registry))
+    return problems
 
 
-_VALIDATORS: dict[str, Callable[[dict], list[str]]] = {
+_VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
     "value_chain_model": _validate_value_chain_model,
 }
 
@@ -69,7 +88,7 @@ class SQLiteStateTool(BaseTool):
                         f"Fix these and write it again: value must be a JSON object, "
                         f"got {type(parsed).__name__}."
                     )
-                problems = validator(parsed)
+                problems = validator(parsed, self.slug)
                 if problems:
                     return (
                         f"Error: {key} was not written - it is structurally invalid. "

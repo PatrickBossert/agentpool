@@ -13,6 +13,7 @@ from api.services.value_chain_model import (
     contribution_key,
     empty_model,
     next_column,
+    validate_against_registry,
     validate_model,
 )
 
@@ -380,3 +381,97 @@ def test_alignment_and_lane_uniqueness_are_separate_rules():
     problems = validate_model(model)
     assert len(problems) == 1
     assert "is split across columns" not in problems[0]
+
+
+# ---------------------------------------------------------------------------
+# The registry as an ID authority.
+#
+# Every stable ID appearing in both the migrated model and Alex's rebuild was reused for a
+# different activity - 14 of 14. The instruction forbidding it has now failed twice, so the
+# comparison lives here, pure, and the caller supplies the registry.
+# ---------------------------------------------------------------------------
+
+
+def _registry(*entries: tuple[str, str, str]) -> dict:
+    return {
+        "schema_version": 2,
+        "activities": [
+            {"id": i, "label": l, "level": v, "active": True} for i, l, v in entries
+        ],
+    }
+
+
+def _named_model() -> dict:
+    return {
+        "model_version": 1,
+        "parties": [{"id": "GSUK"}],
+        "segments": [{"id": "1", "label": "Property"}],
+        "activities": [{"id": "1.1", "segment_id": "1", "label": "Strategy"}],
+        "contributions": [
+            {"activity_id": "1.1", "party_id": "GSUK", "column": 10, "attribution": "stated"}
+        ],
+        "tasks": [{"id": "1.1.1", "activity_id": "1.1", "party_id": "GSUK", "label": "Set it"}],
+        "propositions": [],
+        "links": [],
+    }
+
+
+def test_a_model_matching_the_registry_has_no_problems():
+    registry = _registry(
+        ("1", "Property", "L1"), ("1.1", "Strategy", "L2"), ("1.1.1", "Set it", "L3")
+    )
+    assert validate_against_registry(_named_model(), registry) == []
+
+
+def test_reusing_an_id_for_a_different_activity_is_refused():
+    registry = _registry(
+        ("1", "Property", "L1"),
+        ("1.1", "Fleet Strategy & Policy Setting", "L2"),
+        ("1.1.1", "Set it", "L3"),
+    )
+    problems = validate_against_registry(_named_model(), registry)
+    assert len(problems) == 1
+    # Both labels, because the agent's correction is to pick a different id for the new
+    # thing - and it cannot do that without being told what the id already means.
+    assert "1.1" in problems[0]
+    assert "Fleet Strategy & Policy Setting" in problems[0]
+    assert "Strategy" in problems[0]
+
+
+def test_a_genuinely_new_id_is_accepted_so_the_chain_can_grow():
+    registry = _registry(
+        ("1", "Property", "L1"), ("1.1", "Strategy", "L2"), ("1.1.1", "Set it", "L3")
+    )
+    model = _named_model()
+    model["activities"].append({"id": "1.2", "segment_id": "1", "label": "Acquisition"})
+    model["contributions"].append(
+        {"activity_id": "1.2", "party_id": "GSUK", "column": 20, "attribution": "stated"}
+    )
+    assert validate_against_registry(model, registry) == []
+
+
+def test_an_id_registered_at_another_level_is_refused():
+    # "1.1" as an L3 is not the same claim as "1.1" as an L2, and silently accepting it
+    # would let a task and an activity share an id.
+    registry = _registry(("1", "Property", "L1"), ("1.1", "Strategy", "L3"))
+    problems = validate_against_registry(_named_model(), registry)
+    assert any("1.1" in p and "L3" in p for p in problems)
+
+
+def test_an_empty_registry_accepts_anything_so_a_first_run_is_not_blocked():
+    assert validate_against_registry(_named_model(), {"activities": []}) == []
+
+
+def test_a_task_carrying_no_label_is_not_reported_as_renamed():
+    # Live tasks carry a description and no label; every registry entry carries a label.
+    # Comparing the two reported all 48 tasks of the real model as renamed, against a
+    # registry written by the same run. Every fixture in this file gives tasks a label, so
+    # only a fixture shaped like the live data can catch it.
+    registry = _registry(
+        ("1", "Property", "L1"), ("1.1", "Strategy", "L2"), ("1.1.1", "Set it", "L3")
+    )
+    model = _named_model()
+    model["tasks"] = [
+        {"id": "1.1.1", "activity_id": "1.1", "party_id": "GSUK", "description": "Set it up"}
+    ]
+    assert validate_against_registry(model, registry) == []

@@ -72,6 +72,51 @@ def next_column(model: dict, segment_id: str, party_id: str) -> int:
     return (max(columns) + COLUMN_STEP) if columns else COLUMN_STEP
 
 
+# Which model array each registry level governs. An entry's level is a claim about what
+# kind of thing an id names, so an id registered as an L3 cannot arrive as an activity.
+_LEVEL_ARRAYS = (("L1", "segments"), ("L2", "activities"), ("L3", "tasks"))
+
+
+def validate_against_registry(model: dict, registry: dict) -> list[str]:
+    """Every way this model contradicts the registry's ID ledger.
+
+    Pure - the caller loads the registry, because this module does no I/O. An id already in
+    the ledger must still name the same thing; an id absent from it is a genuine addition
+    and is allowed, so the chain can still grow. An empty ledger accepts anything, which is
+    what a first run needs and what a project with no registry yet must not be blocked by.
+    """
+    problems: list[str] = []
+    known = {
+        entry.get("id"): (entry.get("level"), entry.get("label"))
+        for entry in registry.get("activities", [])
+    }
+    if not known:
+        return problems
+
+    for level, array in _LEVEL_ARRAYS:
+        for item in model.get(array, []):
+            registered = known.get(item.get("id"))
+            if registered is None:
+                continue
+            registered_level, registered_label = registered
+            if registered_level != level:
+                problems.append(
+                    f"{array[:-1]} {item.get('id')} is registered as a {registered_level}, "
+                    f"not a {level} - use an unused id for it"
+                )
+            # Both labels must actually be present to disagree. Live tasks carry a
+            # description and no label at all, while every registry entry has one, so
+            # comparing an absent label against a present one reported every task in the
+            # model as renamed - 48 of 48 on the real file, against a registry written by
+            # the same run. An item that states no label states nothing to contradict.
+            elif registered_label and item.get("label") and item["label"] != registered_label:
+                problems.append(
+                    f"id {item.get('id')} already means {registered_label!r} and cannot be "
+                    f"reused for {item.get('label')!r} - take the next unused number instead"
+                )
+    return problems
+
+
 def validate_model(model: dict) -> list[str]:
     """Every problem with this model, as readable sentences. Empty means valid.
 
