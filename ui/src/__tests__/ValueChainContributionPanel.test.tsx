@@ -82,10 +82,10 @@ describe('ValueChain contribution panel wiring', () => {
   it('selecting a card in the grid shows that contribution in the panel', async () => {
     await openStructureTab()
 
-    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
 
     const panel = screen.getByTestId('contribution-panel')
-    expect(panel).toHaveTextContent('Log the fault')
+    expect(screen.getByTestId('edit-task-label-t1')).toHaveValue('Log the fault')
     expect(panel).toHaveTextContent('Raise a ticket')
     expect(panel).toHaveTextContent('Faster turnaround')
     expect(panel).toHaveTextContent('SP-GS')
@@ -94,17 +94,17 @@ describe('ValueChain contribution panel wiring', () => {
   it('is keyboard reachable: focusing and activating the select control with the keyboard selects it', async () => {
     await openStructureTab()
 
-    const selectControl = screen.getByTestId('card-header-1.1-sp')
+    const selectControl = screen.getByTestId('edit-1.1-sp')
     selectControl.focus()
     await userEvent.keyboard('{Enter}')
 
-    expect(screen.getByTestId('contribution-panel')).toHaveTextContent('Log the fault')
+    expect(screen.getByTestId('edit-task-label-t1')).toHaveValue('Log the fault')
   })
 
   it('shows the empty state, not a blank region, for a contribution with no tasks', async () => {
     await openStructureTab()
 
-    await userEvent.click(screen.getByTestId('card-header-1.2-sp'))
+    await userEvent.click(screen.getByTestId('edit-1.2-sp'))
 
     const panel = screen.getByTestId('contribution-panel')
     expect(panel).toHaveTextContent(/no tasks recorded/i)
@@ -122,17 +122,17 @@ describe('ValueChain contribution panel wiring', () => {
     expect(screen.queryByTestId('contribution-panel')).not.toBeInTheDocument()
   })
 
-  it('opens as a dialog when a card header is activated', async () => {
+  it('opens as a dialog when the pencil is activated', async () => {
     await openStructureTab()
-    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    await userEvent.click(await screen.findByTestId('edit-1.1-sp'))
 
-    const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveTextContent('Log the fault')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-task-label-t1')).toHaveValue('Log the fault')
   })
 
   it('closes on the close control', async () => {
     await openStructureTab()
-    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    await userEvent.click(await screen.findByTestId('edit-1.1-sp'))
     await userEvent.click(screen.getByTestId('close-contribution-panel'))
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -140,7 +140,7 @@ describe('ValueChain contribution panel wiring', () => {
 
   it('closes on Escape', async () => {
     await openStructureTab()
-    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    await userEvent.click(await screen.findByTestId('edit-1.1-sp'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
 
     await userEvent.keyboard('{Escape}')
@@ -150,7 +150,7 @@ describe('ValueChain contribution panel wiring', () => {
 
   it('closes when the backdrop is clicked', async () => {
     await openStructureTab()
-    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    await userEvent.click(await screen.findByTestId('edit-1.1-sp'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('contribution-panel-backdrop'))
@@ -160,7 +160,7 @@ describe('ValueChain contribution panel wiring', () => {
 
   it('stays open when something inside the dialog body is clicked', async () => {
     await openStructureTab()
-    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    await userEvent.click(await screen.findByTestId('edit-1.1-sp'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
 
     // A real, non-interactive element inside the dialog body - not the close control,
@@ -174,53 +174,72 @@ describe('ValueChain contribution panel wiring', () => {
     // Tasks belong to the contribution, so opening ISS's card on a jointly-delivered
     // activity must not show SP-GS's tasks.
     await openStructureTab()
-    await userEvent.click(await screen.findByTestId('card-header-1.1-sp'))
+    await userEvent.click(await screen.findByTestId('edit-1.1-sp'))
 
-    const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveTextContent('Log the fault')
-    expect(dialog).not.toHaveTextContent('Execute repair')
+    // Asserted on which task rows exist, not on text: with the labels in inputs, a
+    // not.toHaveTextContent assertion would pass whatever the dialog held.
+    expect(screen.getByTestId('task-t1')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-t4')).toBeNull()
   })
 
-  it('opens on the activity clicked from a card, not on the first one', async () => {
-    await openStructureTab()
 
-    // The middle of three, deliberately: clicking either end would pass against an
-    // implementation that always highlights the first.
-    await userEvent.click(screen.getByTestId('task-line-t2-sp'))
-
-    expect(screen.getByTestId('task-t2')).toHaveClass('border-brand')
-    expect(screen.getByTestId('task-t1')).not.toHaveClass('border-brand')
-    expect(screen.getByTestId('task-t3')).not.toHaveClass('border-brand')
-  })
-
-  it('highlights nothing when the dialog was opened from the card header', async () => {
-    await openStructureTab()
-
-    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
-
-    for (const id of ['task-t1', 'task-t2', 'task-t3']) {
-      expect(screen.getByTestId(id)).not.toHaveClass('border-brand')
-    }
-  })
 
   it('leads each activity with its number, then its label when there is one', async () => {
     await openStructureTab()
-    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
 
     // t1 has a label. The old `label ?? id` fallback rendered the label alone and dropped
     // the number - invisible only for as long as no task carries a label.
     expect(screen.getByTestId('task-t1')).toHaveTextContent('t1')
-    expect(screen.getByTestId('task-t1')).toHaveTextContent('Log the fault')
-    // t2 has none: the number still leads, and the description follows it.
+    expect(screen.getByTestId('edit-task-label-t1')).toHaveValue('Log the fault')
+    // t2 has none: the number still leads, and the description stands in for the label.
     expect(screen.getByTestId('task-t2')).toHaveTextContent('t2')
-    expect(screen.getByTestId('task-t2')).toHaveTextContent('Assess the damage')
+    expect(screen.getByTestId('edit-task-label-t2')).toHaveValue('Assess the damage')
   })
 
   it('leads the dialog heading with the activity number', async () => {
     await openStructureTab()
-    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
 
     expect(screen.getByRole('heading', { name: /^1\.1 Reactive/ })).toBeInTheDocument()
+  })
+})
+
+describe('the dialog edits', () => {
+  it('edits the stage label and the change reaches the model', async () => {
+    await openStructureTab()
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
+
+    const field = screen.getByTestId('edit-activity-label-1.1')
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Reactive Repair')
+
+    // Controlled, never defaultValue - the same defence that guards the card's
+    // description. An uncontrolled field shows every keystroke and loses them all on save,
+    // which is how this class of defect corrupted saved data once already.
+    expect(field).toHaveValue('Reactive Repair')
+  })
+
+  it('edits an activity label and the change reaches the model', async () => {
+    await openStructureTab()
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
+
+    const field = screen.getByTestId('edit-task-label-t2')
+    await userEvent.type(field, '!')
+
+    expect(field).toHaveValue('Assess the damage!')
+  })
+
+  it('edits one activity without disturbing its siblings', async () => {
+    // A single-task contribution cannot tell "edits the one you typed in" from "edits
+    // whichever it finds first". t2 is the middle of SP-GS's three.
+    await openStructureTab()
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
+
+    await userEvent.type(screen.getByTestId('edit-task-label-t2'), '!')
+
+    expect(screen.getByTestId('edit-task-label-t1')).toHaveValue('Log the fault')
+    expect(screen.getByTestId('edit-task-label-t3')).toHaveValue('Close the job')
   })
 })
 
@@ -230,38 +249,25 @@ describe('the contribution panel and the keyboard', () => {
   it('names the activity in its accessible name, not only its ID', async () => {
     // "1.1 detail" is what a screen reader announced. The activity's label is in scope.
     await openStructureTab()
-    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
 
     expect(screen.getByRole('dialog')).toHaveAccessibleName(/Reactive/)
   })
 
   it('moves focus into the dialog when it opens', async () => {
     await openStructureTab()
-    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
 
     expect(screen.getByTestId('contribution-panel')).toHaveFocus()
   })
 
-  it('returns focus to the card that opened it when it closes', async () => {
+  it('returns focus to the pencil that opened it when it closes', async () => {
     await openStructureTab()
-    const opener = screen.getByTestId('card-header-1.1-sp')
+    const opener = screen.getByTestId('edit-1.1-sp')
     await userEvent.click(opener)
     await userEvent.click(screen.getByTestId('close-contribution-panel'))
 
     expect(opener).toHaveFocus()
   })
 
-  it('returns focus to the activity line that opened it, the second way in', async () => {
-    // The whole chain in one test: card task line -> onSelect's third argument ->
-    // selection.taskId -> the panel's highlightTaskId. Each half is unit-tested
-    // elsewhere; only this fails if the two halves are wired to different names.
-    await openStructureTab()
-    const opener = screen.getByTestId('task-line-t2-sp')
-    await userEvent.click(opener)
-    expect(screen.getByTestId('task-t2')).toHaveClass('border-brand')
-
-    await userEvent.click(screen.getByTestId('close-contribution-panel'))
-
-    expect(opener).toHaveFocus()
-  })
 })

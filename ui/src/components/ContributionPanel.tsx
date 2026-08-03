@@ -6,24 +6,30 @@
 // a modal dialog by the Structure tab, which owns whether it is mounted at all.
 import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
-import type { ValueChainModel } from '../utils/valueChainModel'
+import {
+  updateActivityLabel,
+  updateTaskLabel,
+  type ValueChainModel,
+} from '../utils/valueChainModel'
 
 export interface ContributionPanelProps {
   model: ValueChainModel
   activityId: string
   partyId: string
-  // Set when the dialog was opened by clicking one n.n.n activity on a card. Absent when
-  // the card header opened it, in which case nothing is highlighted.
-  highlightTaskId?: string
 }
 
 export function ContributionPanel({
   model,
   activityId,
   partyId,
-  highlightTaskId,
+  onChange,
   onClose,
-}: ContributionPanelProps & { onClose: () => void }) {
+}: ContributionPanelProps & {
+  // Absent means read-only, which is the same convention the card uses - no separate flag
+  // that could disagree with whether a handler exists.
+  onChange?: (model: ValueChainModel) => void
+  onClose: () => void
+}) {
   const activity = model.activities.find((a) => a.id === activityId)
   const party = model.parties.find((p) => p.id === partyId)
   const contribution = model.contributions.find(
@@ -44,15 +50,6 @@ export function ContributionPanel({
     dialog.current?.focus()
     return () => opener?.focus?.()
   }, [])
-
-  // A contribution's activities can run past the fold of a scrolling dialog, so the one
-  // that was clicked is brought into view rather than merely coloured somewhere below.
-  const highlighted = useRef<HTMLLIElement>(null)
-  useEffect(() => {
-    // Optional call: jsdom does not implement scrollIntoView. This is presentation, so a
-    // test environment without it should do nothing rather than throw.
-    highlighted.current?.scrollIntoView?.({ block: 'nearest' })
-  }, [highlightTaskId])
 
   return (
     <div
@@ -80,7 +77,17 @@ export function ContributionPanel({
         <div className="flex items-start justify-between gap-4">
           <h4 className="text-sm font-medium text-primary">
             <span className="font-mono text-muted">{activityId}</span>{' '}
-            {activity?.label ?? ''}
+            {onChange ? (
+              <input
+                type="text"
+                data-testid={`edit-activity-label-${activityId}`}
+                value={activity?.label ?? ''}
+                onChange={(e) => onChange(updateActivityLabel(model, activityId, e.target.value))}
+                className="bg-surface rounded px-2 py-1 text-sm text-primary"
+              />
+            ) : (
+              activity?.label ?? ''
+            )}
             {party && <span className="text-muted font-normal"> - {party.label}</span>}
           </h4>
           <button
@@ -103,28 +110,28 @@ export function ContributionPanel({
             <p className="text-muted text-xs italic">No tasks recorded for this contribution yet.</p>
           ) : (
             <ul className="space-y-2">
-              {tasks.map((task) => {
-                const isHighlighted = task.id === highlightTaskId
-                return (
-                  <li
-                    key={task.id}
-                    ref={isHighlighted ? highlighted : undefined}
-                    data-testid={`task-${task.id}`}
-                    // border-transparent is right here and wrong on a card: these are list
-                    // rows where a resting edge would be noise, and the border exists only
-                    // to carry the highlight.
-                    className={`rounded border p-2 ${
-                      isHighlighted ? 'border-brand' : 'border-transparent'
-                    }`}
-                  >
-                    <p className="text-sm font-medium text-primary">
-                      <span className="font-mono text-muted">{task.id}</span>
-                      {task.label ? ` ${task.label}` : ''}
-                    </p>
-                    {task.description && <p className="text-muted text-xs">{task.description}</p>}
-                  </li>
-                )
-              })}
+              {tasks.map((task) => (
+                <li key={task.id} data-testid={`task-${task.id}`} className="rounded p-2">
+                  <p className="text-sm font-medium text-primary flex items-baseline gap-2">
+                    <span className="font-mono text-muted shrink-0">{task.id}</span>
+                    {onChange ? (
+                      <input
+                        type="text"
+                        data-testid={`edit-task-label-${task.id}`}
+                        // Controlled, never defaultValue - the same defence that guards the
+                        // card's description. An uncontrolled field shows the keystroke and
+                        // loses it on save.
+                        value={task.label ?? task.description ?? ''}
+                        onChange={(e) => onChange(updateTaskLabel(model, task.id, e.target.value))}
+                        className="flex-1 min-w-0 bg-surface rounded px-2 py-1 text-sm text-primary"
+                      />
+                    ) : (
+                      <span>{task.label ?? ''}</span>
+                    )}
+                  </p>
+                  {task.description && <p className="text-muted text-xs mt-1">{task.description}</p>}
+                </li>
+              ))}
             </ul>
           )}
         </section>

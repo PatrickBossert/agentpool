@@ -90,8 +90,8 @@ export default function StructureTab({ slug }: { slug: string }) {
   // that shows it is rendered outside the grid.
   const [selectedContribution, setSelectedContribution] = useState<ValueChainSelection | null>(null)
 
-  function handleSelectContribution(activityId: string, partyId: string, taskId?: string) {
-    setSelectedContribution({ activityId, partyId, taskId })
+  function handleSelectContribution(activityId: string, partyId: string) {
+    setSelectedContribution({ activityId, partyId })
   }
 
   // Escape closes the panel from anywhere on the page, not just while it has focus -
@@ -219,7 +219,7 @@ export default function StructureTab({ slug }: { slug: string }) {
               model={editedModel}
               activityId={selectedContribution.activityId}
               partyId={selectedContribution.partyId}
-              highlightTaskId={selectedContribution.taskId}
+              onChange={handleModelChange}
               onClose={() => setSelectedContribution(null)}
             />
           )}

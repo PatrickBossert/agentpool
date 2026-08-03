@@ -8,7 +8,7 @@
 // The party menu's open/closed state lives in the grid, not here, keyed on this card's
 // (activityId, partyId) - one open menu at a time across the whole grid, so opening
 // another card's menu closes this one rather than leaving both showing at once.
-import { ChevronLeft, ChevronRight, Lightbulb, Sparkles, Users } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Lightbulb, Pencil, Sparkles, Users } from 'lucide-react'
 
 import {
   addParty,
@@ -55,7 +55,7 @@ export function ContributionCard({
   contribution: ValueChainContribution
   onChange?: (model: ValueChainModel) => void
   selected?: boolean
-  onSelect?: (activityId: string, partyId: string, taskId?: string) => void
+  onSelect?: (activityId: string, partyId: string) => void
   onRequestRemove?: (activityId: string, partyId: string) => void
   menuOpen?: boolean
   onToggleMenu?: () => void
@@ -92,7 +92,6 @@ export function ContributionCard({
             e.dataTransfer.setData('contributionPartyId', partyId)
             e.dataTransfer.effectAllowed = 'move'
           }}
-          onClick={() => onSelect?.(activityId, partyId)}
           onKeyDown={(e) => {
             if (!editable) return
             if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -152,6 +151,16 @@ export function ContributionCard({
           {propositionCount(model, activityId)}
         </span>
 
+        <button
+          type="button"
+          data-testid={`edit-${activityId}-${partyId}`}
+          aria-label={`${editable ? 'Edit' : 'Open'} ${activity.label}`}
+          onClick={() => onSelect?.(activityId, partyId)}
+          className="text-secondary hover:text-brand"
+        >
+          <Pencil className="w-3 h-3" aria-hidden="true" />
+        </button>
+
         {editable && (
           <span className="ml-auto flex items-center gap-1">
             <button
@@ -180,11 +189,11 @@ export function ContributionCard({
         <ul data-testid={`task-list-${activityId}-${partyId}`} className="mt-2 space-y-1">
           {tasks.slice(0, MAX_LISTED_TASKS).map((task) => (
             <li key={task.id}>
-              <button
-                type="button"
+              {/* Text, not a control. Selecting one activity moved into the dialog, where
+                  it can also be edited - so the card shows and the dialog edits. */}
+              <span
                 data-testid={`task-line-${task.id}-${partyId}`}
-                onClick={() => onSelect?.(activityId, partyId, task.id)}
-                className="flex w-full items-baseline gap-2 text-left text-xs text-secondary hover:text-brand"
+                className="flex w-full items-baseline gap-2 text-left text-xs text-secondary"
               >
                 <span className="font-mono text-muted shrink-0">{task.id}</span>
                 {/* No task in the live model carries a label - only a description - while
@@ -198,7 +207,7 @@ export function ContributionCard({
                 <span className="truncate min-w-0">
                   {task.label ?? task.description ?? ''}
                 </span>
-              </button>
+              </span>
             </li>
           ))}
         </ul>

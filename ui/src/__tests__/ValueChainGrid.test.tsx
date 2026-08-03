@@ -201,20 +201,6 @@ describe('ContributionCard content', () => {
     expect(screen.queryByTestId('task-list-1.2-sp')).toBeNull()
   })
 
-  it('reports the clicked activity upwards, not just its contribution', async () => {
-    const seen: Array<[string, string, string | undefined]> = []
-    render(<ValueChainGrid model={MODEL} onSelect={(a, p, t) => seen.push([a, p, t])} />)
-    await userEvent.click(screen.getByTestId('task-line-1.1.2-sp'))
-    expect(seen).toEqual([['1.1', 'sp', '1.1.2']])
-  })
-
-  it('reports no activity when the card header is clicked', async () => {
-    const seen: Array<[string, string, string | undefined]> = []
-    render(<ValueChainGrid model={MODEL} onSelect={(a, p, t) => seen.push([a, p, t])} />)
-    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
-    expect(seen).toEqual([['1.1', 'sp', undefined]])
-  })
-
   it('marks a derived attribution and leaves a stated one unmarked', () => {
     render(<ValueChainGrid model={MODEL} />)
     expect(screen.getByTestId('derived-1.5-iss')).toBeInTheDocument()
@@ -593,5 +579,25 @@ describe('the card is a fixed size', () => {
     render(<ValueChainGrid model={MODEL} />)
     expect(screen.getByTestId('task-list-1.1-sp')).toBeInTheDocument()
     expect(screen.queryByTestId('task-overflow-1.1-sp')).toBeNull()
+  })
+})
+
+describe('the card shows, the dialog edits', () => {
+  it('renders activity lines as text, not as controls', () => {
+    render(<ValueChainGrid model={MODEL} onSelect={() => {}} />)
+    const line = screen.getByTestId('task-line-1.1.1-sp')
+    expect(line.tagName).not.toBe('BUTTON')
+    expect(line.closest('button')).toBeNull()
+  })
+
+  it('opens the dialog from the pencil, and not from the card header', async () => {
+    const seen: Array<[string, string]> = []
+    render(<ValueChainGrid model={MODEL} onChange={() => {}} onSelect={(a, p) => seen.push([a, p])} />)
+    // The header keeps drag and keyboard movement; it no longer opens anything, so one
+    // control opens the dialog rather than two that would have to differ somehow.
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+    expect(seen).toEqual([])
+    await userEvent.click(screen.getByTestId('edit-1.1-sp'))
+    expect(seen).toEqual([['1.1', 'sp']])
   })
 })

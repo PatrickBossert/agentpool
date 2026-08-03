@@ -189,10 +189,6 @@ export function updateDescription(
 export interface ValueChainSelection {
   activityId: string
   partyId: string
-  // Set when the selection came from clicking one n.n.n activity on a card, so the detail
-  // dialog can open on that activity. Absent when the card header opened it, which selects
-  // the contribution without singling out any of its activities.
-  taskId?: string
 }
 
 // A contribution's identity is the composite (activity_id, party_id) - deliberately not a
@@ -341,4 +337,28 @@ export function partiesNotContributing(
     model.contributions.filter((c) => c.activity_id === activityId).map((c) => c.party_id),
   )
   return model.parties.filter((p) => !contributing.has(p.id))
+}
+
+// Editing an activity's own label, and a task's, from the detail dialog. Non-mutating like
+// every other operation here: the caller holds the model and replaces it with the result.
+export function updateActivityLabel(
+  model: ValueChainModel,
+  activityId: string,
+  label: string,
+): ValueChainModel {
+  const next = structuredClone(model)
+  const activity = next.activities.find((a) => a.id === activityId)
+  if (activity) activity.label = label
+  return next
+}
+
+export function updateTaskLabel(
+  model: ValueChainModel,
+  taskId: string,
+  label: string,
+): ValueChainModel {
+  const next = structuredClone(model)
+  const task = next.tasks.find((t) => t.id === taskId)
+  if (task) task.label = label
+  return next
 }

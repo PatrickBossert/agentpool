@@ -56,7 +56,7 @@ export function ValueChainGrid({
   model: ValueChainModel
   onChange?: (model: ValueChainModel) => void
   selected?: ValueChainSelection | null
-  onSelect?: (activityId: string, partyId: string, taskId?: string) => void
+  onSelect?: (activityId: string, partyId: string) => void
 }) {
   // Which party is currently being dragged, and which cell the pointer is over - both
   // derived here, at the grid, rather than read fresh from dataTransfer in every cell's
