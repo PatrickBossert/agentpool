@@ -320,3 +320,63 @@ def test_the_real_agent_written_model_reports_its_five_way_collision():
     assert len(collision) == 1
     for activity in ("5.1", "5.2", "5.3", "5.4", "5.5"):
         assert activity in collision[0]
+
+
+# ---------------------------------------------------------------------------
+# Alignment: one activity, one column.
+#
+# Distinct from lane uniqueness, which is about one *party* across many activities. This is
+# about one *activity* across many parties. A model can break either alone, and a message
+# naming the wrong one sends the reader to the wrong place.
+# ---------------------------------------------------------------------------
+
+
+def _joint_model(columns: dict[str, int]) -> dict:
+    """One activity, one party per entry in `columns`, each at the column given."""
+    return {
+        "model_version": 1,
+        "parties": [{"id": p} for p in columns],
+        "segments": [{"id": "1", "label": "Property"}],
+        "activities": [{"id": "1.1", "segment_id": "1", "label": "Strategy"}],
+        "contributions": [
+            {"activity_id": "1.1", "party_id": p, "column": c, "attribution": "stated"}
+            for p, c in columns.items()
+        ],
+        "tasks": [],
+        "propositions": [],
+        "links": [],
+    }
+
+
+def test_two_parties_on_one_activity_may_share_a_column():
+    assert validate_model(_joint_model({"GSUK": 10, "ISS": 10})) == []
+
+
+def test_two_parties_on_one_activity_may_not_sit_in_different_columns():
+    problems = validate_model(_joint_model({"GSUK": 40, "ISS": 30}))
+    assert len(problems) == 1
+    # The reader's next action is to move one of them, so the message has to name which
+    # parties and which columns. "activity 1.1 is misaligned" would not be actionable.
+    assert "1.1" in problems[0]
+    assert "GSUK" in problems[0] and "ISS" in problems[0]
+    assert "40" in problems[0] and "30" in problems[0]
+
+
+def test_a_split_activity_is_reported_once_naming_every_party():
+    # Three parties in three columns is one problem, not two or three. A two-party fixture
+    # cannot tell "report once per activity" from "report once per extra party".
+    problems = validate_model(_joint_model({"GSUK": 10, "ISS": 20, "DXI": 30}))
+    assert len(problems) == 1
+    assert all(p in problems[0] for p in ("GSUK", "ISS", "DXI"))
+
+
+def test_alignment_and_lane_uniqueness_are_separate_rules():
+    # One party holding two columns in one segment breaks lane uniqueness, not alignment.
+    model = _joint_model({"GSUK": 10})
+    model["activities"].append({"id": "1.2", "segment_id": "1", "label": "Acquisition"})
+    model["contributions"].append(
+        {"activity_id": "1.2", "party_id": "GSUK", "column": 10, "attribution": "stated"}
+    )
+    problems = validate_model(model)
+    assert len(problems) == 1
+    assert "is split across columns" not in problems[0]

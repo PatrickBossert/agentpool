@@ -92,6 +92,11 @@ def validate_model(model: dict) -> list[str]:
             )
 
     cell_occupants: dict[tuple[str, str, int], list[str]] = {}
+    # Deliberately not derived from cell_occupants. That is keyed on (segment, party,
+    # column) and answers "does one party hold this cell twice"; this is keyed on the
+    # activity and answers "do this activity's parties agree where it sits". A model can
+    # break either alone, and reporting one as the other sends the reader to the wrong card.
+    activity_columns: dict[str, list[tuple[int, str]]] = {}
     contribution_ids: set[tuple[str, str]] = set()
 
     for contribution in model.get("contributions", []):
@@ -127,6 +132,7 @@ def validate_model(model: dict) -> list[str]:
         if activity_known and party_known and column_known:
             cell = (activity_segment[activity_id], party_id, column)
             cell_occupants.setdefault(cell, []).append(str(activity_id))
+            activity_columns.setdefault(activity_id, []).append((column, party_id))
 
     # One problem per over-occupied cell, naming every activity in it. The previous form
     # appended a message each time a cell repeated, so five contributions in one cell
@@ -142,6 +148,19 @@ def validate_model(model: dict) -> list[str]:
                 f"{len(occupants)} contributions occupy column {column} in party "
                 f"{party_id}'s lane in segment {segment_id}: {', '.join(ordered)}"
             )
+
+    # An activity is one thing, so it occupies one position in the chain and its parties'
+    # contributions share that column. Offset columns between two parties on one activity
+    # used to be how a handoff was expressed; a handoff is two activities, or two tasks of
+    # one, and expressing it as an offset left partner cards sitting under nothing.
+    # Reported once per activity naming every party and column, because the reader's next
+    # action is to move one of them and a message naming neither could not be acted on.
+    for activity_id, placements in activity_columns.items():
+        if len({column for column, _ in placements}) > 1:
+            listed = ", ".join(
+                f"{party_id} at {column}" for column, party_id in sorted(placements)
+            )
+            problems.append(f"activity {activity_id} is split across columns: {listed}")
 
     # An activity with no contribution belongs to no lane, so it disappears from the grid
     # while remaining in model["activities"] - and nothing in the UI can bring it back.
