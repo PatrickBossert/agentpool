@@ -25,6 +25,12 @@ import {
   type ValueChainModel,
 } from '../utils/valueChainModel'
 
+// The card is a fixed height, so it shows a fixed number of activities. Where there are
+// more, the remainder is counted rather than dropped: three lines and nothing else states
+// that this contribution has three activities, which is a false statement rather than a
+// shortened one.
+const MAX_LISTED_TASKS = 3
+
 // The removal dialog has to hand focus back to something when it closes, and the Remove
 // entry that opened it lives inside the menu, which closes as part of making the request.
 // This button is the control still standing, so the grid needs to be able to find it - hence
@@ -63,8 +69,15 @@ export function ContributionCard({
   return (
     <div
       data-testid={`card-${activityId}-${partyId}`}
-      className={`bg-surface-card rounded-lg p-3 border ${
-        selected ? 'border-brand' : 'border-surface'
+      // Fixed height so a lane reads straight across: with cards sized by their content,
+      // the tallest card in a row set every cell's height in that row. Sized for the most
+      // any card shows - a two-line header, three description lines, three activity lines
+      // and the controls - and overflow-hidden so nothing spills past it.
+      //
+      // border-surface-border, never border-surface: the latter resolves to the page
+      // background, which is how this card spent a day with a border and no visible edge.
+      className={`bg-surface-card rounded-lg p-3 border shadow-sm h-64 overflow-hidden ${
+        selected ? 'border-brand' : 'border-surface-border'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -165,7 +178,7 @@ export function ContributionCard({
 
       {tasks.length > 0 && (
         <ul data-testid={`task-list-${activityId}-${partyId}`} className="mt-2 space-y-1">
-          {tasks.map((task) => (
+          {tasks.slice(0, MAX_LISTED_TASKS).map((task) => (
             <li key={task.id}>
               <button
                 type="button"
@@ -189,6 +202,14 @@ export function ContributionCard({
             </li>
           ))}
         </ul>
+      )}
+      {tasks.length > MAX_LISTED_TASKS && (
+        <p
+          data-testid={`task-overflow-${activityId}-${partyId}`}
+          className="mt-1 text-xs text-muted"
+        >
+          {tasks.length - MAX_LISTED_TASKS} more
+        </p>
       )}
 
       {editable && (

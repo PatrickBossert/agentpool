@@ -14,6 +14,10 @@ export default {
           DEFAULT: '#f9fafb',
           raised: '#ffffff',
           card: '#ffffff',
+          // The scale had no border colour at all, so a card drawn with border-surface was
+          // edged in the page background - a two per cent difference against the backdrop
+          // it was meant to separate from.
+          border: '#e5e7eb',
         },
         primary:   '#111827',
         secondary: '#374151',

@@ -115,14 +115,16 @@ describe('ValueChainGrid layout', () => {
     expect(screen.getByTestId('value-chain-empty')).toBeInTheDocument()
   })
 
-  it('gives an unselected card a visible edge, so one card separates from the next', () => {
+  it('draws the card edge in something other than the page background', () => {
     render(<ValueChainGrid model={MODEL} onSelect={() => {}} />)
-    // The defect was border-transparent: a card had a border box with no visible edge, so
-    // it read as a floating patch of surface. Asserting only that a *selected* card is
-    // border-brand passes on that broken behaviour, so the unselected case is the one that
-    // has to be asserted.
-    expect(screen.getByTestId('card-1.1-sp')).toHaveClass('border-surface')
-    expect(screen.getByTestId('card-1.1-sp')).not.toHaveClass('border-transparent')
+    // This assertion replaces one that required border-surface, which resolves to
+    // surface.DEFAULT - the page background. That test passed while the edge was
+    // invisible, which is the whole defect: "has a border class" is not "has an edge".
+    const card = screen.getByTestId('card-1.1-sp')
+    expect(card).not.toHaveClass('border-surface')
+    expect(card).not.toHaveClass('border-transparent')
+    expect(card).toHaveClass('border-surface-border')
+    expect(card.className).toMatch(/\bshadow/)
   })
 
   it('marks selection by the border colour, not by the border appearing', () => {
@@ -135,7 +137,7 @@ describe('ValueChainGrid layout', () => {
     )
     expect(screen.getByTestId('card-1.1-sp')).toHaveClass('border-brand')
     // The neighbour still has an edge - selection changed a colour, it did not add an edge.
-    expect(screen.getByTestId('card-1.2-sp')).toHaveClass('border-surface')
+    expect(screen.getByTestId('card-1.2-sp')).toHaveClass('border-surface-border')
   })
 
   it('shows the description over three lines rather than one', () => {
@@ -557,5 +559,39 @@ describe('the chains stack', () => {
     expect(screen.queryAllByTestId(/^column-header-/)).toHaveLength(0)
     expect(screen.getByTestId('cell-1-GSUK-20')).toBeInTheDocument()
     expect(screen.getByTestId('cell-1-GSUK-20')).toHaveTextContent('')
+  })
+})
+
+describe('the card is a fixed size', () => {
+  it('gives every card the same height regardless of its content', () => {
+    const uneven = structuredClone(MODEL)
+    uneven.contributions[0].description = 'x'.repeat(400)
+    uneven.contributions[1].description = 'short'
+    render(<ValueChainGrid model={uneven} />)
+    // jsdom does no layout, so this asserts the mechanism - one height class shared by
+    // both - rather than a measured height, which reads 0 here whatever the truth.
+    const height = (id: string) =>
+      screen.getByTestId(id).className.split(' ').find((c) => /^h-/.test(c))
+    expect(height('card-1.1-sp')).toBeTruthy()
+    expect(height('card-1.1-sp')).toBe(height('card-1.2-sp'))
+  })
+
+  it('lists at most three activities and says how many more there are', () => {
+    const many = structuredClone(MODEL)
+    many.tasks = [1, 2, 3, 4, 5].map((n) => ({
+      activity_id: '1.1', party_id: 'sp', id: `1.1.${n}`, label: `Step ${n}`,
+    }))
+    render(<ValueChainGrid model={many} />)
+    expect(screen.getAllByTestId(/^task-line-.*-sp$/)).toHaveLength(3)
+    // The count is the assertion. "renders three lines" is equally true of a silent
+    // truncation - which states that this contribution has three activities, a false
+    // statement rather than a shortened one.
+    expect(screen.getByTestId('task-overflow-1.1-sp')).toHaveTextContent('2')
+  })
+
+  it('shows no overflow marker when every activity fits', () => {
+    render(<ValueChainGrid model={MODEL} />)
+    expect(screen.getByTestId('task-list-1.1-sp')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-overflow-1.1-sp')).toBeNull()
   })
 })
