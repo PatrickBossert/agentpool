@@ -29,8 +29,7 @@ import type { CrewRun, AgentOutput, HumanReview } from '../types'
 import StructureTab from './StructureTab'
 import AlexSetupTab from './tabs/AlexSetupTab'
 import MayaSetupTab from './tabs/MayaSetupTab'
-import TaylorSetupTab from './tabs/TaylorSetupTab'
-import AverySetupTab from './tabs/AverySetupTab'
+import { CrewSetupSections, AGENT_SETUP_SECTION } from './tabs/CrewSetupSections'
 import AveryOutputExtra from './tabs/AveryOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
 import MayaOutputExtra from './tabs/MayaOutputExtra'
@@ -41,12 +40,17 @@ import PamSetupTab from './tabs/PamSetupTab'
 export type SlotFC = FC<{ slug: string }>
 
 // Replaces the default Setup tab reads/produces panel for these crews
+// Whole-tab overrides, for crews that hold exactly one agent - the tab and the agent are
+// then the same scope and naming it after them is correct.
+//
+// stakeholder_management and discovery_interviews are NOT here any more. The first held
+// TaylorSetupTab, which is Taylor's configuration under Jordan's crew - an agent Taylor is
+// not. The second held AverySetupTab for a crew of three. Both are now assembled from
+// per-agent sections; see CrewSetupSections.
 const CREW_SETUP_OVERRIDE: Partial<Record<string, SlotFC>> = {
   PAM:                    PamSetupTab,
   discovery_mapping:      AlexSetupTab,
   assessment_design:      MayaSetupTab,
-  stakeholder_management: TaylorSetupTab,
-  discovery_interviews:   AverySetupTab,
 }
 
 // Rendered after the primary artefact in the Output tab. Exported because AgentOutputTab's
@@ -1139,6 +1143,11 @@ export default function AgentDetailPanel({
         {(() => {
           const SetupOverride = CREW_SETUP_OVERRIDE[crewKey]
           if (SetupOverride) return <SetupOverride slug={slug} />
+
+          // A crew's own agents, each with their own configuration under their own name.
+          // Renders null when none of them has any, so the default below still shows.
+          const sections = <CrewSetupSections crewKey={crewKey} slug={slug} />
+          if (CREW_AGENTS[crewKey]?.some((a) => a in AGENT_SETUP_SECTION)) return sections
 
           // Default: reads/produces metadata
           return crewMeta ? (
