@@ -3,11 +3,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  CheckCircle2, SquareCheckBig, Square, AlertTriangle, Clock, Plus, Trash2,
+  CheckCircle2, SquareCheckBig, Square, Flag, AlertTriangle, Clock, Plus, Trash2,
   ChevronDown, ChevronUp, RefreshCw, CalendarDays, Wand2, Ban, Pencil,
 } from 'lucide-react'
 import { milestonesApi, nonworkingApi, projectsApi } from '../../api/endpoints'
-import { daysLate } from '../../utils/milestones'
+import { milestoneVariance } from '../../utils/milestones'
 import type { Milestone, NonWorkingRange } from '../../types'
 import {
   getPublicHolidays, formatDate, formatDateShort,
@@ -722,7 +722,8 @@ function MilestoneRow({
   const state      = milestoneState(m)
   const badgeCls   = STATE_BADGE[state]
   const isComplete = m.status === 'complete'
-  const late       = daysLate(m, excludedDates)
+  const variance   = milestoneVariance(m, excludedDates)
+  const late       = variance.slip
 
   const phaseLabel = (() => {
     if (state === 'complete') return 'Completed'
@@ -761,13 +762,30 @@ function MilestoneRow({
                   {phaseLabel}
                 </span>
               )}
-              {late !== null && (
+              {/* Variance against the promise, beside the state rather than instead of
+                  it - "Completed" and "3 days late" are both true and the reader needs
+                  both. Measured against baseline_date, so a milestone re-planned onto a
+                  date it then met still shows the slip against what was agreed. */}
+              {variance.state !== 'on_plan' && (
                 <span
-                  data-testid={`milestone-late-${m.id}`}
-                  title={`Planned ${m.due_date}, completed ${m.completed_at}`}
-                  className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200"
+                  data-testid={`milestone-variance-${m.id}`}
+                  title={
+                    m.baseline_date
+                      ? `Promised ${m.baseline_date}, planned ${m.due_date ?? 'unscheduled'}`
+                      : 'Added after the plan was agreed'
+                  }
+                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                    variance.state === 'added_scope'
+                      ? 'bg-surface text-muted border-surface-border'
+                      : variance.state === 'recovered'
+                        ? 'bg-teal-50 text-teal-700 border-teal-200'
+                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}
                 >
-                  {late} day{late === 1 ? '' : 's'} late
+                  {variance.state === 'added_scope' ? 'Added scope'
+                    : variance.state === 'recovered' ? 'Recovered'
+                    : variance.state === 'at_risk' ? `${late} day${late === 1 ? '' : 's'} at risk`
+                    : `${late} day${late === 1 ? '' : 's'} late`}
                 </span>
               )}
             </span>
@@ -792,6 +810,20 @@ function MilestoneRow({
                 style={{ colorScheme: 'light' }}
               />
             </div>
+            {m.baseline_date && m.baseline_date !== m.due_date && (
+              <div className="flex items-center gap-1.5">
+                <Flag size={12} className="text-gray-400" />
+                <span className="text-[10px] text-gray-400 uppercase tracking-wide">Promised</span>
+                {/* Read-only: moving the promise is re-baselining, which needs an approver
+                    and a reason, not a date picker. */}
+                <span
+                  data-testid={`milestone-promised-${m.id}`}
+                  className="text-xs text-gray-500 tabular-nums"
+                >
+                  {m.baseline_date}
+                </span>
+              </div>
+            )}
             {isComplete && (
               <div className="flex items-center gap-1.5">
                 <SquareCheckBig size={12} className="text-teal-500" />
