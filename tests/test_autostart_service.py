@@ -167,11 +167,11 @@ async def test_committing_the_last_upstream_does_not_auto_start_discovery_interv
 
 
 @pytest.mark.asyncio
-async def test_committing_architecture_does_not_start_an_unconfigured_delivery(client):
+async def test_committing_requirements_does_not_start_an_unconfigured_delivery(client):
     """Delivery raises unless value_stream_labels and stakeholder_groups are set.
 
     NewProjectModal collects neither, and both default to [] - so on a project created
-    through the product, approving Architecture would start Delivery, build_and_run_crew
+    through the product, approving the crew above Delivery would start it, build_and_run_crew
     would raise "Project config is missing 'value_stream_labels'", the run would be
     marked failed, and the approver would be mailed that the crew they just approved had
     died. C1's failure mode, on an ordinary step.
@@ -180,12 +180,12 @@ async def test_committing_architecture_does_not_start_an_unconfigured_delivery(c
     await _activate(UNCONFIGURED_SLUG)
     async with get_connection(UNCONFIGURED_SLUG) as conn:
         await insert_approval_commit(
-            conn, crew_name="architecture", committed_by="a", notes=""
+            conn, crew_name="discovery", committed_by="a", notes=""
         )
 
     with patch("api.services.autostart_service.dispatch_crew", AsyncMock()) as dispatch:
         result = await start_ready_downstream(
-            UNCONFIGURED_SLUG, "architecture", committed_by="a"
+            UNCONFIGURED_SLUG, "discovery", committed_by="a"
         )
 
     assert result["started"] == []
@@ -202,7 +202,7 @@ async def test_committing_architecture_does_not_start_an_unconfigured_delivery(c
 
 
 @pytest.mark.asyncio
-async def test_committing_architecture_does_start_a_configured_delivery(client):
+async def test_committing_requirements_does_start_a_configured_delivery(client):
     """The half that stops this becoming a blanket exclusion.
 
     Unlike discovery_interviews, Delivery auto-starts perfectly well once the project
@@ -213,11 +213,11 @@ async def test_committing_architecture_does_start_a_configured_delivery(client):
     await _activate(SLUG)
     async with get_connection(SLUG) as conn:
         await insert_approval_commit(
-            conn, crew_name="architecture", committed_by="a", notes=""
+            conn, crew_name="discovery", committed_by="a", notes=""
         )
 
     with patch("api.services.autostart_service.dispatch_crew", AsyncMock()):
-        result = await start_ready_downstream(SLUG, "architecture", committed_by="a")
+        result = await start_ready_downstream(SLUG, "discovery", committed_by="a")
 
     assert [s["crew"] for s in result["started"]] == ["delivery"]
     assert not any(w["crew"] == "delivery" for w in result["waiting"])

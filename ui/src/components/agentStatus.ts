@@ -10,14 +10,20 @@ import {
 } from 'lucide-react'
 import type { CrewRun } from '../types'
 
+// Display order. CREW_DEPENDENCIES in api/services/crew_graph.py is what actually gates a
+// run; this is what the board shows, and the two must agree - an order contradicting the
+// graph shows a crew as next when it cannot run, and the reader acts on it.
+//
+// Jordan was shown before Maya while the graph required Maya first, which is the drift a
+// test now catches.
 export const CREW_ORDER = [
   'discovery_mapping',
-  'stakeholder_management',
   'assessment_design',
+  'stakeholder_management',
   'discovery_interviews',
-  'discovery',
   'value_design',
   'architecture',
+  'discovery',
   'delivery',
   'business_plan',
 ] as const
