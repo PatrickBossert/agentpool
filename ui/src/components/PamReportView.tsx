@@ -89,8 +89,8 @@ function esc(s: string | null | undefined): string {
     .replace(/'/g, '&#39;')
 }
 
-function printReport(report: PamReport) {
-  const html = buildPrintHtml(report)
+function printReport(report: PamReport, excludedDates?: Set<string>) {
+  const html = buildPrintHtml(report, excludedDates)
   const blob = new Blob([html], { type: 'text/html; charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const win = window.open(url, '_blank')
@@ -105,7 +105,7 @@ function ragLabel(h: string) {
     : 'Green — On track'
 }
 
-function buildPrintHtml(r: PamReport, excludedDates?: Set<string>): string {
+export function buildPrintHtml(r: PamReport, excludedDates?: Set<string>): string {
   const ts = new Date(r.generated_at).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   const ragBg = r.overall_health === 'red' ? '#ef4444' : r.overall_health === 'amber' ? '#f59e0b' : '#10b981'
 
@@ -120,13 +120,9 @@ function buildPrintHtml(r: PamReport, excludedDates?: Set<string>): string {
       : m.rag === 'due_soon' ? ' style="background:#fffbeb;border-color:#fcd34d;color:#92400e;"'
       : m.rag === 'complete' ? ' style="background:#f0fdfa;border-color:#99f6e4;color:#0f766e;"'
       : ''
-    // Planned and actual side by side, with the slip in working days.
-    //
-    // KNOWN GAP: excludedDates is not threaded here, so the export counts weekends only
-    // while the on-screen timeline also excludes public holidays and the project's own
-    // non-working ranges. The two agree except on a slip that spans one of those. The set
-    // is built inside a nested render callback in this file; hoisting it to component
-    // scope is the fix, and is deliberately not bundled into this change.
+    // Planned and actual side by side, with the slip in working days - the same helper
+    // and the same excluded dates the on-screen timeline uses, so a pack sent to a client
+    // cannot disagree with the app it was exported from.
     const late = daysLate(m, excludedDates)
     const actual = m.completed_at
       ? esc(m.completed_at) + (late !== null ? ` <span style="color:#b45309">(${late}wd late)</span>` : '')
@@ -392,6 +388,32 @@ function StatsRow({ report }: { report: PamReport }) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
+// The schedule the report is read against: where it starts, how long it runs, and which
+// dates do not count. Extracted from the Progress Against Plan block so the export can use
+// the same set - buried in a render callback, it was reachable from the screen and not
+// from the print path, and the two then disagreed about how late anything was.
+function scheduleContext(
+  report: PamReport,
+  settings: { locale?: string; sched_start?: string | null; sched_duration_weeks?: number | null } | undefined,
+  nonWorkingRanges: Parameters<typeof buildExcludedDateSet>[1],
+) {
+  const locale = settings?.locale ?? 'GB'
+  const stored = settings?.sched_start && settings?.sched_duration_weeks
+  const datedMs = report.milestones.map((m) => m.due_date).filter(Boolean) as string[]
+  const { schedStart, durationWeeks } = stored
+    ? { schedStart: settings!.sched_start!, durationWeeks: settings!.sched_duration_weeks! }
+    : (datedMs.length >= 2
+        ? inferSchedule(datedMs)
+        : { schedStart: datedMs[0] ?? new Date().toISOString().slice(0, 10), durationWeeks: 12 })
+  const endDate = new Date(schedStart + 'T00:00:00')
+  endDate.setDate(endDate.getDate() + durationWeeks * 7)
+  const holidays = getPublicHolidays(locale, schedStart, endDate.toISOString().slice(0, 10))
+  return {
+    locale, schedStart, durationWeeks, datedMs, holidays,
+    excluded: buildExcludedDateSet(holidays, nonWorkingRanges),
+  }
+}
+
 export default function PamReportView({ slug }: { slug: string }) {
   const { data: report, isLoading, error, refetch, isFetching } = useQuery<PamReport>({
     queryKey: ['pam-report', slug],
@@ -424,6 +446,9 @@ export default function PamReportView({ slug }: { slug: string }) {
     </div>
   )
 
+  // One schedule for the whole view, so the screen and the exported pack cannot disagree.
+  const schedule = scheduleContext(report, settings, nonWorkingRanges)
+
   const ts = new Date(report.generated_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
   return (
@@ -442,7 +467,7 @@ export default function PamReportView({ slug }: { slug: string }) {
             <RefreshCw size={10} className={isFetching ? 'animate-spin' : ''} />Refresh
           </button>
           <button
-            onClick={() => printReport(report)}
+            onClick={() => printReport(report, schedule.excluded)}
             className="flex items-center gap-1.5 text-[10px] bg-teal-600 text-white px-2.5 py-1 rounded-lg hover:bg-teal-700 transition-colors"
           >
             <Download size={10} />Download / Print
@@ -482,17 +507,7 @@ export default function PamReportView({ slug }: { slug: string }) {
               <CheckCheck size={14} className="text-gray-300" />No milestones scheduled yet.
             </div>
           ) : (() => {
-            const locale = settings?.locale ?? 'GB'
-            const stored = settings?.sched_start && settings?.sched_duration_weeks
-            const datedMs = report.milestones.map(m => m.due_date).filter(Boolean) as string[]
-            const { schedStart, durationWeeks } = stored
-              ? { schedStart: settings!.sched_start!, durationWeeks: settings!.sched_duration_weeks! }
-              : (datedMs.length >= 2 ? inferSchedule(datedMs) : { schedStart: datedMs[0] ?? new Date().toISOString().slice(0, 10), durationWeeks: 12 })
-            const endDate = new Date(schedStart + 'T00:00:00')
-            endDate.setDate(endDate.getDate() + durationWeeks * 7)
-            const endStr = endDate.toISOString().slice(0, 10)
-            const holidays = getPublicHolidays(locale, schedStart, endStr)
-            const excluded = buildExcludedDateSet(holidays, nonWorkingRanges)
+            const { locale, schedStart, durationWeeks, datedMs, holidays, excluded } = schedule
             return (
               <div className="space-y-4">
                 {datedMs.length >= 2 && (
