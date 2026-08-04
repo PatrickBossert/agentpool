@@ -13,7 +13,12 @@ from pathlib import Path
 
 from api.config import get_settings
 from agents.tools._db import latest_output_path
-from api.database import fetch_interview_session_by_id, insert_interview_answer
+from api.database import (
+    fetch_interview_answers,
+    fetch_interview_session_by_id,
+    insert_interview_answer,
+)
+from api.services.chroma_client import get_chroma_client
 from api.services.interview_script_model import resolve_tags
 
 _log = logging.getLogger(__name__)
@@ -96,6 +101,13 @@ async def record_answers(
             rating=None,
         ))
 
+    if written_ids:
+        # Indexed after the rows are committed, and from the rows rather than the pairs, so
+        # every document carries the id it will be cited by.
+        written = set(written_ids)
+        stored = await fetch_interview_answers(conn, session_id=session_id)
+        index_answers(slug, [r for r in stored if r["id"] in written])
+
     return len(written_ids)
 
 
@@ -133,3 +145,53 @@ async def script_for_session(conn, slug: str, session: dict) -> dict | None:
         if isinstance(script, dict) and script.get("node_label") == session["node_label"]:
             return script
     return None
+
+
+_META_FIELDS = ("script_id", "section_id", "question_id", "node_id", "chain", "level",
+                "relationship", "discipline", "question_intent", "elicitation",
+                "stakeholder_id", "follow_up")
+
+
+def answer_document(row: dict) -> str:
+    """The text embedded for one answer, with a preamble so a hit carries its own frame.
+
+    A semantic hit arrives as a sentence with no context otherwise, and a reader cannot tell
+    whose answer it was or what it was about.
+    """
+    node = row.get("node_label") or row.get("node_id")
+    frame = (f"[{node} ({row.get('node_id')}) | {row.get('level')} | "
+             f"{row.get('relationship')} | discipline: {row.get('discipline')}]")
+    return f"{frame}\nQ: {row.get('question_text', '')}\nA: {row.get('answer_text', '')}"
+
+
+def answer_metadata(row: dict) -> dict:
+    """Filterable tags for one answer, so retrieval filters before it ranks.
+
+    Chroma accepts only scalars and rejects None. Every entity-anchored answer has a null
+    chain, so passing it through would fail the upsert for the whole A, C, and S programme.
+    """
+    meta = {field: row.get(field) for field in _META_FIELDS}
+    meta["answer_id"] = row.get("id")
+    return {k: ("" if v is None else v) for k, v in meta.items()}
+
+
+def index_answers(slug: str, rows: list[dict]) -> int:
+    """Upsert one Chroma document per answer. Returns how many were indexed.
+
+    Never raises. The SQLite rows are the system of record and can be re-indexed at any
+    time, so a Chroma outage must cost the session nothing - failing here would lose an
+    interview a person has already given.
+    """
+    if not rows:
+        return 0
+    try:
+        collection = get_chroma_client().get_or_create_collection(name=f"{slug}_interviews")
+        collection.upsert(
+            documents=[answer_document(r) for r in rows],
+            ids=[str(r["id"]) for r in rows],
+            metadatas=[answer_metadata(r) for r in rows],
+        )
+        return len(rows)
+    except Exception:
+        _log.exception("index_answers[%s]: %d answers not indexed", slug, len(rows))
+        return 0
