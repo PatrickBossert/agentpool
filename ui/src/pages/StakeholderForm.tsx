@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { stakeholdersApi, projectsApi } from '../api/endpoints'
+import { stakeholdersApi, projectsApi, valueChainApi } from '../api/endpoints'
 import { COUNTRY_DATA, COUNTRY_OPTIONS } from '../utils/countryData'
 import type { Stakeholder } from '../types'
 
@@ -54,45 +54,6 @@ const LANG_OPTIONS = [
 ]
 
 const FIXED_ENTITIES = ['Advisor', 'Auditor', 'Other']
-
-// Extract distinct org/entity names from the registry L1 labels and L3 partner references
-function orgsFromRegistry(activities: Array<{ id: string; label: string; level: string; active: boolean; parent_id?: string | null }>): string[] {
-  const orgs: string[] = []
-  let supportFull = ''
-  let supportAbbrev = ''
-
-  for (const a of activities) {
-    if (!a.active || a.level !== 'L1') continue
-    if (/SUPPORT/i.test(a.label)) {
-      const m = a.label.match(/—\s*(.+)$/)
-      if (m) {
-        supportFull = m[1].trim()
-        supportAbbrev = supportFull.match(/\(([^)]+)\)$/)?.[1] ?? ''
-        orgs.push(supportFull)
-      }
-    }
-  }
-
-  for (const a of activities) {
-    if (!a.active || a.level !== 'L1' || /SUPPORT/i.test(a.label)) continue
-    const custodian = a.label.match(/Custodian:\s*([^·|]+)/)?.[1]?.trim()
-    const maintainer = a.label.match(/Maintainer:\s*([^·|)\n]+)/)?.[1]?.trim()
-    for (const org of [custodian, maintainer].filter((x): x is string => Boolean(x))) {
-      const resolved = (supportAbbrev && org === supportAbbrev) ? supportFull : org
-      if (!orgs.includes(resolved)) orgs.push(resolved)
-    }
-  }
-
-  for (const a of activities) {
-    if (!a.active || a.level !== 'L3') continue
-    for (const pat of [/Fleet Alliance/i]) {
-      const m = a.label.match(pat)
-      if (m && !orgs.includes(m[0])) orgs.push(m[0])
-    }
-  }
-
-  return orgs
-}
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -200,6 +161,18 @@ export default function StakeholderForm() {
     retry: false,
   })
 
+  // Parties are first-class in the model, so the organisation list reads them directly.
+  // It used to be recovered by running regular expressions over value chain labels -
+  // "Custodian: …", "Maintainer: …", and a literal match on one client's supplier - which
+  // only held while labels happened to carry the parties inside their prose, and named a
+  // company in an application meant for any client.
+  const { data: valueChain } = useQuery({
+    queryKey: ['value-chain-model', slug],
+    queryFn: () => valueChainApi.get(slug!),
+    enabled: !!slug,
+    retry: false,
+  })
+
   const { data: existing } = useQuery<Stakeholder[]>({
     queryKey: ['stakeholders', slug],
     queryFn: () => stakeholdersApi.list(slug!),
@@ -281,8 +254,12 @@ export default function StakeholderForm() {
     (!selectedL2 || a.parent_id === selectedL2.id)
   )
 
-  // Org names for entity dropdown
-  const orgOptions = registry ? orgsFromRegistry(allActs) : []
+  // Org names for entity dropdown. Every party on the roster, including one that has no
+  // contribution yet - it is still a real organisation someone can belong to.
+  const model = (valueChain as { model?: { parties?: { label?: string }[] } } | undefined)?.model
+  const orgOptions = (model?.parties ?? [])
+    .map((p) => p.label)
+    .filter((label): label is string => Boolean(label))
 
   return (
     <div className="p-6 max-w-2xl">
