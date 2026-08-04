@@ -73,9 +73,44 @@ def _validate_value_chain_registry(parsed: dict, slug: str) -> list[str]:
     return validate_registry_succession(_current_registry(slug), parsed)
 
 
+def _current_script_registry(slug: str) -> dict:
+    """The script ledger in force, or an empty one when there is none yet."""
+    settings = get_settings()
+    path = latest_output_path(
+        Path(settings.projects_dir) / slug / "outputs" / "interview_script_registry.json"
+    )
+    if path is None:
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
+    from api.services.interview_script_model import (
+        validate_scripts,
+        validate_scripts_against_registry,
+    )
+
+    problems = validate_scripts(parsed)
+    # The value chain registry, not the script one: this checks that each script's anchor
+    # names a node that exists.
+    problems.extend(validate_scripts_against_registry(parsed, _current_registry(slug)))
+    return problems
+
+
+def _validate_interview_script_registry(parsed: dict, slug: str) -> list[str]:
+    from api.services.interview_script_model import validate_script_registry_succession
+
+    return validate_script_registry_succession(_current_script_registry(slug), parsed)
+
+
 _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
     "value_chain_model": _validate_value_chain_model,
     "value_chain_registry": _validate_value_chain_registry,
+    "interview_scripts": _validate_interview_scripts,
+    "interview_script_registry": _validate_interview_script_registry,
 }
 
 

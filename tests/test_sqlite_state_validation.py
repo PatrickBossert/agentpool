@@ -217,11 +217,16 @@ def test_a_json_scalar_is_refused_not_thrown():
 
 
 def test_a_key_with_no_validator_is_written_unchanged():
-    """The tool stays general - only registered keys are checked."""
+    """The tool stays general - only registered keys are checked.
+
+    This used interview_scripts as its unchecked example until that key gained a validator,
+    which is the honest failure mode of naming a real key here: the test went red the moment
+    the key stopped being unchecked. activity_insights has no validator and no plans for one.
+    """
     tool = SQLiteStateTool(slug=SLUG)
     result = tool._run(
-        operation="write", key="interview_scripts",
-        agent_name="interaction_designer", value=json.dumps({"anything": True}),
+        operation="write", key="activity_insights",
+        agent_name="synthesis_analyst", value=json.dumps({"anything": True}),
     )
     assert "Written to" in result
 
@@ -431,3 +436,60 @@ def test_a_model_with_an_undecomposed_contribution_is_refused():
     files, rows = _no_model_written()
     assert files == [] and rows == 0
 
+
+
+# ── Interview scripts ────────────────────────────────────────────────────────
+#
+# Registering a validator in _VALIDATORS is one fact; the write path consulting it for this
+# key is another. Task 1 proved only the second one protects anything: removing a call left
+# every test passing because they all exercised the function directly.
+
+def _valid_scripts() -> dict:
+    return {"SC-001": {
+        "script_id": "SC-001", "node_id": "1.2", "level": "L2",
+        "relationship": "internal", "node_label": "Planned Maintenance L2 Interview",
+        "sections": [{"section_id": "S1", "title": "Opening",
+                      "questions": [{"id": "Q1", "text": "..."}]}],
+    }}
+
+
+def test_a_valid_script_set_is_written():
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(_valid_scripts()),
+    )
+    assert "Written to" in result
+
+
+def test_a_script_with_no_anchor_is_refused_by_the_tool():
+    scripts = _valid_scripts()
+    del scripts["SC-001"]["node_id"]
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(scripts),
+    )
+
+    assert "Written to" not in result
+    assert "node_id" in result
+
+
+def test_a_script_registry_that_drops_an_id_is_refused_by_the_tool():
+    """The ledger may grow and may retire, but may not forget - a dropped id can be handed
+    to another script later, and every answer citing the first then resolves to the second."""
+    tool = SQLiteStateTool(slug=SLUG)
+    tool._run(
+        operation="write", key="interview_script_registry",
+        agent_name="interaction_designer",
+        value=json.dumps({"scripts": [{"id": "SC-001", "node_id": "1.2", "active": True}]}),
+    )
+
+    result = tool._run(
+        operation="write", key="interview_script_registry",
+        agent_name="interaction_designer", value=json.dumps({"scripts": []}),
+    )
+
+    assert "Written to" not in result
+    assert "SC-001" in result
