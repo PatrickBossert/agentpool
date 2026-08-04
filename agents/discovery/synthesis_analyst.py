@@ -7,14 +7,16 @@ def create_synthesis_analyst(slug: str, llm: LLM, tools: list[BaseTool]) -> Agen
     return Agent(
         role="Synthesis Analyst",
         goal=(
-            "Synthesise stakeholder interview transcripts into structured discovery outputs: "
-            "activity-level insights, a requirements register, and a value lever register."
+            "Synthesise stakeholder interview transcripts into activity-level insights and "
+            "the horizontal and vertical themes the evidence supports."
         ),
         backstory=(
             "You are a senior strategy analyst who transforms raw interview data into "
             "structured consulting deliverables. You identify patterns across stakeholders, "
-            "surface actors, needs, and frustrations at each process activity, and articulate "
-            "the value levers that unlock transformation."
+            "surface actors, needs, and frustrations at each process activity, and separate "
+            "themes that run horizontally across the value chain from those that run "
+            "vertically within a discipline. You never assert a theme you cannot point at the "
+            "interviews for."
         ),
         llm=llm,
         tools=tools,
@@ -53,18 +55,26 @@ def create_synthesis_analyst_task(
             "\"source_stakeholder_ids\": [1, 2], \"priority\": \"High|Medium|Low\"}\n"
             "6. Use SQLiteStateTool with operation='write', key='requirements', "
             "agent_name='synthesis_analyst' to save the requirements array.\n"
-            "7. Produce a value lever register: identify 3–8 distinct value levers (themes "
-            "of value creation). Each lever:\n"
-            "   {\"lever\": \"Process Automation\", \"description\": \"...\", "
-            "\"supporting_requirement_ids\": [\"REQ-001\"]}\n"
-            "8. Use SQLiteStateTool with operation='write', key='value_levers', "
-            "agent_name='synthesis_analyst' to save the value levers array.\n"
+            "7. Produce the themes the evidence supports, of two kinds:\n"
+            "   - horizontal: across the value chain, where digital transformation could "
+            "improve efficiency or effectiveness;\n"
+            "   - vertical: within a discipline - governance, data, a specific support "
+            "service - where maturity could be raised.\n"
+            "   Each theme:\n"
+            "   {\"theme\": \"...\", \"kind\": \"horizontal|vertical\", \"description\": \"...\", "
+            "\"activity_ids\": [\"1.2.3\", ...], \"evidence\": [{\"stakeholder_id\": 1, "
+            "\"node_label\": \"...\", \"quote\": \"...\"}]}\n"
+            "   Every theme carries at least two evidence entries from different stakeholders. "
+            "A pattern seen in one transcript is an individual perspective, not a theme.\n"
+            "8. Use SQLiteStateTool with operation='write', key='themes', "
+            "agent_name='synthesis_analyst' to save the themes array.\n"
         ),
         expected_output=(
             "Three JSON files saved via SQLiteStateTool: "
             "activity_insights (per-node actors/needs/frustrations), "
             "requirements (requirements register), "
-            "value_levers (value lever register)."
+            "themes (horizontal and vertical themes, each evidenced by at least two "
+            "stakeholders)."
         ),
         agent=agent,
         context=context_tasks,

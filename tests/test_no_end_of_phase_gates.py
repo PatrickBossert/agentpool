@@ -55,9 +55,16 @@ ALL_AGENT_MODULES = _discover_agent_modules()
 # a deliberate exception list, not something to (re-)discover, so it stays hand-written -
 # but test_the_allow_list_names_modules_that_exist keeps it honest against typos, and
 # test_the_genuine_uses_survive keeps it honest against silent deletion.
+#
+# discovery/requirements_capture left this list when the crews were re-sequenced. His
+# genuine use WAS the multi-turn dialogue: running before value design, an open interview
+# with the project team was the only input he had. Running seventh against an initiative
+# register, the job is enumeration against a defined scope, so the dialogue went and the
+# tool with it. He is now checked for gate phrases like everything else, which is stricter
+# than the exception he used to hold - the entry is removed because the use genuinely
+# ended, not to make a test pass.
 KEEPS_A_GENUINE_USE = [
     "discovery/stakeholder_interviewer",
-    "discovery/requirements_capture",
     "business_plan/business_plan_generator",
 ]
 

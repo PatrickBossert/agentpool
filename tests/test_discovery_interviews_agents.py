@@ -124,15 +124,21 @@ def test_interviewer_task_writes_interview_transcripts():
 # ── Synthesis Analyst ─────────────────────────────────────────────────────────
 
 def test_synthesis_analyst_task_writes_all_three_keys():
-    """Task description instructs agent to write activity_insights, requirements, value_levers."""
+    """Task description instructs agent to write activity_insights, requirements, themes.
+
+    `value_levers` was the third until the crews were re-sequenced. Morgan writes those and
+    now runs first, so a write here would land on top of the levers Maya designed the
+    instruments against and a reviewer approved.
+    """
     from agents.discovery.synthesis_analyst import create_synthesis_analyst_task
     agent = _mock_agent()
     with patch("agents.discovery.synthesis_analyst.Task") as MockTask:
         MockTask.return_value = MagicMock()
         create_synthesis_analyst_task(agent=agent, context_tasks=[])
     _, kwargs = MockTask.call_args
-    for key in ("activity_insights", "requirements", "value_levers"):
+    for key in ("activity_insights", "requirements", "themes"):
         assert key in kwargs["description"], f"Key '{key}' missing from task description"
+    assert "value_levers" not in kwargs["description"]
 
 
 def test_synthesis_analyst_task_reads_transcripts():

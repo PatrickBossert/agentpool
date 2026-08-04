@@ -54,7 +54,7 @@ def create_requirements_crew(
         tools=get_tools_for_agent("requirements_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 
-    rc_task = create_requirements_capture_task(agent=rc, context_tasks=[], slug=slug)
+    rc_task = create_requirements_capture_task(agent=rc, context_tasks=[])
     ra_task = create_requirements_analyst_task(agent=ra, context_tasks=[rc_task])
 
     return Crew(

@@ -1,21 +1,21 @@
 # agents/discovery/requirements_capture.py
-from pathlib import Path
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
-from api.config import get_settings, load_project_config
 
 
 def create_requirements_capture(slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
     return Agent(
         role="Requirements Capture Specialist",
         goal=(
-            "Conduct a structured stakeholder interview to surface digital modernisation requirements. "
-            "Use the value chain as a frame to ask targeted, high-value questions."
+            "Enumerate the requirements each approved initiative places on data, people, "
+            "process, decision flow, application and technology."
         ),
         backstory=(
-            "You are an experienced business analyst who has conducted hundreds of requirements "
-            "workshops. You know how to ask open questions that reveal hidden pain points, "
-            "and how to probe for priorities, constraints, and success criteria."
+            "You are an experienced business analyst who works from a defined scope rather "
+            "than an open brief. Given a set of initiatives, you work through each one "
+            "systematically across every requirement dimension, and you would rather record a "
+            "dimension as 'none identified' than leave a reader guessing whether you "
+            "considered it."
         ),
         llm=llm,
         tools=tools,
@@ -25,36 +25,37 @@ def create_requirements_capture(slug: str, llm: LLM, tools: list[BaseTool]) -> A
 
 
 def create_requirements_capture_task(
-    agent: Agent, context_tasks: list[Task], slug: str
+    agent: Agent, context_tasks: list[Task]
 ) -> Task:
-    settings = get_settings()
-    try:
-        config = load_project_config(Path(settings.projects_dir) / slug)
-        max_turns = config.get("requirements_capture_max_turns", 10)
-    except Exception:
-        max_turns = 10
-
     return Task(
         description=(
-            "Conduct a structured stakeholder interview to capture digital modernisation requirements.\n\n"
-            "The value chain map is available from the previous task's output. "
-            f"Conduct the interview over a minimum of 5 and a maximum of {max_turns} exchanges.\n\n"
-            "Process:\n"
-            "1. Formulate your first question covering the most critical pain points in the value chain.\n"
-            "2. Use HumanInputTool to ask the question.\n"
-            "3. Based on the response, formulate a follow-up question that probes deeper or covers "
-            "a new area. Cover: pain points by value chain activity, current technology constraints, "
-            "desired outcomes, priorities, regulatory constraints, and budget/timeline context.\n"
-            "4. Repeat steps 2-3 until you have sufficient coverage (minimum 5 exchanges) or "
-            f"reach {max_turns} questions.\n"
-            "5. Use SQLiteStateTool with operation='write', key='interview_transcript', "
-            "agent_name='requirements_capture' to save the complete Q&A as JSON: "
-            "[{\"question\": \"...\", \"answer\": \"...\"}, ...].\n"
+            "Enumerate the requirements each approved initiative places on the organisation.\n\n"
+            "Steps:\n"
+            "1. Use SQLiteStateTool with operation='read', key='initiative_register', "
+            "agent_name='requirements_capture' to retrieve the initiatives.\n"
+            "2. Use SQLiteStateTool with operation='read', key='architecture_register', "
+            "agent_name='requirements_capture' to retrieve the current-state capabilities, so "
+            "each requirement is stated against what already exists.\n"
+            "3. For every initiative in the register, work through all six dimensions - data, "
+            "people, process, decision flow, application, and technology. Cover every "
+            "initiative: an initiative absent from your output reads as having no requirements "
+            "rather than as one you did not reach.\n"
+            "4. Produce a JSON array. Each requirement:\n"
+            "   {\"id\": \"REQ-001\", \"initiative_id\": \"...\", "
+            "\"dimension\": \"data|people|process|decision_flow|application|technology\", "
+            "\"description\": \"...\", \"rationale\": \"...\", "
+            "\"priority\": \"High|Medium|Low\"}\n"
+            "   Where a dimension genuinely carries no requirement for an initiative, record it "
+            "with description 'none identified' and say why in rationale - a silent omission "
+            "cannot be told apart from an oversight.\n"
+            "5. Use SQLiteStateTool with operation='write', key='captured_requirements', "
+            "agent_name='requirements_capture' to save the JSON array.\n"
         ),
         expected_output=(
-            "A complete interview transcript saved via SQLiteStateTool under key 'interview_transcript', "
-            f"containing between 5 and {max_turns} question-answer pairs covering "
-            "pain points, constraints, priorities, and desired outcomes."
+            "A JSON requirement set saved via SQLiteStateTool under key "
+            "'captured_requirements', covering every initiative in the register across all six "
+            "requirement dimensions, each entry carrying id, initiative_id, dimension, "
+            "description, rationale, and priority."
         ),
         agent=agent,
         context=context_tasks,
