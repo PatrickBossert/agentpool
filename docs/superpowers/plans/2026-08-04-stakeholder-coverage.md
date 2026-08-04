@@ -334,32 +334,20 @@ git commit -m "feat(coverage): one calculation, three numbers per level"
 
 ---
 
-### Task 5: Jordan's tab
+### Task 5: Jordan's Setup tab
 
 **Files:**
 - Create: `ui/src/components/tabs/JordanCoverageMap.tsx`
 - Modify: `ui/src/components/AgentDetailPanel.tsx` - register it
 
-**Two things to settle before writing this task, both raised with the human partner:**
+**Settled:** the map is Jordan's **Setup** tab. Stakeholder assignment is configuration, not
+a deliverable. His Output tab is reserved for reviewing stakeholder communications and
+approvals, which is future functionality and not touched here.
 
-1. **Output tab or Setup tab.** The design says Jordan's *Output* tab shows the map, and
-   also that the map "in the setup is a view, not a run". SP23b's rule is that Output holds
-   the one versioned artefact edited in place, and Jordan's declared primary is
-   `stakeholder_engagement_plan`. A derived, always-current map is not a versioned artefact,
-   which argues for Setup - but the map is what a reader actually opens Jordan for, which
-   argues for Output. **Default to Output** unless told otherwise, and register it as
-   `CREW_OUTPUT_EDITOR` for `stakeholder_management` the way `StructureTab` is for
-   `discovery_mapping`.
-
-2. **`stakeholder_management`'s setup tab is called `TaylorSetupTab`** - "compact stakeholder
-   list + invite chase rules". But `stakeholder_management` is **Jordan's** crew
-   (`CREW_AGENTS: stakeholder_management: ['Stakeholder Manager']`, and `AGENT_HUMAN_NAME`
-   maps that to Jordan Williams). Taylor Brooks is the Interview Coordinator, a different
-   crew. Either the tab is misnamed or it holds work belonging to another agent. Do not
-   rename it as part of this task - just say in your report which it is, because invite
-   chase rules living under Jordan is exactly the sort of thing that quietly stays wrong.
-- Modify: `ui/src/api/endpoints.ts`
-- Test: `ui/src/__tests__/CoverageMap.test.tsx` (create)
+**This displaces `TaylorSetupTab`**, which is currently registered against
+`stakeholder_management` - Jordan's crew - and holds *Taylor's* invite chase rules. Jordan
+must not define configuration for another agent. Move those rules out as part of this task;
+where they go is recorded below and is not this task's to decide.
 
 **Interfaces:**
 - Consumes: Task 4's endpoint and Task 2's single-row assignment operations.
@@ -446,3 +434,34 @@ Expected: both green. Report both totals - this is the last task, so the pair co
 git add api/services/pam_report_service.py ui/src/components/PamReportView.tsx ui/src/types.ts tests/test_pam_report_coverage.py ui/src/__tests__/PamReportExport.test.ts
 git commit -m "feat(report): PAM reports coverage per level, excluding deliberate exclusions"
 ```
+
+---
+
+## Adjacent, deliberately not in this plan
+
+**Taylor's tabs.** The invite chase rules displaced by Task 5 belong with Taylor, and his
+Output tab should show a compact stakeholder list - invited / reminded[n] / completed - with
+a burndown of the completion rate and a projected completion percentage.
+
+Two things stop that being a task here.
+
+**The panel is keyed by crew, not by agent.** `CREW_SETUP_OVERRIDE[crewKey]` gives one Setup
+tab per crew, and Taylor shares `discovery_interviews` with the Stakeholder Interviewer and
+the Synthesis Analyst - whose slot is already `AverySetupTab`, "voice interviewer
+configuration". So Taylor's rules cannot get a tab of their own without either merging them
+into a tab named for another agent - the same confusion this correction removes - or making
+the panel agent-keyed, which is an architectural change affecting every crew.
+
+The likely answer is that **crew-scoped tabs should be named and organised by crew**, with a
+section per agent's concerns: `InterviewsSetupTab` holding Avery's voice configuration and
+Taylor's chase rules as separate sections. Jordan and Alex are each alone in their crews, so
+their tabs read as personal by coincidence rather than by design.
+
+**The projection needs deciding, not guessing.** "Likely completion percentage" can be a
+linear extrapolation of the current rate, a curve fitted to how each reminder round performed,
+or a simple ratio against the interviews-complete milestone date. Those give materially
+different numbers and a client will act on whichever is shown. That is a short design
+conversation, not an implementation detail.
+
+Until both are settled, Task 5 moves the chase rules to `discovery_interviews` unchanged, so
+they stop being Jordan's without anything being redesigned in passing.
