@@ -622,6 +622,7 @@ export interface PamReportMilestone {
   status: 'pending' | 'complete'
   // When it was actually reached, against due_date's plan. Null while outstanding.
   completed_at?: string | null
+  baseline_date?: string | null
   rag: 'complete' | 'overdue' | 'due_soon' | 'on_track' | 'unscheduled'
   days_delta: number | null
   sort_order: number
@@ -665,5 +666,7 @@ export interface Milestone {
   sort_order: number
   // When it was actually reached. Null while outstanding.
   completed_at?: string | null
+  // What it was promised, set at activation. due_date is what is currently expected.
+  baseline_date?: string | null
   created_at: string
 }
