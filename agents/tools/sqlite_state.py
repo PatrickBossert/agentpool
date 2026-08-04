@@ -104,8 +104,29 @@ def _project_disciplines(slug: str) -> tuple[str, ...]:
         return DEFAULT_DISCIPLINES
 
 
+def _current_levers(slug: str) -> list[dict]:
+    """Morgan's levers, or none when she has not run.
+
+    Absence is not a failure: Maya may legitimately design before the levers exist, and
+    refusing her write then would block the pipeline on an upstream artefact.
+    """
+    settings = get_settings()
+    path = latest_output_path(
+        Path(settings.projects_dir) / slug / "outputs" / "value_levers.json"
+    )
+    if path is None:
+        return []
+    try:
+        loaded = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return loaded if isinstance(loaded, list) else []
+
+
 def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     from api.services.interview_script_model import (
+        validate_elicitation_order,
+        validate_levers_unnamed_in_unaided_sections,
         validate_scripts,
         validate_scripts_against_registry,
     )
@@ -114,6 +135,10 @@ def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     # The value chain registry, not the script one: this checks that each script's anchor
     # names a node that exists.
     problems.extend(validate_scripts_against_registry(parsed, _current_registry(slug)))
+    # The ordering rule is checkable, so it is checked rather than left to an instruction
+    # Maya may or may not follow.
+    problems.extend(validate_elicitation_order(parsed))
+    problems.extend(validate_levers_unnamed_in_unaided_sections(parsed, _current_levers(slug)))
     return problems
 
 

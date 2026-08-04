@@ -494,3 +494,60 @@ def test_a_script_registry_that_drops_an_id_is_refused_by_the_tool():
 
     assert "Written to" not in result
     assert "SC-001" in result
+
+
+def _tagged_section(section_id: str, elicitation: str, question: str) -> dict:
+    return {
+        "section_id": section_id, "title": section_id, "discipline": "governance",
+        "question_intent": "evidence", "elicitation": elicitation,
+        "questions": [{"id": "Q1", "text": question}],
+    }
+
+
+def test_prompted_before_unaided_is_refused_by_the_tool():
+    """Wired in, not merely written. The ordering rule is checkable, so the write path
+    checks it rather than trusting Maya to have followed the instruction."""
+    scripts = {"SC-001": {
+        "script_id": "SC-001", "node_id": "1.2", "level": "L2", "relationship": "internal",
+        "node_label": "x", "sections": [
+            _tagged_section("S1", "prompted", "Your report names X - does that match?"),
+            _tagged_section("S2", "unprompted", "What gets in the way?"),
+        ],
+    }}
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(scripts),
+    )
+
+    assert "Written to" not in result
+    assert "unaided" in result
+
+
+def test_naming_a_lever_in_an_unaided_section_is_refused_by_the_tool():
+    """The anchoring the ordering rule alone cannot catch: a section tagged unprompted that
+    quotes the annual report's own phrasing is prompted in everything but the tag."""
+    from api.config import get_settings
+
+    outputs = Path(get_settings().projects_dir) / SLUG / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / "value_levers.json").write_text(
+        json.dumps([{"lever": "Fleet availability", "hypothesis": "..."}])
+    )
+
+    scripts = {"SC-001": {
+        "script_id": "SC-001", "node_id": "1.2", "level": "L2", "relationship": "internal",
+        "node_label": "x", "sections": [
+            _tagged_section("S1", "unprompted", "How is fleet availability managed here?"),
+        ],
+    }}
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(scripts),
+    )
+
+    assert "Written to" not in result
+    assert "Fleet availability" in result

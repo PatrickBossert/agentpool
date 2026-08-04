@@ -168,3 +168,86 @@ def validate_script_registry_succession(current: dict, proposed: dict) -> list[s
                 "script, because stored answers cite this one"
             )
     return problems
+
+
+def validate_elicitation_order(scripts: dict) -> list[str]:
+    """Unaided sections precede prompted ones, in every script.
+
+    A script may be entirely unaided - a frontline instrument legitimately never prompts -
+    but once it has prompted, an unaided section afterwards is unaided in name only: the
+    interviewee has already been given the framing and cannot un-hear it.
+    """
+    problems: list[str] = []
+    for key, script in scripts.items():
+        label = script.get("script_id") or key
+        prompted_at: str | None = None
+        for section in script.get("sections", []):
+            elicitation = section.get("elicitation")
+            if elicitation == "prompted":
+                prompted_at = prompted_at or section.get("section_id")
+            elif elicitation == "unprompted" and prompted_at is not None:
+                problems.append(
+                    f"script {label} asks unaided section {section.get('section_id')} after "
+                    f"prompted section {prompted_at} - once a lever has been named the "
+                    "interviewee cannot un-hear it, so unaided sections come first"
+                )
+                break
+    return problems
+
+
+def validate_levers_unnamed_in_unaided_sections(scripts: dict, levers: list[dict]) -> list[str]:
+    """No unaided question contains a lever's own words.
+
+    The ordering rule alone is not enough: a section tagged unprompted that quotes the annual
+    report's phrasing is prompted in everything but the tag.
+    """
+    names = [str(lever.get("lever", "")).strip() for lever in levers]
+    names = [n for n in names if n]
+    if not names:
+        return []
+
+    problems: list[str] = []
+    for key, script in scripts.items():
+        label = script.get("script_id") or key
+        for section in script.get("sections", []):
+            if section.get("elicitation") != "unprompted":
+                continue
+            for question in section.get("questions", []):
+                text = str(question.get("text", "")).lower()
+                for name in names:
+                    if name.lower() in text:
+                        problems.append(
+                            f"script {label} names the value lever {name!r} in unaided "
+                            f"question {question.get('id')} of section "
+                            f"{section.get('section_id')} - move it to a prompted section, or "
+                            "the answer confirms the lever rather than testing it"
+                        )
+    return problems
+
+
+def lever_status(lever: dict, answers: list[dict]) -> str:
+    """What the interviews did to this hypothesis.
+
+    Order-independent by construction: a status derived from whichever answer came last would
+    make the strength of the evidence an accident of interview scheduling. Contradiction
+    outranks every confirmation, because reporting "confirmed" for a lever an interviewee
+    disputed is the failure this exists to prevent.
+
+    `untested` is the one that matters most - a lever that reached value design without a
+    single interview touching it, looking exactly like an established finding.
+    """
+    name = str(lever.get("lever", "")).strip().lower()
+    if not name:
+        return "untested"
+
+    touching = [
+        a for a in answers
+        if name in f"{a.get('question_text', '')} {a.get('answer_text', '')}".lower()
+    ]
+    if not touching:
+        return "untested"
+    if any(not a.get("supports") for a in touching):
+        return "contradicted"
+    if any(a.get("elicitation") == "unprompted" for a in touching):
+        return "confirmed_unprompted"
+    return "confirmed_prompted"
