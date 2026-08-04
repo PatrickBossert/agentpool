@@ -1,8 +1,13 @@
 # api/routers/milestones.py
 from fastapi import APIRouter, Depends, HTTPException
 from api.auth import require_any_auth as get_current_user
-from api.database import get_connection, list_milestones, insert_milestone, update_milestone, delete_milestone, seed_default_milestones
-from api.models import Milestone, MilestoneCreate, MilestoneUpdate
+from api.database import (
+    get_connection, list_milestones, insert_milestone, update_milestone,
+    delete_milestone, seed_default_milestones, rebaseline_milestone,
+    fetch_milestone_baselines,
+)
+from api.models import Milestone, MilestoneCreate, MilestoneUpdate, MilestoneRebaseline
+from api.services.commit_service import caller_may_commit
 
 router = APIRouter(prefix="/projects/{slug}/milestones", tags=["milestones"])
 
@@ -75,3 +80,45 @@ async def remove_milestone(slug: str, milestone_id: int, payload: dict = Depends
         deleted = await delete_milestone(conn, milestone_id=milestone_id, slug=slug)
     if not deleted:
         _404("Milestone not found")
+
+
+@router.post("/{milestone_id}/rebaseline", response_model=Milestone)
+async def rebaseline(
+    slug: str, milestone_id: int, body: MilestoneRebaseline,
+    payload: dict = Depends(get_current_user),
+):
+    """Move a milestone's promise, keeping the one it replaces.
+
+    Approver-gated with the same rule as activation, which set the original: whoever may
+    make a promise on this project is whoever may change one.
+    """
+    if not body.reason.strip():
+        raise HTTPException(422, "A re-baseline needs a reason")
+    if not await caller_may_commit(slug, payload):
+        raise HTTPException(403, "Only an approver may re-baseline a milestone")
+
+    async with get_connection(slug) as conn:
+        ok = await rebaseline_milestone(
+            conn, milestone_id=milestone_id, slug=slug,
+            baseline_date=body.baseline_date, reason=body.reason.strip(),
+            set_by=str(payload.get("sub") or payload.get("email") or ""),
+        )
+        if not ok:
+            # Either it does not exist, or it has no baseline to supersede. Allowing the
+            # second would let work added after activation acquire a promise
+            # retrospectively - which is how a project makes its own scope growth vanish.
+            _404("Milestone not found, or it has no baseline to supersede")
+        async with conn.execute(
+            "SELECT * FROM project_milestones WHERE id=?", (milestone_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row)
+
+
+@router.get("/{milestone_id}/baselines")
+async def list_baselines(
+    slug: str, milestone_id: int, payload: dict = Depends(get_current_user),
+):
+    """Every baseline this milestone has carried and been moved off, oldest first."""
+    async with get_connection(slug) as conn:
+        return await fetch_milestone_baselines(conn, milestone_id=milestone_id)

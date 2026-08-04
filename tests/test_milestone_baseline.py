@@ -124,3 +124,71 @@ async def test_activation_reports_how_many_it_baselined(client):
     await _milestone(client, title="Undated", due_date=None)
     r = await client.post(f"/projects/{SLUG}/activate")
     assert r.json()["milestones_baselined"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Re-baselining. A change request that moves the plan is a legitimate event, so it exists -
+# but as its own deliberate, approver-gated action, and never as a side effect of editing a
+# date. A baseline that can be quietly overwritten is not a baseline.
+# ---------------------------------------------------------------------------
+
+
+async def _rebaseline(client, milestone_id: int, **body):
+    return await client.post(
+        f"/projects/{SLUG}/milestones/{milestone_id}/rebaseline", json=body
+    )
+
+
+@pytest.mark.asyncio
+async def test_rebaselining_records_the_superseded_baseline(client):
+    """Asserting only that the new baseline took effect proves nothing about whether the
+    original survived, which is the entire reason for keeping a history."""
+    await _project(client)
+    m = await _milestone(client)
+    await client.post(f"/projects/{SLUG}/activate")
+
+    r = await _rebaseline(client, m["id"], baseline_date="2026-08-24", reason="CR-014 approved")
+    assert r.status_code in (200, 201), r.text
+    assert (await _get(client, m["id"]))["baseline_date"] == "2026-08-24"
+
+    history = (await client.get(f"/projects/{SLUG}/milestones/{m['id']}/baselines")).json()
+    assert [h["baseline_date"] for h in history] == ["2026-08-10"]
+    assert history[0]["reason"] == "CR-014 approved"
+
+
+@pytest.mark.asyncio
+async def test_rebaselining_without_a_reason_is_refused(client):
+    # A re-baseline nobody explained is indistinguishable from a mistake six months later.
+    await _project(client)
+    m = await _milestone(client)
+    await client.post(f"/projects/{SLUG}/activate")
+    r = await _rebaseline(client, m["id"], baseline_date="2026-08-24", reason="   ")
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_two_rebaselines_keep_both_originals_in_order(client):
+    # One entry cannot distinguish "records the superseded baseline" from "records the
+    # first baseline only", and a plan that moves twice is the normal case.
+    await _project(client)
+    m = await _milestone(client)
+    await client.post(f"/projects/{SLUG}/activate")
+
+    await _rebaseline(client, m["id"], baseline_date="2026-08-24", reason="CR-014")
+    await _rebaseline(client, m["id"], baseline_date="2026-08-31", reason="CR-021")
+
+    history = (await client.get(f"/projects/{SLUG}/milestones/{m['id']}/baselines")).json()
+    assert [h["baseline_date"] for h in history] == ["2026-08-10", "2026-08-24"]
+    assert [h["reason"] for h in history] == ["CR-014", "CR-021"]
+    assert (await _get(client, m["id"]))["baseline_date"] == "2026-08-31"
+
+
+@pytest.mark.asyncio
+async def test_rebaselining_something_never_baselined_is_refused(client):
+    """There is nothing to supersede. Allowing it would let added scope acquire a promise
+    retrospectively, which is how a project makes its own scope growth disappear."""
+    await _project(client)
+    await client.post(f"/projects/{SLUG}/activate")
+    m = await _milestone(client, title="New scope", due_date="2026-09-01")
+    r = await _rebaseline(client, m["id"], baseline_date="2026-09-15", reason="CR-030")
+    assert r.status_code == 404

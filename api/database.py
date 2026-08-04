@@ -468,6 +468,25 @@ async def _migrate_project_milestones(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_milestone_baselines(conn: aiosqlite.Connection) -> None:
+    """Every baseline a milestone has ever carried, so re-planning never erases a promise.
+
+    A baseline that can be quietly overwritten is not a baseline: the whole value of one is
+    that the original commitment survives the change request that moved it.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS milestone_baselines (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            milestone_id   INTEGER NOT NULL,
+            baseline_date  TEXT NOT NULL,
+            superseded_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            reason         TEXT NOT NULL,
+            set_by         TEXT NOT NULL DEFAULT ''
+        )
+    """)
+    await conn.commit()
+
+
 async def _migrate_nonworking_ranges(conn: aiosqlite.Connection) -> None:
     """Create nonworking_ranges table for custom non-working date ranges."""
     await conn.execute("""
@@ -731,6 +750,49 @@ async def baseline_milestones(conn: aiosqlite.Connection, *, slug: str) -> int:
     return cur.rowcount
 
 
+async def rebaseline_milestone(
+    conn: aiosqlite.Connection, *, milestone_id: int, slug: str,
+    baseline_date: str, reason: str, set_by: str,
+) -> bool:
+    """Move a milestone's promise, keeping the one it replaces. False if there is none.
+
+    The history row is written BEFORE the baseline is overwritten. If the update then
+    fails, history holds a superseded date that is still current - visibly odd and
+    recoverable. The other order loses the original permanently, which is unrecoverable.
+    """
+    async with conn.execute(
+        "SELECT baseline_date FROM project_milestones WHERE id=? AND slug=?",
+        (milestone_id, slug),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None or row["baseline_date"] is None:
+        return False
+
+    await conn.execute(
+        "INSERT INTO milestone_baselines (milestone_id, baseline_date, reason, set_by) "
+        "VALUES (?,?,?,?)",
+        (milestone_id, row["baseline_date"], reason, set_by),
+    )
+    await conn.execute(
+        "UPDATE project_milestones SET baseline_date=? WHERE id=? AND slug=?",
+        (baseline_date, milestone_id, slug),
+    )
+    await conn.commit()
+    return True
+
+
+async def fetch_milestone_baselines(
+    conn: aiosqlite.Connection, *, milestone_id: int
+) -> list[dict]:
+    """Superseded baselines, oldest first - the order the plan actually moved in."""
+    async with conn.execute(
+        "SELECT id, milestone_id, baseline_date, superseded_at, reason, set_by "
+        "FROM milestone_baselines WHERE milestone_id=? ORDER BY id",
+        (milestone_id,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
 async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slug: str) -> bool:
     cur = await conn.execute(
         "DELETE FROM project_milestones WHERE id=? AND slug=?", (milestone_id, slug)
@@ -760,6 +822,7 @@ async def get_connection(slug: str):
         await _migrate_interview_sessions_ratings(conn)
         await _migrate_interview_sessions_checkpoint(conn)
         await _migrate_project_milestones(conn)
+        await _migrate_milestone_baselines(conn)
         await _migrate_nonworking_ranges(conn)
         await _migrate_stakeholder_node_assignments(conn)
         await _migrate_agent_chat_history(conn)

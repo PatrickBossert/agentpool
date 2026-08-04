@@ -146,3 +146,10 @@ class MilestoneUpdate(BaseModel):
     notes: str | None = None
     sort_order: int | None = None
     completed_at: str | None = None
+
+
+class MilestoneRebaseline(BaseModel):
+    baseline_date: str
+    # Required and non-blank: a re-baseline nobody explained is indistinguishable from a
+    # mistake six months later, when the only remaining evidence is that the date moved.
+    reason: str
