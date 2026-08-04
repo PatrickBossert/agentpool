@@ -10,17 +10,19 @@ from api.config import get_settings
 _AGENT_TO_CREW: dict[str, str] = {
     "value_chain_mapper":          "discovery_mapping",
     "interaction_designer":        "assessment_design",
-    "requirements_capture":        "discovery",
-    "requirements_analyst":        "discovery",
-    "value_lever_analyst":         "discovery",
+    "requirements_capture":        "requirements",
+    "requirements_analyst":        "requirements",
+    # Morgan moved to the mapping crew; this map still said otherwise, so a revert of her
+    # output would have cleared pending reviews on the wrong crew entirely.
+    "value_lever_analyst":         "discovery_mapping",
     "stakeholder_manager":         "stakeholder_management",
     "interview_coordinator":       "discovery_interviews",
     "stakeholder_interviewer":     "discovery_interviews",
     "synthesis_analyst":           "discovery_interviews",
     "value_proposition_generator": "value_design",
     "portfolio_manager":           "value_design",
-    "enterprise_architect":        "architecture",
-    "initiative_identifier":       "architecture",
+    "enterprise_architect":        "capabilities",
+    "initiative_identifier":       "capabilities",
     "roadmap_generator":           "delivery",
     "business_plan_generator":     "business_plan",
 }
@@ -468,6 +470,40 @@ async def _migrate_project_milestones(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+# Crews renamed when the pipeline was re-sequenced: `architecture` compiles as-is
+# capabilities and derives uplift initiatives, and `discovery` - which ran before the
+# interviews it depends on - enumerates requirements against those initiatives and now runs
+# seventh. The stored names move with the code: a row naming a crew that no longer exists
+# does not read as history, it disappears from the board, and a commit gate keyed to one can
+# never be satisfied.
+_CREW_RENAMES: dict[str, str] = {
+    "architecture": "capabilities",
+    "discovery": "requirements",
+}
+
+
+async def rename_crew_in_stored_rows(conn: aiosqlite.Connection) -> int:
+    """Bring stored crew names into line with the code. Returns rows changed.
+
+    Runs on every connection open, so it must be a no-op once applied - the WHERE clause
+    makes it one, and a run that legitimately arrives under the new name is never touched.
+    """
+    changed = 0
+    for table in ("crew_runs", "approval_commits", "crew_submissions"):
+        async with conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ) as cur:
+            if await cur.fetchone() is None:
+                continue
+        for old, new in _CREW_RENAMES.items():
+            cur = await conn.execute(
+                f"UPDATE {table} SET crew_name=? WHERE crew_name=?", (new, old)
+            )
+            changed += cur.rowcount
+    await conn.commit()
+    return changed
+
+
 async def _migrate_milestone_baselines(conn: aiosqlite.Connection) -> None:
     """Every baseline a milestone has ever carried, so re-planning never erases a promise.
 
@@ -823,6 +859,7 @@ async def get_connection(slug: str):
         await _migrate_interview_sessions_checkpoint(conn)
         await _migrate_project_milestones(conn)
         await _migrate_milestone_baselines(conn)
+        await rename_crew_in_stored_rows(conn)
         await _migrate_nonworking_ranges(conn)
         await _migrate_stakeholder_node_assignments(conn)
         await _migrate_agent_chat_history(conn)

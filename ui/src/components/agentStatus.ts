@@ -3,36 +3,42 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Network, Tags, FileText, Globe, ExternalLink, Brain, Map, Database, UserCheck,
   FileEdit, ClipboardList, Target, Ruler, BarChart3, Mail, ClipboardCheck,
-  Mic, MessageSquare, Puzzle, Lightbulb, TrendingUp, Table, Building2,
-  Route, Calculator, FileOutput, Presentation,
+  Mic, MessageSquare, Puzzle, Lightbulb, TrendingUp, Table,
+  Route, Calculator, FileOutput, Presentation, Quote,
   PenTool, Layers, Cpu, Sparkles, Wand2, ImageIcon,
   CalendarDays, FileBarChart2, Shield, AlertOctagon,
 } from 'lucide-react'
 import type { CrewRun } from '../types'
 
+// Display order. CREW_DEPENDENCIES in api/services/crew_graph.py is what actually gates a
+// run; this is what the board shows, and the two must agree - an order contradicting the
+// graph shows a crew as next when it cannot run, and the reader acts on it.
+//
+// Jordan was shown before Maya while the graph required Maya first, which is the drift a
+// test now catches.
 export const CREW_ORDER = [
   'discovery_mapping',
-  'stakeholder_management',
   'assessment_design',
+  'stakeholder_management',
   'discovery_interviews',
-  'discovery',
   'value_design',
-  'architecture',
+  'capabilities',
+  'requirements',
   'delivery',
   'business_plan',
 ] as const
 
 // Snake-case agent names per crew — mirrors api/services/run_service.py _CREW_AGENT_NAMES
 export const CREW_AGENT_NAMES: Record<string, string[]> = {
-  discovery_mapping:      ['value_chain_mapper'],
+  discovery_mapping:      ['value_chain_mapper', 'value_lever_analyst'],
   assessment_design:      ['interaction_designer'],
-  discovery:              ['requirements_capture', 'requirements_analyst', 'value_lever_analyst'],
+  requirements:              ['requirements_capture', 'requirements_analyst'],
   stakeholder_management: ['stakeholder_manager'],
   discovery_interviews:   ['interview_coordinator', 'stakeholder_interviewer', 'synthesis_analyst'],
   value_design:           ['value_proposition_generator', 'portfolio_manager'],
-  architecture:           ['enterprise_architect', 'initiative_identifier'],
+  capabilities:           ['enterprise_architect', 'initiative_identifier'],
   delivery:               ['roadmap_generator'],
-  business_plan:          ['business_plan_generator'],
+  business_plan:          ['business_plan_generator', 'visual_illustrator'],
 }
 
 export type CrewName = (typeof CREW_ORDER)[number]
@@ -41,23 +47,22 @@ export const CREW_LABELS: Record<string, string> = {
   PAM:                    'PMO',
   discovery_mapping:      'Value Chain Mapping',
   assessment_design:      'Assessment Design',
-  discovery:              'Discovery',
+  requirements:              'Requirements',
   stakeholder_management: 'Stakeholder Management',
   discovery_interviews:   'Discovery Interviews',
   value_design:           'Value Design',
-  architecture:           'Architecture',
+  capabilities:           'Capabilities',
   delivery:               'Delivery',
   business_plan:          'Business Plan',
 }
 
 export const CREW_AGENTS: Record<string, string[]> = {
   PAM:                   ['PAM'],
-  discovery_mapping:     ['Value Chain Mapper'],
+  discovery_mapping:     ['Value Chain Mapper', 'Value Lever Analyst'],
   assessment_design:     ['Interaction Designer'],
-  discovery: [
+  requirements: [
     'Requirements Capture',
     'Requirements Analyst',
-    'Value Lever Analyst',
   ],
   stakeholder_management: ['Stakeholder Manager'],
   discovery_interviews: [
@@ -66,19 +71,19 @@ export const CREW_AGENTS: Record<string, string[]> = {
     'Synthesis Analyst',
   ],
   value_design:  ['Value Proposition Generator', 'Portfolio Manager'],
-  architecture:  ['Enterprise Architect', 'Initiative Identifier'],
-  delivery:      ['Roadmap Generator', 'Visual Illustrator'],
-  business_plan: ['Business Plan Generator'],
+  capabilities:  ['Enterprise Architect', 'Initiative Identifier'],
+  delivery:      ['Roadmap Generator'],
+  business_plan: ['Business Plan Generator', 'Visual Illustrator'],
 }
 
 export const CREW_ICONS: Record<string, string> = {
   discovery_mapping:      '🗺️',
   assessment_design:      '🎨',
-  discovery:              '🔍',
+  requirements:              '🔍',
   stakeholder_management: '🤝',
   discovery_interviews:   '🎙️',
   value_design:           '⭐',
-  architecture:           '🏛️',
+  capabilities:           '🏛️',
   delivery:               '🚀',
   business_plan:          '📊',
 }
@@ -130,8 +135,9 @@ export const AGENT_SKILLS: Record<string, AgentSkill[]> = {
     { name: 'State Management', description: 'Read the stakeholder registry, node template assignments, and interview session data before producing any output. Write stakeholder_engagement_plan.json before ending the run.', icon: Database },
   ],
   'Requirements Capture': [
-    { name: 'Requirements Elicitation', description: 'Ask the project team structured questions to surface requirements, constraints, and priorities. Record only what the team explicitly states, using their exact wording — never infer requirements or paraphrase what was said.', icon: UserCheck },
-    { name: 'State Management', description: 'Write all captured requirements to the project state store in structured JSON before ending the session. Do not rely on the conversation history — write every requirement out explicitly and confirm the write before finishing.', icon: Database },
+    { name: 'Initiative-Scoped Enumeration', description: 'Work through every initiative in the register across all six requirement dimensions - data, people, process, decision flow, application, and technology. An initiative absent from the output reads as having no requirements rather than as one you did not reach, so cover every one.', icon: UserCheck },
+    { name: 'Explicit Nil Returns', description: 'Where a dimension genuinely carries no requirement for an initiative, record it as "none identified" with a reason. Never omit it silently — a silent omission cannot be told apart from an oversight.', icon: ClipboardCheck },
+    { name: 'State Management', description: 'Read the initiative register and the as-is capability register before writing anything, so every requirement is stated against what already exists. Write the captured requirements to the project state store in structured JSON and confirm the write before finishing.', icon: Database },
   ],
   'Requirements Analyst': [
     { name: 'Document Ingestion', description: 'Before producing any output, read all uploaded client documents in full. Capture exact terminology the client uses — do not paraphrase. Flag every named system, process, or entity for inclusion in the requirements analysis.', icon: FileText },
@@ -140,9 +146,10 @@ export const AGENT_SKILLS: Record<string, AgentSkill[]> = {
     { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
   ],
   'Value Lever Analyst': [
-    { name: 'Semantic Search', description: 'Query the knowledge base for value-driving patterns, prior initiative outcomes, and corporate context before identifying any lever. Never assert a lever without citing the organisational evidence that supports it.', icon: Brain },
+    { name: 'Document Analysis', description: 'Read the client\'s own strategy, performance, and governance material to find the levers and KPIs the organisation already uses. Name the document every lever came from — a lever with no named source must not be submitted.', icon: FileText },
+    { name: 'Hypothesis Framing', description: 'State every lever as a hypothesis the interviews will test, never as an established finding. Levers read out of documents are what the organisation claims to care about; presenting one as settled removes the interviews\' ability to contradict it.', icon: Lightbulb },
     { name: 'Web Search', description: 'Validate every identified value lever against at least one published benchmark or industry dataset. Cite the source and date — never assert an impact estimate without external evidence.', icon: Globe },
-    { name: 'State Management', description: 'Read the analysed requirements and write identified levers with impact estimates, feasibility indicators, and supporting evidence to the project state store. Never submit a lever without a documented evidence basis.', icon: Database },
+    { name: 'State Management', description: 'Read the value chain model so each lever names the activities it bears on, and write the levers with their hypotheses, KPIs, and sources to the project state store. Where the model is not yet written, leave the activity references empty rather than inventing IDs.', icon: Database },
     { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
   ],
   'Interview Coordinator': [
@@ -157,7 +164,9 @@ export const AGENT_SKILLS: Record<string, AgentSkill[]> = {
   ],
   'Synthesis Analyst': [
     { name: 'Theme Extraction', description: 'Read all completed transcripts before identifying any theme. Only flag a theme if it appears across multiple transcripts — single-respondent observations belong in an "individual perspectives" section, not in the cross-cutting themes. Never extrapolate a theme from one voice.', icon: Puzzle },
-    { name: 'State Management', description: 'Read all interview transcripts and write a synthesised findings report structured by value chain area, maturity dimension, and theme. Do not merge themes from different value streams into a single finding — maintain separation.', icon: Database },
+    { name: 'Horizontal and Vertical Separation', description: 'Classify every theme as horizontal - running across the value chain, where digital transformation could improve efficiency or effectiveness - or vertical, running within a discipline such as governance, data, or a support service, where maturity could be raised. Never leave a theme unclassified.', icon: Route },
+    { name: 'Evidence Citation', description: 'Attach at least two evidence entries from different stakeholders to every theme, each naming the person and the node they spoke about. A theme with one voice behind it is an individual perspective, and one with no evidence must not be submitted.', icon: Quote },
+    { name: 'State Management', description: 'Read all interview transcripts and write activity insights and the classified theme set. Do not merge themes from different value streams into a single finding — maintain separation.', icon: Database },
     { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
   ],
   'Value Proposition Generator': [
@@ -173,15 +182,16 @@ export const AGENT_SKILLS: Record<string, AgentSkill[]> = {
     { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
   ],
   'Enterprise Architect': [
-    { name: 'Architecture Design', description: 'Design the target architecture from the initiative portfolio, not from first principles. Map every architectural component to at least one initiative it enables — never include an architectural element that cannot be linked to a portfolio initiative.', icon: Building2 },
-    { name: 'Semantic Search', description: 'Query the knowledge base for existing architecture context — current-state capabilities, adopted standards, prior design decisions — before proposing any new capability. Never design over the top of an existing investment without acknowledging it.', icon: Brain },
-    { name: 'Diagram Rendering', description: 'Produce a valid Mermaid diagram alongside every architecture JSON output. Validate the syntax before writing the file — a diagram with syntax errors must not be included.', icon: Map },
-    { name: 'State Management', description: 'Write the architecture blueprint — capability model, design decisions, and enabling conditions — to the project state store before ending the run.', icon: Database },
+    { name: 'As-Is Capability Compilation', description: 'Compile the capabilities the organisation has today across the data, technology, and organisation layers. Describe what exists, not what should exist — the uplift initiatives are derived from the gap between this register and each value proposition, and a current state written aspirationally makes that gap unmeasurable.', icon: Layers },
+    { name: 'Document Ingestion', description: 'Read the architecture papers, org charts, system inventories, and technology registers the client has supplied. Capture the exact names the organisation uses for its own systems and functions — never substitute a generic industry term for a named one.', icon: FileText },
+    { name: 'Semantic Search', description: 'Query the knowledge base for existing architecture context — adopted standards, prior design decisions, in-flight investments — before recording any capability. Never record a capability as absent without checking what is already in place.', icon: Brain },
+    { name: 'State Management', description: 'Write the as-is capability register — capabilities, the layer each sits in, and the evidence for each — to the project state store before ending the run.', icon: Database },
     { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
   ],
   'Initiative Identifier': [
-    { name: 'Initiative Decomposition', description: 'Decompose the architecture into initiatives with defined scope, outputs, and dependencies. Every initiative must either name its dependencies explicitly or state that it is independent — no initiative may have an undefined dependency status.', icon: Target },
-    { name: 'State Management', description: 'Read the architecture blueprint and portfolio register. Write the initiative register structured for roadmap sequencing and business plan integration before ending the run.', icon: Database },
+    { name: 'Gap Analysis', description: 'Derive each initiative from the gap between the as-is capability register and an approved value proposition - the "we need to be able to..." statement that closes it. Never propose an initiative that cannot be traced to a specific proposition and a specific missing capability.', icon: Target },
+    { name: 'Initiative Decomposition', description: 'Give every initiative a defined scope, outputs, and dependencies. Each must either name its dependencies explicitly or state that it is independent — no initiative may have an undefined dependency status.', icon: Puzzle },
+    { name: 'State Management', description: 'Read the as-is capability register, the value propositions, and the portfolio register. Write the initiative register structured for roadmap sequencing and business plan integration before ending the run.', icon: Database },
     { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
   ],
   'Roadmap Generator': [
@@ -231,16 +241,16 @@ export const AGENT_ROLE: Record<string, string> = {
   'Value Chain Mapper': 'Decomposes the organisation into a structured, three-level value chain - L1 value streams owned by senior leaders, L2 process stages owned by process managers, and L3 activities at the operational level. Assigns stable n.n.n numeric IDs to every node and maintains a permanent registry that persists across iterations, so all downstream artefacts (interview scripts, stakeholder assignments, roadmap initiatives) can reference activities by stable ID. Produces the authoritative value chain tree and summary that all subsequent crews consume.',
   'Interaction Designer': 'Designs the complete set of interview instruments for the engagement across eight instrument types: L0 (portfolio / board), L1 (GM / value stream), L2 (process manager), L3 (practitioner), C (customer), A (auditor / regulator), F (frontline worker), and S (corporate services). Works immediately after value chain mapping, before stakeholder assignment, so instruments are grounded in organisational structure and stakeholder hierarchy. L1 and L2 scripts embed maturity ratings; all other types use fixed or library section structures without numerical scoring. All content is grounded in configured industry standards and the corporate context from ingested documents.',
   'Stakeholder Manager': 'Actively manages stakeholder engagement across the entire interview programme. Analyses stakeholder-to-node assignment coverage at L1, L2, and L3 levels; identifies gaps where nodes lack adequate representation; and drafts a progressive sequence of communications - invitation, first reminder, second reminder, and re-engagement - calibrated to stakeholder seniority and urgency. Tracks interview session completion status to avoid contacting stakeholders who have already participated. Maintains the stakeholder_engagement_plan.json as the authoritative record of programme health and notifies the project team via Slack when action is required.',
-  'Requirements Capture': 'Gathers and documents stakeholder requirements, constraints, and strategic priorities through structured dialogue with the project team. Ensures all explicitly articulated needs are captured in structured form before analysis - so the discovery phase is grounded in what the client has said, not only what documents imply.',
+  'Requirements Capture': 'Enumerates what each approved initiative requires across six dimensions - data, people, process, decision flow, application, and technology - stated against the current-state capabilities that already exist. Works from the initiative register rather than an open brief, and records a dimension as "none identified" with a reason rather than omitting it, so a gap in the analysis can be told apart from a gap in the requirement.',
   'Requirements Analyst': 'Analyses the captured requirement set for completeness, consistency, priority, and hidden conflicts. Reads client documents to surface implicit requirements that the direct session may have missed, and queries the knowledge base for related precedents. Produces a structured, prioritised requirement analysis that forms the foundation for value lever identification.',
-  'Value Lever Analyst': 'Identifies the highest-value levers for organisational improvement based on discovery findings, value chain structure, and external benchmarks. Grounds each lever in evidence - from the knowledge base, client documents, and published industry data - and estimates expected impact ranges. Produces the prioritised lever set that the Value Proposition Generator will translate into discrete propositions.',
+  'Value Lever Analyst': 'Reads the client\'s own strategy, performance, and governance material to surface the value levers and KPIs the organisation already talks about, and names the value chain activities each one bears on. Runs first, alongside value chain mapping and before the interview instruments are designed, so Maya can design against the measures the organisation itself uses rather than asking cold. Every lever is stated as a hypothesis for the interviews to test, never as an established finding - a lever presented as settled removes the interviews\' ability to contradict it.',
   'Interview Coordinator': 'Plans and activates the stakeholder interview programme. Reads node template assignments and stakeholder lists, creates interview sessions with unique links, and sequences interviews efficiently across the programme timeline. Produces a scheduling plan that coordinates L1 strategic interviews and L2 operational interviews without resource conflicts.',
   'Stakeholder Interviewer': 'Conducts voice and text interviews with assigned stakeholders using the pre-designed interview scripts for their value chain node. Manages session state throughout the lifecycle - launching, recording, tracking progress through script sections, and marking completion. Produces a complete, structured transcript for each session that the Synthesis Analyst can work from directly.',
-  'Synthesis Analyst': 'Synthesises all completed interview transcripts into structured findings and themes. Identifies patterns that cross individual responses - maturity gaps, capability strengths, strategic tensions, consensus priorities - and organises them by value chain area, maturity dimension, and stakeholder level. Produces the synthesis report that drives value proposition generation and portfolio scoring.',
+  'Synthesis Analyst': 'Synthesises all completed interview transcripts into activity-level insights and the themes the evidence supports. Separates horizontal themes - running across the value chain, where digital transformation could improve efficiency or effectiveness - from vertical themes running within a discipline such as governance, data, or a support service, where maturity could be raised. Every theme names the stakeholders whose words evidence it, which is what lets a value proposition be traced back to something a person actually said.',
   'Value Proposition Generator': 'Translates synthesised interview findings and identified value levers into a structured set of value propositions, each with a clear problem statement, proposed intervention, expected benefit, and mapping to the relevant value chain activities and beneficiary groups. Propositions feed directly into the portfolio scoring and architecture design phases.',
   'Portfolio Manager': 'Scores and prioritises the initiative portfolio using the IIRC Integrated Reporting Six Capitals framework. Applies configured weights across eight dimensions to produce a defensible, evidence-based ranking of initiatives. Generates an Excel portfolio register for stakeholder distribution and ensures the investment case is grounded in a transparent, repeatable scoring methodology.',
-  'Enterprise Architect': 'Designs the enterprise architecture required to deliver the prioritised initiative portfolio. Covers capability gaps, technology enablers, integration patterns, and organisational design implications. Draws on the project knowledge base for current-state context and produces both a written blueprint and Mermaid architecture diagrams for inclusion in the business plan and stakeholder presentations.',
-  'Initiative Identifier': 'Decomposes the architecture blueprint into a discrete set of deliverable initiatives - each with defined scope, expected outputs, dependencies, value stream alignment, and indicative cost band. Ensures the initiative register is granular enough for roadmap sequencing and resource planning, while remaining coherent enough for executive comprehension.',
+  'Enterprise Architect': 'Compiles the organisation\'s as-is capabilities from its own documents - architecture papers, org charts, system inventories, and technology registers - across the data, technology, and organisation layers. Describes what exists rather than proposing what should, because the uplift initiatives are derived from the gap between these capabilities and each value proposition, and a current state written aspirationally makes that gap unmeasurable.',
+  'Initiative Identifier': 'Derives the uplift initiatives from the gap between the as-is capability register and each approved value proposition - the "we need to be able to..." statements that close it. Each initiative carries defined scope, expected outputs, dependencies, value stream alignment, and an indicative cost band, granular enough for roadmap sequencing and resource planning while remaining coherent enough for executive comprehension.',
   'Roadmap Generator': 'Sequences initiatives across value streams and time horizons into a phased delivery roadmap that balances quick wins, dependency order, resource constraints, and portfolio priority scores. Produces an interactive HTML roadmap for client presentation, a structured roadmap data file for the Gantt chart view, and a sequencing narrative for the business plan.',
   'Visual Illustrator': 'Translates the structured outputs of the engagement - value chain, value propositions, architecture blueprint, roadmap, and operating model - into richly contextualised illustration briefs ready for image generation. Each brief is a precise, sector-grounded prompt specifying visual style (hand-sketched isometric), composition, labelling level, flow elements, and what to avoid. Briefs are written so that any image generation tool produces a usable result with minimal iteration.',
   'Business Plan Generator': 'Compiles the complete investment case - drawing on all prior crew outputs - into a coherent business plan narrative and financial model. Calculates NPV, IRR, payback period, and maximum borrowing capacity. Produces formatted Word and PowerPoint outputs suitable for board and executive distribution.',
@@ -369,11 +379,11 @@ export const AGENT_BACKSTORY: Record<string, string> = {
 export const CREW_DOWNSTREAM: Record<string, string[]> = {
   discovery_mapping:      ['assessment_design', 'discovery_interviews'],
   assessment_design:      ['discovery_interviews'],
-  discovery:              ['value_design'],
+  requirements:              ['value_design'],
   stakeholder_management: [],
   discovery_interviews:   ['value_design'],
-  value_design:           ['architecture'],
-  architecture:           ['delivery'],
+  value_design:           ['capabilities'],
+  capabilities:           ['delivery'],
   delivery:               ['business_plan'],
   business_plan:          [],
 }
@@ -382,7 +392,7 @@ export type AgentStatus = 'running' | 'waiting' | 'completed' | 'queued' | 'idle
 export type CrewStatus  = 'running' | 'waiting' | 'completed' | 'failed' | 'queued' | 'idle'
 
 // Humorous wellbeing activities shown instead of "Idle"
-const IDLE_STATUSES = [
+export const IDLE_STATUSES = [
   'On a brisk walk',
   'At the gym',
   'Morning yoga',

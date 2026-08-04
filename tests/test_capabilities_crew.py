@@ -1,4 +1,4 @@
-# tests/test_architecture_crew.py
+# tests/test_capabilities_crew.py
 """Unit tests for Architecture crew agents and crew assembly."""
 import pytest
 from unittest.mock import MagicMock, patch
@@ -118,19 +118,19 @@ def test_ii_task_covers_all_categories(mock_llm):
 
 # ── Crew wiring ───────────────────────────────────────────────────────────────
 
-def test_architecture_crew_has_two_agents(mock_llm):
+def test_capabilities_crew_has_two_agents(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
-        from agents.crews.architecture_crew import create_architecture_crew
-        crew = create_architecture_crew(
+        from agents.crews.capabilities_crew import create_capabilities_crew
+        crew = create_capabilities_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
         )
     assert len(crew.agents) == 2
 
 
-def test_architecture_crew_agent_roles(mock_llm):
+def test_capabilities_crew_agent_roles(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
-        from agents.crews.architecture_crew import create_architecture_crew
-        crew = create_architecture_crew(
+        from agents.crews.capabilities_crew import create_capabilities_crew
+        crew = create_capabilities_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
         )
     roles = {a.role for a in crew.agents}
@@ -138,22 +138,22 @@ def test_architecture_crew_agent_roles(mock_llm):
     assert "Initiative Identifier" in roles
 
 
-def test_architecture_crew_sequential_process(mock_llm):
+def test_capabilities_crew_sequential_process(mock_llm):
     from crewai import Process
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
-        from agents.crews.architecture_crew import create_architecture_crew
-        crew = create_architecture_crew(
+        from agents.crews.capabilities_crew import create_capabilities_crew
+        crew = create_capabilities_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
         )
     assert crew.process == Process.sequential
 
 
-def test_architecture_crew_accepts_hitl_tool_override(mock_llm):
+def test_capabilities_crew_accepts_hitl_tool_override(mock_llm):
     """hitl_tool is forwarded to every get_tools_for_agent call."""
     mock_hitl = MagicMock()
-    with patch("agents.crews.architecture_crew.get_tools_for_agent", return_value=[]) as mock_reg:
-        from agents.crews.architecture_crew import create_architecture_crew
-        create_architecture_crew(
+    with patch("agents.crews.capabilities_crew.get_tools_for_agent", return_value=[]) as mock_reg:
+        from agents.crews.capabilities_crew import create_capabilities_crew
+        create_capabilities_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics",
             llm=mock_llm, hitl_tool=mock_hitl,
         )

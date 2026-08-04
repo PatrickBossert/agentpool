@@ -52,7 +52,7 @@ async def test_list_runs_returns_history(client):
         await insert_crew_run(
             conn,
             project_id=project["id"],
-            crew_name="discovery",
+            crew_name="requirements",
             status="completed",
             orchestration_run_id=orch_id,
         )
@@ -71,7 +71,7 @@ async def test_list_runs_returns_history(client):
     assert data[0]["id"] == orch_id
     assert data[0]["status"] == "completed"
     crew_names = [cr["crew_name"] for cr in data[0]["crew_runs"]]
-    assert "discovery" in crew_names
+    assert "requirements" in crew_names
     assert "value_design" in crew_names
 
 

@@ -21,7 +21,7 @@ PROJECT = {
     "sector": "transport",
     "stakeholder_groups": ["Operations"],
     "value_stream_labels": ["Asset Mgmt"],
-    "crews_enabled": ["discovery"],
+    "crews_enabled": ["requirements"],
     "review_gates": True,
     "slack_channel": "",
 }
@@ -239,3 +239,56 @@ async def test_a_crew_with_no_downstream_classifies_to_three_empty_lists(client)
         result = await classify_downstream(conn, crew_name="business_plan")
 
     assert result == {"ready": [], "running": [], "waiting": []}
+
+
+# ---------------------------------------------------------------------------
+# The sequence after the interviews.
+#
+# Each crew consumes what the one before it produced: themes to propositions, propositions
+# to capability uplift, initiatives to requirements, requirements to a roadmap.
+# ---------------------------------------------------------------------------
+
+
+def test_requirements_waits_for_the_capabilities_that_scope_it():
+    # It had NO dependencies at all, so it could run before the interviews it is meant to
+    # follow. That made the displayed order a fiction rather than a plan.
+    assert CREW_DEPENDENCIES["requirements"] == ["capabilities"]
+
+
+def test_value_design_no_longer_waits_for_requirements():
+    """Value propositions come from Casey's themes. Waiting on a crew that now runs two
+    steps later would deadlock the board outright - every crew waiting, none ever ready."""
+    assert CREW_DEPENDENCIES["value_design"] == ["discovery_interviews"]
+
+
+def test_delivery_waits_for_requirements_not_for_capabilities():
+    # The roadmap needs the complexity, method and cost that requirements produces, not
+    # only the initiatives above it.
+    assert CREW_DEPENDENCIES["delivery"] == ["requirements"]
+
+
+def _crew_order_from_frontend() -> list[str]:
+    """CREW_ORDER as the frontend declares it.
+
+    Read rather than duplicated: mirroring the graph into a TypeScript fixture would make
+    two declarations of one sequence, which is the very drift this test exists to catch.
+    """
+    import re
+
+    source = Path("ui/src/components/agentStatus.ts").read_text()
+    block = re.search(r"export const CREW_ORDER = \[(.*?)\]", source, re.S)
+    assert block, "CREW_ORDER not found - has it been renamed?"
+    return re.findall(r"'([a-z_]+)'", block.group(1))
+
+
+def test_the_displayed_order_is_one_the_graph_permits():
+    """Two declarations of one sequence: the graph enforces, the order displays. An order
+    contradicting the graph shows a crew as next when it cannot run, which is worse than
+    showing nothing - the reader acts on it and the run is refused."""
+    order = _crew_order_from_frontend()
+    assert set(order) == set(CREW_DEPENDENCIES), "the two disagree about which crews exist"
+    for position, crew in enumerate(order):
+        for upstream in CREW_DEPENDENCIES[crew]:
+            assert order.index(upstream) < position, (
+                f"{crew} is displayed before its dependency {upstream}"
+            )

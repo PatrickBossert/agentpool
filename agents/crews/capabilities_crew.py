@@ -1,4 +1,4 @@
-# agents/crews/architecture_crew.py
+# agents/crews/capabilities_crew.py
 from crewai import Crew, Process, LLM
 from agents.llm import get_crew_llm
 from agents.tools.registry import get_tools_for_agent
@@ -12,7 +12,7 @@ from agents.architecture.initiative_identifier import (
 )
 
 
-def create_architecture_crew(
+def create_capabilities_crew(
     slug: str,
     run_id: int,
     llm_mode: str,

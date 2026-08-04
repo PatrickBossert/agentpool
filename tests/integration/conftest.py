@@ -115,7 +115,6 @@ def setup_test_project(test_slug, chroma_client):
         "crews_enabled": ["discovery"],
         "review_gates": True,
         "slack_channel": "",
-        "requirements_capture_max_turns": 3,
     }
     (project_dir / "config.yaml").write_text(yaml.dump(config))
 

@@ -197,7 +197,7 @@ def test_vi_task_has_no_hitl_gate(mock_llm):
 
 # ── Crew wiring ───────────────────────────────────────────────────────────────
 
-def test_delivery_crew_has_two_agents(mock_llm):
+def test_delivery_crew_carries_the_roadmap_generator(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.delivery_crew import create_delivery_crew
         crew = create_delivery_crew(
@@ -205,10 +205,10 @@ def test_delivery_crew_has_two_agents(mock_llm):
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
         )
-    assert len(crew.agents) == 2
+    assert len(crew.agents) == 1
 
 
-def test_delivery_crew_agent_roles(mock_llm):
+def test_delivery_crew_agent_role(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.delivery_crew import create_delivery_crew
         crew = create_delivery_crew(
@@ -216,9 +216,10 @@ def test_delivery_crew_agent_roles(mock_llm):
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
         )
-    roles = [a.role for a in crew.agents]
-    assert "Roadmap Generator" in roles
-    assert "Visual Illustrator" in roles
+    # The Illustrator moved to business_plan, where the value chain, the propositions, the
+    # roadmap and the financials all exist and can be rendered in one consistent style. In
+    # delivery he could see only the roadmap.
+    assert [a.role for a in crew.agents] == ["Roadmap Generator"]
 
 
 def test_delivery_crew_sequential_process(mock_llm):

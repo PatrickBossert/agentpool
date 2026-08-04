@@ -261,7 +261,7 @@ def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collectio
         # uses `from agents.llm import get_crew_llm` (local binding).
         with ExitStack() as stack:
             stack.enter_context(
-                patch("agents.crews.discovery_crew.get_crew_llm", return_value=test_llm)
+                patch("agents.crews.requirements_crew.get_crew_llm", return_value=test_llm)
             )
             stack.enter_context(
                 patch("agents.crews.value_design_crew.get_crew_llm", return_value=test_llm)
@@ -273,7 +273,7 @@ def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collectio
                 patch("agents.crews.value_design_crew.get_haiku_llm", return_value=test_llm)
             )
             stack.enter_context(
-                patch("agents.crews.architecture_crew.get_crew_llm", return_value=test_llm)
+                patch("agents.crews.capabilities_crew.get_crew_llm", return_value=test_llm)
             )
             stack.enter_context(
                 patch("agents.crews.delivery_crew.get_crew_llm", return_value=test_llm)

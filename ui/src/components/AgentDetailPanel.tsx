@@ -97,7 +97,7 @@ const CREW_META: Record<string, CrewMeta> = {
     configPage: null,
     note: 'Runs after value chain mapping is approved. Generates eight instrument types — L0 through L3 for the value chain, plus C, A, F, and S for external and frontline perspectives.',
   },
-  discovery: {
+  requirements: {
     reads: ['Uploaded documents', 'Project knowledge base', 'Captured requirements'],
     produces: ['requirements.json', 'value_levers.json'],
     note: 'Discovery can run in parallel with assessment design - it does not depend on interview scripts.',
@@ -119,7 +119,7 @@ const CREW_META: Record<string, CrewMeta> = {
     produces: ['value_propositions.json', 'portfolio_register.json', 'portfolio.xlsx'],
     note: 'Combines discovery findings and interview insights into a scored initiative portfolio.',
   },
-  architecture: {
+  capabilities: {
     reads: ['portfolio_register.json', 'Project knowledge base'],
     produces: ['architecture_blueprint.json', 'architecture_diagram.svg'],
     note: 'Designs the enterprise capability architecture to deliver the prioritised portfolio.',

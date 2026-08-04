@@ -1,4 +1,4 @@
-# tests/integration/test_discovery_crew.py
+# tests/integration/test_requirements_crew.py
 """
 Full end-to-end integration test for the Discovery Crew.
 
@@ -16,13 +16,13 @@ from api.config import get_settings
 
 
 @pytest.mark.integration
-def test_discovery_crew_end_to_end(test_slug, project_id):
+def test_requirements_crew_end_to_end(test_slug, project_id):
     """
     Run the full Discovery Crew and verify all outputs are produced.
     Uses synchronous execution (crew.kickoff()) for test simplicity.
     """
     from agents.llm import get_test_llm
-    from agents.crews.discovery_crew import create_discovery_crew
+    from agents.crews.requirements_crew import create_requirements_crew
 
     settings = get_settings()
     db_path = Path(settings.database_dir) / f"{test_slug}.db"
@@ -40,7 +40,7 @@ def test_discovery_crew_end_to_end(test_slug, project_id):
 
     # Build crew with cheap test LLM
     llm = get_test_llm()
-    crew = create_discovery_crew(
+    crew = create_requirements_crew(
         slug=test_slug,
         run_id=run_id,
         llm_mode="standard",

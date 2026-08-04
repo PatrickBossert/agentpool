@@ -23,14 +23,14 @@ export const CREW_OUTPUT_TYPE: Record<string, string> = {
   value_design:           'portfolio_register',
   // Same shape: initiative_identifier reads 'architecture_register' and decomposes it into
   // the initiatives that delivery and business_plan both consume.
-  architecture:           'initiative_register',
+  capabilities:           'initiative_register',
   // HtmlRoadmapTool writes 'html' too, but that is a rendering of this same JSON.
   delivery:               'roadmap_data',
   // WordOutputTool's business_plan.docx. The deck and the financial model accompany it.
   business_plan:          'docx',
-  // requirements_analyst's output is explicitly "the foundation for value lever
-  // identification", and value_lever_analyst reads it back - the levers are the crew's result.
-  discovery:              'value_levers',
+  // Riley's output. This named 'value_levers' until Morgan - who writes them - moved to
+  // discovery_mapping, where they are a secondary output rather than the primary.
+  requirements:           'requirements',
   stakeholder_management: 'stakeholder_engagement_plan',
   // synthesis_analyst's synthesis of the transcripts stakeholder_interviewer gathered.
   discovery_interviews:   'activity_insights',

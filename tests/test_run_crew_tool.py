@@ -31,10 +31,10 @@ async def test_arun_creates_crew_run_record(monkeypatch, tmp_path):
         mock_ctx.return_value = mock_conn
 
         tool = _make_tool()
-        await tool._arun("discovery")
+        await tool._arun("requirements")
 
     mock_insert.assert_awaited_once_with(
-        mock_conn, project_id=1, crew_name="discovery", status="running", orchestration_run_id=99
+        mock_conn, project_id=1, crew_name="requirements", status="running", orchestration_run_id=99
     )
 
 
@@ -55,7 +55,7 @@ async def test_arun_marks_completed_on_success():
         mock_ctx.return_value = mock_conn
 
         tool = _make_tool()
-        result = await tool._arun("discovery")
+        result = await tool._arun("requirements")
 
     calls = mock_update.call_args_list
     statuses = [c.kwargs.get("status") for c in calls]
@@ -80,18 +80,18 @@ async def test_arun_marks_failed_on_exception():
         mock_ctx.return_value = mock_conn
 
         tool = _make_tool()
-        result = await tool._arun("discovery")
+        result = await tool._arun("requirements")
 
     calls = mock_update.call_args_list
     statuses = [c.kwargs.get("status") for c in calls]
     assert "failed" in statuses
-    assert "Error running discovery" in result
+    assert "Error running requirements" in result
     assert "boom" in result
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("crew_name", [
-    "discovery", "value_design", "architecture", "delivery", "business_plan"
+    "requirements", "value_design", "capabilities", "delivery", "business_plan"
 ])
 async def test_arun_calls_build_and_run_crew_with_correct_name(crew_name):
     """build_and_run_crew is called with the crew_name argument passed to _arun."""

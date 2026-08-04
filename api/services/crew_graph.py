@@ -19,11 +19,19 @@ CREW_DEPENDENCIES: dict[str, list[str]] = {
     "discovery_mapping":      [],
     "assessment_design":      ["discovery_mapping"],
     "stakeholder_management": ["assessment_design"],
-    "discovery":              [],
     "discovery_interviews":   ["assessment_design", "stakeholder_management"],
-    "value_design":           ["discovery", "discovery_interviews"],
-    "architecture":           ["value_design"],
-    "delivery":               ["architecture"],
+    # Value propositions come from Casey's themes. This used to also wait on `discovery`,
+    # which now runs two steps later - leaving that in place would deadlock the board,
+    # with every crew waiting and none ever ready.
+    "value_design":           ["discovery_interviews"],
+    "capabilities":           ["value_design"],
+    # `discovery` - Sam and Riley - had NO dependencies at all, so it could run before the
+    # interviews it is meant to follow. It enumerates requirements against initiatives,
+    # which do not exist until the capability work above has produced them.
+    "requirements":           ["capabilities"],
+    # The roadmap needs the complexity, method and cost that requirements produces, not
+    # only the initiatives above it.
+    "delivery":               ["requirements"],
     "business_plan":          ["delivery"],
 }
 

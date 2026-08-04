@@ -29,7 +29,7 @@ def create_requirements_analyst_task(
         description=(
             "Synthesise the interview transcript and client documents into a structured requirements register.\n\n"
             "Steps:\n"
-            "1. Use SQLiteStateTool with operation='read', key='interview_transcript', "
+            "1. Use SQLiteStateTool with operation='read', key='captured_requirements', "
             "agent_name='requirements_analyst' to retrieve the interview transcript.\n"
             "2. Use ChromaQueryTool with collection='project' to retrieve any additional context "
             "from client documents.\n"

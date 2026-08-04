@@ -163,9 +163,9 @@ describe('AgentDetailPanel - the empty state', () => {
   })
 
   it('still appears for a crew with nothing at all to show', async () => {
-    // The negative half: 'architecture' has neither an editor nor an extra, so suppressing
+    // The negative half: 'capabilities' has neither an editor nor an extra, so suppressing
     // the empty state everywhere would not satisfy this.
-    renderPanel({ crewKey: 'architecture', outputs: [] })
+    renderPanel({ crewKey: 'capabilities', outputs: [] })
     expect(await screen.findByTestId('no-primary-output')).toBeVisible()
   })
 })

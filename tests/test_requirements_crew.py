@@ -1,4 +1,4 @@
-# tests/test_discovery_crew.py
+# tests/test_requirements_crew.py
 """Unit tests for Discovery crew assembly."""
 import pytest
 from unittest.mock import MagicMock, patch
@@ -10,12 +10,12 @@ def mock_llm():
     return MagicMock(spec=LLM)
 
 
-def test_discovery_crew_accepts_hitl_tool_override(mock_llm):
+def test_requirements_crew_accepts_hitl_tool_override(mock_llm):
     """hitl_tool is forwarded to every get_tools_for_agent call."""
     mock_hitl = MagicMock()
-    with patch("agents.crews.discovery_crew.get_tools_for_agent", return_value=[]) as mock_reg:
-        from agents.crews.discovery_crew import create_discovery_crew
-        create_discovery_crew(
+    with patch("agents.crews.requirements_crew.get_tools_for_agent", return_value=[]) as mock_reg:
+        from agents.crews.requirements_crew import create_requirements_crew
+        create_requirements_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics",
             llm=mock_llm, hitl_tool=mock_hitl,
         )
@@ -60,24 +60,25 @@ def test_value_chain_mapper_task_unchanged_when_no_inputs():
     assert "Research brief:" not in desc
 
 
-def test_discovery_mapping_crew_has_one_agent():
+def test_discovery_mapping_crew_carries_alex_and_morgan():
     from agents.crews.discovery_mapping_crew import create_discovery_mapping_crew
     mock_llm = MagicMock(spec=LLM)
     with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
         crew = create_discovery_mapping_crew(
             slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
         )
-    assert len(crew.agents) == 1
+    # Named rather than counted: a count of two is equally true of the wrong two.
+    assert [a.role for a in crew.agents] == ['Value Chain Mapper', 'Value Lever Analyst']
 
 
-def test_discovery_mapping_crew_has_one_task():
+def test_discovery_mapping_crew_runs_a_task_for_each_of_them():
     from agents.crews.discovery_mapping_crew import create_discovery_mapping_crew
     mock_llm = MagicMock(spec=LLM)
     with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
         crew = create_discovery_mapping_crew(
             slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
         )
-    assert len(crew.tasks) == 1
+    assert len(crew.tasks) == 2
 
 
 def test_discovery_mapping_crew_task_mentions_value_chain_model_and_tree():

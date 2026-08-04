@@ -16,15 +16,20 @@ from api.routers.ws import push_log
 
 # Crew name → snake_case agent names stored in agent_outputs.agent_name
 _CREW_AGENT_NAMES: dict[str, list[str]] = {
-    "discovery_mapping":      ["value_chain_mapper"],
+    # Morgan reads levers and KPIs out of the documents, after Alex has given her the
+    # chain to hang them on and before Maya designs instruments against them.
+    "discovery_mapping":      ["value_chain_mapper", "value_lever_analyst"],
     "assessment_design":      ["interaction_designer"],
-    "discovery":              ["requirements_capture", "requirements_analyst", "value_lever_analyst"],
+    "requirements":           ["requirements_capture", "requirements_analyst"],
     "stakeholder_management": ["stakeholder_manager"],
     "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer", "synthesis_analyst"],
     "value_design":           ["value_proposition_generator", "portfolio_manager"],
-    "architecture":           ["enterprise_architect", "initiative_identifier"],
+    "capabilities":           ["enterprise_architect", "initiative_identifier"],
     "delivery":               ["roadmap_generator"],
-    "business_plan":          ["business_plan_generator"],
+    # The Illustrator renders the value chain, the propositions, the roadmap and the
+    # financials in one consistent style for the plan and the pitch pack. He was listed
+    # under delivery on the org chart and dispatched by nothing at all.
+    "business_plan":          ["business_plan_generator", "visual_illustrator"],
 }
 
 # Maps snake_case agent names (used in DB crew runs) to display names (used in agent_skills).
@@ -269,8 +274,8 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             priority_doc_names=priority_doc_names,
         )
 
-    elif crew_name == "discovery":
-        from agents.crews.discovery_crew import create_discovery_crew
+    elif crew_name == "requirements":
+        from agents.crews.requirements_crew import create_requirements_crew
 
         discovery_brief = config.get("discovery_brief", "")
         discovery_links = config.get("discovery_links", [])
@@ -289,7 +294,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
                         if doc_id in doc_map
                     ]
 
-        crew = create_discovery_crew(
+        crew = create_requirements_crew(
             slug=slug,
             run_id=run_id,
             llm_mode=llm_mode,
@@ -303,9 +308,9 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         from agents.crews.value_design_crew import create_value_design_crew
         crew = create_value_design_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
 
-    elif crew_name == "architecture":
-        from agents.crews.architecture_crew import create_architecture_crew
-        crew = create_architecture_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
+    elif crew_name == "capabilities":
+        from agents.crews.capabilities_crew import create_capabilities_crew
+        crew = create_capabilities_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
 
     elif crew_name == "delivery":
         missing = missing_config_keys(config, "delivery")
@@ -329,7 +334,10 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
 
     elif crew_name == "business_plan":
         from agents.crews.business_plan_crew import create_business_plan_crew
-        crew = create_business_plan_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
+        crew = create_business_plan_crew(
+            slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector,
+            client_name=config.get("client_name", slug),
+        )
 
     elif crew_name in ("assessment_design", "questionnaire_builder"):
         # questionnaire_builder is kept as an alias for backward compatibility
@@ -449,13 +457,13 @@ async def dispatch_crew(
 # questionnaires moved inline into the interview. The crew-name alias in
 # build_and_run_crew stays, for stored crew_run rows in other environments.
 AGENT_CREW_NAME: dict[str, str] = {
-    "requirements_analyst":        "discovery",
-    "value_lever_analyst":         "discovery",
+    "requirements_analyst":        "requirements",
+    "value_lever_analyst":         "discovery_mapping",
     "synthesis_analyst":           "discovery_interviews",
     "value_proposition_generator": "value_design",
     "portfolio_manager":           "value_design",
-    "enterprise_architect":        "architecture",
-    "initiative_identifier":       "architecture",
+    "enterprise_architect":        "capabilities",
+    "initiative_identifier":       "capabilities",
     "roadmap_generator":           "delivery",
     "business_plan_generator":     "business_plan",
     "interaction_designer":        "assessment_design",
