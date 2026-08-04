@@ -85,7 +85,7 @@ class SQLiteStateTool(BaseTool):
     description: str = (
         "Read or write a JSON state blob scoped to this project. "
         "Use 'write' to save intermediate results; use 'read' to retrieve them. "
-        "The key becomes the filename (e.g. key='requirements' → outputs/requirements.json)."
+        "The key becomes the filename (e.g. key='themes' → outputs/themes.json)."
     )
     args_schema: type[BaseModel] = SQLiteStateToolInput
     slug: str

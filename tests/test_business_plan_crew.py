@@ -26,7 +26,10 @@ def test_bpg_task_reads_all_inputs(mock_llm):
     )
     agent = create_business_plan_generator(slug="test", llm=mock_llm, tools=[])
     task = create_business_plan_generator_task(agent=agent)
-    for key in ("requirements", "value_levers", "propositions", "initiative_register", "roadmap_data"):
+    # Both requirement levels by name: it runs last and is the one consumer that wants
+    # the strategic framing and the delivery detail rather than whichever ran last.
+    for key in ("strategic_requirements", "requirements_analysis", "value_levers",
+                "propositions", "initiative_register", "roadmap_data"):
         assert f"key='{key}'" in task.description, f"Missing key='{key}' in task description"
 
 

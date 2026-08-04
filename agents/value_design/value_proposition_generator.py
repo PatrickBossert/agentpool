@@ -28,8 +28,9 @@ def create_value_proposition_generator_task(agent: Agent) -> Task:
         description=(
             "Synthesise the Discovery crew outputs into a set of value propositions.\n\n"
             "Steps:\n"
-            "1. Use SQLiteStateTool with operation='read', key='requirements', "
-            "agent_name='value_proposition_generator' to retrieve the requirements register.\n"
+            "1. Use SQLiteStateTool with operation='read', key='strategic_requirements', "
+            "agent_name='value_proposition_generator' to retrieve the strategic "
+            "requirements - the challenges and opportunities the interviews evidenced.\n"
             "2. Use SQLiteStateTool with operation='read', key='value_levers', "
             "agent_name='value_proposition_generator' to retrieve the value levers.\n"
             "3. Use SQLiteStateTool with operation='read', key='value_chain_summary', "

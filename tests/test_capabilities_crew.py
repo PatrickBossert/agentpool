@@ -80,7 +80,8 @@ def test_ii_task_reads_three_inputs(mock_llm):
     task = create_initiative_identifier_task(agent=agent, context_tasks=[])
     assert "key='propositions'" in task.description
     assert "key='architecture_register'" in task.description
-    assert "key='requirements'" in task.description
+    # Sage runs before Riley, so the strategic level is the only one written yet.
+    assert "key='strategic_requirements'" in task.description
 
 
 def test_ii_task_writes_initiative_register(mock_llm):

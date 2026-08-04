@@ -30,7 +30,7 @@ export const CREW_OUTPUT_TYPE: Record<string, string> = {
   business_plan:          'docx',
   // Riley's output. This named 'value_levers' until Morgan - who writes them - moved to
   // discovery_mapping, where they are a secondary output rather than the primary.
-  requirements:           'requirements',
+  requirements:           'requirements_analysis',
   stakeholder_management: 'stakeholder_engagement_plan',
   // synthesis_analyst's synthesis of the transcripts stakeholder_interviewer gathered.
   discovery_interviews:   'activity_insights',
