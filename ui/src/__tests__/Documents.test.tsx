@@ -49,4 +49,42 @@ describe('Documents', () => {
     render(<Wrapper />)
     expect(screen.getByLabelText(/upload/i)).toBeInTheDocument()
   })
+
+  it('shows the reason a document failed to ingest', async () => {
+    // This document said "pending ingestion" through three permanent failures, because
+    // `ingested: false` was the only state the row could hold and the reason lived in a
+    // server log. A reader had no way to tell "not started" from "will never succeed".
+    const { projectsApi } = await import('../api/endpoints')
+    vi.mocked(projectsApi.documents).mockResolvedValueOnce([{
+      id: 3, project_id: 1, filename: 'd89a.pdf',
+      original_name: 'SPUK_2025_Annual_Accounts.pdf', file_path: 'x',
+      content_type: 'application/pdf', size_bytes: 1505860,
+      ingested: false, ingest_status: 'failed',
+      ingest_error: "ChromaDB upsert failed: Quota exceeded: 'Number of records'",
+      uploaded_at: '2026-08-04T11:23:14',
+    }])
+
+    render(<Wrapper />)
+
+    expect(await screen.findByText(/ingestion failed/i)).toBeInTheDocument()
+    expect(screen.getByTestId('ingest-error-3')).toHaveTextContent(/Quota exceeded/)
+    // The distinction the whole change exists for.
+    expect(screen.queryByText(/pending ingestion/i)).not.toBeInTheDocument()
+  })
+
+  it('still shows pending for a document that has not been ingested yet', async () => {
+    // The other half: a genuinely waiting document must not be dressed up as a failure.
+    const { projectsApi } = await import('../api/endpoints')
+    vi.mocked(projectsApi.documents).mockResolvedValueOnce([{
+      id: 4, project_id: 1, filename: 'new.pdf', original_name: 'Just uploaded.pdf',
+      file_path: 'x', content_type: 'application/pdf', size_bytes: 2048,
+      ingested: false, ingest_status: 'pending', ingest_error: null,
+      uploaded_at: '2026-08-04T11:30:00',
+    }])
+
+    render(<Wrapper />)
+
+    expect(await screen.findByText(/pending ingestion/i)).toBeInTheDocument()
+    expect(screen.queryByText(/ingestion failed/i)).not.toBeInTheDocument()
+  })
 })

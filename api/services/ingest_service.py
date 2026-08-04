@@ -4,7 +4,11 @@ import logging
 from pathlib import Path
 
 from api.services.chroma_client import get_chroma_client
-from api.database import get_connection, update_document_ingested
+from api.database import (
+    get_connection,
+    update_document_ingest_failed,
+    update_document_ingested,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +63,30 @@ async def ingest_document(
     """
     path = Path(file_path)
 
-    def _fail(message: str, exc: Exception | None = None) -> None:
+    async def _fail(
+        message: str, exc: Exception | None = None, *, raising: bool = True
+    ) -> None:
+        """Log it, record it on the document, and raise if the caller asked.
+
+        Recording is what makes the failure visible. A background task cannot return an
+        error to a request that has already responded, so the log was the only trace - and
+        the row went on saying "pending", indistinguishable from not yet started, through
+        three permanent failures.
+
+        `raising=False` records the state without raising, for outcomes that are terminal
+        for the document but not errors of the upload. Recording and raising are separate
+        decisions, and conflating them either hides a dead document or fails a request that
+        genuinely succeeded.
+        """
         logger.warning("ingest_document: %s", message)
-        if raise_on_error:
+        try:
+            async with get_connection(slug) as conn:
+                await update_document_ingest_failed(conn, doc_id=doc_id, error=message)
+        except Exception:
+            # Never mask the original failure with a bookkeeping one - the message above is
+            # the thing worth having, and it is already logged.
+            logger.exception("ingest_document: could not record failure for doc_id=%s", doc_id)
+        if raise_on_error and raising:
             raise IngestError(message) from exc
 
     if path.suffix.lower() not in SUPPORTED_SUFFIXES:
@@ -71,12 +96,20 @@ async def ingest_document(
     try:
         text = await asyncio.to_thread(_extract_text, path)
     except Exception as exc:
-        return _fail(f"text extraction failed for {path.name}: {exc}", exc)
+        return await _fail(f"text extraction failed for {path.name}: {exc}", exc)
 
     chunks = _chunk_text(text)
     if not chunks:
-        logger.info("ingest_document: no text extracted from %s", path.name)
-        return
+        # Recorded, not raised. An image-only PDF is a real upload that yields nothing to
+        # index: failing the request would make every scan an unexplained 502, which an
+        # earlier decision deliberately ruled out. But an early return left the row saying
+        # "pending" for ever, with nothing to retry and nothing to read, so the state is
+        # written even though the upload stands.
+        return await _fail(
+            f"no text could be extracted from {path.name} - if it is a scan, it needs OCR "
+            "before it can be indexed",
+            raising=False,
+        )
 
     def _upsert() -> None:
         client = get_chroma_client()
@@ -100,10 +133,10 @@ async def ingest_document(
     try:
         await asyncio.to_thread(_upsert)
     except Exception as exc:
-        return _fail(f"ChromaDB upsert failed for {path.name}: {exc}", exc)
+        return await _fail(f"ChromaDB upsert failed for {path.name}: {exc}", exc)
 
     try:
         async with get_connection(slug) as conn:
             await update_document_ingested(conn, doc_id=doc_id)
     except Exception as exc:
-        return _fail(f"DB update failed for doc_id={doc_id}: {exc}", exc)
+        return await _fail(f"DB update failed for doc_id={doc_id}: {exc}", exc)

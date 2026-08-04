@@ -56,6 +56,10 @@ export interface ClientDocument {
   content_type: string
   size_bytes: number
   ingested: boolean
+  /** 'pending' | 'ingested' | 'failed'. `ingested` is the same fact as a boolean. */
+  ingest_status?: string
+  /** Why it failed, when it did. Null otherwise. */
+  ingest_error?: string | null
   uploaded_at: string
 }
 

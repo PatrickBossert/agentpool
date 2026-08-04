@@ -2,7 +2,7 @@
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
-import { Upload, FolderOpen, Folder, CheckCircle2, AlertCircle, RotateCcw, X, Download, Loader2 } from 'lucide-react'
+import { Upload, FolderOpen, Folder, CheckCircle2, AlertCircle, XCircle, RotateCcw, X, Download, Loader2 } from 'lucide-react'
 import { projectsApi } from '../api/endpoints'
 import type { ClientDocument, AgentOutput } from '../types'
 import { useAuth } from '../context/AuthContext'
@@ -235,10 +235,23 @@ export default function Documents() {
                           {formatBytes(doc.size_bytes)} · {doc.content_type}
                           {doc.ingested ? (
                             <span className="text-emerald-600 flex items-center gap-0.5"><CheckCircle2 size={11} /> ingested</span>
+                          ) : doc.ingest_status === 'failed' ? (
+                            <span className="text-red-600 flex items-center gap-0.5"><XCircle size={11} /> ingestion failed</span>
                           ) : (
                             <span className="text-amber-500 flex items-center gap-0.5"><AlertCircle size={11} /> pending ingestion</span>
                           )}
                         </p>
+                        {/* The reason, on screen rather than in a log nobody reads. This
+                            document said "pending" through three permanent failures. */}
+                        {doc.ingest_status === 'failed' && doc.ingest_error && (
+                          <p
+                            className="text-xs text-red-600 mt-1 max-w-xl"
+                            title={doc.ingest_error}
+                            data-testid={`ingest-error-${doc.id}`}
+                          >
+                            {doc.ingest_error}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 ml-4 flex-shrink-0">
                         {!doc.ingested && (

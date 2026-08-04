@@ -126,6 +126,8 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             content_type TEXT,
             size_bytes   INTEGER,
             ingested     INTEGER NOT NULL DEFAULT 0,
+            ingest_status TEXT NOT NULL DEFAULT 'pending',
+            ingest_error TEXT,
             uploaded_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -535,6 +537,27 @@ async def fetch_interview_session_by_id(
     ) as cur:
         row = await cur.fetchone()
     return dict(row) if row else None
+
+
+async def _migrate_document_ingest_status(conn: aiosqlite.Connection) -> None:
+    """Give existing documents a status derived from the flag they already carry.
+
+    Defaulting every row to 'pending' would have reported already-indexed documents as
+    waiting, which is the same lie in the other direction.
+    """
+    async with conn.execute("PRAGMA table_info(client_documents)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "ingest_status" not in cols:
+        await conn.execute(
+            "ALTER TABLE client_documents ADD COLUMN ingest_status TEXT NOT NULL "
+            "DEFAULT 'pending'"
+        )
+        await conn.execute(
+            "UPDATE client_documents SET ingest_status='ingested' WHERE ingested=1"
+        )
+    if "ingest_error" not in cols:
+        await conn.execute("ALTER TABLE client_documents ADD COLUMN ingest_error TEXT")
+    await conn.commit()
 
 
 async def _migrate_project_milestones(conn: aiosqlite.Connection) -> None:
@@ -959,6 +982,7 @@ async def get_connection(slug: str):
         await _migrate_interview_sessions_ratings(conn)
         await _migrate_interview_sessions_checkpoint(conn)
         await _migrate_interview_answers(conn)
+        await _migrate_document_ingest_status(conn)
         await _migrate_project_milestones(conn)
         await _migrate_milestone_baselines(conn)
         await rename_crew_in_stored_rows(conn)
@@ -1191,14 +1215,38 @@ async def update_project_config(
     await conn.commit()
 
 
+async def _set_document_ingest_state(
+    conn: aiosqlite.Connection, *, doc_id: int, status: str, error: str | None
+) -> None:
+    """The only writer of ingest state.
+
+    `ingested` and `ingest_status` describe one fact, and two columns describing one fact
+    drift the moment either gains its own writer. Both are set here, together, always.
+    """
+    await conn.execute(
+        "UPDATE client_documents SET ingested=?, ingest_status=?, ingest_error=? WHERE id=?",
+        (1 if status == "ingested" else 0, status, error, doc_id),
+    )
+    await conn.commit()
+
+
 async def update_document_ingested(
     conn: aiosqlite.Connection, *, doc_id: int
 ) -> None:
-    await conn.execute(
-        "UPDATE client_documents SET ingested=1 WHERE id=?",
-        (doc_id,),
-    )
-    await conn.commit()
+    """Indexed successfully. Clears any earlier failure: a stale reason beside a green
+    status is worse than none, because a reader trusts the older, louder signal."""
+    await _set_document_ingest_state(conn, doc_id=doc_id, status="ingested", error=None)
+
+
+async def update_document_ingest_failed(
+    conn: aiosqlite.Connection, *, doc_id: int, error: str
+) -> None:
+    """Failed, with the reason a person can act on.
+
+    Without this the row could only say `ingested = 0`, which the UI renders as "pending" -
+    indistinguishable from not yet started, and unchanged after three permanent failures.
+    """
+    await _set_document_ingest_state(conn, doc_id=doc_id, status="failed", error=error[:1000])
 
 
 async def insert_review(
