@@ -620,6 +620,8 @@ export interface PamReportMilestone {
   title: string
   due_date: string | null
   status: 'pending' | 'complete'
+  // When it was actually reached, against due_date's plan. Null while outstanding.
+  completed_at?: string | null
   rag: 'complete' | 'overdue' | 'due_soon' | 'on_track' | 'unscheduled'
   days_delta: number | null
   sort_order: number

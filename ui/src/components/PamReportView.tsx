@@ -6,6 +6,7 @@ import {
   Download, RefreshCw, ArrowRight, Circle, CheckCheck,
 } from 'lucide-react'
 import { pamReportApi, projectsApi, nonworkingApi } from '../api/endpoints'
+import { daysLate } from '../utils/milestones'
 import type { PamReport, PamReportMilestone, PamReportRisk, PamReportIssue, PamReportCrewStatus } from '../types'
 import GanttReadOnly, { inferSchedule, daysBetween, todayStr } from './GanttReadOnly'
 import { getPublicHolidays, buildExcludedDateSet, workingDaysBetween } from '../utils/holidays'
@@ -104,7 +105,7 @@ function ragLabel(h: string) {
     : 'Green — On track'
 }
 
-function buildPrintHtml(r: PamReport): string {
+function buildPrintHtml(r: PamReport, excludedDates?: Set<string>): string {
   const ts = new Date(r.generated_at).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   const ragBg = r.overall_health === 'red' ? '#ef4444' : r.overall_health === 'amber' ? '#f59e0b' : '#10b981'
 
@@ -119,7 +120,18 @@ function buildPrintHtml(r: PamReport): string {
       : m.rag === 'due_soon' ? ' style="background:#fffbeb;border-color:#fcd34d;color:#92400e;"'
       : m.rag === 'complete' ? ' style="background:#f0fdfa;border-color:#99f6e4;color:#0f766e;"'
       : ''
-    return `<tr${rowStyle}><td>${esc(m.title)}</td><td>${esc(m.due_date)}</td><td>${esc(delta)}</td><td><span class="badge"${badgeStyle}>${esc(rag.label)}</span></td></tr>`
+    // Planned and actual side by side, with the slip in working days.
+    //
+    // KNOWN GAP: excludedDates is not threaded here, so the export counts weekends only
+    // while the on-screen timeline also excludes public holidays and the project's own
+    // non-working ranges. The two agree except on a slip that spans one of those. The set
+    // is built inside a nested render callback in this file; hoisting it to component
+    // scope is the fix, and is deliberately not bundled into this change.
+    const late = daysLate(m, excludedDates)
+    const actual = m.completed_at
+      ? esc(m.completed_at) + (late !== null ? ` <span style="color:#b45309">(${late}wd late)</span>` : '')
+      : '&mdash;'
+    return `<tr${rowStyle}><td>${esc(m.title)}</td><td>${esc(m.due_date)}</td><td>${actual}</td><td>${esc(delta)}</td><td><span class="badge"${badgeStyle}>${esc(rag.label)}</span></td></tr>`
   }).join('')
 
   const crewRows = r.crews.map(c => `<tr>
@@ -172,7 +184,7 @@ function buildPrintHtml(r: PamReport): string {
   ${highRiskHtml}
   <h2>1. Progress Against Plan</h2>
   <p style="font-size:9.5pt;color:#6b7280;margin-bottom:8px">${r.milestones_complete} of ${r.milestones_total} milestones complete</p>
-  <table><thead><tr><th>Milestone</th><th>Due date</th><th>Delta</th><th>Status</th></tr></thead><tbody>${msRows}</tbody></table>
+  <table><thead><tr><th>Milestone</th><th>Planned</th><th>Actual</th><th>Delta</th><th>Status</th></tr></thead><tbody>${msRows}</tbody></table>
   <h2>2. Crew Status</h2>
   <table><thead><tr><th>Crew</th><th>Status</th><th>Outputs</th><th>Pending reviews</th><th>Last run</th></tr></thead><tbody>${crewRows}</tbody></table>
   <h2>3. Active Issues</h2>${issueHtml}
@@ -242,6 +254,13 @@ function MilestoneTimeline({ milestones, complete, total, excludedDates }: {
             ? new Date(m.due_date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
             : null
 
+          const actualDate = m.completed_at
+            ? new Date(m.completed_at + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+            : null
+          // Same helper the schedule uses, so the two views cannot disagree about how
+          // late something was.
+          const late = daysLate(m, excludedDates)
+
           return (
             <div key={m.id} className="flex items-center gap-2 py-[3px] relative">
               {/* Numbered circle */}
@@ -254,9 +273,27 @@ function MilestoneTimeline({ milestones, complete, total, excludedDates }: {
                 {m.title}
               </span>
 
-              {/* Date */}
+              {/* Planned, then actual once it has been reached. Tracking slippage needs
+                  both: a completed milestone showing only its plan says nothing about
+                  whether it was met. */}
               {shortDate && (
                 <span className="text-[9px] text-gray-400 flex-shrink-0 tabular-nums">{shortDate}</span>
+              )}
+              {actualDate && (
+                <span
+                  data-testid={`ms-actual-${m.id}`}
+                  className="text-[9px] text-gray-600 flex-shrink-0 tabular-nums"
+                >
+                  → {actualDate}
+                </span>
+              )}
+              {late !== null && (
+                <span
+                  data-testid={`ms-late-${m.id}`}
+                  className="text-[9px] font-medium flex-shrink-0 tabular-nums text-amber-600"
+                >
+                  {late}wd late
+                </span>
               )}
 
               {/* Delta — hidden when complete */}
