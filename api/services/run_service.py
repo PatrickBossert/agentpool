@@ -275,7 +275,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         )
 
     elif crew_name == "requirements":
-        from agents.crews.discovery_crew import create_discovery_crew
+        from agents.crews.requirements_crew import create_requirements_crew
 
         discovery_brief = config.get("discovery_brief", "")
         discovery_links = config.get("discovery_links", [])
@@ -294,7 +294,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
                         if doc_id in doc_map
                     ]
 
-        crew = create_discovery_crew(
+        crew = create_requirements_crew(
             slug=slug,
             run_id=run_id,
             llm_mode=llm_mode,
@@ -309,8 +309,8 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         crew = create_value_design_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
 
     elif crew_name == "capabilities":
-        from agents.crews.architecture_crew import create_architecture_crew
-        crew = create_architecture_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
+        from agents.crews.capabilities_crew import create_capabilities_crew
+        crew = create_capabilities_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
 
     elif crew_name == "delivery":
         missing = missing_config_keys(config, "delivery")

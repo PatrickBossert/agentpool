@@ -55,7 +55,7 @@ async def test_run_value_design_crew_queues_run(client):
 
 
 @pytest.mark.asyncio
-async def test_run_architecture_crew_queues_run(client):
+async def test_run_capabilities_crew_queues_run(client):
     payload = {**PROJECT_PAYLOAD, "client_slug": "arch-test", "crews_enabled": ["capabilities"]}
     await client.post("/projects", json=payload)
     with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):

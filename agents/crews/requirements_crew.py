@@ -1,11 +1,7 @@
-# agents/crews/discovery_crew.py
+# agents/crews/requirements_crew.py
 from crewai import Crew, Process, LLM
 from agents.llm import get_crew_llm
 from agents.tools.registry import get_tools_for_agent
-from agents.discovery.value_chain_mapper import (
-    create_value_chain_mapper,
-    create_value_chain_mapper_task,
-)
 from agents.discovery.requirements_capture import (
     create_requirements_capture,
     create_requirements_capture_task,
@@ -16,19 +12,26 @@ from agents.discovery.requirements_analyst import (
 )
 
 
-def create_discovery_crew(
+def create_requirements_crew(
     slug: str,
     run_id: int,
     llm_mode: str,
     sector: str,
     llm: LLM | None = None,
     hitl_tool=None,
-    discovery_brief: str = "",
-    discovery_links: list[dict] | None = None,
-    priority_doc_names: list[str] | None = None,
 ) -> Crew:
     """
-    Assemble and return the Discovery Crew.
+    Assemble and return the Requirements Crew.
+
+    Sam captures requirements and Riley analyses them for completeness, consistency and
+    conflict. The crew runs seventh, after Capabilities has produced the initiatives the
+    requirements are enumerated against.
+
+    The value chain mapper used to be built here as well, back when this crew was called
+    `discovery` and ran before value design. He belongs to `discovery_mapping` and running
+    him a second time would overwrite an approved value chain, so he is gone from the crew
+    and its brief and document arguments went with him - the value chain reaches this crew
+    through state, not through an in-crew task context.
 
     Args:
         slug: Project slug (used for DB/file scoping).
@@ -40,11 +43,6 @@ def create_discovery_crew(
     if llm is None:
         llm = get_crew_llm(llm_mode)
 
-    vcm = create_value_chain_mapper(
-        slug=slug,
-        llm=llm,
-        tools=get_tools_for_agent("value_chain_mapper", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
-    )
     rc = create_requirements_capture(
         slug=slug,
         llm=llm,
@@ -56,18 +54,12 @@ def create_discovery_crew(
         tools=get_tools_for_agent("requirements_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 
-    vcm_task = create_value_chain_mapper_task(
-        agent=vcm,
-        discovery_brief=discovery_brief,
-        discovery_links=discovery_links,
-        priority_doc_names=priority_doc_names,
-    )
-    rc_task = create_requirements_capture_task(agent=rc, context_tasks=[vcm_task], slug=slug)
-    ra_task = create_requirements_analyst_task(agent=ra, context_tasks=[vcm_task, rc_task])
+    rc_task = create_requirements_capture_task(agent=rc, context_tasks=[], slug=slug)
+    ra_task = create_requirements_analyst_task(agent=ra, context_tasks=[rc_task])
 
     return Crew(
-        agents=[vcm, rc, ra],
-        tasks=[vcm_task, rc_task, ra_task],
+        agents=[rc, ra],
+        tasks=[rc_task, ra_task],
         process=Process.sequential,
         verbose=True,
     )

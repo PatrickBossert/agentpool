@@ -1,4 +1,4 @@
-# tests/integration/test_architecture_crew.py
+# tests/integration/test_capabilities_crew.py
 """
 End-to-end integration test for the Architecture Crew.
 
@@ -19,7 +19,7 @@ from api.config import get_settings
 
 
 @pytest.mark.integration
-def test_architecture_crew_end_to_end(test_slug, project_id, seed_value_design_outputs):
+def test_capabilities_crew_end_to_end(test_slug, project_id, seed_value_design_outputs):
     """
     Run the full Architecture Crew and verify all outputs are produced.
     seed_value_design_outputs also pulls in seed_discovery_outputs (via fixture dependency).
@@ -27,7 +27,7 @@ def test_architecture_crew_end_to_end(test_slug, project_id, seed_value_design_o
     HITL pauses are auto-responded via HITL_AUTO_RESPOND='approved' set in conftest.
     """
     from agents.llm import get_test_llm
-    from agents.crews.architecture_crew import create_architecture_crew
+    from agents.crews.capabilities_crew import create_capabilities_crew
 
     settings = get_settings()
     db_path = Path(settings.database_dir) / f"{test_slug}.db"
@@ -44,7 +44,7 @@ def test_architecture_crew_end_to_end(test_slug, project_id, seed_value_design_o
     conn.close()
 
     llm = get_test_llm()
-    crew = create_architecture_crew(
+    crew = create_capabilities_crew(
         slug=test_slug,
         run_id=run_id,
         llm_mode="standard",

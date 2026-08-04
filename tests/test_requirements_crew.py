@@ -1,4 +1,4 @@
-# tests/test_discovery_crew.py
+# tests/test_requirements_crew.py
 """Unit tests for Discovery crew assembly."""
 import pytest
 from unittest.mock import MagicMock, patch
@@ -10,12 +10,12 @@ def mock_llm():
     return MagicMock(spec=LLM)
 
 
-def test_discovery_crew_accepts_hitl_tool_override(mock_llm):
+def test_requirements_crew_accepts_hitl_tool_override(mock_llm):
     """hitl_tool is forwarded to every get_tools_for_agent call."""
     mock_hitl = MagicMock()
-    with patch("agents.crews.discovery_crew.get_tools_for_agent", return_value=[]) as mock_reg:
-        from agents.crews.discovery_crew import create_discovery_crew
-        create_discovery_crew(
+    with patch("agents.crews.requirements_crew.get_tools_for_agent", return_value=[]) as mock_reg:
+        from agents.crews.requirements_crew import create_requirements_crew
+        create_requirements_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics",
             llm=mock_llm, hitl_tool=mock_hitl,
         )

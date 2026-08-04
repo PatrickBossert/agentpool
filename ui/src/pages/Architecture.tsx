@@ -195,7 +195,7 @@ export default function Architecture() {
           },
           {
             name: 'Architecture Crew',
-            file: 'agents/crews/architecture_crew.py',
+            file: 'agents/crews/capabilities_crew.py',
             agents: ['Enterprise Architect', 'Initiative Identifier'],
             produces: 'architecture_register (data/tech/org layers), initiatives (JSON)',
             trigger: 'PAM Phase 2',
