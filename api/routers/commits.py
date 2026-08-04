@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from api.auth import check_project_access, require_any_auth
 from api.database import (
+    baseline_milestones,
     fetch_approval_commits,
     get_connection,
     get_db_path,
@@ -143,7 +144,10 @@ async def activate_project(slug: str, payload: dict = Depends(require_any_auth))
         )
     async with get_connection(slug) as conn:
         await set_project_status(conn, slug=slug, status="active")
-    return {"slug": slug, "status": "active"}
+        # Activation is the moment the plan is formally agreed, and it is already
+        # approver-gated - so it is where each milestone's promise is recorded.
+        baselined = await baseline_milestones(conn, slug=slug)
+    return {"slug": slug, "status": "active", "milestones_baselined": baselined}
 
 
 @router.get("/{slug}/commits")

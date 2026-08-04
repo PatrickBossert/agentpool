@@ -147,6 +147,7 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             notes          TEXT NOT NULL DEFAULT '',
             sort_order     INTEGER NOT NULL DEFAULT 0,
             completed_at   TEXT,
+            baseline_date  TEXT,
             created_at     TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
@@ -447,6 +448,7 @@ async def _migrate_project_milestones(conn: aiosqlite.Connection) -> None:
             notes          TEXT NOT NULL DEFAULT '',
             sort_order     INTEGER NOT NULL DEFAULT 0,
             completed_at   TEXT,
+            baseline_date  TEXT,
             created_at     TEXT NOT NULL DEFAULT (datetime('now'))
         )
     """)
@@ -457,6 +459,12 @@ async def _migrate_project_milestones(conn: aiosqlite.Connection) -> None:
         cols = {row["name"] async for row in cur}
     if "completed_at" not in cols:
         await conn.execute("ALTER TABLE project_milestones ADD COLUMN completed_at TEXT")
+    # What the milestone was promised, as distinct from due_date, which is what is
+    # currently expected. due_date is editable, so without this a re-plan after a slip
+    # overwrites the commitment and every later comparison measures actual against the
+    # revised plan - a project re-planned as often as it slips looks perfectly on track.
+    if "baseline_date" not in cols:
+        await conn.execute("ALTER TABLE project_milestones ADD COLUMN baseline_date TEXT")
     await conn.commit()
 
 
@@ -702,6 +710,25 @@ async def update_milestone(
     )
     await conn.commit()
     return True
+
+
+async def baseline_milestones(conn: aiosqlite.Connection, *, slug: str) -> int:
+    """Record each dated milestone's current plan as what was promised. Returns the count.
+
+    Only where no baseline exists: re-activating an in-flight project must not adopt its
+    slipped plan as the promise, which would be the very failure the baseline prevents
+    arriving through the mechanism meant to prevent it.
+
+    Only where a due date exists: an undated milestone was never promised anything, and
+    inventing a baseline for it would manufacture a commitment nobody made.
+    """
+    cur = await conn.execute(
+        "UPDATE project_milestones SET baseline_date = due_date "
+        "WHERE slug = ? AND baseline_date IS NULL AND due_date IS NOT NULL",
+        (slug,),
+    )
+    await conn.commit()
+    return cur.rowcount
 
 
 async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slug: str) -> bool:

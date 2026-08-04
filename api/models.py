@@ -124,6 +124,8 @@ class Milestone(BaseModel):
     # When the milestone was actually reached. Null while outstanding - slippage is the
     # difference between this and due_date.
     completed_at: str | None = None
+    # What it was promised, set once at activation. due_date is what is currently expected.
+    baseline_date: str | None = None
     created_at: str
 
 
