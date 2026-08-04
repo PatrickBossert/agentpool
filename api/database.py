@@ -419,6 +419,7 @@ async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None
             project_id                INTEGER NOT NULL REFERENCES projects(id),
             node_label                TEXT    NOT NULL,
             activity_id               TEXT,
+            script_id                 TEXT,
             level                     TEXT    DEFAULT 'L2',
             interview_template_id     INTEGER,
             questionnaire_template_id INTEGER,
@@ -433,6 +434,8 @@ async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None
         await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN activity_id TEXT")
     if "level" not in cols:
         await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN level TEXT DEFAULT 'L2'")
+    if "script_id" not in cols:
+        await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN script_id TEXT")
     await conn.commit()
 
 
@@ -2353,8 +2356,9 @@ async def delete_template(conn, template_id: int) -> bool:
 
 async def fetch_node_template_assignments(conn, project_id: int) -> list:
     async with conn.execute(
-        "SELECT node_label, activity_id, level, interview_template_id, questionnaire_template_id "
-        "FROM node_template_assignments WHERE project_id=? ORDER BY node_label",
+        "SELECT node_label, activity_id, script_id, level, interview_template_id, "
+        "questionnaire_template_id FROM node_template_assignments WHERE project_id=? "
+        "ORDER BY node_label",
         (project_id,),
     ) as cur:
         return [dict(r) async for r in cur]
@@ -2365,18 +2369,49 @@ async def upsert_node_template_assignment(
     interview_template_id, questionnaire_template_id,
     activity_id: str | None = None,
     level: str | None = None,
+    script_id: str | None = None,
 ) -> None:
+    """Match on script_id when there is one, on node_label when there is not.
+
+    Rows written before script ids existed have none, and matching on the id alone would put
+    a second assignment beside every one of them. Keying on node_label was the original
+    defect: the label is the script's own title, so retitling a script made it look like a
+    new node and orphaned the assignment it already had.
+    """
+    if script_id:
+        async with conn.execute(
+            "SELECT id FROM node_template_assignments WHERE project_id=? AND script_id=?",
+            (project_id, script_id),
+        ) as cur:
+            existing = await cur.fetchone()
+        if existing:
+            # activity_id is set, not COALESCEd. The old COALESCE kept a stale anchor
+            # forever: a script that moved node reported success and silently did not move.
+            await conn.execute("""
+                UPDATE node_template_assignments
+                   SET node_label=?, activity_id=?, level=COALESCE(?, level),
+                       interview_template_id=?, questionnaire_template_id=?,
+                       updated_at=datetime('now')
+                 WHERE id=?
+            """, (node_label, activity_id, level, interview_template_id,
+                  questionnaire_template_id, existing["id"]))
+            await conn.commit()
+            return
+
     await conn.execute("""
         INSERT INTO node_template_assignments
-            (project_id, node_label, activity_id, level, interview_template_id, questionnaire_template_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+            (project_id, node_label, activity_id, script_id, level, interview_template_id,
+             questionnaire_template_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(project_id, node_label) DO UPDATE SET
             activity_id=COALESCE(excluded.activity_id, activity_id),
+            script_id=COALESCE(excluded.script_id, script_id),
             level=COALESCE(excluded.level, level),
             interview_template_id=excluded.interview_template_id,
             questionnaire_template_id=excluded.questionnaire_template_id,
             updated_at=datetime('now')
-    """, (project_id, node_label, activity_id, level or "L2", interview_template_id, questionnaire_template_id))
+    """, (project_id, node_label, activity_id, script_id, level or "L2",
+          interview_template_id, questionnaire_template_id))
     await conn.commit()
 
 
