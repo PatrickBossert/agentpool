@@ -10,11 +10,11 @@ it produced, and moves two agents to the crews whose work they actually do.
 
 | # | Crew | Agents | Produces |
 |---|---|---|---|
-| 1 | `discovery_mapping` | Alex | the value chain |
+| 1 | `discovery_mapping` | Alex, **Morgan** | the value chain, and value levers and KPIs from the documents |
 | 2 | `assessment_design` | Maya | interview scripts, one per node |
 | 3 | `stakeholder_management` | Jordan | assignments and coverage |
 | 4 | `discovery_interviews` | Taylor, Avery, **Casey** | transcripts, synthesis, **themes** |
-| 5 | `value_design` | **Morgan**, VP Generator, Portfolio Manager | value propositions, portfolio with ranking criteria |
+| 5 | `value_design` | VP Generator, Portfolio Manager | value propositions, portfolio with ranking criteria |
 | 6 | `capabilities` *(was `architecture`)* | Enterprise Architect, Initiative Identifier | as-is capabilities, uplift initiatives |
 | 7 | `requirements` *(was `discovery`)* | Sam, Riley | requirements and complexity, method, cost |
 | 8 | `delivery` | Roadmap Generator, Visual Illustrator | illustrated roadmap |
@@ -37,12 +37,25 @@ Two kinds, and the distinction is the point:
 proposition traceable back to something a named person actually said, and it is the whole
 reason the downstream chain can be trusted.
 
-### Morgan moves from Discovery to Value Design
+### Morgan moves to Value Chain Mapping
 
-The Value Lever Analyst identifies where value can be created. That is the input to a value
-proposition, not to a requirement - and Morgan currently sits in a crew that runs **before**
-the interviews have produced anything to analyse. Moving Morgan into `value_design` puts the
-lever analysis next to the propositions it feeds, after the evidence exists.
+There are two jobs here and they were conflated. **Early**: what levers and KPIs does this
+organisation already talk about, according to its documents? **Late**: which of them does the
+evidence actually support? The late job already has an owner - the Value Proposition
+Generator, with the Portfolio Manager ranking - so Morgan belongs to the early one.
+
+She joins Alex. It is document analysis, which is what that crew is tooled for, and it runs
+before Maya designs the instruments, so Maya can design against the levers and KPIs the
+organisation itself uses rather than asking cold.
+
+This also removes a genuine absurdity: Morgan currently sits in a crew that runs *before* the
+interviews while doing work that needs their evidence. Under this placement she runs early
+**and** her inputs exist early.
+
+**Her output is hypotheses, not findings**, and her task must say so. Levers and KPIs read out
+of documents are what the organisation *claims* to care about. If Maya treats them as
+established, the interviews anchor on them and lose the ability to contradict them - and the
+entire value of Casey's themes is that they come from what people actually said.
 
 ### `discovery` becomes `requirements`, and runs seventh
 
@@ -103,10 +116,29 @@ are now wrong:
 - **Synthesis Analyst** - describes synthesis only, and now owns the horizontal and vertical
   themes and their citations.
 
-**Requirements Capture and Requirements Analyst keep their bios** - their work is unchanged;
-only when they run has moved. Stating that explicitly matters: a re-sequencing that quietly
-rewrote every bio would lose the distinction between "this agent's job changed" and "this
+- **Requirements Capture** - this one I had wrong on first reading. Sam writes
+  `interview_transcript` from "structured dialogue with the project team", which is open
+  discovery. Running seventh, against initiatives that already exist, the job is
+  initiative-scoped enumeration instead. His bio and his task both change, and
+  `interview_transcript` is a misleading key for it - it reads as one of Avery's stakeholder
+  interviews, which it is not.
+
+**Requirements Analyst keeps his bio.** Riley analyses a captured requirement set for
+completeness, consistency and conflict; that is unchanged, only its inputs and its turn have
+moved. Stating which agents genuinely keep their bios matters: a re-sequencing that quietly
+rewrote every one would lose the difference between "this agent's job changed" and "this
 agent's turn moved".
+
+### Where the outputs land
+
+`CREW_OUTPUT_TYPE` declares one primary artefact per crew, and two entries move with the
+agents:
+
+- `discovery_mapping` keeps `value_chain_model` as its primary. Morgan's `value_levers`
+  becomes a **secondary** output of that crew - real, versioned, visible in Status, and not
+  the thing the crew is judged on.
+- `requirements` - the renamed `discovery` - takes `requirements` as its primary, which is
+  Riley's output. The old entry named `value_levers`, which left with Morgan.
 
 ## What this does not change
 
