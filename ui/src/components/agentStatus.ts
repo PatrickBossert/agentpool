@@ -22,8 +22,8 @@ export const CREW_ORDER = [
   'stakeholder_management',
   'discovery_interviews',
   'value_design',
-  'architecture',
-  'discovery',
+  'capabilities',
+  'requirements',
   'delivery',
   'business_plan',
 ] as const
@@ -32,11 +32,11 @@ export const CREW_ORDER = [
 export const CREW_AGENT_NAMES: Record<string, string[]> = {
   discovery_mapping:      ['value_chain_mapper', 'value_lever_analyst'],
   assessment_design:      ['interaction_designer'],
-  discovery:              ['requirements_capture', 'requirements_analyst'],
+  requirements:              ['requirements_capture', 'requirements_analyst'],
   stakeholder_management: ['stakeholder_manager'],
   discovery_interviews:   ['interview_coordinator', 'stakeholder_interviewer', 'synthesis_analyst'],
   value_design:           ['value_proposition_generator', 'portfolio_manager'],
-  architecture:           ['enterprise_architect', 'initiative_identifier'],
+  capabilities:           ['enterprise_architect', 'initiative_identifier'],
   delivery:               ['roadmap_generator'],
   business_plan:          ['business_plan_generator', 'visual_illustrator'],
 }
@@ -47,11 +47,11 @@ export const CREW_LABELS: Record<string, string> = {
   PAM:                    'PMO',
   discovery_mapping:      'Value Chain Mapping',
   assessment_design:      'Assessment Design',
-  discovery:              'Discovery',
+  requirements:              'Requirements',
   stakeholder_management: 'Stakeholder Management',
   discovery_interviews:   'Discovery Interviews',
   value_design:           'Value Design',
-  architecture:           'Architecture',
+  capabilities:           'Capabilities',
   delivery:               'Delivery',
   business_plan:          'Business Plan',
 }
@@ -60,7 +60,7 @@ export const CREW_AGENTS: Record<string, string[]> = {
   PAM:                   ['PAM'],
   discovery_mapping:     ['Value Chain Mapper', 'Value Lever Analyst'],
   assessment_design:     ['Interaction Designer'],
-  discovery: [
+  requirements: [
     'Requirements Capture',
     'Requirements Analyst',
   ],
@@ -71,7 +71,7 @@ export const CREW_AGENTS: Record<string, string[]> = {
     'Synthesis Analyst',
   ],
   value_design:  ['Value Proposition Generator', 'Portfolio Manager'],
-  architecture:  ['Enterprise Architect', 'Initiative Identifier'],
+  capabilities:  ['Enterprise Architect', 'Initiative Identifier'],
   delivery:      ['Roadmap Generator'],
   business_plan: ['Business Plan Generator', 'Visual Illustrator'],
 }
@@ -79,11 +79,11 @@ export const CREW_AGENTS: Record<string, string[]> = {
 export const CREW_ICONS: Record<string, string> = {
   discovery_mapping:      '🗺️',
   assessment_design:      '🎨',
-  discovery:              '🔍',
+  requirements:              '🔍',
   stakeholder_management: '🤝',
   discovery_interviews:   '🎙️',
   value_design:           '⭐',
-  architecture:           '🏛️',
+  capabilities:           '🏛️',
   delivery:               '🚀',
   business_plan:          '📊',
 }
@@ -374,11 +374,11 @@ export const AGENT_BACKSTORY: Record<string, string> = {
 export const CREW_DOWNSTREAM: Record<string, string[]> = {
   discovery_mapping:      ['assessment_design', 'discovery_interviews'],
   assessment_design:      ['discovery_interviews'],
-  discovery:              ['value_design'],
+  requirements:              ['value_design'],
   stakeholder_management: [],
   discovery_interviews:   ['value_design'],
-  value_design:           ['architecture'],
-  architecture:           ['delivery'],
+  value_design:           ['capabilities'],
+  capabilities:           ['delivery'],
   delivery:               ['business_plan'],
   business_plan:          [],
 }
@@ -387,7 +387,7 @@ export type AgentStatus = 'running' | 'waiting' | 'completed' | 'queued' | 'idle
 export type CrewStatus  = 'running' | 'waiting' | 'completed' | 'failed' | 'queued' | 'idle'
 
 // Humorous wellbeing activities shown instead of "Idle"
-const IDLE_STATUSES = [
+export const IDLE_STATUSES = [
   'On a brisk walk',
   'At the gym',
   'Morning yoga',

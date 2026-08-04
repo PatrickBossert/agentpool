@@ -9,7 +9,7 @@ PROJECT_PAYLOAD = {
     "sector": "transport",
     "stakeholder_groups": ["Operations"],
     "value_stream_labels": ["Asset Mgmt"],
-    "crews_enabled": ["discovery"],
+    "crews_enabled": ["requirements"],
     "review_gates": True,
     "slack_channel": "",
 }
@@ -31,11 +31,11 @@ async def test_run_unknown_project_returns_404(client):
 async def test_run_known_project_queues_run(client):
     await client.post("/projects", json=PROJECT_PAYLOAD)
     with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
-        resp = await client.post("/projects/run-test/run", json={"crew": "discovery"})
+        resp = await client.post("/projects/run-test/run", json={"crew": "requirements"})
     assert resp.status_code == 202
     data = resp.json()
     assert data["project_slug"] == "run-test"
-    assert data["crew"] == "discovery"
+    assert data["crew"] == "requirements"
     assert data["status"] == "running"
     assert isinstance(data["run_id"], int)
 
@@ -56,13 +56,13 @@ async def test_run_value_design_crew_queues_run(client):
 
 @pytest.mark.asyncio
 async def test_run_architecture_crew_queues_run(client):
-    payload = {**PROJECT_PAYLOAD, "client_slug": "arch-test", "crews_enabled": ["architecture"]}
+    payload = {**PROJECT_PAYLOAD, "client_slug": "arch-test", "crews_enabled": ["capabilities"]}
     await client.post("/projects", json=payload)
     with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
-        resp = await client.post("/projects/arch-test/run", json={"crew": "architecture"})
+        resp = await client.post("/projects/arch-test/run", json={"crew": "capabilities"})
     assert resp.status_code == 202
     data = resp.json()
-    assert data["crew"] == "architecture"
+    assert data["crew"] == "capabilities"
     assert data["status"] == "running"
     assert data["project_slug"] == "arch-test"
     assert isinstance(data["run_id"], int)

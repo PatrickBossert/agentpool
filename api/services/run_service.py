@@ -20,11 +20,11 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
     # chain to hang them on and before Maya designs instruments against them.
     "discovery_mapping":      ["value_chain_mapper", "value_lever_analyst"],
     "assessment_design":      ["interaction_designer"],
-    "discovery":              ["requirements_capture", "requirements_analyst"],
+    "requirements":           ["requirements_capture", "requirements_analyst"],
     "stakeholder_management": ["stakeholder_manager"],
     "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer", "synthesis_analyst"],
     "value_design":           ["value_proposition_generator", "portfolio_manager"],
-    "architecture":           ["enterprise_architect", "initiative_identifier"],
+    "capabilities":           ["enterprise_architect", "initiative_identifier"],
     "delivery":               ["roadmap_generator"],
     # The Illustrator renders the value chain, the propositions, the roadmap and the
     # financials in one consistent style for the plan and the pitch pack. He was listed
@@ -274,7 +274,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             priority_doc_names=priority_doc_names,
         )
 
-    elif crew_name == "discovery":
+    elif crew_name == "requirements":
         from agents.crews.discovery_crew import create_discovery_crew
 
         discovery_brief = config.get("discovery_brief", "")
@@ -308,7 +308,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         from agents.crews.value_design_crew import create_value_design_crew
         crew = create_value_design_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
 
-    elif crew_name == "architecture":
+    elif crew_name == "capabilities":
         from agents.crews.architecture_crew import create_architecture_crew
         crew = create_architecture_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
 
@@ -457,13 +457,13 @@ async def dispatch_crew(
 # questionnaires moved inline into the interview. The crew-name alias in
 # build_and_run_crew stays, for stored crew_run rows in other environments.
 AGENT_CREW_NAME: dict[str, str] = {
-    "requirements_analyst":        "discovery",
-    "value_lever_analyst":         "discovery",
+    "requirements_analyst":        "requirements",
+    "value_lever_analyst":         "discovery_mapping",
     "synthesis_analyst":           "discovery_interviews",
     "value_proposition_generator": "value_design",
     "portfolio_manager":           "value_design",
-    "enterprise_architect":        "architecture",
-    "initiative_identifier":       "architecture",
+    "enterprise_architect":        "capabilities",
+    "initiative_identifier":       "capabilities",
     "roadmap_generator":           "delivery",
     "business_plan_generator":     "business_plan",
     "interaction_designer":        "assessment_design",

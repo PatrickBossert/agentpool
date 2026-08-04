@@ -32,7 +32,7 @@ PROJECT = {
     "sector": "transport",
     "stakeholder_groups": ["Operations"],
     "value_stream_labels": ["Asset Mgmt"],
-    "crews_enabled": ["discovery"],
+    "crews_enabled": ["requirements"],
     "review_gates": True,
     "slack_channel": "",
 }
@@ -180,12 +180,12 @@ async def test_committing_requirements_does_not_start_an_unconfigured_delivery(c
     await _activate(UNCONFIGURED_SLUG)
     async with get_connection(UNCONFIGURED_SLUG) as conn:
         await insert_approval_commit(
-            conn, crew_name="discovery", committed_by="a", notes=""
+            conn, crew_name="requirements", committed_by="a", notes=""
         )
 
     with patch("api.services.autostart_service.dispatch_crew", AsyncMock()) as dispatch:
         result = await start_ready_downstream(
-            UNCONFIGURED_SLUG, "discovery", committed_by="a"
+            UNCONFIGURED_SLUG, "requirements", committed_by="a"
         )
 
     assert result["started"] == []
@@ -213,11 +213,11 @@ async def test_committing_requirements_does_start_a_configured_delivery(client):
     await _activate(SLUG)
     async with get_connection(SLUG) as conn:
         await insert_approval_commit(
-            conn, crew_name="discovery", committed_by="a", notes=""
+            conn, crew_name="requirements", committed_by="a", notes=""
         )
 
     with patch("api.services.autostart_service.dispatch_crew", AsyncMock()):
-        result = await start_ready_downstream(SLUG, "discovery", committed_by="a")
+        result = await start_ready_downstream(SLUG, "requirements", committed_by="a")
 
     assert [s["crew"] for s in result["started"]] == ["delivery"]
     assert not any(w["crew"] == "delivery" for w in result["waiting"])

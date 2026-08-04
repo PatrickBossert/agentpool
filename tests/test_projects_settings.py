@@ -11,7 +11,7 @@ PROJECT = {
     "stakeholder_groups": ["Operations"],
     "value_stream_labels": ["Asset Mgmt"],
     "roadmap_time_axis": "quarters",
-    "crews_enabled": ["discovery", "value_design"],
+    "crews_enabled": ["requirements", "value_design"],
     "review_gates": True,
     "slack_channel": "#rail",
 }
@@ -60,7 +60,7 @@ async def test_patch_settings_updates_db(client):
         "stakeholder_groups": ["Finance"],
         "value_stream_labels": [],
         "roadmap_time_axis": "years",
-        "crews_enabled": ["discovery"],
+        "crews_enabled": ["requirements"],
         "review_gates": False,
         "slack_channel": "#energy",
     }
@@ -85,7 +85,7 @@ async def test_patch_settings_rewrites_yaml(client):
         "stakeholder_groups": [],
         "value_stream_labels": [],
         "roadmap_time_axis": "quarters",
-        "crews_enabled": ["discovery"],
+        "crews_enabled": ["requirements"],
         "review_gates": True,
         "slack_channel": "",
     }
@@ -106,7 +106,7 @@ async def test_patch_settings_unknown_project_404(client):
         "stakeholder_groups": [],
         "value_stream_labels": [],
         "roadmap_time_axis": "quarters",
-        "crews_enabled": ["discovery"],
+        "crews_enabled": ["requirements"],
         "review_gates": True,
         "slack_channel": "",
     }
@@ -123,7 +123,7 @@ async def test_patch_settings_discovery_fields(client):
         "stakeholder_groups": [],
         "value_stream_labels": [],
         "roadmap_time_axis": "quarters",
-        "crews_enabled": ["discovery"],
+        "crews_enabled": ["requirements"],
         "review_gates": True,
         "slack_channel": "",
         "discovery_brief": "Focus on freight operations.",

@@ -11,7 +11,7 @@ class ProjectCreate(BaseModel):
     value_stream_labels: list[str] = []
     roadmap_time_axis: Literal["quarters", "years", "horizons"] = "quarters"
     crews_enabled: list[str] = [
-        "discovery", "value_design", "architecture", "delivery", "business_plan"
+        "requirements", "value_design", "capabilities", "delivery", "business_plan"
     ]
     review_gates: bool = True
     slack_channel: str = ""
@@ -24,7 +24,7 @@ class ProjectSettings(BaseModel):
     value_stream_labels: list[str] = []
     roadmap_time_axis: Literal["quarters", "years", "horizons"] = "quarters"
     crews_enabled: list[str] = [
-        "discovery", "value_design", "architecture", "delivery", "business_plan"
+        "requirements", "value_design", "capabilities", "delivery", "business_plan"
     ]
     review_gates: bool = True
     slack_channel: str = ""

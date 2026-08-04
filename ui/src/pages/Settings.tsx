@@ -9,7 +9,7 @@ import { SUPPORTED_LOCALES } from '../utils/holidays'
 const DEFAULT_PRIMARY_COLOR = '#0d9488'  // must match api/models.py default
 const DEFAULT_TEXT_COLOR = '#1f2937'
 
-const KNOWN_CREWS = ['discovery', 'value_design', 'architecture', 'delivery', 'business_plan']
+const KNOWN_CREWS = ['requirements', 'value_design', 'capabilities', 'delivery', 'business_plan']
 
 const DEFAULTS: ProjectSettings = {
   llm_mode: 'standard',

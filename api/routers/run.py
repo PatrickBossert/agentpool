@@ -30,7 +30,7 @@ async def run_crew(slug: str, req: RunRequest, payload: dict = Depends(require_o
             asyncio.create_task(dispatch_agent(slug=slug, agent_key=req.agent, run_id=run_id))
             return RunResponse(run_id=run_id, project_slug=slug, crew=crew_label, status="running")
 
-        crew = req.crew or "discovery"
+        crew = req.crew or "requirements"
         run_id = await insert_crew_run(
             conn, project_id=project["id"], crew_name=crew, status="running"
         )

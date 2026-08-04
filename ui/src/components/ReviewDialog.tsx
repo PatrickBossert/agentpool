@@ -41,10 +41,10 @@ function MarkdownBody({ text }: { text: string }) {
 const CREW_LABEL: Record<string, string> = {
   discovery_mapping:    'Value Chain Mapper',
   value_design:         'Value Design',
-  architecture:         'Architecture',
+  capabilities:         'Capabilities',
   delivery:             'Delivery Planning',
   business_plan:        'Business Plan',
-  discovery:            'Discovery',
+  requirements:            'Requirements',
   discovery_interviews: 'Interview Synthesis',
 }
 

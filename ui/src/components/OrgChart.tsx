@@ -5,9 +5,9 @@ import type { CrewRun } from '../types'
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 export const CREW_ORDER = [
-  'discovery',
+  'requirements',
   'value_design',
-  'architecture',
+  'capabilities',
   'delivery',
   'business_plan',
 ] as const
@@ -15,16 +15,16 @@ export const CREW_ORDER = [
 export type CrewName = (typeof CREW_ORDER)[number] | 'discovery_interviews'
 
 export const CREW_LABELS: Record<string, string> = {
-  discovery:             'Discovery',
+  requirements:             'Requirements',
   discovery_interviews:  'Discovery Interviews',
   value_design:          'Value Design',
-  architecture:          'Architecture',
+  capabilities:          'Capabilities',
   delivery:              'Delivery',
   business_plan:         'Business Plan',
 }
 
 export const CREW_AGENTS: Record<string, string[]> = {
-  discovery: [
+  requirements: [
     'Value Chain Mapper',
     'Requirements Capture',
     'Requirements Analyst',
@@ -36,16 +36,16 @@ export const CREW_AGENTS: Record<string, string[]> = {
     'Synthesis Analyst',
   ],
   value_design:  ['Value Proposition Generator', 'Portfolio Manager'],
-  architecture:  ['Enterprise Architect', 'Initiative Identifier'],
+  capabilities:  ['Enterprise Architect', 'Initiative Identifier'],
   delivery:      ['Roadmap Generator'],
   business_plan: ['Business Plan Generator'],
 }
 
 const CREW_ICONS: Record<string, string> = {
-  discovery:            '🔍',
+  requirements:            '🔍',
   discovery_interviews: '🎙',
   value_design:         '⭐',
-  architecture:         '🏛',
+  capabilities:         '🏛',
   delivery:             '🚀',
   business_plan:        '📊',
 }
@@ -185,7 +185,7 @@ function CrewNode({
         {agents.map((agent, idx) => (
           <AgentRow key={agent} name={agent} status={agentStatuses[idx]} />
         ))}
-        {interviewBadge && crewKey === 'discovery' && (
+        {interviewBadge && crewKey === 'requirements' && (
           <div className="text-[9px] text-brand border border-brand/20 rounded px-1.5 py-0.5 bg-brand/5 mt-0.5 font-mono">
             {interviewBadge}
           </div>
@@ -294,13 +294,13 @@ export default function OrgChart({
 
         {/* Left column: Discovery · Architecture · Business Plan */}
         <div className="flex-1 flex flex-col gap-3">
-          {renderCrew('discovery', true)}
+          {renderCrew('requirements', true)}
           {showDiscoveryInterviews && (
             <div className="ml-4 border-l-2 border-brand/20 pl-3">
               {renderCrew('discovery_interviews')}
             </div>
           )}
-          {renderCrew('architecture')}
+          {renderCrew('capabilities')}
           {renderCrew('business_plan')}
         </div>
 

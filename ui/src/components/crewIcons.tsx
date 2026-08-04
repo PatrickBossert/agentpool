@@ -9,11 +9,11 @@ import type { LucideIcon } from 'lucide-react'
 export const CREW_ICON_COMPONENT: Record<string, LucideIcon> = {
   discovery_mapping:      Network,
   assessment_design:      ClipboardList,
-  discovery:              Search,
+  requirements:              Search,
   stakeholder_management: Users,
   discovery_interviews:   Mic,
   value_design:           Sparkles,
-  architecture:           Building2,
+  capabilities:           Building2,
   delivery:               MapPin,
   business_plan:          TrendingUp,
 }

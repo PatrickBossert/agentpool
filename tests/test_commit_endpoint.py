@@ -20,7 +20,7 @@ PROJECT = {
     "sector": "transport",
     "stakeholder_groups": ["Operations"],
     "value_stream_labels": ["Asset Mgmt"],
-    "crews_enabled": ["discovery"],
+    "crews_enabled": ["requirements"],
     "review_gates": True,
     "slack_channel": "",
 }
@@ -262,12 +262,12 @@ async def test_readiness_endpoint_reflects_commits(client):
 @pytest.mark.asyncio
 async def test_commit_history_is_returned_newest_first(client):
     await client.post("/projects", json=PROJECT)
-    for crew in ("discovery_mapping", "discovery"):
+    for crew in ("discovery_mapping", "requirements"):
         await client.post(
             "/projects/commit-api-test/commits", json={"crew_name": crew, "notes": ""}
         )
     history = (await client.get("/projects/commit-api-test/commits")).json()
-    assert [c["crew_name"] for c in history] == ["discovery", "discovery_mapping"]
+    assert [c["crew_name"] for c in history] == ["requirements", "discovery_mapping"]
     assert history[0]["committed_by"] == "admin"
 
 

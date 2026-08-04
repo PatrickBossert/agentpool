@@ -8,7 +8,7 @@ from agents.pam.pam_agent import (
     create_run_discovery_mapping_task,
     create_run_discovery_interviews_task,
     create_run_value_design_task,
-    create_run_architecture_task,
+    create_run_capabilities_task,
     create_run_delivery_task,
     create_run_business_plan_task,
 )
@@ -62,7 +62,7 @@ def create_pam_resume_crew(
         context_for_value_design = []
 
     t1 = create_run_value_design_task(pam, slug=slug, context_tasks=context_for_value_design)
-    t2 = create_run_architecture_task(pam, slug=slug, context_tasks=[t1])
+    t2 = create_run_capabilities_task(pam, slug=slug, context_tasks=[t1])
     t3 = create_run_delivery_task(pam, slug=slug, context_tasks=[t2])
     t4 = create_run_business_plan_task(pam, slug=slug, context_tasks=[t3])
     tasks += [t1, t2, t3, t4]

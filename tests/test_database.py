@@ -66,10 +66,10 @@ async def test_insert_crew_run(db):
     from api.database import insert_project, insert_crew_run, fetch_crew_runs, fetch_project
     await insert_project(db, slug="acme", llm_mode="standard", sector="rail", config_json='{}')
     project = await fetch_project(db, slug="acme")
-    await insert_crew_run(db, project_id=project["id"], crew_name="discovery", status="running")
+    await insert_crew_run(db, project_id=project["id"], crew_name="requirements", status="running")
     runs = await fetch_crew_runs(db, project_id=project["id"])
     assert len(runs) == 1
-    assert runs[0]["crew_name"] == "discovery"
+    assert runs[0]["crew_name"] == "requirements"
     assert runs[0]["status"] == "running"
 
 

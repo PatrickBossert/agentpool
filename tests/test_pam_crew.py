@@ -69,7 +69,7 @@ def test_pam_resume_crew_has_four_tasks(mock_llm):
 def test_pam_resume_crew_tasks_reference_all_four_crews(mock_llm):
     crew = _build_resume_crew(mock_llm)
     all_descriptions = " ".join(t.description for t in crew.tasks)
-    for name in ("value_design", "architecture", "delivery", "business_plan"):
+    for name in ("value_design", "capabilities", "delivery", "business_plan"):
         assert name in all_descriptions, f"'{name}' missing from task descriptions"
 
 

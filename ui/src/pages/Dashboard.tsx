@@ -18,11 +18,11 @@ import type { CrewRun, HumanReview, AgentOutput } from '../types'
 const CREW_LABEL: Record<string, string> = {
   discovery_mapping:      'Value Chain Mapper',
   assessment_design:      'Assessment Design',
-  discovery:              'Discovery',
+  requirements:              'Discovery',
   stakeholder_management: 'Stakeholder Management',
   discovery_interviews:   'Interview Synthesis',
   value_design:           'Value Design',
-  architecture:           'Architecture',
+  capabilities:           'Architecture',
   delivery:               'Delivery Planning',
   business_plan:          'Business Plan',
 }

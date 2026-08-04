@@ -62,15 +62,15 @@ def create_run_value_design_task(agent: Agent, slug: str, context_tasks: list) -
     )
 
 
-def create_run_architecture_task(agent: Agent, slug: str, context_tasks: list) -> Task:
+def create_run_capabilities_task(agent: Agent, slug: str, context_tasks: list) -> Task:
     return Task(
         description=(
-            f"Use RunCrewTool with crew_name='architecture' to run the Architecture crew "
+            f"Use RunCrewTool with crew_name='capabilities' to run the Capabilities crew "
             f"for project '{slug}'. Wait for it to complete. "
             f"Then use SlackNotifyTool to send: "
             f"'✓ Architecture complete for {slug}. Starting Delivery Planning.'"
         ),
-        expected_output="Confirmation that architecture crew completed and Slack notified.",
+        expected_output="Confirmation that capabilities crew completed and Slack notified.",
         agent=agent,
         context=context_tasks,
     )

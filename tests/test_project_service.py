@@ -18,7 +18,7 @@ async def test_create_project_creates_db_and_dirs(tmp_path, monkeypatch):
         sector="finance",
         stakeholder_groups=["Finance", "Ops"],
         value_stream_labels=["Revenue"],
-        crews_enabled=["discovery"],
+        crews_enabled=["requirements"],
     )
     result = await create_project(req)
     assert result["slug"] == "test-co"
@@ -45,7 +45,7 @@ async def test_create_project_idempotent(tmp_path, monkeypatch):
         sector="finance",
         stakeholder_groups=["Finance"],
         value_stream_labels=["Revenue"],
-        crews_enabled=["discovery"],
+        crews_enabled=["requirements"],
     )
     r1 = await create_project(req)
     r2 = await create_project(req)

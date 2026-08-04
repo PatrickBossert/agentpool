@@ -21,7 +21,7 @@ PROJECT = {
     "sector": "transport",
     "stakeholder_groups": ["Operations"],
     "value_stream_labels": ["Asset Mgmt"],
-    "crews_enabled": ["discovery"],
+    "crews_enabled": ["requirements"],
     "review_gates": True,
     "slack_channel": "",
 }
@@ -252,7 +252,7 @@ async def test_a_crew_with_no_downstream_classifies_to_three_empty_lists(client)
 def test_requirements_waits_for_the_capabilities_that_scope_it():
     # It had NO dependencies at all, so it could run before the interviews it is meant to
     # follow. That made the displayed order a fiction rather than a plan.
-    assert CREW_DEPENDENCIES["discovery"] == ["architecture"]
+    assert CREW_DEPENDENCIES["requirements"] == ["capabilities"]
 
 
 def test_value_design_no_longer_waits_for_requirements():
@@ -264,7 +264,7 @@ def test_value_design_no_longer_waits_for_requirements():
 def test_delivery_waits_for_requirements_not_for_capabilities():
     # The roadmap needs the complexity, method and cost that requirements produces, not
     # only the initiatives above it.
-    assert CREW_DEPENDENCIES["delivery"] == ["discovery"]
+    assert CREW_DEPENDENCIES["delivery"] == ["requirements"]
 
 
 def _crew_order_from_frontend() -> list[str]:

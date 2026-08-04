@@ -24,14 +24,14 @@ CREW_DEPENDENCIES: dict[str, list[str]] = {
     # which now runs two steps later - leaving that in place would deadlock the board,
     # with every crew waiting and none ever ready.
     "value_design":           ["discovery_interviews"],
-    "architecture":           ["value_design"],
+    "capabilities":           ["value_design"],
     # `discovery` - Sam and Riley - had NO dependencies at all, so it could run before the
     # interviews it is meant to follow. It enumerates requirements against initiatives,
     # which do not exist until the capability work above has produced them.
-    "discovery":              ["architecture"],
+    "requirements":           ["capabilities"],
     # The roadmap needs the complexity, method and cost that requirements produces, not
     # only the initiatives above it.
-    "delivery":               ["discovery"],
+    "delivery":               ["requirements"],
     "business_plan":          ["delivery"],
 }
 
