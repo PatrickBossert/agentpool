@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS interview_answers (
     question_text   TEXT    NOT NULL,
     answer_text     TEXT    NOT NULL DEFAULT '',
     answered        INTEGER NOT NULL DEFAULT 1,
+    follow_up       INTEGER NOT NULL DEFAULT 0,
     node_id         TEXT    NOT NULL,
     chain           TEXT,
     level           TEXT    NOT NULL,
@@ -160,6 +161,7 @@ CREATE TABLE IF NOT EXISTS interview_answers (
     party_id        TEXT,
     discipline      TEXT    NOT NULL,
     question_intent TEXT    NOT NULL,
+    elicitation     TEXT    NOT NULL,
     rating          INTEGER,
     answered_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -174,6 +176,28 @@ a chain they never mentioned.
 absent row would mean "not asked" and a blank one means "asked and not answered", and coverage
 cannot tell an instrument that missed a topic from a stakeholder who declined it unless both
 are recorded.
+
+#### The session has to record which question an answer belongs to
+
+Today it does not. `qa_pairs` is `{question: string, answer: string}[]` - the question **text**
+and nothing else - so an answer cannot be traced to the question that produced it even within
+its own script. The pairs also mix three different things without distinguishing them: scripted
+questions, LLM-generated follow-up probes, pre-scripted follow-up branches, and section-level
+prompts (synthesis check, peer referral, forward roadmap).
+
+So the capture contract changes:
+
+| Kind | `question_id` | `follow_up` |
+|---|---|---|
+| Scripted question | the script's ID - `SC-014.S3.Q2` | 0 |
+| Pre-scripted branch | parent question's ID, suffixed `.B1`, `.B2` | 1 |
+| Generated probe | parent question's ID, suffixed `.F1`, `.F2` | 1 |
+| Section-level prompt | the section's ID - `SC-014.S3` | 0 |
+
+A follow-up carries its parent's tags, including `elicitation`: a probe is further evidence
+about the same question, not a new one. Counting probes as separate questions would overstate
+both coverage and the weight of a theme - an interviewee pressed three times on one point would
+read as three stakeholders' worth of agreement.
 
 The tags are denormalised onto the row deliberately. Casey groups by an exact value without a
 four-way join, and every tag is a fact fixed at the moment the answer was given - a later
@@ -232,13 +256,58 @@ Casey's remit is challenges *and* opportunities; tagging the question's intent m
 a query rather than a judgement he has to re-derive from prose, and it keeps scene-setting
 questions out of the evidence base.
 
+`elicitation` - `unprompted` or `prompted`. Whether the question named the thing it was asking
+about. This is a separate axis from intent, and it is what makes a count readable: "six
+stakeholders raised data quality" means something entirely different if five of them were
+handed the phrase. Casey weights unprompted mentions higher because the tag lets him, rather
+than because he inferred it from the wording.
+
 **Derived by Casey** - nothing. He writes themes and requirements that cite answer IDs.
 
 **Considered and rejected:** sentiment (Casey's analysis, not a fact of the answer); stakeholder
 seniority (already on the stakeholder record, so denormalising it adds a second copy of a fact
 that can drift); and a free-text keyword field (the thing this design exists to replace).
 
-### 6. Casey's two artefacts
+### 6. Testing Morgan's hypotheses without anchoring on them
+
+Morgan reads the annual report and the client's other material and produces value levers and
+KPIs as hypotheses. Maya must reference them, and must not reference them first.
+
+**Maya reads `value_levers`**, which she does not today - she reads only the registry and the
+summary. An untested hypothesis is worse than an absent one: unreferenced, Morgan's levers
+flow to value design unverified, which is exactly what framing them as hypotheses was meant to
+prevent.
+
+**The ordering rule: unaided sections precede prompted ones, and the order is never reversed.**
+
+- Early sections ask unaided - what gets in the way, what you would change, what happens when
+  it goes wrong. A lever nobody wrote in the annual report can only surface here.
+- A late section tests Morgan's levers by name: *"Your annual report names fleet availability
+  and carbon reduction as priorities. Does that match what you see? Which is real and which is
+  aspirational?"* An interviewee can contradict the annual report, which is the outcome that
+  makes the exercise worth running.
+
+Naming a lever early buys agreement rather than evidence, most sharply from the junior and
+frontline voices that most need to be heard cleanly. Sequencing is the fix; omission is not.
+
+**The interviewee is the wrong source for value magnitude.** A depot manager knows the van has
+been off the road for nine days and knows the workaround; they do not know what that costs the
+business. The split is: the interviewee supplies the challenge, its frequency, the workaround,
+and the consequence; Morgan and the value design crew supply what it is worth.
+
+**Each lever acquires a status derived from the answers**, not asserted by anyone:
+
+| Status | Meaning |
+|---|---|
+| `contradicted` | Prompted answers dispute it |
+| `confirmed_unprompted` | Raised without being named - the strongest result |
+| `confirmed_prompted` | Only agreed with once named - visibly the weaker result |
+| `untested` | No question referenced it |
+
+`untested` is the one that matters most, because it is the failure the current design cannot
+see at all: a lever that reached value design without a single interview touching it.
+
+### 7. Casey's two artefacts
 
 A theme is a pattern in the evidence - what people said. A strategic requirement is what the
 organisation must therefore be able to do. Keeping them separate means a reviewer can accept
@@ -272,7 +341,7 @@ Horizontal themes group by node position across the chain; vertical themes group
 Every theme carries evidence from at least two different stakeholders. One voice is an
 individual perspective.
 
-### 7. The two requirement levels, separated
+### 8. The two requirement levels, separated
 
 | Artefact | Owner | Step | Key |
 |---|---|---|---|
@@ -288,7 +357,7 @@ the delivery detail gets both rather than whichever ran last.
 Riley's rename is bio-neutral: "produces a structured, prioritised requirement analysis" is
 his own wording, and his job is unchanged.
 
-### 8. Coverage follows the anchor
+### 9. Coverage follows the anchor
 
 Coverage becomes a query over (node, relationship) rather than node alone, so "node `0` has
 internal coverage but no customer coverage" is expressible.
@@ -308,14 +377,16 @@ about the fact that the anchors were never recorded.
 
 Each phase depends on the one before it, except the first.
 
-1. **The requirement key split** (section 7). Independent of everything else and fixes live
+1. **The requirement key split** (section 8). Independent of everything else and fixes live
    data loss today.
 2. **Root node `0`, script IDs, and anchoring** (sections 1, 2, 3).
-3. **The discipline vocabulary and question intent** (section 5) - Maya's Setup and her output
-   schema.
-4. **The answer store** (section 4) - SQLite table, Chroma collection, ingestion at session
+3. **The tag vocabularies** (section 5) - discipline, question intent, and elicitation, in
+   Maya's Setup and her output schema.
+4. **Morgan's levers reach Maya, and the ordering rule** (section 6) - Maya reads
+   `value_levers`, unaided sections precede prompted ones, and lever status is derived.
+5. **The answer store** (section 4) - SQLite table, Chroma collection, ingestion at session
    completion.
-5. **Casey's themes and strategic requirements** (section 6), citing answer IDs.
+6. **Casey's themes and strategic requirements** (section 7), citing answer IDs.
 
 ## Testing
 
@@ -340,6 +411,26 @@ Each phase depends on the one before it, except the first.
 - An answer row's tags match its script's at ingestion time, and a later node rename does not
   change them.
 
+**Session capture:**
+- A completed session writes one answer row per Q&A pair, and every row resolves to a question
+  or section that exists in that session's script.
+- A generated follow-up carries its parent's question ID and tags, and does not count as a
+  separate question for coverage. A test with one question and two probes must report one
+  question covered, not three.
+
+**Elicitation and the ordering rule:**
+- In every script, the first section tagged `prompted` comes after the last section tagged
+  `unprompted`. This is the whole rule, and it is checkable, so it is checked rather than left
+  to Maya's instructions.
+- A script that names a value lever in an unaided section fails: the lever text appearing in a
+  question tagged `unprompted` is precisely the anchoring this design forbids.
+- Lever status is derived from the answers, not asserted. A test that seeds one prompted
+  agreement and one unprompted mention of the same lever must yield `confirmed_unprompted`,
+  not whichever was written last.
+- A lever no question references reports `untested`. Asserting only that confirmed levers are
+  labelled would pass while an untested lever reached value design looking established, which
+  is the failure this status exists to surface.
+
 **The key split:**
 - Casey's strategic requirements survive a full pipeline run. Asserting only that Riley's
   analysis is present would pass today, while Casey's set is being destroyed.
@@ -350,8 +441,9 @@ Each phase depends on the one before it, except the first.
 **What Casey's themes actually say**, how strategic requirements are worded, and how Sage
 weighs them - agent instructions rather than structure.
 
-**Voice and transcript capture mechanics.** The answer store consumes whatever the session
-produces; how the session produces it is unchanged.
+**Voice and transcript capture mechanics** beyond the `question_id` contract in section 4.
+How the interview is conducted, spoken, paced, and checkpointed is unchanged; only what the
+completed session records about each answer changes.
 
 **Re-running the pipeline on sp-gs-am.** Regenerating the scripts is a project action, not
 part of the implementation.
