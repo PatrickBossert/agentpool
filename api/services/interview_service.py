@@ -7,12 +7,14 @@ LLM elaboration press, and session completion helpers.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import aiosqlite
 import httpx
 
 from api.config import get_settings
+from api.services.interview_answer_service import record_answers, script_for_session
 from api.database import (
     complete_interview_session,
     fetch_interview_session,
@@ -22,6 +24,8 @@ from api.database import (
     init_system_db,
     save_interview_checkpoint,
 )
+
+_log = logging.getLogger(__name__)
 
 
 async def _find_session_db(session_token: str) -> str | None:
@@ -235,9 +239,34 @@ async def complete_session(
     db_path = await _find_session_db(session_token)
     if not db_path:
         return False
+    # The slug is the db filename. record_answers needs it to find the scripts on disk and
+    # to index into that project's own Chroma collection.
+    slug = Path(db_path).stem
+
     async with aiosqlite.connect(db_path) as conn:
+        conn.row_factory = aiosqlite.Row
         transcript_json = json.dumps(qa_pairs)
         ratings_json = json.dumps(ratings) if ratings is not None else None
         await complete_interview_session(conn, session_token, transcript_json, ratings_json)
         await save_interview_checkpoint(conn, session_token, None)
+
+        # The transcript blob stays for the review and email screens; the rows are what
+        # anything queries. A session whose script cannot be resolved writes no rows and is
+        # logged - the blob still holds everything the interviewee said, so nothing is lost
+        # and the rows can be backfilled once the script is found.
+        async with conn.execute(
+            "SELECT * FROM interview_sessions WHERE session_token = ?", (session_token,)
+        ) as cur:
+            row = await cur.fetchone()
+        session = dict(row) if row else None
+
+        if session:
+            script = await script_for_session(conn, slug, session)
+            if script:
+                await record_answers(conn, slug, session["id"], qa_pairs, script=script)
+            else:
+                _log.warning(
+                    "complete_session[%s]: no script resolved for session %s - transcript "
+                    "saved, no answer rows written", slug, session_token,
+                )
     return True
