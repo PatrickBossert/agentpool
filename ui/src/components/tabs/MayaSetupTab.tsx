@@ -141,7 +141,7 @@ const INTERVIEW_TYPE_DETAILS: Record<string, TypeDetail> = {
       { title: 'S4 — Performance Tracking & KPI Integrity', duration: '~5 min' },
       { title: 'S5 — Risk Identification & Mitigation', duration: '~6 min' },
       { title: 'S6 — Data & Information Quality', duration: '~5 min' },
-      { title: 'S7 — Third-Party Management — ISS & DXI', duration: '~6 min' },
+      { title: 'S7 — Third-Party Management — Outsourced Providers', duration: '~6 min' },
       { title: 'S8 — Transformation & Change Governance', duration: '~5 min' },
       { title: 'S9 — Comparative & Peer Assessment', duration: '~4 min' },
       { title: 'S10 — Wrap-Up & Critical Observations', duration: '~5 min' },
@@ -150,7 +150,7 @@ const INTERVIEW_TYPE_DETAILS: Record<string, TypeDetail> = {
       'Framing block positions as gathering independent expert perspective',
       'S10 (Wrap-Up & Critical Observations) serves as the synthesis check',
       'No maturity rating — the auditor\'s assessment is qualitative, not numerical',
-      'S7 specifically addresses third-party and outsourced service providers (ISS & DXI)',
+      'S7 specifically addresses third-party and outsourced service providers',
     ],
   },
   F: {

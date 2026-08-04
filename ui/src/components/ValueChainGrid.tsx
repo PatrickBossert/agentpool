@@ -138,8 +138,8 @@ export function ValueChainGrid({
   // One block per chain, stacked. Laid side by side on a single horizontal run - which is
   // what a shared column axis produces - seeing Fleet means scrolling past the whole of
   // Property, and one party's lane spans all three chains at once. That is meaningless
-  // when the chains have different parties: ISS maintains property and DXI maintains
-  // fleet, so neither belongs in the other's chain even as an empty row.
+  // when the chains have different parties - a maintainer engaged on one chain has no
+  // place in another's, not even as an empty row.
   const chains = model.segments
     .map((segment) => {
       const contributions = model.contributions.filter(
