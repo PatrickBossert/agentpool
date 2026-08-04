@@ -701,10 +701,10 @@ function DateControls({
 // ── Milestone row ─────────────────────────────────────────────────────────────
 
 function MilestoneRow({
-  m, idx, slug, showInterviews, prevDueDate, locale, excludedDates,
+  m, idx, slug, showInterviews, prevDueDate, excludedDates,
 }: {
   m: Milestone; idx: number; slug: string; showInterviews: boolean
-  prevDueDate: string | null; locale: string; excludedDates: Set<string>
+  prevDueDate: string | null; excludedDates: Set<string>
 }) {
   const [expanded, setExpanded] = useState(false)
   const qc = useQueryClient()
@@ -778,20 +778,38 @@ function MilestoneRow({
           )}
 
           <div className="flex items-center gap-3 mt-2 flex-wrap">
+            {/* Planned, then actual. The planned date used to render twice here - once as
+                this picker and once as formatted text beside it - which read as two dates
+                that happened to agree. Labelling them and putting the real second date in
+                the second slot is what makes slippage visible at a glance. */}
             <div className="flex items-center gap-1.5">
               <CalendarDays size={12} className="text-gray-400" />
+              <span className="text-[10px] text-gray-400 uppercase tracking-wide">Planned</span>
               <input
                 type="date" value={m.due_date ?? ''}
                 onChange={e => patch.mutate({ due_date: e.target.value || null })}
                 className="text-xs text-gray-600 border-0 bg-transparent focus:outline-none focus:ring-0 cursor-pointer p-0"
                 style={{ colorScheme: 'light' }}
               />
-              {m.due_date && (
-                <span className="text-[10px] text-gray-400">
-                  {formatDate(m.due_date, locale)}
-                </span>
-              )}
             </div>
+            {isComplete && (
+              <div className="flex items-center gap-1.5">
+                <SquareCheckBig size={12} className="text-teal-500" />
+                <span className="text-[10px] text-gray-400 uppercase tracking-wide">Actual</span>
+                {/* Editable: ticking stamps today, but milestones are ticked off
+                    retrospectively far more often than on the day. */}
+                <input
+                  type="date"
+                  data-testid={`milestone-actual-${m.id}`}
+                  value={m.completed_at ?? ''}
+                  onChange={e => patch.mutate({ completed_at: e.target.value || null })}
+                  className={`text-xs border-0 bg-transparent focus:outline-none focus:ring-0 cursor-pointer p-0 ${
+                    late !== null ? 'text-amber-700' : 'text-teal-700'
+                  }`}
+                  style={{ colorScheme: 'light' }}
+                />
+              </div>
+            )}
             {showInterviews && (
               <button
                 onClick={() => setExpanded(v => !v)}
@@ -1067,7 +1085,6 @@ export default function PamSetupTab({ slug }: { slug: string }) {
                         <MilestoneRow key={m.id} m={m} idx={si} slug={slug}
                           showInterviews={m.milestone_key === 'interviews_complete'}
                           prevDueDate={prevDateByIndex[si]}
-                          locale={locale}
                           excludedDates={excludedDates} />
                       )
                     })}
@@ -1088,7 +1105,6 @@ export default function PamSetupTab({ slug }: { slug: string }) {
                         <MilestoneRow key={m.id} m={m} idx={si} slug={slug}
                           showInterviews={m.milestone_key === 'interviews_complete'}
                           prevDueDate={prevDateByIndex[si]}
-                          locale={locale}
                           excludedDates={excludedDates} />
                       )
                     })}
@@ -1109,7 +1125,6 @@ export default function PamSetupTab({ slug }: { slug: string }) {
                         <MilestoneRow key={m.id} m={m} idx={si} slug={slug}
                           showInterviews={false}
                           prevDueDate={prevDateByIndex[si]}
-                          locale={locale}
                           excludedDates={excludedDates} />
                       )
                     })}

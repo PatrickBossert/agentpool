@@ -303,7 +303,7 @@ export const milestonesApi = {
   create: (slug: string, data: { title: string; description?: string; due_date?: string | null; notes?: string }): Promise<Milestone> =>
     apiClient.post<Milestone>(`/projects/${slug}/milestones`, data).then((r) => r.data),
 
-  update: (slug: string, id: number, data: Partial<{ title: string; description: string; due_date: string | null; status: string; notes: string; sort_order: number }>): Promise<Milestone> =>
+  update: (slug: string, id: number, data: Partial<{ title: string; description: string; due_date: string | null; status: string; notes: string; sort_order: number; completed_at: string | null }>): Promise<Milestone> =>
     apiClient.patch<Milestone>(`/projects/${slug}/milestones/${id}`, data).then((r) => r.data),
 
   remove: (slug: string, id: number): Promise<void> =>
