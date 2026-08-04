@@ -20,6 +20,7 @@ def _validate_value_chain_model(parsed: dict, slug: str) -> list[str]:
     from api.services.value_chain_model import (
         validate_against_registry,
         validate_contributions_have_tasks,
+        validate_has_entity,
         validate_model,
     )
 
@@ -30,6 +31,11 @@ def _validate_value_chain_model(parsed: dict, slug: str) -> list[str]:
     # created it. A deliverable has no such excuse - a party whose part is described and
     # decomposed into nothing cannot be interviewed about, scheduled, or held to anything.
     problems.extend(validate_contributions_have_tasks(parsed))
+
+    # Same reasoning as contributions-have-tasks: the editor may hold a model with no entity
+    # while a person works on it, but a deliverable that A and C scripts cannot anchor to is
+    # not finished.
+    problems.extend(validate_has_entity(parsed))
 
     # The registry is the ID authority, and it lives on disk - which is why the comparison
     # itself is pure and the load happens here. Every stable ID shared by the migrated model

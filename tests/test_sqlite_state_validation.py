@@ -57,6 +57,10 @@ def clean(tmp_path, monkeypatch):
 def _valid_model() -> dict:
     return {
         "model_version": 1,
+        # The L0 entity, on the same footing as the tasks below: the agent's write path
+        # requires one, because interview scripts for regulators, customers, and corporate
+        # services have no chain position and anchor here instead.
+        "entity": {"id": "0", "label": "SP-GS", "description": "The organisation."},
         "segments": [{"id": "1", "label": "Segment"}],
         "parties": [{"id": "sp", "label": "SP-GS"}],
         "activities": [{"id": "1.1", "segment_id": "1", "label": "A"}],
@@ -99,6 +103,26 @@ def test_an_invalid_model_is_refused_and_the_problems_are_returned():
     assert "Written to" not in result
     assert "column 10" in result
     assert "1.1" in result and "1.2" in result
+
+
+def test_a_model_with_no_entity_is_refused_by_the_tool():
+    """The rule has to be wired in, not merely written.
+
+    validate_has_entity refusing an entity-less model is one fact; the write path calling it
+    is another, and only the second one protects anything. Removing the call from
+    sqlite_state.py left every test here passing.
+    """
+    model = _valid_model()
+    del model["entity"]
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="value_chain_model",
+        agent_name="value_chain_mapper", value=json.dumps(model),
+    )
+
+    assert "Written to" not in result
+    assert "L0 entity" in result
 
 
 def test_an_invalid_model_writes_no_file():
