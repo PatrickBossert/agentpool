@@ -17,9 +17,19 @@ from agents.tools._db import insert_agent_output_sync, latest_output_path
 # construct an invalid model, and that path must keep refusing. The two guard different
 # writers.
 def _validate_value_chain_model(parsed: dict, slug: str) -> list[str]:
-    from api.services.value_chain_model import validate_against_registry, validate_model
+    from api.services.value_chain_model import (
+        validate_against_registry,
+        validate_contributions_have_tasks,
+        validate_model,
+    )
 
     problems = validate_model(parsed)
+
+    # Held to the agent, not to the editor. A person adding a party in the grid creates a
+    # contribution before its tasks exist; refusing that save would refuse the action that
+    # created it. A deliverable has no such excuse - a party whose part is described and
+    # decomposed into nothing cannot be interviewed about, scheduled, or held to anything.
+    problems.extend(validate_contributions_have_tasks(parsed))
 
     # The registry is the ID authority, and it lives on disk - which is why the comparison
     # itself is pure and the load happens here. Every stable ID shared by the migrated model

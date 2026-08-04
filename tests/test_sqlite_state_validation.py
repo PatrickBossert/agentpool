@@ -63,7 +63,10 @@ def _valid_model() -> dict:
         "contributions": [
             {"activity_id": "1.1", "party_id": "sp", "column": 10, "attribution": "stated"}
         ],
-        "tasks": [],
+        # One task per contribution: the agent's write path now requires every party's part
+        # to decompose into at least one numbered activity, so a fixture with none is not a
+        # model this tool would ever accept.
+        "tasks": [{"id": "1.1.1", "activity_id": "1.1", "party_id": "sp"}],
         "propositions": [],
         "links": [],
     }
@@ -380,3 +383,27 @@ def test_a_first_registry_is_written_because_there_is_nothing_to_succeed():
     tool = SQLiteStateTool(slug=SLUG)
     result = _write_registry_payload(tool, _registry_payload(("1", "Property", "L1")))
     assert "Written to" in result
+
+
+def test_a_model_with_an_undecomposed_contribution_is_refused():
+    """A party whose part is described and broken into no numbered activity. The real case:
+    3.1 carried six tasks, all the custodian's, while the maintainer's stated obligation to
+    use two named systems had none - so a check counting per activity saw nothing wrong."""
+    model = _valid_model()
+    model["parties"].append({"id": "iss", "label": "ISS"})
+    model["contributions"].append(
+        {"activity_id": "1.1", "party_id": "iss", "column": 10, "attribution": "stated"}
+    )
+    model["tasks"] = [{"id": "1.1.1", "activity_id": "1.1", "party_id": "sp"}]
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="value_chain_model",
+        agent_name="value_chain_mapper", value=json.dumps(model),
+    )
+
+    assert "Written to" not in result
+    assert "1.1" in result and "iss" in result
+    files, rows = _no_model_written()
+    assert files == [] and rows == 0
+

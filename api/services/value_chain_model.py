@@ -117,6 +117,32 @@ def validate_against_registry(model: dict, registry: dict) -> list[str]:
     return problems
 
 
+def validate_contributions_have_tasks(model: dict) -> list[str]:
+    """Every contribution that decomposes into nothing.
+
+    Per contribution, not per activity. Tasks aggregate across parties, so an activity can
+    carry six of them and still leave one party's part undecomposed - 3.1 held six tasks,
+    all the custodian's, while the maintainer's stated obligation to use two named systems
+    had none. Nothing downstream can interview about that, schedule it, or hold anyone to it.
+
+    Deliberately NOT part of validate_model. That gates the grid's Save, and adding a party
+    creates a contribution before its tasks exist; holding the editor to this rule would
+    refuse the very save that created the contribution. A person may hold an incomplete
+    state while working. A deliverable may not be incomplete.
+    """
+    owned = {(t.get("activity_id"), t.get("party_id")) for t in model.get("tasks", [])}
+    problems: list[str] = []
+    for contribution in model.get("contributions", []):
+        pair = (contribution.get("activity_id"), contribution.get("party_id"))
+        if pair not in owned:
+            problems.append(
+                f"contribution {contribution_key(*[str(x) for x in pair])} has no activity "
+                "of its own - describe what this party actually does as at least one "
+                "numbered task, or remove the contribution"
+            )
+    return problems
+
+
 def validate_registry_succession(current: dict, proposed: dict) -> list[str]:
     """Every way a proposed registry would break the meanings the current one records.
 

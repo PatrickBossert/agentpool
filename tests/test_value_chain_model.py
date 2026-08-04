@@ -14,6 +14,7 @@ from api.services.value_chain_model import (
     empty_model,
     next_column,
     validate_against_registry,
+    validate_contributions_have_tasks,
     validate_registry_succession,
     validate_model,
 )
@@ -540,3 +541,70 @@ def test_retiring_an_entry_is_accepted_when_its_meaning_is_kept():
 def test_a_first_registry_is_accepted_because_there_is_nothing_to_succeed():
     proposed = _registry(("1", "Property", "L1"))
     assert validate_registry_succession({"activities": []}, proposed) == []
+
+
+# ---------------------------------------------------------------------------
+# Every contribution needs at least one n.n.n activity.
+#
+# Not every *activity*: those already do, because tasks aggregate across parties. The gap
+# is a party whose part is described and decomposed into nothing - 3.1 ISS states a
+# contractual obligation to use two named systems and carries no task at all, so nothing
+# downstream can interview about it, schedule it, or hold anyone to it.
+#
+# Enforced on the agent's write path only, not in validate_model. A person adding a party
+# in the grid creates a contribution before its tasks exist, and refusing that save would
+# make the editor unusable. A person may hold an incomplete state while working; a
+# deliverable may not be incomplete.
+# ---------------------------------------------------------------------------
+
+
+def _contribution_model(tasks: list[dict]) -> dict:
+    return {
+        "model_version": 1,
+        "parties": [{"id": "GSUK"}, {"id": "ISS"}],
+        "segments": [{"id": "3", "label": "Support Services"}],
+        "activities": [{"id": "3.1", "segment_id": "3", "label": "Technology & Digital"}],
+        "contributions": [
+            {"activity_id": "3.1", "party_id": "GSUK", "column": 10, "attribution": "stated"},
+            {"activity_id": "3.1", "party_id": "ISS", "column": 10, "attribution": "stated"},
+        ],
+        "tasks": tasks,
+        "propositions": [],
+        "links": [],
+    }
+
+
+def test_a_contribution_with_no_activity_is_reported():
+    problems = validate_contributions_have_tasks(
+        _contribution_model([{"id": "3.1.1", "activity_id": "3.1", "party_id": "GSUK"}])
+    )
+    assert len(problems) == 1
+    # Names the party and the activity: the agent's correction is to write a task for that
+    # contribution, which it cannot do from "a contribution has no tasks".
+    assert "3.1" in problems[0] and "ISS" in problems[0]
+
+
+def test_every_contribution_having_one_is_accepted():
+    assert validate_contributions_have_tasks(_contribution_model([
+        {"id": "3.1.1", "activity_id": "3.1", "party_id": "GSUK"},
+        {"id": "3.1.2", "activity_id": "3.1", "party_id": "ISS"},
+    ])) == []
+
+
+def test_tasks_on_one_party_do_not_cover_another():
+    # The real defect: 3.1 had six tasks, all GS UK's, so a check counting tasks per
+    # ACTIVITY saw nothing wrong while ISS's obligation was decomposed into nothing.
+    problems = validate_contributions_have_tasks(_contribution_model([
+        {"id": f"3.1.{n}", "activity_id": "3.1", "party_id": "GSUK"} for n in range(1, 7)
+    ]))
+    assert len(problems) == 1
+    assert "ISS" in problems[0]
+
+
+def test_the_editor_is_not_held_to_this():
+    # validate_model gates the grid's Save, and adding a party creates a contribution
+    # before its tasks exist. Holding that path to this rule would refuse the save that
+    # created it.
+    assert validate_model(_contribution_model([
+        {"id": "3.1.1", "activity_id": "3.1", "party_id": "GSUK"}
+    ])) == []

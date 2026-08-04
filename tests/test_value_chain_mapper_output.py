@@ -185,3 +185,10 @@ def test_the_task_still_forbids_a_party_repeating_a_column(raw_task_text):
     # The two column rules are different and both hold. Replacing one with the other would
     # trade this defect for the collision that made the model unsaveable.
     assert "MUST NOT repeat a column" in raw_task_text
+
+
+def test_the_task_requires_every_contribution_to_decompose(raw_task_text):
+    # Enforced at the write path, so the prompt must say it - an agent refused by a rule it
+    # was never given can only guess its way out.
+    assert "at least one" in raw_task_text
+    assert "no activity of its own" in raw_task_text
