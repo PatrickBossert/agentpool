@@ -96,3 +96,45 @@ describe('milestoneVariance', () => {
     expect(v.state).toBe('on_plan')
   })
 })
+
+describe('a promised date that has passed', () => {
+  // `today` is a parameter rather than read from the clock, so these are deterministic.
+  // Fri 14 Aug 2026 is the promise and the plan throughout.
+  const TUE_18 = '2026-08-18'
+
+  it('reports an overdue milestone as at risk, though nothing was re-planned', () => {
+    // The gap this closes. Slip measured baseline -> due_date is zero when nothing moved,
+    // so an overdue milestone read as on plan while the delivery headline said "on the
+    // promised date" - the exact false reassurance baselines exist to remove.
+    const v = milestoneVariance({ ...base }, undefined, TUE_18)
+    expect(v.state).toBe('at_risk')
+    expect(v.slip).toBe(2)
+  })
+
+  it('leaves a milestone that is not yet due on plan', () => {
+    // Nothing has gone wrong yet. Reporting a slip here would cry wolf on every project.
+    expect(milestoneVariance({ ...base }, undefined, '2026-08-12').state).toBe('on_plan')
+  })
+
+  it('takes the later of the plan and today when both have passed', () => {
+    // Re-planned to Tue 18 and still not delivered on Thu 20: the forecast is now, not the
+    // plan it has already missed.
+    const v = milestoneVariance({ ...base, due_date: TUE_18 }, undefined, '2026-08-20')
+    expect(v.slip).toBe(4)
+    expect(v.replan).toBe(2)
+  })
+
+  it('leaves a completed milestone untouched by today', () => {
+    // Delivered on the promise a fortnight ago is still delivered on the promise.
+    const v = milestoneVariance(
+      { ...base, status: 'complete', completed_at: '2026-08-14' }, undefined, '2026-08-28',
+    )
+    expect(v.state).toBe('on_plan')
+    expect(v.slip).toBeNull()
+  })
+
+  it("honours excluded dates when measuring against today", () => {
+    const v = milestoneVariance({ ...base }, new Set(['2026-08-17']), TUE_18)
+    expect(v.slip).toBe(1)
+  })
+})

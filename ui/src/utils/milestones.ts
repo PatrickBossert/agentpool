@@ -39,12 +39,22 @@ export interface MilestoneVarianceInput {
  * of delivery. A milestone can be delivered exactly on its current plan and be three weeks
  * late against what was promised, and a client asks about both.
  *
- * Both return null rather than zero when nothing moved, matching daysLate, so a caller
- * renders a badge on truth rather than on a number.
+ * While outstanding the forecast is the **later of the plan and today**: a promised date
+ * that has already passed can no longer be met, whatever the plan still says. Without
+ * that, a milestone nobody re-planned and nobody delivered reported as on plan, and the
+ * delivery headline read "on the promised date" over work already overdue - the exact
+ * false reassurance a baseline exists to remove.
+ *
+ * `today` is a parameter, not read from the clock, so every caller is deterministic and
+ * the tests do not drift into passing or failing with the calendar.
+ *
+ * Both measures return null rather than zero when nothing moved, so a caller renders a
+ * badge on truth rather than on a number.
  */
 export function milestoneVariance(
   m: MilestoneVarianceInput,
   excluded?: Set<string>,
+  today: string = new Date().toISOString().slice(0, 10),
 ): MilestoneVariance {
   // No baseline, no promise to measure against - and this must win over every other
   // check. Work added after activation is added scope, never on-plan delivery.
@@ -57,7 +67,11 @@ export function milestoneVariance(
   }
 
   const complete = m.status === 'complete'
-  const against = complete ? m.completed_at : m.due_date
+  // Delivered: what happened. Outstanding: the plan, or today if the plan is already
+  // behind us - a date that has passed is no longer a forecast.
+  const against = complete
+    ? m.completed_at
+    : (m.due_date && m.due_date > today ? m.due_date : (m.due_date ? today : null))
   const slip = gap(m.baseline_date, against)
   const replan = gap(m.baseline_date, m.due_date)
 
