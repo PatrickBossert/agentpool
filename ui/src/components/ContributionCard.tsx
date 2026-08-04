@@ -71,12 +71,19 @@ export function ContributionCard({
       data-testid={`card-${activityId}-${partyId}`}
       // Fixed height so a lane reads straight across: with cards sized by their content,
       // the tallest card in a row set every cell's height in that row. Sized for the most
-      // any card shows - a two-line header, three description lines, three activity lines
-      // and the controls - and overflow-hidden so nothing spills past it.
+      // any card shows - a two-line header, three description lines, three activity lines,
+      // the overflow count and the controls row.
+      //
+      // Deliberately NOT overflow-hidden. It was, and it clipped the parties menu at the
+      // card's edge - and, before the controls moved up, the parties control itself on
+      // every card carrying more than three activities, which is more than half of them.
+      // The label is clamped instead, so content cannot grow past the box to begin with.
+      //
+      // relative, because the parties menu positions against this card.
       //
       // border-surface-border, never border-surface: the latter resolves to the page
       // background, which is how this card spent a day with a border and no visible edge.
-      className={`bg-surface-card rounded-lg p-3 border shadow-sm h-64 overflow-hidden ${
+      className={`relative bg-surface-card rounded-lg p-3 border shadow-md h-72 ${
         selected ? 'border-brand' : 'border-surface-border'
       }`}
     >
@@ -104,7 +111,9 @@ export function ContributionCard({
           className="text-left flex-1"
         >
           <span className="block text-xs font-mono text-muted">{activityId}</span>
-          <span className="block text-sm font-medium text-primary">{activity.label}</span>
+          <span className="block text-sm font-medium text-primary line-clamp-2">
+            {activity.label}
+          </span>
         </button>
 
         {contribution.attribution === 'derived' && (
@@ -150,6 +159,20 @@ export function ContributionCard({
           <Lightbulb className="w-3 h-3" aria-hidden="true" />
           {propositionCount(model, activityId)}
         </span>
+
+        {editable && (
+          <button
+            type="button"
+            id={partyMenuButtonId(activityId, partyId)}
+            data-testid={`party-menu-${activityId}-${partyId}`}
+            aria-label={`Parties for ${activity.label}`}
+            aria-expanded={menuOpen}
+            onClick={() => onToggleMenu?.()}
+            className="text-secondary hover:text-brand"
+          >
+            <Users className="w-3 h-3" aria-hidden="true" />
+          </button>
+        )}
 
         <button
           type="button"
@@ -221,23 +244,12 @@ export function ContributionCard({
         </p>
       )}
 
-      {editable && (
-        <div className="mt-2 relative">
-          <button
-            type="button"
-            id={partyMenuButtonId(activityId, partyId)}
-            data-testid={`party-menu-${activityId}-${partyId}`}
-            aria-label={`Parties for ${activity.label}`}
-            aria-expanded={menuOpen}
-            onClick={() => onToggleMenu?.()}
-            className="flex items-center gap-1 text-xs text-secondary hover:text-brand"
-          >
-            <Users className="w-3 h-3" aria-hidden="true" />
-            Parties
-          </button>
-
-          {menuOpen && (
-            <div className="absolute z-10 mt-1 bg-surface-raised rounded-lg p-2 shadow-lg min-w-[12rem]">
+      {/* The menu is positioned against the card, just under the controls row its button
+          now sits in, rather than under a wrapper at the foot of the card. It may extend
+          past the card's edge, which is why the card no longer clips: at 12rem wide it
+          never fitted inside one. */}
+      {editable && menuOpen && (
+            <div className="absolute right-2 top-11 z-20 bg-surface-raised rounded-lg p-2 shadow-lg min-w-[12rem]">
               {available.length === 0 ? (
                 <p className="text-muted text-xs italic px-1 py-1">
                   Every party already contributes to this activity.
@@ -301,8 +313,6 @@ export function ContributionCard({
                 </p>
               )}
             </div>
-          )}
-        </div>
       )}
     </div>
   )

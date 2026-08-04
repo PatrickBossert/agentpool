@@ -657,3 +657,51 @@ describe('lane order follows the flow', () => {
     }
   })
 })
+
+describe('the card controls', () => {
+  const CROWDED = (() => {
+    const m = structuredClone(MODEL)
+    m.tasks = [1, 2, 3, 4, 5, 6].map((n) => ({
+      activity_id: '1.1', party_id: 'sp', id: `1.1.${n}`, label: `Step ${n}`,
+    }))
+    return m
+  })()
+
+  it('keeps the parties control reachable on a card with more activities than it lists', () => {
+    // The fixed height plus overflow-hidden clipped this control on every card carrying
+    // more than three activities - which is more than half of the real chain. The control
+    // now sits in the controls row, above anything that can grow.
+    render(<ValueChainGrid model={CROWDED} onChange={() => {}} onSelect={() => {}} />)
+    expect(screen.getByTestId('task-overflow-1.1-sp')).toHaveTextContent('3')
+    // "is in the document" would pass today: jsdom does no layout, so a control clipped
+    // out of sight still renders. The fix is structural - the control belongs in the
+    // controls row, above everything that can grow - so that is what is asserted.
+    expect(screen.getByTestId('party-menu-1.1-sp').parentElement).toBe(
+      screen.getByTestId('proposition-count-1.1').parentElement,
+    )
+  })
+
+  it('names the parties control without printing a label beside it', () => {
+    render(<ValueChainGrid model={MODEL} onChange={() => {}} onSelect={() => {}} />)
+    const control = screen.getByTestId('party-menu-1.1-sp')
+    // Icon only, so the name has to come from the accessible name rather than the text -
+    // removing the word must not remove it from a screen reader too.
+    expect(control).toHaveTextContent('')
+    expect(control).toHaveAccessibleName(/parties/i)
+  })
+
+  it('does not clip its own content, so the parties menu can open past the card edge', () => {
+    // jsdom does no layout, so the clipping itself cannot be observed. The mechanism can:
+    // an overflow-hidden ancestor is what cut the menu off at the card boundary.
+    render(<ValueChainGrid model={MODEL} onChange={() => {}} onSelect={() => {}} />)
+    expect(screen.getByTestId('card-1.1-sp')).not.toHaveClass('overflow-hidden')
+  })
+
+  it('still keeps every card the same height', () => {
+    render(<ValueChainGrid model={CROWDED} onChange={() => {}} onSelect={() => {}} />)
+    const height = (id: string) =>
+      screen.getByTestId(id).className.split(' ').find((c) => /^h-/.test(c))
+    expect(height('card-1.1-sp')).toBeTruthy()
+    expect(height('card-1.1-sp')).toBe(height('card-1.2-sp'))
+  })
+})
