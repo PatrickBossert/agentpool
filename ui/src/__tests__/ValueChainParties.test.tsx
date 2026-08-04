@@ -278,3 +278,50 @@ describe('the removal dialog', () => {
     expect(dialog).not.toHaveTextContent('SP-GS')
   })
 })
+
+describe('dismissing the parties menu', () => {
+  it('closes on its close control', async () => {
+    render(<Stateful />)
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+    expect(screen.getByTestId('add-party-1.2-sp-iss')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('close-party-menu-1.2-sp'))
+
+    expect(screen.queryByTestId('add-party-1.2-sp-iss')).not.toBeInTheDocument()
+  })
+
+  it('closes when something outside it is clicked', async () => {
+    render(<Stateful />)
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+    expect(screen.getByTestId('add-party-1.2-sp-iss')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('card-header-1.1-sp'))
+
+    expect(screen.queryByTestId('add-party-1.2-sp-iss')).not.toBeInTheDocument()
+  })
+
+  it('stays open when something inside it is clicked', async () => {
+    // Otherwise the menu would dismiss itself the instant anyone reached for an entry -
+    // the same trap the contribution dialog's backdrop handler had to avoid.
+    render(<Stateful />)
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+
+    // The panel itself, not an entry: every entry either acts or is disabled, and a
+    // disabled control swallows the click without it ever reaching the document.
+    await userEvent.click(screen.getByTestId('party-menu-panel-1.2-sp'))
+
+    expect(screen.getByTestId('add-party-1.2-sp-iss')).toBeInTheDocument()
+  })
+
+  it('closes rather than reopening when its own control is clicked again', async () => {
+    // The trap in an outside-click handler: mousedown closes the menu, then the button's
+    // own click toggles it straight back open, so it never appears to close at all.
+    render(<Stateful />)
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+    expect(screen.getByTestId('add-party-1.2-sp-iss')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('party-menu-1.2-sp'))
+
+    expect(screen.queryByTestId('add-party-1.2-sp-iss')).not.toBeInTheDocument()
+  })
+})

@@ -8,7 +8,7 @@
 // The party menu's open/closed state lives in the grid, not here, keyed on this card's
 // (activityId, partyId) - one open menu at a time across the whole grid, so opening
 // another card's menu closes this one rather than leaving both showing at once.
-import { ChevronLeft, ChevronRight, Lightbulb, Pencil, Sparkles, Users } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Lightbulb, Pencil, Sparkles, Users, X } from 'lucide-react'
 
 import {
   addParty,
@@ -165,6 +165,10 @@ export function ContributionCard({
             type="button"
             id={partyMenuButtonId(activityId, partyId)}
             data-testid={`party-menu-${activityId}-${partyId}`}
+            // The grid's outside-click handler skips this element. Without that, its
+            // mousedown would close the menu and its click would toggle it straight back
+            // open, so the control would appear never to close the menu at all.
+            data-party-menu-trigger="true"
             aria-label={`Parties for ${activity.label}`}
             aria-expanded={menuOpen}
             onClick={() => onToggleMenu?.()}
@@ -249,7 +253,22 @@ export function ContributionCard({
           past the card's edge, which is why the card no longer clips: at 12rem wide it
           never fitted inside one. */}
       {editable && menuOpen && (
-            <div className="absolute right-2 top-11 z-20 bg-surface-raised rounded-lg p-2 shadow-lg min-w-[12rem]">
+            <div
+              data-testid={`party-menu-panel-${activityId}-${partyId}`}
+              data-party-menu="true"
+              className="absolute right-2 top-11 z-20 bg-surface-raised rounded-lg p-2 shadow-lg min-w-[12rem]"
+            >
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  data-testid={`close-party-menu-${activityId}-${partyId}`}
+                  aria-label={`Close parties for ${activity.label}`}
+                  onClick={() => onToggleMenu?.()}
+                  className="text-secondary hover:text-brand"
+                >
+                  <X className="w-3 h-3" aria-hidden="true" />
+                </button>
+              </div>
               {available.length === 0 ? (
                 <p className="text-muted text-xs italic px-1 py-1">
                   Every party already contributes to this activity.

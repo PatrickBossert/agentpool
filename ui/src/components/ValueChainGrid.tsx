@@ -92,6 +92,24 @@ export function ValueChainGrid({
   const zoomOut = () => setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - ZOOM_STEP) * 10) / 10))
   const zoomIn = () => setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + ZOOM_STEP) * 10) / 10))
 
+  // A click anywhere else dismisses the open parties menu. The listener lives here rather
+  // than in the card because the open menu is the grid's state - one at a time across the
+  // whole grid - so the card has nothing to close.
+  //
+  // The trigger is excluded deliberately. Without that exclusion its mousedown would close
+  // the menu and its own click would toggle it back open, so the control would appear
+  // never to close anything.
+  useEffect(() => {
+    if (!openMenu) return
+    const dismiss = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('[data-party-menu], [data-party-menu-trigger]')) return
+      setOpenMenu(null)
+    }
+    document.addEventListener('mousedown', dismiss)
+    return () => document.removeEventListener('mousedown', dismiss)
+  }, [openMenu])
+
   // The removal dialog is modal and covers the whole grid, so a keyboard-only user landed
   // nowhere when it opened. Focus moves into it on open, and back to the card's Parties
   // button on close - not to the Remove entry that opened it, which lives inside the menu
