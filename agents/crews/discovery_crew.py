@@ -14,10 +14,6 @@ from agents.discovery.requirements_analyst import (
     create_requirements_analyst,
     create_requirements_analyst_task,
 )
-from agents.discovery.value_lever_analyst import (
-    create_value_lever_analyst,
-    create_value_lever_analyst_task,
-)
 
 
 def create_discovery_crew(
@@ -59,11 +55,6 @@ def create_discovery_crew(
         llm=llm,
         tools=get_tools_for_agent("requirements_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
-    vla = create_value_lever_analyst(
-        slug=slug,
-        llm=llm,
-        tools=get_tools_for_agent("value_lever_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
-    )
 
     vcm_task = create_value_chain_mapper_task(
         agent=vcm,
@@ -73,11 +64,10 @@ def create_discovery_crew(
     )
     rc_task = create_requirements_capture_task(agent=rc, context_tasks=[vcm_task], slug=slug)
     ra_task = create_requirements_analyst_task(agent=ra, context_tasks=[vcm_task, rc_task])
-    vla_task = create_value_lever_analyst_task(agent=vla, context_tasks=[vcm_task, ra_task])
 
     return Crew(
-        agents=[vcm, rc, ra, vla],
-        tasks=[vcm_task, rc_task, ra_task, vla_task],
+        agents=[vcm, rc, ra],
+        tasks=[vcm_task, rc_task, ra_task],
         process=Process.sequential,
         verbose=True,
     )

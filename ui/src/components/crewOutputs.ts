@@ -30,7 +30,9 @@ export const CREW_OUTPUT_TYPE: Record<string, string> = {
   business_plan:          'docx',
   // requirements_analyst's output is explicitly "the foundation for value lever
   // identification", and value_lever_analyst reads it back - the levers are the crew's result.
-  discovery:              'value_levers',
+  // Riley's output. This named 'value_levers' until Morgan - who writes them - moved
+  // to discovery_mapping, where they are a secondary output rather than the primary.
+  discovery:              'requirements',
   stakeholder_management: 'stakeholder_engagement_plan',
   // synthesis_analyst's synthesis of the transcripts stakeholder_interviewer gathered.
   discovery_interviews:   'activity_insights',

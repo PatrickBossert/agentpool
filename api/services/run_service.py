@@ -16,15 +16,20 @@ from api.routers.ws import push_log
 
 # Crew name → snake_case agent names stored in agent_outputs.agent_name
 _CREW_AGENT_NAMES: dict[str, list[str]] = {
-    "discovery_mapping":      ["value_chain_mapper"],
+    # Morgan reads levers and KPIs out of the documents, after Alex has given her the
+    # chain to hang them on and before Maya designs instruments against them.
+    "discovery_mapping":      ["value_chain_mapper", "value_lever_analyst"],
     "assessment_design":      ["interaction_designer"],
-    "discovery":              ["requirements_capture", "requirements_analyst", "value_lever_analyst"],
+    "discovery":              ["requirements_capture", "requirements_analyst"],
     "stakeholder_management": ["stakeholder_manager"],
     "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer", "synthesis_analyst"],
     "value_design":           ["value_proposition_generator", "portfolio_manager"],
     "architecture":           ["enterprise_architect", "initiative_identifier"],
     "delivery":               ["roadmap_generator"],
-    "business_plan":          ["business_plan_generator"],
+    # The Illustrator renders the value chain, the propositions, the roadmap and the
+    # financials in one consistent style for the plan and the pitch pack. He was listed
+    # under delivery on the org chart and dispatched by nothing at all.
+    "business_plan":          ["business_plan_generator", "visual_illustrator"],
 }
 
 # Maps snake_case agent names (used in DB crew runs) to display names (used in agent_skills).
@@ -329,7 +334,10 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
 
     elif crew_name == "business_plan":
         from agents.crews.business_plan_crew import create_business_plan_crew
-        crew = create_business_plan_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
+        crew = create_business_plan_crew(
+            slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector,
+            client_name=config.get("client_name", slug),
+        )
 
     elif crew_name in ("assessment_design", "questionnaire_builder"):
         # questionnaire_builder is kept as an alias for backward compatibility

@@ -6,6 +6,10 @@ from agents.discovery.value_chain_mapper import (
     create_value_chain_mapper,
     create_value_chain_mapper_task,
 )
+from agents.discovery.value_lever_analyst import (
+    create_value_lever_analyst,
+    create_value_lever_analyst_task,
+)
 
 
 def create_discovery_mapping_crew(
@@ -46,6 +50,17 @@ def create_discovery_mapping_crew(
             hitl_tool=hitl_tool,
         ),
     )
+    # Morgan reads the levers and KPIs the organisation itself uses out of the documents.
+    # Her only context is Alex's chain: she used to also take the requirements analysis,
+    # which now runs five steps later, and taking it here would have been impossible.
+    vla = create_value_lever_analyst(
+        slug=slug,
+        llm=llm,
+        tools=get_tools_for_agent(
+            "value_lever_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
+        ),
+    )
+
     vcm_task = create_value_chain_mapper_task(
         agent=vcm,
         discovery_brief=discovery_brief,
@@ -53,9 +68,11 @@ def create_discovery_mapping_crew(
         priority_doc_names=priority_doc_names,
     )
 
+    vla_task = create_value_lever_analyst_task(agent=vla, context_tasks=[vcm_task])
+
     return Crew(
-        agents=[vcm],
-        tasks=[vcm_task],
+        agents=[vcm, vla],
+        tasks=[vcm_task, vla_task],
         process=Process.sequential,
         verbose=True,
     )

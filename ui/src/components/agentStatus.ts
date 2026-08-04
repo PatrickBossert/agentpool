@@ -30,15 +30,15 @@ export const CREW_ORDER = [
 
 // Snake-case agent names per crew — mirrors api/services/run_service.py _CREW_AGENT_NAMES
 export const CREW_AGENT_NAMES: Record<string, string[]> = {
-  discovery_mapping:      ['value_chain_mapper'],
+  discovery_mapping:      ['value_chain_mapper', 'value_lever_analyst'],
   assessment_design:      ['interaction_designer'],
-  discovery:              ['requirements_capture', 'requirements_analyst', 'value_lever_analyst'],
+  discovery:              ['requirements_capture', 'requirements_analyst'],
   stakeholder_management: ['stakeholder_manager'],
   discovery_interviews:   ['interview_coordinator', 'stakeholder_interviewer', 'synthesis_analyst'],
   value_design:           ['value_proposition_generator', 'portfolio_manager'],
   architecture:           ['enterprise_architect', 'initiative_identifier'],
   delivery:               ['roadmap_generator'],
-  business_plan:          ['business_plan_generator'],
+  business_plan:          ['business_plan_generator', 'visual_illustrator'],
 }
 
 export type CrewName = (typeof CREW_ORDER)[number]
@@ -58,12 +58,11 @@ export const CREW_LABELS: Record<string, string> = {
 
 export const CREW_AGENTS: Record<string, string[]> = {
   PAM:                   ['PAM'],
-  discovery_mapping:     ['Value Chain Mapper'],
+  discovery_mapping:     ['Value Chain Mapper', 'Value Lever Analyst'],
   assessment_design:     ['Interaction Designer'],
   discovery: [
     'Requirements Capture',
     'Requirements Analyst',
-    'Value Lever Analyst',
   ],
   stakeholder_management: ['Stakeholder Manager'],
   discovery_interviews: [
@@ -73,8 +72,8 @@ export const CREW_AGENTS: Record<string, string[]> = {
   ],
   value_design:  ['Value Proposition Generator', 'Portfolio Manager'],
   architecture:  ['Enterprise Architect', 'Initiative Identifier'],
-  delivery:      ['Roadmap Generator', 'Visual Illustrator'],
-  business_plan: ['Business Plan Generator'],
+  delivery:      ['Roadmap Generator'],
+  business_plan: ['Business Plan Generator', 'Visual Illustrator'],
 }
 
 export const CREW_ICONS: Record<string, string> = {

@@ -73,11 +73,11 @@ describe('AgentOutputTab', () => {
 
   it("renders an agent's primary read-only when it has no declared editor", () => {
     // The case that proves this is a default and not a special case for Alex. Only
-    // discovery_mapping has a registered editor (StructureTab) as of this task, so any other
-    // crew - 'discovery' here, simply because it differs from the one above - still takes
-    // this path. 'value_levers' is that crew's declared primary and is written by
-    // value_lever_analyst (agents/discovery/value_lever_analyst.py).
-    const outputs: AgentOutput[] = [{ ...OUTPUTS[0], agent_name: 'value_lever_analyst', output_type: 'value_levers' }]
+    // discovery_mapping has a registered editor (StructureTab), so any other crew still
+    // takes this path. 'discovery' declares 'requirements' as its primary, written by
+    // requirements_analyst - it declared 'value_levers' until Morgan, who writes those,
+    // moved to discovery_mapping.
+    const outputs: AgentOutput[] = [{ ...OUTPUTS[0], agent_name: 'requirements_analyst', output_type: 'requirements' }]
     renderOutputTab({ crewKey: 'discovery', outputs })
     expect(screen.getByTestId('primary-output-readonly')).toBeInTheDocument()
   })

@@ -86,13 +86,15 @@ def test_bpg_task_has_no_review_gate(mock_llm):
 
 # ── Crew wiring ───────────────────────────────────────────────────────────────
 
-def test_business_plan_crew_has_one_agent(mock_llm):
+def test_business_plan_crew_carries_the_writer_and_the_illustrator(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.business_plan_crew import create_business_plan_crew
         crew = create_business_plan_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
         )
-    assert len(crew.agents) == 1
+    # Named rather than counted: a count of two is equally true of the wrong two. The
+    # Illustrator moved here from delivery, where he could see only the roadmap.
+    assert [a.role for a in crew.agents] == ['Business Plan Generator', 'Visual Illustrator']
 
 
 def test_business_plan_crew_sequential_process(mock_llm):
@@ -138,7 +140,11 @@ def test_business_plan_crew_accepts_hitl_tool_override(mock_llm):
             slug="test", run_id=1, llm_mode="standard", sector="logistics",
             llm=mock_llm, hitl_tool=mock_hitl,
         )
-    mock_reg.assert_called_once_with(
-        "business_plan_generator", slug="test", run_id=1,
-        sector="logistics", hitl_tool=mock_hitl,
-    )
+    # Both agents, not just the writer. Asserting a single call was only ever true because
+    # the crew held one agent, and an Illustrator that could not raise a review gate would
+    # be a quiet gap rather than a visible one.
+    for agent in ("business_plan_generator", "visual_illustrator"):
+        mock_reg.assert_any_call(
+            agent, slug="test", run_id=1, sector="logistics", hitl_tool=mock_hitl,
+        )
+    assert mock_reg.call_count == 2
