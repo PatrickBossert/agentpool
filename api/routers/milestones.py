@@ -57,6 +57,10 @@ async def patch_milestone(
             title=body.title, description=body.description,
             due_date=body.due_date, status=body.status,
             notes=body.notes, sort_order=body.sort_order,
+            completed_at=body.completed_at,
+            # Pydantic cannot tell an omitted field from an explicit null, and the two mean
+            # different things here: omitted leaves the date alone, null clears it.
+            completed_at_given="completed_at" in body.model_fields_set,
         )
         if not ok:
             _404("Milestone not found")

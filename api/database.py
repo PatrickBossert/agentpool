@@ -1,4 +1,5 @@
 # api/database.py
+from datetime import date
 import aiosqlite
 import json as _json
 from contextlib import asynccontextmanager
@@ -145,6 +146,7 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             status         TEXT NOT NULL DEFAULT 'pending',
             notes          TEXT NOT NULL DEFAULT '',
             sort_order     INTEGER NOT NULL DEFAULT 0,
+            completed_at   TEXT,
             created_at     TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
@@ -444,9 +446,17 @@ async def _migrate_project_milestones(conn: aiosqlite.Connection) -> None:
             status         TEXT NOT NULL DEFAULT 'pending',
             notes          TEXT NOT NULL DEFAULT '',
             sort_order     INTEGER NOT NULL DEFAULT 0,
+            completed_at   TEXT,
             created_at     TEXT NOT NULL DEFAULT (datetime('now'))
         )
     """)
+    # When a milestone was actually reached, as distinct from when it was due. Null while
+    # it is outstanding: slippage is the difference between the two, so an actual date on
+    # something incomplete would report a completion that has not happened.
+    async with conn.execute("PRAGMA table_info(project_milestones)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "completed_at" not in cols:
+        await conn.execute("ALTER TABLE project_milestones ADD COLUMN completed_at TEXT")
     await conn.commit()
 
 
@@ -659,8 +669,25 @@ async def update_milestone(
     conn: aiosqlite.Connection, *, milestone_id: int, slug: str,
     title: str | None, description: str | None, due_date: str | None,
     status: str | None, notes: str | None, sort_order: int | None,
+    completed_at: str | None = None, completed_at_given: bool = False,
 ) -> bool:
+    """Update a milestone. `completed_at_given` distinguishes "set it to null" from "leave
+    it alone" - absent from a payload has to mean unchanged, or renaming a milestone would
+    silently discard the date it was actually reached."""
     fields, vals = [], []
+
+    # Ticking a milestone records when, unticking clears it. An explicit date always wins:
+    # milestones are ticked off retrospectively far more often than on the day.
+    if completed_at_given:
+        fields.append("completed_at=?")
+        vals.append(completed_at or None)
+    elif status == "complete":
+        fields.append("completed_at=?")
+        vals.append(date.today().isoformat())
+    elif status is not None and status != "complete":
+        fields.append("completed_at=?")
+        vals.append(None)
+
     if title       is not None: fields.append("title=?");       vals.append(title)
     if description is not None: fields.append("description=?"); vals.append(description)
     if due_date    is not None: fields.append("due_date=?");    vals.append(due_date if due_date != "" else None)

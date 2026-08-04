@@ -121,6 +121,9 @@ class Milestone(BaseModel):
     status: str
     notes: str
     sort_order: int
+    # When the milestone was actually reached. Null while outstanding - slippage is the
+    # difference between this and due_date.
+    completed_at: str | None = None
     created_at: str
 
 
@@ -140,3 +143,4 @@ class MilestoneUpdate(BaseModel):
     status: str | None = None
     notes: str | None = None
     sort_order: int | None = None
+    completed_at: str | None = None
