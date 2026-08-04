@@ -6,7 +6,7 @@ import {
   Download, RefreshCw, ArrowRight, Circle, CheckCheck,
 } from 'lucide-react'
 import { pamReportApi, projectsApi, nonworkingApi } from '../api/endpoints'
-import { daysLate } from '../utils/milestones'
+import { milestoneVariance } from '../utils/milestones'
 import type { PamReport, PamReportMilestone, PamReportRisk, PamReportIssue, PamReportCrewStatus } from '../types'
 import GanttReadOnly, { inferSchedule, daysBetween, todayStr } from './GanttReadOnly'
 import { getPublicHolidays, buildExcludedDateSet, workingDaysBetween } from '../utils/holidays'
@@ -105,6 +105,37 @@ function ragLabel(h: string) {
     : 'Green — On track'
 }
 
+
+/**
+ * How far delivery has moved against what was promised, in working days.
+ *
+ * Read from the last milestone that has a baseline, in schedule order - not simply the
+ * last one. A single piece of added scope tacked on the end would otherwise silently
+ * become the project's delivery date, and the figure put in front of a client would be
+ * measuring work nobody committed to.
+ *
+ * Null when nothing is baselined at all: before activation there is no promise, and a zero
+ * would read as "on plan" against a plan that was never agreed.
+ */
+export function deliveryMovement(
+  milestones: PamReportMilestone[],
+  excluded?: Set<string>,
+): number | null {
+  const baselined = [...milestones]
+    .filter((m) => m.baseline_date)
+    .sort((a, b) => (a.sort_order !== b.sort_order ? a.sort_order - b.sort_order : a.id - b.id))
+  const last = baselined[baselined.length - 1]
+  if (!last) return null
+  return milestoneVariance(last, excluded).slip ?? 0
+}
+
+function movementLine(movement: number | null): string | null {
+  if (movement === null) return null
+  return movement === 0
+    ? 'Delivery is on the promised date'
+    : `Delivery has moved ${movement} working day${movement === 1 ? '' : 's'}`
+}
+
 export function buildPrintHtml(r: PamReport, excludedDates?: Set<string>): string {
   const ts = new Date(r.generated_at).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   const ragBg = r.overall_health === 'red' ? '#ef4444' : r.overall_health === 'amber' ? '#f59e0b' : '#10b981'
@@ -123,11 +154,11 @@ export function buildPrintHtml(r: PamReport, excludedDates?: Set<string>): strin
     // Planned and actual side by side, with the slip in working days - the same helper
     // and the same excluded dates the on-screen timeline uses, so a pack sent to a client
     // cannot disagree with the app it was exported from.
-    const late = daysLate(m, excludedDates)
+    const late = milestoneVariance(m, excludedDates).slip
     const actual = m.completed_at
       ? esc(m.completed_at) + (late !== null ? ` <span style="color:#b45309">(${late}wd late)</span>` : '')
       : '&mdash;'
-    return `<tr${rowStyle}><td>${esc(m.title)}</td><td>${esc(m.due_date)}</td><td>${actual}</td><td>${esc(delta)}</td><td><span class="badge"${badgeStyle}>${esc(rag.label)}</span></td></tr>`
+    return `<tr${rowStyle}><td>${esc(m.title)}</td><td>${esc(m.baseline_date ?? '')}</td><td>${esc(m.due_date)}</td><td>${actual}</td><td>${esc(delta)}</td><td><span class="badge"${badgeStyle}>${esc(rag.label)}</span></td></tr>`
   }).join('')
 
   const crewRows = r.crews.map(c => `<tr>
@@ -179,8 +210,10 @@ export function buildPrintHtml(r: PamReport, excludedDates?: Set<string>): strin
   <p class="summary">${esc(r.health_summary)}</p>
   ${highRiskHtml}
   <h2>1. Progress Against Plan</h2>
+  ${movementLine(deliveryMovement(r.milestones, excludedDates))
+      ? `<p style="font-size:10pt;color:#b45309;margin-bottom:8px">${esc(movementLine(deliveryMovement(r.milestones, excludedDates))!)}</p>` : ''}
   <p style="font-size:9.5pt;color:#6b7280;margin-bottom:8px">${r.milestones_complete} of ${r.milestones_total} milestones complete</p>
-  <table><thead><tr><th>Milestone</th><th>Planned</th><th>Actual</th><th>Delta</th><th>Status</th></tr></thead><tbody>${msRows}</tbody></table>
+  <table><thead><tr><th>Milestone</th><th>Promised</th><th>Planned</th><th>Actual</th><th>Delta</th><th>Status</th></tr></thead><tbody>${msRows}</tbody></table>
   <h2>2. Crew Status</h2>
   <table><thead><tr><th>Crew</th><th>Status</th><th>Outputs</th><th>Pending reviews</th><th>Last run</th></tr></thead><tbody>${crewRows}</tbody></table>
   <h2>3. Active Issues</h2>${issueHtml}
@@ -255,7 +288,7 @@ function MilestoneTimeline({ milestones, complete, total, excludedDates }: {
             : null
           // Same helper the schedule uses, so the two views cannot disagree about how
           // late something was.
-          const late = daysLate(m, excludedDates)
+          const late = milestoneVariance(m, excludedDates).slip
 
           return (
             <div key={m.id} className="flex items-center gap-2 py-[3px] relative">
@@ -502,6 +535,22 @@ export default function PamReportView({ slug }: { slug: string }) {
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
             <CalendarDays size={11} />Progress Against Plan
           </p>
+          {(() => {
+            // The same helper the export uses, so the screen and a pack sent to a client
+            // cannot report different numbers - they diverged once already.
+            const line = movementLine(deliveryMovement(report.milestones, schedule.excluded))
+            return line ? (
+              <p
+                data-testid="delivery-movement"
+                className={`text-xs mb-3 ${
+                  deliveryMovement(report.milestones, schedule.excluded)
+                    ? 'text-amber-600 font-medium' : 'text-gray-400'
+                }`}
+              >
+                {line}
+              </p>
+            ) : null
+          })()}
           {report.milestones.length === 0 ? (
             <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
               <CheckCheck size={14} className="text-gray-300" />No milestones scheduled yet.

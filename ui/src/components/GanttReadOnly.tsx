@@ -69,6 +69,9 @@ export interface GanttMilestone {
   due_date: string | null
   status: 'pending' | 'complete'
   sort_order: number
+  // What it was promised. Drawn as a hollow marker where it differs from the date the
+  // solid marker sits at, so slippage reads as a distance rather than a number.
+  baseline_date?: string | null
   rag?: MilestoneRAG
 }
 
@@ -191,6 +194,33 @@ export default function GanttReadOnly({
 
           {/* Spine */}
           <div className="absolute left-0 right-0 border-t border-white/15 pointer-events-none" style={{ top: '50%' }} />
+
+          {/* Baseline markers - the promise, behind the plan. Only where the two differ,
+              so an unmoved milestone is not drawn twice. The shaded span between them is
+              the slip: five milestones each slipping two days reads instantly as a
+              staircase drifting right, which no column of badges ever will. */}
+          {sorted.map((m) => {
+            if (!m.due_date || !m.baseline_date || m.baseline_date === m.due_date) return null
+            const from = Math.min(toPct(m.baseline_date), toPct(m.due_date))
+            const to   = Math.max(toPct(m.baseline_date), toPct(m.due_date))
+            return (
+              <div key={'base-' + m.id}>
+                <div
+                  data-testid={`gantt-slip-${m.id}`}
+                  className="absolute bg-amber-400/25 pointer-events-none"
+                  style={{ top: '50%', height: 6, transform: 'translateY(-50%)',
+                           left: `${from}%`, right: `${100 - to}%`, zIndex: 6 }}
+                />
+                <div
+                  data-testid={`gantt-baseline-${m.id}`}
+                  className="absolute w-2 h-2 rounded-full border-2 border-white/70 bg-transparent pointer-events-none"
+                  style={{ top: '50%', left: `${toPct(m.baseline_date)}%`,
+                           transform: 'translate(-50%, -50%)', zIndex: 7 }}
+                  title={`Promised ${m.baseline_date}`}
+                />
+              </div>
+            )
+          })}
 
           {/* Milestone markers */}
           {sorted.map((m, idx) => {

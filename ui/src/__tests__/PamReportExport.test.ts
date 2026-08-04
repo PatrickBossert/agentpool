@@ -14,6 +14,7 @@ function milestone(over: Partial<PamReportMilestone> = {}): PamReportMilestone {
   return {
     id: 1, milestone_key: 'value_chain_approved', title: 'Value chain approved',
     due_date: '2026-08-14', status: 'complete', completed_at: '2026-08-19',
+    baseline_date: '2026-08-14',
     rag: 'complete', days_delta: null, sort_order: 1, ...over,
   }
 }
@@ -61,5 +62,77 @@ describe('the exported Progress Against Plan table', () => {
     const html = buildPrintHtml(report([milestone({ completed_at: '2026-08-14' })]))
     expect(html).toContain('2026-08-14')
     expect(html).not.toContain('wd late')
+  })
+})
+
+
+describe('the delivery movement headline', () => {
+  it('states how far delivery has moved, in working days', () => {
+    const html = buildPrintHtml(report([
+      milestone({ id: 1, baseline_date: '2026-08-14', due_date: '2026-08-14',
+                  completed_at: '2026-08-14', status: 'complete' }),
+      milestone({ id: 2, baseline_date: '2026-08-21', due_date: '2026-08-28',
+                  completed_at: null, status: 'pending', sort_order: 2 }),
+    ]))
+    expect(html).toContain('5 working days')
+  })
+
+  it('reads the movement from the last baselined milestone, not the last one', () => {
+    // A single piece of added scope on the end would otherwise silently become the
+    // project's delivery date - a number put in front of a client measuring work nobody
+    // committed to.
+    const html = buildPrintHtml(report([
+      milestone({ id: 1, baseline_date: '2026-08-14', due_date: '2026-08-21',
+                  completed_at: null, status: 'pending' }),
+      milestone({ id: 2, baseline_date: null, due_date: '2026-12-01',
+                  completed_at: null, status: 'pending', sort_order: 2 }),
+    ]))
+    // The added-scope milestone still appears in the table - it is real work - so its
+    // date being present proves nothing. What discriminates is the headline: reading the
+    // movement from it would find no baseline, report zero, and say "on the promised
+    // date" while the project is a week behind.
+    expect(html).toContain('5 working days')
+    expect(html).not.toContain('on the promised date')
+  })
+
+  it('says delivery is on the promised date when nothing has moved', () => {
+    const html = buildPrintHtml(report([
+      milestone({ id: 1, baseline_date: '2026-08-14', due_date: '2026-08-14',
+                  completed_at: '2026-08-14', status: 'complete' }),
+    ]))
+    expect(html).toContain('on the promised date')
+    expect(html).not.toContain('working days')
+  })
+
+  it('says nothing about movement when nothing has a baseline', () => {
+    // Before activation there is no promise, so there is no movement to report - and a
+    // zero would read as "on plan" against a plan that was never agreed.
+    const html = buildPrintHtml(report([
+      milestone({ id: 1, baseline_date: null, due_date: '2026-08-14',
+                  completed_at: null, status: 'pending' }),
+    ]))
+    expect(html).not.toContain('working days')
+    expect(html).not.toContain('on the promised date')
+  })
+})
+
+describe('the exported table carries the promise', () => {
+  it('shows the promised date in its own column', () => {
+    const html = buildPrintHtml(report([
+      milestone({ baseline_date: '2026-08-10', due_date: '2026-08-14',
+                  completed_at: '2026-08-14', status: 'complete' }),
+    ]))
+    expect(html).toContain('<th>Promised</th>')
+    expect(html).toContain('2026-08-10')
+  })
+
+  it('reports a milestone delivered on a revised plan as late against the promise', () => {
+    // daysLate measured against due_date and reported this as on time, which is the
+    // defect the baseline exists to expose.
+    const html = buildPrintHtml(report([
+      milestone({ baseline_date: '2026-08-10', due_date: '2026-08-14',
+                  completed_at: '2026-08-14', status: 'complete' }),
+    ]))
+    expect(html).toContain('4wd late')
   })
 })
