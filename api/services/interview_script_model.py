@@ -17,6 +17,31 @@ RELATIONSHIPS = frozenset({"internal", "customer", "regulator", "supplier", "par
 
 LEVELS = frozenset({"L0", "L1", "L2", "L3", "C", "A", "F", "S"})
 
+QUESTION_INTENTS = frozenset({"context", "evidence", "maturity", "challenge", "opportunity"})
+
+# Whether the question named the thing it asked about. A separate axis from intent, and what
+# makes a count readable: "six stakeholders raised data quality" means something entirely
+# different if five of them were handed the phrase.
+ELICITATIONS = frozenset({"unprompted", "prompted"})
+
+# The starting vertical axis. Per project, because a discipline that matters in one engagement
+# does not in another - hard-coding one list would make the tag wrong rather than closed.
+DEFAULT_DISCIPLINES = (
+    "governance", "data", "technology", "process", "people",
+    "commercial", "assurance", "finance", "sustainability",
+)
+
+_TAG_FIELDS = ("discipline", "question_intent", "elicitation")
+
+
+def resolve_tags(section: dict, question: dict) -> dict:
+    """A question's three tags, inherited from its section unless it overrides one.
+
+    Each field falls back independently. Inheriting all three only when the question restates
+    none of them would let a single override silently blank the other two.
+    """
+    return {field: question.get(field, section.get(field)) for field in _TAG_FIELDS}
+
 
 def question_id(script_id: str, section_id: str, question_no: int) -> str:
     """A question's global address.
@@ -27,8 +52,10 @@ def question_id(script_id: str, section_id: str, question_no: int) -> str:
     return f"{script_id}.{section_id}.Q{question_no}"
 
 
-def validate_scripts(scripts: dict) -> list[str]:
-    """Every way this script set is unciteable or unanchored."""
+def validate_scripts(
+    scripts: dict, disciplines: tuple[str, ...] = DEFAULT_DISCIPLINES
+) -> list[str]:
+    """Every way this script set is unciteable, unanchored, or untagged."""
     problems: list[str] = []
     seen_script_ids: set[str] = set()
 
@@ -75,6 +102,24 @@ def validate_scripts(scripts: dict) -> list[str]:
             if section_id in seen_section_ids:
                 problems.append(f"script {label} uses section_id {section_id} twice")
             seen_section_ids.add(section_id)
+
+            allowed = {
+                "discipline": set(disciplines),
+                "question_intent": QUESTION_INTENTS,
+                "elicitation": ELICITATIONS,
+            }
+            # The section itself is checked, then each question that overrides. Checking only
+            # questions would let an empty section carry any nonsense until the moment someone
+            # adds a question to it, which then silently inherits the nonsense.
+            taggables = [({}, section)] + [(q, section) for q in section.get("questions", [])]
+            for question, owner in taggables:
+                tags = resolve_tags(owner, question)
+                for field, values in allowed.items():
+                    if tags[field] not in values:
+                        problems.append(
+                            f"script {label} section {section_id} has {field} "
+                            f"{tags[field]!r}, which is not one of {sorted(values)}"
+                        )
 
     return problems
 

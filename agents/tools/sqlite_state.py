@@ -87,13 +87,30 @@ def _current_script_registry(slug: str) -> dict:
         return {}
 
 
+def _project_disciplines(slug: str) -> tuple[str, ...]:
+    """The project's own vertical axis, or the default list.
+
+    A missing or unreadable config is not a reason to refuse a write - that would block every
+    script on a sidecar file.
+    """
+    from api.config import load_project_config
+    from api.services.interview_script_model import DEFAULT_DISCIPLINES
+
+    settings = get_settings()
+    try:
+        config = load_project_config(Path(settings.projects_dir) / slug)
+        return tuple(config.get("disciplines") or DEFAULT_DISCIPLINES)
+    except Exception:
+        return DEFAULT_DISCIPLINES
+
+
 def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     from api.services.interview_script_model import (
         validate_scripts,
         validate_scripts_against_registry,
     )
 
-    problems = validate_scripts(parsed)
+    problems = validate_scripts(parsed, disciplines=_project_disciplines(slug))
     # The value chain registry, not the script one: this checks that each script's anchor
     # names a node that exists.
     problems.extend(validate_scripts_against_registry(parsed, _current_registry(slug)))

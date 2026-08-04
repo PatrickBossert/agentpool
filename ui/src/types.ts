@@ -106,6 +106,8 @@ export interface ProjectSettings {
   sched_start?: string | null
   sched_duration_weeks?: number | null
   client_name?: string
+  /** Closed vertical axis for interview section tags; Casey groups maturity themes by it. */
+  disciplines?: string[]
   service_categories?: string
   key_vendors?: string
   applicable_regulations?: string

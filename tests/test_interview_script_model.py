@@ -32,8 +32,11 @@ def _script(script_id="SC-001", node_id="1.2", level="L2", relationship="interna
         "level": level,
         "relationship": relationship,
         "node_label": "Planned Maintenance L2 Interview",
+        # Tags are required from the moment the vocabularies exist, so the default fixture
+        # carries them - a fixture the write path would refuse proves nothing about it.
         "sections": sections if sections is not None else [
-            {"section_id": "S1", "title": "Opening", "questions": [
+            {"section_id": "S1", "title": "Opening", "discipline": "governance",
+             "question_intent": "evidence", "elicitation": "unprompted", "questions": [
                 {"id": "Q1", "text": "..."}, {"id": "Q2", "text": "..."},
             ]},
         ],
@@ -78,14 +81,18 @@ def test_a_script_with_no_node_id_is_refused():
 def test_a_section_with_no_id_is_refused():
     """Some live sections carry section_id: null. A theme citing "S1: Strategic Mandate"
     cites a string Maya may rewrite on her next run."""
-    s = _script(sections=[{"title": "Opening", "questions": [{"id": "Q1", "text": "x"}]}])
+    s = _script(sections=[{"title": "Opening", "discipline": "governance",
+                           "question_intent": "evidence", "elicitation": "unprompted",
+                           "questions": [{"id": "Q1", "text": "x"}]}])
     assert any("section_id" in p for p in validate_scripts(_scripts(s)))
 
 
 def test_two_sections_in_one_script_may_not_share_a_section_id():
+    tagged = {"discipline": "governance", "question_intent": "evidence",
+              "elicitation": "unprompted"}
     s = _script(sections=[
-        {"section_id": "S1", "title": "A", "questions": [{"id": "Q1", "text": "x"}]},
-        {"section_id": "S1", "title": "B", "questions": [{"id": "Q1", "text": "y"}]},
+        {"section_id": "S1", "title": "A", **tagged, "questions": [{"id": "Q1", "text": "x"}]},
+        {"section_id": "S1", "title": "B", **tagged, "questions": [{"id": "Q1", "text": "y"}]},
     ])
     assert any("S1" in p for p in validate_scripts(_scripts(s)))
 

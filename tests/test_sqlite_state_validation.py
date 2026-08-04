@@ -448,7 +448,8 @@ def _valid_scripts() -> dict:
     return {"SC-001": {
         "script_id": "SC-001", "node_id": "1.2", "level": "L2",
         "relationship": "internal", "node_label": "Planned Maintenance L2 Interview",
-        "sections": [{"section_id": "S1", "title": "Opening",
+        "sections": [{"section_id": "S1", "title": "Opening", "discipline": "governance",
+                      "question_intent": "evidence", "elicitation": "unprompted",
                       "questions": [{"id": "Q1", "text": "..."}]}],
     }}
 
