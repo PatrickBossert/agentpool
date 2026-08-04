@@ -266,6 +266,22 @@ export const AGENT_AVATAR: Record<string, { emoji: string; gradient: string }> =
   'Business Plan Generator':     { emoji: '📈', gradient: 'from-lime-400 to-green-600' },
 }
 
+// The agent's own name, from whichever form of the name the caller holds.
+//
+// AGENT_HUMAN_NAME is keyed by display name ('Value Chain Mapper') while agent_outputs
+// stores snake_case ('value_chain_mapper'), and PAM is stored as her key in both. Title
+// casing alone would leave PAM as "PAM" while every other agent gained a name, so the
+// direct lookup comes first.
+export function agentDisplayName(agentName: string): string {
+  const direct = AGENT_HUMAN_NAME[agentName]
+  if (direct) return direct
+  const titled = agentName
+    .split('_')
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ')
+  return AGENT_HUMAN_NAME[titled] ?? titled
+}
+
 // Human names for each agent - used in crew cards
 export const AGENT_HUMAN_NAME: Record<string, string> = {
   'PAM':                         'Pamela Reid',

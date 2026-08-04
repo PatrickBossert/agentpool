@@ -100,3 +100,21 @@ describe('outputs awaiting review', () => {
         'acme', 91, 'changes_requested', 'Fleet party is wrong'))
   })
 })
+
+describe('naming the agent on a review card', () => {
+  it("shows the agent's name, not the stored snake_case key", async () => {
+    renderReviews()
+    await waitFor(() => expect(screen.getByTestId('output-review-91')).toBeInTheDocument())
+    // agent_outputs stores 'value_chain_mapper'; the reader knows him as Alex.
+    expect(screen.getByTestId('output-review-91')).toHaveTextContent('Alex Chen')
+    expect(screen.getByTestId('output-review-91')).not.toHaveTextContent('value_chain_mapper')
+  })
+
+  it('handles an agent whose stored name is already its key', async () => {
+    // PAM is stored as 'PAM', not snake_case, so a converter that only title-cases
+    // underscores would leave her as "PAM" while every other agent gained a name.
+    renderReviews()
+    await waitFor(() => expect(screen.getByTestId('output-review-76')).toBeInTheDocument())
+    expect(screen.getByTestId('output-review-76')).toHaveTextContent('Pamela Reid')
+  })
+})

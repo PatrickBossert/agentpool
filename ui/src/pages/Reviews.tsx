@@ -7,7 +7,7 @@ import type { LucideIcon } from 'lucide-react'
 import { projectsApi, commitsApi } from '../api/endpoints'
 import { campaignsApi } from '../api/campaigns'
 import { CrewApprovalRow, type CrewState } from '../components/CrewApprovalRow'
-import { CREW_LABELS } from '../components/agentStatus'
+import { CREW_LABELS, agentDisplayName } from '../components/agentStatus'
 import { CREW_OUTPUT_TYPE } from '../components/crewOutputs'
 import type { AgentOutput, HumanReview, ReminderEmail } from '../types'
 
@@ -436,7 +436,7 @@ function OutputReviewCard({ output, slug }: { output: AgentOutput; slug: string 
     >
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-sm font-medium text-primary">
-          {CREW_LABELS[output.agent_name] ?? output.agent_name}
+          {agentDisplayName(output.agent_name)}
           <span className="text-muted font-normal"> · {output.output_type}</span>
         </p>
         <span className="text-xs text-muted font-mono">v{output.version}</span>
