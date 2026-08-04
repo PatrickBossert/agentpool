@@ -110,6 +110,15 @@ export const projectsApi = {
   portfolioRegister: (slug: string): Promise<PortfolioItem[]> =>
     apiClient.get<PortfolioItem[]>(`/projects/${slug}/portfolio-register`).then((r) => r.data),
 
+  // An output is created review_status='pending'. This endpoint has always existed on the
+  // server and nothing called it, so nothing could ever move an output off pending.
+  submitOutputReview: (
+    slug: string, outputId: number, decision: string, notes: string,
+  ): Promise<void> =>
+    apiClient
+      .post(`/projects/${slug}/review`, { output_id: outputId, decision, notes })
+      .then(() => undefined),
+
   listReviews: (slug: string): Promise<HumanReview[]> =>
     apiClient.get<HumanReview[]>(`/projects/${slug}/reviews`).then((r) => r.data),
 

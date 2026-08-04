@@ -482,7 +482,10 @@ export default function CrewCarousel({
           orchestrationStatus={orchestrationStatus}
           isPipelineActive={isPipelineActive}
           isStarting={isPipelineStarting}
-          hitlReviewCount={hitlReviews.length}
+          // PAM's own gates, not the project's. Every crew card already scopes by
+          // crew_name through waitingCrews; this brings the one numeric badge into line.
+          // Unscoped, any crew's gate made PAM read as waiting on the reader.
+          hitlReviewCount={hitlReviews.filter((r) => r.crew_name === 'PAM').length}
           runCount={crewRuns.length}
           isSelected={selectedCrew === 'PAM'}
           isHovered={hoveredCrew === 'PAM'}

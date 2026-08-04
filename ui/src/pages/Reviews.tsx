@@ -8,7 +8,8 @@ import { projectsApi, commitsApi } from '../api/endpoints'
 import { campaignsApi } from '../api/campaigns'
 import { CrewApprovalRow, type CrewState } from '../components/CrewApprovalRow'
 import { CREW_LABELS } from '../components/agentStatus'
-import type { HumanReview, ReminderEmail } from '../types'
+import { CREW_OUTPUT_TYPE } from '../components/crewOutputs'
+import type { AgentOutput, HumanReview, ReminderEmail } from '../types'
 
 // A single crew's change count, fetched independently so one crew's request does not
 // block the rest of the section from rendering.
@@ -404,6 +405,74 @@ function ReminderEmailCard({ item, slug }: { item: ReminderEmail; slug: string }
   )
 }
 
+// An output's crew deliverable, plus PAM's report. Listing every pending output would put
+// 79 rows in this queue for one project, two dozen of them variants of one interview
+// script - so the queue shows the artefact each crew is judged on.
+//
+// PAM is deliberately absent from CREW_OUTPUT_TYPE because her Output tab is an Overview
+// rather than a versioned artefact. Naming her report here rather than adding her to that
+// map keeps the queue right without changing her tab or the Dashboard preview.
+const REVIEWABLE_OUTPUT_TYPES = new Set([...Object.values(CREW_OUTPUT_TYPE), 'pam_report'])
+
+function OutputReviewCard({ output, slug }: { output: AgentOutput; slug: string }) {
+  const qc = useQueryClient()
+  const [notes, setNotes] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function decide(decision: string) {
+    setBusy(true)
+    try {
+      await projectsApi.submitOutputReview(slug, output.id, decision, notes)
+      await qc.invalidateQueries({ queryKey: ['outputs', slug] })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      data-testid={`output-review-${output.id}`}
+      className="bg-surface-card border border-surface-border rounded-lg p-4 shadow-sm"
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-sm font-medium text-primary">
+          {CREW_LABELS[output.agent_name] ?? output.agent_name}
+          <span className="text-muted font-normal"> · {output.output_type}</span>
+        </p>
+        <span className="text-xs text-muted font-mono">v{output.version}</span>
+      </div>
+      <textarea
+        data-testid={`output-notes-${output.id}`}
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="What needs changing? Left empty when approving."
+        rows={2}
+        className="mt-3 w-full bg-surface rounded px-2 py-1 text-xs text-secondary resize-none"
+      />
+      <div className="mt-3 flex justify-end gap-2">
+        <button
+          type="button"
+          data-testid={`request-changes-output-${output.id}`}
+          disabled={busy}
+          onClick={() => decide('changes_requested')}
+          className="text-xs text-secondary px-3 py-1 disabled:opacity-40"
+        >
+          Request changes
+        </button>
+        <button
+          type="button"
+          data-testid={`approve-output-${output.id}`}
+          disabled={busy}
+          onClick={() => decide('approved')}
+          className="text-xs bg-brand text-white rounded px-3 py-1 disabled:opacity-40"
+        >
+          Approve
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function Reviews() {
   const { slug } = useParams<{ slug: string }>()
 
@@ -413,6 +482,18 @@ export default function Reviews() {
     enabled: !!slug,
     refetchInterval: 5000,
   })
+
+  const { data: outputs = [] } = useQuery({
+    queryKey: ['outputs', slug],
+    queryFn: () => projectsApi.outputs(slug!),
+    enabled: !!slug,
+    refetchInterval: 10_000,
+  })
+
+  const pendingOutputs = outputs.filter(
+    (o) => o.is_current && o.review_status === 'pending' &&
+      REVIEWABLE_OUTPUT_TYPES.has(o.output_type),
+  )
 
   const { data: reminderEmails = [] } = useQuery({
     queryKey: ['reminder-emails', slug],
@@ -426,8 +507,20 @@ export default function Reviews() {
       <h2 className="text-lg font-semibold text-gray-900">Reviews</h2>
       {slug && <ActivateProjectControl slug={slug} />}
       {slug && <CrewApprovalSection slug={slug} />}
+      {pendingOutputs.length > 0 && (
+        <>
+          <h3 className="text-sm font-semibold text-gray-700 mt-6 mb-3">
+            Outputs awaiting review
+          </h3>
+          <div className="space-y-4">
+            {pendingOutputs.map((o) => (
+              <OutputReviewCard key={o.id} output={o} slug={slug!} />
+            ))}
+          </div>
+        </>
+      )}
       {isLoading && <p className="text-sm text-gray-400">Loading...</p>}
-      {!isLoading && reviews.length === 0 && (
+      {!isLoading && reviews.length === 0 && pendingOutputs.length === 0 && (
         <p className="text-sm text-gray-400">
           No pending reviews - the crew is running autonomously.
         </p>
