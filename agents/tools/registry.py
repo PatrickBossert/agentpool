@@ -128,6 +128,9 @@ def get_tools_for_agent(
         ],
         "synthesis_analyst": [
             SQLiteStateTool(slug=slug),
+            # The interview corpus is too large to read whole, and a transcript blob cannot
+            # be filtered by discipline or relationship. He queries the answers.
+            ChromaQueryTool(slug=slug, sector=sector),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "interaction_designer": [

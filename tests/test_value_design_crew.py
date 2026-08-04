@@ -27,7 +27,7 @@ def test_vpg_task_reads_discovery_outputs(mock_llm):
     agent = create_value_proposition_generator(slug="test", llm=mock_llm, tools=[])
     task = create_value_proposition_generator_task(agent=agent)
     desc = task.description
-    assert "key='requirements'" in desc
+    assert "key='strategic_requirements'" in desc
     assert "key='value_levers'" in desc
     assert "key='value_chain_summary'" in desc
     assert "key='user_journeys'" in desc

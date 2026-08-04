@@ -419,6 +419,7 @@ async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None
             project_id                INTEGER NOT NULL REFERENCES projects(id),
             node_label                TEXT    NOT NULL,
             activity_id               TEXT,
+            script_id                 TEXT,
             level                     TEXT    DEFAULT 'L2',
             interview_template_id     INTEGER,
             questionnaire_template_id INTEGER,
@@ -433,7 +434,107 @@ async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None
         await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN activity_id TEXT")
     if "level" not in cols:
         await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN level TEXT DEFAULT 'L2'")
+    if "script_id" not in cols:
+        await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN script_id TEXT")
     await conn.commit()
+
+
+async def _migrate_interview_answers(conn: aiosqlite.Connection) -> None:
+    """One row per question per session - the system of record for interview evidence.
+
+    Tags are denormalised deliberately. Casey groups by an exact value without a four-way
+    join, and every tag is a fact fixed at the moment the answer was given: a later rename of
+    a node must not retrospectively change what an interview was about.
+
+    Rows are append-only, which is what makes `id` usable as a citation token.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS interview_answers (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id      INTEGER NOT NULL REFERENCES interview_sessions(id),
+            stakeholder_id  INTEGER NOT NULL REFERENCES stakeholders(id),
+            script_id       TEXT    NOT NULL,
+            section_id      TEXT    NOT NULL,
+            question_id     TEXT    NOT NULL,
+            question_text   TEXT    NOT NULL,
+            answer_text     TEXT    NOT NULL DEFAULT '',
+            answered        INTEGER NOT NULL DEFAULT 1,
+            follow_up       INTEGER NOT NULL DEFAULT 0,
+            node_id         TEXT    NOT NULL,
+            node_label      TEXT    NOT NULL DEFAULT '',
+            chain           TEXT,
+            level           TEXT    NOT NULL,
+            relationship    TEXT    NOT NULL,
+            party_id        TEXT,
+            discipline      TEXT    NOT NULL,
+            question_intent TEXT    NOT NULL,
+            elicitation     TEXT    NOT NULL,
+            rating          INTEGER,
+            answered_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_answers_session ON interview_answers(session_id)")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_answers_node ON interview_answers(node_id)")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_answers_discipline ON interview_answers(discipline)")
+    await conn.commit()
+
+
+_ANSWER_COLUMNS = (
+    "session_id", "stakeholder_id", "script_id", "section_id", "question_id",
+    "question_text", "answer_text", "answered", "follow_up", "node_id", "node_label",
+    "chain", "level", "relationship", "party_id", "discipline", "question_intent",
+    "elicitation", "rating",
+)
+
+
+async def insert_interview_answer(conn: aiosqlite.Connection, **fields) -> int:
+    """One answer row. Returns its id, which is the citation token."""
+    columns = [c for c in _ANSWER_COLUMNS if c in fields]
+    placeholders = ", ".join("?" for _ in columns)
+    cur = await conn.execute(
+        f"INSERT INTO interview_answers ({', '.join(columns)}) VALUES ({placeholders})",
+        tuple(fields[c] for c in columns),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+async def fetch_interview_answers(
+    conn: aiosqlite.Connection,
+    session_id: int | None = None,
+    node_id: str | None = None,
+    discipline: str | None = None,
+) -> list[dict]:
+    """Answers matching whichever filters are given, oldest first."""
+    clauses, params = [], []
+    for column, value in (("session_id", session_id), ("node_id", node_id),
+                          ("discipline", discipline)):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    async with conn.execute(
+        f"SELECT * FROM interview_answers{where} ORDER BY id", tuple(params)
+    ) as cur:
+        return [dict(row) async for row in cur]
+
+
+async def fetch_interview_session_by_id(
+    conn: aiosqlite.Connection, session_id: int
+) -> dict | None:
+    """One session by primary key.
+
+    The existing lookups are all by session_token, which the answer service does not hold -
+    it runs after completion, from the row's id.
+    """
+    async with conn.execute(
+        "SELECT * FROM interview_sessions WHERE id = ?", (session_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
 
 
 async def _migrate_project_milestones(conn: aiosqlite.Connection) -> None:
@@ -857,6 +958,7 @@ async def get_connection(slug: str):
         await _migrate_node_template_assignments(conn)
         await _migrate_interview_sessions_ratings(conn)
         await _migrate_interview_sessions_checkpoint(conn)
+        await _migrate_interview_answers(conn)
         await _migrate_project_milestones(conn)
         await _migrate_milestone_baselines(conn)
         await rename_crew_in_stored_rows(conn)
@@ -2353,8 +2455,9 @@ async def delete_template(conn, template_id: int) -> bool:
 
 async def fetch_node_template_assignments(conn, project_id: int) -> list:
     async with conn.execute(
-        "SELECT node_label, activity_id, level, interview_template_id, questionnaire_template_id "
-        "FROM node_template_assignments WHERE project_id=? ORDER BY node_label",
+        "SELECT node_label, activity_id, script_id, level, interview_template_id, "
+        "questionnaire_template_id FROM node_template_assignments WHERE project_id=? "
+        "ORDER BY node_label",
         (project_id,),
     ) as cur:
         return [dict(r) async for r in cur]
@@ -2365,18 +2468,49 @@ async def upsert_node_template_assignment(
     interview_template_id, questionnaire_template_id,
     activity_id: str | None = None,
     level: str | None = None,
+    script_id: str | None = None,
 ) -> None:
+    """Match on script_id when there is one, on node_label when there is not.
+
+    Rows written before script ids existed have none, and matching on the id alone would put
+    a second assignment beside every one of them. Keying on node_label was the original
+    defect: the label is the script's own title, so retitling a script made it look like a
+    new node and orphaned the assignment it already had.
+    """
+    if script_id:
+        async with conn.execute(
+            "SELECT id FROM node_template_assignments WHERE project_id=? AND script_id=?",
+            (project_id, script_id),
+        ) as cur:
+            existing = await cur.fetchone()
+        if existing:
+            # activity_id is set, not COALESCEd. The old COALESCE kept a stale anchor
+            # forever: a script that moved node reported success and silently did not move.
+            await conn.execute("""
+                UPDATE node_template_assignments
+                   SET node_label=?, activity_id=?, level=COALESCE(?, level),
+                       interview_template_id=?, questionnaire_template_id=?,
+                       updated_at=datetime('now')
+                 WHERE id=?
+            """, (node_label, activity_id, level, interview_template_id,
+                  questionnaire_template_id, existing["id"]))
+            await conn.commit()
+            return
+
     await conn.execute("""
         INSERT INTO node_template_assignments
-            (project_id, node_label, activity_id, level, interview_template_id, questionnaire_template_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+            (project_id, node_label, activity_id, script_id, level, interview_template_id,
+             questionnaire_template_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(project_id, node_label) DO UPDATE SET
             activity_id=COALESCE(excluded.activity_id, activity_id),
+            script_id=COALESCE(excluded.script_id, script_id),
             level=COALESCE(excluded.level, level),
             interview_template_id=excluded.interview_template_id,
             questionnaire_template_id=excluded.questionnaire_template_id,
             updated_at=datetime('now')
-    """, (project_id, node_label, activity_id, level or "L2", interview_template_id, questionnaire_template_id))
+    """, (project_id, node_label, activity_id, script_id, level or "L2",
+          interview_template_id, questionnaire_template_id))
     await conn.commit()
 
 

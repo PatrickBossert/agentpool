@@ -281,14 +281,30 @@ async def save_checkpoint(session_token: str, body: CheckpointBody):
 # Endpoint 6: PATCH /{session_token}/complete
 # ---------------------------------------------------------------------------
 
+class CapturedPair(BaseModel):
+    """One answer, addressed to the question that produced it.
+
+    Typed rather than a bare dict: an untyped payload accepted a pair with no question_id
+    silently, and the answer then had no question to be traced to. follow_up marks a
+    generated probe or a scripted branch, which is further evidence about one question rather
+    than a question of its own.
+    """
+    question_id: str
+    question: str
+    answer: str = ""
+    follow_up: int = 0
+
+
 class CompleteRequest(BaseModel):
-    qa_pairs: list[dict]
+    qa_pairs: list[CapturedPair]
     ratings: list[dict] | None = None
 
 
 @router.patch("/{session_token}/complete")
 async def complete_interview(session_token: str, body: CompleteRequest):
-    success = await complete_session(session_token, body.qa_pairs, body.ratings)
+    success = await complete_session(
+        session_token, [p.model_dump() for p in body.qa_pairs], body.ratings
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"ok": True}

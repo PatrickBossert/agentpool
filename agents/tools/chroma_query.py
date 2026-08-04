@@ -29,6 +29,9 @@ class ChromaQueryTool(BaseTool):
     description: str = (
         "Retrieve relevant text chunks from ChromaDB. "
         "Use collection='project' for ingested client documents; "
+        "use collection='interviews' for interview answers - one document per question, "
+        "each carrying its node, level, relationship, discipline, and elicitation as "
+        "metadata; "
         "use collection='sector' for the shared sector knowledge base."
     )
     args_schema: type[BaseModel] = ChromaQueryToolInput
@@ -46,9 +49,10 @@ class ChromaQueryTool(BaseTool):
             return "ChromaDB is not reachable. Start Docker (docker compose up -d) and retry."
         client = get_chroma_client()
 
-        collection_name = (
-            f"{self.slug}_docs" if collection == "project" else f"sector_{self.sector}"
-        )
+        collection_name = {
+            "project": f"{self.slug}_docs",
+            "interviews": f"{self.slug}_interviews",
+        }.get(collection, f"sector_{self.sector}")
 
         try:
             col = client.get_collection(collection_name)

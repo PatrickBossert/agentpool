@@ -54,17 +54,28 @@ async def auto_assign_interview_scripts(slug: str) -> int:
         if not project:
             return 0
         project_id = project["id"]
-        current = {a["node_label"]: a for a in await fetch_node_template_assignments(conn, project_id)}
+        # Keyed on script_id, not node_label. The label is the script's own title, so
+        # retitling one made it look like a new node: it gained a second assignment and the
+        # first was orphaned. Rows written before script ids existed still key on the label.
+        current = {
+            (a.get("script_id") or a["node_label"]): a
+            for a in await fetch_node_template_assignments(conn, project_id)
+        }
 
         async with aiosqlite.connect(str(sys_db_path)) as sys_conn:
             sys_conn.row_factory = aiosqlite.Row
             await init_system_db(sys_conn)
 
-            for node_label, script in scripts.items():
+            for script_key, script in scripts.items():
+                script_id = script.get("script_id") or script_key
+                node_label = script.get("node_label") or script_key
                 schema = {k: v for k, v in script.items() if k not in _INTERVIEW_STRIP}
                 schema_json = json.dumps(schema)
-                assignment = current.get(node_label, {})
-                activity_id = assignment.get("activity_id")
+                assignment = current.get(script_id, {})
+                # The script states its own anchor. Taking activity_id from the existing
+                # assignment made the node link whatever a human last set, which is why A
+                # and C scripts had none at all.
+                activity_id = script.get("node_id") or assignment.get("activity_id")
                 clean = _clean_label(node_label)
                 name = f"{activity_id} — {clean}" if activity_id else clean
                 description = (script.get("research_brief") or "")[:200]
@@ -74,6 +85,19 @@ async def auto_assign_interview_scripts(slug: str) -> int:
                     tpl = await fetch_template(sys_conn, existing_tid)
                     if tpl:
                         await update_template(sys_conn, existing_tid, name, description, schema_json)
+                        # The assignment is upserted too, not just the template. Returning
+                        # here left the row holding the label and anchor from the first run,
+                        # so a retitled or moved script updated its template and silently
+                        # kept its old node.
+                        await upsert_node_template_assignment(
+                            conn, project_id, node_label,
+                            existing_tid,
+                            assignment.get("questionnaire_template_id"),
+                            activity_id=activity_id,
+                            script_id=script_id,
+                        )
+                        current[script_id] = {**assignment, "node_label": node_label,
+                                              "activity_id": activity_id}
                         count += 1
                         continue
 
@@ -83,8 +107,9 @@ async def auto_assign_interview_scripts(slug: str) -> int:
                     template_id,
                     assignment.get("questionnaire_template_id"),
                     activity_id=activity_id,
+                    script_id=script_id,
                 )
-                current[node_label] = {**assignment, "interview_template_id": template_id}
+                current[script_id] = {**assignment, "interview_template_id": template_id}
                 count += 1
 
     _log.info("auto_assign_interview_scripts[%s]: %d nodes updated", slug, count)

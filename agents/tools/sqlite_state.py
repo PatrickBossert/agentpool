@@ -20,6 +20,7 @@ def _validate_value_chain_model(parsed: dict, slug: str) -> list[str]:
     from api.services.value_chain_model import (
         validate_against_registry,
         validate_contributions_have_tasks,
+        validate_has_entity,
         validate_model,
     )
 
@@ -30,6 +31,11 @@ def _validate_value_chain_model(parsed: dict, slug: str) -> list[str]:
     # created it. A deliverable has no such excuse - a party whose part is described and
     # decomposed into nothing cannot be interviewed about, scheduled, or held to anything.
     problems.extend(validate_contributions_have_tasks(parsed))
+
+    # Same reasoning as contributions-have-tasks: the editor may hold a model with no entity
+    # while a person works on it, but a deliverable that A and C scripts cannot anchor to is
+    # not finished.
+    problems.extend(validate_has_entity(parsed))
 
     # The registry is the ID authority, and it lives on disk - which is why the comparison
     # itself is pure and the load happens here. Every stable ID shared by the migrated model
@@ -67,9 +73,86 @@ def _validate_value_chain_registry(parsed: dict, slug: str) -> list[str]:
     return validate_registry_succession(_current_registry(slug), parsed)
 
 
+def _current_script_registry(slug: str) -> dict:
+    """The script ledger in force, or an empty one when there is none yet."""
+    settings = get_settings()
+    path = latest_output_path(
+        Path(settings.projects_dir) / slug / "outputs" / "interview_script_registry.json"
+    )
+    if path is None:
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _project_disciplines(slug: str) -> tuple[str, ...]:
+    """The project's own vertical axis, or the default list.
+
+    A missing or unreadable config is not a reason to refuse a write - that would block every
+    script on a sidecar file.
+    """
+    from api.config import load_project_config
+    from api.services.interview_script_model import DEFAULT_DISCIPLINES
+
+    settings = get_settings()
+    try:
+        config = load_project_config(Path(settings.projects_dir) / slug)
+        return tuple(config.get("disciplines") or DEFAULT_DISCIPLINES)
+    except Exception:
+        return DEFAULT_DISCIPLINES
+
+
+def _current_levers(slug: str) -> list[dict]:
+    """Morgan's levers, or none when she has not run.
+
+    Absence is not a failure: Maya may legitimately design before the levers exist, and
+    refusing her write then would block the pipeline on an upstream artefact.
+    """
+    settings = get_settings()
+    path = latest_output_path(
+        Path(settings.projects_dir) / slug / "outputs" / "value_levers.json"
+    )
+    if path is None:
+        return []
+    try:
+        loaded = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return loaded if isinstance(loaded, list) else []
+
+
+def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
+    from api.services.interview_script_model import (
+        validate_elicitation_order,
+        validate_levers_unnamed_in_unaided_sections,
+        validate_scripts,
+        validate_scripts_against_registry,
+    )
+
+    problems = validate_scripts(parsed, disciplines=_project_disciplines(slug))
+    # The value chain registry, not the script one: this checks that each script's anchor
+    # names a node that exists.
+    problems.extend(validate_scripts_against_registry(parsed, _current_registry(slug)))
+    # The ordering rule is checkable, so it is checked rather than left to an instruction
+    # Maya may or may not follow.
+    problems.extend(validate_elicitation_order(parsed))
+    problems.extend(validate_levers_unnamed_in_unaided_sections(parsed, _current_levers(slug)))
+    return problems
+
+
+def _validate_interview_script_registry(parsed: dict, slug: str) -> list[str]:
+    from api.services.interview_script_model import validate_script_registry_succession
+
+    return validate_script_registry_succession(_current_script_registry(slug), parsed)
+
+
 _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
     "value_chain_model": _validate_value_chain_model,
     "value_chain_registry": _validate_value_chain_registry,
+    "interview_scripts": _validate_interview_scripts,
+    "interview_script_registry": _validate_interview_script_registry,
 }
 
 
@@ -85,7 +168,7 @@ class SQLiteStateTool(BaseTool):
     description: str = (
         "Read or write a JSON state blob scoped to this project. "
         "Use 'write' to save intermediate results; use 'read' to retrieve them. "
-        "The key becomes the filename (e.g. key='requirements' → outputs/requirements.json)."
+        "The key becomes the filename (e.g. key='themes' → outputs/themes.json)."
     )
     args_schema: type[BaseModel] = SQLiteStateToolInput
     slug: str

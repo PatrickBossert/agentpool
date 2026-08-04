@@ -132,11 +132,29 @@ async def test_complete_interview_success(client):
     ):
         r = await client.patch(
             "/api/interviews/test-token-abc/complete",
-            json={"qa_pairs": [{"q": "What?", "a": "This."}]},
+            json={"qa_pairs": [
+                {"question_id": "SC-014.S3.Q1", "question": "What?", "answer": "This."}
+            ]},
         )
 
     assert r.status_code == 200
     assert r.json() == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_complete_interview_rejects_a_pair_with_no_question_id(client):
+    """This payload - {"q": ..., "a": ...} - was accepted until the shape was typed.
+
+    An answer that cannot name its question cannot be cited, grouped, or counted, and
+    accepting it silently is how a session completes looking successful while producing
+    evidence nothing can use.
+    """
+    r = await client.patch(
+        "/api/interviews/test-token-abc/complete",
+        json={"qa_pairs": [{"q": "What?", "a": "This."}]},
+    )
+
+    assert r.status_code == 422
 
 
 # ---------------------------------------------------------------------------

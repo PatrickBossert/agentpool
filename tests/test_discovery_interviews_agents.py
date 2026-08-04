@@ -141,12 +141,18 @@ def test_synthesis_analyst_task_writes_all_three_keys():
     assert "value_levers" not in kwargs["description"]
 
 
-def test_synthesis_analyst_task_reads_transcripts():
-    """Task description instructs agent to read interview_transcripts."""
+def test_synthesis_analyst_task_reads_the_answer_store():
+    """He reads answers, not the transcript blob.
+
+    This asserted on `interview_transcripts` until answers became addressable. A blob cannot
+    be filtered by discipline or by who the speaker is to this organisation, and the corpus
+    is too large to read whole - both of which are the point of the tagged store.
+    """
     from agents.discovery.synthesis_analyst import create_synthesis_analyst_task
     agent = _mock_agent()
     with patch("agents.discovery.synthesis_analyst.Task") as MockTask:
         MockTask.return_value = MagicMock()
         create_synthesis_analyst_task(agent=agent, context_tasks=[])
     _, kwargs = MockTask.call_args
-    assert "interview_transcripts" in kwargs["description"]
+    assert "collection='interviews'" in kwargs["description"]
+    assert "interview_transcripts" not in kwargs["description"]

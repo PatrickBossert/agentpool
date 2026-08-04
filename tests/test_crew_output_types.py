@@ -99,7 +99,7 @@ def test_the_derivation_finds_producers_at_all():
     per-agent lookup would silently pass nothing at all."""
     produced = _produced_by_agent()
     assert len(_declared_primaries()) == len(_CREW_AGENT_NAMES)
-    assert produced.get("requirements_analyst") == {"requirements"}
+    assert produced.get("requirements_analyst") == {"requirements_analysis"}
     assert "docx" in produced.get("business_plan_generator", set())
 
 

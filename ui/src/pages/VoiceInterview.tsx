@@ -14,6 +14,45 @@ type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'test
 
 const BASE = '/api'
 
+export interface CapturedPair {
+  question_id: string
+  question: string
+  answer: string
+  follow_up: 0 | 1
+}
+
+/**
+ * One captured answer, addressed to the question that produced it.
+ *
+ * qa_pairs used to carry question text alone, so an answer could not be traced to its
+ * question even within its own script, and it mixed four different things without
+ * distinguishing them: scripted questions, generated probes, pre-scripted branches, and the
+ * synthesis block.
+ *
+ * A follow-up carries its parent's id with a suffix rather than an id of its own. It is
+ * further evidence about one question, and counting probes as questions would overstate both
+ * coverage and the weight of any theme drawn from them - an interviewee pressed three times
+ * on one point would read as three stakeholders' worth of agreement.
+ */
+export function capturedPair(
+  scriptId: string,
+  sectionId: string,
+  questionNo: number | null,
+  question: string,
+  answer: string,
+  followUp?: { kind: 'F' | 'B'; index: number },
+): CapturedPair {
+  const base = questionNo === null
+    ? `${scriptId}.${sectionId}`
+    : `${scriptId}.${sectionId}.Q${questionNo}`
+  return {
+    question_id: followUp ? `${base}.${followUp.kind}${followUp.index}` : base,
+    question,
+    answer,
+    follow_up: followUp ? 1 : 0,
+  }
+}
+
 export default function VoiceInterview() {
   const { sessionToken } = useParams<{ sessionToken: string }>()
   const [phase, setPhase] = useState<Phase>('loading')
@@ -34,7 +73,7 @@ export default function VoiceInterview() {
   const [interimText, setInterimText] = useState('')
   const recognitionRef = useRef<any>(null)
   const restartAnswerRef = useRef(false)
-  const qaRef = useRef<{ question: string; answer: string }[]>([])
+  const qaRef = useRef<CapturedPair[]>([])
   const sectionRatingsRef = useRef<SectionMaturityRating[]>([])
   const ratingResolveRef = useRef<((rating: number) => void) | null>(null)
   const interviewLangRef = useRef<string>('en-GB')
@@ -455,8 +494,14 @@ export default function VoiceInterview() {
 
     sectionRatingsRef.current = []
 
-    for (const section of script.sections) {
-      for (const question of section.questions) {
+    const scriptId = script.script_id ?? ''
+
+    for (const [sectionIndex, section] of script.sections.entries()) {
+      // Falls back to position when a script predates section ids, so an older script still
+      // produces addressable answers rather than colliding every section onto one id.
+      const sectionId = section.section_id ?? `S${sectionIndex + 1}`
+      for (const [questionIndex, question] of section.questions.entries()) {
+        const questionNo = questionIndex + 1
         questionNumber++
         setProgress(p => ({ ...p, current: questionNumber }))
         setCurrentQuestion(question.text)
@@ -479,13 +524,13 @@ export default function VoiceInterview() {
           setCurrentQuestion(pressText)
           await speakText(pressText, voiceId)
           const followUpAnswer = await listenWithRestart(lang)
-          qaRef.current.push({ question: pressText, answer: followUpAnswer })
+          qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, pressText, followUpAnswer, { kind: 'F', index: followUpCount + 1 }))
           answer = `${answer} ${followUpAnswer}`.trim()
           followUpCount++
         }
 
         // Push primary Q&A before follow-up branches
-        qaRef.current.push({ question: question.text, answer })
+        qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, question.text, answer))
 
         // Pre-scripted follow-up branches
         while (followUpCount < question.follow_up_count && question.follow_up_branches[followUpCount]) {
@@ -493,7 +538,7 @@ export default function VoiceInterview() {
           setCurrentQuestion(branch)
           await speakText(branch, voiceId)
           const branchAnswer = await listenWithRestart(lang)
-          qaRef.current.push({ question: branch, answer: branchAnswer })
+          qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: followUpCount + 1 }))
           followUpCount++
         }
       }
@@ -515,30 +560,30 @@ export default function VoiceInterview() {
       await speakText(sc.synthesis_prompt, voiceId)
       // Listen for the interviewee's confirmation or correction
       const synthesisResponse = await listenWithRestart(lang)
-      qaRef.current.push({ question: sc.synthesis_prompt, answer: synthesisResponse })
+      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 1, sc.synthesis_prompt, synthesisResponse))
       // Peer referral
       setCurrentQuestion(sc.peer_referral)
       await speakText(sc.peer_referral, voiceId)
       const referralResponse = await listenWithRestart(lang)
-      qaRef.current.push({ question: sc.peer_referral, answer: referralResponse })
+      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
       // Forward roadmap
       setCurrentQuestion(sc.forward_roadmap)
       await speakText(sc.forward_roadmap, voiceId)
       const roadmapResponse = await listenWithRestart(lang)
-      qaRef.current.push({ question: sc.forward_roadmap, answer: roadmapResponse })
+      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 3, sc.forward_roadmap, roadmapResponse))
       // L0 only — portfolio sequencing options validation
       if (sc.portfolio_options) {
         setCurrentQuestion(sc.portfolio_options)
         await speakText(sc.portfolio_options, voiceId)
         const portfolioResponse = await listenWithRestart(lang)
-        qaRef.current.push({ question: sc.portfolio_options, answer: portfolioResponse })
+        qaRef.current.push(capturedPair(scriptId, 'SYNTH', 4, sc.portfolio_options, portfolioResponse))
       }
       // L0 only — executive sponsorship commitment check
       if (sc.sponsorship_check) {
         setCurrentQuestion(sc.sponsorship_check)
         await speakText(sc.sponsorship_check, voiceId)
         const sponsorshipResponse = await listenWithRestart(lang)
-        qaRef.current.push({ question: sc.sponsorship_check, answer: sponsorshipResponse })
+        qaRef.current.push(capturedPair(scriptId, 'SYNTH', 5, sc.sponsorship_check, sponsorshipResponse))
       }
     }
 

@@ -57,6 +57,10 @@ def clean(tmp_path, monkeypatch):
 def _valid_model() -> dict:
     return {
         "model_version": 1,
+        # The L0 entity, on the same footing as the tasks below: the agent's write path
+        # requires one, because interview scripts for regulators, customers, and corporate
+        # services have no chain position and anchor here instead.
+        "entity": {"id": "0", "label": "SP-GS", "description": "The organisation."},
         "segments": [{"id": "1", "label": "Segment"}],
         "parties": [{"id": "sp", "label": "SP-GS"}],
         "activities": [{"id": "1.1", "segment_id": "1", "label": "A"}],
@@ -99,6 +103,26 @@ def test_an_invalid_model_is_refused_and_the_problems_are_returned():
     assert "Written to" not in result
     assert "column 10" in result
     assert "1.1" in result and "1.2" in result
+
+
+def test_a_model_with_no_entity_is_refused_by_the_tool():
+    """The rule has to be wired in, not merely written.
+
+    validate_has_entity refusing an entity-less model is one fact; the write path calling it
+    is another, and only the second one protects anything. Removing the call from
+    sqlite_state.py left every test here passing.
+    """
+    model = _valid_model()
+    del model["entity"]
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="value_chain_model",
+        agent_name="value_chain_mapper", value=json.dumps(model),
+    )
+
+    assert "Written to" not in result
+    assert "L0 entity" in result
 
 
 def test_an_invalid_model_writes_no_file():
@@ -193,11 +217,16 @@ def test_a_json_scalar_is_refused_not_thrown():
 
 
 def test_a_key_with_no_validator_is_written_unchanged():
-    """The tool stays general - only registered keys are checked."""
+    """The tool stays general - only registered keys are checked.
+
+    This used interview_scripts as its unchecked example until that key gained a validator,
+    which is the honest failure mode of naming a real key here: the test went red the moment
+    the key stopped being unchecked. activity_insights has no validator and no plans for one.
+    """
     tool = SQLiteStateTool(slug=SLUG)
     result = tool._run(
-        operation="write", key="interview_scripts",
-        agent_name="interaction_designer", value=json.dumps({"anything": True}),
+        operation="write", key="activity_insights",
+        agent_name="synthesis_analyst", value=json.dumps({"anything": True}),
     )
     assert "Written to" in result
 
@@ -407,3 +436,118 @@ def test_a_model_with_an_undecomposed_contribution_is_refused():
     files, rows = _no_model_written()
     assert files == [] and rows == 0
 
+
+
+# ── Interview scripts ────────────────────────────────────────────────────────
+#
+# Registering a validator in _VALIDATORS is one fact; the write path consulting it for this
+# key is another. Task 1 proved only the second one protects anything: removing a call left
+# every test passing because they all exercised the function directly.
+
+def _valid_scripts() -> dict:
+    return {"SC-001": {
+        "script_id": "SC-001", "node_id": "1.2", "level": "L2",
+        "relationship": "internal", "node_label": "Planned Maintenance L2 Interview",
+        "sections": [{"section_id": "S1", "title": "Opening", "discipline": "governance",
+                      "question_intent": "evidence", "elicitation": "unprompted",
+                      "questions": [{"id": "Q1", "text": "..."}]}],
+    }}
+
+
+def test_a_valid_script_set_is_written():
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(_valid_scripts()),
+    )
+    assert "Written to" in result
+
+
+def test_a_script_with_no_anchor_is_refused_by_the_tool():
+    scripts = _valid_scripts()
+    del scripts["SC-001"]["node_id"]
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(scripts),
+    )
+
+    assert "Written to" not in result
+    assert "node_id" in result
+
+
+def test_a_script_registry_that_drops_an_id_is_refused_by_the_tool():
+    """The ledger may grow and may retire, but may not forget - a dropped id can be handed
+    to another script later, and every answer citing the first then resolves to the second."""
+    tool = SQLiteStateTool(slug=SLUG)
+    tool._run(
+        operation="write", key="interview_script_registry",
+        agent_name="interaction_designer",
+        value=json.dumps({"scripts": [{"id": "SC-001", "node_id": "1.2", "active": True}]}),
+    )
+
+    result = tool._run(
+        operation="write", key="interview_script_registry",
+        agent_name="interaction_designer", value=json.dumps({"scripts": []}),
+    )
+
+    assert "Written to" not in result
+    assert "SC-001" in result
+
+
+def _tagged_section(section_id: str, elicitation: str, question: str) -> dict:
+    return {
+        "section_id": section_id, "title": section_id, "discipline": "governance",
+        "question_intent": "evidence", "elicitation": elicitation,
+        "questions": [{"id": "Q1", "text": question}],
+    }
+
+
+def test_prompted_before_unaided_is_refused_by_the_tool():
+    """Wired in, not merely written. The ordering rule is checkable, so the write path
+    checks it rather than trusting Maya to have followed the instruction."""
+    scripts = {"SC-001": {
+        "script_id": "SC-001", "node_id": "1.2", "level": "L2", "relationship": "internal",
+        "node_label": "x", "sections": [
+            _tagged_section("S1", "prompted", "Your report names X - does that match?"),
+            _tagged_section("S2", "unprompted", "What gets in the way?"),
+        ],
+    }}
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(scripts),
+    )
+
+    assert "Written to" not in result
+    assert "unaided" in result
+
+
+def test_naming_a_lever_in_an_unaided_section_is_refused_by_the_tool():
+    """The anchoring the ordering rule alone cannot catch: a section tagged unprompted that
+    quotes the annual report's own phrasing is prompted in everything but the tag."""
+    from api.config import get_settings
+
+    outputs = Path(get_settings().projects_dir) / SLUG / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / "value_levers.json").write_text(
+        json.dumps([{"lever": "Fleet availability", "hypothesis": "..."}])
+    )
+
+    scripts = {"SC-001": {
+        "script_id": "SC-001", "node_id": "1.2", "level": "L2", "relationship": "internal",
+        "node_label": "x", "sections": [
+            _tagged_section("S1", "unprompted", "How is fleet availability managed here?"),
+        ],
+    }}
+
+    tool = SQLiteStateTool(slug=SLUG)
+    result = tool._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(scripts),
+    )
+
+    assert "Written to" not in result
+    assert "Fleet availability" in result

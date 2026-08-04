@@ -76,6 +76,51 @@ def next_column(model: dict, segment_id: str, party_id: str) -> int:
 # kind of thing an id names, so an id registered as an L3 cannot arrive as an activity.
 _LEVEL_ARRAYS = (("L1", "segments"), ("L2", "activities"), ("L3", "tasks"))
 
+# The L0 entity is the organisation itself. Its id is reserved: A, C, and S interview scripts
+# anchor here because a regulator regulates the entity and a customer of the entity may sit in
+# another company entirely, so neither has a position in any chain.
+ENTITY_ID = "0"
+
+_LEVEL_NOUN = {"L0": "entity", "L1": "segment", "L2": "activity", "L3": "task"}
+
+
+def validate_entity(model: dict) -> list[str]:
+    """The reserved id is held, and no value chain takes it.
+
+    In validate_model, which gates the grid's Save, because both rules are cheap and true of
+    every model. Absence is NOT checked here - see validate_has_entity.
+    """
+    problems: list[str] = []
+    entity = model.get("entity")
+    if entity is not None and entity.get("id") != ENTITY_ID:
+        problems.append(
+            f"the L0 entity must have id {ENTITY_ID!r}, not {entity.get('id')!r} - the id is "
+            "reserved and never renumbered"
+        )
+    for segment in model.get("segments", []):
+        if segment.get("id") == ENTITY_ID:
+            problems.append(
+                f"id {ENTITY_ID} is reserved for the L0 entity and cannot be a value chain - "
+                "take the next unused number"
+            )
+    return problems
+
+
+def validate_has_entity(model: dict) -> list[str]:
+    """The entity is present.
+
+    Held to the agent, not to the editor, exactly as validate_contributions_have_tasks is.
+    Every model built before this rule existed lacks an entity, and refusing those in
+    validate_model would refuse to save any project until its chain was rebuilt.
+    """
+    if model.get("entity") is None:
+        return [
+            'the model has no L0 entity - add {"entity": {"id": "0", "label": ..., '
+            '"description": ...}} naming the organisation itself, because interview scripts '
+            "for regulators, customers, and corporate services anchor to it"
+        ]
+    return []
+
 
 def validate_against_registry(model: dict, registry: dict) -> list[str]:
     """Every way this model contradicts the registry's ID ledger.
@@ -93,16 +138,23 @@ def validate_against_registry(model: dict, registry: dict) -> list[str]:
     if not known:
         return problems
 
-    for level, array in _LEVEL_ARRAYS:
-        for item in model.get(array, []):
+    # The entity is checked alongside the arrays rather than beside them: it is a dict, so a
+    # loop over the three arrays skips it, and it would be the one node whose id could be
+    # silently redefined.
+    entity = model.get("entity")
+    levels: list[tuple[str, list]] = [("L0", [entity] if entity else [])]
+    levels += [(level, model.get(array, [])) for level, array in _LEVEL_ARRAYS]
+
+    for level, items in levels:
+        for item in items:
             registered = known.get(item.get("id"))
             if registered is None:
                 continue
             registered_level, registered_label = registered
             if registered_level != level:
                 problems.append(
-                    f"{array[:-1]} {item.get('id')} is registered as a {registered_level}, "
-                    f"not a {level} - use an unused id for it"
+                    f"{_LEVEL_NOUN[level]} {item.get('id')} is registered as a "
+                    f"{registered_level}, not a {level} - use an unused id for it"
                 )
             # Both labels must actually be present to disagree. Live tasks carry a
             # description and no label at all, while every registry entry has one, so
@@ -306,5 +358,7 @@ def validate_model(model: dict) -> list[str]:
                     f"link {end} endpoint {contribution_key(*[str(x) for x in pair])} "
                     "does not exist"
                 )
+
+    problems.extend(validate_entity(model))
 
     return problems

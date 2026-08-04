@@ -1,4 +1,5 @@
 # api/models.py
+from api.services.interview_script_model import DEFAULT_DISCIPLINES
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -44,6 +45,10 @@ class ProjectSettings(BaseModel):
     brand_interviewer_tagline: str = "I'll be guiding our conversation today"
     # Project context — populated by Alex (Value Chain Mapper) to ground Maya's interview instruments
     client_name: str = ""
+    # The vertical axis Casey groups maturity themes by. Closed so that grouping is an
+    # exact-value query rather than prose clustering, and per project because a discipline
+    # that matters in one engagement does not in another.
+    disciplines: list[str] = list(DEFAULT_DISCIPLINES)
     service_categories: str = ""
     key_vendors: str = ""
     applicable_regulations: str = ""

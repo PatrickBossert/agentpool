@@ -106,6 +106,8 @@ export interface ProjectSettings {
   sched_start?: string | null
   sched_duration_weeks?: number | null
   client_name?: string
+  /** Closed vertical axis for interview section tags; Casey groups maturity themes by it. */
+  disciplines?: string[]
   service_categories?: string
   key_vendors?: string
   applicable_regulations?: string
@@ -400,6 +402,8 @@ export interface MaturityRating {
 }
 
 export interface InterviewSection {
+  /** Stable within its script. A citation to a title cites a string Maya may rewrite. */
+  section_id?: string
   title: string
   target_minutes?: number
   questions: InterviewQuestion[]
@@ -436,6 +440,11 @@ export interface SectionMaturityRating {
 }
 
 export interface InterviewScript {
+  /** Registered, opaque, never reused - stored answers cite scripts through it. */
+  script_id?: string
+  /** The stable value chain node this script is about; "0" is the L0 entity. */
+  node_id?: string
+  relationship?: 'internal' | 'customer' | 'regulator' | 'supplier' | 'partner'
   node_label: string
   level: string
   research_brief: string

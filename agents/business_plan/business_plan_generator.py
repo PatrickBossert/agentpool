@@ -29,8 +29,9 @@ def create_business_plan_generator_task(agent: Agent) -> Task:
         description=(
             "Generate a complete business plan from all prior crew outputs.\n\n"
             "Steps:\n"
-            "1. Read all five inputs via SQLiteStateTool:\n"
-            "   - operation='read', key='requirements', agent_name='business_plan_generator'\n"
+            "1. Read all six inputs via SQLiteStateTool:\n"
+            "   - operation='read', key='strategic_requirements', agent_name='business_plan_generator'\n"
+            "   - operation='read', key='requirements_analysis', agent_name='business_plan_generator'\n"
             "   - operation='read', key='value_levers', agent_name='business_plan_generator'\n"
             "   - operation='read', key='propositions', agent_name='business_plan_generator'\n"
             "   - operation='read', key='initiative_register', agent_name='business_plan_generator'\n"

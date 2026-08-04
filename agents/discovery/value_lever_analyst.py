@@ -49,12 +49,17 @@ def create_value_lever_analyst_task(
             "5. Produce a value levers analysis as a JSON array. Each lever must follow this "
             "schema:\n"
             "   {\"lever\": \"...\", \"description\": \"...\", \"hypothesis\": \"...\", "
-            "\"kpis\": [\"...\"], \"value_impact\": \"high|medium|low\", "
+            "\"kpis\": [\"...\"], \"status\": \"untested\", "
+            "\"value_impact\": \"high|medium|low\", "
             "\"effort\": \"high|medium|low\", \"related_activity_ids\": [\"1.2.3\", ...], "
             "\"source\": \"...\", \"evidence\": \"...\"}\n"
             "   `hypothesis` states what the interviews would have to confirm for the lever to "
             "hold. `source` names the client document the lever came from, or the benchmark if "
             "it came from outside - a lever with neither must not be submitted.\n"
+            "   `status` is always \"untested\" when you write it. The interviews decide it "
+            "later - contradicted, confirmed_unprompted, confirmed_prompted, or untested - "
+            "and a lever nothing asked about stays untested, which is the finding a reader "
+            "most needs. Never write a status claiming evidence you do not have.\n"
             "   Order levers by value_impact (high first), then by effort (low first).\n"
             "6. Use SQLiteStateTool with operation='write', key='value_levers', "
             "agent_name='value_lever_analyst' to save the JSON array.\n"
@@ -62,7 +67,7 @@ def create_value_lever_analyst_task(
         expected_output=(
             "A JSON value levers analysis saved to outputs/value_levers.json. "
             "Analysis must contain at least 3 levers, each stated as a hypothesis to be tested "
-            "in the interviews, with lever, description, hypothesis, kpis, value_impact, "
+            "in the interviews, with lever, description, hypothesis, kpis, status, value_impact, "
             "effort, related_activity_ids, source, and evidence fields."
         ),
         agent=agent,
