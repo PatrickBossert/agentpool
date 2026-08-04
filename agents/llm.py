@@ -2,6 +2,13 @@
 from crewai import LLM
 from api.config import get_settings
 from agents.pam import PAM_MODEL
+from agents.anthropic_compat import ensure_conversation_ends_with_user
+
+# Applied here because this is the only place the application builds an LLM. Without it, a
+# run resumed after a human requests changes sends a conversation ending with the agent's
+# own message and the API refuses it - which is what killed run 15 after every output had
+# already been written. See agents/anthropic_compat.py.
+ensure_conversation_ends_with_user()
 
 
 def get_crew_llm(llm_mode: str) -> LLM:
