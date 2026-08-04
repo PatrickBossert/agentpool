@@ -740,6 +740,7 @@ function MilestoneRow({
           {idx + 1}
         </span>
         <button
+          data-testid={`milestone-tick-${m.id}`}
           onClick={() => patch.mutate({ status: isComplete ? 'pending' : 'complete' })}
           className="mt-0.5 flex-shrink-0 transition-colors"
           aria-label={isComplete ? 'Mark pending' : 'Mark complete'}
