@@ -10,6 +10,15 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".pdf", ".docx"}
 
+# Chroma caps records per Upsert ACTION, not per collection. A 1.5MB PDF chunked to 848
+# records was sent in one call against a limit of 300, and the whole call was rejected
+# atomically - so any document over roughly 300KB of extracted text could never ingest, on
+# any plan, and sat on "pending" for ever because there is no failed state to show.
+#
+# 250 rather than 300 is deliberate headroom: the limit is a tenant setting rather than a
+# constant of the product, and a batch sized exactly at the cap has nothing left if it moves.
+UPSERT_BATCH = 250
+
 
 class IngestError(Exception):
     """Raised when ingestion fails and the caller asked to be told."""
@@ -76,7 +85,17 @@ async def ingest_document(
         metadatas = [
             {"filename": path.name, "chunk": i, "doc_id": doc_id} for i in range(len(chunks))
         ]
-        collection.upsert(documents=chunks, ids=ids, metadatas=metadatas)
+        # Sliced rather than sent whole. A failing batch raises out of here and the caller
+        # leaves the document unmarked, so a partial index is retried rather than recorded
+        # as done - a document that looks ingested and is mostly absent is worse than one
+        # that plainly failed.
+        for start in range(0, len(chunks), UPSERT_BATCH):
+            end = start + UPSERT_BATCH
+            collection.upsert(
+                documents=chunks[start:end],
+                ids=ids[start:end],
+                metadatas=metadatas[start:end],
+            )
 
     try:
         await asyncio.to_thread(_upsert)

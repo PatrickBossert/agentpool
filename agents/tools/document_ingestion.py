@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 import chromadb
 from api.config import get_settings
+from api.services.ingest_service import UPSERT_BATCH
 
 
 def _chroma_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
@@ -96,7 +97,23 @@ class DocumentIngestionTool(BaseTool):
             chunks = _chunk_text(text)
             ids = [f"{path.name}::{i}" for i in range(len(chunks))]
             metadatas = [{"filename": path.name, "chunk": i} for i in range(len(chunks))]
-            collection.upsert(documents=chunks, ids=ids, metadatas=metadatas)
+            # Batched for the same reason as the upload path: Chroma caps records per Upsert
+            # action, and one call carrying every chunk of a large document is rejected
+            # whole. Unbatched, Alex could never ingest a document over ~300KB of text.
+            try:
+                for start in range(0, len(chunks), UPSERT_BATCH):
+                    end = start + UPSERT_BATCH
+                    collection.upsert(
+                        documents=chunks[start:end],
+                        ids=ids[start:end],
+                        metadatas=metadatas[start:end],
+                    )
+            except Exception as e:
+                # Named in the returned string rather than swallowed: this text is what the
+                # agent reads, and a document silently missing from the index is a gap it
+                # cannot see and will not mention.
+                ingested.append(f"{path.name} (FAILED: {e})")
+                continue
             ingested.append(path.name)
 
         return f"Ingested: {', '.join(ingested)}"
