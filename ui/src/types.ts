@@ -661,5 +661,7 @@ export interface Milestone {
   status: 'pending' | 'complete'
   notes: string
   sort_order: number
+  // When it was actually reached. Null while outstanding.
+  completed_at?: string | null
   created_at: string
 }

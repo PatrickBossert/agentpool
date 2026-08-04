@@ -3,10 +3,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  CheckCircle2, Circle, AlertTriangle, Clock, Plus, Trash2,
+  CheckCircle2, SquareCheckBig, Square, AlertTriangle, Clock, Plus, Trash2,
   ChevronDown, ChevronUp, RefreshCw, CalendarDays, Wand2, Ban, Pencil,
 } from 'lucide-react'
 import { milestonesApi, nonworkingApi, projectsApi } from '../../api/endpoints'
+import { daysLate } from '../../utils/milestones'
 import type { Milestone, NonWorkingRange } from '../../types'
 import {
   getPublicHolidays, formatDate, formatDateShort,
@@ -721,9 +722,10 @@ function MilestoneRow({
   const state      = milestoneState(m)
   const badgeCls   = STATE_BADGE[state]
   const isComplete = m.status === 'complete'
+  const late       = daysLate(m, excludedDates)
 
   const phaseLabel = (() => {
-    if (state === 'complete') return 'Complete'
+    if (state === 'complete') return 'Completed'
     if (!m.due_date || !prevDueDate) return countdownLabel(m, excludedDates)
     const wd = libWorkingDaysBetween(prevDueDate, m.due_date, excludedDates)
     if (wd <= 0) return 'Same day'
@@ -741,9 +743,11 @@ function MilestoneRow({
           className="mt-0.5 flex-shrink-0 transition-colors"
           aria-label={isComplete ? 'Mark pending' : 'Mark complete'}
         >
+          {/* A square: each milestone is ticked off on its own. A circle reads as a
+              radio, which implies choosing one of a set. */}
           {isComplete
-            ? <CheckCircle2 size={20} className="text-teal-500" />
-            : <Circle size={20} className="text-gray-300" />}
+            ? <SquareCheckBig size={20} className="text-teal-500" />
+            : <Square size={20} className="text-gray-300" />}
         </button>
 
         <div className="flex-1 min-w-0">
@@ -751,11 +755,22 @@ function MilestoneRow({
             <p className={`text-sm font-semibold leading-snug ${isComplete ? 'line-through text-gray-400' : 'text-gray-800'}`}>
               {m.title}
             </p>
-            {phaseLabel && (
-              <span className={`flex-shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badgeCls}`}>
-                {phaseLabel}
-              </span>
-            )}
+            <span className="flex-shrink-0 flex items-center gap-1">
+              {phaseLabel && (
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badgeCls}`}>
+                  {phaseLabel}
+                </span>
+              )}
+              {late !== null && (
+                <span
+                  data-testid={`milestone-late-${m.id}`}
+                  title={`Planned ${m.due_date}, completed ${m.completed_at}`}
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200"
+                >
+                  {late} day{late === 1 ? '' : 's'} late
+                </span>
+              )}
+            </span>
           </div>
 
           {m.description && (
