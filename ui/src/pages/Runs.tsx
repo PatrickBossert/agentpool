@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import StatusBadge from '../components/StatusBadge'
+import LineageView from '../components/LineageView'
 import { bcp47 } from '../utils/holidays'
 import type { OrchestrationRunHistory } from '../types'
 
@@ -72,6 +73,7 @@ function RunRow({ run, slug, locale = 'GB' }: { run: OrchestrationRunHistory; sl
 
 export default function Runs() {
   const { slug } = useParams<{ slug: string }>()
+  const [activeTab, setActiveTab] = useState<'runs' | 'lineage'>('runs')
 
   const { data: runs = [], isLoading } = useQuery({
     queryKey: ['runs', slug],
@@ -91,18 +93,40 @@ export default function Runs() {
     enabled: !!slug,
   })
 
+  const tabCls = (active: boolean) =>
+    `px-5 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
+      active ? 'text-brand border-brand' : 'text-gray-400 border-transparent hover:text-gray-700'
+    }`
+
   return (
     <div className="p-6 space-y-6">
-      <h2 className="text-lg font-semibold text-gray-900">Run History</h2>
-      {isLoading && <p className="text-sm text-gray-400">Loading…</p>}
-      {!isLoading && runs.length === 0 && (
-        <p className="text-sm text-gray-400">No pipeline runs yet.</p>
-      )}
-      <div className="space-y-3">
-        {runs.map((run) => (
-          <RunRow key={run.id} run={run} slug={slug!} locale={settings?.locale} />
-        ))}
+      <div className="border-b border-gray-200">
+        <h2 className="text-lg font-semibold text-gray-900 mb-3">Run History</h2>
+        <div className="flex">
+          <button onClick={() => setActiveTab('runs')} className={tabCls(activeTab === 'runs')}>
+            Runs
+          </button>
+          <button onClick={() => setActiveTab('lineage')} className={tabCls(activeTab === 'lineage')}>
+            Lineage
+          </button>
+        </div>
       </div>
+
+      {activeTab === 'runs' && (
+        <>
+          {isLoading && <p className="text-sm text-gray-400">Loading…</p>}
+          {!isLoading && runs.length === 0 && (
+            <p className="text-sm text-gray-400">No pipeline runs yet.</p>
+          )}
+          <div className="space-y-3">
+            {runs.map((run) => (
+              <RunRow key={run.id} run={run} slug={slug!} locale={settings?.locale} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'lineage' && slug && <LineageView slug={slug} />}
     </div>
   )
 }

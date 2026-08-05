@@ -667,6 +667,27 @@ export interface PamReport {
   doc_count: number
 }
 
+export interface LineageOutput {
+  id: number
+  agent_name: string
+  output_type: string
+  version: number
+  is_current: number
+  state: 'fresh' | 'stale' | 'unknown'
+  behind: { output_type: string; built_from: number; approved: number }[]
+  input_output_ids: number[]
+  document_ids: number[]
+}
+
+export interface LineageResponse {
+  outputs: LineageOutput[]
+  documents: Record<string, string>
+  blocked_writes: {
+    id: number; agent_name: string; key: string; owner: string | null
+    reason: string; attempted_at: string
+  }[]
+}
+
 export interface Milestone {
   id: number
   slug: string

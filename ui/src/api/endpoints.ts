@@ -21,6 +21,7 @@ import type {
   StakeholderAssignment,
   Milestone,
   PamReport,
+  LineageResponse,
 } from '../types'
 
 export const authApi = {
@@ -163,6 +164,9 @@ export const projectsApi = {
     form.append('file', file)
     return apiClient.post<{ url: string }>(`/projects/${slug}/branding/image`, form).then((r) => r.data)
   },
+
+  lineage: (slug: string): Promise<LineageResponse> =>
+    apiClient.get<LineageResponse>(`/projects/${slug}/lineage`).then((r) => r.data),
 }
 
 export const skillNotesApi = {
