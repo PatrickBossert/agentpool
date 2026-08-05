@@ -34,3 +34,43 @@ async def fetch_lineage(conn, *, project_id: int) -> list[dict]:
         output["input_output_ids"] = sorted(by_output.get(output["output_id"], []))
         output["document_ids"] = sorted(docs.get(output["output_id"], []))
     return outputs
+
+
+def staleness(outputs: list[dict], approvals: dict[str, int]) -> dict[int, dict]:
+    """Which outputs have been overtaken by a newer approved input.
+
+    `approvals` maps output_type to the highest approved version. Measured against approval
+    rather than the newest write: agents write several versions inside one run, and those are
+    working state rather than deliverables.
+
+    An output with no recorded ancestry is `unknown`, never `fresh` - outputs written before
+    lineage existed know nothing about their inputs, and claiming freshness for them would
+    assert something nothing knows.
+    """
+    by_id = {o["id"]: o for o in outputs}
+    result: dict[int, dict] = {}
+
+    for output in outputs:
+        inputs = output.get("input_output_ids") or []
+        if not inputs:
+            result[output["id"]] = {"state": "unknown", "behind": []}
+            continue
+
+        behind = []
+        for input_id in inputs:
+            source = by_id.get(input_id)
+            if source is None:
+                continue
+            approved = approvals.get(source["output_type"])
+            if approved is not None and approved > source["version"]:
+                behind.append({
+                    "output_type": source["output_type"],
+                    "built_from": source["version"],
+                    "approved": approved,
+                })
+
+        result[output["id"]] = {
+            "state": "stale" if behind else "fresh",
+            "behind": behind,
+        }
+    return result
