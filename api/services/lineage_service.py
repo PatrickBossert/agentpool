@@ -74,3 +74,13 @@ def staleness(outputs: list[dict], approvals: dict[str, int]) -> dict[int, dict]
             "behind": behind,
         }
     return result
+
+
+async def approved_versions(conn, *, project_id: int) -> dict[str, int]:
+    """The highest approved version per output type."""
+    async with conn.execute(
+        "SELECT output_type, MAX(version) FROM agent_outputs"
+        " WHERE project_id=? AND review_status='approved' GROUP BY output_type",
+        (project_id,),
+    ) as cur:
+        return {row[0]: row[1] async for row in cur}
