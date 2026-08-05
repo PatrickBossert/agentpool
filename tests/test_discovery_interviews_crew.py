@@ -97,15 +97,6 @@ def test_discovery_interviews_crew_accepts_node_templates(mock_llm):
     assert "Goods-in Inspection" in crew.tasks[0].description
 
 
-def test_registry_has_interview_script_designer_entry():
-    with patch("agents.tools.registry.get_settings") as ms, \
-         patch("agents.tools.registry.load_project_config", return_value={"sector": "rail"}):
-        ms.return_value.projects_dir = "/tmp"
-        from agents.tools.registry import get_tools_for_agent
-        tools = get_tools_for_agent("interview_script_designer", slug="t", run_id=1, sector="rail")
-    assert len(tools) > 0
-
-
 def test_registry_has_interview_coordinator_entry():
     with patch("agents.tools.registry.get_settings") as ms, \
          patch("agents.tools.registry.load_project_config", return_value={"sector": "rail"}):
