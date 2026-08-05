@@ -1714,6 +1714,55 @@ async def fetch_outputs_by_type(
         return [dict(r) async for r in cur]
 
 
+async def prune_output_types(
+    conn: aiosqlite.Connection, *, project_id: int, output_types: list[str]
+) -> dict:
+    """Delete every agent_outputs row of the given types, with its dependent rows.
+
+    Returns {"deleted": int, "file_paths": [...]}. The paths are collected before the
+    delete, because afterwards there is nothing left to ask - the caller archives them.
+
+    Dependents must go first. agent_outputs is referenced by human_reviews,
+    approval_commit_outputs, output_changes, run_inputs, output_lineage on BOTH of its
+    columns, and output_citations, and get_connection enables foreign key enforcement, so
+    a bare delete raises. Missing input_output_id would leave the commoner case broken:
+    a doomed row is more often something else was built from than something that built.
+    """
+    if not output_types:
+        return {"deleted": 0, "file_paths": []}
+
+    marks = ",".join("?" * len(output_types))
+    params = (project_id, *output_types)
+
+    async with conn.execute(
+        f"SELECT DISTINCT file_path FROM agent_outputs"
+        f" WHERE project_id=? AND output_type IN ({marks})",
+        params,
+    ) as cur:
+        file_paths = [row[0] async for row in cur]
+
+    doomed = (
+        f"SELECT id FROM agent_outputs WHERE project_id=? AND output_type IN ({marks})"
+    )
+    for table, column in (
+        ("human_reviews", "output_id"),
+        ("approval_commit_outputs", "output_id"),
+        ("output_changes", "output_id"),
+        ("run_inputs", "output_id"),
+        ("output_lineage", "output_id"),
+        ("output_lineage", "input_output_id"),
+        ("output_citations", "output_id"),
+    ):
+        await conn.execute(f"DELETE FROM {table} WHERE {column} IN ({doomed})", params)
+
+    cur = await conn.execute(
+        f"DELETE FROM agent_outputs WHERE project_id=? AND output_type IN ({marks})",
+        params,
+    )
+    await conn.commit()
+    return {"deleted": cur.rowcount, "file_paths": file_paths}
+
+
 async def update_crew_run_status(
     conn: aiosqlite.Connection,
     *,
