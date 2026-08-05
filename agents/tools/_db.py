@@ -97,10 +97,13 @@ def insert_agent_output_sync(
         if not row:
             raise ValueError(f"Project not found: {slug}")
         project_id = row[0]
+        # Scoped per (project, output_type) to match the filename, which carries no agent.
+        # Scoping the version per agent while the filename ignored the agent is what let one
+        # agent's v1 land on another's.
         max_ver = conn.execute(
             "SELECT MAX(version) FROM agent_outputs"
-            " WHERE project_id=? AND agent_name=? AND output_type=?",
-            (project_id, agent_name, output_type),
+            " WHERE project_id=? AND output_type=?",
+            (project_id, output_type),
         ).fetchone()[0]
         version = (max_ver or 0) + 1
 
@@ -118,8 +121,8 @@ def insert_agent_output_sync(
         # Mark all previous versions of this output as superseded
         conn.execute(
             "UPDATE agent_outputs SET is_current=0"
-            " WHERE project_id=? AND agent_name=? AND output_type=?",
-            (project_id, agent_name, output_type),
+            " WHERE project_id=? AND output_type=?",
+            (project_id, output_type),
         )
         cur = conn.execute(
             "INSERT INTO agent_outputs"
