@@ -1365,10 +1365,41 @@ async def revert_to_version(
         (project_id, agent_name, output_type, target_version),
     ) as cur:
         deleted_paths = [r["file_path"] for r in await cur.fetchall()]
-    # Delete human_reviews referencing the newer outputs first to satisfy the FK constraint,
-    # then hard-delete the agent_outputs rows themselves.
+    # Delete human_reviews, run_inputs, output_lineage and output_citations rows referencing
+    # the newer outputs first to satisfy the FK constraint, then hard-delete the agent_outputs
+    # rows themselves. output_lineage is scoped on both output_id and input_output_id, since a
+    # doomed output can be the thing built (output_id) or a thing something else was built from
+    # (input_output_id).
     await conn.execute(
         """DELETE FROM human_reviews WHERE output_id IN (
+               SELECT id FROM agent_outputs
+               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+           )""",
+        (project_id, agent_name, output_type, target_version),
+    )
+    await conn.execute(
+        """DELETE FROM run_inputs WHERE output_id IN (
+               SELECT id FROM agent_outputs
+               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+           )""",
+        (project_id, agent_name, output_type, target_version),
+    )
+    await conn.execute(
+        """DELETE FROM output_lineage WHERE output_id IN (
+               SELECT id FROM agent_outputs
+               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+           )""",
+        (project_id, agent_name, output_type, target_version),
+    )
+    await conn.execute(
+        """DELETE FROM output_lineage WHERE input_output_id IN (
+               SELECT id FROM agent_outputs
+               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+           )""",
+        (project_id, agent_name, output_type, target_version),
+    )
+    await conn.execute(
+        """DELETE FROM output_citations WHERE output_id IN (
                SELECT id FROM agent_outputs
                WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
            )""",
