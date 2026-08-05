@@ -700,6 +700,38 @@ async def _migrate_agent_chat_history(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_blocked_writes(conn: aiosqlite.Connection) -> None:
+    """Writes an agent attempted and was not permitted to make.
+
+    The attempted payload is deliberately not stored - it can be large, and the useful fact
+    is that the reach happened, by whom, and for what.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS blocked_writes (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id   INTEGER NOT NULL REFERENCES projects(id),
+            run_id       INTEGER,
+            agent_name   TEXT NOT NULL,
+            key          TEXT NOT NULL,
+            owner        TEXT,
+            reason       TEXT NOT NULL,
+            attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
+async def fetch_blocked_writes(
+    conn: aiosqlite.Connection, *, run_id: int | None = None
+) -> list[dict]:
+    where = " WHERE run_id = ?" if run_id is not None else ""
+    params = (run_id,) if run_id is not None else ()
+    async with conn.execute(
+        f"SELECT * FROM blocked_writes{where} ORDER BY id DESC", params
+    ) as cur:
+        return [dict(row) async for row in cur]
+
+
 async def get_stakeholder_node_assignments(
     conn: aiosqlite.Connection, project_id: int
 ) -> list[dict]:
@@ -989,6 +1021,7 @@ async def get_connection(slug: str):
         await _migrate_nonworking_ranges(conn)
         await _migrate_stakeholder_node_assignments(conn)
         await _migrate_agent_chat_history(conn)
+        await _migrate_blocked_writes(conn)
         yield conn
 
 

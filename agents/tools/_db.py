@@ -131,6 +131,21 @@ def insert_agent_output_sync(
         return cur.lastrowid
 
 
+def record_blocked_write_sync(
+    slug: str, run_id: int, agent_name: str, key: str, owner: str | None, reason: str
+) -> None:
+    """Best-effort. The refusal is the load-bearing half; if this fails the write is still
+    refused, and losing the record is better than letting the write through."""
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        project_id = get_project_id(slug)
+        conn.execute(
+            "INSERT INTO blocked_writes (project_id, run_id, agent_name, key, owner, reason)"
+            " VALUES (?,?,?,?,?,?)",
+            (project_id, run_id or None, agent_name, key, owner, reason),
+        )
+        conn.commit()
+
+
 def insert_hitl_review(slug: str, run_id: int, prompt: str) -> int:
     """Insert a human_reviews record with decision='pending'. Returns review_id.
 

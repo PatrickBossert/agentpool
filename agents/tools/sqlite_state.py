@@ -5,8 +5,12 @@ from typing import Callable
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from api.config import get_settings
-from agents.tools._db import insert_agent_output_sync, latest_output_path
-from agents.tools.ownership import check_write
+from agents.tools._db import (
+    insert_agent_output_sync,
+    latest_output_path,
+    record_blocked_write_sync,
+)
+from agents.tools.ownership import OUTPUT_OWNERS, check_write
 
 
 # Keys whose content is checked before it is stored. The tool returns a string and CrewAI
@@ -174,6 +178,7 @@ class SQLiteStateTool(BaseTool):
     args_schema: type[BaseModel] = SQLiteStateToolInput
     slug: str
     agent_name: str = ""
+    run_id: int = 0
 
     def _run(
         self,
@@ -198,6 +203,13 @@ class SQLiteStateTool(BaseTool):
                 )
             refusal = check_write(key, identity)
             if refusal:
+                try:
+                    record_blocked_write_sync(
+                        self.slug, self.run_id, identity, key,
+                        OUTPUT_OWNERS.get(key), refusal,
+                    )
+                except Exception:
+                    pass  # never let bookkeeping turn a refusal into a permitted write
                 return refusal
             try:
                 parsed = json.loads(value)
