@@ -729,18 +729,26 @@ async def _migrate_lineage(conn: aiosqlite.Connection) -> None:
     means a run's reads survive a process restart mid-run, and the edges do not depend on
     anything being held in memory.
     """
+    # run_id alone used to be the key on run_inputs/run_documents. A crew run spans several
+    # agents (discovery_mapping runs value_chain_mapper and value_lever_analyst), so that key
+    # let a read made by one agent attach to an output a different agent wrote later in the
+    # same run. agent_name is part of the key here so a fresh database gets the right shape
+    # directly; _migrate_run_inputs_agent_scope below rebuilds any database that already has
+    # these tables under the old, run-only key - CREATE TABLE IF NOT EXISTS does nothing there.
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS run_inputs (
-            run_id    INTEGER NOT NULL,
-            output_id INTEGER NOT NULL REFERENCES agent_outputs(id),
-            PRIMARY KEY (run_id, output_id)
+            run_id     INTEGER NOT NULL,
+            agent_name TEXT NOT NULL DEFAULT '',
+            output_id  INTEGER NOT NULL REFERENCES agent_outputs(id),
+            PRIMARY KEY (run_id, agent_name, output_id)
         )
     """)
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS run_documents (
-            run_id INTEGER NOT NULL,
-            doc_id INTEGER NOT NULL REFERENCES client_documents(id),
-            PRIMARY KEY (run_id, doc_id)
+            run_id     INTEGER NOT NULL,
+            agent_name TEXT NOT NULL DEFAULT '',
+            doc_id     INTEGER NOT NULL REFERENCES client_documents(id),
+            PRIMARY KEY (run_id, agent_name, doc_id)
         )
     """)
     await conn.execute("""
@@ -757,6 +765,53 @@ async def _migrate_lineage(conn: aiosqlite.Connection) -> None:
             PRIMARY KEY (output_id, doc_id)
         )
     """)
+    await conn.commit()
+
+
+async def _migrate_run_inputs_agent_scope(conn: aiosqlite.Connection) -> None:
+    """Rebuild run_inputs/run_documents onto (run_id, agent_name, *) if they predate it.
+
+    CREATE TABLE IF NOT EXISTS in _migrate_lineage does nothing to a database where the
+    table already exists under the old two-column key - SQLite cannot change a primary key
+    via ALTER TABLE. Detect the old shape by the absence of the agent_name column and rebuild,
+    the same way _migrate_human_reviews rebuilds to drop a NOT NULL constraint. Existing rows
+    are carried over with agent_name='' rather than dropped: both tables were empty in every
+    database this shipped against, but a rebuild must not assume that of every database.
+    """
+    async with conn.execute("PRAGMA table_info(run_inputs)") as cur:
+        cols = {row["name"] async for row in cur}
+    if cols and "agent_name" not in cols:
+        await conn.executescript("""
+            DROP TABLE IF EXISTS run_inputs_new;
+            CREATE TABLE run_inputs_new (
+                run_id     INTEGER NOT NULL,
+                agent_name TEXT NOT NULL DEFAULT '',
+                output_id  INTEGER NOT NULL REFERENCES agent_outputs(id),
+                PRIMARY KEY (run_id, agent_name, output_id)
+            );
+            INSERT INTO run_inputs_new (run_id, agent_name, output_id)
+                SELECT run_id, '', output_id FROM run_inputs;
+            DROP TABLE run_inputs;
+            ALTER TABLE run_inputs_new RENAME TO run_inputs;
+        """)
+
+    async with conn.execute("PRAGMA table_info(run_documents)") as cur:
+        cols = {row["name"] async for row in cur}
+    if cols and "agent_name" not in cols:
+        await conn.executescript("""
+            DROP TABLE IF EXISTS run_documents_new;
+            CREATE TABLE run_documents_new (
+                run_id     INTEGER NOT NULL,
+                agent_name TEXT NOT NULL DEFAULT '',
+                doc_id     INTEGER NOT NULL REFERENCES client_documents(id),
+                PRIMARY KEY (run_id, agent_name, doc_id)
+            );
+            INSERT INTO run_documents_new (run_id, agent_name, doc_id)
+                SELECT run_id, '', doc_id FROM run_documents;
+            DROP TABLE run_documents;
+            ALTER TABLE run_documents_new RENAME TO run_documents;
+        """)
+
     await conn.commit()
 
 
@@ -1062,6 +1117,7 @@ async def get_connection(slug: str):
         await _migrate_agent_chat_history(conn)
         await _migrate_blocked_writes(conn)
         await _migrate_lineage(conn)
+        await _migrate_run_inputs_agent_scope(conn)
         yield conn
 
 

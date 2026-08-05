@@ -244,7 +244,7 @@ class SQLiteStateTool(BaseTool):
             except (OSError, ValueError) as e:
                 return f"Error: write failed — {e}"
             try:
-                link_output_sync(self.slug, self.run_id, new_output_id)
+                link_output_sync(self.slug, self.run_id, self.agent_name, new_output_id)
             except Exception:
                 # The write already landed - both the file and its agent_outputs row are
                 # durable by this point. Letting this raise would tell the agent the write
@@ -262,7 +262,8 @@ class SQLiteStateTool(BaseTool):
                 return f"Error: no state found for key '{key}'"
             try:
                 record_run_input_sync(
-                    self.slug, self.run_id, output_id_for_path_sync(self.slug, str(stored))
+                    self.slug, self.run_id, self.agent_name,
+                    output_id_for_path_sync(self.slug, str(stored)),
                 )
             except Exception:
                 # A read must never fail because its bookkeeping did - the agent needs

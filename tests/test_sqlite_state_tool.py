@@ -34,12 +34,12 @@ def state_project(tmp_path):
     )
     # Lineage bookkeeping tables link_output_sync writes to on every successful write.
     conn.execute(
-        "CREATE TABLE run_inputs (run_id INTEGER, output_id INTEGER,"
-        " PRIMARY KEY (run_id, output_id))"
+        "CREATE TABLE run_inputs (run_id INTEGER, agent_name TEXT, output_id INTEGER,"
+        " PRIMARY KEY (run_id, agent_name, output_id))"
     )
     conn.execute(
-        "CREATE TABLE run_documents (run_id INTEGER, doc_id INTEGER,"
-        " PRIMARY KEY (run_id, doc_id))"
+        "CREATE TABLE run_documents (run_id INTEGER, agent_name TEXT, doc_id INTEGER,"
+        " PRIMARY KEY (run_id, agent_name, doc_id))"
     )
     conn.execute(
         "CREATE TABLE output_lineage (output_id INTEGER, input_output_id INTEGER,"

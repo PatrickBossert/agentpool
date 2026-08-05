@@ -99,6 +99,7 @@ class ChromaQueryTool(BaseTool):
     slug: str
     sector: str
     run_id: int = 0
+    agent_name: str = ""
 
     def _run(
         self,
@@ -138,7 +139,7 @@ class ChromaQueryTool(BaseTool):
         try:
             doc_ids = {m.get("doc_id") for m in metas if m and m.get("doc_id") is not None}
             for doc_id in doc_ids:
-                record_run_document_sync(self.slug, self.run_id, doc_id)
+                record_run_document_sync(self.slug, self.run_id, self.agent_name, doc_id)
         except Exception:
             # A retrieval must never fail because its bookkeeping did - the agent needs
             # the chunks, and a missing citation edge degrades the graph rather than the run.

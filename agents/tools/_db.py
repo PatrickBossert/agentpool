@@ -149,47 +149,52 @@ def record_blocked_write_sync(
         conn.commit()
 
 
-def record_run_input_sync(slug: str, run_id: int, output_id: int) -> None:
+def record_run_input_sync(slug: str, run_id: int, agent_name: str, output_id: int) -> None:
     if not run_id or not output_id:
         return
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO run_inputs (run_id, output_id) VALUES (?,?)",
-            (run_id, output_id),
+            "INSERT OR IGNORE INTO run_inputs (run_id, agent_name, output_id) VALUES (?,?,?)",
+            (run_id, agent_name, output_id),
         )
         conn.commit()
 
 
-def record_run_document_sync(slug: str, run_id: int, doc_id: int) -> None:
+def record_run_document_sync(slug: str, run_id: int, agent_name: str, doc_id: int) -> None:
     if not run_id or not doc_id:
         return
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO run_documents (run_id, doc_id) VALUES (?,?)",
-            (run_id, doc_id),
+            "INSERT OR IGNORE INTO run_documents (run_id, agent_name, doc_id) VALUES (?,?,?)",
+            (run_id, agent_name, doc_id),
         )
         conn.commit()
 
 
-def link_output_sync(slug: str, run_id: int, output_id: int) -> None:
-    """Link a new output to everything its run has read SO FAR.
+def link_output_sync(slug: str, run_id: int, agent_name: str, output_id: int) -> None:
+    """Link a new output to what its OWN writing agent has read SO FAR in this run.
 
-    Taken at write time rather than at run end: a read that happens afterwards belongs to
-    whatever is written next, and attaching it here would claim this output was built from
-    something that did not exist when it was made.
+    Scoped by agent_name as well as run_id: a crew run spans several agents
+    (discovery_mapping runs value_chain_mapper and value_lever_analyst; discovery_interviews
+    runs three), so a read recorded under run_id alone would attach to whatever any agent in
+    the run writes next - not just the agent that actually made the read. Taken at write time
+    rather than at run end: a read that happens afterwards belongs to whatever is written
+    next, and attaching it here would claim this output was built from something that did
+    not exist when it was made.
     """
     if not output_id:
         return
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
         conn.execute(
             "INSERT OR IGNORE INTO output_lineage (output_id, input_output_id)"
-            " SELECT ?, output_id FROM run_inputs WHERE run_id=? AND output_id != ?",
-            (output_id, run_id, output_id),
+            " SELECT ?, output_id FROM run_inputs"
+            " WHERE run_id=? AND agent_name=? AND output_id != ?",
+            (output_id, run_id, agent_name, output_id),
         )
         conn.execute(
             "INSERT OR IGNORE INTO output_citations (output_id, doc_id)"
-            " SELECT ?, doc_id FROM run_documents WHERE run_id=?",
-            (output_id, run_id),
+            " SELECT ?, doc_id FROM run_documents WHERE run_id=? AND agent_name=?",
+            (output_id, run_id, agent_name),
         )
         conn.commit()
 

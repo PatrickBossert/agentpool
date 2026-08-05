@@ -35,23 +35,47 @@ async def _output(conn, agent, output_type, version, is_current=1):
 
 
 @pytest.mark.asyncio
-async def test_an_output_links_to_every_input_its_run_read(project):
+async def test_an_output_links_to_every_input_the_same_agent_read(project):
     from agents.tools._db import link_output_sync, record_run_input_sync
 
     async with get_connection(SLUG) as conn:
         model = await _output(conn, "value_chain_mapper", "value_chain_model", 8)
         levers = await _output(conn, "value_lever_analyst", "value_levers", 2)
 
-    record_run_input_sync(SLUG, 20, model)
-    record_run_input_sync(SLUG, 20, levers)
+    record_run_input_sync(SLUG, 20, "interaction_designer", model)
+    record_run_input_sync(SLUG, 20, "interaction_designer", levers)
 
     async with get_connection(SLUG) as conn:
         scripts = await _output(conn, "interaction_designer", "interview_scripts", 5)
-    link_output_sync(SLUG, 20, scripts)
+    link_output_sync(SLUG, 20, "interaction_designer", scripts)
 
     async with get_connection(SLUG) as conn:
         rows = {r["output_id"]: r for r in await fetch_lineage(conn, project_id=1)}
     assert sorted(rows[scripts]["input_output_ids"]) == sorted([model, levers])
+
+
+@pytest.mark.asyncio
+async def test_a_read_by_one_agent_does_not_attach_to_another_agents_write(project):
+    """A crew run spans several agents - discovery_mapping runs value_chain_mapper and
+    value_lever_analyst under one run_id. Alex (value_chain_mapper) reads the value chain
+    model early in the run; Morgan (value_lever_analyst) writes value_levers later in the
+    SAME run. Morgan's output must not be recorded as built from a read she never made -
+    that is what made every value_levers row in sp-gs-am look stale on every later value
+    chain approval, for a read Morgan never performed."""
+    from agents.tools._db import link_output_sync, record_run_input_sync
+
+    async with get_connection(SLUG) as conn:
+        model = await _output(conn, "value_chain_mapper", "value_chain_model", 8)
+
+    record_run_input_sync(SLUG, 25, "value_chain_mapper", model)
+
+    async with get_connection(SLUG) as conn:
+        levers = await _output(conn, "value_lever_analyst", "value_levers", 2)
+    link_output_sync(SLUG, 25, "value_lever_analyst", levers)
+
+    async with get_connection(SLUG) as conn:
+        rows = {r["output_id"]: r for r in await fetch_lineage(conn, project_id=1)}
+    assert rows[levers]["input_output_ids"] == []
 
 
 @pytest.mark.asyncio
@@ -62,7 +86,7 @@ async def test_rows_carry_both_id_and_output_id(project):
 
     async with get_connection(SLUG) as conn:
         levers = await _output(conn, "value_lever_analyst", "value_levers", 2)
-    link_output_sync(SLUG, 24, levers)
+    link_output_sync(SLUG, 24, "value_lever_analyst", levers)
 
     async with get_connection(SLUG) as conn:
         rows = await fetch_lineage(conn, project_id=1)
@@ -76,12 +100,12 @@ async def test_reading_the_same_input_twice_makes_one_edge(project):
 
     async with get_connection(SLUG) as conn:
         model = await _output(conn, "value_chain_mapper", "value_chain_model", 8)
-    record_run_input_sync(SLUG, 21, model)
-    record_run_input_sync(SLUG, 21, model)
+    record_run_input_sync(SLUG, 21, "interaction_designer", model)
+    record_run_input_sync(SLUG, 21, "interaction_designer", model)
 
     async with get_connection(SLUG) as conn:
         scripts = await _output(conn, "interaction_designer", "interview_scripts", 6)
-    link_output_sync(SLUG, 21, scripts)
+    link_output_sync(SLUG, 21, "interaction_designer", scripts)
 
     async with get_connection(SLUG) as conn:
         rows = {r["output_id"]: r for r in await fetch_lineage(conn, project_id=1)}
@@ -96,7 +120,7 @@ async def test_an_output_that_read_nothing_has_no_ancestry(project):
 
     async with get_connection(SLUG) as conn:
         levers = await _output(conn, "value_lever_analyst", "value_levers", 2)
-    link_output_sync(SLUG, 22, levers)
+    link_output_sync(SLUG, 22, "value_lever_analyst", levers)
 
     async with get_connection(SLUG) as conn:
         rows = {r["output_id"]: r for r in await fetch_lineage(conn, project_id=1)}
@@ -115,12 +139,37 @@ async def test_documents_retrieved_are_recorded_as_citations(project):
         await conn.commit()
         levers = await _output(conn, "value_lever_analyst", "value_levers", 2)
 
-    record_run_document_sync(SLUG, 22, 3)
-    link_output_sync(SLUG, 22, levers)
+    record_run_document_sync(SLUG, 22, "value_lever_analyst", 3)
+    link_output_sync(SLUG, 22, "value_lever_analyst", levers)
 
     async with get_connection(SLUG) as conn:
         rows = {r["output_id"]: r for r in await fetch_lineage(conn, project_id=1)}
     assert rows[levers]["document_ids"] == [3]
+
+
+@pytest.mark.asyncio
+async def test_a_document_retrieved_by_one_agent_does_not_cite_on_another_agents_write(project):
+    """Same defect, same fix, for citations: run_documents was scoped by run_id alone, so
+    link_output_sync built output_citations from every document any agent in the run had
+    retrieved - not just the writing agent's own retrievals."""
+    from agents.tools._db import link_output_sync, record_run_document_sync
+
+    async with get_connection(SLUG) as conn:
+        await conn.execute(
+            "INSERT INTO client_documents (id, project_id, filename, original_name,"
+            " file_path, content_type, size_bytes) VALUES (4,1,'h.pdf','Annual.pdf','x','p',1)"
+        )
+        await conn.commit()
+
+    record_run_document_sync(SLUG, 26, "synthesis_analyst", 4)
+
+    async with get_connection(SLUG) as conn:
+        levers = await _output(conn, "value_lever_analyst", "value_levers", 3)
+    link_output_sync(SLUG, 26, "value_lever_analyst", levers)
+
+    async with get_connection(SLUG) as conn:
+        rows = {r["output_id"]: r for r in await fetch_lineage(conn, project_id=1)}
+    assert rows[levers]["document_ids"] == []
 
 
 @pytest.mark.asyncio
@@ -129,24 +178,24 @@ async def test_a_later_read_does_not_attach_to_an_earlier_write(project):
     ever wrote would claim an output was built from something written after it.
 
     An unrelated run (99) reads something before this test's own run (23) even starts, so
-    run_inputs is non-empty at the moment link_output_sync(SLUG, 23, first) is called. Without
-    that row present, a broken WHERE clause that ignored run_id entirely would still find
-    nothing to wrongly attach - an empty table looks correct whether the scoping is right or
-    not - so this row is what makes the assertion below actually distinguish the two.
+    run_inputs is non-empty at the moment link_output_sync(SLUG, 23, ..., first) is called.
+    Without that row present, a broken WHERE clause that ignored run_id entirely would still
+    find nothing to wrongly attach - an empty table looks correct whether the scoping is
+    right or not - so this row is what makes the assertion below actually distinguish the two.
     """
     from agents.tools._db import link_output_sync, record_run_input_sync
 
     async with get_connection(SLUG) as conn:
         other_run_input = await _output(conn, "value_chain_mapper", "value_chain_model", 10)
-    record_run_input_sync(SLUG, 99, other_run_input)
+    record_run_input_sync(SLUG, 99, "interaction_designer", other_run_input)
 
     async with get_connection(SLUG) as conn:
         first = await _output(conn, "interaction_designer", "interview_scripts", 7)
-    link_output_sync(SLUG, 23, first)
+    link_output_sync(SLUG, 23, "interaction_designer", first)
 
     async with get_connection(SLUG) as conn:
         model = await _output(conn, "value_chain_mapper", "value_chain_model", 9)
-    record_run_input_sync(SLUG, 23, model)
+    record_run_input_sync(SLUG, 23, "interaction_designer", model)
 
     async with get_connection(SLUG) as conn:
         rows = {r["output_id"]: r for r in await fetch_lineage(conn, project_id=1)}
