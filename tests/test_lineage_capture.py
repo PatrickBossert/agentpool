@@ -55,6 +55,22 @@ async def test_an_output_links_to_every_input_its_run_read(project):
 
 
 @pytest.mark.asyncio
+async def test_rows_carry_both_id_and_output_id(project):
+    """Task 4's tests index by output_id; the staleness rule downstream indexes by id.
+    Both must be present, and they must agree."""
+    from agents.tools._db import link_output_sync
+
+    async with get_connection(SLUG) as conn:
+        levers = await _output(conn, "value_lever_analyst", "value_levers", 2)
+    link_output_sync(SLUG, 24, levers)
+
+    async with get_connection(SLUG) as conn:
+        rows = await fetch_lineage(conn, project_id=1)
+    row = next(r for r in rows if r["output_id"] == levers)
+    assert row["id"] == row["output_id"] == levers
+
+
+@pytest.mark.asyncio
 async def test_reading_the_same_input_twice_makes_one_edge(project):
     from agents.tools._db import link_output_sync, record_run_input_sync
 
@@ -110,8 +126,19 @@ async def test_documents_retrieved_are_recorded_as_citations(project):
 @pytest.mark.asyncio
 async def test_a_later_read_does_not_attach_to_an_earlier_write(project):
     """Links are taken at write time. Attaching everything a run ever read to everything it
-    ever wrote would claim an output was built from something written after it."""
+    ever wrote would claim an output was built from something written after it.
+
+    An unrelated run (99) reads something before this test's own run (23) even starts, so
+    run_inputs is non-empty at the moment link_output_sync(SLUG, 23, first) is called. Without
+    that row present, a broken WHERE clause that ignored run_id entirely would still find
+    nothing to wrongly attach - an empty table looks correct whether the scoping is right or
+    not - so this row is what makes the assertion below actually distinguish the two.
+    """
     from agents.tools._db import link_output_sync, record_run_input_sync
+
+    async with get_connection(SLUG) as conn:
+        other_run_input = await _output(conn, "value_chain_mapper", "value_chain_model", 10)
+    record_run_input_sync(SLUG, 99, other_run_input)
 
     async with get_connection(SLUG) as conn:
         first = await _output(conn, "interaction_designer", "interview_scripts", 7)

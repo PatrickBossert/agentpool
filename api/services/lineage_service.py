@@ -5,9 +5,13 @@ from __future__ import annotations
 
 async def fetch_lineage(conn, *, project_id: int) -> list[dict]:
     """One row per output, with its state ancestry and its cited documents."""
+    # Both id and output_id carry the same value: this task's own tests index rows by
+    # output_id, while the staleness rule (Task 5) and the endpoint that serves it (Task 6)
+    # index by id. Carrying both is what lets each read naturally without either being
+    # rewritten.
     async with conn.execute(
-        "SELECT id AS output_id, agent_name, output_type, version, is_current, review_status,"
-        " created_at FROM agent_outputs WHERE project_id=? ORDER BY id",
+        "SELECT id, id AS output_id, agent_name, output_type, version, is_current,"
+        " review_status, created_at FROM agent_outputs WHERE project_id=? ORDER BY id",
         (project_id,),
     ) as cur:
         outputs = [dict(row) async for row in cur]
