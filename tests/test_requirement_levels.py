@@ -80,11 +80,13 @@ def test_no_output_key_has_two_writers():
     """The general form. A key two agents write is a slot whose contents depend on run order,
     and the loser's work is destroyed with no error anywhere.
 
-    Scoped to agents some crew actually dispatches. `interview_script_designer` also writes
-    `interview_scripts`, but it is Maya's predecessor - present in the tool registry and in no
-    crew - so nothing runs it and it cannot collide with anything at runtime. Naming the
-    exclusion here rather than filtering it silently: if that module is ever wired into a crew,
-    this test starts failing, which is the correct moment to notice.
+    Scoped to agents some crew actually dispatches, because the registry and the agent modules
+    on disk can hold names no crew ever runs, and a write from one of those cannot collide with
+    anything at runtime. `interview_script_designer` was one such name - Maya's predecessor,
+    present in the registry and dispatched by no crew - until it was deleted outright rather
+    than left as a trap. The scope is structural (`agents & DISPATCHED`), not a name-based skip
+    list, so it holds for whichever undispatched module turns up next: that is a different
+    problem for a different test to find, not a hole in this one.
     """
     collisions = {
         key: sorted(agents & DISPATCHED)
