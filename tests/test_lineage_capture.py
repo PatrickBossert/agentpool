@@ -151,3 +151,144 @@ async def test_a_later_read_does_not_attach_to_an_earlier_write(project):
     async with get_connection(SLUG) as conn:
         rows = {r["output_id"]: r for r in await fetch_lineage(conn, project_id=1)}
     assert rows[first]["input_output_ids"] == []
+
+
+# The tests above drive record_run_input_sync, record_run_document_sync and link_output_sync
+# directly - proving the bookkeeping is correct in isolation, but not that either tool actually
+# calls it. The three below go through SQLiteStateTool and ChromaQueryTool's public interface,
+# _run(), so a dropped run_id or a wrong id passed at the call site would fail here even if
+# every sync helper above stayed correct.
+
+
+@pytest.mark.asyncio
+async def test_a_tool_read_records_the_run_input(project):
+    """SQLiteStateTool's read branch, not the sync helper called directly, must record what
+    it served."""
+    from agents.tools._db import insert_agent_output_sync
+    from agents.tools.sqlite_state import SQLiteStateTool
+
+    outputs_dir = project / "projects" / SLUG / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    file_path = outputs_dir / "value_chain_model.json"
+    file_path.write_text('{"hello": "world"}')
+    model_id = insert_agent_output_sync(
+        SLUG, "value_chain_mapper", "value_chain_model", str(file_path)
+    )
+
+    tool = SQLiteStateTool(slug=SLUG, run_id=30)
+    result = tool._run(
+        operation="read", key="value_chain_model", agent_name="value_lever_analyst"
+    )
+    assert "hello" in result
+
+    async with get_connection(SLUG) as conn:
+        async with conn.execute(
+            "SELECT 1 FROM run_inputs WHERE run_id=? AND output_id=?", (30, model_id)
+        ) as cur:
+            row = await cur.fetchone()
+    assert row is not None
+
+
+@pytest.mark.asyncio
+async def test_a_tool_write_links_to_what_the_same_run_read(project):
+    """End to end: a read through the tool followed by a write through the tool, under the
+    same run, must produce a durable output_lineage edge - the path this task exists to build,
+    not just the sync helper that backs it."""
+    import json
+
+    from agents.tools._db import insert_agent_output_sync
+    from agents.tools.sqlite_state import SQLiteStateTool
+
+    outputs_dir = project / "projects" / SLUG / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    file_path = outputs_dir / "value_chain_model.json"
+    file_path.write_text('{"hello": "world"}')
+    model_id = insert_agent_output_sync(
+        SLUG, "value_chain_mapper", "value_chain_model", str(file_path)
+    )
+
+    tool = SQLiteStateTool(slug=SLUG, agent_name="value_lever_analyst", run_id=31)
+    tool._run(operation="read", key="value_chain_model", agent_name="value_lever_analyst")
+    write_result = tool._run(
+        operation="write", key="value_levers", agent_name="value_lever_analyst",
+        value=json.dumps([{"lever": "x"}]),
+    )
+    assert "Written to" in write_result
+
+    async with get_connection(SLUG) as conn:
+        async with conn.execute(
+            "SELECT id FROM agent_outputs WHERE output_type='value_levers'"
+        ) as cur:
+            levers_row = await cur.fetchone()
+        async with conn.execute(
+            "SELECT input_output_id FROM output_lineage WHERE output_id=?",
+            (levers_row["id"],),
+        ) as cur:
+            edges = [r[0] async for r in cur]
+    assert edges == [model_id]
+
+
+@pytest.mark.asyncio
+async def test_a_tool_query_records_the_run_document(project):
+    """ChromaQueryTool's own recording, not record_run_document_sync called directly, must
+    fire for a doc_id it actually serves."""
+    from unittest.mock import MagicMock, patch
+
+    from agents.tools.chroma_query import ChromaQueryTool
+
+    async with get_connection(SLUG) as conn:
+        await conn.execute(
+            "INSERT INTO client_documents (id, project_id, filename, original_name,"
+            " file_path, content_type, size_bytes) VALUES (7,1,'h.pdf','Report.pdf','x','p',1)"
+        )
+        await conn.commit()
+
+    col = MagicMock()
+    col.count.return_value = 1
+    col.query.return_value = {
+        "documents": [["Some retrieved text."]],
+        "metadatas": [[{"doc_id": 7, "chunk": 1}]],
+    }
+    client = MagicMock()
+    client.get_collection.return_value = col
+
+    tool = ChromaQueryTool(slug=SLUG, sector="utilities", run_id=40)
+    with patch("agents.tools.chroma_query.get_chroma_client", return_value=client), \
+         patch("agents.tools.chroma_query._chroma_reachable", return_value=True):
+        tool._run(query="asset condition", collection="project")
+
+    async with get_connection(SLUG) as conn:
+        async with conn.execute("SELECT run_id, doc_id FROM run_documents") as cur:
+            rows = [tuple(r) async for r in cur]
+    assert rows == [(40, 7)]
+
+
+@pytest.mark.asyncio
+async def test_a_tool_query_does_not_record_an_answer_id_as_a_run_document(project):
+    """answer_id and doc_id are different namespaces. run_documents has a foreign key into
+    client_documents, so an answer_id recorded there would be a dangling reference into the
+    wrong table."""
+    from unittest.mock import MagicMock, patch
+
+    from agents.tools.chroma_query import ChromaQueryTool
+
+    col = MagicMock()
+    col.count.return_value = 1
+    col.query.return_value = {
+        "documents": [["For compliance, yes."]],
+        "metadatas": [[{"answer_id": 812, "node_id": "1.2"}]],
+    }
+    client = MagicMock()
+    client.get_collection.return_value = col
+
+    tool = ChromaQueryTool(slug=SLUG, sector="utilities", run_id=41)
+    with patch("agents.tools.chroma_query.get_chroma_client", return_value=client), \
+         patch("agents.tools.chroma_query._chroma_reachable", return_value=True):
+        tool._run(query="asset record", collection="interviews")
+
+    async with get_connection(SLUG) as conn:
+        async with conn.execute(
+            "SELECT run_id, doc_id FROM run_documents WHERE run_id=41"
+        ) as cur:
+            rows = [tuple(r) async for r in cur]
+    assert rows == []

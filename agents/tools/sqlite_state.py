@@ -243,7 +243,14 @@ class SQLiteStateTool(BaseTool):
                 )
             except (OSError, ValueError) as e:
                 return f"Error: write failed — {e}"
-            link_output_sync(self.slug, self.run_id, new_output_id)
+            try:
+                link_output_sync(self.slug, self.run_id, new_output_id)
+            except Exception:
+                # The write already landed - both the file and its agent_outputs row are
+                # durable by this point. Letting this raise would tell the agent the write
+                # failed when it didn't, and it would write again, versioning a duplicate.
+                # A missing lineage edge is a smaller loss than that.
+                pass
             return f"Written to {file_path}"
 
         if operation == "read":
