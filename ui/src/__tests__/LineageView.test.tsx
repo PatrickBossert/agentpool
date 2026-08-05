@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import LineageView from '../components/LineageView'
+import { projectsApi } from '../api/endpoints'
 
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
@@ -49,11 +50,16 @@ describe('LineageView', () => {
     expect(screen.getByTestId('lineage-3')).toHaveTextContent(/v9/)
   })
 
-  it('does not mark an output with no ancestry as stale', async () => {
+  it('does not mark an output with no ancestry as stale, nor as current', async () => {
     // Morgan's levers have document ancestry and no state ancestry. Rendering that as stale
-    // would cry wolf on every document-driven output in the project.
+    // would cry wolf on every document-driven output in the project. Rendering it as fresh
+    // would be just as wrong the other way - "current" is a claim nothing here can back, so
+    // both directions are asserted rather than just the one a staleness regression would trip.
     render(<Wrapper />)
-    expect(await screen.findByTestId('lineage-4')).not.toHaveTextContent(/stale/i)
+    const row = await screen.findByTestId('lineage-4')
+    expect(row).not.toHaveTextContent(/stale/i)
+    expect(row).not.toHaveTextContent(/current/i)
+    expect(row).toHaveTextContent(/no recorded ancestry/i)
   })
 
   it('names cited documents so the citation can be checked', async () => {
@@ -67,5 +73,22 @@ describe('LineageView', () => {
     const blocked = await screen.findByTestId('blocked-writes')
     expect(blocked).toHaveTextContent(/interaction_designer/)
     expect(blocked).toHaveTextContent(/value_chain_registry/)
+  })
+
+  it('reports a failed fetch instead of loading forever', async () => {
+    vi.mocked(projectsApi.lineage).mockRejectedValueOnce(new Error('network'))
+    render(<Wrapper />)
+    expect(await screen.findByText(/could not load lineage/i)).toBeInTheDocument()
+    expect(screen.queryByText(/loading/i)).not.toBeInTheDocument()
+  })
+
+  it('says lineage has not started yet, rather than showing a blank panel', async () => {
+    vi.mocked(projectsApi.lineage).mockResolvedValueOnce({
+      outputs: [],
+      documents: {},
+      blocked_writes: [],
+    })
+    render(<Wrapper />)
+    expect(await screen.findByText(/no lineage recorded yet/i)).toBeInTheDocument()
   })
 })

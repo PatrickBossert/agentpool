@@ -34,14 +34,27 @@ function StateBadge({ output }: { output: LineageOutput }) {
 }
 
 export default function LineageView({ slug }: { slug: string }) {
-  const { data } = useQuery<LineageResponse>({
+  const { data, isError } = useQuery<LineageResponse>({
     queryKey: ['lineage', slug],
     queryFn: () => projectsApi.lineage(slug),
   })
 
+  // "Still loading" and "failed" are different facts, and this panel exists to stop
+  // asserting things nothing knows - collapsing the two would do exactly that.
+  if (isError) return <p className="text-xs text-red-500 italic">Could not load lineage.</p>
+
   if (!data) return <p className="text-xs text-muted">Loading lineage…</p>
 
   const current = data.outputs.filter((o) => o.is_current)
+
+  if (current.length === 0 && data.blocked_writes.length === 0) {
+    return (
+      <p className="text-xs text-muted">
+        No lineage recorded yet - it begins from the next run, and outputs written before
+        then have no recorded ancestry.
+      </p>
+    )
+  }
 
   return (
     <div className="space-y-4">
