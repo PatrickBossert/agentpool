@@ -26,9 +26,14 @@ async def test_documents_are_returned_by_name_not_by_stored_filename(client):
     await client.post("/projects", json=PROJECT)
     from api.database import get_connection
 
+    # DATABASE_DIR is a fixed path shared by every test run (see conftest.py), so
+    # lineage-api-test.db survives between pytest invocations - a bare INSERT with this
+    # hardcoded id passes once and then hits UNIQUE constraint failed: client_documents.id
+    # on every run after. INSERT OR IGNORE makes setup idempotent: the row lands on the
+    # first run and is a no-op (same values) on every run after.
     async with get_connection(SLUG) as conn:
         await conn.execute(
-            "INSERT INTO client_documents (id, project_id, filename, original_name,"
+            "INSERT OR IGNORE INTO client_documents (id, project_id, filename, original_name,"
             " file_path, content_type, size_bytes) VALUES (3,1,'d89a.pdf','Annual.pdf','x','p',1)"
         )
         await conn.commit()
