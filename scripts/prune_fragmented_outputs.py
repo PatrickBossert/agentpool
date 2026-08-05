@@ -71,13 +71,44 @@ async def main(slug: str, archive_name: str) -> None:
     archive.mkdir(parents=True, exist_ok=True)
 
     moved = 0
+    missing: list[str] = []
+    failed: list[tuple[str, str]] = []
     for rel in result["file_paths"]:
         source = root / rel
-        if source.exists():
-            shutil.move(str(source), str(archive / source.name))
+        if not source.exists():
+            missing.append(rel)
+            continue
+        dest = archive / source.name
+        if dest.exists():
+            # Basename collision - shutil.move would silently overwrite an already-
+            # archived file. Leave the source in place rather than risk that; it stays
+            # recoverable for a manual look, whereas an overwrite would not.
+            failed.append((rel, f"{dest} already exists in the archive - not overwriting"))
+            continue
+        try:
+            shutil.move(str(source), str(dest))
             moved += 1
+        except OSError as exc:
+            # A row's agent_outputs record is already deleted and committed by this
+            # point, so a failed move here cannot be retried by re-running the script -
+            # prune_output_types would match nothing. Record it and keep going: a file
+            # left in place is recoverable, an unlogged partial state is not.
+            failed.append((rel, str(exc)))
     print(f"archived files: {moved} of {len(result['file_paths'])} into {archive}")
-    print("(a path with no file is normal - several rows shared one filename)")
+    if missing:
+        print(
+            f"no file on disk for {len(missing)} path(s) - expected when the row was"
+            " recorded before insert_agent_output_sync (agents/tools/_db.py) renamed"
+            " the output to its _vN name, so the base filename has not existed since."
+            " Not a sign of loss:"
+        )
+        for rel in missing:
+            print(f"  {rel}")
+    if failed:
+        print(f"FAILED to move {len(failed)} file(s) - their agent_outputs rows are")
+        print("already deleted, so these need manual attention, not a re-run:")
+        for rel, reason in failed:
+            print(f"  {rel}: {reason}")
 
 
 if __name__ == "__main__":
