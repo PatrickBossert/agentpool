@@ -1273,6 +1273,15 @@ async def delete_document(conn: aiosqlite.Connection, *, doc_id: int) -> bool:
     return cur.rowcount > 0
 
 
+async def fetch_document_names(conn: aiosqlite.Connection, *, project_id: int) -> dict[str, str]:
+    """Map doc id to original_name, not the stored filename - that's a hash, unreadable in a citation."""
+    async with conn.execute(
+        "SELECT id, original_name FROM client_documents WHERE project_id=?",
+        (project_id,),
+    ) as cur:
+        return {str(row[0]): row[1] async for row in cur}
+
+
 async def update_project_config(
     conn: aiosqlite.Connection,
     *,

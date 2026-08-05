@@ -2,7 +2,7 @@
 """GET /projects/{slug}/runs — list orchestration run history."""
 from fastapi import APIRouter, Depends, HTTPException
 from api.auth import require_any_auth, check_project_access
-from api.database import get_connection, get_db_path, fetch_project, fetch_blocked_writes
+from api.database import get_connection, get_db_path, fetch_project, fetch_blocked_writes, fetch_document_names
 from api.services.project_service import get_run_history
 from api.services.lineage_service import fetch_lineage, staleness, approved_versions
 
@@ -32,11 +32,7 @@ async def get_lineage(slug: str, payload: dict = Depends(require_any_auth)):
         outputs = await fetch_lineage(conn, project_id=project["id"])
         approvals = await approved_versions(conn, project_id=project["id"])
         blocked = await fetch_blocked_writes(conn)
-        async with conn.execute(
-            "SELECT id, original_name FROM client_documents WHERE project_id=?",
-            (project["id"],),
-        ) as cur:
-            documents = {str(row[0]): row[1] async for row in cur}
+        documents = await fetch_document_names(conn, project_id=project["id"])
 
     states = staleness(outputs, approvals)
     for output in outputs:
