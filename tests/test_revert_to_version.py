@@ -85,3 +85,33 @@ async def test_revert_succeeds_when_the_discarded_version_has_lineage_rows(proje
         ) as cur:
             remaining = await cur.fetchall()
     assert [dict(r) for r in remaining] == [{"id": v1, "is_current": 1}]
+
+
+@pytest.mark.asyncio
+async def test_revert_supersedes_by_output_type_not_by_agent(project):
+    """Version numbering and is_current supersession are scoped by (project, output_type),
+    not by agent - the filename that anchors a version carries no agent (Task 3). Two agents
+    can both write the 'state' output type; reverting alex's output to an earlier version
+    must leave exactly one is_current row for the output type, superseding maya's row too -
+    not leave two current rows standing side by side."""
+    async with get_connection(SLUG) as conn:
+        alex_v1 = await _output(conn, "alex", "state", 1, is_current=0)
+        alex_v2 = await _output(conn, "alex", "state", 2, is_current=0)
+        maya_v3 = await _output(conn, "maya", "state", 3, is_current=1)
+
+    async with get_connection(SLUG) as conn:
+        row, deleted_paths = await revert_to_version(conn, project_id=1, output_id=alex_v1)
+
+    assert row is not None
+    assert row["id"] == alex_v1
+    assert row["is_current"] == 1
+    assert deleted_paths == ["state_v2.json", "state_v3.json"]
+
+    async with get_connection(SLUG) as conn:
+        async with conn.execute(
+            "SELECT id, is_current FROM agent_outputs WHERE output_type='state' ORDER BY id"
+        ) as cur:
+            remaining = await cur.fetchall()
+    remaining = [dict(r) for r in remaining]
+    assert remaining == [{"id": alex_v1, "is_current": 1}]
+    assert sum(r["is_current"] for r in remaining) == 1

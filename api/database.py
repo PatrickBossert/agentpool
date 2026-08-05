@@ -1360,7 +1360,15 @@ async def insert_review(
 async def revert_to_version(
     conn: aiosqlite.Connection, *, project_id: int, output_id: int
 ) -> tuple[dict | None, list[str]]:
-    """Hard-delete all versions newer than output_id for the same (agent_name, output_type).
+    """Hard-delete all versions newer than output_id for the same output_type.
+
+    Scoped by (project_id, output_type) only, not agent_name - version numbering and
+    is_current supersession are per output_type project-wide (see insert_agent_output_sync
+    and set_current_output), because the filename that anchors a version carries no agent.
+    Scoping this delete by agent_name as well would leave another agent's rows for the same
+    output_type undeleted and, worse, leave their is_current row untouched by the sweep
+    below, re-creating the two-current-rows state this scoping fix exists to prevent.
+
     Sets the target version as is_current=1.
     Returns (target_row, list_of_file_paths_that_were_deleted).
     The caller is responsible for deleting the returned files from disk."""
@@ -1377,60 +1385,61 @@ async def revert_to_version(
     # Collect file paths of newer versions so the caller can delete them from disk
     async with conn.execute(
         """SELECT file_path FROM agent_outputs
-           WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?""",
-        (project_id, agent_name, output_type, target_version),
+           WHERE project_id=? AND output_type=? AND version > ?""",
+        (project_id, output_type, target_version),
     ) as cur:
         deleted_paths = [r["file_path"] for r in await cur.fetchall()]
     # Delete human_reviews, run_inputs, output_lineage and output_citations rows referencing
     # the newer outputs first to satisfy the FK constraint, then hard-delete the agent_outputs
-    # rows themselves. output_lineage is scoped on both output_id and input_output_id, since a
-    # doomed output can be the thing built (output_id) or a thing something else was built from
-    # (input_output_id).
+    # rows themselves. Every subquery below is scoped identically to the main delete so it
+    # selects the same row set. output_lineage is scoped on both output_id and
+    # input_output_id, since a doomed output can be the thing built (output_id) or a thing
+    # something else was built from (input_output_id).
     await conn.execute(
         """DELETE FROM human_reviews WHERE output_id IN (
                SELECT id FROM agent_outputs
-               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+               WHERE project_id=? AND output_type=? AND version > ?
            )""",
-        (project_id, agent_name, output_type, target_version),
+        (project_id, output_type, target_version),
     )
     await conn.execute(
         """DELETE FROM run_inputs WHERE output_id IN (
                SELECT id FROM agent_outputs
-               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+               WHERE project_id=? AND output_type=? AND version > ?
            )""",
-        (project_id, agent_name, output_type, target_version),
+        (project_id, output_type, target_version),
     )
     await conn.execute(
         """DELETE FROM output_lineage WHERE output_id IN (
                SELECT id FROM agent_outputs
-               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+               WHERE project_id=? AND output_type=? AND version > ?
            )""",
-        (project_id, agent_name, output_type, target_version),
+        (project_id, output_type, target_version),
     )
     await conn.execute(
         """DELETE FROM output_lineage WHERE input_output_id IN (
                SELECT id FROM agent_outputs
-               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+               WHERE project_id=? AND output_type=? AND version > ?
            )""",
-        (project_id, agent_name, output_type, target_version),
+        (project_id, output_type, target_version),
     )
     await conn.execute(
         """DELETE FROM output_citations WHERE output_id IN (
                SELECT id FROM agent_outputs
-               WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?
+               WHERE project_id=? AND output_type=? AND version > ?
            )""",
-        (project_id, agent_name, output_type, target_version),
+        (project_id, output_type, target_version),
     )
     await conn.execute(
         """DELETE FROM agent_outputs
-           WHERE project_id=? AND agent_name=? AND output_type=? AND version > ?""",
-        (project_id, agent_name, output_type, target_version),
+           WHERE project_id=? AND output_type=? AND version > ?""",
+        (project_id, output_type, target_version),
     )
     # Set the target as the sole current version
     await conn.execute(
         """UPDATE agent_outputs SET is_current=0
-           WHERE project_id=? AND agent_name=? AND output_type=?""",
-        (project_id, agent_name, output_type),
+           WHERE project_id=? AND output_type=?""",
+        (project_id, output_type),
     )
     await conn.execute(
         "UPDATE agent_outputs SET is_current=1 WHERE id=?",
