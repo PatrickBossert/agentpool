@@ -69,7 +69,7 @@ def create_interview_coordinator_task(
             "Steps:\n"
             "1. Use SQLiteStateTool with operation='read', key='interview_scripts', "
             "agent_name='interview_coordinator' to retrieve the scripts written by the "
-            "Script Designer. Each script is keyed by node_label.\n"
+            "Interaction Designer. Each script is keyed by node_label.\n"
             "2. For each stakeholder listed in the assignments above:\n"
             "   a. Look up the script for their node_label in the interview_scripts map.\n"
             "   b. Resolve their voice_config using the lookup table above "

@@ -51,7 +51,7 @@ export default function InterviewTemplateEditor({ slug, nodeLabel, activityId, o
       const r = await apiClient.get<Script>(`/projects/${slug}/interview-scripts/${encodeURIComponent(nodeLabel)}`)
       setScript(r.data)
     } catch {
-      setError('No interview script found for this node. Run the Interview Script Designer first.')
+      setError('No interview script found for this node. Run the Assessment Design crew first.')
     } finally {
       setLoading(false)
     }

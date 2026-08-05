@@ -76,18 +76,6 @@ export const CREW_AGENTS: Record<string, string[]> = {
   business_plan: ['Business Plan Generator', 'Visual Illustrator'],
 }
 
-export const CREW_ICONS: Record<string, string> = {
-  discovery_mapping:      '🗺️',
-  assessment_design:      '🎨',
-  requirements:              '🔍',
-  stakeholder_management: '🤝',
-  discovery_interviews:   '🎙️',
-  value_design:           '⭐',
-  capabilities:           '🏛️',
-  delivery:               '🚀',
-  business_plan:          '📊',
-}
-
 export interface AgentSkill {
   name: string
   description: string
