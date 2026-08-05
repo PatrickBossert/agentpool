@@ -1268,6 +1268,13 @@ async def fetch_document(conn: aiosqlite.Connection, *, doc_id: int) -> dict | N
 
 
 async def delete_document(conn: aiosqlite.Connection, *, doc_id: int) -> bool:
+    # Delete output_citations and run_documents rows referencing this document first to
+    # satisfy the FK constraint, then hard-delete the client_documents row itself. Both
+    # tables reference client_documents(id): output_citations is the durable edge written
+    # when an output cites this document, run_documents is the per-run record of a retrieval
+    # that returned a chunk from it.
+    await conn.execute("DELETE FROM output_citations WHERE doc_id=?", (doc_id,))
+    await conn.execute("DELETE FROM run_documents WHERE doc_id=?", (doc_id,))
     cur = await conn.execute("DELETE FROM client_documents WHERE id=?", (doc_id,))
     await conn.commit()
     return cur.rowcount > 0

@@ -118,3 +118,55 @@ async def test_upload_triggers_ingest_background_task(client, tmp_path):
     assert call_args.args[0] == "doc-test"          # slug
     assert isinstance(call_args.args[1], int)        # doc_id
     assert call_args.args[2].endswith(".txt")        # file_path ends with .txt extension
+
+
+@pytest.mark.asyncio
+async def test_delete_document_with_run_documents_and_citations_succeeds(client):
+    """A document a crew run has read (run_documents) or an output has cited
+    (output_citations) must still be deletable - foreign_keys=ON means those rows have to
+    be cleared before client_documents can be hard-deleted, or the delete raises
+    IntegrityError and the endpoint 500s."""
+    from api.database import get_connection
+
+    await client.post("/projects", json=PROJECT)
+
+    resp = await client.post(
+        "/projects/doc-test/documents/upload",
+        files={"file": ("report.pdf", io.BytesIO(b"content"), "application/pdf")},
+    )
+    doc_id = resp.json()["id"]
+
+    async with get_connection("doc-test") as conn:
+        await conn.execute(
+            "INSERT INTO agent_outputs (project_id, agent_name, output_type, file_path,"
+            " version, is_current, review_status) VALUES (1,'value_lever_analyst',"
+            " 'value_levers','value_levers_v1.json',1,1,'pending')"
+        )
+        await conn.commit()
+        async with conn.execute("SELECT id FROM agent_outputs") as cur:
+            output_id = (await cur.fetchone())["id"]
+        await conn.execute(
+            "INSERT INTO run_documents (run_id, doc_id) VALUES (30,?)", (doc_id,)
+        )
+        await conn.execute(
+            "INSERT INTO output_citations (output_id, doc_id) VALUES (?,?)",
+            (output_id, doc_id),
+        )
+        await conn.commit()
+
+    resp = await client.delete(f"/projects/doc-test/documents/{doc_id}")
+    assert resp.status_code == 204
+
+    async with get_connection("doc-test") as conn:
+        async with conn.execute(
+            "SELECT 1 FROM client_documents WHERE id=?", (doc_id,)
+        ) as cur:
+            assert await cur.fetchone() is None
+        async with conn.execute(
+            "SELECT 1 FROM run_documents WHERE doc_id=?", (doc_id,)
+        ) as cur:
+            assert await cur.fetchone() is None
+        async with conn.execute(
+            "SELECT 1 FROM output_citations WHERE doc_id=?", (doc_id,)
+        ) as cur:
+            assert await cur.fetchone() is None
