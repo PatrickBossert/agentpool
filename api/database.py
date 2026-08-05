@@ -1714,6 +1714,40 @@ async def fetch_outputs_by_type(
         return [dict(r) async for r in cur]
 
 
+async def count_outputs_by_type(
+    conn: aiosqlite.Connection, *, project_id: int, output_types: list[str]
+) -> dict:
+    """Read-only counterpart to prune_output_types - reports what a prune would touch.
+
+    Returns {"counts": {output_type: row_count, ...}, "file_paths": [...]}, deleting
+    nothing. This is the per-type breakdown a prune's audit trail needs: a caller that
+    only prints a single total cannot tell, from the transcript alone, which types
+    were actually hit.
+    """
+    if not output_types:
+        return {"counts": {}, "file_paths": []}
+
+    marks = ",".join("?" * len(output_types))
+    params = (project_id, *output_types)
+
+    async with conn.execute(
+        f"SELECT output_type, COUNT(*) FROM agent_outputs"
+        f" WHERE project_id=? AND output_type IN ({marks})"
+        f" GROUP BY output_type",
+        params,
+    ) as cur:
+        counts = {row[0]: row[1] async for row in cur}
+
+    async with conn.execute(
+        f"SELECT DISTINCT file_path FROM agent_outputs"
+        f" WHERE project_id=? AND output_type IN ({marks})",
+        params,
+    ) as cur:
+        file_paths = [row[0] async for row in cur]
+
+    return {"counts": counts, "file_paths": file_paths}
+
+
 async def prune_output_types(
     conn: aiosqlite.Connection, *, project_id: int, output_types: list[str]
 ) -> dict:
@@ -1755,12 +1789,13 @@ async def prune_output_types(
     ):
         await conn.execute(f"DELETE FROM {table} WHERE {column} IN ({doomed})", params)
 
-    cur = await conn.execute(
+    async with conn.execute(
         f"DELETE FROM agent_outputs WHERE project_id=? AND output_type IN ({marks})",
         params,
-    )
+    ) as cur:
+        deleted = cur.rowcount
     await conn.commit()
-    return {"deleted": cur.rowcount, "file_paths": file_paths}
+    return {"deleted": deleted, "file_paths": file_paths}
 
 
 async def update_crew_run_status(

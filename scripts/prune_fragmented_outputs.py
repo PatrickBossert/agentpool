@@ -5,19 +5,39 @@ The list is literal rather than pattern-matched. A rule like "everything startin
 interview_scripts_" would silently widen as new keys appeared, and this deletes data.
 
 Rows go first, then files. If the delete raises, nothing has moved and the run can simply
-be repeated. Files are moved into a timestamped archive rather than unlinked - the point
-is a clean baseline, not destroyed evidence.
+be repeated. Files are moved into an archive directory named after whatever the operator
+passes as the second argument, rather than unlinked - the point is a clean baseline, not
+destroyed evidence.
+
+Dry run by default: without --apply, this only reports what it would delete and archive.
+Pass --apply to actually do it. There is no undo once files have moved and rows have gone,
+so a second look at the dry-run report before adding --apply is the point of the default.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import shutil
 import sys
 from pathlib import Path
 
 from api.config import get_settings
-from api.database import fetch_project, get_connection, prune_output_types
+from api.database import count_outputs_by_type, fetch_project, get_connection, prune_output_types
 
+# "state" and "value_chain" are deliberately absent from this list.
+#
+# Both are live types, not legacy fragments: DeriveRegistryTool writes "state" on every
+# registry derivation (agents/tools/derive_registry.py:141) and MermaidRenderTool writes
+# "value_chain" on every diagram render (agents/tools/mermaid_render.py:43). Both are read
+# by live code - api/routers/projects.py serves the current value_chain output, and the
+# agent-chat personas (api/services/agent_chat_service.py) read both types as context. Their
+# rows accumulate legitimately as the project runs, so pruning them does not clean up
+# fragments - it deletes state that a running project depends on.
+#
+# This happened once already: an earlier run of this script pruned both types from a live
+# project and broke three things downstream before it was noticed and repaired. Do not
+# re-add either without addressing why that repair was necessary - a design change to how
+# DeriveRegistryTool or MermaidRenderTool version their output belongs on a different branch.
 PRUNE_TYPES = [
     "interview_scripts_a",
     "interview_scripts_batch1",
@@ -49,17 +69,37 @@ PRUNE_TYPES = [
     "interview_scripts_part5",
     "interview_scripts_part6",
     "interview_scripts_s",
-    "state",
-    "value_chain",
     "value_chain_model_raw",
 ]
 
 
-async def main(slug: str, archive_name: str) -> None:
+def _print_breakdown(counts: dict, file_paths: list) -> None:
+    print("rows by output_type:")
+    if counts:
+        for output_type in sorted(counts):
+            print(f"  {output_type}: {counts[output_type]}")
+    else:
+        print("  (none)")
+    print(f"total rows: {sum(counts.values())}")
+    print(f"distinct files: {len(file_paths)}")
+
+
+async def main(slug: str, archive_name: str, apply: bool) -> None:
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
             raise SystemExit(f"no such project: {slug}")
+
+        preview = await count_outputs_by_type(
+            conn, project_id=project["id"], output_types=PRUNE_TYPES
+        )
+        print("DRY RUN - nothing will be deleted or moved. Pass --apply to act." if not apply
+              else "APPLYING - rows will be deleted and files moved.")
+        _print_breakdown(preview["counts"], preview["file_paths"])
+
+        if not apply:
+            return
+
         result = await prune_output_types(
             conn, project_id=project["id"], output_types=PRUNE_TYPES
         )
@@ -111,7 +151,26 @@ async def main(slug: str, archive_name: str) -> None:
             print(f"  {rel}: {reason}")
 
 
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Prune fragmented/legacy output types from a project. Reports what it would "
+            "delete and archive by default; pass --apply to actually do it."
+        ),
+    )
+    parser.add_argument("slug", help="project slug")
+    parser.add_argument(
+        "archive_name",
+        help="name of the archive directory to move pruned files into (e.g. a timestamp)",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="delete the rows and move the files; without this flag, only report",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: prune_fragmented_outputs.py <slug> <archive-dir-name>")
-    asyncio.run(main(sys.argv[1], sys.argv[2]))
+    args = _parse_args(sys.argv[1:])
+    asyncio.run(main(args.slug, args.archive_name, args.apply))
