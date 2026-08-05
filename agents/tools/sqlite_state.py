@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from api.config import get_settings
 from agents.tools._db import insert_agent_output_sync, latest_output_path
+from agents.tools.ownership import check_write
 
 
 # Keys whose content is checked before it is stored. The tool returns a string and CrewAI
@@ -172,6 +173,7 @@ class SQLiteStateTool(BaseTool):
     )
     args_schema: type[BaseModel] = SQLiteStateToolInput
     slug: str
+    agent_name: str = ""
 
     def _run(
         self,
@@ -186,6 +188,17 @@ class SQLiteStateTool(BaseTool):
         file_path = outputs_dir / f"{key}.json"
 
         if operation == "write":
+            # The identity the tool was built with, not the one the caller supplied. An
+            # identity an agent asserts about itself is not an identity.
+            identity = self.agent_name or agent_name
+            if self.agent_name and agent_name and agent_name != self.agent_name:
+                return (
+                    f"Refused: this tool belongs to {self.agent_name}, and the write claims "
+                    f"to be from {agent_name}."
+                )
+            refusal = check_write(key, identity)
+            if refusal:
+                return refusal
             try:
                 parsed = json.loads(value)
             except json.JSONDecodeError as e:

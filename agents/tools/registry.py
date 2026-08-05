@@ -56,90 +56,90 @@ def get_tools_for_agent(
             # No MermaidRenderTool: this agent emits the structured value chain model, and
             # holding the tool would let it write a value_chain_v<n>.md whatever the task
             # asks for. The Enterprise Architect below keeps it.
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             DeriveRegistryTool(slug=slug),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "requirements_capture": [
             HumanInputTool(slug=slug, run_id=run_id),
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
         ],
         "requirements_analyst": [
             DocumentIngestionTool(slug=slug),
             ChromaQueryTool(slug=slug, sector=sector),
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "value_lever_analyst": [
             ChromaQueryTool(slug=slug, sector=sector),
             TavilySearchTool(),
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "pam": [
             RunCrewTool(slug=slug, orchestration_run_id=run_id),
             SlackNotifyTool(slug=slug),
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
         ],
         "value_proposition_generator": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "portfolio_manager": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
             ExcelOutputTool(slug=slug),
         ],
         "enterprise_architect": [
             ChromaQueryTool(slug=slug, sector=sector),
             MermaidRenderTool(slug=slug),
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "initiative_identifier": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "roadmap_generator": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
             HtmlRoadmapTool(slug=slug),
         ],
         "business_plan_generator": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
             WordOutputTool(slug=slug),
             PowerPointOutputTool(slug=slug),
             FinancialModelTool(slug=slug),
         ],
         "interview_script_designer": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "interview_coordinator": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
             InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
         ],
         "stakeholder_interviewer": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
             InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
         ],
         "synthesis_analyst": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             # The interview corpus is too large to read whole, and a transcript blob cannot
             # be filtered by discipline or relationship. He queries the answers.
             ChromaQueryTool(slug=slug, sector=sector),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "interaction_designer": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             ChromaQueryTool(slug=slug, sector=sector),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "stakeholder_manager": [
-            SQLiteStateTool(slug=slug),
+            SQLiteStateTool(slug=slug, agent_name=agent_name),
             InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
             SlackNotifyTool(slug=slug),
         ],

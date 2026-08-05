@@ -48,16 +48,21 @@ def _run(base, slug, **kwargs):
 
 
 def test_write_then_read_round_trip(state_project):
-    """The core regression: a value written must be readable back."""
+    """The core regression: a value written must be readable back.
+
+    Uses an owned, unvalidated key (`value_chain_summary` / `value_chain_mapper`) rather
+    than a placeholder key - ownership now guards every write, and a key nobody owns would
+    be refused before the round trip this test exists to check.
+    """
     base, slug = state_project
     payload = {"hello": "world"}
 
-    write_result = _run(base, slug, operation="write", key="test_state",
-                        agent_name="test_agent", value=json.dumps(payload))
-    assert "test_state" in write_result
+    write_result = _run(base, slug, operation="write", key="value_chain_summary",
+                        agent_name="value_chain_mapper", value=json.dumps(payload))
+    assert "value_chain_summary" in write_result
 
-    read_result = _run(base, slug, operation="read", key="test_state",
-                       agent_name="test_agent")
+    read_result = _run(base, slug, operation="read", key="value_chain_summary",
+                       agent_name="value_chain_mapper")
     assert json.loads(read_result) == payload
 
 
@@ -65,11 +70,11 @@ def test_read_returns_latest_version_after_overwrite(state_project):
     """A second write must win — reads resolve the highest version, not the first."""
     base, slug = state_project
     for value in ({"v": 1}, {"v": 2}, {"v": 3}):
-        _run(base, slug, operation="write", key="counter",
-             agent_name="test_agent", value=json.dumps(value))
+        _run(base, slug, operation="write", key="value_chain_summary",
+             agent_name="value_chain_mapper", value=json.dumps(value))
 
-    read_result = _run(base, slug, operation="read", key="counter",
-                       agent_name="test_agent")
+    read_result = _run(base, slug, operation="read", key="value_chain_summary",
+                       agent_name="value_chain_mapper")
     assert json.loads(read_result) == {"v": 3}
 
 
@@ -82,8 +87,8 @@ def test_read_missing_key_reports_not_found(state_project):
 
 def test_write_rejects_invalid_json(state_project):
     base, slug = state_project
-    result = _run(base, slug, operation="write", key="bad",
-                  agent_name="test_agent", value="not-json")
+    result = _run(base, slug, operation="write", key="value_chain_summary",
+                  agent_name="value_chain_mapper", value="not-json")
     assert "not valid JSON" in result
 
 
