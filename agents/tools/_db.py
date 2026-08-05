@@ -149,6 +149,65 @@ def record_blocked_write_sync(
         conn.commit()
 
 
+def record_run_input_sync(slug: str, run_id: int, output_id: int) -> None:
+    if not run_id or not output_id:
+        return
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO run_inputs (run_id, output_id) VALUES (?,?)",
+            (run_id, output_id),
+        )
+        conn.commit()
+
+
+def record_run_document_sync(slug: str, run_id: int, doc_id: int) -> None:
+    if not run_id or not doc_id:
+        return
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO run_documents (run_id, doc_id) VALUES (?,?)",
+            (run_id, doc_id),
+        )
+        conn.commit()
+
+
+def link_output_sync(slug: str, run_id: int, output_id: int) -> None:
+    """Link a new output to everything its run has read SO FAR.
+
+    Taken at write time rather than at run end: a read that happens afterwards belongs to
+    whatever is written next, and attaching it here would claim this output was built from
+    something that did not exist when it was made.
+    """
+    if not output_id:
+        return
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO output_lineage (output_id, input_output_id)"
+            " SELECT ?, output_id FROM run_inputs WHERE run_id=? AND output_id != ?",
+            (output_id, run_id, output_id),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO output_citations (output_id, doc_id)"
+            " SELECT ?, doc_id FROM run_documents WHERE run_id=?",
+            (output_id, run_id),
+        )
+        conn.commit()
+
+
+def output_id_for_path_sync(slug: str, file_path: str) -> int | None:
+    """The agent_outputs row for a resolved output file, or None.
+
+    None is normal rather than exceptional: files written by hand, or before versioning
+    existed, have no row. A read of one records no lineage edge, which is honest.
+    """
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        row = conn.execute(
+            "SELECT id FROM agent_outputs WHERE file_path=? ORDER BY id DESC LIMIT 1",
+            (file_path,),
+        ).fetchone()
+    return row[0] if row else None
+
+
 def insert_hitl_review(slug: str, run_id: int, prompt: str) -> int:
     """Insert a human_reviews record with decision='pending'. Returns review_id.
 

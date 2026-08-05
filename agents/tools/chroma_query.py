@@ -5,7 +5,7 @@ import sqlite3
 from typing import Literal
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
-from agents.tools._db import _db_path
+from agents.tools._db import _db_path, record_run_document_sync
 from api.config import get_settings
 from api.services.chroma_client import get_chroma_client
 
@@ -98,6 +98,7 @@ class ChromaQueryTool(BaseTool):
     args_schema: type[BaseModel] = ChromaQueryToolInput
     slug: str
     sector: str
+    run_id: int = 0
 
     def _run(
         self,
@@ -134,4 +135,12 @@ class ChromaQueryTool(BaseTool):
             f"{_citation(metas[i] if i < len(metas) else None, names)}\n{text}"
             for i, text in enumerate(docs)
         ]
+        try:
+            doc_ids = {m.get("doc_id") for m in metas if m and m.get("doc_id") is not None}
+            for doc_id in doc_ids:
+                record_run_document_sync(self.slug, self.run_id, doc_id)
+        except Exception:
+            # A retrieval must never fail because its bookkeeping did - the agent needs
+            # the chunks, and a missing citation edge degrades the graph rather than the run.
+            pass
         return "\n\n---\n\n".join(blocks)

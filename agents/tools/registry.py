@@ -52,7 +52,7 @@ def get_tools_for_agent(
             DocumentIngestionTool(slug=slug),
             TavilySearchTool(),
             WebFetchTool(),
-            ChromaQueryTool(slug=slug, sector=sector),
+            ChromaQueryTool(slug=slug, sector=sector, run_id=run_id),
             # No MermaidRenderTool: this agent emits the structured value chain model, and
             # holding the tool would let it write a value_chain_v<n>.md whatever the task
             # asks for. The Enterprise Architect below keeps it.
@@ -66,12 +66,12 @@ def get_tools_for_agent(
         ],
         "requirements_analyst": [
             DocumentIngestionTool(slug=slug),
-            ChromaQueryTool(slug=slug, sector=sector),
+            ChromaQueryTool(slug=slug, sector=sector, run_id=run_id),
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "value_lever_analyst": [
-            ChromaQueryTool(slug=slug, sector=sector),
+            ChromaQueryTool(slug=slug, sector=sector, run_id=run_id),
             TavilySearchTool(),
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
             HumanInputTool(slug=slug, run_id=run_id),
@@ -91,7 +91,7 @@ def get_tools_for_agent(
             ExcelOutputTool(slug=slug),
         ],
         "enterprise_architect": [
-            ChromaQueryTool(slug=slug, sector=sector),
+            ChromaQueryTool(slug=slug, sector=sector, run_id=run_id),
             MermaidRenderTool(slug=slug),
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
             HumanInputTool(slug=slug, run_id=run_id),
@@ -130,12 +130,12 @@ def get_tools_for_agent(
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
             # The interview corpus is too large to read whole, and a transcript blob cannot
             # be filtered by discipline or relationship. He queries the answers.
-            ChromaQueryTool(slug=slug, sector=sector),
+            ChromaQueryTool(slug=slug, sector=sector, run_id=run_id),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "interaction_designer": [
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
-            ChromaQueryTool(slug=slug, sector=sector),
+            ChromaQueryTool(slug=slug, sector=sector, run_id=run_id),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
         "stakeholder_manager": [

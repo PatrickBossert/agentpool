@@ -32,6 +32,23 @@ def state_project(tmp_path):
         " is_current INTEGER NOT NULL DEFAULT 1,"
         " created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
     )
+    # Lineage bookkeeping tables link_output_sync writes to on every successful write.
+    conn.execute(
+        "CREATE TABLE run_inputs (run_id INTEGER, output_id INTEGER,"
+        " PRIMARY KEY (run_id, output_id))"
+    )
+    conn.execute(
+        "CREATE TABLE run_documents (run_id INTEGER, doc_id INTEGER,"
+        " PRIMARY KEY (run_id, doc_id))"
+    )
+    conn.execute(
+        "CREATE TABLE output_lineage (output_id INTEGER, input_output_id INTEGER,"
+        " PRIMARY KEY (output_id, input_output_id))"
+    )
+    conn.execute(
+        "CREATE TABLE output_citations (output_id INTEGER, doc_id INTEGER,"
+        " PRIMARY KEY (output_id, doc_id))"
+    )
     conn.execute("INSERT INTO projects (id, slug) VALUES (1, ?)", (slug,))
     conn.commit()
     conn.close()

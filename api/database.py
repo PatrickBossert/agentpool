@@ -721,6 +721,45 @@ async def _migrate_blocked_writes(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_lineage(conn: aiosqlite.Connection) -> None:
+    """What a run read, and what each output was built from.
+
+    run_inputs and run_documents accumulate during a run; output_lineage and
+    output_citations are the durable edges, written when an output is created. Keeping both
+    means a run's reads survive a process restart mid-run, and the edges do not depend on
+    anything being held in memory.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS run_inputs (
+            run_id    INTEGER NOT NULL,
+            output_id INTEGER NOT NULL REFERENCES agent_outputs(id),
+            PRIMARY KEY (run_id, output_id)
+        )
+    """)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS run_documents (
+            run_id INTEGER NOT NULL,
+            doc_id INTEGER NOT NULL REFERENCES client_documents(id),
+            PRIMARY KEY (run_id, doc_id)
+        )
+    """)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS output_lineage (
+            output_id       INTEGER NOT NULL REFERENCES agent_outputs(id),
+            input_output_id INTEGER NOT NULL REFERENCES agent_outputs(id),
+            PRIMARY KEY (output_id, input_output_id)
+        )
+    """)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS output_citations (
+            output_id INTEGER NOT NULL REFERENCES agent_outputs(id),
+            doc_id    INTEGER NOT NULL REFERENCES client_documents(id),
+            PRIMARY KEY (output_id, doc_id)
+        )
+    """)
+    await conn.commit()
+
+
 async def fetch_blocked_writes(
     conn: aiosqlite.Connection, *, run_id: int | None = None
 ) -> list[dict]:
@@ -1022,6 +1061,7 @@ async def get_connection(slug: str):
         await _migrate_stakeholder_node_assignments(conn)
         await _migrate_agent_chat_history(conn)
         await _migrate_blocked_writes(conn)
+        await _migrate_lineage(conn)
         yield conn
 
 

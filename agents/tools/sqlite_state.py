@@ -8,7 +8,10 @@ from api.config import get_settings
 from agents.tools._db import (
     insert_agent_output_sync,
     latest_output_path,
+    link_output_sync,
+    output_id_for_path_sync,
     record_blocked_write_sync,
+    record_run_input_sync,
 )
 from agents.tools.ownership import OUTPUT_OWNERS, check_write
 
@@ -232,7 +235,7 @@ class SQLiteStateTool(BaseTool):
                     )
             try:
                 file_path.write_text(value)
-                insert_agent_output_sync(
+                new_output_id = insert_agent_output_sync(
                     slug=self.slug,
                     agent_name=agent_name,
                     output_type=key,
@@ -240,6 +243,7 @@ class SQLiteStateTool(BaseTool):
                 )
             except (OSError, ValueError) as e:
                 return f"Error: write failed — {e}"
+            link_output_sync(self.slug, self.run_id, new_output_id)
             return f"Written to {file_path}"
 
         if operation == "read":
@@ -249,6 +253,14 @@ class SQLiteStateTool(BaseTool):
             stored = latest_output_path(file_path)
             if stored is None:
                 return f"Error: no state found for key '{key}'"
+            try:
+                record_run_input_sync(
+                    self.slug, self.run_id, output_id_for_path_sync(self.slug, str(stored))
+                )
+            except Exception:
+                # A read must never fail because its bookkeeping did - the agent needs
+                # the content, and a missing edge degrades the graph rather than the run.
+                pass
             return stored.read_text()
 
         return f"Error: unknown operation '{operation}' — use 'read' or 'write'"
