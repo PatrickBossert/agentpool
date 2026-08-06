@@ -274,3 +274,128 @@ async def test_a_failed_run_leaves_the_change_request_open(crew_project):
     row = await _change_status(output_id)
     assert row["status"] == "open"
     assert row["applied_run_id"] is None
+
+
+# ── Both feedback doors, exactly once ───────────────────────────────────────────────────
+#
+# api/routers/reviews.py has two doors that can record decision='changes_requested' with
+# notes: POST /projects/{slug}/review (submit_review - used by RerunDialog's "Suggest a
+# revision" and AgentStatusTab's inline "Revise") and PATCH /projects/{slug}/reviews/{id}
+# (resolve_hitl_review - used by ReviewDialog, the pending-review queue). Before this fix,
+# only the PATCH door wrote an output_changes row; run_service._fetch_revision_notes read
+# human_reviews.notes directly and injected a REVISION INSTRUCTIONS block for *both* doors,
+# which meant the PATCH door's note reached the agent twice and the POST door's note reached
+# it only through that one now-removed path. Both doors now write output_changes, and
+# _fetch_change_requests is the only path a reviewer's note travels by, for either door.
+#
+# These use the real router functions (not just _fetch_change_requests) and the `client`
+# fixture from conftest.py, so the assertion covers the whole path: HTTP request in,
+# task.description at kickoff out.
+
+DOOR_PROJECT_TEMPLATE = {
+    "llm_mode": "standard", "sector": "utilities",
+    "stakeholder_groups": [], "value_stream_labels": [], "crews_enabled": ["requirements"],
+    "review_gates": True, "slack_channel": "",
+}
+
+
+async def _seed_door_project(client, slug: str) -> int:
+    """A project with one current output owned by the requirements crew's own agent."""
+    await client.post("/projects", json={**DOOR_PROJECT_TEMPLATE, "client_slug": slug})
+    from api.database import get_connection, fetch_project, insert_agent_output
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        output_id = await insert_agent_output(
+            conn,
+            project_id=project["id"],
+            agent_name="requirements_analyst",
+            output_type="requirements_doc",
+            file_path="/tmp/door_req.json",
+            version=1,
+        )
+    return output_id
+
+
+async def _run_requirements_crew_and_capture_description(slug: str) -> str:
+    """Build and run the requirements crew with a mocked crew factory, capturing the task
+    description crewai would actually have seen at kickoff - the same boundary
+    test_change_request_text_reaches_the_task_before_kickoff patches above."""
+    mock_task = MagicMock()
+    mock_task.description = "original task body"
+    mock_crew = MagicMock()
+    mock_crew.tasks = [mock_task]
+    seen: list[str] = []
+
+    async def _fake_kickoff():
+        seen.append(mock_task.description)
+        return "done"
+
+    mock_crew.kickoff_async = AsyncMock(side_effect=_fake_kickoff)
+
+    import agents.crews.requirements_crew  # noqa: F401  ensure importable before patching
+    with patch(
+        "agents.crews.requirements_crew.create_requirements_crew",
+        return_value=mock_crew,
+    ):
+        from api.services.run_service import build_and_run_crew
+        await build_and_run_crew(slug, "requirements", run_id=1)
+
+    return seen[0]
+
+
+@pytest.mark.asyncio
+async def test_the_post_review_door_reaches_the_agent_exactly_once(client):
+    """RerunDialog's 'Suggest a revision' and AgentStatusTab's inline 'Revise' both submit
+    through POST /review. Before this fix that endpoint never wrote output_changes, so its
+    only delivery mechanism was the REVISION INSTRUCTIONS injection this branch retires -
+    wiring this door to output_changes is what makes retiring that injection safe rather
+    than a silent regression for these two flows.
+    """
+    slug = "door-post-test"
+    output_id = await _seed_door_project(client, slug)
+
+    resp = await client.post(
+        f"/projects/{slug}/review",
+        json={"output_id": output_id, "decision": "changes_requested",
+              "notes": "use the approved 2025 figures"},
+    )
+    assert resp.status_code == 201
+
+    description = await _run_requirements_crew_and_capture_description(slug)
+
+    assert description.count("use the approved 2025 figures") == 1
+    assert "REQUESTED CHANGES" in description
+    assert "REVISION INSTRUCTIONS" not in description
+
+
+@pytest.mark.asyncio
+async def test_the_patch_review_door_reaches_the_agent_exactly_once(client):
+    """ReviewDialog's pending-review queue submits through PATCH /reviews/{id}. This door
+    already wrote output_changes before this fix; what this fix closes is that
+    human_reviews.notes was *also* being injected as REVISION INSTRUCTIONS, so the same
+    note reached the agent twice.
+    """
+    slug = "door-patch-test"
+    output_id = await _seed_door_project(client, slug)
+    from api.database import get_connection
+
+    async with get_connection(slug) as conn:
+        cur = await conn.execute(
+            "INSERT INTO human_reviews (output_id, decision) VALUES (?, 'pending')",
+            (output_id,),
+        )
+        review_id = cur.lastrowid
+        await conn.commit()
+
+    resp = await client.patch(
+        f"/projects/{slug}/reviews/{review_id}",
+        json={"decision": "changes_requested", "notes": "use the approved 2025 figures"},
+    )
+    assert resp.status_code == 200
+
+    description = await _run_requirements_crew_and_capture_description(slug)
+
+    assert description.count("use the approved 2025 figures") == 1
+    assert "REQUESTED CHANGES" in description
+    assert "REVISION INSTRUCTIONS" not in description

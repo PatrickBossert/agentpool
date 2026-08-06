@@ -72,27 +72,6 @@ def missing_config_keys(config: dict, crew_name: str) -> list[str]:
     return [key for key in REQUIRED_CONFIG_KEYS.get(crew_name, ()) if not config.get(key)]
 
 
-async def _fetch_revision_notes(slug: str, crew_name: str) -> str:
-    """Return any pending revision notes for the crew's current outputs, or ''."""
-    agent_names = set(_CREW_AGENT_NAMES.get(crew_name, []))
-    if not agent_names:
-        return ""
-    async with get_connection(slug) as conn:
-        project = await fetch_project(conn, slug=slug)
-        if not project:
-            return ""
-        outputs = await fetch_agent_outputs(conn, project_id=project["id"])
-    for o in outputs:
-        if (
-            o["agent_name"] in agent_names
-            and o.get("is_current", 1)
-            and o.get("review_status") == "changes_requested"
-            and o.get("reviewer_notes")
-        ):
-            return o["reviewer_notes"]
-    return ""
-
-
 async def _fetch_skill_notes(crew_name: str) -> str:
     """Return stored skill notes and approved library skills for this crew's agents."""
     from api.database import get_system_connection, fetch_skill_notes as _fetch, fetch_skills
@@ -436,17 +415,12 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
 
     crew.step_callback = make_step_callback(slug, crew_name)
 
-    # Prepend any pending revision notes to all tasks in this crew
-    revision_notes = await _fetch_revision_notes(slug, crew_name)
-    if revision_notes:
-        prefix = (
-            "REVISION INSTRUCTIONS — apply these changes to your previous output:\n"
-            f"{revision_notes}\n\n"
-            "Carry forward everything not mentioned above unchanged.\n\n"
-            "---\n\n"
-        )
-        for task in crew.tasks:
-            task.description = prefix + task.description
+    # A reviewer's note reaches the agent through _fetch_change_requests below, via
+    # output_changes - not from here. human_reviews.notes / agent_outputs.reviewer_notes
+    # are still written and still displayed in the UI (the revision dialog pre-populates
+    # from them), but they are no longer injected directly: both doors that write
+    # review_status='changes_requested' (POST /review and PATCH /reviews/{id}) also write
+    # an output_changes row now, so injecting from here too would say the same thing twice.
 
     skill_notes = await _fetch_skill_notes(crew_name)
     if skill_notes:

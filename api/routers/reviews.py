@@ -44,6 +44,22 @@ async def submit_review(slug: str, req: ReviewRequest, payload: dict = Depends(r
             )
         except AioSQLiteIntegrityError:
             raise HTTPException(status_code=422, detail=f"output_id {req.output_id} does not exist")
+        # An approval is not feedback, and neither is an empty note - mirrors the guard on
+        # the PATCH door below. No intent parameter here: every caller of this endpoint
+        # ("Suggest a revision" and the inline "Revise" action) means fix this output, which
+        # is exactly what kind='change_request' means, so the default is correct by
+        # construction rather than by omission. Don't add an intent picker to this door
+        # thinking it was overlooked - it wasn't.
+        if req.decision == "changes_requested" and req.notes.strip():
+            await insert_output_change(
+                conn,
+                output_id=req.output_id,
+                requested_by=payload.get("sub", "unknown"),
+                source="review",
+                request=req.notes.strip(),
+                summary="",
+                kind="change_request",
+            )
         return {
             "id": review_id,
             "output_id": req.output_id,
