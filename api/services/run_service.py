@@ -7,12 +7,15 @@ and RunCrewTool (PAM orchestration path).
 dispatch_crew() is called by the run router via asyncio.create_task().
 """
 import json
+import logging
 from pathlib import Path
 from typing import Any
 import aiosqlite
 from api.config import get_settings, load_project_config
 from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_agent_outputs, fetch_stakeholder_assignments, fetch_stakeholders
 from api.routers.ws import push_log
+
+log = logging.getLogger(__name__)
 
 # Crew name → snake_case agent names stored in agent_outputs.agent_name
 _CREW_AGENT_NAMES: dict[str, list[str]] = {
@@ -117,6 +120,36 @@ async def _fetch_skill_notes(crew_name: str) -> str:
     if skills:
         sections.append("AGENT SKILLS (apply these capabilities in your work):\n" + "\n".join(skills))
     return "\n\n".join(sections)
+
+
+async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[int]]:
+    """Open change requests for this crew's current outputs, and the ids to close after.
+
+    Scoped to current outputs, the same scoping commit_service already uses, so a request
+    against a superseded version is not replayed against its replacement.
+    """
+    from api.database import (
+        fetch_agent_outputs, fetch_open_change_requests, fetch_project,
+    )
+    agents = set(_CREW_AGENT_NAMES.get(crew_name, []))
+    if not agents:
+        return "", []
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return "", []
+        outputs = await fetch_agent_outputs(conn, project_id=project["id"])
+        output_ids = [
+            o["id"] for o in outputs if o["agent_name"] in agents and o.get("is_current")
+        ]
+        rows = await fetch_open_change_requests(conn, output_ids=output_ids)
+    if not rows:
+        return "", []
+    lines = "\n".join(f"- {r['request']}" for r in rows)
+    header = (
+        "REQUESTED CHANGES (a reviewer asked for these on your last output; apply them):\n"
+    )
+    return header + lines, [r["id"] for r in rows]
 
 
 def make_step_callback(slug: str, crew_name: str):
@@ -397,7 +430,26 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         for task in crew.tasks:
             task.description = skill_notes + "\n\n" + task.description
 
-    return await crew.kickoff_async()
+    change_text, change_ids = await _fetch_change_requests(slug, crew_name)
+    if change_text:
+        for task in crew.tasks:
+            task.description = change_text + "\n\n" + task.description
+
+    result = await crew.kickoff_async()
+
+    if change_ids:
+        try:
+            async with get_connection(slug) as conn:
+                from api.database import mark_change_requests_applied
+                await mark_change_requests_applied(
+                    conn, change_ids=change_ids, run_id=run_id
+                )
+        except Exception:
+            # A request left open is re-injected next run, which is noisy but harmless.
+            # Failing the run because bookkeeping failed would discard completed work.
+            log.exception("could not close change requests for %s", crew_name)
+
+    return result
 
 
 _AUTO_ASSIGN_CREWS = {"discovery_interviews", "questionnaire_builder", "assessment_design"}
