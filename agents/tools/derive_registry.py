@@ -116,14 +116,16 @@ class DeriveRegistryTool(BaseTool):
                 inactive["active"] = False
                 new_activities.append(inactive)
 
-        # Sort numerically by ID: "1" < "1.1" < "1.1.1" < "1.2" < ...
-        def _sort_key(a: dict) -> list[int]:
-            try:
-                return [int(p) for p in a["id"].split(".")]
-            except ValueError:
-                return [0]
+        # Sort by the ID's numeric parts, sharing value_chain_model's implementation so the
+        # registry, the collision messages and the migration never disagree about what
+        # "1.10" means relative to "1.9". The local version raised ValueError on any
+        # non-numeric part and fell back to [0], which put every role node (0.A, 0.S, 1.C,
+        # 1.F, 2.F) on the same key, ahead of the root and in arbitrary order relative to
+        # each other. id_order maps a non-numeric part to 10**9 instead, so a role node
+        # trails its numbered siblings rather than interleaving with them.
+        from api.services.value_chain_model import id_order
 
-        new_activities.sort(key=_sort_key)
+        new_activities.sort(key=lambda a: id_order(a["id"]))
 
         registry = {"schema_version": 2, "activities": new_activities}
 
