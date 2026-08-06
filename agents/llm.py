@@ -10,6 +10,17 @@ from agents.anthropic_compat import ensure_conversation_ends_with_user
 # already been written. See agents/anthropic_compat.py.
 ensure_conversation_ends_with_user()
 
+# CrewAI routes "anthropic/*" models to its own AnthropicCompletion provider, which calls the
+# Anthropic SDK directly - LiteLLM is not involved. That provider defaults to stream=False and
+# passes timeout=None straight through, so the SDK client is built with no timeout whatsoever.
+# A long non-streaming generation therefore holds an idle socket open with nothing flowing until
+# the entire response lands, and a dropped connection surfaces as a bare
+# "anthropic.APIConnectionError: Connection error." with no way to bound it. That is what killed
+# discovery_mapping runs 22 and 23. Streaming keeps bytes moving so the connection is never idle,
+# and the explicit timeout applies per read rather than to the whole call - it bounds a wedged
+# socket without capping how long a legitimate generation may take.
+_LONG_CALL_TRANSPORT = {"stream": True, "timeout": 600.0}
+
 
 def get_crew_llm(llm_mode: str) -> LLM:
     """Return the LLM for crew agents based on the project's llm_mode setting."""
@@ -27,6 +38,7 @@ def get_crew_llm(llm_mode: str) -> LLM:
         model="anthropic/claude-sonnet-4-6",
         api_key=settings.anthropic_api_key,
         max_tokens=16384,
+        **_LONG_CALL_TRANSPORT,
     )
 
 
@@ -36,6 +48,7 @@ def get_pam_llm() -> LLM:
     return LLM(
         model=PAM_MODEL,
         api_key=settings.anthropic_api_key,
+        **_LONG_CALL_TRANSPORT,
     )
 
 
