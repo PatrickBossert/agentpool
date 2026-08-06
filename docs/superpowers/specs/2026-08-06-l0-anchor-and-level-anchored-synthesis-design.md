@@ -117,30 +117,90 @@ tree - `value_chain_tree` is Alex's key and the write would be refused by the ow
 so synthesising would leave the registry holding anchors the tree and the value chain UI cannot
 display, reintroducing a resolution gap through a different door.
 
-## Where warnings are recorded
+## Where warnings are recorded, and how a reviewer acts on one
 
 One new table, written by both validators:
 
 ```sql
 validation_warnings (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id  INTEGER NOT NULL REFERENCES projects(id),
-  run_id      INTEGER,
-  source      TEXT NOT NULL,   -- 'value_chain_tree' | 'theme_anchor'
-  subject     TEXT,            -- node id or theme id
-  code        TEXT NOT NULL,
-  detail      TEXT NOT NULL,
-  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id       INTEGER NOT NULL REFERENCES projects(id),
+  run_id           INTEGER,
+  source           TEXT NOT NULL,   -- 'value_chain_tree' | 'theme_anchor'
+  subject          TEXT,            -- node id or theme id
+  code             TEXT NOT NULL,
+  detail           TEXT NOT NULL,
+  disposition      TEXT NOT NULL DEFAULT 'open',  -- open | acknowledged | dismissed
+  disposition_note TEXT,
+  disposed_by      TEXT,
+  disposed_at      DATETIME,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
 )
 ```
 
-Surfaced in the agent's **Status tab**, which is already this project's home for an artefact's
-history, and in the **PAM report**, because Pamela cannot report accurately on a crew whose output
-is structurally suspect.
+**Warnings appear in the review dialog** for the crew under review, alongside the output. This is
+the load-bearing surface: `ReviewDialog.tsx` is where a reviewer chooses `approve` or
+`changes_requested`, and a warning they never see cannot inform that decision. They also appear in
+the agent's Status tab, which is this project's home for an artefact's history, and in the PAM
+report, because Pamela cannot report accurately on a crew whose output is structurally suspect.
+
+A reviewer gives each warning a **disposition**:
+
+| Disposition | Meaning | Effect |
+|---|---|---|
+| `open` | Nobody has looked yet | Shown in the review dialog |
+| `acknowledged` | The warning is **correct** and the output needs fixing | Stays visible; carried into the agent's next run as a correction |
+| `dismissed` | A **false positive** - the output is genuinely right | Suppressed for that `(subject, code)`, with the reason recorded |
+
+A dismissal re-raises if the underlying measure moves materially - for `l3_skew`, if the L3
+proportion changes by more than ten percentage points. Without that, one dismissal blinds the check
+permanently, which is how a warning system dies. The recorded reason is also the only way a later
+reader can tell "we considered this and it is fine" from "nobody looked".
 
 Deliberately not `blocked_writes`. That table means "an agent reached for something it does not
 own", which is a different fact; overloading it would blur a distinction the ownership work paid
 to establish.
+
+## Two loops close the feedback
+
+**The machine loop, in this spec.** On re-run, an agent reads its own `open` and `acknowledged`
+warnings from the previous run and corrects. No reviewer involvement and no general mechanism -
+just an agent seeing what its last output was flagged for. This is what makes a warning actionable
+immediately rather than decorative.
+
+**The human loop, in sub-project C.** A reviewer's `changes_requested` note reaching the agent is
+the general mechanism serving every crew, not only Casey. It is a hard prerequisite for the human
+half of this design: without it, a reviewer who sees a skew warning can request changes, but the
+re-run gives the agent identical inputs and it reproduces the same skew. **C must therefore be
+built before this spec is fully actionable, and is sequenced first.**
+
+### Feedback becomes durable agent skill
+
+Every piece of feedback - a reviewer note or an acknowledged warning - is assessed against one
+question: **does this agent need to do this consistently in future?**
+
+| Feedback | Answer | Destination |
+|---|---|---|
+| "ISS is not a fleet maintainer" | No - a fact about this client | Project context, this project only |
+| "Anchor governance themes at L0" | Yes - how the agent should always work | Skill candidate |
+
+The machinery already exists and is wired end to end. `skills_service.check_specificity()` is the
+discriminator: it flags descriptions naming org names, people, suppliers or contracts as unsuitable
+for cross-project reuse, so the ISS note stays project-local while the anchoring rule passes clean.
+A candidate lands in `skills` as `status='pending'`; `run_service._fetch_skill_notes()` injects only
+`approved` skills, prepending them to every task description for that crew's agents. The approval
+gate matters - an agent able to promote its own corrections to permanent instructions would be
+rewriting its own brief with nothing watching.
+
+Validator warnings and reviewer notes sit at opposite ends of this triage by construction. A
+validator warning is generic - `anchor_level_mismatch` is a statement about how anchoring works,
+with no client in it - so it will usually pass `check_specificity` and belongs in the library. A
+reviewer note is usually the opposite, existing precisely because a human knew something
+project-specific. The triage question is what separates them, not their source.
+
+**The triage mechanism itself is specified in C**, which is the single home for the feedback loop.
+This spec establishes only that its validator warnings are feedback of the same kind, entering the
+same triage, with acknowledged warnings as skill candidates.
 
 ## Casey's level-anchored synthesis
 
@@ -206,11 +266,24 @@ as the fuller account. The statement to record:
   containing the L0 and those role nodes with correct `parent_id` values. This is the regression
   that started all of this.
 - **Warnings** - a warning is written once per occurrence, and re-running does not duplicate it.
+- **Dispositions** - a `dismissed` warning is suppressed on the next run for the same
+  `(subject, code)`; the same warning re-raises once the L3 proportion moves more than ten
+  percentage points; an `acknowledged` warning stays visible rather than being suppressed.
+- **The machine loop** - an agent's `open` and `acknowledged` warnings from the previous run are
+  present in its next run's context, and `dismissed` ones are not.
+
+## Sequencing
+
+**C - the reviewer feedback loop - is built first**, ahead of this spec. It is a prerequisite
+rather than a sibling: the human half of the loop described above does not function without it, and
+the feedback triage that turns corrections into durable agent skills is specified there. This spec
+then follows, with the rest of the decomposition (I, F, H, G, E, D) after.
 
 ## Not in this spec
 
-`role_description` on the stakeholder record (sub-project F, Jordan's directory); Maya's
-incremental build (E); the reviewer feedback loop (C); tokenised review links and the Slack stub
-(D); multiple types per role code; and `n.n.n.F` activity-specific role nodes such as a
-call-centre frontline supporting sales. The last two are extensibility we have deliberately
-deferred - the current model is insightful enough without over-complicating it.
+The feedback triage mechanism and reviewer-note delivery (C, now a prerequisite);
+`role_description` on the stakeholder record (F, Jordan's directory); Maya's incremental build (E);
+tokenised review links and the Slack stub (D); multiple types per role code; and `n.n.n.F`
+activity-specific role nodes such as a call-centre frontline supporting sales. The last two are
+extensibility we have deliberately deferred - the current model is insightful enough without
+over-complicating it.
