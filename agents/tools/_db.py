@@ -39,6 +39,86 @@ def latest_output_path(original: Path) -> Path | None:
     return max(versions)[1] if versions else None
 
 
+def current_output_path(
+    slug: str, output_type: str, *, run_id: int = 0
+) -> Path | None:
+    """The file the ledger marks current for this output type.
+
+    agent_outputs already records this and already maintains it: insert_agent_output_sync
+    sweeps is_current and stores the versioned path, and revert_to_version repoints
+    is_current to the reverted version. Reverting is exactly the case a filename-ordering
+    scheme cannot express - the newer files are still on disk, and they are not the answer.
+
+    Three outcomes, deliberately distinct:
+
+      row + file exists  -> the file
+      row, file missing  -> None, and a warning naming what survives. Falling through to
+                            the glob here is what turns a broken pointer into a wrong
+                            answer, which is how the 15 July value_chain_summary was read
+                            on every run for three weeks, naming a party a human had
+                            already corrected.
+      no row             -> latest_output_path, which covers a first write (the file is
+                            written and renamed before its row exists), a hand-written
+                            file, and projects predating versioning.
+    """
+    settings = get_settings()
+    outputs_dir = Path(settings.projects_dir) / slug / "outputs"
+    base = outputs_dir / f"{output_type}.json"
+
+    try:
+        project_id = get_project_id(slug)
+        with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+            row = conn.execute(
+                "SELECT version, file_path FROM agent_outputs"
+                " WHERE project_id=? AND output_type=? AND is_current=1"
+                " ORDER BY version DESC LIMIT 1",
+                (project_id, output_type),
+            ).fetchone()
+    except (sqlite3.Error, ValueError):
+        return latest_output_path(base)   # an unreadable ledger is not an answer
+
+    if row is None:
+        return latest_output_path(base)
+
+    version, file_path = row[0], Path(row[1])
+    if file_path.exists():
+        return file_path
+
+    _record_missing_current(slug, output_type, version, file_path, outputs_dir, run_id)
+    return None
+
+
+def _record_missing_current(
+    slug: str, output_type: str, version, file_path: Path, outputs_dir: Path, run_id: int
+) -> None:
+    """Name the output, the version, the missing file, and what is left to revert to.
+
+    The reader has two remedies - revert to a version that still exists, or restore a
+    backup by hand - and neither is possible without knowing what survives.
+    """
+    pattern = re.compile(rf"^{re.escape(output_type)}_v(\d+)\.json$")
+    survivors = sorted(
+        int(m.group(1))
+        for p in outputs_dir.glob(f"{output_type}_v*.json")
+        if (m := pattern.match(p.name))
+    )
+    available = ", ".join(f"v{v}" for v in survivors) if survivors else "none"
+    try:
+        record_validation_warnings_sync(slug, run_id, "output_resolution", [{
+            "subject": output_type,
+            "code": "current_file_missing",
+            "measure": None,
+            "detail": (
+                f"{output_type} is marked current at v{version}, but {file_path.name} is "
+                f"not on disk. Nothing resolved it to an older version, because reading a "
+                f"superseded artefact silently is worse than reading none. Still present: "
+                f"{available}. Revert to one of those, or restore the file from a backup."
+            ),
+        }])
+    except Exception:
+        pass   # a resolver must not fail because bookkeeping did
+
+
 def _db_path(slug: str) -> str:
     return str(Path(get_settings().database_dir) / f"{slug}.db")
 
