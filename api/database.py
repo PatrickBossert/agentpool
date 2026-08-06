@@ -1547,6 +1547,16 @@ async def revert_to_version(
     return (dict(r) if r else None), deleted_paths
 
 
+async def fetch_review(conn: aiosqlite.Connection, *, review_id: int) -> dict | None:
+    """A single human_reviews row by id, including its output_id - callers that need to
+    attach a change to the output a review was made against use this."""
+    async with conn.execute(
+        "SELECT * FROM human_reviews WHERE id=?", (review_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def update_review(
     conn: aiosqlite.Connection, *, review_id: int, decision: str, notes: str
 ) -> bool:
