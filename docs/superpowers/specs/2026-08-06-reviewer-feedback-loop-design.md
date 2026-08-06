@@ -14,13 +14,26 @@ Feedback is recorded and never reaches the agent. The paths were traced directly
   `api/services/value_chain_store.py:91` (a manual edit). It is read by exactly one consumer,
   `api/services/commit_service.py:146`, which displays it at commit time. **No agent, crew factory,
   `run_service` or `orchestration_service` reads it.**
-- `human_reviews.notes` carries the reviewer's words from `PATCH /{slug}/reviews/{id}` and is
-  likewise display-only.
+- `human_reviews.notes` carries the reviewer's words from `PATCH /{slug}/reviews/{id}`.
 
-So a reviewer who corrects an output watches the correction evaporate: the crew re-runs with
-identical inputs and reproduces the same output. A manual edit is worse, because the reviewer
-believes they have fixed it - `value_chain_store` records the edit with `source="edit"` and no
-rationale, and the next run silently reverts it.
+**Correction, established during stage 1:** this section originally claimed `human_reviews.notes` was
+display-only. **That was wrong.** `fetch_agent_outputs` computes a `reviewer_notes` alias as a
+subquery over it (`api/database.py`), `_fetch_revision_notes` read that alias, and `run_service`
+injected it as a `REVISION INSTRUCTIONS` block - so the review flow always reached the agent. The
+error came from grepping for readers of the *table* when the reader used a computed *alias*.
+
+Two consequences, both settled in stage 1. The same note was briefly injected twice, once through
+each carrier; the old path has been retired and `output_changes` is now the single carrier. And
+there are **two review doors**, not one: `PATCH /reviews/{id}` serves `ReviewDialog.tsx`, while
+`POST /review` serves `RerunDialog.tsx`'s "Suggest a revision" and `AgentStatusTab.tsx`'s inline
+"Revise". Both now write to the queue. Anything planned against this spec must account for both.
+
+So a reviewer's correction reached the agent only through the review flow's `REVISION INSTRUCTIONS`
+block, and only while the output's `review_status` remained `changes_requested` - with no lifecycle,
+no record of whether it had been acted upon, and nothing carrying it beyond that one window. A
+manual edit had no path at all, which is worse, because the editor believes they have fixed it -
+`value_chain_store` records the edit with `source="edit"` and no rationale, and the next run
+silently reverts it.
 
 **The underlying asymmetry:** everything project-scoped is unread, and everything read is global.
 
@@ -28,7 +41,7 @@ rationale, and the next run silently reverts it.
 |---|---|---|---|
 | `skills` where `status='approved'` | Global | Baseline seed only | yes, via `_fetch_skill_notes` |
 | `agent_skill_notes` | **Global** - no `project_id` | A separate manual endpoint | yes, via `_fetch_skill_notes` |
-| `human_reviews.notes` | Project | The review flow | no |
+| `human_reviews.notes` | Project | The review flow | **yes** - via the `reviewer_notes` alias, see correction above |
 | `output_changes` | Project | Reviewers and manual edits | no |
 
 This fell between two features. The review feature records decisions; the skills feature builds
