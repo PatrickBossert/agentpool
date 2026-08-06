@@ -362,6 +362,17 @@ export function OutputPreview({ slug, output }: { slug: string; output: AgentOut
 
 // ── ReviewDialog ──────────────────────────────────────────────────────────────
 
+type ReviewIntent = 'change_request' | 'correction' | 'skill'
+
+// Declared (not cast) so a typo'd intent fails to compile rather than shipping a value the
+// API will 422 on - handleSubmit's try/finally has no catch, so a rejected request would
+// otherwise vanish silently from the reviewer's point of view.
+const INTENT_OPTIONS: [ReviewIntent, string, string][] = [
+  ['change_request', 'Fix this output', 'Applies to the next run only.'],
+  ['correction', 'This is true of this client', 'Becomes a standing fact for this client.'],
+  ['skill', 'Do this on every project', 'Becomes a capability this agent uses everywhere.'],
+]
+
 export interface ReviewDialogProps {
   slug: string
   review: HumanReview
@@ -374,7 +385,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   const [mode, setMode] = useState<'idle' | 'revise' | 'reject'>('idle')
   const [notes, setNotes] = useState('')
   const [skillInput, setSkillInput] = useState('')
-  const [intent, setIntent] = useState<'change_request' | 'correction' | 'skill'>('change_request')
+  const [intent, setIntent] = useState<ReviewIntent>('change_request')
   const [submitting, setSubmitting] = useState(false)
 
   const outputType = review.crew_name ? CREW_OUTPUT_TYPE[review.crew_name] : undefined
@@ -470,13 +481,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
                       What should happen to this feedback?
                     </label>
                     <div className="space-y-2">
-                      {(
-                        [
-                          ['change_request', 'Fix this output', 'Applies to the next run only.'],
-                          ['correction', 'This is true of this client', 'Becomes a standing fact for this client.'],
-                          ['skill', 'Do this on every project', 'Becomes a capability this agent uses everywhere.'],
-                        ] as [typeof intent, string, string][]
-                      ).map(([value, label, explanation]) => (
+                      {INTENT_OPTIONS.map(([value, label, explanation]) => (
                         <label key={value} className="flex items-start gap-2 text-sm text-primary cursor-pointer">
                           <input
                             type="radio"

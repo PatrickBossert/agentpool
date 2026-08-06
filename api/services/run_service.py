@@ -464,9 +464,18 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         try:
             async with get_connection(slug) as conn:
                 from api.database import mark_change_requests_applied
-                await mark_change_requests_applied(
+                closed = await mark_change_requests_applied(
                     conn, change_ids=change_ids, run_id=run_id
                 )
+                if closed != len(change_ids):
+                    # Zero is the ordinary shape of this mismatch - a concurrent duplicate
+                    # run already closed some or all of them - but it looks identical here
+                    # to a bug that silently failed to close any. Logging the actual counts
+                    # is what tells the two apart after the fact.
+                    log.warning(
+                        "mark_change_requests_applied closed %d of %d requested for %s (run %s)",
+                        closed, len(change_ids), crew_name, run_id,
+                    )
         except Exception:
             # A request left open is re-injected next run, which is noisy but harmless.
             # Failing the run because bookkeeping failed would discard completed work.
