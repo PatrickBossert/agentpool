@@ -12,6 +12,7 @@ from agents.tools._db import (
     output_id_for_path_sync,
     record_blocked_write_sync,
     record_run_input_sync,
+    record_validation_warnings_sync,
 )
 from agents.tools.ownership import OUTPUT_OWNERS, check_write
 
@@ -159,6 +160,38 @@ _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
 }
 
 
+def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
+    from api.services.tree_validation import validate_tree_structure
+
+    previous = _current_registry(slug)
+    # None, not {}, on a first run: the validator skips the role-node and id-succession
+    # checks when it has no baseline, and says so rather than passing silently.
+    return validate_tree_structure(parsed, previous or None)
+
+
+# Warners differ from validators in two ways that matter, and both are why they are a
+# separate map rather than another _VALIDATORS entry:
+#
+#   1. A validator REFUSES - the write never lands. A warner records and lets the write
+#      through, because blocking the run would lose the work the run just did. That is not
+#      hypothetical: DeriveRegistryTool refused a label change and the registry stuck at v5
+#      for two days while the tree moved to v12, and the run still reported completed.
+#   2. _VALIDATORS rejects any payload that is not a dict. value_chain_tree is a JSON
+#      *list*, so registering it there would refuse every tree write ever made.
+#
+# They run after the write succeeds, so a recorded warning always refers to an output that
+# actually exists.
+_WARNERS: dict[str, Callable[[object, str], list[dict]]] = {
+    "value_chain_tree": _warn_value_chain_tree,
+}
+
+# The `source` recorded against each warning, so a reviewer can tell a tree finding from a
+# theme one without parsing the code.
+_WARNER_SOURCE: dict[str, str] = {
+    "value_chain_tree": "value_chain_tree",
+}
+
+
 # Keys whose write merges into the current version instead of replacing it.
 #
 # Maya's script set is roughly 400KB of JSON and max_tokens is 16384, so it cannot be
@@ -278,6 +311,20 @@ class SQLiteStateTool(BaseTool):
                 )
             except (OSError, ValueError) as e:
                 return f"Error: write failed — {e}"
+            warner = _WARNERS.get(key)
+            if warner is not None:
+                try:
+                    found = warner(parsed, self.slug)
+                    if found:
+                        record_validation_warnings_sync(
+                            self.slug, self.run_id, _WARNER_SOURCE[key], found
+                        )
+                except Exception:
+                    # A warning is never worth failing a completed write over. The write and
+                    # its row are durable by this point; telling the agent it failed would
+                    # make it write again and version a duplicate.
+                    pass
+
             try:
                 link_output_sync(self.slug, self.run_id, self.agent_name, new_output_id)
             except Exception:
