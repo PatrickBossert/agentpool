@@ -127,3 +127,33 @@ async def test_interview_sessions_and_answers_are_never_touched(seeded):
     assert "DELETE FROM interview_sessions" not in src
     assert "DELETE FROM interview_answers" not in src
     reset_interview_artefacts(slug, apply=True)
+
+
+@pytest.mark.asyncio
+async def test_fragment_files_from_earlier_runs_are_caught(seeded):
+    """Maya's earlier fragmentation left names like interview_scripts_batch1_v1.json.
+    They end in _vN but do not match `interview_scripts_v*`, so a narrower glob leaves
+    them sitting in outputs looking like current work - the filename-family trap."""
+    slug, outputs = seeded
+    from scripts.reset_interview_artefacts import reset_interview_artefacts
+
+    for name in ("interview_scripts_batch1_v1.json", "interview_scripts_part3_v34.json"):
+        (outputs / name).write_text(json.dumps({"SC-001": {"node_label": "stray"}}))
+
+    reset_interview_artefacts(slug, apply=True)
+    strays = sorted(p.name for p in outputs.glob("interview_scripts*"))
+    assert strays == [], f"fragment files left behind: {strays}"
+
+
+@pytest.mark.asyncio
+async def test_the_wider_glob_does_not_cross_between_types(seeded):
+    """interview_scripts must not swallow interview_script_registry, and nothing here may
+    touch a value chain file."""
+    slug, outputs = seeded
+    from scripts.reset_interview_artefacts import reset_interview_artefacts
+
+    (outputs / "value_chain_registry_v5.json").write_text(json.dumps({"activities": []}))
+    report = reset_interview_artefacts(slug, apply=True)
+    assert (outputs / "value_chain_registry_v5.json").exists()
+    assert (outputs / "value_chain_tree_v1.json").exists()
+    assert all("value_chain" not in t for t in report["types"])

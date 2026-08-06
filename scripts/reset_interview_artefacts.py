@@ -61,13 +61,21 @@ def reset_interview_artefacts(slug: str, *, apply: bool = False) -> dict:
     # Every file whose stem belongs to one of these types, not only the paths the database
     # names - a version written and then renamed can leave a file no row points at, which
     # is exactly how six different L0 interviews came to be merged into one view.
-    files: list[Path] = []
+    #
+    # The glob is deliberately `{type}*.json` rather than `{type}_v*.json`. Maya's earlier
+    # fragmentation left names like interview_scripts_batch1_v1.json and
+    # interview_scripts_part3_v34.json, which end in _vN but do not match _v* after the
+    # type - so a narrower glob leaves them behind, looking like current outputs. That is
+    # the filename-family trap the clean baseline was bitten by: reason about the family,
+    # not about the rows.
+    #
+    # No type here is a prefix of another ("interview_scripts" does not prefix
+    # "interview_script_registry" - the 's' differs), so the wider glob cannot cross types.
+    files: set[Path] = set()
     if outputs.is_dir():
         for output_type in INTERVIEW_OUTPUT_TYPES:
-            files.extend(sorted(outputs.glob(f"{output_type}_v*.json")))
-            exact = outputs / f"{output_type}.json"
-            if exact.exists():
-                files.append(exact)
+            files.update(outputs.glob(f"{output_type}*.json"))
+    files = sorted(files)
 
     report = {
         "rows": len(rows),
