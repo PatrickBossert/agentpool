@@ -99,3 +99,29 @@ async def test_an_unknown_intent_is_rejected(client):
         json={"decision": "changes_requested", "notes": "x", "intent": "whatever"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_approving_with_notes_still_records_no_change(client):
+    """Non-empty notes are the whole point of this test: the guard must key on the
+    decision, not on whether notes are present. With empty notes, a guard of
+    `if req.notes.strip()` and the correct `if decision == "changes_requested" and
+    req.notes.strip()` are indistinguishable - both skip recording. Only a non-empty
+    note on an approval tells them apart. Without this case, someone could collapse
+    the guard to key on notes alone and every existing test would still pass, while
+    approvals carrying notes would silently start recording change requests -
+    instructions that say nothing, injected into every subsequent run."""
+    review_id, output_id = await _seed_review(client)
+
+    await client.patch(
+        f"/projects/{SLUG}/reviews/{review_id}",
+        json={"decision": "approved", "notes": "do this anyway"},
+    )
+
+    from api.database import get_connection
+
+    async with get_connection(SLUG) as conn:
+        rows = await conn.execute_fetchall(
+            "SELECT COUNT(*) FROM output_changes WHERE output_id=?", (output_id,)
+        )
+    assert rows[0][0] == 0
