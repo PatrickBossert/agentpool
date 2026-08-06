@@ -133,6 +133,7 @@ def _current_levers(slug: str) -> list[dict]:
 
 def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     from api.services.interview_script_model import (
+        validate_anchor_levels,
         validate_elicitation_order,
         validate_levers_unnamed_in_unaided_sections,
         validate_scripts,
@@ -143,6 +144,9 @@ def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     # The value chain registry, not the script one: this checks that each script's anchor
     # names a node that exists.
     problems.extend(validate_scripts_against_registry(parsed, _current_registry(slug)))
+    # And that it is the right kind of node. Existence alone let run 26 file an L0 board
+    # interview against an L1 entity, because the L0 it wanted was not in the registry.
+    problems.extend(validate_anchor_levels(parsed, _current_registry(slug)))
     # The ordering rule is checkable, so it is checked rather than left to an instruction
     # Maya may or may not follow.
     problems.extend(validate_elicitation_order(parsed))

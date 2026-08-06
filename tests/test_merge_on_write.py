@@ -128,3 +128,15 @@ async def test_a_non_merging_key_still_replaces(maya_project):
     from agents.tools.sqlite_state import _MERGE_ON_WRITE
     assert "value_chain_model" not in _MERGE_ON_WRITE
     assert "interview_scripts" in _MERGE_ON_WRITE
+
+
+@pytest.mark.asyncio
+async def test_the_tool_refuses_a_script_filed_at_the_wrong_altitude(maya_project):
+    """One layer away from tests/test_anchor_levels.py: the validator is proved there,
+    and here the tool that calls it must actually act on what it returns."""
+    slug, outputs = maya_project
+    result = _write(slug, _script("SC-001", "1", "L0"))   # L0 script on an L1 node
+    assert result.startswith("Error"), result
+    assert "altitude" in result
+    assert latest_output_path(outputs / "interview_scripts.json") is None, \
+        "a refused write must leave no file behind"

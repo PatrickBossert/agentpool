@@ -251,3 +251,63 @@ def lever_status(lever: dict, answers: list[dict]) -> str:
     if any(a.get("elicitation") == "unprompted" for a in touching):
         return "confirmed_unprompted"
     return "confirmed_prompted"
+
+
+_ROLE_LEVELS = ("C", "A", "F", "S")
+
+
+def validate_anchor_levels(scripts: dict, registry: dict) -> list[str]:
+    """Every script whose level disagrees with the level of the node it anchors to.
+
+    validate_scripts_against_registry proves the node exists. This proves it is the right
+    kind of node. Without it an L0 board interview can be filed against an L1 entity and
+    accepted - which is what run 26 did, putting the Board and C-Suite script on node "1",
+    Property Asset Management, beside the L1 script that legitimately owns it. Registry v5
+    held no "0", the existence check refused that anchor, and so the agent picked one that
+    resolved.
+
+    An anchor that resolves to nothing is not reported here; the existence check owns that
+    message, and reporting it twice would make one fault look like two.
+
+    The role checks activate only once the registry actually holds role nodes. A project
+    whose value chain predates them must not be blocked by a rule about nodes it has never
+    had.
+    """
+    levels = {
+        entry.get("id"): entry.get("level")
+        for entry in registry.get("activities", [])
+    }
+    if not levels:
+        return []
+
+    has_role_nodes = any(
+        str(node_id).rsplit(".", 1)[-1] in _ROLE_LEVELS for node_id in levels
+    )
+
+    problems: list[str] = []
+    for key, script in scripts.items():
+        if not isinstance(script, dict):
+            continue
+        node_id = script.get("node_id")
+        if node_id not in levels:
+            continue
+        name = script.get("script_id") or key
+        level = script.get("level")
+
+        if level in ("L0", "L1", "L2", "L3"):
+            node_level = levels[node_id]
+            if node_level != level:
+                problems.append(
+                    f"script {name} is a {level} interview anchored to node {node_id!r}, "
+                    f"which is {node_level}. A script filed at the wrong altitude sends its "
+                    f"evidence to the wrong level of the value chain."
+                )
+        elif level in _ROLE_LEVELS and has_role_nodes:
+            suffix = str(node_id).rsplit(".", 1)[-1]
+            if suffix != level:
+                expected = f"0.{level}" if level in ("A", "S") else f"<entity>.{level}"
+                problems.append(
+                    f"script {name} is a {level} interview anchored to node {node_id!r}, "
+                    f"which is not a {level} role node. Anchor it to {expected}."
+                )
+    return problems
