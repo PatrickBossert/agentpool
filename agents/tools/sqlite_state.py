@@ -164,6 +164,41 @@ _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
 }
 
 
+# Keys whose write merges into the current version instead of replacing it.
+#
+# Maya's script set is roughly 400KB of JSON and max_tokens is 16384, so it cannot be
+# written in one call. Before this, every batch clobbered the last: run 26 produced seven
+# versions in fifty minutes and the one marked current held one script of eighteen. Every
+# one of those writes succeeded - nothing was being refused, so nothing was going to
+# self-correct. The version history recorded seven revisions where there had only been
+# chunking.
+#
+# Merging is additive on purpose. A script absent from a batch means "not in this batch",
+# never "delete this" - an agent that omits a key under context pressure would otherwise
+# silently destroy work it had already banked. Retirement is expressed in
+# interview_script_registry's active: false, where it is explicit and reversible.
+_MERGE_ON_WRITE: frozenset[str] = frozenset({"interview_scripts"})
+
+
+def _merge_with_current(key: str, parsed: dict, slug: str) -> dict:
+    """The current artefact with this batch applied over it, newest wins per id."""
+    settings = get_settings()
+    current_path = latest_output_path(
+        Path(settings.projects_dir) / slug / "outputs" / f"{key}.json"
+    )
+    if current_path is None:
+        return parsed
+    try:
+        current = json.loads(current_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return parsed          # an unreadable current version is no base, not a blocker
+    if not isinstance(current, dict) or not isinstance(parsed, dict):
+        return parsed
+    merged = dict(current)
+    merged.update(parsed)
+    return merged
+
+
 class SQLiteStateToolInput(BaseModel):
     operation: str = Field(description="'read' or 'write'")
     key: str = Field(description="Unique key for this state blob (used as filename)")
@@ -218,6 +253,14 @@ class SQLiteStateTool(BaseTool):
                 parsed = json.loads(value)
             except json.JSONDecodeError as e:
                 return f"Error: value is not valid JSON — {e}"
+
+            # Merge before validating, so the validator judges the artefact that will
+            # actually be stored rather than the fragment that arrived. A batch that would
+            # corrupt the accumulated set is refused whole and the previous version stays
+            # current - the refusal costs the batch, never the work already banked.
+            if key in _MERGE_ON_WRITE and isinstance(parsed, dict):
+                parsed = _merge_with_current(key, parsed, self.slug)
+                value = json.dumps(parsed, indent=2)
 
             validator = _VALIDATORS.get(key)
             if validator is not None:
