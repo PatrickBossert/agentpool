@@ -60,8 +60,19 @@ async def test_open_requests_are_gathered_for_the_crew(project):
 
 
 @pytest.mark.asyncio
-async def test_a_request_against_a_superseded_output_is_not_replayed(project):
-    """Scoped to current outputs, matching how commit_service already scopes them."""
+async def test_a_request_against_a_superseded_output_is_still_gathered(project):
+    """Scoped by output_type, not by output_id - inverted from this test's old name and
+    assertions, which encoded the opposite as desired.
+
+    The old scoping matched only output ids that were still `is_current`, so a request
+    raised against v1 became permanently unreachable the moment v2 became current - the
+    "born orphaned" case from the design review: the crew moves on before a still-open
+    review naming the old version gets resolved, and the resolution's notes then have
+    nowhere left to land. Gathering by output_type instead means the request rides along
+    with the artefact (value_chain_model) rather than the specific row, as long as this
+    crew's own agents still hold the type's current version - which they do here. Do not
+    restore the old `text == "" / ids == []` assertions; that was the bug, not a guarantee.
+    """
     from api.services.run_service import _fetch_change_requests
 
     async with get_connection(SLUG) as conn:
@@ -74,8 +85,54 @@ async def test_a_request_against_a_superseded_output_is_not_replayed(project):
 
     text, ids = await _fetch_change_requests(SLUG, "discovery_mapping")
 
-    assert text == ""
-    assert ids == []
+    assert "an old request" in text
+    assert len(ids) == 1
+
+
+async def _excel_output(conn, *, agent_name, is_current=1, version=1):
+    """An 'excel' output - the one output_type two different crews' agents both write
+    (Portfolio Manager in value_design, the Business Plan Generator in business_plan),
+    used to prove the output_type widening in _fetch_change_requests cannot leak a
+    request from one crew to the other.
+    """
+    cur = await conn.execute(
+        "INSERT INTO agent_outputs (project_id, agent_name, output_type, file_path,"
+        " version, is_current, review_status)"
+        " VALUES (1,?,'excel',?,?,?,'pending')",
+        (agent_name, f"e_v{version}.json", version, is_current),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+@pytest.mark.asyncio
+async def test_a_shared_output_type_does_not_leak_between_crews(project):
+    """output_type is not unique to one crew - guard against the regression that widening
+    the scope from output_id to output_type would most plausibly introduce.
+
+    Portfolio Manager's (value_design) old 'excel' export is superseded by the Business
+    Plan Generator's (business_plan) 'excel' export, which is now current - so business_plan
+    genuinely owns the type "excel" in the widened sense (one of its own agents holds the
+    current row). A change request against Portfolio Manager's superseded row must not be
+    handed to business_plan: matching on output_type alone would find it, since 'excel' is
+    among business_plan's owned types too. Only the per-row agent_name check - kept
+    unconditionally, not just when types happen not to collide - excludes it, because that
+    specific row was never produced by one of business_plan's own agents.
+    """
+    from api.services.run_service import _fetch_change_requests
+
+    async with get_connection(SLUG) as conn:
+        portfolio_excel = await _excel_output(conn, agent_name="portfolio_manager", is_current=0, version=1)
+        await _excel_output(conn, agent_name="business_plan_generator", is_current=1, version=2)
+        await insert_output_change(
+            conn, output_id=portfolio_excel, requested_by="alice", source="review",
+            request="tidy the portfolio excel", summary="", kind="change_request",
+        )
+
+    bp_text, bp_ids = await _fetch_change_requests(SLUG, "business_plan")
+
+    assert bp_text == ""
+    assert bp_ids == []
 
 
 @pytest.mark.asyncio

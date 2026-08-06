@@ -123,10 +123,24 @@ async def _fetch_skill_notes(crew_name: str) -> str:
 
 
 async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[int]]:
-    """Open change requests for this crew's current outputs, and the ids to close after.
+    """Open change requests for output types this crew's own agents produce, and the ids
+    to close after.
 
-    Scoped to current outputs, the same scoping commit_service already uses, so a request
-    against a superseded version is not replayed against its replacement.
+    Scoped by output_type rather than pinned to one specific output_id: a request follows
+    the artefact across versions, not the row it happened to be raised against. The old
+    scoping (current output_id only) orphaned a request the moment the row it named stopped
+    being current - either because the crew was re-run before a still-open review got
+    resolved, or because a manual edit landed a new version afterwards. Gathering by type
+    means a request against a since-superseded version is still reachable as long as this
+    crew's own agents still hold the current version of that type.
+
+    Ownership is still enforced per row via agent_name, exactly as the old scoping did -
+    output_type only widens which of *this crew's own* rows are eligible, it is never used
+    on its own. That matters because output_type is not unique to one crew: Portfolio
+    Manager (value_design) and the Business Plan Generator (business_plan) both write
+    output_type='excel'. Without the agent_name check, whichever crew's agent currently
+    holds the live 'excel' row would also inherit the other crew's open request against it.
+    tests/test_change_request_injection.py proves this does not happen.
     """
     from api.database import (
         fetch_agent_outputs, fetch_open_change_requests, fetch_project,
@@ -139,8 +153,17 @@ async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[i
         if not project:
             return "", []
         outputs = await fetch_agent_outputs(conn, project_id=project["id"])
+        # Output types this crew's own agents currently hold the live version of.
+        owned_types = {
+            o["output_type"] for o in outputs
+            if o["agent_name"] in agents and o.get("is_current")
+        }
+        # Every version of those types this crew's own agents ever produced, current or
+        # not - agent_name is checked on every row, so widening past is_current can only
+        # add this crew's own history, never another crew's.
         output_ids = [
-            o["id"] for o in outputs if o["agent_name"] in agents and o.get("is_current")
+            o["id"] for o in outputs
+            if o["agent_name"] in agents and o["output_type"] in owned_types
         ]
         rows = await fetch_open_change_requests(conn, output_ids=output_ids)
     if not rows:
