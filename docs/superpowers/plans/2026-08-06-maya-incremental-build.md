@@ -476,6 +476,8 @@ git commit -m "feat(scripts): a script's level must match the level of the node 
 
 She is already batching. The prompt tells her to produce everything at once, so the batching is improvisation under pressure rather than a described strategy - which is why the batches were erratic (one script, then two, then a re-send of both).
 
+**The brief also asks for something that cannot exist.** Registry v5 holds 78 active nodes - 3 L1, 17 L2, 58 L3 - and "one integrated script per L0, L1, L2, L3, C, A, F and S node" taken literally is ~78 scripts at ~22KB, about 1.7MB, or 28 full-budget responses. The declared ledger has 18: every L1, 8 of 17 L2s, 2 of 58 L3s. Maya is therefore already selecting, with no rule to select by - which is why the set differs run to run and why 65 nodes have no script. Batching without a coverage rule just makes an unbounded job take longer.
+
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -493,6 +495,13 @@ def test_the_prompt_describes_batching():
 def test_the_prompt_says_omission_is_not_deletion():
     src = inspect.getsource(interaction_designer)
     assert "active: false" in src
+
+
+def test_the_prompt_states_a_coverage_rule():
+    """Without one Maya selects arbitrarily and the set differs every run."""
+    src = inspect.getsource(interaction_designer)
+    assert "every L0 and every L1" in src
+    assert "not every L3" in src
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -513,7 +522,18 @@ Replace the two lines at ~3136:
             "you have already written, and re-sending one only rewrites that script. "
             "Omitting a script from a batch does NOT remove it; retire a script you no "
             "longer need by setting active: false in the registry below. Work through the "
-            "nodes in registry order and stop when every node has a script.\n"
+            "nodes in registry order and stop when every node you have chosen has a "
+            "script.\n"
+            "   COVERAGE. Do not write one script per node - the registry holds far more "
+            "nodes than anyone will be interviewed about, and a script per L3 activity is a "
+            "programme nobody would run. Write a script for every L0 and every L1 node, and "
+            "for every role node (C, A, F, S). Below that, select: an L2 stage warrants a "
+            "script when it carries a value lever, a maturity question the L1 script cannot "
+            "answer, or a party handoff; not every L3 warrants one, and an L3 does only when "
+            "a specific activity is itself contested or is where a lever actually bites. "
+            "Say in each script's research_brief why that node was chosen - a selection "
+            "nobody can see is one nobody can challenge, and it is what makes the set differ "
+            "from run to run.\n"
 ```
 
 Then update `expected_output` so it describes the accumulated artefact rather than a single write, keeping its existing per-level detail intact and adding:
@@ -917,12 +937,142 @@ Expected: the current version holds **every** script rather than the last batch;
 
 ---
 
+---
+
+## Task 8: The Output tab reads the artefact, not the directory
+
+**Files:**
+- Modify: `api/routers/projects.py` (`list_interview_scripts`, line ~476)
+- Test: `tests/test_interview_scripts_endpoint.py` *(new)*
+
+**Interfaces:** none - behaviour change only. Runnable any time after Task 1; best landed with Task 7.
+
+`list_interview_scripts` globs **every** `interview_scripts*.json` in the outputs directory, merges them oldest-first and dedupes by normalised node label. That was the right call when Maya's set was fragmented across files; once a write merges, the current version already *is* the whole artefact and the directory glob only adds history.
+
+The damage is visible today. Twenty files spanning four runs produce **six distinct L0 titles** - "GS UK Portfolio — L0 Board Interview" (v1), "GS UK Portfolio L0 Board Interview" (v15), "GS UK Portfolio L0 Interview" (v31, v32), "GS UK Portfolio — Board & C-Suite L0 Interview" (batch1), and two more from run 26. The three oldest carry no `node_id` at all - they predate the script registry - so they can never dedupe by node, only by title, and their titles differ by an em dash and the word "L0".
+
+Keep `dedupe_script_map`: within a single artefact two scripts can still share a normalised label, and dropping non-interview values still matters.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_interview_scripts_endpoint.py
+import json
+import pytest
+from pathlib import Path
+from api.config import get_settings
+
+
+@pytest.fixture
+def scripts_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    outputs = tmp_path / "projects" / "ep-test" / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    yield outputs
+    get_settings.cache_clear()
+
+
+def _script(label, level="L0", node="0"):
+    return {"node_label": label, "level": level, "node_id": node,
+            "sections": [{"section_id": "S1", "questions": []}]}
+
+
+@pytest.mark.asyncio
+async def test_only_the_current_version_is_returned(scripts_dir, client):
+    """Six L0 titles across four runs is what the directory glob produced."""
+    (scripts_dir / "interview_scripts_v1.json").write_text(
+        json.dumps({"GS UK Portfolio — L0 Board Interview": _script("GS UK Portfolio — L0 Board Interview")}))
+    (scripts_dir / "interview_scripts_v15.json").write_text(
+        json.dumps({"GS UK Portfolio L0 Interview": _script("GS UK Portfolio L0 Interview")}))
+    (scripts_dir / "interview_scripts_v33.json").write_text(
+        json.dumps({"SC-001": _script("Board and C-Suite Interview")}))
+
+    r = await client.get("/projects/ep-test/interview-scripts")
+    assert r.status_code == 200
+    body = r.json()
+    assert sorted(body) == ["SC-001"], f"history leaked into the current set: {sorted(body)}"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_outputs_directory_returns_an_empty_map(scripts_dir, client):
+    r = await client.get("/projects/ep-test/interview-scripts")
+    assert r.status_code == 200
+    assert r.json() == {}
+
+
+@pytest.mark.asyncio
+async def test_dedupe_still_runs_within_the_current_version(scripts_dir, client):
+    """Two scripts in one artefact can still normalise to the same label."""
+    (scripts_dir / "interview_scripts_v2.json").write_text(json.dumps({
+        "SC-001": _script("Board & C-Suite Interview"),
+        "SC-009": _script("Board and C Suite Interview"),
+        "not-a-script": {"test": True},
+    }))
+    r = await client.get("/projects/ep-test/interview-scripts")
+    body = r.json()
+    assert "not-a-script" not in body
+    assert len(body) == 1, f"duplicates within one artefact must still collapse: {sorted(body)}"
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `./venv/bin/pytest tests/test_interview_scripts_endpoint.py -v`
+Expected: FAIL on the first test - three titles returned instead of one
+
+- [ ] **Step 3: Read the current version**
+
+Replace the body of `list_interview_scripts` in `api/routers/projects.py`:
+
+```python
+@router.get("/{slug}/interview-scripts")
+async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_auth)):
+    """Return the current interview script artefact, keyed by script id.
+
+    This used to merge every interview_scripts*.json in the directory, which was correct
+    while Maya's set was spread across files. Now that a write merges into the current
+    version, the current version is the whole artefact and the glob only adds history:
+    twenty files across four runs produced six different L0 interviews, three of them
+    predating node_id and so undedupable by anything but their titles.
+
+    dedupe_script_map still runs - two scripts inside one artefact can normalise to the
+    same label, and it also drops values that are not interviews.
+    """
+    await check_project_access(slug, payload)
+    from agents.tools._db import latest_output_path
+    from api.services.interview_scripts_service import dedupe_script_map
+
+    outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
+    current = latest_output_path(outputs_dir / "interview_scripts.json")
+    if current is None:
+        return {}
+    try:
+        return dedupe_script_map(json.loads(current.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return {}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `./venv/bin/pytest tests/test_interview_scripts_endpoint.py -v`
+Expected: 3 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add api/routers/projects.py tests/test_interview_scripts_endpoint.py
+git commit -m "fix(scripts): the Output tab shows the current artefact, not four runs of history"
+```
+
+---
+
 ## Sequencing
 
 ```
 A+B Tasks 2-5  ──► Alex emits the L0 and role nodes  ──► E Task 7 (reset + rebuild)
                                                      ▲
-E Tasks 1-6 (merge, anchor levels, prompt, script) ──┘
+E Tasks 1-6, 8 (merge, anchor levels, prompt,      ──┘
+                coverage rule, script, endpoint)
 ```
 
 Tasks 1 to 6 are independent and can be built immediately. Task 7 is the only one gated on the L0, and it is gated hard: its first step asserts the registry holds `0` and the role nodes, and stops if it does not.
