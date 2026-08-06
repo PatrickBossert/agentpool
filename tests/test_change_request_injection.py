@@ -193,6 +193,20 @@ async def _requirements_output(conn, *, is_current=1, version=1):
     return cur.lastrowid
 
 
+async def _requirements_output_of_type(conn, *, agent_name, output_type, version=1, is_current=1):
+    """A current output for one of the requirements crew's own agents, with a caller-chosen
+    output_type - used to give the crew several distinct current outputs at once, the way a
+    real project accumulates them, so a fan-out across all of them can be simulated."""
+    cur = await conn.execute(
+        "INSERT INTO agent_outputs (project_id, agent_name, output_type, file_path,"
+        " version, is_current, review_status)"
+        " VALUES (1,?,?,?,?,?,'pending')",
+        (agent_name, output_type, f"{output_type}_v{version}.json", version, is_current),
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
 async def _change_status(output_id):
     async with get_connection(CREW_SLUG) as conn:
         async with conn.execute(
@@ -399,3 +413,47 @@ async def test_the_patch_review_door_reaches_the_agent_exactly_once(client):
     assert description.count("use the approved 2025 figures") == 1
     assert "REQUESTED CHANGES" in description
     assert "REVISION INSTRUCTIONS" not in description
+
+
+@pytest.mark.asyncio
+async def test_the_same_note_fanned_out_across_a_crews_outputs_reaches_the_agent_once(client, crew_project):
+    """RerunDialog's "Suggest a revision" posts the same note once per output shown for the
+    crew (`outputs.map(o => projectsApi.review(...))` in RerunDialog.tsx) - one POST per
+    output, each writing its own output_changes row with identical request text. Before
+    deduplicating at assembly, _fetch_change_requests rendered one bullet per row: the same
+    sentence three times here, roughly nine for a crew the size of discovery_interviews -
+    the same defect class this wave exists to remove, reintroduced by fan-out instead of by
+    double injection.
+
+    Both halves of the fix are asserted: the injected text carries the note once, and all
+    three rows still end up applied. Deduplicating change_ids itself (rather than only the
+    rendered text) would pass the first half while leaving two rows open forever - the
+    failure the open/applied lifecycle exists to prevent.
+    """
+    async with get_connection(CREW_SLUG) as conn:
+        a = await _requirements_output_of_type(
+            conn, agent_name="requirements_analyst", output_type="requirements_doc"
+        )
+        b = await _requirements_output_of_type(
+            conn, agent_name="requirements_analyst", output_type="requirements_analysis"
+        )
+        c = await _requirements_output_of_type(
+            conn, agent_name="requirements_capture", output_type="captured_requirements"
+        )
+
+    note = "use the approved 2025 figures"
+    for output_id in (a, b, c):
+        resp = await client.post(
+            f"/projects/{CREW_SLUG}/review",
+            json={"output_id": output_id, "decision": "changes_requested", "notes": note},
+        )
+        assert resp.status_code == 201
+
+    description = await _run_requirements_crew_and_capture_description(CREW_SLUG)
+
+    assert description.count(note) == 1
+    assert "REQUESTED CHANGES" in description
+
+    for output_id in (a, b, c):
+        row = await _change_status(output_id)
+        assert row["status"] == "applied"

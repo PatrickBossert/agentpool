@@ -120,6 +120,16 @@ async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[i
     output_type='excel'. Without the agent_name check, whichever crew's agent currently
     holds the live 'excel' row would also inherit the other crew's open request against it.
     tests/test_change_request_injection.py proves this does not happen.
+
+    The injected text is deduplicated on the request string, first occurrence wins, but
+    change_ids keeps every row regardless. RerunDialog's "Suggest a revision" posts the
+    same note once per output in the crew (api/routers/reviews.py's submit_review then
+    writes one output_changes row per POST), so without deduplication the same sentence
+    would appear once per output the crew produces - the exact defect this wave exists to
+    remove, reintroduced by fan-out instead of by double injection. Deduplicating change_ids
+    itself instead would leave the un-deduplicated rows open forever, since only ids actually
+    passed to mark_change_requests_applied ever close - assembly is the only layer that can
+    fix the display without breaking the close.
     """
     from api.database import (
         fetch_agent_outputs, fetch_open_change_requests, fetch_project,
@@ -147,11 +157,16 @@ async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[i
         rows = await fetch_open_change_requests(conn, output_ids=output_ids)
     if not rows:
         return "", []
-    lines = "\n".join(f"- {r['request']}" for r in rows)
+    seen_requests: set[str] = set()
+    deduped_lines: list[str] = []
+    for r in rows:
+        if r["request"] not in seen_requests:
+            seen_requests.add(r["request"])
+            deduped_lines.append(f"- {r['request']}")
     header = (
         "REQUESTED CHANGES (a reviewer asked for these on your last output; apply them):\n"
     )
-    return header + lines, [r["id"] for r in rows]
+    return header + "\n".join(deduped_lines), [r["id"] for r in rows]
 
 
 def make_step_callback(slug: str, crew_name: str):
