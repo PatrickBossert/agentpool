@@ -114,6 +114,9 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             source        TEXT NOT NULL,
             request       TEXT NOT NULL,
             summary       TEXT NOT NULL DEFAULT '',
+            kind          TEXT NOT NULL DEFAULT 'unclassified',
+            status        TEXT NOT NULL DEFAULT 'open',
+            applied_run_id INTEGER,
             created_at    TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -410,6 +413,29 @@ async def _migrate_interview_sessions_checkpoint(conn: aiosqlite.Connection) -> 
         cols = {row["name"] async for row in cur}
     if "checkpoint_json" not in cols:
         await conn.execute("ALTER TABLE interview_sessions ADD COLUMN checkpoint_json TEXT")
+    await conn.commit()
+
+
+async def _migrate_output_changes_kind(conn: aiosqlite.Connection) -> None:
+    """Record what kind of feedback a change is, and whether it has been acted upon.
+
+    kind carries the reviewer's intent - a correction and a skill are captured here but
+    reach the agent through RAG and the skill library respectively, so only a
+    change_request is ever injected. status stops a request being replayed on every run
+    thereafter.
+    """
+    async with conn.execute("PRAGMA table_info(output_changes)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "kind" not in cols:
+        await conn.execute(
+            "ALTER TABLE output_changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'unclassified'"
+        )
+    if "status" not in cols:
+        await conn.execute(
+            "ALTER TABLE output_changes ADD COLUMN status TEXT NOT NULL DEFAULT 'open'"
+        )
+    if "applied_run_id" not in cols:
+        await conn.execute("ALTER TABLE output_changes ADD COLUMN applied_run_id INTEGER")
     await conn.commit()
 
 
@@ -1118,6 +1144,7 @@ async def get_connection(slug: str):
         await _migrate_blocked_writes(conn)
         await _migrate_lineage(conn)
         await _migrate_run_inputs_agent_scope(conn)
+        await _migrate_output_changes_kind(conn)
         yield conn
 
 
@@ -1633,12 +1660,13 @@ async def insert_output_change(
     source: str,
     request: str,
     summary: str = "",
+    kind: str = "unclassified",
 ) -> int:
     """Record a change asked of an output: who asked, through which door, for what."""
     cur = await conn.execute(
-        "INSERT INTO output_changes (output_id, requested_by, source, request, summary) "
-        "VALUES (?,?,?,?,?)",
-        (output_id, requested_by, source, request, summary),
+        "INSERT INTO output_changes (output_id, requested_by, source, request, summary, kind) "
+        "VALUES (?,?,?,?,?,?)",
+        (output_id, requested_by, source, request, summary, kind),
     )
     await conn.commit()
     return cur.lastrowid
@@ -1667,6 +1695,45 @@ async def fetch_output_changes(
     sql += " ORDER BY id DESC"
     async with conn.execute(sql, tuple(params)) as cur:
         return [dict(row) for row in await cur.fetchall()]
+
+
+async def fetch_open_change_requests(
+    conn: aiosqlite.Connection, *, output_ids: list[int]
+) -> list[dict]:
+    """Open change requests for these outputs, oldest first.
+
+    Only kind='change_request'. A correction reaches the agent through RAG and a skill
+    through the prompt library; injecting them here too would say the same thing twice.
+    """
+    if not output_ids:
+        return []
+    marks = ",".join("?" * len(output_ids))
+    async with conn.execute(
+        f"SELECT * FROM output_changes"
+        f" WHERE output_id IN ({marks}) AND kind='change_request' AND status='open'"
+        f" ORDER BY id ASC",
+        tuple(output_ids),
+    ) as cur:
+        return [dict(row) async for row in cur]
+
+
+async def mark_change_requests_applied(
+    conn: aiosqlite.Connection, *, change_ids: list[int], run_id: int | None
+) -> int:
+    """Close the requests a run consumed. Returns rows changed.
+
+    An empty list is the ordinary case on a first run and must not build an IN () clause.
+    """
+    if not change_ids:
+        return 0
+    marks = ",".join("?" * len(change_ids))
+    cur = await conn.execute(
+        f"UPDATE output_changes SET status='applied', applied_run_id=?"
+        f" WHERE id IN ({marks}) AND status='open'",
+        (run_id, *change_ids),
+    )
+    await conn.commit()
+    return cur.rowcount
 
 
 async def delete_hitl_review(
