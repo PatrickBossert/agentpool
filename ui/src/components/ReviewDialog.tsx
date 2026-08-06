@@ -374,6 +374,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   const [mode, setMode] = useState<'idle' | 'revise' | 'reject'>('idle')
   const [notes, setNotes] = useState('')
   const [skillInput, setSkillInput] = useState('')
+  const [intent, setIntent] = useState<'change_request' | 'correction' | 'skill'>('change_request')
   const [submitting, setSubmitting] = useState(false)
 
   const outputType = review.crew_name ? CREW_OUTPUT_TYPE[review.crew_name] : undefined
@@ -406,7 +407,9 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
     setSubmitting(true)
     try {
       const decision = mode === 'reject' ? 'rejected' : 'changes_requested'
-      await projectsApi.resolveReview(slug, review.id, decision, notes.trim())
+      await projectsApi.resolveReview(
+        slug, review.id, decision, notes.trim(), mode === 'revise' ? intent : 'change_request',
+      )
       // Save skill note alongside rejection (fire-and-forget, non-blocking)
       if (mode === 'reject' && rejectingAgentKey && skillInput.trim()) {
         skillNotesApi.create(rejectingAgentKey, skillInput.trim()).catch(() => {})
@@ -418,7 +421,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
     }
   }
 
-  function cancel() { setMode('idle'); setNotes(''); setSkillInput('') }
+  function cancel() { setMode('idle'); setNotes(''); setSkillInput(''); setIntent('change_request') }
 
   return (
     <>
@@ -461,6 +464,37 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
 
             {mode !== 'idle' && (
               <div className="space-y-4">
+                {mode === 'revise' && (
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-2">
+                      What should happen to this feedback?
+                    </label>
+                    <div className="space-y-2">
+                      {(
+                        [
+                          ['change_request', 'Fix this output', 'Applies to the next run only.'],
+                          ['correction', 'This is true of this client', 'Becomes a standing fact for this client.'],
+                          ['skill', 'Do this on every project', 'Becomes a capability this agent uses everywhere.'],
+                        ] as [typeof intent, string, string][]
+                      ).map(([value, label, explanation]) => (
+                        <label key={value} className="flex items-start gap-2 text-sm text-primary cursor-pointer">
+                          <input
+                            type="radio"
+                            name="intent"
+                            value={value}
+                            checked={intent === value}
+                            onChange={() => setIntent(value)}
+                            className="mt-1"
+                          />
+                          <span>
+                            <span className="block font-medium">{label}</span>
+                            <span className="block text-xs text-muted">{explanation}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-2">
                     {mode === 'reject' ? 'Reason for rejection' : 'Revision notes'}{' '}

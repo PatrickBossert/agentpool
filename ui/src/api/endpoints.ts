@@ -123,9 +123,15 @@ export const projectsApi = {
   listReviews: (slug: string): Promise<HumanReview[]> =>
     apiClient.get<HumanReview[]>(`/projects/${slug}/reviews`).then((r) => r.data),
 
-  resolveReview: (slug: string, reviewId: number, decision: string, notes: string): Promise<void> =>
+  resolveReview: (
+    slug: string,
+    reviewId: number,
+    decision: string,
+    notes: string,
+    intent: string = 'change_request',
+  ): Promise<void> =>
     apiClient
-      .patch(`/projects/${slug}/reviews/${reviewId}`, { decision, notes })
+      .patch(`/projects/${slug}/reviews/${reviewId}`, { decision, notes, intent })
       .then(() => undefined),
 
   deleteReview: (slug: string, reviewId: number): Promise<void> =>
