@@ -203,10 +203,22 @@ def validate_registry_succession(current: dict, proposed: dict) -> list[str]:
     while every model check passed against the registry that same run had just replaced.
 
     Growth is free: a new id is a new thing. Retirement is free too, as long as the meaning
-    is kept - `active: false` with the same label and level. What is refused is redefining
-    an id, moving it to another level, or dropping it altogether. Dropping is the worst of
-    the three: the ledger forgets the meaning, and nothing then stops the number being
-    handed to something else later.
+    is kept - `active: false` at the same level. What is refused is moving an id to another
+    level, or dropping it altogether. Dropping is the worse of the two: the ledger forgets
+    the meaning, and nothing then stops the number being handed to something else later.
+
+    A LABEL CHANGE IS NO LONGER REFUSED HERE. It used to be, and that contradicted the
+    agent's own brief - "IDs are assigned once and are permanent, even if labels are
+    refined" - so the tool refused precisely what the prompt invited. Because Alex rebuilds
+    the whole chain every run and re-emits all ~78 labels, the practical effect was that
+    one typographic drift blocked every future derivation: on 6 August the registry stuck
+    at v5 while the tree moved to v12, and the run still reported completed.
+
+    Label stability is now held two other ways, both better than a refusal. DeriveRegistryTool
+    keeps the label an id already carries, so regeneration cannot quietly rewrite the ledger;
+    and tree_validation raises `id_redefined` when a label changes in a way that is not merely
+    typographic, which a reviewer dispositions. Refuse what breaks meaning irrecoverably;
+    warn what needs a human's eye.
     """
     problems: list[str] = []
     proposed_entries = {e.get("id"): e for e in proposed.get("activities", [])}
@@ -225,11 +237,6 @@ def validate_registry_succession(current: dict, proposed: dict) -> list[str]:
             problems.append(
                 f"id {entry_id} is registered as a {entry.get('level')} and this makes it "
                 f"a {successor.get('level')} - use an unused id for the new thing"
-            )
-        elif entry.get("label") and successor.get("label") != entry.get("label"):
-            problems.append(
-                f"id {entry_id} already means {entry.get('label')!r} and cannot be "
-                f"redefined as {successor.get('label')!r} - take the next unused number"
             )
     return problems
 

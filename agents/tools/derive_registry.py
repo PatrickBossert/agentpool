@@ -82,9 +82,21 @@ class DeriveRegistryTool(BaseTool):
                 if not node_id:
                     continue
                 new_ids.add(node_id)
+                # An id that is already registered keeps the label the ledger holds. Alex
+                # regenerates every label on every run, so taking the tree's wording here
+                # would let a regeneration quietly rewrite the ledger - which is how
+                # 'Financial Control (£350M)' became 'Financial Control (350M)'. A label is
+                # changed deliberately, through the validation loop, not as a side effect of
+                # rebuilding. A genuinely new id takes its label from the tree.
+                registered = old_entries.get(node_id)
+                label = (
+                    registered.get("label")
+                    if registered and registered.get("label")
+                    else node.get("label", "")
+                )
                 entry: dict = {
                     "id": node_id,
-                    "label": node.get("label", ""),
+                    "label": label,
                     "level": node.get("level", ""),
                     "active": True,
                 }

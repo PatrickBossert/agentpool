@@ -12,6 +12,8 @@ that the L0 was missing.
 """
 from __future__ import annotations
 
+from api.services.text_stability import is_substantive_change
+
 ROLE_SUFFIXES = ("A", "S", "C", "F")
 
 
@@ -107,13 +109,17 @@ def validate_tree_structure(tree: list, previous_registry: dict | None) -> list[
             continue
         old_label = str(entry.get("label", "")).strip()
         new_label = str(node.get("label", "")).strip()
-        if old_label and new_label and old_label != new_label:
+        # Substantive only. Alex regenerates every label on every run, so typographic drift
+        # is routine - an en dash becoming a hyphen is not a redefinition, and a warning
+        # that fires on one teaches reviewers to dismiss without reading.
+        if is_substantive_change(old_label, new_label):
             warnings.append({
                 "subject": node_id, "code": "id_redefined", "measure": None,
                 "detail": (
                     f"id {node_id} meant {old_label!r} and now means {new_label!r}. The "
-                    f"ledger may grow and may retire, but may not redefine - Architecture's "
-                    f"capability model is built against these ids."
+                    f"ledger may grow and may retire, but a change of meaning needs a "
+                    f"human - Architecture's capability model is built against these ids, "
+                    f"and Maya's scripts and Casey's themes anchor to them."
                 ),
             })
     return warnings

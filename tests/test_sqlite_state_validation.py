@@ -378,12 +378,19 @@ def _no_registry_written_since(before: int) -> bool:
     return rows == before
 
 
-def test_a_registry_redefining_a_registered_id_is_refused():
-    """The ledger is the ID authority, and the agent that writes the model writes it too.
+def test_a_registry_relabelling_a_registered_id_is_no_longer_refused():
+    """The ledger is still the ID authority; what changed is how it is defended.
 
-    Left unchecked, the model validator is only as good as a file the same run can replace
-    - which is exactly how fourteen IDs were reused while every model check passed.
+    Refusing every label change contradicted Alex's brief ("permanent, even if labels are
+    refined") and, because he regenerates all ~78 labels each run, one typographic drift
+    blocked derivation entirely - the registry stuck at v5 while the tree moved to v12.
+
+    A level change and a drop are still refused here, since neither is recoverable. A
+    relabel is instead prevented from reaching the ledger by DeriveRegistryTool, and raised
+    to a human by tree_validation's id_redefined when it is more than typographic.
     """
+    from api.services.text_stability import is_substantive_change
+
     tool = SQLiteStateTool(slug=SLUG)
     _write_registry_payload(tool, _registry_payload(("2.1", "Fleet Strategy", "L2")))
 
@@ -391,9 +398,9 @@ def test_a_registry_redefining_a_registered_id_is_refused():
         tool, _registry_payload(("2.1", "Multi-Year Work Packaging", "L2"))
     )
 
-    assert "Written to" not in result
-    assert "Fleet Strategy" in result and "Multi-Year Work Packaging" in result
-    assert _no_registry_written_since(1)
+    assert "Written to" in result, result
+    assert is_substantive_change("Fleet Strategy", "Multi-Year Work Packaging"), \
+        "the relabel must still be visible to a human as a warning"
 
 
 def test_a_registry_dropping_a_registered_id_is_refused():

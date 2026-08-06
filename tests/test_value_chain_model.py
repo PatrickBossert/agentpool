@@ -499,14 +499,26 @@ def test_adding_an_entry_is_accepted_so_the_chain_can_grow():
     assert validate_registry_succession(current, proposed) == []
 
 
-def test_redefining_a_registered_id_is_refused():
+def test_a_label_change_is_no_longer_refused_here():
+    """It used to be, and that contradicted Alex's own brief - "IDs are assigned once and
+    are permanent, even if labels are refined". Because he regenerates every label on every
+    run, one typographic drift then blocked every future derivation: on 6 August the
+    registry stuck at v5 while the tree moved to v12.
+
+    The protection did not go away, it moved and got stronger. DeriveRegistryTool now keeps
+    the label an id already carries, so the ledger cannot be rewritten at all (see
+    tests/test_derive_registry.py), and tree_validation raises id_redefined for a human
+    when the change is more than typographic - asserted here so this test still fails if
+    that half is ever removed.
+    """
+    from api.services.text_stability import is_substantive_change
+
     current = _registry(("2.1", "Fleet Strategy & Policy Setting", "L2"))
     proposed = _registry(("2.1", "Multi-Year Work Packaging", "L2"))
-    problems = validate_registry_succession(current, proposed)
-    assert len(problems) == 1
-    assert "2.1" in problems[0]
-    assert "Fleet Strategy & Policy Setting" in problems[0]
-    assert "Multi-Year Work Packaging" in problems[0]
+    assert validate_registry_succession(current, proposed) == []
+    assert is_substantive_change(
+        "Fleet Strategy & Policy Setting", "Multi-Year Work Packaging"), \
+        "a rename this large must still reach a human as a warning"
 
 
 def test_moving_a_registered_id_to_another_level_is_refused():

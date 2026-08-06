@@ -226,7 +226,7 @@ def test_derive_registry_preserves_history_across_runs(project_dir):
     assert by_id["1.1"]["active"] is False, "history lost between runs"
 
 
-def test_derive_registry_refuses_a_tree_that_redefines_a_registered_id(project_dir):
+def test_derive_registry_keeps_the_registered_label_when_a_tree_renames_an_id(project_dir):
     """DeriveRegistryTool writes through insert_agent_output_sync, not SQLiteStateTool, so
     the write-path validator never sees it. That made this the one door through which the
     ID ledger could still be rewritten - which is how a single id came to mean
@@ -253,14 +253,19 @@ def test_derive_registry_refuses_a_tree_that_redefines_a_registered_id(project_d
         {"id": "1.1", "label": "Multi-Year Work Packaging", "level": "L2"}
     ]}])
 
-    assert "Error" in result
-    # Both meanings, because the correction is to give the new thing a different id, and
-    # the agent cannot do that without being told what the id already means.
-    assert "Fleet Strategy & Policy Setting" in result
-    assert "Multi-Year Work Packaging" in result
-    # And the ledger on disk still says what it said.
+    # The run is no longer refused - refusing a label change contradicted Alex's brief and
+    # blocked every future derivation over typographic drift. The ledger is protected more
+    # directly instead: a registered id keeps the label it already carries, so a tree that
+    # renames it simply does not reach the ledger.
+    assert "Error" not in result, result
     by_id = {a["id"]: a for a in _read_registry(base, slug)["activities"]}
-    assert by_id["1.1"]["label"] == "Fleet Strategy & Policy Setting"
+    assert by_id["1.1"]["label"] == "Fleet Strategy & Policy Setting", \
+        "the tree renamed a registered id and the ledger took it"
+
+    # And the rename still reaches a human, rather than vanishing.
+    from api.services.text_stability import is_substantive_change
+    assert is_substantive_change(
+        "Fleet Strategy & Policy Setting", "Multi-Year Work Packaging")
 
 
 def test_derive_registry_still_accepts_a_tree_that_only_grows(project_dir):
