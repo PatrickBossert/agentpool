@@ -85,6 +85,31 @@ pytest tests/test_campaigns.py -v
 
 Tests use in-memory SQLite — no running services required.
 
+**Run the backend suite twice before believing it is green.** `tests/conftest.py` points
+`DATABASE_DIR` at a fixed `/tmp/agentpool_test` that persists between runs, so a test which writes
+a hardcoded row id poisons its own database: it passes once and fails on every run afterwards. That
+defect shipped through eight task reviews before a second run caught it. Tests that need isolation
+must use `monkeypatch.setenv("DATABASE_DIR", str(tmp_path))` with `get_settings.cache_clear()` on
+both sides; tests using the shared `client` fixture must scope every assertion to a row they
+created rather than hardcoding an id or counting globally.
+
+## Reviewing changes: the recurring failure mode
+
+Five times on this project a test has verified a property **one layer away from where it holds**.
+In every case the shipped code was correct and the test could not distinguish correct from
+incorrect:
+
+- `check_write` tested; the tool calling it not.
+- `staleness` tested; the endpoint assembling it not.
+- An approval guard tested for one of its two conditions.
+- `_fetch_change_requests` tested; the injection using it not.
+- A radio tested as *rendered*; not as *sent*.
+
+Pure functions and rendered state are cheap to assert, so they get asserted — and the assertion
+lands beside the property rather than on it. When reviewing, ask: **"what calls this, and is
+*that* tested?"** and **"would this test fail if the code were wrong?"** The second question is
+different from "does this test pass", and far more productive here.
+
 ---
 
 ## Database conventions
@@ -110,6 +135,18 @@ When adding a new column to an existing table:
 - Auth: JWT bearer token, `Depends(get_current_user)` on protected routes
 - 404 helper: `_404(msg)` raises `HTTPException(404)`
 - No ORM — all SQL is raw strings in `api/database.py`
+
+**There are two review doors, and anything touching review feedback must serve both:**
+
+| Door | Handler | Called from |
+|------|---------|-------------|
+| `POST /projects/{slug}/review` | `submit_review` | `RerunDialog.tsx` "Suggest a revision", `AgentStatusTab.tsx` inline "Revise" |
+| `PATCH /projects/{slug}/reviews/{id}` | `resolve_hitl_review` | `ReviewDialog.tsx` |
+
+Nothing in the code says why both exist. Wiring only one silently turns the other's flows into
+no-ops — notes that save, display in the UI, and never reach the agent. `RerunDialog` also **fans
+out**, posting one review per crew output, so anything assembling review feedback into a prompt
+must deduplicate or it repeats the same instruction N times.
 
 ---
 
