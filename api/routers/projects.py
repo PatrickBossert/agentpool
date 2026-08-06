@@ -475,24 +475,29 @@ def _scripts_path(slug: str, kind: str) -> Path:
 
 @router.get("/{slug}/interview-scripts")
 async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_auth)):
-    """Return all interview scripts keyed by node_label, merging all versioned files."""
+    """Return the current interview script artefact, keyed by script id.
+
+    This used to merge every interview_scripts*.json in the directory, which was correct
+    while Maya's set was spread across files. Now that a write merges into the current
+    version, the current version IS the whole artefact and the glob only adds history: by
+    6 August twenty files across four runs were producing six different L0 interviews,
+    three of them predating node_id and so undedupable by anything but their titles.
+
+    dedupe_script_map still runs - two scripts inside one artefact can normalise to the
+    same label, and it also drops values that are not interviews.
+    """
     await check_project_access(slug, payload)
-    outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
+    from agents.tools._db import latest_output_path
     from api.services.interview_scripts_service import dedupe_script_map
-    exact = outputs_dir / "interview_scripts.json"
-    if exact.exists():
-        return dedupe_script_map(json.loads(exact.read_text(encoding="utf-8")))
-    # Merge versioned files (oldest first so newer versions overwrite for the same key)
-    files = sorted(outputs_dir.glob("interview_scripts*.json"), key=lambda p: p.stat().st_mtime)
-    if not files:
+
+    outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
+    current = latest_output_path(outputs_dir / "interview_scripts.json")
+    if current is None:
         return {}
-    merged: dict = {}
-    for f in files:
-        try:
-            merged.update(json.loads(f.read_text(encoding="utf-8")))
-        except Exception:
-            pass
-    return dedupe_script_map(merged)
+    try:
+        return dedupe_script_map(json.loads(current.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 @router.get("/{slug}/interview-scripts/{node_label}")
