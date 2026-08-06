@@ -60,4 +60,19 @@ describe('review intent', () => {
       ),
     )
   })
+
+  it('sends change_request when the reviewer submits without touching any radio', async () => {
+    render(<Wrapper />)
+    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Looks mostly right, just tighten the summary' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /submit revision request/i }))
+
+    await waitFor(() =>
+      expect(resolveReview).toHaveBeenCalledWith(
+        'acme', 1, 'changes_requested', 'Looks mostly right, just tighten the summary', 'change_request',
+      ),
+    )
+  })
 })
