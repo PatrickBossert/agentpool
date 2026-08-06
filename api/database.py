@@ -787,6 +787,26 @@ async def _migrate_validation_warnings(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_registry_output_type(conn: aiosqlite.Connection) -> None:
+    """Re-type the registry rows DeriveRegistryTool wrote as 'state'.
+
+    Matched on file_path, not on agent or version: the fault was always that the row's type
+    disagreed with the family its file belongs to, and the file is the only witness to that.
+    A 'state' row naming anything else is left alone - state is a real output type with real
+    rows.
+
+    One filename family answering to two output types is what let the clean-baseline prune
+    demote value_chain_summary v12 to v4 and value_chain_tree v13 to v9, and it is the
+    invariant current_output_path depends on.
+    """
+    await conn.execute(
+        "UPDATE agent_outputs SET output_type='value_chain_registry'"
+        " WHERE output_type='state'"
+        "   AND file_path LIKE '%value_chain_registry%'"
+    )
+    await conn.commit()
+
+
 async def fetch_validation_warnings(
     conn: aiosqlite.Connection,
     *,
@@ -1229,6 +1249,7 @@ async def get_connection(slug: str):
         await _migrate_run_inputs_agent_scope(conn)
         await _migrate_output_changes_kind(conn)
         await _migrate_validation_warnings(conn)
+        await _migrate_registry_output_type(conn)
         yield conn
 
 

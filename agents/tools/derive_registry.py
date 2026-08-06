@@ -150,7 +150,12 @@ class DeriveRegistryTool(BaseTool):
             insert_agent_output_sync(
                 slug=self.slug,
                 agent_name=agent_name,
-                output_type="state",
+                # Not "state". This tool and SQLiteStateTool both write the
+                # value_chain_registry_vN family, and recording them under different types
+                # made one filename family answer to two ledgers - which is why 'state'
+                # carried two is_current rows, why it could never be pruned, and why
+                # deleting rows of one type demoted files belonging to the other.
+                output_type="value_chain_registry",
                 file_path=str(registry_path),
             )
         except (OSError, ValueError) as e:
