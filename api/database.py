@@ -747,6 +747,89 @@ async def _migrate_blocked_writes(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_validation_warnings(conn: aiosqlite.Connection) -> None:
+    """Structural findings a validator raised but did not refuse.
+
+    Deliberately not blocked_writes. That table means "an agent reached for something it
+    does not own"; this one means "what an agent wrote is structurally suspect". Overloading
+    one with the other would blur a distinction the ownership work paid to establish.
+
+    `measure` is not in the design's DDL. It is here because the dismissal rule - re-raise
+    when the L3 proportion moves more than ten percentage points - cannot compare against a
+    number nobody stored. Null for codes that carry no measure.
+
+    The unique index is what makes a warning idempotent: a re-run refreshes the occurrence
+    rather than appending a duplicate, so a reviewer's disposition outlives the run that
+    triggered it.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS validation_warnings (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id       INTEGER NOT NULL REFERENCES projects(id),
+            run_id           INTEGER,
+            source           TEXT NOT NULL,
+            subject          TEXT,
+            code             TEXT NOT NULL,
+            detail           TEXT NOT NULL,
+            measure          REAL,
+            disposition      TEXT NOT NULL DEFAULT 'open',
+            disposition_note TEXT,
+            disposed_by      TEXT,
+            disposed_at      DATETIME,
+            created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_validation_warnings_occurrence
+        ON validation_warnings (project_id, source, IFNULL(subject, ''), code)
+    """)
+    await conn.commit()
+
+
+async def fetch_validation_warnings(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    sources: list[str] | None = None,
+    dispositions: list[str] | None = None,
+) -> list[dict]:
+    """Warnings for a project, most recent occurrence first."""
+    where = ["project_id = ?"]
+    params: list = [project_id]
+    if sources:
+        where.append(f"source IN ({','.join('?' * len(sources))})")
+        params.extend(sources)
+    if dispositions:
+        where.append(f"disposition IN ({','.join('?' * len(dispositions))})")
+        params.extend(dispositions)
+    sql = (
+        "SELECT * FROM validation_warnings WHERE "
+        + " AND ".join(where)
+        + " ORDER BY updated_at DESC, id DESC"
+    )
+    async with conn.execute(sql, params) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def dispose_validation_warning(
+    conn: aiosqlite.Connection,
+    *,
+    warning_id: int,
+    disposition: str,
+    note: str,
+    by: str,
+) -> bool:
+    """Record a reviewer's judgement. False when the id does not exist."""
+    cur = await conn.execute(
+        "UPDATE validation_warnings SET disposition=?, disposition_note=?, disposed_by=?,"
+        " disposed_at=CURRENT_TIMESTAMP WHERE id=?",
+        (disposition, note, by, warning_id),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
 async def _migrate_lineage(conn: aiosqlite.Connection) -> None:
     """What a run read, and what each output was built from.
 
@@ -1145,6 +1228,7 @@ async def get_connection(slug: str):
         await _migrate_lineage(conn)
         await _migrate_run_inputs_agent_scope(conn)
         await _migrate_output_changes_kind(conn)
+        await _migrate_validation_warnings(conn)
         yield conn
 
 

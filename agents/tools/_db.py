@@ -265,3 +265,34 @@ def complete_hitl_review(slug: str, review_id: int, decision: str) -> None:
             (decision, review_id),
         )
         conn.commit()
+
+
+def record_validation_warnings_sync(
+    slug: str, run_id: int, source: str, warnings: list[dict]
+) -> None:
+    """Best-effort, exactly as record_blocked_write_sync is best-effort.
+
+    A validator that warns must never be able to fail the write it was inspecting - the
+    whole point of warn-and-record over refuse is that the work survives. Losing a warning
+    is strictly better than losing the output that produced it.
+
+    ON CONFLICT keeps one row per (project, source, subject, code) and refreshes the
+    occurrence. `disposition` is deliberately absent from the SET list: a reviewer's
+    judgement outlives the run that triggered it.
+    """
+    if not warnings:
+        return
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        project_id = get_project_id(slug)
+        for w in warnings:
+            conn.execute(
+                "INSERT INTO validation_warnings"
+                " (project_id, run_id, source, subject, code, detail, measure)"
+                " VALUES (?,?,?,?,?,?,?)"
+                " ON CONFLICT (project_id, source, IFNULL(subject, ''), code) DO UPDATE SET"
+                "   run_id=excluded.run_id, detail=excluded.detail,"
+                "   measure=excluded.measure, updated_at=CURRENT_TIMESTAMP",
+                (project_id, run_id or None, source, w.get("subject"),
+                 w["code"], w["detail"], w.get("measure")),
+            )
+        conn.commit()
