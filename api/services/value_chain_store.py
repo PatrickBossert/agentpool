@@ -51,11 +51,23 @@ async def load_model(slug: str) -> dict | None:
     return json.loads(path.read_text())
 
 
-async def save_model(slug: str, model: dict, *, saved_by: str, summary: str) -> int:
+async def save_model(
+    slug: str,
+    model: dict,
+    *,
+    saved_by: str,
+    summary: str = "",
+    rationale: str = "",
+    intent: str = "change_request",
+) -> int:
     """Write the next version. Raises ValueError with the problems if the model is invalid.
 
     Validation runs before anything is written, so a rejected save leaves no file and no
     row - a half-saved model would be worse than a refused one.
+
+    The save itself never waits on a rationale - demanding one before someone can save is
+    how people stop editing. Without one the edit still lands, just as `unclassified`, so a
+    later triage pass can find it rather than the next agent run silently reverting it.
     """
     problems = validate_model(model)
     if problems:
@@ -93,8 +105,11 @@ async def save_model(slug: str, model: dict, *, saved_by: str, summary: str) -> 
             output_id=output_id,
             requested_by=saved_by,
             source="edit",
-            request=summary,
+            # The reviewer's words when they gave them, otherwise the mechanical summary -
+            # which is a record that an edit happened, not a reason it did.
+            request=rationale.strip() or summary,
             summary=f"saved value chain model version {version}",
+            kind=intent if rationale.strip() else "unclassified",
         )
 
     return output_id
