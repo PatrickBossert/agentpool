@@ -77,7 +77,7 @@ const AGENTS: AgentEntry[] = [
   {
     agent: 'Value Chain Mapper (Alex Chen)',
     crew: 'Value Chain Mapping',
-    tools: ['Web search (Tavily)', 'Web fetch', 'ChromaDB semantic search', 'Mermaid diagram renderer', 'Project state read/write'],
+    tools: ['Web search (Tavily)', 'Web fetch', 'ChromaDB semantic search', 'Document ingestion', 'Registry derivation', 'Human review gate', 'Project state read/write'],
     externalServices: ['Anthropic Claude API', 'Tavily Search API'],
     dataShared: 'Organisation context, sector description, and ingested document excerpts sent to Claude. Web search sends keyword queries only (no document content) to Tavily.',
     storageAfterUse: 'Anthropic: not retained. Tavily: query logs per Tavily policy.',

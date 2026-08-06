@@ -129,8 +129,8 @@ export default function Architecture() {
             <div className="text-xs text-teal-400 mb-1 uppercase tracking-wide">Phase 1 - Mapping</div>
             <ol className="text-sm text-slate-300 space-y-1 list-decimal ml-4">
               <li>Create <code>orchestration_runs</code> record (status: <Tag color="amber">running</Tag>)</li>
-              <li>PAM dispatches <strong>Discovery Mapping Crew</strong> (Value Chain Mapper only)</li>
-              <li>Produces: value chain Mermaid diagram + value_chain_tree (L1→L3 node hierarchy)</li>
+              <li>PAM dispatches <strong>Discovery Mapping Crew</strong> (Value Chain Mapper, then Value Lever Analyst)</li>
+              <li>Produces: value_chain_model (structured JSON), value_chain_tree (L1→L3 node hierarchy), value_chain_registry (stable IDs), value_levers</li>
               <li>Status advances to <Tag color="amber">awaiting_assignment</Tag></li>
             </ol>
           </div>
@@ -175,8 +175,8 @@ export default function Architecture() {
           {
             name: 'Discovery Mapping Crew',
             file: 'agents/crews/discovery_mapping_crew.py',
-            agents: ['Value Chain Mapper'],
-            produces: 'value_chain Mermaid diagram, value_chain_tree (L1→L3 JSON)',
+            agents: ['Value Chain Mapper', 'Value Lever Analyst'],
+            produces: 'value_chain_model (JSON), value_chain_tree (L1→L3 JSON), value_chain_registry, value_levers',
             trigger: 'PAM Phase 1',
           },
           {
@@ -259,9 +259,9 @@ export default function Architecture() {
               {
                 name: 'Value Chain Mapper',
                 file: 'agents/discovery/value_chain_mapper.py',
-                role: 'Produce a complete Mermaid value chain diagram from documents, links, and sector research.',
-                tools: ['DocumentIngestionTool', 'ChromaQueryTool (project+sector)', 'TavilySearchTool', 'WebFetchTool', 'MermaidRenderTool', 'SQLiteStateTool', 'HumanInputTool'],
-                output: 'value_chain (Mermaid), value_chain_summary (JSON), value_chain_tree (L1→L3 hierarchy)',
+                role: 'Produce a complete structured value chain model from documents, links, and sector research.',
+                tools: ['DocumentIngestionTool', 'ChromaQueryTool (project+sector)', 'TavilySearchTool', 'WebFetchTool', 'SQLiteStateTool', 'DeriveRegistryTool', 'HumanInputTool'],
+                output: 'value_chain_model (JSON), value_chain_summary (JSON), value_chain_tree (L1→L3 hierarchy), value_chain_registry (stable IDs)',
               },
               {
                 name: 'Requirements Capture Specialist',
