@@ -55,6 +55,20 @@ def current_output_path(slug: str, output_type: str) -> Path | None:
 
 Step 2 is the load-bearing one. The current behaviour has no way to distinguish "no current version" from "the current version's file is missing", and the difference decides whether an agent should proceed.
 
+### "The current version is gone" is an answer a human acts on
+
+`None` is correct, and it is not the end of it. The person who sees it has two remedies - revert to a version that still exists, or restore a backup by hand - and neither is possible without knowing what survives. So the record carries what the choice needs:
+
+- the output type, and the version the ledger marks current;
+- the `file_path` that is missing;
+- **the versions still present on disk**, so "revert to v4" is a decision rather than an investigation.
+
+It is written as a `validation_warnings` row - `source='output_resolution'`, `code='current_file_missing'`, `subject=<output_type>` - reusing the table, the disposition flow and the surfaces built for the tree and anchor validators. That puts it in the review dialog, the agent's Status tab and the PAM report without a second mechanism, and `revert_to_version` is already the tool for the first remedy.
+
+Restoring a backup stays manual for now. Automating it would mean deciding which backup, which is a judgement the person making it has context for and the system does not.
+
+**An agent that resolves `None` must not proceed as though the input were merely absent.** A missing upstream artefact and a *lost* one call for different behaviour: the first is a first run, the second is damage. The tool returns the same distinction it records, so the agent can say which it hit rather than quietly producing an output built on nothing.
+
 ## The prerequisite: one output type per filename family
 
 `DeriveRegistryTool` writes `value_chain_registry_vN.json` with `output_type="state"` (`derive_registry.py:153`). `SQLiteStateTool` writes the same filename family with `output_type="value_chain_registry"`. Two writers, one family, two types.
@@ -95,6 +109,8 @@ Nor does it introduce a new table. A separate "current filename registry" would 
 - **Ledger wins over disk.** A project whose `is_current` row names `_v5` while `_v12` sits beside it resolves to v5. This is the `value_chain_summary` incident, as a test.
 - **Revert is honoured.** After `revert_to_version` to an older version, the resolver returns the reverted file while the newer files remain on disk untouched.
 - **A dangling row is not a wrong answer.** A row marked current whose file is absent returns `None` and records the fact, rather than falling through to a stale file.
+- **The record names the way out.** That warning carries the output type, the current version, the missing path, and the versions still on disk - asserted on content, because a warning that says only "file missing" leaves the reader to do the investigation the warning existed to save.
+- **A lost input is distinguishable from an absent one.** Resolving a dangling row and resolving a never-written output produce different signals, so an agent can refuse rather than build on nothing.
 - **First write.** No row yet, file on disk: falls back and finds it.
 - **Rename window.** A resolve between rename and row insert does not raise and does not return a stale version.
 - **One type per family.** After the migration, no filename family is claimed by two output types - asserted across every type, so a new writer that reintroduces the split fails a test rather than a demo.
