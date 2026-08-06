@@ -137,7 +137,7 @@ async def test_derivation_keeps_the_registered_label_and_adds_new_ones(derive_pr
     assert not result.startswith("Error"), result
 
     by_id = {a["id"]: a for a in
-             json.loads(_latest_registry(outputs).read_text())["activities"]}
+             json.loads(_latest_registry(slug).read_text())["activities"]}
     assert by_id["1.1"]["label"] == "Financial Control (£350M)", \
         "an existing id keeps the label the registry already holds"
     assert by_id["1.2"]["label"] == "A Brand New Stage", \
@@ -159,5 +159,5 @@ async def test_derivation_now_succeeds_where_it_used_to_refuse(derive_project):
     result = DeriveRegistryTool(slug=slug)._run(agent_name="value_chain_mapper")
     assert not result.startswith("Error"), result
 
-    ids = {a["id"] for a in json.loads(_latest_registry(outputs).read_text())["activities"]}
+    ids = {a["id"] for a in json.loads(_latest_registry(slug).read_text())["activities"]}
     assert "1.2" in ids, "the new stage never reached the registry - derivation was refused"

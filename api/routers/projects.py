@@ -487,11 +487,11 @@ async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_
     same label, and it also drops values that are not interviews.
     """
     await check_project_access(slug, payload)
-    from agents.tools._db import latest_output_path
+    from agents.tools._db import current_output_path
     from api.services.interview_scripts_service import dedupe_script_map
 
     outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
-    current = latest_output_path(outputs_dir / "interview_scripts.json")
+    current = current_output_path(slug, "interview_scripts")
     if current is None:
         return {}
     try:

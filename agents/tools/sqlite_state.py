@@ -7,7 +7,7 @@ from crewai.tools import BaseTool
 from api.config import get_settings
 from agents.tools._db import (
     insert_agent_output_sync,
-    latest_output_path,
+    current_output_path,
     link_output_sync,
     output_id_for_path_sync,
     record_blocked_write_sync,
@@ -55,10 +55,7 @@ def _validate_value_chain_model(parsed: dict, slug: str) -> list[str]:
 
 def _current_registry(slug: str) -> dict:
     """The registry in force, or an empty ledger when there is none yet."""
-    settings = get_settings()
-    path = latest_output_path(
-        Path(settings.projects_dir) / slug / "outputs" / "value_chain_registry.json"
-    )
+    path = current_output_path(slug, "value_chain_registry")
     if path is None:
         return {}
     try:
@@ -83,10 +80,7 @@ def _validate_value_chain_registry(parsed: dict, slug: str) -> list[str]:
 
 def _current_script_registry(slug: str) -> dict:
     """The script ledger in force, or an empty one when there is none yet."""
-    settings = get_settings()
-    path = latest_output_path(
-        Path(settings.projects_dir) / slug / "outputs" / "interview_script_registry.json"
-    )
+    path = current_output_path(slug, "interview_script_registry")
     if path is None:
         return {}
     try:
@@ -118,10 +112,7 @@ def _current_levers(slug: str) -> list[dict]:
     Absence is not a failure: Maya may legitimately design before the levers exist, and
     refusing her write then would block the pipeline on an upstream artefact.
     """
-    settings = get_settings()
-    path = latest_output_path(
-        Path(settings.projects_dir) / slug / "outputs" / "value_levers.json"
-    )
+    path = current_output_path(slug, "value_levers")
     if path is None:
         return []
     try:
@@ -186,10 +177,7 @@ _MERGE_ON_WRITE: frozenset[str] = frozenset({"interview_scripts"})
 
 def _merge_with_current(key: str, parsed: dict, slug: str) -> dict:
     """The current artefact with this batch applied over it, newest wins per id."""
-    settings = get_settings()
-    current_path = latest_output_path(
-        Path(settings.projects_dir) / slug / "outputs" / f"{key}.json"
-    )
+    current_path = current_output_path(slug, key)
     if current_path is None:
         return parsed
     try:
@@ -301,10 +289,11 @@ class SQLiteStateTool(BaseTool):
             return f"Written to {file_path}"
 
         if operation == "read":
-            # Resolve through latest_output_path: the write above is renamed to
-            # a _vN suffix by insert_agent_output_sync, so reading file_path
-            # directly never finds anything the tool itself wrote.
-            stored = latest_output_path(file_path)
+            # Resolve through the ledger: the write above is renamed to a _vN suffix by
+            # insert_agent_output_sync, so reading file_path directly never finds anything
+            # the tool itself wrote - and the highest number on disk is not necessarily the
+            # current version, which is how a 15 July file was read for three weeks.
+            stored = current_output_path(self.slug, key, run_id=self.run_id)
             if stored is None:
                 return f"Error: no state found for key '{key}'"
             try:

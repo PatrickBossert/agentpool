@@ -13,8 +13,12 @@ def _read_registry(base, slug):
     left at the base filename. Resolve the same way production does.
     """
     from agents.tools.derive_registry import _latest_registry
-    outputs = base / "projects" / slug / "outputs"
-    path = _latest_registry(outputs)
+    # _latest_registry now asks the ledger, so settings must resolve for the duration of
+    # the call - both projects_dir (to find outputs/) and database_dir (to find the rows).
+    with patch("agents.tools._db.get_settings") as m_db:
+        m_db.return_value.projects_dir = str(base / "projects")
+        m_db.return_value.database_dir = str(base / "data")
+        path = _latest_registry(slug)
     assert path is not None, "no registry file was written"
     return json.loads(path.read_text())
 
@@ -81,6 +85,7 @@ def _make_tool(project_dir, slug):
          patch("agents.tools._db.get_settings") as m_db_settings:
         m_settings.return_value.projects_dir = str(base / "projects")
         m_db_settings.return_value.database_dir = str(base / "data")
+        m_db_settings.return_value.projects_dir = str(base / "projects")
         return DeriveRegistryTool(slug=slug), m_settings, m_db_settings
 
 
@@ -104,6 +109,7 @@ def test_derive_registry_creates_flat_entries(project_dir):
          patch("agents.tools._db.get_settings") as m_db:
         m_s.return_value.projects_dir = str(base / "projects")
         m_db.return_value.database_dir = str(base / "data")
+        m_db.return_value.projects_dir = str(base / "projects")
         tool = DeriveRegistryTool(slug=slug)
         result = tool._run()
 
@@ -124,6 +130,7 @@ def test_derive_registry_all_active(project_dir):
          patch("agents.tools._db.get_settings") as m_db:
         m_s.return_value.projects_dir = str(base / "projects")
         m_db.return_value.database_dir = str(base / "data")
+        m_db.return_value.projects_dir = str(base / "projects")
         DeriveRegistryTool(slug=slug)._run()
     data = _read_registry(base, slug)
     assert all(a["active"] for a in data["activities"])
@@ -137,6 +144,7 @@ def test_derive_registry_parent_id_set(project_dir):
          patch("agents.tools._db.get_settings") as m_db:
         m_s.return_value.projects_dir = str(base / "projects")
         m_db.return_value.database_dir = str(base / "data")
+        m_db.return_value.projects_dir = str(base / "projects")
         DeriveRegistryTool(slug=slug)._run()
     data = _read_registry(base, slug)
     by_id = {a["id"]: a for a in data["activities"]}
@@ -170,6 +178,7 @@ def test_derive_registry_marks_removed_as_inactive(project_dir):
          patch("agents.tools._db.get_settings") as m_db:
         m_s.return_value.projects_dir = str(base / "projects")
         m_db.return_value.database_dir = str(base / "data")
+        m_db.return_value.projects_dir = str(base / "projects")
         result = DeriveRegistryTool(slug=slug)._run()
 
     assert "inactive" in result
@@ -208,6 +217,7 @@ def test_derive_registry_preserves_history_across_runs(project_dir):
              patch("agents.tools._db.get_settings") as m_db:
             m_s.return_value.projects_dir = str(base / "projects")
             m_db.return_value.database_dir = str(base / "data")
+            m_db.return_value.projects_dir = str(base / "projects")
             return DeriveRegistryTool(slug=slug)._run()
 
     # First run records both activities
@@ -243,6 +253,7 @@ def test_derive_registry_keeps_the_registered_label_when_a_tree_renames_an_id(pr
              patch("agents.tools._db.get_settings") as m_db:
             m_s.return_value.projects_dir = str(base / "projects")
             m_db.return_value.database_dir = str(base / "data")
+            m_db.return_value.projects_dir = str(base / "projects")
             return DeriveRegistryTool(slug=slug)._run()
 
     _run_with([{"id": "1", "label": "Property", "level": "L1", "children": [
@@ -279,6 +290,7 @@ def test_derive_registry_still_accepts_a_tree_that_only_grows(project_dir):
              patch("agents.tools._db.get_settings") as m_db:
             m_s.return_value.projects_dir = str(base / "projects")
             m_db.return_value.database_dir = str(base / "data")
+            m_db.return_value.projects_dir = str(base / "projects")
             return DeriveRegistryTool(slug=slug)._run()
 
     _run_with([{"id": "1", "label": "Property", "level": "L1", "children": [

@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 from api.config import get_settings
-from agents.tools._db import latest_output_path
+from agents.tools._db import current_output_path
 from api.database import (
     fetch_interview_answers,
     fetch_interview_session_by_id,
@@ -119,9 +119,7 @@ async def script_for_session(conn, slug: str, session: dict) -> dict | None:
     is what they were keyed on. A session whose script cannot be resolved returns None rather
     than guessing - tagging answers from the wrong script is worse than leaving them untagged.
     """
-    path = latest_output_path(
-        Path(get_settings().projects_dir) / slug / "outputs" / "interview_scripts.json"
-    )
+    path = current_output_path(slug, "interview_scripts")
     if path is None:
         return None
     try:
