@@ -101,6 +101,51 @@ async def _fetch_skill_notes(crew_name: str) -> str:
     return "\n\n".join(sections)
 
 
+# Which crew is answerable for each warning source. A warning is only useful to the agent
+# that can act on it: Alex cannot fix a theme skew and Casey cannot add a root node.
+_WARNING_SOURCE_CREW: dict[str, str] = {
+    "value_chain_tree": "discovery_mapping",
+    "theme_anchor": "discovery_interviews",
+}
+
+
+async def _fetch_validation_warnings(slug: str, crew_name: str) -> str:
+    """Structural warnings this crew is answerable for, as a prompt block.
+
+    open and acknowledged both reach the agent; dismissed does not. That asymmetry is the
+    whole meaning of a disposition - acknowledged says "this is real, fix it", dismissed
+    says "this is a false positive", and re-injecting a dismissed warning would make the
+    dismissal pointless.
+
+    This is the machine half of the feedback loop: no reviewer involvement, just an agent
+    seeing what its last output was flagged for. The human half - a reviewer's note -
+    arrives through _fetch_change_requests below.
+    """
+    from api.database import fetch_project, fetch_validation_warnings
+
+    sources = [s for s, c in _WARNING_SOURCE_CREW.items() if c == crew_name]
+    if not sources:
+        return ""
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return ""
+        rows = await fetch_validation_warnings(
+            conn, project_id=project["id"], sources=sources,
+            dispositions=["open", "acknowledged"],
+        )
+    if not rows:
+        return ""
+    lines = []
+    for r in rows:
+        subject = f"[{r['subject']}] " if r["subject"] else ""
+        lines.append(f"- {subject}{r['detail']}")
+    return (
+        "STRUCTURAL WARNINGS (your last output was flagged for these; correct them):\n"
+        + "\n".join(lines)
+    )
+
+
 async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[int]]:
     """Open change requests for output types this crew's own agents produce, and the ids
     to close after.
@@ -446,6 +491,11 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     if change_text:
         for task in crew.tasks:
             task.description = change_text + "\n\n" + task.description
+
+    warning_text = await _fetch_validation_warnings(slug, crew_name)
+    if warning_text:
+        for task in crew.tasks:
+            task.description = warning_text + "\n\n" + task.description
 
     result = await crew.kickoff_async()
 
