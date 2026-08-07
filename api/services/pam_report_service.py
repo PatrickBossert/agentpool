@@ -102,6 +102,29 @@ async def build_pam_report(slug: str) -> dict:
         ) as cur:
             outputs = [dict(r) for r in await cur.fetchall()]
 
+        # Pamela cannot report accurately on a crew whose output is structurally suspect.
+        # An open or acknowledged warning is part of project health; a dismissed one is not,
+        # because somebody looked and recorded why. A finding with no owning crew - the
+        # resolver's current_file_missing, say - still counts in the totals rather than
+        # vanishing from the report because no agent produced it.
+        from api.database import fetch_validation_warnings
+        from api.services.run_service import _WARNING_SOURCE_CREW
+
+        warning_rows = await fetch_validation_warnings(
+            conn, project_id=project["id"], dispositions=["open", "acknowledged"],
+        )
+        by_crew: dict[str, int] = {}
+        for w in warning_rows:
+            crew = _WARNING_SOURCE_CREW.get(w["source"])
+            if crew:
+                by_crew[crew] = by_crew.get(crew, 0) + 1
+        validation_warnings = {
+            "open": sum(1 for w in warning_rows if w["disposition"] == "open"),
+            "acknowledged": sum(
+                1 for w in warning_rows if w["disposition"] == "acknowledged"),
+            "by_crew": by_crew,
+        }
+
         # outputs per crew (approximate by agent_name snake_case)
         CREW_AGENT_KEYS: dict[str, list[str]] = {
             'discovery_mapping':      ['value_chain_mapper'],
@@ -314,6 +337,7 @@ async def build_pam_report(slug: str) -> dict:
 
     return {
         'generated_at':       datetime.now(timezone.utc).isoformat(),
+        'validation_warnings': validation_warnings,
         'project_slug':       slug,
         'client_name':        client_name,
         'sector':             sector,
