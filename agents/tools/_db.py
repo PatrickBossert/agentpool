@@ -348,7 +348,7 @@ def complete_hitl_review(slug: str, review_id: int, decision: str) -> None:
 
 
 def record_validation_warnings_sync(
-    slug: str, run_id: int, source: str, warnings: list[dict]
+    slug: str, run_id: int, source: str, warnings: list[dict], *, complete: bool = False
 ) -> None:
     """Best-effort, exactly as record_blocked_write_sync is best-effort.
 
@@ -356,13 +356,27 @@ def record_validation_warnings_sync(
     whole point of warn-and-record over refuse is that the work survives. Losing a warning
     is strictly better than losing the output that produced it.
 
-    ON CONFLICT keeps one row per (project, source, subject, code) and refreshes the
-    occurrence. `disposition` is deliberately absent from the SET list: a reviewer's
-    judgement outlives the run that triggered it.
+    One row per (project, source, subject, code), refreshed on each occurrence.
+    `disposition` is deliberately not refreshed: a reviewer's judgement outlives the run
+    that triggered it.
+
+    `complete` says this call carries the FULL set of findings for its source, so anything
+    absent is no longer true and is cleared. A warner qualifies - it re-derives every
+    finding from the artefact it just judged - and run 29 shows why it matters: missing_l0
+    was raised on tree v17 and fixed by v18 in the same run, and without clearing the
+    reviewer sees a solved problem and the agent is re-injected a warning it already acted
+    on. The resolver does NOT qualify: it reports one output at a time, and clearing on its
+    behalf would erase a finding about a different output.
+
+    A dismissal survives clearing. It is a standing judgement that this finding is a false
+    positive, and if the condition returns that judgement should still apply - which it
+    cannot if the row it lives on was deleted the moment the finding stopped appearing. An
+    acknowledged warning that has been fixed is deleted: raised, acknowledged, fixed is the
+    loop completing, not a record to keep.
     """
     from api.services.anchor_validation import SKEW_RERAISE_DELTA
 
-    if not warnings:
+    if not warnings and not complete:
         return
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
         project_id = get_project_id(slug)
@@ -410,4 +424,19 @@ def record_validation_warnings_sync(
                     " updated_at=CURRENT_TIMESTAMP WHERE id=?",
                     (run_id or None, w["detail"], measure, warning_id),
                 )
+
+        if complete:
+            seen = [(w.get("subject") or "", w["code"]) for w in warnings]
+            sql = (
+                "DELETE FROM validation_warnings"
+                " WHERE project_id=? AND source=?"
+                "   AND disposition IN ('open','acknowledged')"
+            )
+            params: list = [project_id, source]
+            if seen:
+                pairs = " OR ".join(["(IFNULL(subject,'')=? AND code=?)"] * len(seen))
+                sql += f" AND NOT ({pairs})"
+                for subject, code in seen:
+                    params.extend([subject, code])
+            conn.execute(sql, params)
         conn.commit()

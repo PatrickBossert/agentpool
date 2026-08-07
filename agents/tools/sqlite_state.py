@@ -367,10 +367,14 @@ class SQLiteStateTool(BaseTool):
             if warner is not None:
                 try:
                     found = warner(parsed, self.slug)
-                    if found:
-                        record_validation_warnings_sync(
-                            self.slug, self.run_id, _WARNER_SOURCE[key], found
-                        )
+                    # complete=True: a warner re-derives every finding from the artefact it
+                    # just judged, so anything absent is fixed and is cleared. Called even
+                    # when nothing was found, because that is precisely when clearing
+                    # matters - run 29 raised missing_l0 on tree v17 and fixed it on v18,
+                    # and without this the warning outlived the problem.
+                    record_validation_warnings_sync(
+                        self.slug, self.run_id, _WARNER_SOURCE[key], found, complete=True
+                    )
                 except Exception:
                     # A warning is never worth failing a completed write over. The write and
                     # its row are durable by this point; telling the agent it failed would

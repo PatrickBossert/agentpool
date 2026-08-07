@@ -155,7 +155,10 @@ async def notify_crew_awaiting_commit(slug: str, crew_name: str) -> None:
         slug, crew_name,
         flags=("is_reviewer",),
         fallback_flags=("is_approver",),
-        subject=f"{slug}: {crew_name} is ready for review",
+        # "ready for review" sent people to the HITL review queue, which has been empty
+        # for these crews since crews stopped blocking for a typed approval - the output is
+        # waiting to be committed, and the subject has to say the same thing the body does.
+        subject=f"{slug}: {crew_name} is ready to commit",
         intro=f"{crew_name} has finished and its output is waiting to be committed.",
         audience_label="reviewers",
     )

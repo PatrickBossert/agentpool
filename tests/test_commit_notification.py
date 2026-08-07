@@ -298,4 +298,10 @@ async def test_a_successful_run_still_sends_the_completion_notice_not_a_failure_
         await notify_crew_awaiting_commit(SLUG, "assessment_design")
 
     assert "failed" not in send.await_args.kwargs["subject"].lower()
-    assert "ready for review" in send.await_args.kwargs["subject"].lower()
+    subject = send.await_args.kwargs["subject"].lower()
+    # Names the commit queue, not the review one. "ready for review" sent people to the
+    # HITL review queue, which has been empty for these crews since they stopped blocking
+    # for a typed approval - the body always said "waiting to be committed" and the subject
+    # contradicted it.
+    assert "ready to commit" in subject
+    assert "review" not in subject
