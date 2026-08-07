@@ -36,15 +36,49 @@ _FOLD = {
 _ARROWS = ("→", "⟶", "⇒", "->", "=>")
 
 
+# Symbol-and-word pairs a reader treats as identical. Currency symbols expand to their code
+# rather than vanishing: dropping "£" from "£350M" loses information, writing "GBP350M"
+# does not, and only the first should be a finding.
+_WORDS = {
+    "&": " and ",
+    "£": " gbp ", "$": " usd ", "€": " eur ", "¥": " jpy ",
+    "%": " percent ",
+    "+": " plus ",
+    "@": " at ",
+}
+
+
 def normalise_typography(text: str) -> str:
-    """The text as it would be read aloud: typography folded, meaning untouched."""
+    """The words and numbers, with punctuation discarded.
+
+    Run 28 produced fifty-nine label changes against the registry and not one was a
+    redefinition. Fifty-two were '&' becoming 'and'; the rest dropped a slash or a colon,
+    turned '×' into 'x', or wrote 'GBP350M' for '£350M'. Alex regenerates every label on
+    every run, so punctuation drift is what he does, and a check that fires on it produces
+    fifty-nine false positives and no true ones.
+
+    So: compare the token sequence. Two labels differ when their words or their numbers
+    differ, never when only their punctuation does. '£350M' against '350M' still differs -
+    the currency expands rather than disappearing - which is the one real defect this rule
+    was written to catch.
+    """
     s = unicodedata.normalize("NFKC", str(text))
     for src, dst in _FOLD.items():
         s = s.replace(src, dst)
     for arrow in _ARROWS:
         s = s.replace(arrow, " to ")
-    s = re.sub(r"[\s\-]+", " ", s)      # dashes and runs of space both collapse to one space
-    return s.strip().casefold()
+    s = s.casefold()
+    for src, dst in _WORDS.items():
+        s = s.replace(src, dst)
+    # Letters and digits tokenise separately, so "GBP350M" and "£350M" agree once the
+    # symbol has expanded - the space a symbol leaves behind must not itself be a
+    # difference.
+    tokens = re.findall(r"[a-z]+|[0-9]+", s)
+    # "and" is a connector, not content. A slash carries it silently, an ampersand carries
+    # it as a symbol, and Alex writes it as a word - "(Asbestos / Statutory)" and
+    # "(Asbestos and Statutory)" name the same pair. "or" is deliberately NOT dropped: it
+    # changes what a label claims.
+    return " ".join(t for t in tokens if t != "and")
 
 
 def is_substantive_change(old: str, new: str) -> bool:

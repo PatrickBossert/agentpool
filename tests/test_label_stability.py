@@ -31,6 +31,15 @@ def test_typographic_variants_are_not_substantive():
         ("Works  Programming", "Works Programming"),
         ("Asset Register", "asset register"),
         ("O’Brien Review", "O'Brien Review"),
+        # From run 28, which produced 59 label changes and not one redefinition.
+        ("Strategic Planning & Standards", "Strategic Planning and Standards"),
+        ("Compliance (Asbestos / Statutory)", "Compliance (Asbestos and Statutory)"),
+        ("Modelling (Bathtub Curve / 20-yr TCO)", "Modelling (Bathtub Curve 20-yr TCO)"),
+        ("Risk: Rm = Pf × Cf", "Risk Rm = Pf x Cf"),
+        ("Defect Capture & FRACAS (Mobile / Tririga)",
+         "Defect Capture and FRACAS (Mobile Tririga)"),
+        ("Capital & Revenue Financial Control (£350M)",
+         "Capital and Revenue Financial Control (GBP350M)"),
     ]
     for old, new in pairs:
         assert not is_substantive_change(old, new), f"{old!r} -> {new!r}"
@@ -50,9 +59,19 @@ def test_a_changed_number_is_substantive():
     assert is_substantive_change("Phases 0-7", "Phases 0-9")
 
 
-def test_normalise_leaves_meaningful_characters_alone():
-    assert "£" in normalise_typography("£350M")
-    assert "&" in normalise_typography("Capital & Revenue")
+def test_a_currency_expands_rather_than_vanishing():
+    """Dropping the pound sign loses information; writing GBP does not. Only the first is
+    a finding, so the symbol has to survive normalisation as a token rather than as a
+    character."""
+    assert normalise_typography("£350M") == "gbp 350 m"
+    assert is_substantive_change("(£350M)", "(350M)"), "a dropped currency is real"
+    assert not is_substantive_change("(£350M)", "(GBP350M)"), "GBP350M says the same thing"
+
+
+def test_words_and_numbers_still_decide():
+    assert is_substantive_change("Works Delivery", "Asset Register and Data")
+    assert is_substantive_change("Phases 0-7", "Phases 0-9")
+    assert is_substantive_change("10-yr Rolling Plan", "20-yr Rolling Plan")
 
 
 # ── the succession rule ───────────────────────────────────────────────────────────
@@ -161,3 +180,8 @@ async def test_derivation_now_succeeds_where_it_used_to_refuse(derive_project):
 
     ids = {a["id"] for a in json.loads(_latest_registry(slug).read_text())["activities"]}
     assert "1.2" in ids, "the new stage never reached the registry - derivation was refused"
+
+
+def test_or_is_not_dropped_because_it_changes_the_claim():
+    """'and' is a connector three different notations carry silently; 'or' is content."""
+    assert is_substantive_change("Repair or Replace", "Repair and Replace")
