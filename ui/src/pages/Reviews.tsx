@@ -8,12 +8,19 @@ import { projectsApi, commitsApi } from '../api/endpoints'
 import { campaignsApi } from '../api/campaigns'
 import { CrewApprovalRow, type CrewState } from '../components/CrewApprovalRow'
 import { CREW_LABELS, agentDisplayName } from '../components/agentStatus'
+import ValidationWarnings from '../components/ValidationWarnings'
+import { CREW_WARNING_SOURCE } from '../components/ReviewDialog'
 import { CREW_OUTPUT_TYPE } from '../components/crewOutputs'
 import type { AgentOutput, HumanReview, ReminderEmail } from '../types'
 
 // A single crew's change count, fetched independently so one crew's request does not
 // block the rest of the section from rendering.
-function CrewApprovalRowWithChanges({
+//
+// Exported for tests. This is also where a crew's structural warnings are dispositioned:
+// the design put them in the review dialog, but these crews stopped raising a review when
+// they stopped blocking for a typed approval, so the commit is now the decision and the
+// warnings belong beside it.
+export function CrewApprovalRowWithChanges({
   slug,
   crewName,
   state,
@@ -35,14 +42,21 @@ function CrewApprovalRowWithChanges({
     enabled: state === 'ready',
   })
 
+  const warningSource = CREW_WARNING_SOURCE[crewName]
+
   return (
-    <CrewApprovalRow
-      crewName={crewName}
-      state={state}
-      changeCount={changeCount}
-      onSubmit={onSubmit}
-      onApprove={onApprove}
-    />
+    <div className="space-y-2">
+      <CrewApprovalRow
+        crewName={crewName}
+        state={state}
+        changeCount={changeCount}
+        onSubmit={onSubmit}
+        onApprove={onApprove}
+      />
+      {warningSource && (
+        <ValidationWarnings slug={slug} source={warningSource} />
+      )}
+    </div>
   )
 }
 
