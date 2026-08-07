@@ -1,6 +1,7 @@
 // ui/src/components/ReviewDialog.tsx
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import ValidationWarnings from './ValidationWarnings'
 import { X, Check, PauseCircle, Download, XCircle } from 'lucide-react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -367,6 +368,14 @@ type ReviewIntent = 'change_request' | 'correction' | 'skill'
 // Declared (not cast) so a typo'd intent fails to compile rather than shipping a value the
 // API will 422 on - handleSubmit's try/finally has no catch, so a rejected request would
 // otherwise vanish silently from the reviewer's point of view.
+// Which structural warnings belong to which crew. A warning is only useful beside the
+// artefact it concerns: Alex's tree findings on his review, Casey's anchor findings on
+// hers.
+export const CREW_WARNING_SOURCE: Record<string, string> = {
+  discovery_mapping: 'value_chain_tree',
+  discovery_interviews: 'theme_anchor',
+}
+
 const INTENT_OPTIONS: [ReviewIntent, string, string][] = [
   ['change_request', 'Fix this output', 'Applies to the next run only.'],
   ['correction', 'This is true of this client', 'Becomes a standing fact for this client.'],
@@ -471,6 +480,13 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
                 </p>
                 <OutputPreview slug={slug} output={matchedOutput} />
               </div>
+            )}
+
+            {review.crew_name && CREW_WARNING_SOURCE[review.crew_name] && (
+              <ValidationWarnings
+                slug={slug}
+                source={CREW_WARNING_SOURCE[review.crew_name]}
+              />
             )}
 
             {mode !== 'idle' && (

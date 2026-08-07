@@ -334,6 +334,22 @@ export interface ValueChainMigrationResult {
   }
 }
 
+export const validationsApi = {
+  list: (slug: string, source?: string): Promise<import('../types').ValidationWarning[]> =>
+    apiClient
+      .get(`/projects/${slug}/validation-warnings`, { params: source ? { source } : {} })
+      .then((r) => r.data),
+  dispose: (
+    slug: string,
+    warningId: number,
+    disposition: 'open' | 'acknowledged' | 'dismissed',
+    note: string,
+  ): Promise<{ id: number }> =>
+    apiClient
+      .patch(`/projects/${slug}/validation-warnings/${warningId}`, { disposition, note })
+      .then((r) => r.data),
+}
+
 export const valueChainApi = {
   get: (slug: string): Promise<{ model: unknown }> =>
     apiClient.get(`/projects/${slug}/value-chain-model`).then((r) => r.data),

@@ -14,7 +14,8 @@ import {
   RotateCcw, History, Check, X, AlertTriangle, ChevronDown, ChevronRight, Ban,
 } from 'lucide-react'
 import { projectsApi } from '../api/endpoints'
-import { MermaidThumbnail, DiagramLightbox } from './ReviewDialog'
+import { MermaidThumbnail, DiagramLightbox, CREW_WARNING_SOURCE } from './ReviewDialog'
+import ValidationWarnings from './ValidationWarnings'
 import { CREW_LABELS, CREW_DOWNSTREAM, CREW_AGENTS, AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME } from './agentStatus'
 import type { CrewStatus } from './agentStatus'
 import { CREW_OUTPUT_TYPE, parseDbDate } from './crewOutputs'
@@ -583,6 +584,10 @@ export function AgentStatusTab({
 
   const isRunning = crewStatus === 'running'
 
+  // Read-only here: the Status tab is an artefact's history, and a disposition is a
+  // review decision. The review dialog is where it is made.
+  const warningSource = CREW_WARNING_SOURCE[crewKey]
+
   // The primary type's full version list, then every other output type this crew has
   // produced grouped by type - both act on a version rather than the current artefact, so
   // both live here rather than in the Output tab.
@@ -629,6 +634,10 @@ export function AgentStatusTab({
           <p className="text-xs text-gray-600">{primaryModel.contributions.length} contributions</p>
           <p className="text-xs text-gray-600">{primaryModel.tasks.length} tasks</p>
         </div>
+      )}
+
+      {warningSource && (
+        <ValidationWarnings slug={slug} source={warningSource} readOnly />
       )}
 
       {/* Primary type version history */}

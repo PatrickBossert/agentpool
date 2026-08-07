@@ -704,3 +704,17 @@ export interface Milestone {
   baseline_date?: string | null
   created_at: string
 }
+
+// A structural finding a validator raised and did not refuse. Recorded when an agent
+// writes, dispositioned by a reviewer, and carried back into the agent's next run unless
+// dismissed.
+export interface ValidationWarning {
+  id: number
+  source: string
+  subject: string | null
+  code: string
+  detail: string
+  measure: number | null
+  disposition: 'open' | 'acknowledged' | 'dismissed'
+  disposition_note: string | null
+}
