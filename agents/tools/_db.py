@@ -360,19 +360,54 @@ def record_validation_warnings_sync(
     occurrence. `disposition` is deliberately absent from the SET list: a reviewer's
     judgement outlives the run that triggered it.
     """
+    from api.services.anchor_validation import SKEW_RERAISE_DELTA
+
     if not warnings:
         return
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
         project_id = get_project_id(slug)
         for w in warnings:
-            conn.execute(
-                "INSERT INTO validation_warnings"
-                " (project_id, run_id, source, subject, code, detail, measure)"
-                " VALUES (?,?,?,?,?,?,?)"
-                " ON CONFLICT (project_id, source, IFNULL(subject, ''), code) DO UPDATE SET"
-                "   run_id=excluded.run_id, detail=excluded.detail,"
-                "   measure=excluded.measure, updated_at=CURRENT_TIMESTAMP",
-                (project_id, run_id or None, source, w.get("subject"),
-                 w["code"], w["detail"], w.get("measure")),
+            subject = w.get("subject")
+            measure = w.get("measure")
+            row = conn.execute(
+                "SELECT id, disposition, measure FROM validation_warnings"
+                " WHERE project_id=? AND source=? AND IFNULL(subject,'')=? AND code=?",
+                (project_id, source, subject or "", w["code"]),
+            ).fetchone()
+
+            if row is None:
+                conn.execute(
+                    "INSERT INTO validation_warnings"
+                    " (project_id, run_id, source, subject, code, detail, measure)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    (project_id, run_id or None, source, subject,
+                     w["code"], w["detail"], measure),
+                )
+                continue
+
+            warning_id, disposition, old_measure = row[0], row[1], row[2]
+            # A dismissal says "this is a false positive at this magnitude". Once the
+            # magnitude moves materially it is a different claim, so the dismissal expires.
+            # Without this one dismissal silences the check forever, which is how a warning
+            # system dies. An acknowledgement is never auto-reset - it already says the
+            # warning is right, and no measure makes it more so. A warning with no measure
+            # has nothing to compare, so its dismissal stands.
+            reraise = (
+                disposition == "dismissed"
+                and measure is not None and old_measure is not None
+                and abs(measure - old_measure) > SKEW_RERAISE_DELTA
             )
+            if reraise:
+                conn.execute(
+                    "UPDATE validation_warnings SET run_id=?, detail=?, measure=?,"
+                    " disposition='open', disposition_note=NULL, disposed_by=NULL,"
+                    " disposed_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (run_id or None, w["detail"], measure, warning_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE validation_warnings SET run_id=?, detail=?, measure=?,"
+                    " updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (run_id or None, w["detail"], measure, warning_id),
+                )
         conn.commit()

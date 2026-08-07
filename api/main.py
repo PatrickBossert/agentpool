@@ -9,6 +9,7 @@ from api.config import get_settings
 from api.services.scheduler_service import scheduler_loop
 import api.services.pam_report_job  # noqa: F401 - registers JOB_REGISTRY["pam_daily_report"]
 from api.routers import projects, run, outputs, ws
+from api.routers import validations as validations_router
 from api.routers import auth as auth_router
 from api.routers import documents as documents_router
 from api.routers import reviews as reviews_router
@@ -163,3 +164,4 @@ app.include_router(nonworking_router.router)
 app.include_router(system_router.router)
 app.include_router(commits_router.router)
 app.include_router(value_chain_router.router)
+app.include_router(validations_router.router)
