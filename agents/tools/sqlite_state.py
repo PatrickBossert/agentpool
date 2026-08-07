@@ -217,6 +217,40 @@ _WARNER_SOURCE: dict[str, str] = {
 # never "delete this" - an agent that omits a key under context pressure would otherwise
 # silently destroy work it had already banked. Retirement is expressed in
 # interview_script_registry's active: false, where it is explicit and reversible.
+def _preserve_registered_labels(parsed: dict, slug: str) -> dict:
+    """A registered id keeps the label the ledger already holds.
+
+    DeriveRegistryTool does this too, and it has to be done here as well because
+    value_chain_registry has two doors: the derive tool, and SQLiteStateTool, where the key
+    is Alex's own. validate_registry_succession used to refuse any label change and so
+    guarded both; when that refusal was relaxed - because it contradicted Alex's brief and
+    blocked derivation over an en dash - the derive tool gained preservation and this door
+    gained nothing. Run 29 wrote 'Capital and Revenue Financial Control (350M)' over
+    '(£350M)' straight into the ledger.
+
+    ownership.py puts it exactly: ownership stops another agent reaching for a key,
+    succession stops its owner corrupting it. This is the succession half, restored.
+
+    Only the label is carried through. active, level and the entries themselves are the
+    agent's to set - retiring an id is a legitimate edit through this door.
+    """
+    current = _current_registry(slug)
+    registered = {
+        str(a.get("id")): a.get("label")
+        for a in (current.get("activities") or [])
+        if isinstance(a, dict) and a.get("label")
+    }
+    if not registered:
+        return parsed
+    out = dict(parsed)
+    out["activities"] = [
+        {**a, "label": registered.get(str(a.get("id"))) or a.get("label", "")}
+        if isinstance(a, dict) else a
+        for a in (parsed.get("activities") or [])
+    ]
+    return out
+
+
 _MERGE_ON_WRITE: frozenset[str] = frozenset({"interview_scripts"})
 
 
@@ -297,6 +331,12 @@ class SQLiteStateTool(BaseTool):
             # current - the refusal costs the batch, never the work already banked.
             if key in _MERGE_ON_WRITE and isinstance(parsed, dict):
                 parsed = _merge_with_current(key, parsed, self.slug)
+                value = json.dumps(parsed, indent=2)
+
+            # The ledger's labels are not the writer's to restate. Applied before the
+            # validator, so succession judges what will actually be stored.
+            if key == "value_chain_registry" and isinstance(parsed, dict):
+                parsed = _preserve_registered_labels(parsed, self.slug)
                 value = json.dumps(parsed, indent=2)
 
             validator = _VALIDATORS.get(key)
