@@ -298,14 +298,9 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - Slack bot must be manually invited to the target channel (`/invite @TaskReimagination` in Slack) before `SlackNotifyTool` works
 - `taskreimagination.ai` must be a verified sender domain in Resend before reminder emails deliver
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
-- **The `business_plan` crew cannot be built.** `visual_illustrator` has no entry in
-  `agents/tools/registry.py`'s `tool_map`, and `business_plan_crew.py` calls
-  `get_tools_for_agent` for it unconditionally, so `create_business_plan_crew` raises
-  `ValueError: Unknown agent: visual_illustrator` before its first task. The Illustrator is
-  planned work whose upstream outputs do not exist yet, so registering tools now buys a crew
-  that builds and then fails further in. `tests/test_crew_agent_registration.py` pins this
-  deliberately: it fails if another agent goes unregistered **and** if the Illustrator is
-  fixed, so whoever fixes it is told to delete the pin.
+- The `business_plan` crew has never completed a real run. It only became buildable when
+  `visual_illustrator` was registered; before that `create_business_plan_crew` raised
+  before its first task. Treat its first run as an experiment.
 
 ---
 

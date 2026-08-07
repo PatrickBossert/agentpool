@@ -112,6 +112,19 @@ def get_tools_for_agent(
             PowerPointOutputTool(slug=slug),
             FinancialModelTool(slug=slug),
         ],
+        # One tool, because his task needs exactly one: he reads five upstream outputs and
+        # writes illustration_briefs, and SQLiteStateTool does both. It also writes the file
+        # to outputs/, which is why the task no longer asks for a separate file-write step.
+        #
+        # No HumanInputTool: the Illustrator has no approval gate, which
+        # test_vi_task_has_no_hitl_gate states of the task and this states of the tool list.
+        # A tool an agent holds is a tool it can decide to call. `hitl_tool` is still passed
+        # in by the crew and is a no-op here, as it is for any agent with no gate.
+        #
+        # No MermaidRenderTool: he produces prompts for an image generator, not diagrams.
+        "visual_illustrator": [
+            SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
+        ],
         "interview_coordinator": [
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
             HumanInputTool(slug=slug, run_id=run_id),
