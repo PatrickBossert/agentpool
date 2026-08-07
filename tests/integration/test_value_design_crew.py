@@ -64,9 +64,15 @@ def test_value_design_crew_end_to_end(test_slug, project_id, seed_discovery_outp
 
     outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
 
-    # 1. propositions.json exists and is a valid JSON array
-    propositions_path = outputs_dir / "propositions.json"
-    assert propositions_path.exists(), "propositions.json not created"
+    # Anything SQLiteStateTool writes lands under a _vN suffix - the tool reports "Written
+    # to propositions.json" while the file on disk is propositions_v1.json - so a declared
+    # JSON output is resolved through the ledger. The .xlsx below keeps its bare name: it
+    # comes from a different tool that does not version.
+    from agents.tools._db import current_output_path
+
+    # 1. propositions exists and is a valid JSON array
+    propositions_path = current_output_path(test_slug, "propositions")
+    assert propositions_path is not None, "propositions not created"
     propositions = json.loads(propositions_path.read_text())
     assert isinstance(propositions, list), "propositions.json is not a JSON array"
     assert len(propositions) >= 1, "propositions.json contains no propositions"
@@ -78,9 +84,9 @@ def test_value_design_crew_end_to_end(test_slug, project_id, seed_discovery_outp
     assert first["value_estimate"] in ("High", "Medium", "Low"), \
         f"Invalid value_estimate: {first['value_estimate']}"
 
-    # 2. portfolio_register.json exists and is a valid JSON array
-    portfolio_path = outputs_dir / "portfolio_register.json"
-    assert portfolio_path.exists(), "portfolio_register.json not created"
+    # 2. portfolio_register exists and is a valid JSON array
+    portfolio_path = current_output_path(test_slug, "portfolio_register")
+    assert portfolio_path is not None, "portfolio_register not created"
     portfolio = json.loads(portfolio_path.read_text())
     assert isinstance(portfolio, list), "portfolio_register.json is not a JSON array"
     assert len(portfolio) >= 1, "portfolio_register.json contains no entries"

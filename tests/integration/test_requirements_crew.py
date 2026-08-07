@@ -71,7 +71,13 @@ def test_requirements_crew_end_to_end(test_slug, project_id):
             (project_id,),
         )
         agent_names = {row[0] for row in cur.fetchall()}
-        assert "value_chain_mapper" in agent_names, "Value Chain Mapper produced no output"
+        # The agents this crew actually holds. It used to assert value_chain_mapper, who
+        # has not been in the requirements crew since the value chain moved to
+        # discovery_mapping - _CREW_AGENT_NAMES["requirements"] is the authority, and it
+        # names these two. Asserting an agent from another crew meant this test could only
+        # ever fail.
+        assert "requirements_capture" in agent_names, "Requirements Capture produced no output"
+        assert "requirements_analyst" in agent_names, "Requirements Analyst produced no output"
 
         # 4. human_reviews: at least one HITL record for this run
         cur = conn.execute(
@@ -81,24 +87,29 @@ def test_requirements_crew_end_to_end(test_slug, project_id):
     assert hitl_count >= 1, "No HITL reviews created during crew run"
 
     # 5. Output files
-    outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
+    #
+    # Three assertions were removed here rather than repaired, because each named work this
+    # crew no longer does:
+    #
+    #   value_chain.md, asserted to contain Mermaid "graph"/"flowchart" syntax - the value
+    #     chain belongs to discovery_mapping now, and the Mermaid renderer was replaced by
+    #     the value chain grid in the UI. There is no Mermaid left to assert.
+    #   value_levers.json - value_levers is owned by value_lever_analyst, who runs in
+    #     discovery_mapping. Belongs in that crew's test, not this one.
+    #   requirements.json - never a declared output type. The two this crew owns are below.
+    #
+    # Declared outputs resolve through the ledger: SQLiteStateTool writes are renamed to a
+    # _vN suffix, so the bare filename these assertions used never exists on disk.
+    from agents.tools._db import current_output_path
 
-    value_chain_path = outputs_dir / "value_chain.md"
-    assert value_chain_path.exists(), "value_chain.md not created"
-    value_chain_content = value_chain_path.read_text()
-    assert "graph" in value_chain_content.lower() or "flowchart" in value_chain_content.lower(), \
-        "value_chain.md does not contain Mermaid syntax"
+    captured_path = current_output_path(test_slug, "captured_requirements")
+    assert captured_path is not None, "captured_requirements not created"
+    captured = json.loads(captured_path.read_text())
+    assert isinstance(captured, list), "captured_requirements is not a JSON array"
+    assert len(captured) >= 1, "captured_requirements contains no requirements"
+    assert "id" in captured[0], "Requirements missing 'id' field"
 
-    requirements_path = outputs_dir / "requirements.json"
-    assert requirements_path.exists(), "requirements.json not created"
-    requirements = json.loads(requirements_path.read_text())
-    assert isinstance(requirements, list), "requirements.json is not a JSON array"
-    assert len(requirements) >= 1, "requirements.json contains no requirements"
-    assert "id" in requirements[0], "Requirements missing 'id' field"
-
-    value_levers_path = outputs_dir / "value_levers.json"
-    assert value_levers_path.exists(), "value_levers.json not created"
-    levers = json.loads(value_levers_path.read_text())
-    assert isinstance(levers, list), "value_levers.json is not a JSON array"
-    assert len(levers) >= 1, "value_levers.json contains no levers"
-    assert "lever" in levers[0], "Value levers missing 'lever' field"
+    analysis_path = current_output_path(test_slug, "requirements_analysis")
+    assert analysis_path is not None, "requirements_analysis not created"
+    analysis = json.loads(analysis_path.read_text())
+    assert analysis, "requirements_analysis is empty"

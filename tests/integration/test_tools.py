@@ -8,34 +8,45 @@ from api.config import get_settings
 
 @pytest.mark.integration
 def test_sqlite_state_tool_round_trip(test_slug, project_id):
+    """A declared key, written by the agent that owns it.
+
+    This used to write key='test_state' as agent 'test_agent'. Neither is declared, so
+    check_write refused every write - and the assertion `"test_state" in write_result`
+    passed anyway, because the refusal text quotes the key it is refusing. The write half
+    of a round-trip test could not fail; only the read caught it.
+
+    Asserting the success prefix rather than a substring is the point: a refusal names the
+    key, the owner and the caller, so almost any substring drawn from the call itself will
+    appear in the message that says the call was rejected.
+    """
     from agents.tools.sqlite_state import SQLiteStateTool
-    settings = get_settings()
 
     tool = SQLiteStateTool(slug=test_slug)
 
-    # Write a value
     write_result = tool._run(
         operation="write",
-        key="test_state",
-        agent_name="test_agent",
+        key="value_chain_summary",
+        agent_name="value_chain_mapper",
         value=json.dumps({"hello": "world"}),
     )
-    assert "test_state" in write_result
+    assert write_result.startswith("Written to"), write_result
 
-    # Read it back
     read_result = tool._run(
         operation="read",
-        key="test_state",
-        agent_name="test_agent",
+        key="value_chain_summary",
+        agent_name="value_chain_mapper",
     )
     data = json.loads(read_result)
     assert data == {"hello": "world"}
 
-    # Verify file was written. insert_agent_output_sync renames it to a _vN
-    # suffix, so resolve the same way the tool's read path does.
-    from agents.tools._db import latest_output_path
-    base = Path(settings.projects_dir) / test_slug / "outputs" / "test_state.json"
-    assert latest_output_path(base) is not None
+    # Resolve through the ledger, not the disk. insert_agent_output_sync renames the write
+    # to a _vN suffix, and latest_output_path - which this test used to call - returns the
+    # highest number on disk rather than the current version. CLAUDE.md records four
+    # incidents caused by that distinction.
+    from agents.tools._db import current_output_path
+    stored = current_output_path(test_slug, "value_chain_summary")
+    assert stored is not None and stored.exists()
+    assert json.loads(stored.read_text()) == {"hello": "world"}
 
 
 @pytest.mark.integration

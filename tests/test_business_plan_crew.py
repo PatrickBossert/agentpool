@@ -89,8 +89,20 @@ def test_bpg_task_has_no_review_gate(mock_llm):
 
 # ── Crew wiring ───────────────────────────────────────────────────────────────
 
+# Every patch below targets agents.crews.business_plan_crew.get_tools_for_agent - the module
+# that *looks the name up* - not agents.tools.registry, where it is defined. The crew module
+# binds the function into its own namespace with `from ... import`, so patching the registry
+# leaves that binding pointing at the real function.
+#
+# These four tests used to patch the registry and still passed, which is the part worth
+# remembering. The `import` sits inside the with-block, so the first test to run imported the
+# crew module while the mock was installed and the module kept that MagicMock for the rest of
+# the session - one test poisoning the module made the next three pass. Alone: 12 passed.
+# Behind any suite member that imports the crew module first: 4 failed.
+
+
 def test_business_plan_crew_carries_the_writer_and_the_illustrator(mock_llm):
-    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+    with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]):
         from agents.crews.business_plan_crew import create_business_plan_crew
         crew = create_business_plan_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
@@ -102,7 +114,7 @@ def test_business_plan_crew_carries_the_writer_and_the_illustrator(mock_llm):
 
 def test_business_plan_crew_sequential_process(mock_llm):
     from crewai import Process
-    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
+    with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]):
         from agents.crews.business_plan_crew import create_business_plan_crew
         crew = create_business_plan_crew(
             slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
@@ -112,7 +124,7 @@ def test_business_plan_crew_sequential_process(mock_llm):
 
 def test_business_plan_crew_sensitive_mode_uses_local_llm(mock_llm):
     """In sensitive mode, get_crew_llm is called with 'sensitive'."""
-    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
+    with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]), \
          patch("agents.crews.business_plan_crew.get_crew_llm") as mock_get_llm:
         mock_get_llm.return_value = mock_llm
         from agents.crews.business_plan_crew import create_business_plan_crew
@@ -124,7 +136,7 @@ def test_business_plan_crew_sensitive_mode_uses_local_llm(mock_llm):
 
 def test_business_plan_crew_standard_mode_uses_opus(mock_llm):
     """Standard mode calls get_pam_llm (Opus 4.6), not get_crew_llm."""
-    with patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
+    with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]), \
          patch("agents.crews.business_plan_crew.get_pam_llm") as mock_pam:
         mock_pam.return_value = mock_llm
         from agents.crews.business_plan_crew import create_business_plan_crew

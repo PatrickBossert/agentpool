@@ -65,9 +65,14 @@ def test_capabilities_crew_end_to_end(test_slug, project_id, seed_value_design_o
 
     outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
 
-    # 1. architecture_register.json exists and has all three layers
-    arch_path = outputs_dir / "architecture_register.json"
-    assert arch_path.exists(), "architecture_register.json not created"
+    # Declared JSON outputs are versioned to _vN by insert_agent_output_sync, so they are
+    # resolved through the ledger. The diagram .md files below are written by a different
+    # tool and keep their bare names.
+    from agents.tools._db import current_output_path
+
+    # 1. architecture_register exists and has all three layers
+    arch_path = current_output_path(test_slug, "architecture_register")
+    assert arch_path is not None, "architecture_register not created"
     arch = json.loads(arch_path.read_text())
     assert "data_layer" in arch, "architecture_register.json missing 'data_layer'"
     assert "technology_layer" in arch, "architecture_register.json missing 'technology_layer'"
@@ -87,9 +92,9 @@ def test_capabilities_crew_end_to_end(test_slug, project_id, seed_value_design_o
         assert "graph" in content.lower() or "flowchart" in content.lower(), \
             f"{diagram_name} does not contain Mermaid syntax"
 
-    # 3. initiative_register.json exists and has valid structure
-    init_path = outputs_dir / "initiative_register.json"
-    assert init_path.exists(), "initiative_register.json not created"
+    # 3. initiative_register exists and has valid structure
+    init_path = current_output_path(test_slug, "initiative_register")
+    assert init_path is not None, "initiative_register not created"
     initiatives = json.loads(init_path.read_text())
     assert isinstance(initiatives, list), "initiative_register.json is not a JSON array"
     assert len(initiatives) >= 1, "initiative_register.json contains no initiatives"

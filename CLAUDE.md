@@ -81,9 +81,17 @@ pytest --cov=api --cov-report=term-missing
 
 # Single file
 pytest tests/test_campaigns.py -v
+
+# Integration tests — opt-in, and they cost money
+pytest -m integration
 ```
 
 Tests use in-memory SQLite — no running services required.
+
+`tests/integration` is deselected by `addopts` in `pytest.ini`. Those tests call the real
+Anthropic API and expect ChromaDB on :8002, so a bare `pytest` used to spend credit on
+infrastructure that is usually not running. Collecting them also **changed the result of
+unit tests** — see the patch-target entry below — so the deselection is not only about cost.
 
 **Run the backend suite twice before believing it is green.** `tests/conftest.py` points
 `DATABASE_DIR` at a fixed `/tmp/agentpool_test` that persists between runs, so a test which writes
@@ -104,6 +112,20 @@ incorrect:
 - An approval guard tested for one of its two conditions.
 - `_fetch_change_requests` tested; the injection using it not.
 - A radio tested as *rendered*; not as *sent*.
+- `check_write` refused an undeclared key; the test asserted `"test_state" in write_result`,
+  and the *refusal message quotes the key it is refusing*. The write half of a round-trip
+  test could not fail. Assert the success prefix, not a substring drawn from your own call.
+- Four crew tests patched `agents.tools.registry.get_tools_for_agent` — where the function
+  is **defined** — while the crew module binds its own reference via `from ... import`.
+  Patch where the name is *looked up*. Worse, their `import` sat inside the `with patch(...)`
+  block, so the first test imported the module under the mock and the module kept that dead
+  MagicMock for the whole session: one test poisoning the module made the next three pass.
+  Alone, 12 passed; behind anything that imports the crew module first, 4 failed — and the
+  production bug they were hiding (`create_business_plan_crew` raises `ValueError: Unknown
+  agent: visual_illustrator`) had been live on master the entire time.
+
+When a test passes alone and fails in the suite, the isolated pass is the thing to distrust —
+it is usually the one running under state no production caller ever has.
 
 Pure functions and rendered state are cheap to assert, so they get asserted — and the assertion
 lands beside the property rather than on it. When reviewing, ask: **"what calls this, and is
@@ -276,6 +298,14 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - Slack bot must be manually invited to the target channel (`/invite @TaskReimagination` in Slack) before `SlackNotifyTool` works
 - `taskreimagination.ai` must be a verified sender domain in Resend before reminder emails deliver
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
+- **The `business_plan` crew cannot be built.** `visual_illustrator` has no entry in
+  `agents/tools/registry.py`'s `tool_map`, and `business_plan_crew.py` calls
+  `get_tools_for_agent` for it unconditionally, so `create_business_plan_crew` raises
+  `ValueError: Unknown agent: visual_illustrator` before its first task. The Illustrator is
+  planned work whose upstream outputs do not exist yet, so registering tools now buys a crew
+  that builds and then fails further in. `tests/test_crew_agent_registration.py` pins this
+  deliberately: it fails if another agent goes unregistered **and** if the Illustrator is
+  fixed, so whoever fixes it is told to delete the pin.
 
 ---
 

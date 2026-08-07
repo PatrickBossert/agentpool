@@ -66,9 +66,14 @@ def test_delivery_crew_end_to_end(test_slug, project_id, seed_architecture_outpu
 
     outputs_dir = Path(settings.projects_dir) / test_slug / "outputs"
 
-    # 1. roadmap_data.json exists with correct schema
-    roadmap_path = outputs_dir / "roadmap_data.json"
-    assert roadmap_path.exists(), "roadmap_data.json not created"
+    # roadmap_data is a declared output and is versioned to _vN on write, so it resolves
+    # through the ledger. roadmap.html below is written by HtmlRoadmapTool and does not
+    # version, so it keeps its bare name.
+    from agents.tools._db import current_output_path
+
+    # 1. roadmap_data exists with correct schema
+    roadmap_path = current_output_path(test_slug, "roadmap_data")
+    assert roadmap_path is not None, "roadmap_data not created"
     roadmap = json.loads(roadmap_path.read_text())
     assert "periods" in roadmap, "roadmap_data.json missing 'periods'"
     assert "value_streams" in roadmap, "roadmap_data.json missing 'value_streams'"
