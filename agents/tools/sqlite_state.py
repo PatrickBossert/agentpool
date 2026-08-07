@@ -160,6 +160,16 @@ _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
 }
 
 
+def _warn_themes(parsed: object, slug: str) -> list[dict]:
+    from api.services.anchor_validation import validate_theme_anchors
+
+    if not isinstance(parsed, list):
+        return []   # shape is the schema's problem, not the anchor validator's
+    # An empty registry accepts anything: Casey may legitimately run on a project whose
+    # value chain is not built yet, and there is nothing to judge an anchor against.
+    return validate_theme_anchors(parsed, _current_registry(slug))
+
+
 def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
     from api.services.tree_validation import validate_tree_structure
 
@@ -183,12 +193,14 @@ def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
 # actually exists.
 _WARNERS: dict[str, Callable[[object, str], list[dict]]] = {
     "value_chain_tree": _warn_value_chain_tree,
+    "themes": _warn_themes,
 }
 
 # The `source` recorded against each warning, so a reviewer can tell a tree finding from a
 # theme one without parsing the code.
 _WARNER_SOURCE: dict[str, str] = {
     "value_chain_tree": "value_chain_tree",
+    "themes": "theme_anchor",
 }
 
 

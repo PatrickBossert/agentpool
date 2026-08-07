@@ -141,3 +141,120 @@ async def test_a_recorder_failure_cannot_lose_the_write(tool_project, monkeypatc
     result = _write_tree(slug, ROOTLESS)
     assert not result.startswith("Error"), result
     assert current_output_path(slug, "value_chain_tree") is not None
+
+
+# ── Casey's themes ────────────────────────────────────────────────────────────────
+
+def _seed_registry(outputs, activities):
+    (outputs / "value_chain_registry_v1.json").write_text(
+        json.dumps({"activities": activities}))
+
+
+async def _register(slug, outputs, output_type, filename):
+    async with get_connection(slug) as conn:
+        async with conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
+            pid = (await cur.fetchone())[0]
+        await conn.execute(
+            "INSERT INTO agent_outputs"
+            " (project_id, agent_name, output_type, file_path, version, is_current)"
+            " VALUES (?,?,?,?,1,1)",
+            (pid, "a", output_type, str(outputs / filename)))
+        await conn.commit()
+
+
+def _write_themes(slug, themes, run_id=11):
+    from agents.tools.sqlite_state import SQLiteStateTool
+    return SQLiteStateTool(slug=slug, agent_name="synthesis_analyst", run_id=run_id)._run(
+        operation="write", key="themes",
+        agent_name="synthesis_analyst", value=json.dumps(themes))
+
+
+SKEWED = [
+    {"id": f"TH-{i:02d}", "kind": "horizontal", "theme": "t", "description": "d",
+     "anchors": ["1.1.1"]}
+    for i in range(6)
+]
+
+BALANCED = [
+    {"id": "TH-01", "kind": "vertical", "theme": "t", "description": "d",
+     "anchors": ["0"]},
+    {"id": "TH-02", "kind": "horizontal", "theme": "t", "description": "d",
+     "anchors": ["1"]},
+    {"id": "TH-03", "kind": "horizontal", "theme": "t", "description": "d",
+     "anchors": ["1.1"]},
+    {"id": "TH-04", "kind": "horizontal", "theme": "t", "description": "d",
+     "anchors": ["1.1.1"]},
+    {"id": "TH-05", "kind": "horizontal", "theme": "t", "description": "d",
+     "anchors": ["1.1"]},
+]
+
+ACTIVITIES = [
+    {"id": "0", "level": "L0", "active": True},
+    {"id": "1", "level": "L1", "active": True},
+    {"id": "1.1", "level": "L2", "active": True},
+    {"id": "1.1.1", "level": "L3", "active": True},
+]
+
+
+@pytest.mark.asyncio
+async def test_skewed_themes_are_written_and_warned_about(tool_project):
+    """Casey's half of the same contract: the write lands, the finding is recorded."""
+    slug, project_id, outputs = tool_project
+    _seed_registry(outputs, ACTIVITIES)
+    await _register(slug, outputs, "value_chain_registry", "value_chain_registry_v1.json")
+
+    result = _write_themes(slug, SKEWED)
+    assert not result.startswith("Error"), result
+    assert current_output_path(slug, "themes") is not None, "the write must land"
+
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_anchor"])
+    assert [r["code"] for r in rows] == ["l3_skew"]
+    assert rows[0]["measure"] == 1.0
+    assert rows[0]["subject"] is None
+    assert rows[0]["run_id"] == 11
+
+
+@pytest.mark.asyncio
+async def test_balanced_themes_record_nothing(tool_project):
+    slug, project_id, outputs = tool_project
+    _seed_registry(outputs, ACTIVITIES)
+    await _register(slug, outputs, "value_chain_registry", "value_chain_registry_v1.json")
+
+    _write_themes(slug, BALANCED)
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_anchor"])
+    assert rows == [], [r["detail"] for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_themes_written_before_any_registry_exists_are_not_blocked(tool_project):
+    """Casey may legitimately run on a project whose value chain is not built yet."""
+    slug, project_id, _ = tool_project
+    result = _write_themes(slug, SKEWED)
+    assert not result.startswith("Error"), result
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_anchor"])
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_tree_warning_and_a_theme_warning_are_told_apart(tool_project):
+    """source is what lets a reviewer see a tree finding separately from a theme one."""
+    slug, project_id, outputs = tool_project
+    _seed_registry(outputs, ACTIVITIES)
+    await _register(slug, outputs, "value_chain_registry", "value_chain_registry_v1.json")
+
+    _write_tree(slug, ROOTLESS)
+    _write_themes(slug, SKEWED)
+
+    async with get_connection(slug) as conn:
+        tree = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["value_chain_tree"])
+        theme = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_anchor"])
+    assert [r["code"] for r in tree] == ["missing_l0"]
+    assert [r["code"] for r in theme] == ["l3_skew"]
