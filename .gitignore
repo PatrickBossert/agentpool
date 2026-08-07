@@ -36,7 +36,9 @@ venv/
 .venv/
 
 # ── Node ────────────────────────────────────────────────────────
-ui/node_modules/
+# Unanchored, so it catches the stray root-level node_modules/ that a
+# vite invocation from the wrong directory leaves behind, not just ui/.
+node_modules/
 ui/dist/
 
 # ── Runtime / tooling ───────────────────────────────────────────
