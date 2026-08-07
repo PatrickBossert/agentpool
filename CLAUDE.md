@@ -180,6 +180,68 @@ PAM always uses `claude-opus-4-6` regardless of sensitive mode. Other agents use
 
 ---
 
+## Anchoring: themes and requirements sit where the insight lives
+
+Themes and requirements must anchor at the level where the insight lives - L0 for
+governance, assurance and vertical themes; L1 for functional; L2 for decision and
+effectiveness; L3 for tactical and efficiency. Anchoring everything at `n.n.n` loses
+resolution and systematically skews value proposition generation toward L3 efficiency.
+
+This is a pipeline-shaping property, not a formatting preference. If nothing else exists to
+anchor to, L3 becomes the only altitude the evidence is ever expressed at, and every
+proposition built downstream inherits the bias.
+
+The tree is the canonical spine. `0` is the organisation; `0.A` and `0.S` are its
+organisation-level role nodes (audit, corporate services frontline); each L1 entity carries
+the `<L1>.C` and `<L1>.F` role nodes it warrants. L2 and L3 belong to exactly one L1 -
+nothing is shared or duplicated. Role nuance never lives on the node; it lives on the
+stakeholder, which is what lets one `F` programme serve both `1.F` and `2.F` while the
+answers still differ.
+
+**IDs are a permanent contract.** The ledger may grow and may retire, but may never
+redefine or forget. Two things enforce that, and neither is a refusal: `DeriveRegistryTool`
+keeps the label an id already carries, so a regenerated tree cannot rewrite the ledger; and
+`tree_validation` raises `id_redefined` when a label changes in a way that is not merely
+typographic. Alex rebuilds the whole chain on every run and re-emits every label, so
+punctuation drift is routine - one run produced 59 label changes and not one was a
+redefinition.
+
+Fuller account: `docs/superpowers/specs/2026-08-06-l0-anchor-and-level-anchored-synthesis-design.md`.
+
+---
+
+## Resolving an output: ask the ledger, never the disk
+
+`agent_outputs.is_current` + `file_path` is the authority on which version of an output is
+current. `insert_agent_output_sync` maintains it on every write and `revert_to_version`
+repoints it on every revert - which is the case a filename-ordering scheme cannot express,
+since the newer files stay on disk.
+
+**Use `current_output_path(slug, output_type)`, not `latest_output_path`.** The latter
+globs `stem_v*` and returns the highest number, which caused four separate incidents: the
+clean-baseline demotion, the `value_chain_tree_v13` shadow, a version-counter reset, and
+Maya reading a 15 July summary on every run for three weeks - naming a party a human had
+corrected out on 4 August. `latest_output_path` survives only as the fallback for a first
+write and for hand-written files.
+
+Two invariants this depends on, both asserted in `tests/test_output_type_families.py`: one
+filename family answers to exactly one output type, and one output type has exactly one
+`is_current` row.
+
+Fuller account: `docs/superpowers/specs/2026-08-06-output-resolution-by-ledger-design.md`.
+
+---
+
+## Running the API while agents are running
+
+Start the server **without `--reload`**. Editing any watched `.py` file restarts the worker
+and kills every in-flight crew run - the error surfaces as
+`{"error": "Server restart interrupted run"}`, which is what killed runs 21 and 27. The
+cost is that the server no longer picks up code changes: restart it after backend edits,
+and never while a run is in flight.
+
+---
+
 ## Key files
 
 | File | Purpose |
