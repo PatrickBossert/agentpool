@@ -193,8 +193,14 @@ def test_derive_registry_invalid_tree(project_dir):
     base, slug = project_dir
     (base / "projects" / slug / "outputs" / "value_chain_tree.json").write_text("not-json")
     from agents.tools.derive_registry import DeriveRegistryTool
-    with patch("agents.tools.derive_registry.get_settings") as m_s:
+    # The tree read now resolves through current_output_path, which reads its own settings
+    # from agents.tools._db - both patches are needed or it looks for the tree in the real
+    # projects_dir and reports "not found" instead of exercising the invalid-JSON path.
+    with patch("agents.tools.derive_registry.get_settings") as m_s, \
+         patch("agents.tools._db.get_settings") as m_db:
         m_s.return_value.projects_dir = str(base / "projects")
+        m_db.return_value.database_dir = str(base / "data")
+        m_db.return_value.projects_dir = str(base / "projects")
         tool = DeriveRegistryTool(slug=slug)
         result = tool._run()
     assert "not valid JSON" in result

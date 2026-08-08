@@ -119,6 +119,12 @@ async def auto_assign_interview_scripts(slug: str) -> int:
 
 async def auto_assign_questionnaire_scripts(slug: str) -> int:
     """Read questionnaire_scripts.json → upsert each as a questionnaire template → assign to node."""
+    # questionnaire_scripts is not in OUTPUT_OWNERS: no agent or tool writes it through
+    # SQLiteStateTool, and nothing in api/ or agents/ writes it at all today (interaction_designer's
+    # docstrings note the questionnaire was folded into interview_scripts, so this artefact is
+    # currently vestigial). With no writer there is no ledger row to resolve, so the bare path is
+    # not a bug - current_output_path would fall through to this same path via latest_output_path.
+    # Left as a bare read deliberately; revisit if a writer for this output type is (re)introduced.
     scripts_path = Path(get_settings().projects_dir) / slug / "outputs" / "questionnaire_scripts.json"
     if not scripts_path.exists():
         return 0

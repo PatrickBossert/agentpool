@@ -50,10 +50,15 @@ class DeriveRegistryTool(BaseTool):
     def _run(self, agent_name: str = "value_chain_mapper") -> str:
         settings = get_settings()
         outputs_dir = Path(settings.projects_dir) / self.slug / "outputs"
-        tree_path = outputs_dir / "value_chain_tree.json"
-        registry_path = outputs_dir / "value_chain_registry.json"
+        # SQLiteStateTool renames its write to a _vN suffix before this tool ever runs (it is
+        # called "immediately after" the tree write, but as a separate tool call), so the bare
+        # path is already gone by the time we get here. Every existing test wrote the tree
+        # straight to the bare path and so never exercised this - resolving through the ledger
+        # is the actual fix, not just a guard-satisfying rename.
+        tree_path = current_output_path(self.slug, "value_chain_tree")
+        registry_path = outputs_dir / f"{_REGISTRY_STEM}.json"
 
-        if not tree_path.exists():
+        if tree_path is None:
             return "Error: value_chain_tree.json not found — write the tree first (step 10)."
 
         try:

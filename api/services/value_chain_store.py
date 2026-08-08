@@ -124,8 +124,10 @@ async def migrate_project(slug: str, *, saved_by: str) -> dict:
     if await load_model(slug) is not None:
         raise FileExistsError("a value chain model already exists for this project")
 
+    from agents.tools._db import current_output_path
+
     outputs = _outputs_dir(slug)
-    registry_path = outputs / "value_chain_registry.json"
+    registry_path = current_output_path(slug, "value_chain_registry")
     # Sort numerically on the version suffix - lexical order would put v9 after v12, and
     # the real sp-gs-am project already has a v12, so this matters immediately. A filename
     # that matches the glob but carries no numeric suffix (e.g. a hand-renamed backup)
@@ -137,7 +139,7 @@ async def migrate_project(slug: str, *, saved_by: str) -> dict:
         if match:
             candidates.append((int(match.group(1)), path))
     mermaid_paths = [path for _, path in sorted(candidates)]
-    if not registry_path.exists() or not mermaid_paths:
+    if registry_path is None or not mermaid_paths:
         raise FileNotFoundError(
             "need value_chain_registry.json and a value_chain_v*.md to migrate"
         )

@@ -323,9 +323,10 @@ async def get_portfolio_register(slug: str) -> list | None:
     """
     if not get_db_path(slug).exists():
         return None
-    settings = get_settings()
-    file_path = Path(settings.projects_dir) / slug / "outputs" / "portfolio_register.json"
-    if not file_path.exists():
+    from agents.tools._db import current_output_path
+
+    file_path = current_output_path(slug, "portfolio_register")
+    if file_path is None:
         return []
     try:
         return json.loads(file_path.read_text(encoding="utf-8"))
@@ -369,9 +370,10 @@ async def get_value_chain_tree(slug: str) -> list | None:
         project = await fetch_project(conn, slug=slug)
         if not project:
             return None
-    settings = get_settings()
-    path = Path(settings.projects_dir) / slug / "outputs" / "value_chain_tree.json"
-    if not path.exists():
+    from agents.tools._db import current_output_path
+
+    path = current_output_path(slug, "value_chain_tree")
+    if path is None:
         return []
     try:
         return json.loads(path.read_text(encoding="utf-8"))

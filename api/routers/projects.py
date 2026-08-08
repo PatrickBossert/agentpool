@@ -331,11 +331,11 @@ def _load_tree_nodes(slug: str) -> list[dict]:
     L1 nodes are included so senior leaders can be assigned a strategic questionnaire.
     L3 activity nodes are excluded — they are traceable via IDs but have no own templates yet.
     """
-    outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
+    from agents.tools._db import current_output_path
 
     # Prefer the registry — it is the source of truth for stable IDs.
-    registry_path = outputs_dir / "value_chain_registry.json"
-    if registry_path.exists():
+    registry_path = current_output_path(slug, "value_chain_registry")
+    if registry_path is not None:
         try:
             registry = json.loads(registry_path.read_text(encoding="utf-8"))
             return [
@@ -347,8 +347,8 @@ def _load_tree_nodes(slug: str) -> list[dict]:
             pass
 
     # Fall back to tree file (pre-registry projects have no activity_id).
-    tree_path = outputs_dir / "value_chain_tree.json"
-    if not tree_path.exists():
+    tree_path = current_output_path(slug, "value_chain_tree")
+    if tree_path is None:
         return []
     try:
         tree = json.loads(tree_path.read_text(encoding="utf-8"))
@@ -430,8 +430,10 @@ async def upsert_node_template(slug: str, node_label: str, body: NodeTemplateAss
 async def get_value_chain_registry(slug: str, payload: dict = Depends(require_any_auth)):
     """Return the stable activity ID registry for this project."""
     await check_project_access(slug, payload)
-    registry_path = Path(get_settings().projects_dir) / slug / "outputs" / "value_chain_registry.json"
-    if not registry_path.exists():
+    from agents.tools._db import current_output_path
+
+    registry_path = current_output_path(slug, "value_chain_registry")
+    if registry_path is None:
         raise HTTPException(status_code=404, detail="No activity registry found for this project")
     return json.loads(registry_path.read_text(encoding="utf-8"))
 
