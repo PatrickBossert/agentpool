@@ -507,6 +507,22 @@ async def _migrate_interview_answers(conn: aiosqlite.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_answers_node ON interview_answers(node_id)")
     await conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_answers_discipline ON interview_answers(discipline)")
+
+    # One row per question per session. Without this a retried PATCH /complete - two tabs,
+    # a flaky connection - appends the whole answer set again, and Casey synthesises from a
+    # corpus with silent duplicates.
+    #
+    # Duplicates are collapsed before the index is created, keeping the lowest id because
+    # that is the original write and `id` is the citation token later rows point at.
+    await conn.execute("""
+        DELETE FROM interview_answers WHERE id NOT IN (
+            SELECT MIN(id) FROM interview_answers GROUP BY session_id, question_id
+        )
+    """)
+    await conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_answers_session_question
+        ON interview_answers(session_id, question_id)
+    """)
     await conn.commit()
 
 
@@ -519,11 +535,19 @@ _ANSWER_COLUMNS = (
 
 
 async def insert_interview_answer(conn: aiosqlite.Connection, **fields) -> int:
-    """One answer row. Returns its id, which is the citation token."""
+    """One answer row, upserted on (session_id, question_id).
+
+    A resubmission - two tabs, a retry, a flaky connection - updates the existing row rather
+    than adding one, so the answer is replaced but its id, the citation token retrieved
+    chunks carry, survives.
+    """
     columns = [c for c in _ANSWER_COLUMNS if c in fields]
     placeholders = ", ".join("?" for _ in columns)
+    update_columns = [c for c in columns if c not in ("session_id", "question_id")]
     cur = await conn.execute(
-        f"INSERT INTO interview_answers ({', '.join(columns)}) VALUES ({placeholders})",
+        f"INSERT INTO interview_answers ({', '.join(columns)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(session_id, question_id) DO UPDATE SET "
+        f"{', '.join(f'{c}=excluded.{c}' for c in update_columns)}",
         tuple(fields[c] for c in columns),
     )
     await conn.commit()
@@ -1222,7 +1246,7 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # runs again after a database's first post-upgrade open in a process - there is no test
 # that catches a missed bump, because none can: it is a fact about this constant, not
 # about behaviour.
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
