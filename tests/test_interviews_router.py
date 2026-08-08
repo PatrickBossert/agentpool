@@ -187,6 +187,42 @@ async def test_elaboration_press_not_found(client):
 
 
 @pytest.mark.asyncio
+async def test_an_over_budget_press_is_reported_as_an_empty_string(client):
+    """The contract the interview pages are built on: no press is "", not an error.
+
+    elaboration_press returns "" when it runs out of budget, and the endpoint passes that
+    through with a 200. Both pages now read that as "no press was produced" and skip the
+    follow-up entirely; before, VoiceInterview's `data.press_text ?? fallback` treated "" as
+    a press and spoke it, leaving the interviewee recording in silence in front of a blank
+    question. Pinned here so the shape the pages depend on cannot drift to null, a 503, or
+    an omitted key without a test saying so.
+    """
+    with patch(
+        "api.routers.interviews._find_session_db",
+        new_callable=AsyncMock,
+        return_value="/tmp/agentpool_test/test-proj.db",
+    ), patch(
+        "api.routers.interviews.get_connection",
+        return_value=_FakeConnCtx(config_json=None),
+    ), patch(
+        "api.routers.interviews.elaboration_press",
+        new_callable=AsyncMock,
+        return_value="",
+    ):
+        r = await client.post(
+            "/api/interviews/test-token-abc/elaboration-press",
+            json={
+                "question_text": "What are your main challenges?",
+                "response_text": "Many things.",
+                "probing_instructions": "Ask for specifics.",
+            },
+        )
+
+    assert r.status_code == 200
+    assert r.json() == {"press_text": ""}
+
+
+@pytest.mark.asyncio
 async def test_elaboration_press_reads_configured_budget(client):
     """The budget the endpoint hands elaboration_press must come from projects.config_json,
     not the default - otherwise Avery's settings page value is silently ignored."""

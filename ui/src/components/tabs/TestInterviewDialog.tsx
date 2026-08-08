@@ -563,16 +563,21 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
         let followUpCount = 0
 
         if (needsElaboration) {
+          // An empty press is the server saying it went over budget and produced none. It
+          // must not be spoken or displayed: doing so leaves the interviewee recording in
+          // silence in front of a blank question, and records an exchange with no question.
           const pressText = await getElaborationPress(question, answer)
           if (aborted()) return
-          setCurrentQ(pressText)
-          await speakText(pressText)
-          if (aborted()) return
-          const elaborationAnswer = await listenForAnswer(bcp47(locale))
-          if (aborted()) return
-          addToTranscript(pressText, elaborationAnswer)
-          answer = `${answer} ${elaborationAnswer}`.trim()
-          followUpCount++
+          if (pressText) {
+            setCurrentQ(pressText)
+            await speakText(pressText)
+            if (aborted()) return
+            const elaborationAnswer = await listenForAnswer(bcp47(locale))
+            if (aborted()) return
+            addToTranscript(pressText, elaborationAnswer)
+            answer = `${answer} ${elaborationAnswer}`.trim()
+            followUpCount++
+          }
         } else {
           speculativeRef.current?.controller.abort()
           speculativeRef.current = null

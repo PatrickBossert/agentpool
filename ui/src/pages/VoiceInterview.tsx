@@ -428,7 +428,14 @@ export default function VoiceInterview() {
       })
       if (!res.ok) return "Could you tell me more about that?"
       const data = await res.json()
-      return data.press_text ?? "Could you tell me more about that?"
+      // An empty press_text is the server reporting that the press went over its budget and
+      // produced nothing - it is an answer, not a missing field, so it is returned as-is for
+      // the caller to skip on. `??` treated "" as present and passed it straight through to
+      // speakText and setCurrentQuestion, which left the interviewee recording in silence in
+      // front of a blank question and wrote an answer row with no question text. That fires
+      // most often in secure mode, where the local model is slowest - so the budget made the
+      // sensitive-project interview worse than having no budget at all.
+      return typeof data.press_text === 'string' ? data.press_text : "Could you tell me more about that?"
     } catch {
       return "Could you tell me more about that?"
     }
@@ -519,14 +526,19 @@ export default function VoiceInterview() {
         let followUpCount = 0
 
         if (needsElaboration) {
-          // Press for elaboration
+          // Press for elaboration. An empty press means no press was produced in time, so
+          // the whole branch is skipped and the interview moves on to the next question -
+          // a missed follow-up costs depth on one answer, while speaking nothing and then
+          // listening costs the interviewee's confidence in the whole conversation.
           const pressText = await getElaborationPress(question.text, answer, question.probing_instructions)
-          setCurrentQuestion(pressText)
-          await speakText(pressText, voiceId)
-          const followUpAnswer = await listenWithRestart(lang)
-          qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, pressText, followUpAnswer, { kind: 'F', index: followUpCount + 1 }))
-          answer = `${answer} ${followUpAnswer}`.trim()
-          followUpCount++
+          if (pressText) {
+            setCurrentQuestion(pressText)
+            await speakText(pressText, voiceId)
+            const followUpAnswer = await listenWithRestart(lang)
+            qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, pressText, followUpAnswer, { kind: 'F', index: followUpCount + 1 }))
+            answer = `${answer} ${followUpAnswer}`.trim()
+            followUpCount++
+          }
         }
 
         // Push primary Q&A before follow-up branches
