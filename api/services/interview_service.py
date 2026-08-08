@@ -26,6 +26,7 @@ from api.database import (
     fetch_template,
     get_system_db_path,
     init_system_db,
+    interview_db_connection,
     save_interview_checkpoint,
 )
 
@@ -47,6 +48,16 @@ async def _find_session_db(session_token: str) -> str | None:
     """Scan all project DB files to find the one containing session_token.
 
     Returns the absolute path string of the matching DB, or None.
+
+    Opens each candidate with wal=False: this loop touches every project database in the
+    directory on every lookup, not just the one holding the session, and PRAGMA
+    journal_mode=WAL is a write - briefly exclusive, and it leaves -wal/-shm files behind.
+    Flipping that on every database a scan merely passes over (most of which are not the
+    session's) is a cost with no matching benefit here; busy_timeout is applied regardless,
+    since it is cheap and per-connection, and it stops the scan itself failing outright if it
+    catches an unrelated database mid-write. The database this call is actually looking for
+    gets WAL from the very next connection opened against it - get_session_with_script or
+    complete_session, both of which use the default wal=True.
     """
     settings = get_settings()
     db_dir = Path(settings.database_dir)
@@ -60,8 +71,7 @@ async def _find_session_db(session_token: str) -> str | None:
 
     for db_path in candidate_paths:
         try:
-            async with aiosqlite.connect(str(db_path)) as conn:
-                conn.row_factory = aiosqlite.Row
+            async with interview_db_connection(str(db_path), wal=False) as conn:
                 async with conn.execute(
                     "SELECT id FROM interview_sessions WHERE session_token=?",
                     (session_token,),
@@ -89,8 +99,7 @@ async def get_session_with_script(session_token: str) -> dict | None:
     slug = Path(db_path).stem
 
     config: dict = {}
-    async with aiosqlite.connect(db_path) as conn:
-        conn.row_factory = aiosqlite.Row
+    async with interview_db_connection(db_path) as conn:
         session_row = await fetch_interview_session(conn, session_token)
         if not session_row:
             return None
@@ -131,8 +140,7 @@ async def get_session_with_script(session_token: str) -> dict | None:
     questionnaire = None
     try:
         # Re-open the DB to get project id and node assignments
-        async with aiosqlite.connect(db_path) as qconn:
-            qconn.row_factory = aiosqlite.Row
+        async with interview_db_connection(db_path) as qconn:
             async with qconn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
                 proj_row = await cur.fetchone()
             if proj_row:
@@ -285,8 +293,7 @@ async def complete_session(
     # to index into that project's own Chroma collection.
     slug = Path(db_path).stem
 
-    async with aiosqlite.connect(db_path) as conn:
-        conn.row_factory = aiosqlite.Row
+    async with interview_db_connection(db_path) as conn:
         transcript_json = json.dumps(qa_pairs)
         ratings_json = json.dumps(ratings) if ratings is not None else None
         await complete_interview_session(conn, session_token, transcript_json, ratings_json)

@@ -1270,6 +1270,39 @@ _SCHEMA_VERSION = 2
 # _forget_migrations and tests have a slug-keyed record to clear or discard from.
 _MIGRATED: set[str] = set()
 
+# busy_timeout is per-connection (unlike journal_mode, which is a persistent file
+# property), so it must be reapplied on every open. Centralised here so get_connection and
+# interview_db_connection cannot drift apart on the value - the concurrency work this
+# constant serves is worthless if only one of the two paths that open project databases
+# honours it.
+_BUSY_TIMEOUT_MS = 10000
+
+
+async def _apply_connection_pragmas(conn: aiosqlite.Connection, *, wal: bool = True) -> None:
+    """Apply the durability pragmas every project-database connection needs.
+
+    Shared by get_connection and interview_db_connection so the pragma list is defined in
+    exactly one place - the defect this task fixes was these two paths quietly disagreeing,
+    and factoring out a second copy would only reintroduce that risk under a different name.
+
+    wal defaults to on. _find_session_db opts out: it scans every candidate database file
+    looking for a session token, and PRAGMA journal_mode=WAL is a write - it briefly takes an
+    exclusive lock and creates -wal/-shm files - so applying it there would write to every
+    database in the directory on every interview request, not just the one holding the
+    session. busy_timeout is cheap and per-connection either way, so it is always applied.
+    """
+    conn.row_factory = aiosqlite.Row
+    await conn.execute("PRAGMA foreign_keys = ON")
+    if wal:
+        # WAL lets readers proceed while a completion writes. Under journal_mode=delete
+        # they block each other, and completions - the heavy writes - cluster at the end
+        # of a break. WAL is a persistent property of the database file, so this only
+        # needs to take effect once, but re-asserting it each open is cheap and safe.
+        await conn.execute("PRAGMA journal_mode = WAL")
+    # busy_timeout lets a connection wait for a lock instead of failing immediately with
+    # "database is locked" under the brief contention WAL doesn't eliminate.
+    await conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+
 
 async def _forget_migrations(slug: str) -> None:
     """Reset the on-disk migration marker for slug, forcing the next open to re-run every
@@ -1295,17 +1328,7 @@ async def get_connection(slug: str):
     path = get_db_path(slug)
     path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(path) as conn:
-        conn.row_factory = aiosqlite.Row
-        await conn.execute("PRAGMA foreign_keys = ON")
-        # WAL lets readers proceed while a completion writes. Under journal_mode=delete
-        # they block each other, and completions - the heavy writes - cluster at the end
-        # of a break. WAL is a persistent property of the database file, so this only
-        # needs to take effect once, but re-asserting it each open is cheap and safe.
-        await conn.execute("PRAGMA journal_mode = WAL")
-        # busy_timeout is per-connection, unlike WAL, so it must be set on every open:
-        # it lets a connection wait for a lock instead of failing immediately with
-        # "database is locked" under the brief contention WAL doesn't eliminate.
-        await conn.execute("PRAGMA busy_timeout = 10000")
+        await _apply_connection_pragmas(conn)
         # The file is the authority on whether it has been migrated, not the slug or the
         # inode: PRAGMA user_version is part of the database file's own header, so it
         # survives across processes and is correct even if the file was deleted and
@@ -1345,6 +1368,25 @@ async def get_connection(slug: str):
             # module constant, never user input, so formatting it in is safe.
             await conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         _MIGRATED.add(slug)
+        yield conn
+
+
+@asynccontextmanager
+async def interview_db_connection(db_path: str, *, wal: bool = True):
+    """A connection to a project database opened by path rather than slug.
+
+    The interview endpoints resolve a session by scanning for its token (see
+    _find_session_db in api/services/interview_service.py), so they hold a path and not a
+    slug, and they must not run migrations - a public interview request is not the place to
+    discover a schema change. They still need the same durability settings get_connection
+    applies, which is what this exists for: WAL so a completion does not block the readers
+    around it, and the same busy_timeout rather than aiosqlite's own 5s default.
+
+    wal=False is for the scan itself, not for serving or writing a session - see
+    _apply_connection_pragmas for why the scan opts out.
+    """
+    async with aiosqlite.connect(db_path) as conn:
+        await _apply_connection_pragmas(conn, wal=wal)
         yield conn
 
 

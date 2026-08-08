@@ -8,7 +8,9 @@ which is the entire property.
 import asyncio
 import json
 import time
+from contextlib import asynccontextmanager
 
+import aiosqlite
 import pytest
 import pytest_asyncio
 
@@ -93,6 +95,128 @@ async def dup_project(tmp_path, monkeypatch):
         await conn.commit()
     yield slug
     get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Task 5 set journal_mode=WAL and busy_timeout in get_connection. The interview path never
+# called it - see api/services/interview_service.py and api/database.py.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def raw_session(tmp_path, monkeypatch):
+    """A session seeded through get_connection, then put back into delete mode.
+
+    Same shape as dup_project - a project row, a current interview_scripts artefact, a
+    stakeholder, and a pending session - built via get_connection so the schema is the real,
+    fully migrated one rather than a hand-picked subset. But get_connection's own pragma
+    application leaves the file in WAL as a side effect of fixture setup: WAL is a persistent
+    file property, so a later check would see WAL regardless of whether the interview path
+    itself ever set it, and the regression test would pass whether or not the fix is present -
+    exactly the trap CLAUDE.md's "tested one layer away from where it holds" note describes.
+    So this fixture explicitly reverts journal_mode to DELETE after setup, on a connection of
+    its own (SQLite refuses the switch while another connection holds the file in WAL),
+    putting the file back into the state a project database whose first touch of the day is
+    genuinely an interview is actually in.
+    """
+    from api.config import get_settings
+    from api.database import get_connection
+
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    slug = "freshproj"
+    outputs = tmp_path / "projects" / slug / "outputs"
+    outputs.mkdir(parents=True)
+    scripts = {"SC-001": {"script_id": "SC-001", "node_id": "1.F",
+                          "node_label": "Frontline Interview", "level": "F",
+                          "relationship": "internal", "sections": []}}
+    (outputs / "interview_scripts_v1.json").write_text(json.dumps(scripts))
+
+    db_path = tmp_path / f"{slug}.db"
+    token = "fresh-token"
+    async with get_connection(slug) as conn:
+        await conn.execute("INSERT INTO projects (slug, sector) VALUES (?,?)", (slug, "test"))
+        await conn.commit()
+        cur = await conn.execute("SELECT id FROM projects WHERE slug=?", (slug,))
+        pid = (await cur.fetchone())[0]
+        await conn.execute(
+            "INSERT INTO agent_outputs (project_id, agent_name, output_type, "
+            "version, is_current, file_path) VALUES (?,?,?,?,?,?)",
+            (pid, "interaction_designer", "interview_scripts", 1, 1,
+             str(outputs / "interview_scripts_v1.json")),
+        )
+        await conn.execute(
+            "INSERT INTO stakeholders (project_id, name) VALUES (?,?)", (pid, "Sam Stakeholder"),
+        )
+        await conn.commit()
+        cur = await conn.execute("SELECT id FROM stakeholders WHERE project_id=?", (pid,))
+        sid = (await cur.fetchone())[0]
+        await conn.execute(
+            "INSERT INTO interview_sessions (project_id, stakeholder_id, node_label, "
+            "session_token, status) VALUES (?,?,?,?,?)",
+            (pid, sid, "Frontline Interview", token, "pending"),
+        )
+        await conn.commit()
+
+    async with aiosqlite.connect(str(db_path)) as conn:
+        await conn.execute("PRAGMA journal_mode = DELETE")
+
+    yield token, db_path
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_the_interview_path_gets_wal_and_a_busy_timeout(raw_session, monkeypatch):
+    """Task 5 set these in get_connection, which the interview path does not use.
+
+    Asserted through the real endpoint path (get_session_with_script, which is what serving
+    an interview calls) rather than by calling interview_db_connection directly: the defect
+    was that a correct pragma-setting function already existed and this path never called it,
+    so asserting the helper in isolation would reproduce the same blind spot.
+
+    journal_mode persists in the file, so it is checked with a later, independent connection.
+    busy_timeout does not persist - it is per-connection - so it cannot be checked that way;
+    instead a thin spy wraps interview_service's own reference to interview_db_connection,
+    delegating to the real implementation and capturing the pragma value off the actual
+    connection the real interview path opens.
+    """
+    token, db_path = raw_session
+
+    # Precondition: without this, a pass would not distinguish the fix from its absence.
+    async with aiosqlite.connect(str(db_path)) as conn:
+        cur = await conn.execute("PRAGMA journal_mode")
+        before = (await cur.fetchone())[0].lower()
+    assert before == "delete", (
+        "fixture already left the database in WAL - this test cannot detect the defect"
+    )
+
+    from api.services import interview_service as svc
+
+    captured: dict = {}
+    real_interview_db_connection = svc.interview_db_connection
+
+    @asynccontextmanager
+    async def spy(path, **kwargs):
+        async with real_interview_db_connection(path, **kwargs) as conn:
+            cur = await conn.execute("PRAGMA busy_timeout")
+            captured["busy_timeout"] = (await cur.fetchone())[0]
+            yield conn
+
+    monkeypatch.setattr(svc, "interview_db_connection", spy)
+
+    result = await svc.get_session_with_script(token)
+    assert result is not None, "fixture setup did not produce a resolvable session"
+
+    assert captured.get("busy_timeout") == 10000, (
+        f"the interview path left busy_timeout at {captured.get('busy_timeout')!r} "
+        "instead of the configured 10000"
+    )
+
+    async with aiosqlite.connect(str(db_path)) as conn:
+        cur = await conn.execute("PRAGMA journal_mode")
+        after = (await cur.fetchone())[0].lower()
+    assert after == "wal", "the interview path left the database in delete mode"
 
 
 @pytest.mark.asyncio
