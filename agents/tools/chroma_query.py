@@ -110,7 +110,7 @@ class ChromaQueryTool(BaseTool):
         settings = get_settings()
         if not settings.chroma_api_key and not _chroma_reachable(settings.chroma_host, settings.chroma_port):
             return "ChromaDB is not reachable. Start Docker (docker compose up -d) and retry."
-        client = get_chroma_client()
+        client = get_chroma_client(self.slug)
 
         collection_name = {
             "project": f"{self.slug}_docs",

@@ -29,7 +29,7 @@ def search(slug: str, query: str, k: int = RETRIEVAL_TOP_K) -> list[dict]:
         if not query.strip():
             return []
 
-        client = get_chroma_client()
+        client = get_chroma_client(slug)
         collection = client.get_collection(f"{slug}_docs")
         count = collection.count()
         if not count:

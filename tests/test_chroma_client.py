@@ -1,5 +1,14 @@
 # tests/test_chroma_client.py
-from unittest.mock import patch, MagicMock
+"""CloudClient vs HttpClient selection for a standard-mode project.
+
+get_chroma_client now takes a slug (see tests/test_secure_mode_routing.py for the
+per-project, sensitive-vs-standard routing this exists to express). These two tests keep
+their original, narrower purpose: given a project already resolved as "standard", the
+choice between CloudClient and HttpClient still turns on chroma_api_key alone. Mode
+resolution itself is stubbed via _MODE_CACHE rather than exercised, since the DB lookup path
+is covered separately.
+"""
+from unittest.mock import patch
 
 
 def test_uses_cloud_client_when_api_key_set():
@@ -8,8 +17,12 @@ def test_uses_cloud_client_when_api_key_set():
         m_settings.return_value.chroma_api_key = "ck-test"
         m_settings.return_value.chroma_tenant = "tenant-1"
         m_settings.return_value.chroma_database = "db-1"
-        from api.services.chroma_client import get_chroma_client
-        get_chroma_client()
+        from api.services.chroma_client import get_chroma_client, _MODE_CACHE
+        _MODE_CACHE["standard-proj"] = "standard"
+        try:
+            get_chroma_client("standard-proj")
+        finally:
+            _MODE_CACHE.pop("standard-proj", None)
     m_chroma.CloudClient.assert_called_once_with(
         tenant="tenant-1", database="db-1", api_key="ck-test"
     )
@@ -22,7 +35,11 @@ def test_uses_http_client_when_no_api_key():
         m_settings.return_value.chroma_api_key = ""
         m_settings.return_value.chroma_host = "localhost"
         m_settings.return_value.chroma_port = 8002
-        from api.services.chroma_client import get_chroma_client
-        get_chroma_client()
+        from api.services.chroma_client import get_chroma_client, _MODE_CACHE
+        _MODE_CACHE["standard-proj"] = "standard"
+        try:
+            get_chroma_client("standard-proj")
+        finally:
+            _MODE_CACHE.pop("standard-proj", None)
     m_chroma.HttpClient.assert_called_once_with(host="localhost", port=8002)
     m_chroma.CloudClient.assert_not_called()

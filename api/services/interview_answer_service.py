@@ -184,7 +184,7 @@ def index_answers(slug: str, rows: list[dict]) -> int:
     if not rows:
         return 0
     try:
-        collection = get_chroma_client().get_or_create_collection(name=f"{slug}_interviews")
+        collection = get_chroma_client(slug).get_or_create_collection(name=f"{slug}_interviews")
         collection.upsert(
             documents=[answer_document(r) for r in rows],
             ids=[str(r["id"]) for r in rows],

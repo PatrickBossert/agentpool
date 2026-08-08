@@ -112,7 +112,7 @@ async def ingest_document(
         )
 
     def _upsert() -> None:
-        client = get_chroma_client()
+        client = get_chroma_client(slug)
         collection = client.get_or_create_collection(f"{slug}_docs")
         ids = [f"{path.name}::{i}" for i in range(len(chunks))]
         metadatas = [
