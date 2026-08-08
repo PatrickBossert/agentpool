@@ -434,17 +434,6 @@ async def test_twenty_sessions_complete_concurrently(client, seeded_campaign):
     would make it fail here; the WAL/busy_timeout guarantee is exercised and proven
     separately, not by this test.
 
-    A second, unrelated finding from the same investigation, worth a reviewer's attention:
-    the endpoint's actual write path - complete_session and _find_session_db in
-    api/services/interview_service.py - opens its connections with a bare
-    aiosqlite.connect(db_path), not api.database.get_connection(slug). WAL survives that
-    regardless, because it is a persistent property of the database file once any code path
-    sets it (this fixture's own get_connection calls do). busy_timeout does not survive it -
-    it is per-connection, and nothing sets it on this path. It happens not to matter for
-    this workload, per the probe above, but the CLAUDE.md guarantee ("get_connection sets
-    ... busy_timeout=10000") does not actually reach the /complete endpoint's writes. Out of
-    scope here (this task touches only this test file); flagged for a follow-up task.
-
     It does not prove behaviour under multi-process load or real network concurrency, which
     this repository has no harness for.
     """

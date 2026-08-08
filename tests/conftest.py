@@ -1,5 +1,6 @@
 # tests/conftest.py
 import os
+import shutil
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -12,7 +13,13 @@ from api.config import get_settings
 # Point to a temp directory so tests never touch real project data
 os.environ.setdefault("DATABASE_DIR", "/tmp/agentpool_test")
 os.environ.setdefault("PROJECTS_DIR", "/tmp/agentpool_test_projects")
-os.environ.setdefault("DATA_DIR", "/tmp/agentpool_test")
+# DATA_DIR gets a directory of its own, emptied at the start of every session. It backs the
+# TTS cache (api/services/tts_cache.py), which is keyed by voice and text and never expires,
+# so pointing it at the persistent /tmp/agentpool_test isolated it from the repo's real
+# data/ and not at all from the previous run: the first test to call speak() without its own
+# override would store its audio, pass, and then be served a cache hit for ever after -
+# passing once and failing on every run afterwards, exactly the trap CLAUDE.md documents.
+os.environ.setdefault("DATA_DIR", "/tmp/agentpool_test_data")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ.setdefault("ADMIN_PASSWORD", "test-admin-pw")
 os.environ.setdefault("ADMIN_USERNAME", "admin")
@@ -35,6 +42,12 @@ os.environ.setdefault("N8N_WEBHOOK_URL", "")
 
 Path("/tmp/agentpool_test").mkdir(exist_ok=True)
 Path("/tmp/agentpool_test_projects").mkdir(exist_ok=True)
+
+# Recreated rather than merely ensured: an empty DATA_DIR is the whole point of giving it one.
+_data_dir = Path(os.environ["DATA_DIR"])
+if _data_dir.is_dir() and _data_dir.name == "agentpool_test_data":
+    shutil.rmtree(_data_dir, ignore_errors=True)
+_data_dir.mkdir(parents=True, exist_ok=True)
 
 
 @pytest.fixture(autouse=True)

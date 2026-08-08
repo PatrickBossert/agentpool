@@ -15,15 +15,20 @@ import pytest_asyncio
 
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_shared_clients():
-    """Close and drop any real client each test built, before and after the test runs.
+    """Close and drop any real client, before and after each test *in this module*.
 
     pytest.ini sets asyncio_default_fixture_loop_scope = function, so every asyncio test
     gets its own event loop, while _tts_client/_anthropic_client in http_clients are
     process-global and outlive any single test's loop. A client left behind by one test
     sits there for the rest of the session - not closed, just orphaned from a dead loop -
     and the next test that drives real I/O through it hits a "different loop" RuntimeError,
-    order-dependently. Closing before and after each test guarantees every test starts and
-    ends with a clean slate regardless of what earlier tests constructed.
+    order-dependently.
+
+    Scope note, because autouse invites the wrong reading: an autouse fixture declared in a
+    test module applies to that module only. These are the tests that construct the shared
+    clients deliberately, so this is where the clean-up belongs - but it is not a
+    session-wide guarantee, and anything elsewhere that builds a shared client and leaves it
+    behind is not covered by it. Widening this would mean moving it to conftest.py.
     """
     from api.services.http_clients import close_http_clients
     await close_http_clients()
