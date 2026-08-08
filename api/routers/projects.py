@@ -439,8 +439,10 @@ async def get_value_chain_registry(slug: str, payload: dict = Depends(require_an
 @router.post("/{slug}/node-templates/{node_label}/publish")
 async def publish_node_template(slug: str, node_label: str, body: PublishNodeTemplateBody, payload: dict = Depends(require_org_admin_or_above)):
     """Publish an interview script for a node as a reusable template."""
-    scripts_path = Path(get_settings().projects_dir) / slug / "outputs" / "interview_scripts.json"
-    if not scripts_path.exists():
+    from agents.tools._db import current_output_path
+
+    scripts_path = current_output_path(slug, "interview_scripts")
+    if scripts_path is None:
         raise HTTPException(status_code=404, detail="interview_scripts.json not found for this project")
 
     scripts = json.loads(scripts_path.read_text(encoding="utf-8"))

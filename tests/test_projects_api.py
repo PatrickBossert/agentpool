@@ -320,3 +320,57 @@ async def test_publish_node_template_not_found(auth_client, create_project):
         json={"name": "T1", "description": ""},
     )
     assert resp.status_code == 404
+
+
+PUBLISH_NODE_LABEL = "FrontlineInterview"
+PUBLISH_SCRIPTS = {
+    PUBLISH_NODE_LABEL: {
+        "node_label": PUBLISH_NODE_LABEL, "level": "L2", "research_brief": "b",
+        "sections": [{"section_id": "S1", "title": "Opening", "questions": []}],
+    }
+}
+
+
+@pytest_asyncio.fixture
+async def versioned_scripts_project(create_project):
+    """A project whose only interview_scripts artefact is versioned - what every real
+    project has, since insert_agent_output_sync renames every output it records to a _vN
+    suffix and leaves nothing at the bare interview_scripts.json path."""
+    slug = create_project
+    from agents.tools._db import insert_agent_output_sync
+
+    outputs = Path(get_settings().projects_dir) / slug / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    draft = outputs / "interview_scripts.json"
+    draft.write_text(json.dumps(PUBLISH_SCRIPTS))
+    insert_agent_output_sync(slug, "interview_coordinator", "interview_scripts", str(draft))
+    assert not draft.exists()
+    return slug
+
+
+@pytest.mark.asyncio
+async def test_publishing_a_template_finds_the_current_scripts(auth_client, versioned_scripts_project):
+    """It raised 404 for any project whose scripts are versioned, which is all of them.
+    A non-404 status alone would pass against an endpoint that fabricates a response without
+    reading anything, so this also checks the template actually landed in the system db with
+    the right content."""
+    slug = versioned_scripts_project
+    resp = await auth_client.post(
+        f"/projects/{slug}/node-templates/{PUBLISH_NODE_LABEL}/publish",
+        json={"name": "Frontline", "description": ""},
+    )
+    assert resp.status_code == 200
+    template_id = resp.json()["template_id"]
+    assert template_id
+
+    import aiosqlite
+    from api.database import fetch_template, get_system_db_path, init_system_db
+
+    async with aiosqlite.connect(str(get_system_db_path())) as sys_conn:
+        sys_conn.row_factory = aiosqlite.Row
+        await init_system_db(sys_conn)
+        tpl = await fetch_template(sys_conn, template_id)
+    assert tpl is not None
+    assert tpl["name"] == "Frontline"
+    schema = json.loads(tpl["schema_json"])
+    assert schema["sections"][0]["section_id"] == "S1"

@@ -121,3 +121,44 @@ async def test_a_moved_anchor_overwrites_rather_than_being_kept(project):
 
     row = next(r for r in await _assignments() if r["script_id"] == "SC-001")
     assert row["activity_id"] == "2"
+
+
+VERSIONED_SLUG = "anchor-test-versioned"
+VERSIONED_PROJECT = {**PROJECT, "client_slug": VERSIONED_SLUG}
+
+
+@pytest_asyncio.fixture
+async def versioned_scripts_project(client):
+    """A project whose only interview_scripts artefact is versioned - which is what every
+    real project has, since insert_agent_output_sync renames every output it records to a
+    _vN suffix and nothing is ever left at the bare interview_scripts.json path again."""
+    await client.post("/projects", json=VERSIONED_PROJECT)
+    from agents.tools._db import insert_agent_output_sync
+
+    outputs = Path(get_settings().projects_dir) / VERSIONED_SLUG / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    draft = outputs / "interview_scripts.json"
+    draft.write_text(json.dumps(SCRIPTS))
+    insert_agent_output_sync(VERSIONED_SLUG, "interview_coordinator", "interview_scripts", str(draft))
+    # Sanity: insert_agent_output_sync must actually have moved it away, or this fixture
+    # would not be testing what it claims to.
+    assert not draft.exists()
+    return VERSIONED_SLUG
+
+
+@pytest.mark.asyncio
+async def test_auto_assign_finds_the_current_scripts(versioned_scripts_project):
+    """It read a bare interview_scripts.json and returned 0 when absent, so assignment has
+    silently done nothing since writes became versioned. A count alone would pass against a
+    function that counts without writing, so this also checks the assignment landed in the
+    database with the template it claims to have created."""
+    slug = versioned_scripts_project
+    count = await auto_assign_interview_scripts(slug)
+    assert count > 0
+
+    async with get_connection(slug) as conn:
+        proj = await fetch_project(conn, slug=slug)
+        rows = await fetch_node_template_assignments(conn, proj["id"])
+    by_script = {r["script_id"]: r for r in rows}
+    assert by_script["SC-001"]["activity_id"] == "1.2"
+    assert by_script["SC-001"]["interview_template_id"] is not None

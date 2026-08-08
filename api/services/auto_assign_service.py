@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 import aiosqlite
 
+from agents.tools._db import current_output_path
 from api.config import get_settings
 from api.database import (
     get_connection, fetch_project, fetch_node_template_assignments,
@@ -35,9 +36,9 @@ def _clean_label(label: str) -> str:
 
 
 async def auto_assign_interview_scripts(slug: str) -> int:
-    """Read interview_scripts.json → upsert each as a system template → assign to node."""
-    scripts_path = Path(get_settings().projects_dir) / slug / "outputs" / "interview_scripts.json"
-    if not scripts_path.exists():
+    """Read the current interview_scripts artefact → upsert each as a system template → assign to node."""
+    scripts_path = current_output_path(slug, "interview_scripts")
+    if scripts_path is None:
         return 0
     try:
         scripts: dict = json.loads(scripts_path.read_text(encoding="utf-8"))
