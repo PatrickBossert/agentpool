@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     chroma_tenant: str = "default_tenant"
     chroma_database: str = "default_database"
     database_dir: str = "./data"
+    data_dir: str = "data"
     projects_dir: str = "./projects"
     jwt_secret: str
     admin_username: str

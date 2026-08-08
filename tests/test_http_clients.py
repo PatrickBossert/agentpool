@@ -61,13 +61,23 @@ async def test_closing_lets_the_anthropic_client_rebuild():
 
 
 @pytest.mark.asyncio
-async def test_speak_does_not_construct_a_client_per_call():
+async def test_speak_does_not_construct_a_client_per_call(tmp_path, monkeypatch):
     """The getter memoising is not proof speak() uses it - speak could still build its own.
 
     Patch httpx.AsyncClient itself so a per-call constructor call would be caught, then call
     speak twice and assert the constructor ran at most once (the shared client is built lazily
     on first use, then reused).
+
+    speak() is cached (see tests/test_tts_cache.py), so this test points DATA_DIR at a fresh
+    tmp_path: without it, "Hello"/"voice-abc" and "World"/"voice-abc" would be stored in the
+    shared /tmp/agentpool_test cache on the first run of the suite and served as cache hits
+    on every run after, and the assertion below - which is about client construction, not
+    about caching - would see zero calls instead of one and fail on the second run.
     """
+    from api.config import get_settings
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
     settings_obj = MagicMock()
     settings_obj.elevenlabs_api_key = "test-key"
 

@@ -161,8 +161,8 @@ async def generate_deepgram_token() -> str:
         return resp.json()["key"]
 
 
-async def speak(text: str, voice_id: str) -> bytes:
-    """Call ElevenLabs TTS API and return raw audio bytes."""
+async def synthesise(text: str, voice_id: str) -> bytes:
+    """Call ElevenLabs and return raw audio. No caching - the cache wraps this."""
     settings = get_settings()
     if not settings.elevenlabs_api_key:
         raise ValueError("ELEVENLABS_API_KEY not configured")
@@ -187,6 +187,18 @@ async def speak(text: str, voice_id: str) -> bytes:
     )
     resp.raise_for_status()
     return resp.content
+
+
+async def speak(text: str, voice_id: str) -> bytes:
+    """Cached speech. Scripted questions are identical across every interviewee."""
+    from api.services.tts_cache import cache_key, cached_audio, store_audio
+    key = cache_key(voice_id, text)
+    hit = cached_audio(key)
+    if hit is not None:
+        return hit
+    audio = await synthesise(text, voice_id)
+    store_audio(key, audio)
+    return audio
 
 
 async def elaboration_press(

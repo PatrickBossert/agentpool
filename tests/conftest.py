@@ -12,6 +12,7 @@ from api.config import get_settings
 # Point to a temp directory so tests never touch real project data
 os.environ.setdefault("DATABASE_DIR", "/tmp/agentpool_test")
 os.environ.setdefault("PROJECTS_DIR", "/tmp/agentpool_test_projects")
+os.environ.setdefault("DATA_DIR", "/tmp/agentpool_test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ.setdefault("ADMIN_PASSWORD", "test-admin-pw")
 os.environ.setdefault("ADMIN_USERNAME", "admin")
