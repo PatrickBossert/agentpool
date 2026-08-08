@@ -1843,3 +1843,122 @@ frontend_url is unset in every deployment and defaults to localhost, and the rou
 :slug/reviews under basename /dashboard - there is no /projects/ segment. A reviewer clicking
 the link in a HITL notification got a 404 on localhost."
 ```
+
+---
+
+## Task 15: The interview path never gets the pragmas Task 5 added
+
+Found by Task 12's implementer while probing for lock contention. Task 5 set `journal_mode=WAL`
+and `busy_timeout=10000` inside `get_connection`, but the interview request path does not use
+`get_connection`. It opens raw connections:
+
+| Line | Function | On the request path? |
+|---|---|---|
+| `interview_service.py:63` | `_find_session_db` | **every** public interview endpoint |
+| `interview_service.py:92` | `get_session_with_script` | serving the interview |
+| `interview_service.py:134` | `get_session_with_script` (questionnaire) | serving the interview |
+| `interview_service.py:288` | `complete_session` | the heavy write |
+
+Measured on the live database, a raw `aiosqlite.connect` reports:
+
+```
+journal_mode   = delete
+busy_timeout   = 5000      (Python's default, not the configured 10000)
+```
+
+WAL is a persistent file property, so a database that some other code path has already opened
+through `get_connection` stays in WAL. But a database whose first touch of the day is an
+interview - which is exactly what happens during a campaign - never gets it. So the concurrency
+mechanism added for concurrent interviews does not reach concurrent interviews.
+
+This is not a new defect introduced by this plan; it is the plan's own central fix failing to
+land where it was aimed.
+
+**Files:**
+- Modify: `api/database.py` (extract the pragma application), `api/services/interview_service.py:63,92,134,288`
+- Test: `tests/test_interview_concurrency.py`
+
+**Interfaces:**
+- Produces: `interview_db_connection(db_path: str)` - an `@asynccontextmanager` yielding an
+  `aiosqlite.Connection` with `row_factory`, `foreign_keys`, `journal_mode=WAL`, and
+  `busy_timeout` applied. It takes a **path**, not a slug, because `_find_session_db` scans
+  files without knowing which project it is looking at, and must not run migrations.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+@pytest.mark.asyncio
+async def test_the_interview_path_gets_wal_and_a_busy_timeout(tmp_path, monkeypatch):
+    """Task 5 set these in get_connection, which the interview path does not use.
+
+    Asserted through the real endpoint rather than by calling the helper: the defect was that
+    a correct pragma-setting function existed and this path never called it, so asserting the
+    helper would reproduce the bug.
+    """
+    ...  # seed a project and a session, as seeded_campaign does
+    from api.services.interview_service import _find_session_db
+    db_path = await _find_session_db(token)
+    import aiosqlite
+    async with aiosqlite.connect(db_path) as conn:
+        cur = await conn.execute("PRAGMA journal_mode")
+        assert (await cur.fetchone())[0].lower() == "wal", (
+            "the interview path left the database in delete mode"
+        )
+```
+
+Note the assertion works because `journal_mode` persists in the file: if the interview path set
+it, a later connection sees WAL. `busy_timeout` does not persist, so assert that one by
+inspecting the connection the helper yields.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `./venv/bin/pytest tests/test_interview_concurrency.py -v`
+Expected: FAIL - `assert 'delete' == 'wal'`.
+
+- [ ] **Step 3: Extract the pragma application and use it**
+
+In `api/database.py`, factor the pragma block out of `get_connection` so both callers share one
+definition, and export an `@asynccontextmanager` that applies pragmas without running migrations:
+
+```python
+@asynccontextmanager
+async def interview_db_connection(db_path: str):
+    """A connection to a project database opened by path rather than slug.
+
+    The interview endpoints resolve a session by scanning for its token, so they hold a path
+    and not a slug, and they must not run migrations - a public request is not the place to
+    discover a schema change. They still need the same durability settings, which is what this
+    exists for: WAL so a completion does not block the readers around it, and the same
+    busy_timeout rather than Python's 5s default.
+    """
+    async with aiosqlite.connect(db_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA foreign_keys = ON")
+        await conn.execute("PRAGMA journal_mode = WAL")
+        await conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+        yield conn
+```
+
+Replace all four raw `aiosqlite.connect` calls in `interview_service.py` with it. Leave the
+`system.db` connection at line 147 alone - it is a different database and out of scope.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `./venv/bin/pytest tests/test_interview_concurrency.py tests/test_interview_service.py tests/test_interviews_router.py -q`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add api/database.py api/services/interview_service.py tests/test_interview_concurrency.py
+git commit -m "fix(interviews): the interview path gets WAL and the configured busy timeout
+
+Task 5 set journal_mode=WAL and busy_timeout=10000 in get_connection, but every public
+interview endpoint opens a raw aiosqlite connection instead - _find_session_db,
+get_session_with_script, and complete_session, which is the heavy write. Measured on a live
+database, those connections reported journal_mode=delete and busy_timeout=5000.
+
+WAL persists once set, so a database another path has opened stays in WAL. A database whose
+first touch of the day is an interview - which is what happens during a campaign - never got
+it. The concurrency fix did not reach the concurrent path it was aimed at."
+```
