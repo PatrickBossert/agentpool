@@ -150,3 +150,45 @@ def test_a_failed_read_is_not_cached(tmp_path, monkeypatch):
         assert chroma_client.project_llm_mode("recovers-proj") == "standard"
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_a_sensitive_project_presses_with_the_local_model(two_projects, monkeypatch):
+    """Asserts the base URL the request went to, not that a mode helper was called.
+
+    The defect being fixed is precisely that a correct-looking mode helper existed and the
+    interview path never consulted it, so asserting the helper would reproduce the bug.
+    """
+    from api.services import interview_service as svc
+    seen = {}
+
+    class FakeMessages:
+        async def create(self, **kw):
+            seen.update(kw)
+            class R:
+                content = [type("T", (), {"text": "and then?"})()]
+            return R()
+
+    class FakeClient:
+        def __init__(self, **kw):
+            seen["base_url"] = kw.get("base_url")
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr(svc, "AsyncAnthropic", FakeClient)
+    await svc.elaboration_press("Q?", "short", "press", slug="secure-proj")
+    assert seen["base_url"] == get_settings().llamacpp_base_url
+
+
+@pytest.mark.asyncio
+async def test_the_press_gives_up_on_budget_rather_than_stalling(two_projects, monkeypatch):
+    """A local model under load must not hold a live interview open."""
+    import asyncio
+    from api.services import interview_service as svc
+
+    async def never(*a, **k):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(svc, "_press_call", never)
+    result = await svc.elaboration_press("Q?", "short", "press",
+                                         slug="open-proj", timeout_seconds=0.1)
+    assert result == "", "an over-budget press must return no press, not raise or stall"

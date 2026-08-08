@@ -6,14 +6,17 @@ LLM elaboration press, and session completion helpers.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
 
 import aiosqlite
 import httpx
+from anthropic import AsyncAnthropic
 
 from api.config import get_settings
+from api.services.chroma_client import project_llm_mode
 from api.services.http_clients import get_tts_client, get_anthropic_client
 from api.services.interview_answer_service import record_answers, script_for_session
 from api.database import (
@@ -201,14 +204,41 @@ async def speak(text: str, voice_id: str) -> bytes:
     return audio
 
 
+async def _press_call(prompt: str, slug: str) -> str:
+    """The provider call, split out so the budget in elaboration_press can wrap it."""
+    settings = get_settings()
+    if project_llm_mode(slug) == "sensitive":
+        client = AsyncAnthropic(base_url=settings.llamacpp_base_url, api_key="not-needed")
+        model = settings.local_llm_model
+    else:
+        client = get_anthropic_client()
+        model = "claude-haiku-4-5-20251001"
+    response = await client.messages.create(
+        model=model, max_tokens=150, messages=[{"role": "user", "content": prompt}]
+    )
+    return response.content[0].text.strip()
+
+
 async def elaboration_press(
     question_text: str,
     response_text: str,
     probing_instructions: str,
     stakeholder_name: str = "",
+    *,
+    slug: str = "",
+    timeout_seconds: float = 8.0,
 ) -> str:
-    """Generate a follow-up press question via Claude Haiku."""
-    client = get_anthropic_client()
+    """Generate a follow-up press, or return "" if it cannot be produced in time.
+
+    The press sits on the request path with a person waiting, and in secure mode the model
+    behind it is local: slower, and serving far fewer parallel requests. An elaboration
+    press is an enhancement rather than part of the instrument, so a missed one costs depth
+    on a single answer while a long silence costs the interviewee's confidence in the whole
+    conversation. Returning "" is the deliberate trade; the caller moves to the next
+    scripted question.
+
+    Skips are logged, so a consistently over-budget model is visible rather than quiet.
+    """
     name_clause = f" {stakeholder_name}" if stakeholder_name else ""
     prompt = (
         f"You are a polite but insistent interviewer.{name_clause} has given an "
@@ -219,12 +249,13 @@ async def elaboration_press(
         "Generate one natural follow-up question (max 2 sentences) that presses for "
         "elaboration without being confrontational. Return only the question text, no preamble."
     )
-    response = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=150,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
+    try:
+        return await asyncio.wait_for(_press_call(prompt, slug), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        _log.warning(
+            "elaboration_press[%s]: over budget at %.1fs - skipped", slug, timeout_seconds
+        )
+        return ""
 
 
 async def complete_session(

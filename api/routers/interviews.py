@@ -225,15 +225,27 @@ class ElaborationPressRequest(BaseModel):
 
 @router.post("/{session_token}/elaboration-press")
 async def get_elaboration_press(session_token: str, body: ElaborationPressRequest):
-    result = await get_session_with_script(session_token)
-    if not result:
+    db_path = await _find_session_db(session_token)
+    if not db_path:
         raise HTTPException(status_code=404, detail="Session not found")
+    # The slug is the stem of the project db file that holds this session - the same
+    # resolution get_session_with_script uses internally, done directly here because the
+    # budget and the routing decision both need the slug before elaboration_press is called.
+    slug = Path(db_path).stem
+    async with get_connection(slug) as conn:
+        cur = await conn.execute("SELECT config_json FROM projects WHERE slug=?", (slug,))
+        row = await cur.fetchone()
+    config = json.loads(row["config_json"]) if row and row["config_json"] else {}
+    budget = float(config.get("elaboration_press_timeout_seconds", 8))
+
     try:
         press_text = await elaboration_press(
             body.question_text,
             body.response_text,
             body.probing_instructions,
             body.stakeholder_name,
+            slug=slug,
+            timeout_seconds=budget,
         )
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))

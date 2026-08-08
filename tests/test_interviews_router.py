@@ -1,5 +1,6 @@
 # tests/test_interviews_router.py
 """Tests for public interview API endpoints."""
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -94,17 +95,55 @@ async def test_speak_success(client):
 # 5. POST /{session_token}/elaboration-press — success
 # ---------------------------------------------------------------------------
 
+class _FakeConfigCursor:
+    """Stands in for the aiosqlite cursor the router reads config_json from."""
+
+    def __init__(self, config_json):
+        self._config_json = config_json
+
+    async def fetchone(self):
+        return {"config_json": self._config_json}
+
+
+class _FakeConfigConn:
+    def __init__(self, config_json):
+        self._config_json = config_json
+
+    async def execute(self, *args, **kwargs):
+        return _FakeConfigCursor(self._config_json)
+
+
+class _FakeConnCtx:
+    """Stands in for get_connection(slug)'s async context manager."""
+
+    def __init__(self, config_json=None):
+        self._config_json = config_json
+
+    async def __aenter__(self):
+        return _FakeConfigConn(self._config_json)
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
 @pytest.mark.asyncio
 async def test_elaboration_press_success(client):
+    # The endpoint now resolves the slug itself (from _find_session_db) and reads the
+    # configured budget from projects.config_json before calling elaboration_press, so both
+    # are faked here rather than the higher-level get_session_with_script this endpoint no
+    # longer calls.
     with patch(
-        "api.routers.interviews.get_session_with_script",
+        "api.routers.interviews._find_session_db",
         new_callable=AsyncMock,
-        return_value=FAKE_SESSION,
+        return_value="/tmp/agentpool_test/test-proj.db",
+    ), patch(
+        "api.routers.interviews.get_connection",
+        return_value=_FakeConnCtx(config_json=None),
     ), patch(
         "api.routers.interviews.elaboration_press",
         new_callable=AsyncMock,
         return_value="Could you expand on that point?",
-    ):
+    ) as mock_press:
         r = await client.post(
             "/api/interviews/test-token-abc/elaboration-press",
             json={
@@ -117,6 +156,65 @@ async def test_elaboration_press_success(client):
 
     assert r.status_code == 200
     assert r.json() == {"press_text": "Could you expand on that point?"}
+    mock_press.assert_awaited_once_with(
+        "What are your main challenges?",
+        "Many things.",
+        "Ask for specifics.",
+        "Alice",
+        slug="test-proj",
+        timeout_seconds=8.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_elaboration_press_not_found(client):
+    with patch(
+        "api.routers.interviews._find_session_db",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        r = await client.post(
+            "/api/interviews/unknown-token-xyz/elaboration-press",
+            json={
+                "question_text": "What are your main challenges?",
+                "response_text": "Many things.",
+                "probing_instructions": "Ask for specifics.",
+            },
+        )
+
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Session not found"
+
+
+@pytest.mark.asyncio
+async def test_elaboration_press_reads_configured_budget(client):
+    """The budget the endpoint hands elaboration_press must come from projects.config_json,
+    not the default - otherwise Avery's settings page value is silently ignored."""
+    with patch(
+        "api.routers.interviews._find_session_db",
+        new_callable=AsyncMock,
+        return_value="/tmp/agentpool_test/budget-proj.db",
+    ), patch(
+        "api.routers.interviews.get_connection",
+        return_value=_FakeConnCtx(config_json=json.dumps({"elaboration_press_timeout_seconds": 3})),
+    ), patch(
+        "api.routers.interviews.elaboration_press",
+        new_callable=AsyncMock,
+        return_value="",
+    ) as mock_press:
+        r = await client.post(
+            "/api/interviews/test-token-abc/elaboration-press",
+            json={
+                "question_text": "Q?",
+                "response_text": "short",
+                "probing_instructions": "press",
+            },
+        )
+
+    assert r.status_code == 200
+    mock_press.assert_awaited_once_with(
+        "Q?", "short", "press", "", slug="budget-proj", timeout_seconds=3.0,
+    )
 
 
 # ---------------------------------------------------------------------------
