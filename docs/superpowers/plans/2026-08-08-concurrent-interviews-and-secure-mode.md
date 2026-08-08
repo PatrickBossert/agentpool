@@ -1962,3 +1962,124 @@ WAL persists once set, so a database another path has opened stays in WAL. A dat
 first touch of the day is an interview - which is what happens during a campaign - never got
 it. The concurrency fix did not reach the concurrent path it was aimed at."
 ```
+
+---
+
+## Task 16: Sweep the remaining bare-filename reads, and stop the class recurring
+
+Tasks 1 and 13 each fixed instances of the same defect, and Task 13's implementer found more.
+This is systemic rather than incidental, so this task sweeps what remains and adds the guard that
+makes a seventh instance fail loudly instead of silently.
+
+Every site below reads an output by filename. Verified against the live project, **all four bare
+files are missing**, so every one of these reads returns nothing today:
+
+| Site | Output type | Declared? |
+|---|---|---|
+| `api/routers/projects.py:433` | `value_chain_registry` | yes |
+| `api/services/project_service.py:327` | `portfolio_register` | yes |
+| `api/services/project_service.py:373` | `value_chain_tree` | yes |
+| `api/services/auto_assign_service.py:122` | `questionnaire_scripts` | **no** - check how it is written before assuming |
+
+`questionnaire_scripts` is not in `OUTPUT_OWNERS`, so `SQLiteStateTool` would refuse to write it.
+Establish how it actually reaches disk before changing that site: if it is not versioned, the bare
+path may be correct and should be left alone with a comment saying so.
+
+`api/routers/interviews.py:113` reads `projects/smoke-test/outputs/interview_scripts.json`, a
+hand-written fixture that genuinely exists at its bare path. Leave it, and make sure the guard
+test below does not flag it.
+
+**Files:**
+- Modify: `api/routers/projects.py`, `api/services/project_service.py`, possibly `api/services/auto_assign_service.py`
+- Test: `tests/test_output_resolution_guard.py` (create)
+
+- [ ] **Step 1: Write the guard test**
+
+The durable deliverable. It must fail if any source file builds a path to a declared output type
+by filename, and it must not fire on the legitimate smoke-test fixture.
+
+```python
+# tests/test_output_resolution_guard.py
+"""No code may resolve a declared output by filename.
+
+Writes are versioned to a _vN suffix and the current version is recorded in agent_outputs, so a
+bare `<type>.json` names a file that does not exist. It fails silently: the reader gets None, an
+empty list, or a 404, and nothing reports why. This has now been found in six places across three
+separate tasks, which is why it gets a guard rather than a sixth individual fix.
+
+CLAUDE.md's "Resolving an output: ask the ledger, never the disk" records four incidents from the
+same root - a demoted clean baseline, a value_chain_tree_v13 shadow, a version-counter reset, and
+an agent reading a three-week-old summary.
+"""
+import re
+from pathlib import Path
+
+import pytest
+
+from agents.tools.ownership import OUTPUT_OWNERS
+
+# The one legitimate bare read: a hand-written fixture for the built-in test interview that
+# really does live at that path and is not produced by any agent.
+_ALLOWED = {("api/routers/interviews.py", "interview_scripts")}
+
+
+def test_no_declared_output_is_resolved_by_filename():
+    root = Path(__file__).resolve().parents[1]
+    offenders = []
+    for directory in ("api", "agents"):
+        for path in (root / directory).rglob("*.py"):
+            rel = str(path.relative_to(root))
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                for output_type in OUTPUT_OWNERS:
+                    if f'"{output_type}.json"' in line and (rel, output_type) not in _ALLOWED:
+                        offenders.append(f"{rel}:{number} builds a path to {output_type}.json")
+    assert not offenders, (
+        "resolve these through current_output_path(slug, output_type):\n  "
+        + "\n  ".join(offenders)
+    )
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `./venv/bin/pytest tests/test_output_resolution_guard.py -v`
+Expected: FAIL, naming the three declared-type sites in the table above.
+
+- [ ] **Step 3: Fix each site**
+
+Replace each bare path with `current_output_path(slug, "<output_type>")`, importing from
+`agents/tools/_db.py`. Preserve each site's existing missing-file behaviour exactly - a `None`
+return where it returned `None`, its own 404 where it raised one. Do not change what callers see
+when an output genuinely does not exist.
+
+- [ ] **Step 4: Establish what writes questionnaire_scripts**
+
+Run: `grep -rn "questionnaire_scripts" api agents | grep -v test`
+If it is written through `SQLiteStateTool` it must be in `OUTPUT_OWNERS` and versioned - fix the
+read and say so. If it is written directly to a bare path by other code, the read is consistent
+with the write: leave both, and add a one-line comment at the read site recording that it is
+deliberately not a ledger-resolved output.
+
+- [ ] **Step 5: Run the guard and the affected suites**
+
+Run: `./venv/bin/pytest tests/test_output_resolution_guard.py tests/test_projects_api.py tests/test_auto_assign_anchor.py -q`
+Then the full suite twice in succession.
+
+- [ ] **Step 6: Verify the guard has power**
+
+Add a bare `"value_chain_tree.json"` path back in a scratch line, confirm the guard fails and
+names it, remove it, confirm the guard passes. Report both.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add api/routers/projects.py api/services/project_service.py api/services/auto_assign_service.py tests/test_output_resolution_guard.py
+git commit -m "fix(outputs): resolve every declared output through the ledger, and guard it
+
+Three more sites read a declared output by filename - value_chain_registry, portfolio_register,
+and value_chain_tree. Verified against the live project, none of those bare files exists, so all
+three reads returned nothing and said nothing.
+
+Found in six places across three tasks now, so this adds the guard rather than a sixth
+individual fix: a test that fails if any source file builds a path to a declared output type,
+with one documented exemption for the hand-written smoke-test fixture."
+```
