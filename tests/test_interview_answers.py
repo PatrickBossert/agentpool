@@ -1,6 +1,8 @@
 # tests/test_interview_answers.py
 """One row per question per session, tagged at the moment it was answered."""
+import asyncio
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,7 @@ import pytest_asyncio
 
 from api.config import get_settings
 from api.database import fetch_interview_answers, get_connection
+from api.services import interview_answer_service as svc
 from api.services.interview_answer_service import record_answers
 
 SLUG = "answers-test"
@@ -188,3 +191,37 @@ async def test_a_synthesis_prompt_belongs_to_no_section_and_still_records(seeded
         rows = await fetch_interview_answers(conn, session_id=seeded_session)
     assert written == 1
     assert rows[0]["node_id"] == "1.2"
+
+
+@pytest.mark.asyncio
+async def test_indexing_does_not_delay_a_concurrent_session(seeded_session, monkeypatch):
+    """The event-loop property, exercised through record_answers itself.
+
+    tests/test_interview_concurrency.py proves _index_in_background frees the loop, but it
+    calls that helper directly - it would keep passing even if record_answers' call site
+    reverted to the original synchronous `index_answers(slug, [...])` and left the helper
+    unused. Only a test that drives record_answers, the call site the brief names as the
+    actual defect, can catch that regression. index_answers is stubbed with a blocking sleep
+    standing in for a slow or unreachable Chroma.
+    """
+    def slow_index(slug, rows):
+        time.sleep(0.5)
+        return len(rows)
+
+    monkeypatch.setattr(svc, "index_answers", slow_index)
+
+    async def waiter(t0):
+        await asyncio.sleep(0.01)
+        return time.perf_counter() - t0
+
+    async with get_connection(SLUG) as conn:
+        t0 = time.perf_counter()
+        written, waited = await asyncio.gather(
+            record_answers(conn, SLUG, seeded_session, PAIRS, script=SCRIPT),
+            waiter(t0),
+        )
+    assert written == 3
+    assert waited < 0.2, (
+        f"a concurrent session waited {waited:.2f}s while another completed - "
+        "indexing is still on the event loop"
+    )
