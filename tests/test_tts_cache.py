@@ -206,3 +206,44 @@ def test_store_audio_gives_each_call_its_own_temp_file(monkeypatch):
         "two store_audio calls on the same key produced the same temp file name - "
         "concurrent writers on this key would collide"
     )
+
+
+def test_store_audio_swallows_a_disk_failure_instead_of_raising(monkeypatch):
+    """mkstemp is a real filesystem call (unlike the path arithmetic it replaced), so it
+    can raise OSError on its own - disk full, permission denied, fd exhaustion, or the
+    cache directory vanishing between _cache_dir()'s mkdir and mkstemp. The cache is an
+    optimisation, never a requirement, so store_audio must absorb that failure rather than
+    let it escape."""
+    import tempfile as tempfile_module
+    from api.services.tts_cache import cache_key, store_audio
+
+    def explode(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tempfile_module, "mkstemp", explode)
+
+    key = cache_key("voice-full-disk", "does this raise?")
+    store_audio(key, b"AUDIO")  # must return normally, not raise
+
+
+@pytest.mark.asyncio
+async def test_speak_still_returns_audio_when_the_cache_write_fails(monkeypatch):
+    """The property the interviewee actually experiences, exercised through the real
+    speak() -> store_audio() path (not a mocked-out store_audio, which would only prove
+    speak lacks its own try/except - never the point). Simulate the reported failure at
+    its actual source, mkstemp, and confirm a cache-write failure on a miss costs nothing
+    but the optimisation: speak() still hands back the freshly synthesised audio rather
+    than failing the turn."""
+    import tempfile as tempfile_module
+    from api.services import interview_service as svc
+
+    async def fake_synthesise(text, voice_id):
+        return b"FRESH-DESPITE-DISK-FULL"
+
+    def explode(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(svc, "synthesise", fake_synthesise)
+    monkeypatch.setattr(tempfile_module, "mkstemp", explode)
+
+    assert await svc.speak("A brand new question", "voice-1") == b"FRESH-DESPITE-DISK-FULL"

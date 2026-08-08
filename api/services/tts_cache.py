@@ -58,17 +58,31 @@ def store_audio(key: str, audio: bytes) -> None:
     writers - e.g. one derived from `key` alone - cannot happen), so two writers on the same
     key write to two different files and cannot interleave into each other's payload.
     Whichever call reaches `replace()` last simply publishes its own complete bytes.
+
+    The cache is an optimisation, never a requirement: `speak()` (interview_service.py)
+    calls this synchronously on the live request path after it already has the freshly
+    synthesised audio in hand, so any failure here - disk full, permission denied, fd
+    exhaustion, or the cache directory vanishing between `_cache_dir()`'s `mkdir` and
+    `mkstemp` - must be swallowed rather than propagated. `mkstemp` itself can raise
+    `OSError` (it is a real filesystem call, unlike the path arithmetic it replaced), so it
+    has to sit inside the same try/except as the write and the rename - a bare `tmp =
+    tempfile.mkstemp(...)` ahead of the try block would let exactly that exception escape
+    uncaught and fail the interview turn a cache miss was never supposed to be able to
+    fail. `tmp` starts as None so the except handler can tell "never created" from "created,
+    then failed" and only unlink in the latter case.
     """
     directory = _cache_dir()
-    fd, tmp_name = tempfile.mkstemp(dir=directory, prefix=f".{key}.", suffix=".partial")
-    tmp = Path(tmp_name)
+    tmp: Path | None = None
     try:
+        fd, tmp_name = tempfile.mkstemp(dir=directory, prefix=f".{key}.", suffix=".partial")
+        tmp = Path(tmp_name)
         with os.fdopen(fd, "wb") as f:
             f.write(audio)
         tmp.replace(directory / f"{key}.mp3")
     except OSError:
         _log.warning("tts_cache: could not store %s", key)
-        tmp.unlink(missing_ok=True)
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
 
 
 async def prewarm_script_audio(slug: str, script_id: str, voice_id: str) -> int:
