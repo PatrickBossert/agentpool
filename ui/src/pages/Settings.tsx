@@ -25,6 +25,7 @@ const DEFAULTS: ProjectSettings = {
   discovery_links: [],
   discovery_document_ids: [],
   interview_method: 'none',
+  elaboration_press_timeout_seconds: 8,
 }
 
 function TagInput({
@@ -287,6 +288,30 @@ export default function Settings() {
               </label>
             ))}
           </div>
+        </div>
+
+        <div>
+          <label htmlFor="press-budget" className="text-xs text-gray-600 block mb-2">
+            Follow-up time limit (seconds)
+          </label>
+          <input
+            id="press-budget"
+            type="number"
+            min={1}
+            max={60}
+            value={form.elaboration_press_timeout_seconds}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                elaboration_press_timeout_seconds: Number(e.target.value),
+              })
+            }
+            className="w-24 bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+          />
+          <p className="text-xs text-muted mt-1">
+            How long Avery waits for a follow-up question before moving on. A local model in
+            secure mode needs longer than the hosted one.
+          </p>
         </div>
       </section>
 

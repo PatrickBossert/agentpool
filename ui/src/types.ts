@@ -100,6 +100,8 @@ export interface ProjectSettings {
   discovery_links: DiscoveryLink[]
   discovery_document_ids: number[]
   interview_method: 'agent' | 'none'
+  /** How long Avery waits for a follow-up during a live interview before moving on. */
+  elaboration_press_timeout_seconds: number
   brand_header_image_url?: string
   brand_primary_color?: string
   brand_text_color?: string
