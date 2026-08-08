@@ -1391,16 +1391,28 @@ async def interview_db_connection(db_path: str, *, wal: bool = True):
 
 
 async def insert_project(conn: aiosqlite.Connection, *, slug: str, llm_mode: str, sector: str, config_json: str) -> bool:
-    """Insert a project. Returns True if inserted, False if slug already exists."""
+    """Insert a project. Returns True if inserted, False if slug already exists.
+
+    The second writer of llm_mode, and so the second place the mode cache has to be dropped.
+    project_llm_mode caches "standard" both when the database file is absent and when the row
+    is absent - which is precisely the state during creation, including the window inside
+    create_project where get_connection(slug) has made the file but this insert has not yet
+    written the row. Anything resolving a mode in that window pins "standard" for the life of
+    the process, and creation never calls update_project_config, so nothing later clears it:
+    a project created as sensitive would ship its documents to Chroma Cloud with no
+    operator-visible signal.
+    """
     try:
         await conn.execute(
             "INSERT INTO projects (slug, llm_mode, sector, config_json) VALUES (?,?,?,?)",
             (slug, llm_mode, sector, config_json),
         )
         await conn.commit()
-        return True
     except aiosqlite.IntegrityError:
         return False
+    from api.services.chroma_client import forget_project_mode
+    forget_project_mode(slug)
+    return True
 
 
 async def fetch_project(conn: aiosqlite.Connection, *, slug: str) -> dict | None:

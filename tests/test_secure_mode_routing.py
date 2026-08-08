@@ -30,6 +30,10 @@ def two_projects(tmp_path, monkeypatch):
     from api.services import chroma_client
     chroma_client._MODE_CACHE.clear()
     yield
+    # Cleared on the way out as well as in: the cache is process-global and keyed by slug,
+    # so clearing only on entry leaves this fixture's slugs resolved for the rest of the
+    # session, pointing at a tmp_path that no longer exists.
+    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 
@@ -74,6 +78,7 @@ async def standard_project(tmp_path, monkeypatch):
     from api.services import chroma_client
     chroma_client._MODE_CACHE.clear()
     yield
+    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 
@@ -107,6 +112,52 @@ async def test_switching_to_sensitive_through_settings_invalidates_the_cache(
     assert built == ["local"]
 
 
+@pytest.mark.asyncio
+async def test_creating_a_project_as_sensitive_is_not_pinned_to_standard(tmp_path, monkeypatch):
+    """The second writer of llm_mode - and the one nothing invalidated.
+
+    project_llm_mode caches "standard" when the database file is absent, and again when the
+    row is absent. Both describe the moments around creation, including the window inside
+    create_project where get_connection(slug) has made the file and insert_project has not
+    yet written the row. Whatever resolves a mode in that window pins "standard" for the life
+    of the process, and creation never calls update_project_config, so the invalidation wired
+    into that path never fires.
+
+    The pre-creation resolution below stands in for that window: it is the state the cache
+    would be left in, reached deterministically. The assertion is on the client actually
+    constructed, because the mode helper returning the right string is only half of it.
+    """
+    import chromadb
+    from api.services import chroma_client
+    from api.models import ProjectCreate
+    from api.services.project_service import create_project
+
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setenv("CHROMA_API_KEY", "cloud-key-is-set")
+    get_settings.cache_clear()
+    chroma_client._MODE_CACHE.clear()
+    try:
+        assert chroma_client.project_llm_mode("fresh-proj") == "standard"
+
+        await create_project(
+            ProjectCreate(client_slug="fresh-proj", llm_mode="sensitive", sector="rail")
+        )
+
+        assert chroma_client.project_llm_mode("fresh-proj") == "sensitive"
+
+        built = []
+        monkeypatch.setattr(chromadb, "CloudClient", lambda **kw: built.append("cloud"))
+        monkeypatch.setattr(chromadb, "HttpClient", lambda **kw: built.append("local"))
+        chroma_client.get_chroma_client("fresh-proj")
+        assert built == ["local"], (
+            "a project created as sensitive is still routed to Chroma Cloud"
+        )
+    finally:
+        chroma_client._MODE_CACHE.clear()
+        get_settings.cache_clear()
+
+
 def test_a_read_error_against_an_existing_database_fails_closed(tmp_path, monkeypatch):
     """The database file exists but the read fails - here, a projects table that hasn't
     been created yet, standing in for locked, corrupt, or permission-denied. This must not
@@ -122,6 +173,7 @@ def test_a_read_error_against_an_existing_database_fails_closed(tmp_path, monkey
     try:
         assert chroma_client.project_llm_mode("broken-proj") == "sensitive"
     finally:
+        chroma_client._MODE_CACHE.clear()
         get_settings.cache_clear()
 
 
@@ -149,6 +201,7 @@ def test_a_failed_read_is_not_cached(tmp_path, monkeypatch):
 
         assert chroma_client.project_llm_mode("recovers-proj") == "standard"
     finally:
+        chroma_client._MODE_CACHE.clear()
         get_settings.cache_clear()
 
 
