@@ -5,7 +5,7 @@ Interview scripts are designed upstream by the assessment_design crew (Interacti
 This crew handles scheduling, conducting, and synthesising the interviews themselves.
 """
 from crewai import Crew, Process, LLM
-from agents.llm import get_pam_llm
+from agents.llm import get_crew_llm
 from agents.tools.registry import get_tools_for_agent
 from agents.discovery.interview_coordinator import (
     create_interview_coordinator,
@@ -60,7 +60,13 @@ def create_discovery_interviews_crew(
     stakeholder_assignments: list of dicts with keys: name, job_title, level, node_label.
     """
     if llm is None:
-        llm = get_pam_llm()
+        # Sonnet 4.6 (standard/fallback) or the local model (sensitive). This crew used to
+        # take get_pam_llm() unconditionally, which read llm_mode not at all: the Synthesis
+        # Analyst holds ChromaQueryTool over {slug}_interviews, so on a sensitive project it
+        # pulled verbatim interview answers out of the correctly-local Chroma and posted them
+        # to a hosted model. Of every crew factory, this was the only one not branching here,
+        # and the only one whose agents read interview answers.
+        llm = get_crew_llm(llm_mode)
 
     assignments_str = _format_assignments(stakeholder_assignments)
 
