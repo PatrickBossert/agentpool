@@ -7,6 +7,7 @@ evidence its own themes cite.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -106,7 +107,7 @@ async def record_answers(
         # every document carries the id it will be cited by.
         written = set(written_ids)
         stored = await fetch_interview_answers(conn, session_id=session_id)
-        index_answers(slug, [r for r in stored if r["id"] in written])
+        await _index_in_background(slug, [r for r in stored if r["id"] in written])
 
     return len(written_ids)
 
@@ -193,3 +194,14 @@ def index_answers(slug: str, rows: list[dict]) -> int:
     except Exception:
         _log.exception("index_answers[%s]: %d answers not indexed", slug, len(rows))
         return 0
+
+
+async def _index_in_background(slug: str, rows: list[dict]) -> int:
+    """Index off the event loop.
+
+    index_answers is synchronous and makes a network call. Called directly from async code
+    it blocks every other request in the process, not just this session - and completions
+    cluster at the end of a break, exactly when other people are mid-question. Measured at
+    3.66s per completion with Chroma unreachable.
+    """
+    return await asyncio.to_thread(index_answers, slug, rows)
