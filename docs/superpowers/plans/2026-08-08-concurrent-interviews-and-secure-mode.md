@@ -228,7 +228,7 @@ async def test_indexing_does_not_delay_other_sessions(monkeypatch):
 
     t0 = time.perf_counter()
     _, waited = await asyncio.gather(
-        asyncio.to_thread(lambda: None) if False else svc._index_in_background("s", [{"id": 1}]),
+        svc._index_in_background("s", [{"id": 1}]),
         waiter(t0),
     )
     assert waited < 0.2, (
@@ -1426,20 +1426,40 @@ async def test_the_sessions_listing_requires_auth(client):
 
 ```python
 # tests/test_interview_session_tool.py  (append)
-def test_the_token_is_generated_in_code(tmp_path, monkeypatch):
+def test_the_token_is_generated_in_code(seeded_tool_project):
     """Taylor's prompt asked the model to 'Generate a UUID4'. The uniqueness of the sole
-    access credential must not depend on a language model."""
+    access credential must not depend on a language model.
+
+    seeded_tool_project is the existing fixture used by test_interview_session_tool_create;
+    reuse it rather than building another. It yields (slug, orchestration_run_id) with
+    stakeholder assignments already in place.
+    """
+    import sqlite3
     import uuid
+    import contextlib
+    from pathlib import Path
+    from api.config import get_settings
     from agents.tools.interview_session_tool import InterviewSessionTool
-    # ... seed a project and one assignment, as the existing create test does ...
-    tool = InterviewSessionTool(slug="tok", orchestration_run_id=1)
-    tool._run(operation="create")
-    # every token parses as a uuid4 and no two are equal
-    tokens = [...]  # read session_token from interview_sessions
-    assert len(set(tokens)) == len(tokens)
-    for t in tokens:
-        assert uuid.UUID(t).version == 4
+
+    slug, run_id = seeded_tool_project
+    InterviewSessionTool(slug=slug, orchestration_run_id=run_id)._run(operation="create")
+
+    db = Path(get_settings().database_dir) / f"{slug}.db"
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        tokens = [r[0] for r in conn.execute(
+            "SELECT session_token FROM interview_sessions WHERE orchestration_run_id=?",
+            (run_id,),
+        )]
+
+    assert tokens, "create wrote no sessions - the fixture seeded no assignments"
+    assert len(set(tokens)) == len(tokens), "duplicate session tokens"
+    for token in tokens:
+        assert uuid.UUID(token).version == 4, f"{token} is not a uuid4"
 ```
+
+If the existing create test builds its project inline rather than through a fixture, extract
+that setup into a `seeded_tool_project` fixture first and have both tests use it. Do not
+duplicate the setup.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1488,7 +1508,65 @@ Everything above is a unit change. This is the property the sub-project exists f
 **Interfaces:**
 - Consumes: every change from Tasks 1-11
 
-- [ ] **Step 1: Write the test**
+- [ ] **Step 1: Write the fixture**
+
+```python
+# tests/test_interview_concurrency.py  (append)
+from dataclasses import dataclass
+
+
+@dataclass
+class Campaign:
+    slug: str
+    tokens: list[str]
+
+
+@pytest_asyncio.fixture
+async def seeded_campaign(tmp_path, monkeypatch):
+    """One project, twenty pending sessions, and a current interview_scripts artefact.
+
+    Every session points at the same script, which is what a real cohort looks like: twenty
+    frontline staff on SC-001, all invited on the same day.
+    """
+    import json
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    slug = "peak"
+    outputs = tmp_path / "projects" / slug / "outputs"
+    outputs.mkdir(parents=True)
+    scripts = {"SC-001": {"script_id": "SC-001", "node_id": "1.F",
+                          "node_label": "Frontline Interview", "level": "F",
+                          "relationship": "internal",
+                          "sections": [{"section_id": "s1", "questions": [
+                              {"question_id": "q1", "text": "Q?"}]}]}}
+    (outputs / "interview_scripts_v1.json").write_text(json.dumps(scripts))
+
+    from api.database import get_connection
+    tokens = [f"peak-token-{i:02d}" for i in range(20)]
+    async with get_connection(slug) as conn:
+        await conn.execute("INSERT INTO projects (slug, sector) VALUES (?,?)", (slug, "test"))
+        await conn.commit()
+        cur = await conn.execute("SELECT id FROM projects WHERE slug=?", (slug,))
+        pid = (await cur.fetchone())[0]
+        await conn.execute(
+            "INSERT INTO agent_outputs (project_id, run_id, agent_name, output_type, "
+            "version, is_current, file_path) VALUES (?,?,?,?,?,?,?)",
+            (pid, 0, "interaction_designer", "interview_scripts", 1, 1,
+             str(outputs / "interview_scripts_v1.json")),
+        )
+        for i, token in enumerate(tokens):
+            await conn.execute(
+                "INSERT INTO interview_sessions (project_id, stakeholder_id, node_label, "
+                "session_token, status) VALUES (?,?,?,?,?)",
+                (pid, i + 1, "Frontline Interview", token, "pending"),
+            )
+        await conn.commit()
+    yield Campaign(slug=slug, tokens=tokens)
+    get_settings.cache_clear()
+```
+
+- [ ] **Step 2: Write the test**
 
 ```python
 # tests/test_interview_concurrency.py  (append)
@@ -1519,22 +1597,22 @@ async def test_twenty_sessions_complete_concurrently(client, seeded_campaign):
     assert set(counts.values()) == {1}, f"answers leaked between sessions: {counts}"
 ```
 
-- [ ] **Step 2: Run it**
+- [ ] **Step 3: Run it**
 
 Run: `./venv/bin/pytest tests/test_interview_concurrency.py -v`
 Expected: PASS. A failure mentioning `database is locked` means Task 5's WAL change is not in effect for this connection path; a count above 1 means Task 6's unique index is missing.
 
-- [ ] **Step 3: Run the whole suite twice**
+- [ ] **Step 4: Run the whole suite twice**
 
 Run: `./venv/bin/pytest -q` then `./venv/bin/pytest -q`
 Expected: identical counts, both green.
 
-- [ ] **Step 4: Run the frontend suite**
+- [ ] **Step 5: Run the frontend suite**
 
 Run: `cd ui && npx vitest run && npx tsc --noEmit`
 Expected: PASS, `tsc` clean
 
-- [ ] **Step 5: Update CLAUDE.md**
+- [ ] **Step 6: Update CLAUDE.md**
 
 Add to Known issues / tech debt:
 
@@ -1547,7 +1625,7 @@ Add to Known issues / tech debt:
   experience, which is why sub-project B left it alone.
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add tests/test_interview_concurrency.py CLAUDE.md
