@@ -70,8 +70,6 @@ async def get_session_with_script(session_token: str) -> dict | None:
     if not db_path:
         return None
 
-    settings = get_settings()
-
     # Derive slug from db filename (e.g. "myproject.db" → "myproject")
     slug = Path(db_path).stem
 
@@ -93,19 +91,10 @@ async def get_session_with_script(session_token: str) -> dict | None:
         except Exception:
             pass
 
-    # interview_scripts are written by SQLiteStateTool as a JSON file at:
-    # {projects_dir}/{slug}/outputs/interview_scripts.json
-    scripts_path = (
-        Path(settings.projects_dir) / slug / "outputs" / "interview_scripts.json"
-    )
-    script = None
-    if scripts_path.exists():
-        try:
-            scripts = json.loads(scripts_path.read_text())
-            node_label = session_row.get("node_label") if isinstance(session_row, dict) else session_row["node_label"]
-            script = scripts.get(node_label)
-        except (json.JSONDecodeError, KeyError):
-            pass
+        # Resolved exactly as the completion path resolves it. These must agree: a session
+        # served from one script and recorded against another tags every answer with the
+        # wrong node, discipline and level, and nothing reports the mismatch.
+        script = await script_for_session(conn, slug, dict(session_row))
 
     branding = {
         "header_image_url": config.get("brand_header_image_url", ""),
