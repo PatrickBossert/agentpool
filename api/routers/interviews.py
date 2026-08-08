@@ -13,7 +13,6 @@ import re
 import time
 from collections import defaultdict
 
-import aiosqlite
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
@@ -24,6 +23,7 @@ from api.config import get_settings
 from api.database import (
     fetch_interview_sessions_for_run,
     get_connection,
+    interview_db_connection,
     save_interview_checkpoint,
     update_interview_session_status,
 )
@@ -273,7 +273,7 @@ async def update_session_status(session_token: str, body: StatusUpdateRequest):
     db_path = await _find_session_db(session_token)
     if not db_path:
         raise HTTPException(status_code=404, detail="Session not found")
-    async with aiosqlite.connect(db_path) as conn:
+    async with interview_db_connection(db_path) as conn:
         await update_interview_session_status(conn, session_token, body.status)
     return {"ok": True}
 
@@ -292,7 +292,7 @@ async def save_checkpoint(session_token: str, body: CheckpointBody):
     db_path = await _find_session_db(session_token)
     if not db_path:
         raise HTTPException(status_code=404, detail="Session not found")
-    async with aiosqlite.connect(db_path) as conn:
+    async with interview_db_connection(db_path) as conn:
         await save_interview_checkpoint(conn, session_token, body.checkpoint)
     return {"saved": True}
 
@@ -365,8 +365,7 @@ async def email_transcript(session_token: str, body: TranscriptEmailRequest):
     if not db_path:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    async with aiosqlite.connect(db_path) as _conn:
-        _conn.row_factory = aiosqlite.Row
+    async with interview_db_connection(db_path) as _conn:
         async with _conn.execute(
             "SELECT s.status, st.email AS stakeholder_email "
             "FROM interview_sessions s "

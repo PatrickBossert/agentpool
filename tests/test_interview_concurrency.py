@@ -220,6 +220,58 @@ async def test_the_interview_path_gets_wal_and_a_busy_timeout(raw_session, monke
 
 
 @pytest.mark.asyncio
+async def test_complete_session_gets_wal_and_a_busy_timeout(raw_session, monkeypatch):
+    """Same defect, on the heavy write rather than the read.
+
+    complete_session is the call this whole plan is most concerned with - the write a real
+    campaign's completions cluster on at the end of a break - so it earns its own assertion
+    rather than relying on test_the_interview_path_gets_wal_and_a_busy_timeout's coverage of
+    get_session_with_script to stand in for it. Both call sites go through the same
+    interview_db_connection, which makes them *likely* to agree, but a fixed pragma list
+    shared in one place is exactly the kind of "obviously correct" property this plan has
+    already found broken once (get_connection had it right; the interview path just never
+    called it) - so each call site that touches a database this task cares about gets its own
+    check rather than borrowing another's.
+    """
+    token, db_path = raw_session
+
+    async with aiosqlite.connect(str(db_path)) as conn:
+        cur = await conn.execute("PRAGMA journal_mode")
+        before = (await cur.fetchone())[0].lower()
+    assert before == "delete", (
+        "fixture already left the database in WAL - this test cannot detect the defect"
+    )
+
+    from api.services import interview_service as svc
+
+    captured: dict = {}
+    real_interview_db_connection = svc.interview_db_connection
+
+    @asynccontextmanager
+    async def spy(path, **kwargs):
+        async with real_interview_db_connection(path, **kwargs) as conn:
+            cur = await conn.execute("PRAGMA busy_timeout")
+            captured["busy_timeout"] = (await cur.fetchone())[0]
+            yield conn
+
+    monkeypatch.setattr(svc, "interview_db_connection", spy)
+
+    pairs = [{"question_id": "q1", "question": "Q?", "answer": "A"}]
+    ok = await svc.complete_session(token, pairs)
+    assert ok is True, "fixture setup did not produce a completable session"
+
+    assert captured.get("busy_timeout") == 10000, (
+        f"complete_session left busy_timeout at {captured.get('busy_timeout')!r} "
+        "instead of the configured 10000"
+    )
+
+    async with aiosqlite.connect(str(db_path)) as conn:
+        cur = await conn.execute("PRAGMA journal_mode")
+        after = (await cur.fetchone())[0].lower()
+    assert after == "wal", "complete_session left the database in delete mode"
+
+
+@pytest.mark.asyncio
 async def test_completing_twice_writes_one_answer_set(client, dup_project):
     """Driven through the endpoint twice, not by calling record_answers twice.
 

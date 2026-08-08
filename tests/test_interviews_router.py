@@ -618,3 +618,100 @@ async def test_email_transcript_rejects_whitespace_padded_address(client, clean_
 
     assert r.status_code == 422
     mock_client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 14. PATCH /{session_token}/status and PATCH /{session_token}/checkpoint —
+#    both moved from a raw aiosqlite.connect onto interview_db_connection.
+#    Neither endpoint had any functional coverage before this - every other
+#    test in this file mocks the service layer out from under the router - so
+#    these seed a real session and check the write actually lands, not just
+#    that the endpoint returns 200.
+# ---------------------------------------------------------------------------
+
+_STATUS_SLUG = "interview-status-test"
+
+
+@pytest.fixture
+def clean_status_checkpoint():
+    db_path = Path(get_settings().database_dir) / f"{_STATUS_SLUG}.db"
+    db_path.unlink(missing_ok=True)
+    yield
+    get_settings.cache_clear()
+    db_path.unlink(missing_ok=True)
+
+
+async def _seed_pending_session(client, token: str) -> None:
+    """Create a project with one pending session - no completed/email trappings needed."""
+    r = await client.post(
+        "/projects",
+        json={"client_slug": _STATUS_SLUG, "llm_mode": "standard", "sector": "test"},
+    )
+    assert r.status_code in (200, 201)
+
+    async with get_connection(_STATUS_SLUG) as conn:
+        async with conn.execute(
+            "SELECT id FROM projects WHERE slug=?", (_STATUS_SLUG,)
+        ) as cur:
+            project_id = (await cur.fetchone())["id"]
+
+        cur = await conn.execute(
+            "INSERT INTO stakeholders (project_id, name) VALUES (?,?)",
+            (project_id, "Sam Stakeholder"),
+        )
+        await conn.commit()
+
+        await insert_interview_session(
+            conn,
+            project_id=project_id,
+            orchestration_run_id=None,
+            stakeholder_id=cur.lastrowid,
+            node_label="Goods-in Inspection",
+            session_token=token,
+        )
+        await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_update_session_status_writes_through_interview_db_connection(
+    client, clean_status_checkpoint
+):
+    """The write must land, not just return 200 - a mocked service layer couldn't tell the
+    difference between a real interview_db_connection write and a silently swallowed one."""
+    token = "status-token-01"
+    await _seed_pending_session(client, token)
+
+    r = await client.patch(f"/api/interviews/{token}/status", json={"status": "active"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+    async with get_connection(_STATUS_SLUG) as conn:
+        cur = await conn.execute(
+            "SELECT status FROM interview_sessions WHERE session_token=?", (token,)
+        )
+        assert (await cur.fetchone())["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_save_checkpoint_writes_through_interview_db_connection(
+    client, clean_status_checkpoint
+):
+    """The autosave path - the highest-frequency write during a live interview, and the
+    scenario this task's concurrency fix is squarely aimed at - still saves correctly once
+    routed through interview_db_connection instead of a raw aiosqlite.connect."""
+    token = "checkpoint-token-01"
+    await _seed_pending_session(client, token)
+
+    r = await client.patch(
+        f"/api/interviews/{token}/checkpoint",
+        json={"checkpoint": {"question_index": 3, "answers": {"q1": "A"}}},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"saved": True}
+
+    async with get_connection(_STATUS_SLUG) as conn:
+        cur = await conn.execute(
+            "SELECT checkpoint_json FROM interview_sessions WHERE session_token=?", (token,)
+        )
+        row = await cur.fetchone()
+    assert json.loads(row["checkpoint_json"]) == {"question_index": 3, "answers": {"q1": "A"}}
