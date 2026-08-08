@@ -133,6 +133,14 @@ async def test_speak_raises_without_key():
 
 @pytest.mark.asyncio
 async def test_elaboration_press_returns_string():
+    """elaboration_press must use the shared client from http_clients, not build its own.
+
+    Previously this constructed AsyncAnthropic() per call, so the test patched sys.modules
+    and reloaded interview_service to inject a fake class. Now the client is memoised in
+    api.services.http_clients, so the getter itself is what must be mocked - patching
+    sys.modules would miss it, since http_clients already holds its own AsyncAnthropic
+    reference from import time.
+    """
     fake_text = "Could you elaborate on that point?"
 
     mock_content_block = MagicMock()
@@ -145,16 +153,12 @@ async def test_elaboration_press_returns_string():
     mock_client.messages = MagicMock()
     mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-    mock_async_anthropic_cls = MagicMock(return_value=mock_client)
-    mock_anthropic_module = MagicMock()
-    mock_anthropic_module.AsyncAnthropic = mock_async_anthropic_cls
+    with patch(
+        "api.services.interview_service.get_anthropic_client", return_value=mock_client
+    ):
+        from api.services.interview_service import elaboration_press
 
-    with patch.dict("sys.modules", {"anthropic": mock_anthropic_module}):
-        import importlib
-        import api.services.interview_service as svc_module
-        importlib.reload(svc_module)
-
-        result = await svc_module.elaboration_press(
+        result = await elaboration_press(
             question_text="What are the main challenges?",
             response_text="It's complicated.",
             probing_instructions="Ask for specific examples.",
@@ -163,6 +167,7 @@ async def test_elaboration_press_returns_string():
 
     assert isinstance(result, str)
     assert len(result) > 0
+    mock_client.messages.create.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import aiosqlite
 import httpx
 
 from api.config import get_settings
+from api.services.http_clients import get_tts_client, get_anthropic_client
 from api.services.interview_answer_service import record_answers, script_for_session
 from api.database import (
     complete_interview_session,
@@ -165,27 +166,27 @@ async def speak(text: str, voice_id: str) -> bytes:
     settings = get_settings()
     if not settings.elevenlabs_api_key:
         raise ValueError("ELEVENLABS_API_KEY not configured")
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-            headers={
-                "xi-api-key": settings.elevenlabs_api_key,
-                "Content-Type": "application/json",
+    client = get_tts_client()
+    resp = await client.post(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+        headers={
+            "xi-api-key": settings.elevenlabs_api_key,
+            "Content-Type": "application/json",
+        },
+        json={
+            "text": text,
+            "model_id": "eleven_turbo_v2",
+            "voice_settings": {
+                "stability": 0.40,
+                "similarity_boost": 0.75,
+                "style": 0.25,
+                "use_speaker_boost": True,
             },
-            json={
-                "text": text,
-                "model_id": "eleven_turbo_v2",
-                "voice_settings": {
-                    "stability": 0.40,
-                    "similarity_boost": 0.75,
-                    "style": 0.25,
-                    "use_speaker_boost": True,
-                },
-            },
-            timeout=30.0,
-        )
-        resp.raise_for_status()
-        return resp.content
+        },
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+    return resp.content
 
 
 async def elaboration_press(
@@ -195,9 +196,7 @@ async def elaboration_press(
     stakeholder_name: str = "",
 ) -> str:
     """Generate a follow-up press question via Claude Haiku."""
-    from anthropic import AsyncAnthropic
-
-    client = AsyncAnthropic()
+    client = get_anthropic_client()
     name_clause = f" {stakeholder_name}" if stakeholder_name else ""
     prompt = (
         f"You are a polite but insistent interviewer.{name_clause} has given an "

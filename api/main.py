@@ -129,6 +129,9 @@ async def lifespan(app: FastAPI):
     with contextlib.suppress(asyncio.CancelledError):
         await scheduler_task
 
+    from api.services.http_clients import close_http_clients
+    await close_http_clients()
+
 
 app = FastAPI(title="AgentPool API", version="0.1.0", lifespan=lifespan, favicon_url=None)
 
