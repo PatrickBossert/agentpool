@@ -424,7 +424,9 @@ async def test_get_sessions_with_data(client, clean_sessions_with_data):
     assert session["node_label"] == "Goods-in Inspection"
     assert session["session_token"] == session_token
     assert session["status"] == "completed"
-    assert session["interview_url"].endswith(f"/interview/{session_token}")
+    # Must carry the /dashboard basename the SPA is served under - a link built from
+    # frontend_url instead of public_url, or missing /dashboard, 404s for the interviewee.
+    assert session["interview_url"].endswith(f"/dashboard/interview/{session_token}")
 
     assert data["summary"]["completed"] == 1
     assert data["summary"]["pending"] == 0

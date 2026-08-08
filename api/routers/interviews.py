@@ -30,6 +30,7 @@ from api.services.interview_service import (
     elaboration_press,
     generate_deepgram_token,
     get_session_with_script,
+    interview_url,
     speak,
 )
 
@@ -75,7 +76,6 @@ async def get_sessions_for_project(slug: str):
         rows = await fetch_interview_sessions_for_run(conn, orchestration_run_id)
 
     # 4. Build response
-    frontend_url = get_settings().frontend_url
     summary = {**_EMPTY_SUMMARY}
     sessions = []
     for row in rows:
@@ -89,7 +89,7 @@ async def get_sessions_for_project(slug: str):
             "node_label": row["node_label"],
             "session_token": row["session_token"],
             "status": status,
-            "interview_url": f"{frontend_url}/interview/{row['session_token']}",
+            "interview_url": interview_url(row["session_token"]),
             "started_at": row["started_at"],
             "completed_at": row["completed_at"],
             "created_at": row["created_at"],

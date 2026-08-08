@@ -32,6 +32,17 @@ from api.database import (
 _log = logging.getLogger(__name__)
 
 
+def interview_url(session_token: str) -> str:
+    """The link an interviewee follows.
+
+    public_url, not frontend_url: frontend_url is unset in every deployment and defaults to
+    localhost. And /dashboard, because that is the SPA's vite base and router basename - a
+    link without it 404s. Two of the three hand-built versions of this string got one or
+    both wrong, and only the reminder email produced a working link.
+    """
+    return f"{get_settings().public_url.rstrip('/')}/dashboard/interview/{session_token}"
+
+
 async def _find_session_db(session_token: str) -> str | None:
     """Scan all project DB files to find the one containing session_token.
 

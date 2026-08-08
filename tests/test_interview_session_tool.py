@@ -184,11 +184,16 @@ def _setup_sync_db(tmp_path):
 
 
 def test_interview_session_tool_create(tmp_path):
+    """The tool builds its printed URLs via interview_service.interview_url(), imported
+    inside _create() to dodge a circular import - so the setting that matters is
+    public_url on interview_service's own get_settings, not the tool module's, and the
+    expected string carries the /dashboard basename the SPA is served under.
+    """
     db_path = _setup_sync_db(tmp_path)
     from agents.tools.interview_session_tool import InterviewSessionTool
     with patch("agents.tools.interview_session_tool._db_path", return_value=db_path), \
-         patch("agents.tools.interview_session_tool.get_settings") as ms:
-        ms.return_value.frontend_url = "https://app.example.com"
+         patch("api.services.interview_service.get_settings") as ms:
+        ms.return_value.public_url = "https://app.example.com"
         tool = InterviewSessionTool(slug="myslug", orchestration_run_id=1)  # crew_run_id=1
         result = tool._run(
             operation="create",
@@ -197,7 +202,7 @@ def test_interview_session_tool_create(tmp_path):
             session_tokens=[],
         )
     assert "abc-123" in result
-    assert "https://app.example.com" in result
+    assert "https://app.example.com/dashboard/interview/abc-123" in result
     # verify DB state
     with contextlib.closing(sqlite3.connect(db_path)) as conn:
         conn.row_factory = sqlite3.Row

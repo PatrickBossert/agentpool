@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from api.config import get_settings
 import httpx
 
+from api.services.interview_service import interview_url
 from api.database import (
     get_connection,
     get_db_path,
@@ -357,7 +358,6 @@ async def generate_reminders_svc(slug: str, campaign_id: int) -> dict | None:
             exclude_completed=True,
         )
 
-        public_url = get_settings().public_url.rstrip("/")
         count = 0
         for s in stakeholders:
             invited_at = s.get("interview_invited_at")
@@ -368,13 +368,15 @@ async def generate_reminders_svc(slug: str, campaign_id: int) -> dict | None:
             subject = template["subject"]
             session_token = await fetch_session_token_for_stakeholder(conn, s["id"])
             if session_token:
-                interview_url = f"{public_url}/dashboard/interview/{session_token}"
+                url = interview_url(session_token)
             else:
-                interview_url = f"{public_url}/dashboard/interview"
+                # No session yet - point at the SPA's interview landing rather than a
+                # per-session link that doesn't exist.
+                url = f"{get_settings().public_url.rstrip('/')}/dashboard/interview"
             body = template["body"].format(
                 name=s["name"],
                 campaign_name=camp["campaign_name"] or camp["value_stream_name"],
-                interview_url=interview_url,
+                interview_url=url,
             )
             await insert_reminder_email(
                 conn,

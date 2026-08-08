@@ -92,8 +92,12 @@ class InterviewSessionTool(BaseTool):
         orchestration_run_id: int,
         sessions: list[dict],
     ) -> str:
-        settings = get_settings()
-        base_url = settings.frontend_url.rstrip("/")
+        # Imported here, not at module scope: api.services.interview_service pulls in
+        # api.database and friends, and this tool module loads early via the CrewAI tool
+        # registry - importing at the top risks a circular import. This is the established
+        # pattern for this tool.
+        from api.services.interview_service import interview_url
+
         urls = []
         for s in sessions:
             try:
@@ -117,7 +121,7 @@ class InterviewSessionTool(BaseTool):
                     voice_config_json,
                 ),
             )
-            url = f"{base_url}/interview/{session_token}"
+            url = interview_url(session_token)
             urls.append(f"- {s.get('name', 'Stakeholder')}: {url}")
         conn.commit()
         return "Sessions created. Interview URLs:\n" + "\n".join(urls)
