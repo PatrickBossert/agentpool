@@ -18,7 +18,16 @@ export default function AveryOutputExtra({ slug }: { slug: string }) {
 
   const { data, isLoading } = useQuery<InterviewSessionsResponse>({
     queryKey: ['interview-sessions', slug],
-    queryFn: () => fetch(`/api/interviews/sessions/${slug}`).then(r => r.json()),
+    queryFn: () =>
+      fetch(`/api/interviews/sessions/${slug}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      }).then(r => r.ok
+        ? r.json()
+        : Promise.resolve({
+            orchestration_run_id: null,
+            sessions: [],
+            summary: { pending: 0, active: 0, completed: 0, abandoned: 0 },
+          })),
     refetchInterval: 15_000,
   })
 

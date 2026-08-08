@@ -314,6 +314,10 @@ async def test_get_sessions_unknown_slug(client):
     assert resp.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# 10. GET /sessions/{slug} — requires auth, and still works with it
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
 async def test_the_sessions_listing_requires_auth():
     """It returns every session_token for a project, and a token is the only credential
@@ -341,7 +345,7 @@ async def test_the_sessions_listing_works_with_auth(client):
 
 
 # ---------------------------------------------------------------------------
-# 8. GET /sessions/{slug} — project exists but no orchestration runs
+# 11. GET /sessions/{slug} — project exists but no orchestration runs
 # ---------------------------------------------------------------------------
 
 _SESSIONS_SLUG_NO_RUNS = "sessions-no-runs-test"
@@ -374,7 +378,7 @@ async def test_get_sessions_no_runs(client, clean_sessions_no_runs):
 
 
 # ---------------------------------------------------------------------------
-# 8. GET /sessions/{slug} — project with orchestration run and session data
+# 12. GET /sessions/{slug} — project with orchestration run and session data
 # ---------------------------------------------------------------------------
 
 _SESSIONS_SLUG_WITH_DATA = "sessions-with-data-test"
@@ -461,7 +465,7 @@ async def test_get_sessions_with_data(client, clean_sessions_with_data):
 
 
 # ---------------------------------------------------------------------------
-# 9. POST /{session_token}/email-transcript — destination must match the
+# 13. POST /{session_token}/email-transcript — destination must match the
 #    stakeholder the session was created for.
 #
 #    The transcript body is deliberately caller-supplied (interviewees edit it
