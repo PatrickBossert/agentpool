@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
-import chromadb
 from api.config import get_settings
+from api.services.chroma_client import get_chroma_client
 from api.services.ingest_service import UPSERT_BATCH
 
 
@@ -70,20 +70,23 @@ class DocumentIngestionTool(BaseTool):
         if not paths:
             return "No supported documents found (.txt, .md, .pdf)"
 
+        # Routed through the shared factory rather than constructing a client here, because
+        # this tool is held by value_chain_mapper and requirements_analyst and ingests the
+        # client's own corporate documents. Building CloudClient off CHROMA_API_KEY alone sent
+        # a sensitive project's documents to Chroma Cloud, and left the sensitive path broken
+        # as well as leaking: ChromaQueryTool reads local for that project while this wrote
+        # cloud, so nothing Alex ingested could be retrieved.
         try:
-            if settings.chroma_api_key:
-                client = chromadb.CloudClient(
-                    tenant=settings.chroma_tenant,
-                    database=settings.chroma_database,
-                    api_key=settings.chroma_api_key,
-                )
-            else:
-                if not _chroma_reachable(settings.chroma_host, settings.chroma_port):
-                    return "ChromaDB is not reachable. Start Docker (docker compose up -d) and retry."
-                client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+            client = get_chroma_client(self.slug)
             collection = client.get_or_create_collection(name=f"{self.slug}_docs")
         except Exception as e:
-            return f"Error: ChromaDB unavailable — {e}"
+            # The probe runs only once construction has already failed: it costs a socket
+            # connection, and its one job is to tell "Docker is not running" apart from every
+            # other reason Chroma might be unavailable. Which client the factory chose is not
+            # re-derived here - duplicating the routing rule is how the two drift apart.
+            if not _chroma_reachable(settings.chroma_host, settings.chroma_port):
+                return "ChromaDB is not reachable. Start Docker (docker compose up -d) and retry."
+            return f"Error: ChromaDB unavailable - {e}"
 
         ingested = []
         for path in paths:

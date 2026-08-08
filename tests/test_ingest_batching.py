@@ -125,9 +125,11 @@ def test_the_agent_tool_batches_too(tmp_path, monkeypatch):
     client = MagicMock()
     collection = _collection(client)
 
+    # Patched at the factory rather than at chromadb, because the tool no longer chooses a
+    # client class itself - which client a project gets is decided by get_chroma_client, and
+    # tested in tests/test_secure_mode_document_paths.py. This test is about batching only.
     with patch("agents.tools.document_ingestion.get_settings", return_value=settings), \
-         patch("agents.tools.document_ingestion.chromadb") as chromadb:
-        chromadb.CloudClient.return_value = client
+         patch("agents.tools.document_ingestion.get_chroma_client", return_value=client):
         DocumentIngestionTool(slug="acme")._run(filename=None)
 
     calls = collection.upsert.call_args_list

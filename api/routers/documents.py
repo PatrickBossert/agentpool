@@ -115,20 +115,15 @@ async def delete_document_endpoint(
     # Remove file from disk
     Path(doc["file_path"]).unlink(missing_ok=True)
 
-    # Remove from ChromaDB if it was ingested
+    # Remove from ChromaDB if it was ingested. Resolved per project, exactly as the upload
+    # path does (api/services/ingest_service.py): a raw CloudClient here would delete from
+    # the cloud for a project whose chunks were indexed locally, and the failure is invisible
+    # because the whole block is best-effort - the chunks would stay in the local collection
+    # for ever and remain retrievable after the operator deleted the document.
     if doc["ingested"]:
         try:
-            from api.config import get_settings
-            import chromadb
-            settings = get_settings()
-            if settings.chroma_api_key:
-                client = chromadb.CloudClient(
-                    tenant=settings.chroma_tenant,
-                    database=settings.chroma_database,
-                    api_key=settings.chroma_api_key,
-                )
-            else:
-                client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+            from api.services.chroma_client import get_chroma_client
+            client = get_chroma_client(slug)
             collection = client.get_or_create_collection(name=f"{slug}_docs")
             collection.delete(where={"doc_id": doc_id})
         except Exception:
