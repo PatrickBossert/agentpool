@@ -176,6 +176,7 @@ async def update_project_settings(slug: str, settings: ProjectSettings) -> dict 
             return None
         await update_project_config(
             conn,
+            slug=slug,
             project_id=project["id"],
             llm_mode=settings.llm_mode,
             sector=settings.sector,

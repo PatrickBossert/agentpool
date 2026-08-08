@@ -19,29 +19,66 @@ from api.config import get_settings
 
 _log = logging.getLogger(__name__)
 
-# Resolved once per slug per process. llm_mode changes only when a human edits the project.
+# Resolved once per slug per process, and invalidated by forget_project_mode whenever
+# llm_mode is written (see api.database.update_project_config). Caching survives a mode
+# switch only between the write and the next resolution - it is not stale by design, it is
+# stale until someone tells it otherwise.
 _MODE_CACHE: dict[str, str] = {}
+
+
+def forget_project_mode(slug: str) -> None:
+    """Drop a cached mode so the next resolution re-reads the database.
+
+    Call this from wherever llm_mode is written. Without it, a project switched
+    standard -> sensitive keeps routing to whichever client its mode last resolved to,
+    for as long as the process runs - a silent confidentiality breach with no
+    operator-visible signal, not merely a stale read.
+    """
+    _MODE_CACHE.pop(slug, None)
 
 
 def project_llm_mode(slug: str) -> str:
     """The project's llm_mode, read synchronously.
 
     Sync because every caller is: index_answers, the ingest service and ChromaQueryTool all
-    run outside the event loop or in a thread. Defaults to "standard" when the project or
-    column cannot be read - a project that does not exist has no secrets to protect, and
-    failing closed here would break ingest for every standard project on a bad read.
+    run outside the event loop or in a thread. Note for a future reader: this opens its own
+    sqlite3 connection per call and, unlike the async pool in api.database.get_connection,
+    sets no busy_timeout - so it can raise "database is locked" under contention rather than
+    waiting, which is exactly the read error the fail-closed branch below exists to handle.
+
+    Two failure shapes, deliberately treated differently:
+
+    - The database file does not exist at all: the project has never been created, so it
+      has no secrets to protect. This is a stable fact, safe to default to "standard" and
+      cache.
+    - The database file exists but the read fails (locked, corrupt, permission denied,
+      whatever): this says nothing about the project's real mode, and defaulting to
+      "standard" here would silently route a possibly-sensitive project's data to Chroma
+      Cloud on a transient fault. Fails closed to "sensitive" instead, and the result is
+      NOT cached - caching a guess born of a failed read is what would turn one bad read
+      into a permanent, silent breach.
     """
     if slug in _MODE_CACHE:
         return _MODE_CACHE[slug]
-    mode = "standard"
+
     db_path = Path(get_settings().database_dir) / f"{slug}.db"
-    with contextlib.suppress(sqlite3.Error, OSError):
+    if not db_path.exists():
+        _MODE_CACHE[slug] = "standard"
+        return "standard"
+
+    try:
         with contextlib.closing(sqlite3.connect(db_path)) as conn:
             row = conn.execute(
                 "SELECT llm_mode FROM projects WHERE slug=?", (slug,)
             ).fetchone()
-            if row and row[0]:
-                mode = row[0]
+    except (sqlite3.Error, OSError):
+        _log.warning(
+            "project_llm_mode(%s): database exists but could not be read - "
+            "defaulting to sensitive and not caching the result", slug,
+        )
+        return "sensitive"
+
+    mode = row[0] if row and row[0] else "standard"
     _MODE_CACHE[slug] = mode
     return mode
 

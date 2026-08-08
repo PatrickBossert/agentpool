@@ -202,6 +202,7 @@ async def test_update_project_config(db):
     project = await fetch_project(db, slug="cfg-test")
     await update_project_config(
         db,
+        slug="cfg-test",
         project_id=project["id"],
         llm_mode="sensitive",
         sector="energy",

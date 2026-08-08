@@ -256,6 +256,7 @@ async def upload_branding_image(
         config["brand_header_image_url"] = image_url
         await update_project_config(
             conn,
+            slug=slug,
             project_id=project["id"],
             llm_mode=project["llm_mode"],
             sector=project["sector"],

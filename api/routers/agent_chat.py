@@ -111,6 +111,7 @@ async def _patch_config(conn, project: dict, key: str, value) -> None:
     config[key] = value
     await update_project_config(
         conn,
+        slug=project["slug"],
         project_id=project["id"],
         llm_mode=project["llm_mode"],
         sector=project.get("sector") or "",

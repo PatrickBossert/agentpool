@@ -1575,16 +1575,24 @@ async def fetch_document_names(conn: aiosqlite.Connection, *, project_id: int) -
 async def update_project_config(
     conn: aiosqlite.Connection,
     *,
+    slug: str,
     project_id: int,
     llm_mode: str,
     sector: str,
     config_json: str,
 ) -> None:
+    """The one write path for a project's llm_mode - every caller that can change it goes
+    through here, which is why the cache invalidation lives here rather than at any one
+    of them. Called with an unchanged llm_mode (e.g. a branding or config-key patch) still
+    clears the cache; that costs one extra read on the next resolution and is cheaper than
+    a caller forgetting to invalidate on the one call that actually flips the mode."""
     await conn.execute(
         "UPDATE projects SET llm_mode=?, sector=?, config_json=? WHERE id=?",
         (llm_mode, sector, config_json, project_id),
     )
     await conn.commit()
+    from api.services.chroma_client import forget_project_mode
+    forget_project_mode(slug)
 
 
 async def _set_document_ingest_state(
