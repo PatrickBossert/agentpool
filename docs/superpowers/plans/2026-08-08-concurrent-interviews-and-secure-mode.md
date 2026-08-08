@@ -1761,3 +1761,85 @@ versioned. publish_node_template read the same bare path and 404d for every proj
 interviews.py:113 is left alone deliberately: it reads a hand-written smoke-test fixture
 that does exist at its bare path."
 ```
+
+---
+
+## Task 14: The review link in the HITL webhook
+
+Found by Task 10's implementer while eliminating hand-built interview URLs. `agents/tools/human_input.py:60`
+builds the `review_url` sent to n8n in the HITL webhook payload, and gets it wrong twice:
+
+```python
+f"{settings.frontend_url}/projects/{self.slug}/reviews"
+```
+
+- `frontend_url` is unset in every deployment and defaults to `http://localhost:3000`. Only
+  `PUBLIC_URL` is set. This is the same defect Task 10 fixed for interview links.
+- The route is `:slug/reviews` under basename `/dashboard` (`ui/src/router.tsx:126`), so the
+  correct path is `/dashboard/{slug}/reviews`. The emitted `/projects/` segment does not exist.
+
+So a reviewer clicking the link in a HITL notification gets a 404 on localhost. After this task,
+`grep -rn frontend_url api agents` should return only the explanatory comment in
+`interview_service.py`, and `frontend_url` itself becomes a candidate for deletion from
+`api/config.py` and `.env.example` - check for other consumers before removing it.
+
+**Files:**
+- Modify: `agents/tools/human_input.py:56-61`
+- Test: `tests/test_human_input.py` (or whichever file covers `HumanInputTool`; create the test
+  in the file that already covers the webhook payload)
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+def test_the_review_link_points_at_a_route_that_exists(monkeypatch):
+    """The link goes to n8n and a human clicks it. It resolved to localhost, on a path with a
+    /projects/ segment the router does not define, so it 404d wherever it was opened."""
+    monkeypatch.setenv("PUBLIC_URL", "https://example.test")
+    get_settings.cache_clear()
+    payload = _captured_webhook_payload()      # drive HumanInputTool with the post mocked
+    url = payload["review_url"]
+    assert url.startswith("https://example.test/dashboard/")
+    assert "/projects/" not in url
+    assert url.endswith("/reviews")
+    get_settings.cache_clear()
+```
+
+Read `agents/tools/human_input.py` for the real webhook call and mock at that boundary rather
+than assuming a helper exists.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `./venv/bin/pytest tests/test_human_input.py -v`
+Expected: FAIL - the URL starts `http://localhost:3000` and contains `/projects/`.
+
+- [ ] **Step 3: Build the link from public_url and the real route**
+
+```python
+                        "review_url": (
+                            f"{settings.public_url}/dashboard/{self.slug}/reviews"
+                        ),
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `./venv/bin/pytest tests/test_human_input.py -q`
+Expected: PASS
+
+- [ ] **Step 5: Check whether frontend_url still has any consumer**
+
+Run: `grep -rn "frontend_url\|FRONTEND_URL" api agents ui .env.example`
+If the only remaining hits are the explanatory comment in `interview_service.py` and the setting's
+own definition, remove the setting from `api/config.py` and `.env.example` in this commit. If any
+consumer remains, leave it and say which in the commit message.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add agents/tools/human_input.py tests/test_human_input.py
+git commit -m "fix(hitl): the review link points at a route that exists
+
+human_input.py built the review_url sent to n8n as {frontend_url}/projects/{slug}/reviews.
+frontend_url is unset in every deployment and defaults to localhost, and the router defines
+:slug/reviews under basename /dashboard - there is no /projects/ segment. A reviewer clicking
+the link in a HITL notification got a 404 on localhost."
+```
