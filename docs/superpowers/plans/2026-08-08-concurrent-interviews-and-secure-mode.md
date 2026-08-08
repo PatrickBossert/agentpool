@@ -1667,3 +1667,97 @@ Task 1 is not in the spec. It was found while writing this plan: `get_session_wi
 **Placeholder scan:** none. Every code step carries the code.
 
 **Type consistency:** `cache_key -> str` feeds `cached_audio(key: str)` and `store_audio(key: str, ...)`; `project_llm_mode(slug) -> str` is consumed by `get_chroma_client(slug)` and `_press_call(prompt, slug)`; `elaboration_press(..., slug="", timeout_seconds=8.0) -> str` matches the endpoint call in Task 8; `interview_url(session_token) -> str` matches all three replaced call sites; `synthesise` is defined in Task 4 and referenced by `prewarm_script_audio` in the same task.
+
+---
+
+## Task 13: The other two bare-filename reads
+
+Found by Task 1's implementer while checking that no other code read the unversioned path.
+Task 1 fixed the interview-serving path; these are the same defect in two more places, and
+both fail silently rather than loudly:
+
+- `api/services/auto_assign_service.py:39` - `auto_assign_interview_scripts` reads the bare
+  path and **returns 0** when it is missing. It runs after every `assessment_design` and
+  `discovery_interviews` run, so script-to-node-template assignment has been a no-op. Answers
+  still resolve, because `script_for_session` falls back to scanning for a matching
+  `node_label` field, but the `script_id` path it prefers is never populated.
+- `api/routers/projects.py:441` - `publish_node_template` reads the bare path and raises 404,
+  so publishing a script as a reusable template fails for any project whose scripts are
+  versioned, which is all of them.
+
+`api/routers/interviews.py:113` is **not** a defect: it reads
+`projects/smoke-test/outputs/interview_scripts.json`, a hand-written fixture for the built-in
+test interview that genuinely exists at that path. Leave it.
+
+**Files:**
+- Modify: `api/services/auto_assign_service.py:39`, `api/routers/projects.py:441`
+- Test: `tests/test_auto_assign_service.py`, `tests/test_node_templates.py` (whichever covers
+  `publish_node_template`; create the test in the file that already covers the endpoint)
+
+**Interfaces:**
+- Consumes: `current_output_path(slug, "interview_scripts") -> Path | None` from `agents/tools/_db.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+One per site. Each seeds a project whose only scripts artefact is versioned - which is what
+every real project has - and asserts the code finds it.
+
+```python
+@pytest.mark.asyncio
+async def test_auto_assign_finds_the_current_scripts(versioned_scripts_project):
+    """It read a bare interview_scripts.json and returned 0 when absent, so assignment has
+    silently done nothing since writes became versioned."""
+    from api.services.auto_assign_service import auto_assign_interview_scripts
+    assert await auto_assign_interview_scripts(versioned_scripts_project) > 0
+```
+
+```python
+@pytest.mark.asyncio
+async def test_publishing_a_template_finds_the_current_scripts(client, versioned_scripts_project):
+    """It raised 404 for any project whose scripts are versioned, which is all of them."""
+    r = await client.post(
+        f"/projects/{versioned_scripts_project}/node-templates/Frontline Interview/publish",
+        json={"template_name": "Frontline"},
+    )
+    assert r.status_code != 404
+```
+
+Match the real endpoint path and body shape - read the route decorator at
+`api/routers/projects.py:439` rather than trusting the sketch above.
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `./venv/bin/pytest tests/test_auto_assign_service.py -v`
+Expected: FAIL - `assert 0 > 0`, and a 404 from the publish endpoint.
+
+- [ ] **Step 3: Resolve through the ledger at both sites**
+
+Replace each `scripts_path = Path(...) / "interview_scripts.json"` with:
+
+```python
+    scripts_path = current_output_path(slug, "interview_scripts")
+    if scripts_path is None:
+        return 0        # or the endpoint's existing 404, unchanged
+```
+
+Import `from agents.tools._db import current_output_path`. Keep each site's existing
+missing-file behaviour: `auto_assign` returns 0, `publish_node_template` raises its 404.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `./venv/bin/pytest tests/test_auto_assign_service.py tests/test_node_templates.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add api/services/auto_assign_service.py api/routers/projects.py tests/
+git commit -m "fix(interviews): resolve scripts through the ledger in the last two places
+
+auto_assign_interview_scripts read a bare interview_scripts.json and returned 0 when it was
+missing, so script-to-node-template assignment has silently done nothing since writes became
+versioned. publish_node_template read the same bare path and 404d for every project.
+
+interviews.py:113 is left alone deliberately: it reads a hand-written smoke-test fixture
+that does exist at its bare path."
+```
