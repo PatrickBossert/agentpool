@@ -200,6 +200,20 @@ a missed one costs some depth on a single answer, while a ten-second silence cos
 interviewee's confidence in the whole conversation. Skipped presses are counted and logged so a
 consistently over-budget local model is visible rather than merely quiet.
 
+The budget is **configurable in Avery's settings**, because the right value depends on the model
+behind it: a few seconds is generous for Haiku and mean for a local model on modest hardware.
+Per-agent configuration in this codebase lives in `projects.config_json` alongside
+`interview_method` and the `brand_interviewer_*` keys, edited on the Settings page, so the budget
+follows that pattern rather than introducing an agent-settings table for one value:
+
+```
+config key : elaboration_press_timeout_seconds
+default    : 8
+surfaced   : ui/src/pages/Settings.tsx, beside Interview Method
+```
+
+The default applies when the key is absent, so existing projects need no migration.
+
 ### The lesser items
 
 One `interview_url(session_token)` helper, built from `public_url` and the `/dashboard`
@@ -225,6 +239,10 @@ holds. Three assertions here are deliberately placed at the layer that would act
 - **Secure routing** asserts the base URL the request was sent to for a project whose `llm_mode`
   is `sensitive`, not that `get_crew_llm` was called. The defect being fixed is precisely that a
   correct-looking mode helper existed and the interview path never consulted it.
+- **The press timeout setting** is asserted as *persisted and read back*, not as rendered.
+  CLAUDE.md's list already contains "a radio tested as rendered, not as sent", and this is the
+  same control on the same page. The test changes the value, saves, and asserts the timeout the
+  endpoint actually applies.
 - **Per-project isolation** is asserted with two projects in one process - one sensitive, one
   standard - interleaved. The sensitive one must reach the local model and a local Chroma while
   the standard one reaches Haiku and the cloud, in the same test. A per-deployment
