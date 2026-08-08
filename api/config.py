@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     admin_password: str
     tavily_api_key: Optional[str] = None
     n8n_webhook_url: Optional[str] = None
-    frontend_url: str = "http://localhost:3000"
     public_url: str = "http://localhost:3000"
     elevenlabs_api_key: str = ""
     deepgram_api_key: str = ""

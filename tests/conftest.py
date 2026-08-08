@@ -32,7 +32,6 @@ os.environ.setdefault("TAVILY_API_KEY", "")
 os.environ.setdefault("ELEVENLABS_API_KEY", "")
 os.environ.setdefault("DEEPGRAM_API_KEY", "")
 os.environ.setdefault("N8N_WEBHOOK_URL", "")
-os.environ.setdefault("FRONTEND_URL", "http://localhost:3000")
 
 Path("/tmp/agentpool_test").mkdir(exist_ok=True)
 Path("/tmp/agentpool_test_projects").mkdir(exist_ok=True)

@@ -57,7 +57,7 @@ class HumanInputTool(BaseTool):
                         "project_slug": self.slug,
                         "run_id": self.run_id,
                         "review_url": (
-                            f"{settings.frontend_url}/projects/{self.slug}/reviews"
+                            f"{settings.public_url.rstrip('/')}/dashboard/{self.slug}/reviews"
                         ),
                     },
                     timeout=5.0,
