@@ -1216,6 +1216,36 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
     return cur.rowcount > 0
 
 
+# (slug, inode) pairs whose migrations have run in this process. init_db plus the 27
+# _migrate_* functions below are idempotent by construction, but they were running on
+# every connection open - about 4.2ms, and a single interview request opens several
+# connections.
+#
+# Keyed on the file's inode rather than the slug alone: several tests (and the app
+# itself, e.g. project deletion) delete a project's .db file and let a later open
+# recreate it under the same slug. A brand-new file gets a fresh inode, so it still
+# reads as unmigrated even though its slug was already seen - a bare slug key would
+# instead skip migrations against a schema-less file. This surfaced in review as the
+# task's own warning predicted, but at a scale a handful of teardown fixes could not
+# keep up with: dozens of test files across the suite delete and recreate a fixed-slug
+# .db file per test.
+_MIGRATED: set[tuple[str, int]] = set()
+
+
+def _forget_migrations(slug: str) -> None:
+    """Drop every memoised migration entry for slug, regardless of inode.
+
+    Not used by application code - once a slug is migrated in this process, nothing the
+    app does writes non-migrated rows into it again, since every write goes through
+    current-schema-aware code. It exists for tests that reproduce a pre-migration
+    database by writing legacy-shaped rows directly via raw SQL against an already-open
+    connection and then reopening to assert the migration fixes them: that reopen targets
+    the same inode, so it needs an explicit reason to re-run, standing in for the real
+    scenario the migration exists for - a legacy file opened for the first time.
+    """
+    _MIGRATED.difference_update({key for key in _MIGRATED if key[0] == slug})
+
+
 @asynccontextmanager
 async def get_connection(slug: str):
     path = get_db_path(slug)
@@ -1223,33 +1253,47 @@ async def get_connection(slug: str):
     async with aiosqlite.connect(path) as conn:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA foreign_keys = ON")
-        await init_db(conn)
-        await _migrate_orchestration_runs_error(conn)
-        await _migrate_agent_outputs_is_current(conn)
-        await _migrate_agent_outputs_revision_notes(conn)
-        await _migrate_human_reviews(conn)
-        await _migrate_crew_runs(conn)
-        await _migrate_stakeholders(conn)
-        await _migrate_campaigns(conn)
-        await _migrate_stakeholder_assignments(conn)
-        await _migrate_interview_sessions(conn)
-        await _migrate_node_template_assignments(conn)
-        await _migrate_interview_sessions_ratings(conn)
-        await _migrate_interview_sessions_checkpoint(conn)
-        await _migrate_interview_answers(conn)
-        await _migrate_document_ingest_status(conn)
-        await _migrate_project_milestones(conn)
-        await _migrate_milestone_baselines(conn)
-        await rename_crew_in_stored_rows(conn)
-        await _migrate_nonworking_ranges(conn)
-        await _migrate_stakeholder_node_assignments(conn)
-        await _migrate_agent_chat_history(conn)
-        await _migrate_blocked_writes(conn)
-        await _migrate_lineage(conn)
-        await _migrate_run_inputs_agent_scope(conn)
-        await _migrate_output_changes_kind(conn)
-        await _migrate_validation_warnings(conn)
-        await _migrate_registry_output_type(conn)
+        # WAL lets readers proceed while a completion writes. Under journal_mode=delete
+        # they block each other, and completions - the heavy writes - cluster at the end
+        # of a break. WAL is a persistent property of the database file, so this only
+        # needs to take effect once, but re-asserting it each open is cheap and safe.
+        await conn.execute("PRAGMA journal_mode = WAL")
+        # busy_timeout is per-connection, unlike WAL, so it must be set on every open:
+        # it lets a connection wait for a lock instead of failing immediately with
+        # "database is locked" under the brief contention WAL doesn't eliminate.
+        await conn.execute("PRAGMA busy_timeout = 10000")
+        # aiosqlite.connect() has already created the file on disk if it did not exist,
+        # so stat() here always resolves.
+        migration_key = (slug, path.stat().st_ino)
+        if migration_key not in _MIGRATED:
+            await init_db(conn)
+            await _migrate_orchestration_runs_error(conn)
+            await _migrate_agent_outputs_is_current(conn)
+            await _migrate_agent_outputs_revision_notes(conn)
+            await _migrate_human_reviews(conn)
+            await _migrate_crew_runs(conn)
+            await _migrate_stakeholders(conn)
+            await _migrate_campaigns(conn)
+            await _migrate_stakeholder_assignments(conn)
+            await _migrate_interview_sessions(conn)
+            await _migrate_node_template_assignments(conn)
+            await _migrate_interview_sessions_ratings(conn)
+            await _migrate_interview_sessions_checkpoint(conn)
+            await _migrate_interview_answers(conn)
+            await _migrate_document_ingest_status(conn)
+            await _migrate_project_milestones(conn)
+            await _migrate_milestone_baselines(conn)
+            await rename_crew_in_stored_rows(conn)
+            await _migrate_nonworking_ranges(conn)
+            await _migrate_stakeholder_node_assignments(conn)
+            await _migrate_agent_chat_history(conn)
+            await _migrate_blocked_writes(conn)
+            await _migrate_lineage(conn)
+            await _migrate_run_inputs_agent_scope(conn)
+            await _migrate_output_changes_kind(conn)
+            await _migrate_validation_warnings(conn)
+            await _migrate_registry_output_type(conn)
+            _MIGRATED.add(migration_key)
         yield conn
 
 

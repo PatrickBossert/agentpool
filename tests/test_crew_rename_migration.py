@@ -69,6 +69,14 @@ async def test_a_historical_run_is_renamed_not_orphaned(client):
     async with get_connection(SLUG) as conn:
         await _write_old_rows(conn)
 
+    # get_connection now memoises migrations per (slug, inode) for the life of the
+    # process, so a reopen of the same file no longer re-runs them by itself. Forgetting
+    # SLUG here stands in for the real scenario this migration exists for - a database
+    # from before the rename, opened for the first time - since the app itself never
+    # writes old-named rows into an already-migrated file.
+    from api.database import _forget_migrations
+    _forget_migrations(SLUG)
+
     # No explicit call: the migration runs on connection open, so simply reopening is the
     # production path. Asserting a return count here tested a call the fixture had already
     # made, which is why it read zero.

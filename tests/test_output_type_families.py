@@ -129,6 +129,14 @@ async def test_the_migration_retypes_existing_state_rows(derive_db):
                 (pid, "value_chain_mapper", "state", str(path), 3))
         await conn.commit()
 
+    # get_connection now memoises migrations per (slug, inode) for the life of the
+    # process, so a reopen of the same file no longer re-runs them by itself. Forgetting
+    # slug here stands in for the real scenario this migration exists for - a project
+    # database from before this change, opened for the first time - since the app itself
+    # never writes a 'state' row for this family into an already-migrated file.
+    from api.database import _forget_migrations
+    _forget_migrations(slug)
+
     # Reopening runs the migrations.
     async with get_connection(slug) as conn:
         async with conn.execute(
