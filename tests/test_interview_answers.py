@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 
 from api.config import get_settings
-from api.database import fetch_interview_answers, get_connection
+from api.database import fetch_interview_answers, get_connection, insert_interview_answer
 from api.services import interview_answer_service as svc
 from api.services.interview_answer_service import record_answers
 
@@ -224,4 +224,97 @@ async def test_indexing_does_not_delay_a_concurrent_session(seeded_session, monk
     assert waited < 0.2, (
         f"a concurrent session waited {waited:.2f}s while another completed - "
         "indexing is still on the event loop"
+    )
+
+
+def _answer_fields(seeded_session, question_id, answer_text):
+    """The NOT NULL-complete field set insert_interview_answer needs, called directly
+    rather than through record_answers so the id it returns is not mediated by anything
+    else."""
+    return dict(
+        session_id=seeded_session, stakeholder_id=1, script_id="SC-014", section_id="S3",
+        question_id=question_id, question_text="Q?", answer_text=answer_text, answered=1,
+        follow_up=0, node_id="1.2", node_label="", chain="1", level="L2",
+        relationship="internal", party_id=None, discipline="", question_intent="",
+        elicitation="", rating=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_resubmission_returns_its_own_id_not_the_connections_last_insert(
+    seeded_session,
+):
+    """RETURNING id, not cur.lastrowid.
+
+    lastrowid reflects a connection's last true INSERT, and the DO UPDATE branch of an
+    upsert is not one - it leaves lastrowid holding whatever the last true INSERT on this
+    connection was. Two different questions must be written on one connection to show it:
+    q1 then q2 (both true inserts, q2's id newest), then q1 resubmitted (a DO UPDATE) on the
+    same connection. Under cur.lastrowid, the resubmission of q1 wrongly reports q2's id.
+    """
+    async with get_connection(SLUG) as conn:
+        id1 = await insert_interview_answer(conn, **_answer_fields(seeded_session, "q1", "A1"))
+        id2 = await insert_interview_answer(conn, **_answer_fields(seeded_session, "q2", "A2"))
+        assert id1 != id2
+
+        resubmitted_id1 = await insert_interview_answer(
+            conn, **_answer_fields(seeded_session, "q1", "A1 revised")
+        )
+
+    assert resubmitted_id1 == id1, (
+        f"resubmission returned {resubmitted_id1}, which is q2's id ({id2}) - "
+        f"the connection's last true INSERT, not q1's own id ({id1})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_resubmission_is_indexed_under_its_real_row_not_a_strangers(
+    seeded_session, monkeypatch
+):
+    """record_answers must hand index_answers the ids of the rows it actually wrote.
+
+    Reproduces the production path: one connection writes q1 then q2 (two true inserts),
+    then resubmits q1 alone with a changed answer (a DO UPDATE that follows a later true
+    insert on the same connection - exactly the ordering that leaves cur.lastrowid stale).
+    If insert_interview_answer reports the wrong id, record_answers indexes an unrelated,
+    unchanged row while the actually-revised row is never re-indexed - Chroma then keeps
+    serving stale text under the citation id a reader would trust.
+    """
+    captured: list[list[dict]] = []
+
+    def capturing_index(slug, rows):
+        captured.append(rows)
+        return len(rows)
+
+    monkeypatch.setattr(svc, "index_answers", capturing_index)
+
+    first_round = [
+        {"question_id": "SC-014.S3.Q1", "question": "Is the record trusted?",
+         "answer": "For compliance, yes.", "follow_up": 0},
+        {"question_id": "SC-014.S3.Q2", "question": "For investment?",
+         "answer": "Yes.", "follow_up": 0},
+    ]
+    resubmission = [
+        {"question_id": "SC-014.S3.Q1", "question": "Is the record trusted?",
+         "answer": "Revised: no.", "follow_up": 0},
+    ]
+
+    async with get_connection(SLUG) as conn:
+        await record_answers(conn, SLUG, seeded_session, first_round, script=SCRIPT)
+        await record_answers(conn, SLUG, seeded_session, resubmission, script=SCRIPT)
+        rows = await fetch_interview_answers(conn, session_id=seeded_session)
+
+    real_row = next(r for r in rows if r["question_id"] == "SC-014.S3.Q1")
+    assert real_row["answer_text"] == "Revised: no.", "the row itself was not updated"
+    assert len(rows) == 2, "the resubmission must not have appended a new row"
+
+    indexed_on_resubmission = captured[-1]
+    assert len(indexed_on_resubmission) == 1
+    assert indexed_on_resubmission[0]["id"] == real_row["id"], (
+        "indexing was handed a stranger's id - "
+        f"real row id is {real_row['id']}, indexing received "
+        f"{indexed_on_resubmission[0]['id']}"
+    )
+    assert indexed_on_resubmission[0]["answer_text"] == "Revised: no.", (
+        "indexing was handed stale content instead of the revised answer"
     )

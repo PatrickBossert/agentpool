@@ -540,6 +540,13 @@ async def insert_interview_answer(conn: aiosqlite.Connection, **fields) -> int:
     A resubmission - two tabs, a retry, a flaky connection - updates the existing row rather
     than adding one, so the answer is replaced but its id, the citation token retrieved
     chunks carry, survives.
+
+    Returns the id via `RETURNING`, not `cur.lastrowid`. `lastrowid` reflects the
+    connection's last true INSERT and is left stale by the DO UPDATE branch of an upsert -
+    on a connection that has inserted other rows since, a resubmission that hits DO UPDATE
+    would otherwise report a different row's id as its own, and record_answers uses this
+    return value to decide which rows to re-index, so a stale id would leave the revised
+    answer un-indexed while Chroma keeps serving the old text under the real id.
     """
     columns = [c for c in _ANSWER_COLUMNS if c in fields]
     placeholders = ", ".join("?" for _ in columns)
@@ -547,11 +554,13 @@ async def insert_interview_answer(conn: aiosqlite.Connection, **fields) -> int:
     cur = await conn.execute(
         f"INSERT INTO interview_answers ({', '.join(columns)}) VALUES ({placeholders}) "
         f"ON CONFLICT(session_id, question_id) DO UPDATE SET "
-        f"{', '.join(f'{c}=excluded.{c}' for c in update_columns)}",
+        f"{', '.join(f'{c}=excluded.{c}' for c in update_columns)} "
+        f"RETURNING id",
         tuple(fields[c] for c in columns),
     )
+    row = await cur.fetchone()
     await conn.commit()
-    return cur.lastrowid
+    return row[0]
 
 
 async def fetch_interview_answers(
