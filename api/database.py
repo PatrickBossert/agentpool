@@ -1216,34 +1216,45 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
     return cur.rowcount > 0
 
 
-# (slug, inode) pairs whose migrations have run in this process. init_db plus the 27
-# _migrate_* functions below are idempotent by construction, but they were running on
-# every connection open - about 4.2ms, and a single interview request opens several
-# connections.
-#
-# Keyed on the file's inode rather than the slug alone: several tests (and the app
-# itself, e.g. project deletion) delete a project's .db file and let a later open
-# recreate it under the same slug. A brand-new file gets a fresh inode, so it still
-# reads as unmigrated even though its slug was already seen - a bare slug key would
-# instead skip migrations against a schema-less file. This surfaced in review as the
-# task's own warning predicted, but at a scale a handful of teardown fixes could not
-# keep up with: dozens of test files across the suite delete and recreate a fixed-slug
-# .db file per test.
-_MIGRATED: set[tuple[str, int]] = set()
+# Bumped whenever a _migrate_* function is added to (or removed from) the block below.
+# Written to the database file itself as PRAGMA user_version once the block has run, so
+# forgetting to bump this after adding a migration means the new migration silently never
+# runs again after a database's first post-upgrade open in a process - there is no test
+# that catches a missed bump, because none can: it is a fact about this constant, not
+# about behaviour.
+_SCHEMA_VERSION = 1
+
+# Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
+# keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
+# database file's own header - unconditionally on every open, including for a slug
+# already in this set, and that read is what actually decides whether migrations run.
+# Slug alone is not a reliable proxy for "this exact file has already been migrated": a
+# test (or an out-of-band `rm` and restart, or restoring a backup over a live path) can
+# delete and recreate - or in-place overwrite - a project's .db file under the same slug,
+# and the new file needs migrating even though its slug looks familiar. A pragma read
+# costs microseconds against the 4.2 ms it guards, and three pragmas are already issued
+# per open, so there is no reason to skip it based on this set. It exists so
+# _forget_migrations and tests have a slug-keyed record to clear or discard from.
+_MIGRATED: set[str] = set()
 
 
-def _forget_migrations(slug: str) -> None:
-    """Drop every memoised migration entry for slug, regardless of inode.
+async def _forget_migrations(slug: str) -> None:
+    """Reset the on-disk migration marker for slug, forcing the next open to re-run every
+    _migrate_* function against it.
 
-    Not used by application code - once a slug is migrated in this process, nothing the
-    app does writes non-migrated rows into it again, since every write goes through
-    current-schema-aware code. It exists for tests that reproduce a pre-migration
-    database by writing legacy-shaped rows directly via raw SQL against an already-open
-    connection and then reopening to assert the migration fixes them: that reopen targets
-    the same inode, so it needs an explicit reason to re-run, standing in for the real
-    scenario the migration exists for - a legacy file opened for the first time.
+    Not used by application code - once a slug is migrated, nothing the app does writes
+    non-migrated rows into that file again, since every write goes through current-schema-
+    aware code. It exists for tests that reproduce a pre-migration database by writing
+    legacy-shaped rows directly via raw SQL against an already-migrated file and then
+    reopening to assert the migration fixes them: PRAGMA user_version on that file already
+    reads as current, so the reopen needs an explicit reason to re-run, standing in for the
+    real scenario the migration exists for - a legacy file opened for the first time.
     """
-    _MIGRATED.difference_update({key for key in _MIGRATED if key[0] == slug})
+    _MIGRATED.discard(slug)
+    path = get_db_path(slug)
+    async with aiosqlite.connect(path) as conn:
+        await conn.execute("PRAGMA user_version = 0")
+        await conn.commit()
 
 
 @asynccontextmanager
@@ -1262,10 +1273,14 @@ async def get_connection(slug: str):
         # it lets a connection wait for a lock instead of failing immediately with
         # "database is locked" under the brief contention WAL doesn't eliminate.
         await conn.execute("PRAGMA busy_timeout = 10000")
-        # aiosqlite.connect() has already created the file on disk if it did not exist,
-        # so stat() here always resolves.
-        migration_key = (slug, path.stat().st_ino)
-        if migration_key not in _MIGRATED:
+        # The file is the authority on whether it has been migrated, not the slug or the
+        # inode: PRAGMA user_version is part of the database file's own header, so it
+        # survives across processes and is correct even if the file was deleted and
+        # recreated, or overwritten in place (e.g. a backup restored over the live path),
+        # under the same slug and possibly the same inode.
+        cur = await conn.execute("PRAGMA user_version")
+        current_version = (await cur.fetchone())[0]
+        if current_version < _SCHEMA_VERSION:
             await init_db(conn)
             await _migrate_orchestration_runs_error(conn)
             await _migrate_agent_outputs_is_current(conn)
@@ -1293,7 +1308,10 @@ async def get_connection(slug: str):
             await _migrate_output_changes_kind(conn)
             await _migrate_validation_warnings(conn)
             await _migrate_registry_output_type(conn)
-            _MIGRATED.add(migration_key)
+            # PRAGMA does not accept bound parameters; _SCHEMA_VERSION is a hardcoded
+            # module constant, never user input, so formatting it in is safe.
+            await conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+        _MIGRATED.add(slug)
         yield conn
 
 

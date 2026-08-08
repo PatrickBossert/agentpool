@@ -19,6 +19,21 @@ async def test_connections_are_wal(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_connections_have_a_busy_timeout(tmp_path, monkeypatch):
+    """busy_timeout is per-connection, unlike WAL, so it must be asserted on the
+    connection itself rather than inferred from the pragma having been issued once.
+    Without it, a connection that meets a lock fails immediately with 'database is
+    locked' instead of waiting for the writer to finish."""
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    from api.database import get_connection
+    async with get_connection("busytimeouttest") as conn:
+        cur = await conn.execute("PRAGMA busy_timeout")
+        assert (await cur.fetchone())[0] == 10000
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
 async def test_migrations_run_once_per_slug(tmp_path, monkeypatch):
     """28 migration functions on every open, ~4.2ms, and one request opens several."""
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
@@ -38,6 +53,42 @@ async def test_migrations_run_once_per_slug(tmp_path, monkeypatch):
     async with db.get_connection("oncetest") as conn:
         await conn.execute("SELECT 1")
     assert len(calls) == 1, f"migrations ran {len(calls)} times for one slug"
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_migrations_rerun_after_the_file_is_deleted_and_recreated(tmp_path, monkeypatch):
+    """The property the (slug, inode) design existed to protect and PRAGMA user_version
+    protects now: a slug alone is not proof a given file has been migrated. Delete the
+    file underneath a memoised slug and reopen it - the new, schema-less file must be
+    migrated again, not skipped because its slug looks familiar. This is also what a test
+    fixture that unlinks a fixed-slug .db file between tests relies on, and there are
+    dozens of those in this suite."""
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    import api.database as db
+    calls = []
+    original = db._migrate_interview_answers
+
+    async def counting(conn):
+        calls.append(1)
+        await original(conn)
+
+    monkeypatch.setattr(db, "_migrate_interview_answers", counting)
+    db._MIGRATED.clear()
+
+    async with db.get_connection("deletetest") as conn:
+        await conn.execute("SELECT 1")
+    assert len(calls) == 1
+
+    db.get_db_path("deletetest").unlink()
+
+    async with db.get_connection("deletetest") as conn:
+        await conn.execute("SELECT 1")
+    assert len(calls) == 2, (
+        f"migrations ran {len(calls)} times across a delete and recreate under the same "
+        "slug - the new file was wrongly treated as already migrated"
+    )
     get_settings.cache_clear()
 
 

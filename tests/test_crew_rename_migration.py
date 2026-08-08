@@ -69,17 +69,19 @@ async def test_a_historical_run_is_renamed_not_orphaned(client):
     async with get_connection(SLUG) as conn:
         await _write_old_rows(conn)
 
-    # get_connection now memoises migrations per (slug, inode) for the life of the
-    # process, so a reopen of the same file no longer re-runs them by itself. Forgetting
-    # SLUG here stands in for the real scenario this migration exists for - a database
-    # from before the rename, opened for the first time - since the app itself never
-    # writes old-named rows into an already-migrated file.
+    # get_connection now reads PRAGMA user_version to decide whether to migrate, and the
+    # file above already has it set current from client.post's own connection, so a plain
+    # reopen would no longer re-run the migration. _forget_migrations resets that marker on
+    # disk, standing in for the real scenario this migration exists for - a database from
+    # before the rename, opened for the first time - since the app itself never writes
+    # old-named rows into a file whose user_version already reads as current.
     from api.database import _forget_migrations
-    _forget_migrations(SLUG)
+    await _forget_migrations(SLUG)
 
-    # No explicit call: the migration runs on connection open, so simply reopening is the
-    # production path. Asserting a return count here tested a call the fixture had already
-    # made, which is why it read zero.
+    # No explicit call to the migration function itself: it runs as a side effect of
+    # get_connection reading a stale user_version, so simply reopening is the production
+    # path once the marker has been reset above. Asserting a return count here tested a
+    # call the fixture had already made, which is why it read zero.
     async with get_connection(SLUG) as conn:
         rows = await conn.execute_fetchall("SELECT crew_name FROM crew_runs ORDER BY id")
 
