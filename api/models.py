@@ -37,6 +37,14 @@ class ProjectSettings(BaseModel):
     discovery_links: list[dict] = []
     discovery_document_ids: list[int] = []
     interview_method: Literal["agent", "none"] = "none"
+    # Wall-clock budget for one elaboration press (api/services/interview_service.py).
+    # Declared here or it does not exist: pydantic v2 defaults to extra='ignore', so an
+    # undeclared key is dropped inbound on PATCH, stripped outbound on GET, and erased from
+    # config_json by update_project_settings, which writes model_dump() as the whole config.
+    # Bounded rather than free because the UI's min/max are advisory only - a cleared number
+    # input sends Number('') === 0, which reaches asyncio.wait_for(timeout=0) and silently
+    # skips every press.
+    elaboration_press_timeout_seconds: int = Field(default=8, ge=1, le=60)
     brand_header_image_url: str = ""
     brand_primary_color: str = Field(default="#0d9488", pattern=r"^#[0-9a-fA-F]{3,8}$")
     brand_text_color: str = Field(default="#1f2937", pattern=r"^#[0-9a-fA-F]{3,8}$")
