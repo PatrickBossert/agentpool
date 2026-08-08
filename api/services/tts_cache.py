@@ -11,6 +11,8 @@ provider while somebody is waiting.
 import hashlib
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 from api.config import get_settings
@@ -44,16 +46,25 @@ def cached_audio(key: str) -> bytes | None:
 
 
 def store_audio(key: str, audio: bytes) -> None:
-    """Write via a temporary file and rename.
+    """Write via a uniquely-named temporary file, then rename onto the final path.
 
-    Two interviewees can miss on the same key at the same moment. Rename is atomic on the
-    same filesystem, so the loser overwrites with identical bytes rather than leaving a
-    half-written file for a third reader.
+    Two interviewees can miss on the same key at the same moment - and once pre-warm and a
+    live server share a cache directory, a pre-warm run and a live miss can too. The rename
+    is atomic on the same filesystem, so a reader never sees a half-renamed target: it gets
+    either the old content (or none) or the complete new content, never a partial one. But
+    that guarantee covers only the rename step. `tempfile.mkstemp` is what protects the
+    write step before it: it hands each call a name unique to that call (mkstemp itself
+    picks it and creates the file exclusively, so a fixed name shared across concurrent
+    writers - e.g. one derived from `key` alone - cannot happen), so two writers on the same
+    key write to two different files and cannot interleave into each other's payload.
+    Whichever call reaches `replace()` last simply publishes its own complete bytes.
     """
     directory = _cache_dir()
-    tmp = directory / f".{key}.partial"
+    fd, tmp_name = tempfile.mkstemp(dir=directory, prefix=f".{key}.", suffix=".partial")
+    tmp = Path(tmp_name)
     try:
-        tmp.write_bytes(audio)
+        with os.fdopen(fd, "wb") as f:
+            f.write(audio)
         tmp.replace(directory / f"{key}.mp3")
     except OSError:
         _log.warning("tts_cache: could not store %s", key)

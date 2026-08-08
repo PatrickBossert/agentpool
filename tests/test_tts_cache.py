@@ -7,6 +7,8 @@ path entirely. The property that matters is not that the cache round-trips in is
 (that's cheap and proves little) but that `speak` actually consults it, and that
 `prewarm_script_audio` stores audio under the exact key `speak` will look up later.
 """
+import threading
+
 import pytest
 from api.config import get_settings
 
@@ -123,3 +125,84 @@ async def test_prewarm_stores_audio_under_the_key_speak_would_look_up(tmp_path, 
 
     key = cache_key("voice-9", "What does a good day look like?")
     assert cached_audio(key) == b"WARM-AUDIO"
+
+
+def test_concurrent_writers_on_the_same_key_do_not_corrupt_each_others_payload():
+    """A fixed temp filename derived only from `key` (e.g. `.{key}.partial`) is shared by
+    every writer racing on that key: a `--workers N>1` deployment, or a pre-warm run
+    sharing a cache directory with a live server that independently misses the same
+    question. Two writers opening and writing that shared path around the same moment can
+    interleave into a mixture of both payloads before either renames - the final rename is
+    atomic, but atomicity of the rename says nothing about what ends up *in* the file being
+    renamed. `store_audio` must give each call its own temp file, so this drives many
+    overlapping (thread, key) pairs and requires every stored result to be exactly one
+    writer's complete payload, never a splice of both and never truncated.
+    """
+    from api.services.tts_cache import cache_key, cached_audio, store_audio
+
+    # Large and clearly distinguishable so a splice (any byte from the other payload, or a
+    # short read) is detectable rather than accidentally looking like a clean result.
+    payload_a = b"A" * 300_000
+    payload_b = b"B" * 300_000
+
+    for trial in range(10):
+        key = cache_key("voice-race", f"concurrent question {trial}")
+        barrier = threading.Barrier(2)
+
+        def write(payload):
+            barrier.wait()  # both threads reach store_audio at the same moment
+            store_audio(key, payload)
+
+        threads = [
+            threading.Thread(target=write, args=(payload_a,)),
+            threading.Thread(target=write, args=(payload_b,)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        result = cached_audio(key)
+        assert result in (payload_a, payload_b), (
+            f"trial {trial}: stored bytes are neither writer's payload intact - "
+            f"got {len(result) if result is not None else 'None'} bytes, "
+            "which means the two writers' temp files collided"
+        )
+
+
+def test_store_audio_gives_each_call_its_own_temp_file(monkeypatch):
+    """The mechanism the property above depends on, tested directly.
+
+    The end-to-end test above exercises real concurrent writers and never observed a
+    spliced result even against the pre-fix implementation, on this filesystem: macOS
+    serialises whole-buffer write() calls to a regular file closely enough that "last
+    writer wins" held in every trial rather than ever interleaving - so that test alone
+    cannot be trusted to catch a regression back to a shared temp name on this platform.
+    This test targets the actual guarantee instead: two calls to `store_audio` for the
+    same key must go through two distinct temporary files, never a name derived only from
+    `key` (which every writer racing on that key would share, regardless of platform write
+    semantics - and unlike a single process's threads, separate `--workers` processes have
+    no shared serialisation to fall back on).
+    """
+    import tempfile as tempfile_module
+    from api.services.tts_cache import cache_key, store_audio
+
+    seen: list[str] = []
+    real_mkstemp = tempfile_module.mkstemp
+
+    def spy(*args, **kwargs):
+        fd, name = real_mkstemp(*args, **kwargs)
+        seen.append(name)
+        return fd, name
+
+    monkeypatch.setattr(tempfile_module, "mkstemp", spy)
+
+    key = cache_key("voice-x", "same question, twice")
+    store_audio(key, b"first")
+    store_audio(key, b"second")
+
+    assert len(seen) == 2, "store_audio did not go through tempfile.mkstemp both times"
+    assert seen[0] != seen[1], (
+        "two store_audio calls on the same key produced the same temp file name - "
+        "concurrent writers on this key would collide"
+    )
