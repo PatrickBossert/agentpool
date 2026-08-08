@@ -10,6 +10,7 @@ at runtime, so queries against interview_sessions use the correct FK.
 import contextlib
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
@@ -26,7 +27,10 @@ class InterviewSessionToolInput(BaseModel):
     )
     sessions: list[dict] = Field(
         default=[],
-        description="For 'create': list of {stakeholder_id, name, node_label, session_token}",
+        description=(
+            "For 'create': list of {stakeholder_id, name, node_label}. "
+            "session_token is assigned in code when the row is created, not supplied here."
+        ),
     )
     session_tokens: list[str] = Field(
         default=[],
@@ -103,9 +107,12 @@ class InterviewSessionTool(BaseTool):
             try:
                 stakeholder_id = s["stakeholder_id"]
                 node_label = s["node_label"]
-                session_token = s["session_token"]
             except KeyError as e:
                 return f"Error: session dict missing required key {e}"
+            # The session token is the sole credential for the public interview API, so
+            # its uniqueness must not depend on a language model. Minted here, in code,
+            # regardless of anything the caller supplies.
+            session_token = str(uuid.uuid4())
             voice_config = s.get("voice_config")
             voice_config_json = json.dumps(voice_config) if voice_config else None
             conn.execute(

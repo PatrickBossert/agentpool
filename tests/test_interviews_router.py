@@ -314,6 +314,32 @@ async def test_get_sessions_unknown_slug(client):
     assert resp.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_the_sessions_listing_requires_auth():
+    """It returns every session_token for a project, and a token is the only credential
+    the public interview API has. Anyone knowing a slug could answer anyone's interview.
+
+    Built with a bare AsyncClient (no Authorization header) rather than the `client`
+    fixture, which always attaches a sysadmin bearer token and so could never observe
+    a refusal.
+    """
+    from httpx import AsyncClient, ASGITransport
+    from api.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        r = await ac.get("/api/interviews/sessions/any-slug")
+    assert r.status_code in (401, 403), "session tokens are served without authentication"
+
+
+@pytest.mark.asyncio
+async def test_the_sessions_listing_works_with_auth(client):
+    """A refusal-only test would also pass if the endpoint 403s for everybody - which
+    would break the sessions view the consultant actually uses. Confirm the authenticated
+    path still works (404 here, for an unknown slug, rather than 401/403)."""
+    resp = await client.get("/api/interviews/sessions/nonexistent-slug-xyz")
+    assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # 8. GET /sessions/{slug} — project exists but no orchestration runs
 # ---------------------------------------------------------------------------

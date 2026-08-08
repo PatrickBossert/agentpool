@@ -179,36 +179,94 @@ def _setup_sync_db(tmp_path):
         # crew_run with orchestration_run_id=1
         conn.execute("INSERT INTO crew_runs (project_id, crew_name, orchestration_run_id) VALUES (1, 'discovery_interviews', 1)")
         conn.execute("INSERT INTO stakeholders (project_id, name) VALUES (1, 'Bob')")
+        conn.execute("INSERT INTO stakeholders (project_id, name) VALUES (1, 'Carol')")
         conn.commit()
     return db_path
 
 
-def test_interview_session_tool_create(tmp_path):
+@pytest.fixture
+def seeded_tool_project(tmp_path):
+    """Shared DB setup for InterviewSessionTool tests: a project, orchestration run, crew
+    run and two stakeholders (assignments), with the tool's `_db_path` patched to point at
+    it for the lifetime of the test.
+
+    Yields (slug, crew_run_id) - the tool's `orchestration_run_id` field actually receives
+    the crew_run_id and resolves the real orchestration_run_id from it internally, which is
+    why every test in this file passes `orchestration_run_id=1` (crew_runs row id 1, whose
+    own orchestration_run_id column also happens to be 1).
+    """
+    db_path = _setup_sync_db(tmp_path)
+    with patch("agents.tools.interview_session_tool._db_path", return_value=db_path):
+        yield "myslug", 1
+
+
+def test_interview_session_tool_create(seeded_tool_project):
     """The tool builds its printed URLs via interview_service.interview_url(), imported
     inside _create() to dodge a circular import - so the setting that matters is
     public_url on interview_service's own get_settings, not the tool module's, and the
     expected string carries the /dashboard basename the SPA is served under.
+
+    The session_token is minted in code (uuid.uuid4()) rather than supplied by the caller,
+    so the persisted row is located by stakeholder_id/node_label rather than by a
+    caller-chosen token.
     """
-    db_path = _setup_sync_db(tmp_path)
-    from agents.tools.interview_session_tool import InterviewSessionTool
-    with patch("agents.tools.interview_session_tool._db_path", return_value=db_path), \
-         patch("api.services.interview_service.get_settings") as ms:
+    slug, run_id = seeded_tool_project
+    from agents.tools.interview_session_tool import InterviewSessionTool, _db_path
+    with patch("api.services.interview_service.get_settings") as ms:
         ms.return_value.public_url = "https://app.example.com"
-        tool = InterviewSessionTool(slug="myslug", orchestration_run_id=1)  # crew_run_id=1
+        tool = InterviewSessionTool(slug=slug, orchestration_run_id=run_id)
         result = tool._run(
             operation="create",
-            sessions=[{"stakeholder_id": 1, "name": "Bob", "node_label": "Goods-in",
-                        "session_token": "abc-123"}],
+            sessions=[{"stakeholder_id": 1, "name": "Bob", "node_label": "Goods-in"}],
             session_tokens=[],
         )
-    assert "abc-123" in result
-    assert "https://app.example.com/dashboard/interview/abc-123" in result
+    assert "https://app.example.com/dashboard/interview/" in result
     # verify DB state
-    with contextlib.closing(sqlite3.connect(db_path)) as conn:
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT * FROM interview_sessions WHERE session_token='abc-123'").fetchone()
+        row = conn.execute(
+            "SELECT * FROM interview_sessions WHERE stakeholder_id=1 AND node_label='Goods-in'"
+        ).fetchone()
         assert row is not None
         assert row["status"] == "pending"
+        import uuid as _uuid
+        assert _uuid.UUID(row["session_token"]).version == 4
+
+
+def test_the_token_is_generated_in_code(seeded_tool_project):
+    """Taylor's prompt (agents/discovery/interview_coordinator.py) used to ask the model to
+    'Generate a UUID4' session_token. The uniqueness of the sole access credential for the
+    entire public interview API must not depend on a language model, so _create() mints its
+    own token - and must do so even if a caller's session dict tries to supply one.
+    """
+    import uuid
+    slug, run_id = seeded_tool_project
+    from agents.tools.interview_session_tool import InterviewSessionTool, _db_path
+
+    tool = InterviewSessionTool(slug=slug, orchestration_run_id=run_id)
+    tool._run(
+        operation="create",
+        sessions=[
+            {"stakeholder_id": 1, "name": "Bob", "node_label": "Goods-in",
+             "session_token": "not-a-real-uuid"},  # model-supplied token must be ignored
+            {"stakeholder_id": 2, "name": "Carol", "node_label": "Packing"},
+        ],
+        session_tokens=[],
+    )
+
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        tokens = [r[0] for r in conn.execute(
+            "SELECT session_token FROM interview_sessions WHERE orchestration_run_id=?",
+            (run_id,),
+        )]
+
+    assert tokens, "create wrote no sessions - the fixture seeded no assignments"
+    assert len(set(tokens)) == len(tokens), "duplicate session tokens"
+    assert "not-a-real-uuid" not in tokens, (
+        "a caller-supplied token was used instead of one generated in code"
+    )
+    for token in tokens:
+        assert uuid.UUID(token).version == 4, f"{token} is not a uuid4"
 
 
 def test_interview_session_tool_get_status(tmp_path):

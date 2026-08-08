@@ -74,26 +74,27 @@ def create_interview_coordinator_task(
             "   a. Look up the script for their node_label in the interview_scripts map.\n"
             "   b. Resolve their voice_config using the lookup table above "
             "(match on language + country_code; fall back to en/GB if no entry matches).\n"
-            "   c. Generate a UUID4 session_token.\n"
-            "   d. Produce a session entry:\n"
+            "   c. Produce a session entry:\n"
             "      {\n"
             "        \"stakeholder_id\": 1,\n"
             "        \"name\": \"Alice Chen\",\n"
             "        \"node_label\": \"Goods-in Inspection\",\n"
-            "        \"session_token\": \"<uuid4>\",\n"
             "        \"voice_config\": {\n"
             "          \"language\": \"en\",\n"
             "          \"country_code\": \"NZ\",\n"
             "          \"elevenlabs_voice_id\": \"MF3mGyEYCl7XYWbV9V6O\"\n"
             "        }\n"
             "      }\n"
+            "   Do not invent a session_token: one is assigned in code when the session "
+            "is created, not by you.\n"
             "3. Assemble all session entries into a JSON array called interview_plan.\n"
             "4. Use SQLiteStateTool with operation='write', key='interview_plan', "
             "agent_name='interview_coordinator' to save the array.\n"
         ),
         expected_output=(
             "A JSON interview_plan array saved via SQLiteStateTool, containing one session entry "
-            "per assigned stakeholder with session_token and voice_config."
+            "per assigned stakeholder with voice_config. session_token is not included - it is "
+            "assigned in code when the session is created."
         ),
         agent=agent,
         context=context,

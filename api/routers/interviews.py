@@ -1,7 +1,10 @@
 # api/routers/interviews.py
-"""Public interview endpoints — no auth required.
+"""Public interview endpoints - no auth required, with one exception.
 
-Session tokens (UUID4) serve as the access credential.
+Session tokens (UUID4) serve as the access credential for the interview flow itself.
+GET /sessions/{slug}, however, lists every session_token for a project - the sole
+credential the rest of this API relies on - so it requires an authenticated caller
+(require_any_auth) rather than trusting the slug alone.
 """
 from __future__ import annotations
 
@@ -45,8 +48,13 @@ _EMPTY_SUMMARY = {"pending": 0, "active": 0, "completed": 0, "abandoned": 0}
 
 
 @router.get("/sessions/{slug}")
-async def get_sessions_for_project(slug: str):
-    """Return all interview sessions for the latest orchestration run of a project."""
+async def get_sessions_for_project(slug: str, payload: dict = Depends(require_any_auth)):
+    """Return all interview sessions for the latest orchestration run of a project.
+
+    Requires auth: this is the one endpoint in an otherwise-public router that returns
+    session_token values, and a token is the only credential the rest of the interview
+    API checks.
+    """
     async with get_connection(slug) as conn:
         # 1. Look up project by slug
         async with conn.execute(
