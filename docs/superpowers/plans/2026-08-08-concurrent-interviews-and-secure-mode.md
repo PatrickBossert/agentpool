@@ -2083,3 +2083,47 @@ Found in six places across three tasks now, so this adds the guard rather than a
 individual fix: a test that fails if any source file builds a path to a declared output type,
 with one documented exemption for the hand-written smoke-test fixture."
 ```
+
+### Task 16, addendum: guard the raw-connection class too
+
+The same shape emerged twice in this plan. Task 15 converted four sites in `interview_service.py`;
+its review found three more in `api/routers/interviews.py` that the brief had not looked at. As
+with bare filenames, the codebase has no mechanism preventing the next one.
+
+Add a second guard beside the first, in the same file:
+
+```python
+def test_no_project_database_is_opened_outside_the_shared_helper():
+    """Project databases carry WAL and a busy timeout, applied in one place.
+
+    A raw aiosqlite.connect gets journal_mode=delete and Python's 5s default instead - measured
+    on the live database. Task 15 fixed four such sites and its review found three more in a file
+    nobody had checked, which is why this is a guard rather than an eighth fix.
+
+    system.db is a different database with different needs and is not covered here.
+    """
+    root = Path(__file__).resolve().parents[1]
+    # Legitimate raw opens: the helpers themselves, and one startup admin scan that runs
+    # before the app serves any request.
+    allowed = {"api/database.py", "api/main.py"}
+    offenders = []
+    for directory in ("api", "agents"):
+        for path in (root / directory).rglob("*.py"):
+            rel = str(path.relative_to(root))
+            if rel in allowed:
+                continue
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if "aiosqlite.connect(" in line and "sys_db_path" not in line and "sys_path" not in line:
+                    offenders.append(f"{rel}:{number}")
+    assert not offenders, (
+        "open project databases through api.database.interview_db_connection or "
+        f"get_connection, not raw:\n  " + "\n  ".join(offenders)
+    )
+```
+
+Check the `sys_db_path`/`sys_path` exclusions against the real call sites before relying on them -
+if a `system.db` open uses a different variable name, the guard will flag it wrongly. Prefer
+matching on how the path is derived rather than on a variable name if that proves fragile.
+
+Verify power the same way as the first guard: add a scratch raw `aiosqlite.connect` in a
+non-exempt file, confirm the guard names it, remove it, confirm the guard passes.
