@@ -148,6 +148,13 @@ When adding a new column to an existing table:
 2. Add the column to the `CREATE TABLE` statement so fresh DBs include it
 3. Add the column to test fixtures that create that table manually
 
+When adding a new `_migrate_*` function, bump `_SCHEMA_VERSION` in `api/database.py` in the
+same change and add the new function to the migration block `get_connection` runs. Forgetting
+fails unsafe, not loudly: `get_connection` only re-runs the migration block when
+`PRAGMA user_version < _SCHEMA_VERSION`, so a new migration added without bumping the version
+silently never runs on any database that has already been opened once at the current version -
+no error, no warning, just rows that stay unmigrated forever on every existing deployment.
+
 ---
 
 ## API conventions
@@ -301,6 +308,20 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - The `business_plan` crew has never completed a real run. It only became buildable when
   `visual_illustrator` was registered; before that `create_business_plan_crew` raised
   before its first task. Treat its first run as an experiment.
+- Deepgram (STT) and ElevenLabs (TTS) are used in secure mode by decision, both being
+  streamed with no content retention. Local speech services are future work, not a
+  current requirement.
+- Avery still blocks on `HumanInputTool` for up to 24 hours during an interview programme,
+  and nothing notifies the crew when a session completes. It does not affect interviewee
+  experience, which is why sub-project B left it alone.
+- `complete_session` and `_find_session_db` in `api/services/interview_service.py` open
+  their connections with a bare `aiosqlite.connect(db_path)`, not
+  `api.database.get_connection(slug)`. WAL survives that, because it is a persistent
+  property of the database file once any code path sets it; `busy_timeout` does not, since
+  it is per-connection and nothing sets it on this path. Found while proving twenty
+  concurrent interview completions in `tests/test_interview_concurrency.py` - it did not
+  fail the test on this workload, but the `get_connection` guarantee does not actually
+  reach the `/complete` endpoint's writes. Worth a follow-up task.
 
 ---
 
