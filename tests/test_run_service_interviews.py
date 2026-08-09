@@ -86,7 +86,7 @@ async def _seed_project_with_sessions(slug: str, statuses: list[str]) -> None:
                 node_label="exec_interview",
                 session_token=token,
             )
-            # insert_interview_session always starts a session as 'pending' — only move it on
+            # insert_interview_session always starts a session as 'pending' - only move it on
             # if the fixture wants something else.
             if status != "pending":
                 await update_interview_session_status(conn, token, status)
