@@ -28,6 +28,12 @@ const BASE_SETTINGS: ProjectSettings = {
   discovery_document_ids: [],
   interview_method: 'none',
   elaboration_press_timeout_seconds: 8,
+  anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
+  anthropic_deep_model: 'anthropic/claude-opus-4-6',
+  local_fast_model: 'gemma4:fast',
+  local_fast_url: 'http://localhost:11434/v1',
+  local_deep_model: 'qwen27b:reasoning',
+  local_deep_url: 'http://localhost:11434/v1',
 }
 
 function Wrapper() {
@@ -75,5 +81,20 @@ describe('Settings - press budget', () => {
     render(<Wrapper />)
     const input = await screen.findByLabelText(/follow-up time limit/i)
     await waitFor(() => expect(input).toHaveValue(22))
+  })
+
+  it('sends the local deep model when the form is saved', async () => {
+    // Rendered is not sent - see the comment on the press budget test above.
+    const saved = vi.fn().mockResolvedValue({})
+    vi.mocked(projectsApi.updateSettings).mockImplementation(saved)
+    render(<Wrapper />)
+    const input = await screen.findByLabelText(/local deep model/i)
+    fireEvent.change(input, { target: { value: 'qwen27b:reasoning' } })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    await waitFor(() =>
+      expect(saved).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ local_deep_model: 'qwen27b:reasoning' }),
+      ))
   })
 })

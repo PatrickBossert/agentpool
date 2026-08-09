@@ -26,6 +26,12 @@ const DEFAULTS: ProjectSettings = {
   discovery_document_ids: [],
   interview_method: 'none',
   elaboration_press_timeout_seconds: 8,
+  anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
+  anthropic_deep_model: 'anthropic/claude-opus-4-6',
+  local_fast_model: 'gemma4:fast',
+  local_fast_url: 'http://localhost:11434/v1',
+  local_deep_model: 'qwen27b:reasoning',
+  local_deep_url: 'http://localhost:11434/v1',
 }
 
 function TagInput({
@@ -314,6 +320,37 @@ export default function Settings() {
           </p>
         </div>
       </section>
+
+      {/* Models */}
+      <div className="mt-6">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Models</h3>
+        <p className="text-xs text-muted mt-1 mb-3">
+          Fast models handle coordination and live follow-ups. Deep models handle analysis
+          across a whole campaign. Sensitive projects use the local pair and never the hosted
+          ones.
+        </p>
+        {(
+          [
+            ['anthropic_fast_model', 'Hosted fast model'],
+            ['anthropic_deep_model', 'Hosted deep model'],
+            ['local_fast_model', 'Local fast model'],
+            ['local_fast_url', 'Local fast URL'],
+            ['local_deep_model', 'Local deep model'],
+            ['local_deep_url', 'Local deep URL'],
+          ] as [keyof ProjectSettings, string][]
+        ).map(([key, label]) => (
+          <div key={key} className="mb-3">
+            <label htmlFor={key} className="text-xs text-gray-600 block mb-1">{label}</label>
+            <input
+              id={key}
+              type="text"
+              value={String(form[key] ?? '')}
+              onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+              className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-brand"
+            />
+          </div>
+        ))}
+      </div>
 
       {/* Interview Branding */}
       <section className="space-y-4">

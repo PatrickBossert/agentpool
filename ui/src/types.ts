@@ -102,6 +102,14 @@ export interface ProjectSettings {
   interview_method: 'agent' | 'none'
   /** How long Avery waits for a follow-up during a live interview before moving on. */
   elaboration_press_timeout_seconds: number
+  /** Hosted fast model, used for coordination and live follow-ups. */
+  anthropic_fast_model: string
+  /** Hosted deep model, used for analysis across a whole campaign. */
+  anthropic_deep_model: string
+  local_fast_model: string
+  local_fast_url: string
+  local_deep_model: string
+  local_deep_url: string
   brand_header_image_url?: string
   brand_primary_color?: string
   brand_text_color?: string

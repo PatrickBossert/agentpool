@@ -45,6 +45,14 @@ class ProjectSettings(BaseModel):
     # input sends Number('') === 0, which reaches asyncio.wait_for(timeout=0) and silently
     # skips every press.
     elaboration_press_timeout_seconds: int = Field(default=8, ge=1, le=60)
+    # Model selection. Defaults here rather than in the registry so a project created before
+    # this feature resolves exactly as it did before, and so the UI has something to show.
+    anthropic_fast_model: str = "anthropic/claude-haiku-4-5-20251001"
+    anthropic_deep_model: str = "anthropic/claude-opus-4-6"
+    local_fast_model: str = "gemma4:fast"
+    local_fast_url: str = "http://localhost:11434/v1"
+    local_deep_model: str = "qwen27b:reasoning"
+    local_deep_url: str = "http://localhost:11434/v1"
     brand_header_image_url: str = ""
     brand_primary_color: str = Field(default="#0d9488", pattern=r"^#[0-9a-fA-F]{3,8}$")
     brand_text_color: str = Field(default="#1f2937", pattern=r"^#[0-9a-fA-F]{3,8}$")
