@@ -950,3 +950,116 @@ and called with that signature in Tasks 3, 4, and 7. `AGENT_TIER: dict[str, str]
 Task 2 and read in Tasks 2 and 7. `LocalModelUnavailable` is defined and raised in Task 2 and
 asserted in Task 2's tests. The six settings names in Task 1 match `_TIER_SETTINGS` in Task 2
 exactly.
+
+---
+
+## Task 8: The live follow-up reads the same settings as everything else
+
+Found by Task 4's implementer. The spec states that `LOCAL_LLM_MODEL` and `LLAMACPP_BASE_URL` are
+removed rather than kept as a fallback, on the grounds that a second authority for one fact is how
+drift happens. They survive because `_press_call` still reads them:
+
+```python
+# api/services/interview_service.py:230
+client = AsyncAnthropic(base_url=settings.llamacpp_base_url, api_key="not-needed")
+model = settings.local_llm_model
+```
+
+So for a sensitive project, agents resolve `local_fast_model` and `local_fast_url` from the
+project's own settings while the live follow-up resolves two process-wide environment variables.
+Configure one and not the other and they disagree silently - the exact shape the spec set out to
+prevent, created by this plan rather than inherited.
+
+The press is the fast-tier workload by nature: short, latency-critical, and answering a person in
+real time. It should read the fast tier's settings.
+
+**Files:**
+- Modify: `api/services/interview_service.py` (`_press_call`), `api/config.py`, `.env.example`
+- Test: `tests/test_secure_mode_routing.py`
+
+**Interfaces:**
+- Consumes: the `local_fast_model` and `local_fast_url` settings from Task 1
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+@pytest.mark.asyncio
+async def test_the_press_uses_the_project_s_fast_local_model(two_projects, monkeypatch):
+    """Agents and the live follow-up must resolve from the same place.
+
+    Asserted on the base URL the request actually reached, not on which setting was read - the
+    defect this whole plan exists to fix was a correct-looking mode helper that a code path
+    never consulted.
+    """
+    import json
+    import sqlite3
+    from pathlib import Path
+    from api.services import interview_service as svc
+
+    db = Path(get_settings().database_dir) / "secure-proj.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE projects SET config_json=? WHERE slug=?",
+                     (json.dumps({"local_fast_model": "gemma4:fast",
+                                  "local_fast_url": "http://localhost:11999/v1"}), "secure-proj"))
+
+    seen = {}
+
+    class FakeMessages:
+        async def create(self, **kw):
+            seen.update(kw)
+            class R:
+                content = [type("T", (), {"text": "and then?"})()]
+            return R()
+
+    class FakeClient:
+        def __init__(self, **kw):
+            seen["base_url"] = kw.get("base_url")
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr(svc, "AsyncAnthropic", FakeClient)
+    await svc.elaboration_press("Q?", "short", "press", slug="secure-proj")
+    assert seen["base_url"] == "http://localhost:11999/v1"
+    assert seen["model"] == "gemma4:fast"
+```
+
+Adapt the fixture name and slug to whatever `tests/test_secure_mode_routing.py` already uses -
+read the file rather than trusting these names.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `./venv/bin/pytest tests/test_secure_mode_routing.py -v`
+Expected: FAIL - the base URL is the global `LLAMACPP_BASE_URL`, not the project's.
+
+- [ ] **Step 3: Read the fast tier's settings**
+
+In `_press_call`, replace the two `settings.*` reads with the project's fast-tier settings. Reuse
+`agents.model_registry._project_setting` rather than writing a second reader - importing inside the
+function avoids a cycle, which is the established pattern in this file.
+
+Keep the failure behaviour the press already has: it is wrapped in a budget that returns no press
+on expiry, so a misconfigured local model degrades to a skipped follow-up rather than an error.
+Decide whether an unconfigured fast tier should raise `LocalModelUnavailable` here or be caught by
+the budget, and say which you chose and why - the interviewee is waiting either way.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `./venv/bin/pytest tests/test_secure_mode_routing.py tests/test_interviews_router.py -q`
+Expected: PASS
+
+- [ ] **Step 5: Remove the two settings**
+
+Run: `grep -rn "local_llm_model\|llamacpp_base_url\|LOCAL_LLM_MODEL\|LLAMACPP_BASE_URL" api agents ui .env.example`
+If the only hits left are the definitions themselves, delete them from `api/config.py` and
+`.env.example`. If anything still reads them, leave them and name it in your report.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add api/services/interview_service.py api/config.py .env.example tests/test_secure_mode_routing.py
+git commit -m "fix(secure): the live follow-up reads the project's fast-tier settings
+
+Agents resolved local_fast_model and local_fast_url from the project while _press_call read the
+process-wide LLAMACPP_BASE_URL and LOCAL_LLM_MODEL. Configure one and not the other and they
+disagreed silently - two authorities for one fact, which is what this plan set out to remove and
+had instead created."
+```
