@@ -331,6 +331,9 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   concurrent interview completions in `tests/test_interview_concurrency.py` - it did not
   fail the test on this workload, but the `get_connection` guarantee does not actually
   reach the `/complete` endpoint's writes. Worth a follow-up task.
+- Secure mode runs two local models concurrently. `OLLAMA_MAX_LOADED_MODELS` defaults to 1, which
+  makes them evict each other on every alternation regardless of free memory - see
+  `docs/runbook-local-models.md` before diagnosing local models as slow.
 
 ---
 
