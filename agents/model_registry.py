@@ -87,23 +87,39 @@ def _setting_default(key: str) -> str:
     return ProjectSettings.model_fields[key].default
 
 
+# Sentinel distinguishing "key absent from config_json" from "key present with a falsy value".
+# A `.get(key)` truthiness check collapses those two cases, and they must not collapse: these
+# fields are plain `str` with no `min_length`, so PATCH /projects/{slug}/settings can write ""
+# deliberately. A blank value has to reach get_llm_for_agent as blank, or the
+# LocalModelUnavailable guard there can never fire through any real configuration path - it
+# would only ever see "absent, so use the untouched default", never "present and empty".
+_ABSENT = object()
+
+
 def _project_setting(slug: str, key: str, default: str) -> str:
-    """One value from the project's config_json, falling back to the model default.
+    """One value from the project's config_json, falling back to the model default only when
+    the key is genuinely absent - a present-but-blank value is returned as blank, not defaulted.
 
     Synchronous, because every caller is: crew factories are built inside a running crew and the
     standalone dispatch is a plain function.
     """
     import contextlib
     import sqlite3
-    path = f"{get_settings().database_dir}/{slug}.db"
+    from pathlib import Path
+    db_path = Path(get_settings().database_dir) / f"{slug}.db"
+    if not db_path.exists():
+        # Mirrors project_llm_mode's existence check (chroma_client.py): connecting to a
+        # missing path would create an empty file as a side effect, leaving a stray <slug>.db
+        # behind for a not-yet-created project or a typo'd slug.
+        return default
     with contextlib.suppress(sqlite3.Error, OSError, json.JSONDecodeError):
-        with contextlib.closing(sqlite3.connect(path)) as conn:
+        with contextlib.closing(sqlite3.connect(db_path)) as conn:
             row = conn.execute(
                 "SELECT config_json FROM projects WHERE slug=?", (slug,)
             ).fetchone()
             if row and row[0]:
-                value = json.loads(row[0]).get(key)
-                if value:
+                value = json.loads(row[0]).get(key, _ABSENT)
+                if value is not _ABSENT:
                     return str(value)
     return default
 

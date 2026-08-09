@@ -5,6 +5,7 @@ Crew factories previously chose models themselves, which is how discovery_interv
 to declare llm_mode and never read it - putting the Synthesis Analyst on a hosted model while
 it held ChromaQueryTool over the project's own interview answers.
 """
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -22,7 +23,6 @@ def two_projects(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     get_settings.cache_clear()
-    import json
     for slug, mode in (("sec-proj", "sensitive"), ("std-proj", "standard")):
         conn = sqlite3.connect(tmp_path / f"{slug}.db")
         conn.execute("CREATE TABLE projects (id INTEGER PRIMARY KEY, slug TEXT, "
@@ -34,6 +34,15 @@ def two_projects(tmp_path, monkeypatch):
     chroma_client._MODE_CACHE.clear()
     yield
     get_settings.cache_clear()
+
+
+def _set_config(tmp_path, slug: str, config: dict) -> None:
+    """Write config_json the way PATCH /projects/{slug}/settings would - the way a user
+    actually reaches this table, as opposed to monkeypatching model_registry internals."""
+    conn = sqlite3.connect(tmp_path / f"{slug}.db")
+    conn.execute("UPDATE projects SET config_json=? WHERE slug=?", (json.dumps(config), slug))
+    conn.commit()
+    conn.close()
 
 
 def test_every_dispatched_agent_has_a_tier():
@@ -79,14 +88,48 @@ def test_two_agents_in_one_crew_get_different_models(two_projects):
     assert fast.model != deep.model
 
 
-def test_an_unconfigured_local_tier_refuses_rather_than_falling_back(two_projects, monkeypatch):
-    """Never a hosted fallback, and never borrowing the other tier."""
+def test_a_deliberately_blanked_local_tier_refuses_rather_than_falling_back(two_projects, tmp_path):
+    """Never a hosted fallback, and never borrowing the other tier.
+
+    Drives a real blank value in config_json, written the way PATCH /projects/{slug}/settings
+    would write it - local_deep_model is a plain `str` with no `min_length`, so a user can clear
+    it from the UI. This is the load-bearing version: a fix that made _project_setting return
+    the untouched default for a *present but blank* key (indistinguishable from "never set" under
+    a bare `.get(key)` truthiness check) would pass a test that monkeypatches
+    _project_setting's return value, because that only proves get_llm_for_agent reacts correctly
+    to a falsy input - not that a falsy input is ever reachable from real configuration. It
+    wasn't, until _project_setting distinguished absent from blank.
+    """
+    _set_config(tmp_path, "sec-proj", {"local_deep_model": ""})
+    from agents.model_registry import get_llm_for_agent, LocalModelUnavailable
+    with pytest.raises(LocalModelUnavailable, match="local_deep_model"):
+        get_llm_for_agent("synthesis_analyst", "sec-proj")
+
+
+def test_get_llm_for_agent_raises_on_a_blank_resolved_value(two_projects, monkeypatch):
+    """Unit-level check of the guard itself, decoupled from whether a blank is reachable in
+    practice - test_a_deliberately_blanked_local_tier_refuses_rather_than_falling_back is the
+    one that proves reachability; this one is kept only for a faster, more targeted signal on
+    the raise-and-message behaviour of get_llm_for_agent."""
     from agents import model_registry
     from agents.model_registry import get_llm_for_agent, LocalModelUnavailable
     monkeypatch.setattr(model_registry, "_project_setting",
                         lambda slug, key, default: "" if key == "local_deep_model" else default)
     with pytest.raises(LocalModelUnavailable, match="local_deep_model"):
         get_llm_for_agent("synthesis_analyst", "sec-proj")
+
+
+def test_a_blank_hosted_model_setting_is_not_silently_defaulted(two_projects, tmp_path):
+    """The same absent-vs-blank distinction applies on the standard branch. A blank
+    anthropic_deep_model is not a confidentiality leak - the standard branch never touches a
+    local model - but _project_setting does not know which branch is calling it, so a fix
+    scoped only to the sensitive branch would leave this silently resolving to the untouched
+    anthropic/claude-opus-4-6 default instead of failing. crewai.LLM itself refuses an empty
+    model string, so with the fix this fails loudly rather than silently choosing a model."""
+    _set_config(tmp_path, "std-proj", {"anthropic_deep_model": ""})
+    from agents.model_registry import get_llm_for_agent
+    with pytest.raises(ValueError, match="non-empty"):
+        get_llm_for_agent("synthesis_analyst", "std-proj")
 
 
 def test_both_llm_paths_set_max_tokens(two_projects):
