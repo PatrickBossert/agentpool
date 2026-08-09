@@ -70,7 +70,11 @@ function wordSimilarity(a: string, b: string): number {
 
 interface Props { slug: string; onClose: () => void; locale?: string }
 
-export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB' }: Props) {
+// The slug is not decoration. The script comes from the smoke-test project, but the answers
+// the consultant types are this project's, and the elaboration press is what sends them to a
+// model - so the press has to say which project it belongs to or it cannot be routed by that
+// project's llm_mode.
+export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Props) {
   const [phase, setPhase]             = useState<Phase>('loading')
   const [script, setScript]           = useState<InterviewScript | null>(null)
   const [errorMsg, setErrorMsg]       = useState('')
@@ -274,7 +278,7 @@ export default function TestInterviewDialog({ slug: _slug, onClose, locale = 'GB
     return fetch(`${API_BASE}/elaboration-press`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ question_text: questionText, response_text: responseText, probing_instructions: probingInstructions }),
+      body: JSON.stringify({ question_text: questionText, response_text: responseText, probing_instructions: probingInstructions, slug }),
       signal,
     })
       .then(r => r.ok ? r.json() : Promise.reject(r.status))

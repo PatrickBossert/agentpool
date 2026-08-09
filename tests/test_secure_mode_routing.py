@@ -205,13 +205,43 @@ def test_a_failed_read_is_not_cached(tmp_path, monkeypatch):
         get_settings.cache_clear()
 
 
+def _capture_local_calls(monkeypatch, *, reply: str = "and then?", status: int = 200):
+    """Point the shared local-model client at an httpx.MockTransport and record requests.
+
+    A fake *transport*, not a fake client class. The previous version of this test swapped
+    AsyncAnthropic for a stub and asserted on the base_url handed to it, which proved only
+    that a setting was read - it could not see that the SDK POSTs `{base_url}/v1/messages`
+    while every local server on this project's runbook serves `{base_url}/chat/completions`
+    and nothing else. Here the request object is genuine: its URL, method, and JSON body are
+    what a real server would receive, so a protocol mismatch fails the assertions below.
+    """
+    import httpx
+    from api.services import http_clients
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if status != 200:
+            return httpx.Response(status, json={"error": "nope"})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"role": "assistant", "content": reply}}]}
+        )
+
+    monkeypatch.setattr(
+        http_clients, "_local_llm_client",
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    return requests
+
+
 @pytest.mark.asyncio
 async def test_the_press_uses_the_project_s_fast_local_model(two_projects, monkeypatch):
     """Agents and the live follow-up must resolve from the same place.
 
-    Asserted on the base URL the request actually reached, not on which setting was read -
-    the defect this whole plan exists to fix was a correct-looking mode helper that a code
-    path never consulted.
+    Asserted on the request that actually went out, not on which setting was read - the
+    defect this whole plan exists to fix was a correct-looking mode helper that a code path
+    never consulted.
     """
     import json
     import sqlite3
@@ -225,24 +255,45 @@ async def test_the_press_uses_the_project_s_fast_local_model(two_projects, monke
                                   "local_fast_url": "http://localhost:11999/v1"}), "secure-proj"))
         conn.commit()
 
-    seen = {}
+    requests = _capture_local_calls(monkeypatch)
+    result = await svc.elaboration_press("Q?", "short", "press", slug="secure-proj")
 
-    class FakeMessages:
-        async def create(self, **kw):
-            seen.update(kw)
-            class R:
-                content = [type("T", (), {"text": "and then?"})()]
-            return R()
+    assert result == "and then?"
+    assert len(requests) == 1, "the press did not reach the local model at all"
+    request = requests[0]
+    assert str(request.url) == "http://localhost:11999/v1/chat/completions", (
+        "the press must speak the OpenAI chat-completions protocol the agents already use - "
+        "Ollama and llama.cpp serve no /v1/messages at any path"
+    )
+    body = json.loads(request.content)
+    assert body["model"] == "gemma4:fast"
+    assert body["messages"][-1]["role"] == "user"
 
-    class FakeClient:
-        def __init__(self, **kw):
-            seen["base_url"] = kw.get("base_url")
-            self.messages = FakeMessages()
 
-    monkeypatch.setattr(svc, "AsyncAnthropic", FakeClient)
-    await svc.elaboration_press("Q?", "short", "press", slug="secure-proj")
-    assert seen["base_url"] == "http://localhost:11999/v1"
-    assert seen["model"] == "gemma4:fast"
+@pytest.mark.asyncio
+async def test_the_press_skips_rather_than_errors_when_the_local_model_answers_an_error(
+    two_projects, monkeypatch
+):
+    """A configured-but-broken local model degrades the same way an unconfigured one does.
+
+    The interviewee is waiting. A 404 from a misconfigured URL used to reach them as a 500
+    mid-interview, because the press caught only TimeoutError and LocalModelUnavailable.
+    """
+    import json
+    import sqlite3
+    from pathlib import Path
+    from api.services import interview_service as svc
+
+    db = Path(get_settings().database_dir) / "secure-proj.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE projects SET config_json=? WHERE slug=?",
+                     (json.dumps({"local_fast_model": "gemma4:fast",
+                                  "local_fast_url": "http://localhost:11999/v1"}), "secure-proj"))
+        conn.commit()
+
+    _capture_local_calls(monkeypatch, status=404)
+    result = await svc.elaboration_press("Q?", "short", "press", slug="secure-proj")
+    assert result == "", "a provider error must skip the follow-up, not reach the interviewee"
 
 
 @pytest.mark.asyncio
@@ -281,3 +332,107 @@ async def test_the_press_gives_up_on_budget_rather_than_stalling(two_projects, m
     result = await svc.elaboration_press("Q?", "short", "press",
                                          slug="open-proj", timeout_seconds=0.1)
     assert result == "", "an over-budget press must return no press, not raise or stall"
+
+
+@pytest.mark.asyncio
+async def test_the_standard_press_reads_the_project_s_fast_model_setting(
+    two_projects, monkeypatch
+):
+    """The hosted branch is not allowed a hardcoded model either.
+
+    anthropic_fast_model sits on the same project's settings the sensitive branch reads. A
+    literal here would be a third authority for one fact - the exact shape removed from the
+    sensitive branch and left standing in the branch below it.
+    """
+    import json
+    import sqlite3
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+    from api.services import llm_client
+    from api.services import interview_service as svc
+
+    db = Path(get_settings().database_dir) / "open-proj.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE projects SET config_json=? WHERE slug=?",
+                     (json.dumps({"anthropic_fast_model": "anthropic/claude-fictional-9"}),
+                      "open-proj"))
+        conn.commit()
+
+    block = MagicMock()
+    block.text = "and then?"
+    response = MagicMock()
+    response.content = [block]
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=response)
+    monkeypatch.setattr(llm_client, "get_anthropic_client", lambda: client)
+
+    await svc.elaboration_press("Q?", "short", "press", slug="open-proj")
+    sent = client.messages.create.await_args.kwargs
+    assert sent["model"] == "claude-fictional-9", (
+        "the press sent %r - the project's anthropic_fast_model is what decides this, and the "
+        "Anthropic SDK wants the bare id without the LiteLLM provider prefix" % sent["model"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_press_refuses_a_call_with_no_slug(two_projects):
+    """Without a slug there is no mode, and no mode defaults to hosted.
+
+    A caller that forgets the slug is a caller that sends a sensitive project's question text
+    and a stakeholder's answer to Anthropic. That has to be an error, not a default.
+    """
+    from api.services import interview_service as svc
+
+    with pytest.raises(ValueError, match="slug"):
+        await svc.elaboration_press("Q?", "short", "press", slug="")
+
+
+@pytest.mark.asyncio
+async def test_the_test_interview_press_routes_by_the_project_it_was_opened_from(
+    two_projects, monkeypatch, client
+):
+    """"Test interview" is opened from Avery's setup tab on a real project.
+
+    The dialog took the slug and discarded it, and the endpoint called elaboration_press with
+    none, so project_llm_mode("") found no database, answered "standard", and a consultant on
+    a sensitive engagement typing a realistic answer sent it to Anthropic. Asserted on the
+    request that went out, not on what the endpoint was handed.
+    """
+    import json
+    import sqlite3
+    from pathlib import Path
+
+    db = Path(get_settings().database_dir) / "secure-proj.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE projects SET config_json=? WHERE slug=?",
+                     (json.dumps({"local_fast_model": "gemma4:fast",
+                                  "local_fast_url": "http://localhost:11999/v1"}), "secure-proj"))
+        conn.commit()
+
+    requests = _capture_local_calls(monkeypatch)
+    response = await client.post(
+        "/api/interviews/test/elaboration-press",
+        json={"question_text": "What are your main challenges?",
+              "response_text": "Rostering, mostly.",
+              "probing_instructions": "Ask for specifics.",
+              "slug": "secure-proj"},
+    )
+
+    assert response.status_code == 200
+    assert len(requests) == 1, (
+        "the test-interview press never reached the project's local model - it went hosted"
+    )
+    assert str(requests[0].url) == "http://localhost:11999/v1/chat/completions"
+
+
+@pytest.mark.asyncio
+async def test_the_test_interview_press_refuses_without_a_slug(two_projects, client):
+    """Refused, not defaulted. A default is what routed a sensitive project's answers hosted."""
+    body = {"question_text": "Q?", "response_text": "A.", "probing_instructions": "Press."}
+
+    missing = await client.post("/api/interviews/test/elaboration-press", json=body)
+    assert missing.status_code == 422, "an absent slug must be refused, not defaulted"
+
+    blank = await client.post("/api/interviews/test/elaboration-press",
+                              json={**body, "slug": ""})
+    assert blank.status_code == 422, "a blank slug must be refused, not defaulted"

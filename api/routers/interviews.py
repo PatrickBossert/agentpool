@@ -16,9 +16,9 @@ from collections import defaultdict
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from api.auth import require_any_auth
+from api.auth import check_project_access, require_any_auth
 from api.config import get_settings
 from api.database import (
     fetch_interview_sessions_for_run,
@@ -152,19 +152,30 @@ class TestElaborationRequest(BaseModel):
     question_text: str
     response_text: str
     probing_instructions: str
+    # Required, and min_length=1 so a blank one is a 422 rather than a default. The dialog is
+    # opened from a real project's Avery setup tab and the consultant types real answers into
+    # it; without the slug there is no llm_mode, and no llm_mode resolves to standard - which
+    # sent a sensitive engagement's answers to a hosted model.
+    slug: str = Field(min_length=1)
 
 
 @router.post("/test/elaboration-press")
 async def test_elaboration_press(
     body: TestElaborationRequest, payload: dict = Depends(require_any_auth)
 ):
-    """Elaboration press for the built-in test interview — no session token required."""
+    """Elaboration press for the built-in test interview — no session token required.
+
+    The script is the smoke-test project's, but the routing is the caller's project's: what
+    needs protecting here is the answer the consultant types, not the question they are asked.
+    """
+    await check_project_access(body.slug, payload)
     try:
         press_text = await elaboration_press(
             body.question_text,
             body.response_text,
             body.probing_instructions,
             "test interviewee",
+            slug=body.slug,
         )
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))

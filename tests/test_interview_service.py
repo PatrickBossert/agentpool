@@ -138,9 +138,9 @@ async def test_elaboration_press_returns_string():
 
     Previously this constructed AsyncAnthropic() per call, so the test patched sys.modules
     and reloaded interview_service to inject a fake class. Now the client is memoised in
-    api.services.http_clients, so the getter itself is what must be mocked - patching
-    sys.modules would miss it, since http_clients already holds its own AsyncAnthropic
-    reference from import time.
+    api.services.http_clients and reached through api.services.llm_client, which is where
+    the hosted-or-local decision is made - so the getter is patched at the name llm_client
+    looks up, not at the name http_clients defines.
     """
     fake_text = "Could you elaborate on that point?"
 
@@ -155,7 +155,7 @@ async def test_elaboration_press_returns_string():
     mock_client.messages.create = AsyncMock(return_value=mock_response)
 
     with patch(
-        "api.services.interview_service.get_anthropic_client", return_value=mock_client
+        "api.services.llm_client.get_anthropic_client", return_value=mock_client
     ):
         from api.services.interview_service import elaboration_press
 
@@ -164,6 +164,7 @@ async def test_elaboration_press_returns_string():
             response_text="It's complicated.",
             probing_instructions="Ask for specific examples.",
             stakeholder_name="Alice",
+            slug="press-client-test",
         )
 
     assert isinstance(result, str)
@@ -225,7 +226,7 @@ async def test_elaboration_press_success_logs_duration(caplog):
     mock_client.messages.create = AsyncMock(return_value=mock_response)
 
     with patch(
-        "api.services.interview_service.get_anthropic_client", return_value=mock_client
+        "api.services.llm_client.get_anthropic_client", return_value=mock_client
     ):
         from api.services.interview_service import elaboration_press
 
@@ -235,6 +236,7 @@ async def test_elaboration_press_success_logs_duration(caplog):
                 response_text="It's complicated.",
                 probing_instructions="Ask for specific examples.",
                 stakeholder_name="Alice",
+                slug="press-timing-success",
             )
 
     assert result == fake_text

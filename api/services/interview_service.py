@@ -14,11 +14,10 @@ from pathlib import Path
 
 import aiosqlite
 import httpx
-from anthropic import AsyncAnthropic
 
 from api.config import get_settings
-from api.services.chroma_client import project_llm_mode
-from api.services.http_clients import get_tts_client, get_anthropic_client
+from api.services.http_clients import get_tts_client
+from api.services.llm_client import LocalModelError, project_completion
 from api.services.interview_answer_service import record_answers, script_for_session
 from api.database import (
     complete_interview_session,
@@ -227,31 +226,19 @@ async def speak(text: str, voice_id: str) -> bytes:
 async def _press_call(prompt: str, slug: str) -> str:
     """The provider call, split out so the budget in elaboration_press can wrap it.
 
-    The press is the fast tier's workload by nature - short and latency-critical - so a
-    sensitive project resolves it from the same place agents do: local_fast_model and
-    local_fast_url on the project's own settings, via model_registry's own reader rather
-    than a second one. Importing inside the function, not at module scope, matches how this
-    file already handles the tts_cache/interview_service pair below (speak()) - a local
-    import for a dependency this file is not always loaded to use.
+    The press is the fast tier's workload by nature - short and latency-critical - so it goes
+    through api.services.llm_client, the same routing every other per-project call uses:
+    local_fast_model/local_fast_url for a sensitive project, anthropic_fast_model otherwise,
+    and both read from the project's own settings rather than from a literal here.
+
+    It used to build `AsyncAnthropic(base_url=...)` for the sensitive branch, which POSTs
+    `{base_url}/v1/messages` - a path no local server on this project's runbook serves, and
+    with local_fast_url already ending in `/v1`, not even the path it intended. Every live
+    follow-up on a correctly configured sensitive project raised NotFoundError.
     """
-    if project_llm_mode(slug) == "sensitive":
-        from agents.model_registry import LocalModelUnavailable, _project_setting, _setting_default
-        model = _project_setting(slug, "local_fast_model", _setting_default("local_fast_model"))
-        base_url = _project_setting(slug, "local_fast_url", _setting_default("local_fast_url"))
-        if not model or not base_url:
-            raise LocalModelUnavailable(
-                f"Project '{slug}' is sensitive and has no local model for the 'fast' tier. "
-                f"Set local_fast_model and local_fast_url in the project's settings. "
-                f"A hosted model is never substituted for a sensitive project."
-            )
-        client = AsyncAnthropic(base_url=base_url, api_key="not-needed")
-    else:
-        client = get_anthropic_client()
-        model = "claude-haiku-4-5-20251001"
-    response = await client.messages.create(
-        model=model, max_tokens=150, messages=[{"role": "user", "content": prompt}]
+    return await project_completion(
+        slug, "fast", [{"role": "user", "content": prompt}], max_tokens=150
     )
-    return response.content[0].text.strip()
 
 
 async def elaboration_press(
@@ -277,16 +264,26 @@ async def elaboration_press(
     greppable from one campaign's logs - is the evidence a later decision about allowing a
     hosted model for follow-ups would need.
 
-    An unconfigured fast tier on a sensitive project is caught here alongside the timeout,
-    not left to reach the endpoint. The agent path raises LocalModelUnavailable and stops a
-    run outright, because there is no one waiting and a hosted fallback would leak client
-    content. The press has someone waiting: it is already a best-effort enhancement that
-    turns any over-budget call into a skipped follow-up, so a misconfigured local model
-    degrades the same way rather than surfacing an error page mid-interview. The distinct
-    log line keeps "misconfigured" greppable apart from "timed out" without changing what
-    the interviewee experiences.
+    A local model that is unconfigured, unreachable, or answering with an error is caught
+    here alongside the timeout, not left to reach the endpoint. The agent path raises and
+    stops a run outright, because there is no one waiting and a hosted fallback would leak
+    client content. The press has someone waiting: it is already a best-effort enhancement
+    that turns any over-budget call into a skipped follow-up, so a misconfigured or broken
+    local model degrades the same way rather than surfacing an error page mid-interview. The
+    distinct log line keeps "misconfigured" greppable apart from "timed out" without changing
+    what the interviewee experiences.
+
+    The slug is required rather than defaulted. Without it there is no mode, and no mode
+    resolves to standard - which is how the test-interview dialog came to send a sensitive
+    project's question text and a stakeholder's answer to a hosted model.
     """
     from agents.model_registry import LocalModelUnavailable
+    if not slug:
+        raise ValueError(
+            "elaboration_press requires the project slug: it decides whether this call goes "
+            "to a local model or a hosted one. Defaulting would route a sensitive project's "
+            "question text and the interviewee's answer to a third party."
+        )
     name_clause = f" {stakeholder_name}" if stakeholder_name else ""
     prompt = (
         f"You are a polite but insistent interviewer.{name_clause} has given an "
@@ -311,9 +308,9 @@ async def elaboration_press(
             slug, time.perf_counter() - started, timeout_seconds,
         )
         return ""
-    except LocalModelUnavailable as exc:
+    except (LocalModelUnavailable, LocalModelError) as exc:
         _log.warning(
-            "elaboration_press[%s]: SKIPPED, no local model configured: %s",
+            "elaboration_press[%s]: SKIPPED, local model unavailable: %s",
             slug, exc,
         )
         return ""
