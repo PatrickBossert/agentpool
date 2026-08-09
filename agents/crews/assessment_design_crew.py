@@ -1,6 +1,6 @@
 # agents/crews/assessment_design_crew.py
 from crewai import Crew, Process, LLM
-from agents.llm import get_crew_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.discovery.interaction_designer import (
     create_interaction_designer,
@@ -22,11 +22,10 @@ def create_assessment_design_crew(
     applicable_regulations: str = "",
     llm: LLM | None = None,
 ) -> Crew:
-    if llm is None:
-        llm = get_crew_llm(llm_mode)
+    resolved_llm = llm or get_llm_for_agent("interaction_designer", slug)
 
     tools = get_tools_for_agent("interaction_designer", slug=slug, run_id=run_id, sector=sector)
-    agent = create_interaction_designer(slug=slug, llm=llm, tools=tools)
+    agent = create_interaction_designer(slug=slug, llm=resolved_llm, tools=tools)
     task = create_interaction_designer_task(
         agent=agent,
         standards_references=standards_references,

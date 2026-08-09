@@ -1,6 +1,6 @@
 # agents/crews/value_design_crew.py
 from crewai import Crew, Process, LLM
-from agents.llm import get_crew_llm, get_pam_llm, get_haiku_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.value_design.value_proposition_generator import (
     create_value_proposition_generator,
@@ -30,17 +30,8 @@ def create_value_design_crew(
         sector: Client sector (unused by Value Design but kept for interface consistency).
         llm: Optional LLM override (used in tests to inject a cheap model for all agents).
     """
-    if llm is not None:
-        # Test override: use the same cheap model for all agents
-        vpg_llm = pm_llm = llm
-    elif llm_mode == "sensitive":
-        # Sensitive mode: all agents use local LLM
-        _local = get_crew_llm("sensitive")
-        vpg_llm = pm_llm = _local
-    else:
-        # Production: per-spec model assignment
-        vpg_llm = get_pam_llm()    # Claude Opus 4.6
-        pm_llm = get_haiku_llm()   # Claude Haiku 4.5
+    vpg_llm = llm or get_llm_for_agent("value_proposition_generator", slug)
+    pm_llm = llm or get_llm_for_agent("portfolio_manager", slug)
 
     vpg = create_value_proposition_generator(
         slug=slug,

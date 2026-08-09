@@ -153,16 +153,22 @@ def test_value_design_crew_sequential_process(mock_llm):
     assert crew.process == Process.sequential
 
 
-def test_value_design_crew_sensitive_mode_uses_local_llm(mock_llm):
-    """In sensitive mode, a single local LLM is used (not the test override)."""
+def test_value_design_crew_asks_the_registry_per_agent(mock_llm):
+    """No llm override: each agent must ask agents/model_registry.py by its own name rather
+    than the crew choosing one shared model. This is the collapse the refactor fixed - the
+    old code gave both agents one local LLM in sensitive mode via a single get_crew_llm call.
+    Patched where the name is looked up - agents.crews.value_design_crew binds its own
+    reference via `from ... import` - not agents.model_registry, where it is defined."""
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
-         patch("agents.crews.value_design_crew.get_crew_llm") as mock_local:
-        mock_local.return_value = mock_llm
+         patch("agents.crews.value_design_crew.get_llm_for_agent") as mock_get_llm:
+        mock_get_llm.return_value = mock_llm
         from agents.crews.value_design_crew import create_value_design_crew
-        crew = create_value_design_crew(
+        create_value_design_crew(
             slug="test", run_id=1, llm_mode="sensitive", sector="logistics"
         )
-    mock_local.assert_called_once_with("sensitive")
+    mock_get_llm.assert_any_call("value_proposition_generator", "test")
+    mock_get_llm.assert_any_call("portfolio_manager", "test")
+    assert mock_get_llm.call_count == 2
 
 
 def test_value_design_crew_accepts_hitl_tool_override(mock_llm):

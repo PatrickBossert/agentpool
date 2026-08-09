@@ -5,7 +5,7 @@ Interview scripts are designed upstream by the assessment_design crew (Interacti
 This crew handles scheduling, conducting, and synthesising the interviews themselves.
 """
 from crewai import Crew, Process, LLM
-from agents.llm import get_crew_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.discovery.interview_coordinator import (
     create_interview_coordinator,
@@ -59,30 +59,28 @@ def create_discovery_interviews_crew(
 
     stakeholder_assignments: list of dicts with keys: name, job_title, level, node_label.
     """
-    if llm is None:
-        # Sonnet 4.6 (standard/fallback) or the local model (sensitive). This crew used to
-        # take get_pam_llm() unconditionally, which read llm_mode not at all: the Synthesis
-        # Analyst holds ChromaQueryTool over {slug}_interviews, so on a sensitive project it
-        # pulled verbatim interview answers out of the correctly-local Chroma and posted them
-        # to a hosted model. Of every crew factory, this was the only one not branching here,
-        # and the only one whose agents read interview answers.
-        llm = get_crew_llm(llm_mode)
-
+    # Each agent asks the registry for its own model. This crew used to take one shared
+    # get_crew_llm(llm_mode) call for all three agents, and the standalone dispatch path
+    # used to take get_pam_llm() unconditionally, reading llm_mode not at all: the Synthesis
+    # Analyst holds ChromaQueryTool over {slug}_interviews, so on a sensitive project it
+    # pulled verbatim interview answers out of the correctly-local Chroma and posted them to
+    # a hosted model. Asking per agent means there is no shared variable left to forget to
+    # branch on.
     assignments_str = _format_assignments(stakeholder_assignments)
 
     coordinator = create_interview_coordinator(
         slug=slug,
-        llm=llm,
+        llm=llm or get_llm_for_agent("interview_coordinator", slug),
         tools=get_tools_for_agent("interview_coordinator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
     interviewer = create_stakeholder_interviewer(
         slug=slug,
-        llm=llm,
+        llm=llm or get_llm_for_agent("stakeholder_interviewer", slug),
         tools=get_tools_for_agent("stakeholder_interviewer", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
     analyst = create_synthesis_analyst(
         slug=slug,
-        llm=llm,
+        llm=llm or get_llm_for_agent("synthesis_analyst", slug),
         tools=get_tools_for_agent("synthesis_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 

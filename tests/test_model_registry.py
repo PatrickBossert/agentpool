@@ -139,3 +139,24 @@ def test_both_llm_paths_set_max_tokens(two_projects):
     for slug in ("sec-proj", "std-proj"):
         llm = get_llm_for_agent("value_chain_mapper", slug)
         assert getattr(llm, "max_tokens", None) == 16384, f"{slug} has no max_tokens"
+
+
+def test_no_crew_factory_chooses_a_model():
+    """Factories ask the registry. A factory that cannot choose a model cannot forget to
+    consult llm_mode, which is the defect that shipped past sixteen reviews.
+
+    Guards the class rather than the instance: bare-filename reads recurred across six sites and
+    raw database connections across seven before each got a guard.
+    """
+    offenders = []
+    for path in sorted(Path("agents/crews").glob("*_crew.py")):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "anthropic/claude" in stripped or "get_pam_llm" in stripped \
+                    or "get_haiku_llm" in stripped or "get_crew_llm" in stripped:
+                offenders.append(f"{path}:{number}  {stripped[:70]}")
+    assert not offenders, (
+        "these choose a model instead of asking get_llm_for_agent:\n  " + "\n  ".join(offenders)
+    )

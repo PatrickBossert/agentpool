@@ -97,54 +97,97 @@ def test_discovery_interviews_crew_accepts_node_templates(mock_llm):
     assert "Goods-in Inspection" in crew.tasks[0].description
 
 
-def _build_crew_without_an_llm(llm_mode):
-    """Build the crew the way run_service does - no llm override, so the factory chooses."""
+def _write_project_row(tmp_path, slug: str, llm_mode: str) -> None:
+    """Write a project row the way get_llm_for_agent actually reads mode - a real sqlite
+    row, not a mocked return value. This is what makes these two tests exercise the crew's
+    real wiring into agents/model_registry.py rather than trusting a factory-level llm_mode
+    argument the factory no longer even consults."""
+    import json
+    import sqlite3
+    conn = sqlite3.connect(tmp_path / f"{slug}.db")
+    conn.execute(
+        "CREATE TABLE projects (id INTEGER PRIMARY KEY, slug TEXT, llm_mode TEXT, "
+        "sector TEXT, config_json TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO projects (slug, llm_mode, sector, config_json) VALUES (?,?,?,?)",
+        (slug, llm_mode, "rail", json.dumps({})),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _build_crew_for_project(slug: str):
+    """Build the crew the way run_service does - no llm override, so each agent asks the
+    registry, which reads the real project row set up by _write_project_row. The llm_mode
+    argument below is a required parameter the factory no longer reads at all; its value is
+    irrelevant to which model is resolved, which is the point of this test."""
     with patch("agents.crews.discovery_interviews_crew.get_tools_for_agent", return_value=[]):
         from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew
         return create_discovery_interviews_crew(
-            slug="test", run_id=1, llm_mode=llm_mode, sector="rail",
+            slug=slug, run_id=1, llm_mode="standard", sector="rail",
             stakeholder_assignments=[],
         )
 
 
-def test_a_sensitive_project_gets_no_hosted_model_in_this_crew():
+def test_a_sensitive_project_gets_no_hosted_model_in_this_crew(monkeypatch, tmp_path):
     """The branch's headline guarantee, at the one crew that reads interview answers.
 
-    llm_mode was a declared parameter this factory never read: it called get_pam_llm()
-    unconditionally, putting all three agents - including the Synthesis Analyst, which holds
-    ChromaQueryTool over {slug}_interviews - on a hosted Anthropic model. Chroma routing was
-    fixed to keep a sensitive project's answers local, and this crew then read them back out
-    and sent them to Anthropic anyway.
-
-    Asserted on every agent's actual LLM rather than on the factory's choice, because two of
-    the three agents take their llm from the same local and one is the one that matters.
+    This crew used to take one shared get_crew_llm(llm_mode) call for all three agents, and
+    llm_mode was, at one point, a declared parameter this factory never read at all - it
+    called get_pam_llm() unconditionally, putting all three agents, including the Synthesis
+    Analyst, which holds ChromaQueryTool over {slug}_interviews, on a hosted Anthropic model.
+    Each agent now asks agents/model_registry.get_llm_for_agent for its own model, which reads
+    the project's real llm_mode from its own row rather than trusting a caller-supplied one -
+    so this test drives a real sensitive project row rather than passing "sensitive" to the
+    factory, which the factory no longer even looks at.
     """
     from api.config import get_settings
+    from api.services import chroma_client
 
-    crew = _build_crew_without_an_llm("sensitive")
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    chroma_client._MODE_CACHE.clear()
+    _write_project_row(tmp_path, "sec-crew", "sensitive")
+
+    crew = _build_crew_for_project("sec-crew")
     assert len(crew.agents) == 3
     for agent in crew.agents:
-        assert agent.llm.model == f"openai/{get_settings().local_llm_model}", (
+        assert agent.llm.base_url is not None, (
+            f"{agent.role} has no base_url - not routed to a local model"
+        )
+        assert "anthropic" not in str(agent.llm.model).lower(), (
             f"{agent.role} is on {agent.llm.model} - a sensitive project's interview answers "
             "must never reach a hosted model"
         )
-        assert agent.llm.base_url == get_settings().llamacpp_base_url
-        assert "anthropic" not in str(agent.llm.model).lower()
+    get_settings.cache_clear()
 
 
-def test_a_standard_project_gets_the_shared_crew_model():
-    """The other side of the branch: standard must still route hosted, and to the crew model.
-
-    Pinned to get_crew_llm's choice rather than merely "not local" - the defect it replaced
-    put these three agents on PAM's Opus, which is not local either and would pass a
-    negative-only assertion.
+def test_a_standard_project_asks_the_registry_per_agent(monkeypatch, tmp_path):
+    """The other side: standard still routes hosted, and each agent now asks for its own
+    tier rather than sharing one factory-wide model - the Synthesis Analyst is deep, the
+    Coordinator and Interviewer are fast. A shared-model implementation would pass a test
+    that only checked "hosted", so this also proves the two tiers differ.
     """
-    from agents.llm import get_crew_llm
+    from api.config import get_settings
+    from api.services import chroma_client
 
-    expected = get_crew_llm("standard").model
-    crew = _build_crew_without_an_llm("standard")
-    for agent in crew.agents:
-        assert agent.llm.model == expected
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    chroma_client._MODE_CACHE.clear()
+    _write_project_row(tmp_path, "std-crew", "standard")
+
+    crew = _build_crew_for_project("std-crew")
+    by_role = {agent.role: agent.llm for agent in crew.agents}
+    for role, llm in by_role.items():
+        # crewai.LLM strips the "anthropic/" prefix into llm_type and stores the bare model
+        # name on .model, so the hosted signal is llm_type, not a substring of .model.
+        assert llm.base_url is None, f"{role} is routed local on a standard project"
+        assert llm.llm_type == "anthropic", f"{role} is on {llm.llm_type}:{llm.model}, not hosted"
+    assert by_role["Synthesis Analyst"].model != by_role["Interview Coordinator"].model, (
+        "the deep-tier Analyst and the fast-tier Coordinator resolved to the same model"
+    )
+    get_settings.cache_clear()
 
 
 def test_registry_has_interview_coordinator_entry():

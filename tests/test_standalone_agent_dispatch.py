@@ -36,7 +36,7 @@ async def test_every_advertised_agent_has_a_dispatch_branch(agent_key):
                 "public_url": "https://example.test",
             }), \
          patch("api.services.run_service.get_settings") as m_settings, \
-         patch("agents.llm.get_crew_llm", return_value=MagicMock(spec=LLM)), \
+         patch("agents.model_registry.get_llm_for_agent", return_value=MagicMock(spec=LLM)), \
          patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
          patch("api.services.run_service.make_step_callback", return_value=None), \
          patch("crewai.Crew", return_value=fake_crew):

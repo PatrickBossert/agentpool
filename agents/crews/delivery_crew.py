@@ -1,6 +1,6 @@
 # agents/crews/delivery_crew.py
 from crewai import Crew, Process, LLM
-from agents.llm import get_crew_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.delivery.roadmap_generator import (
     create_roadmap_generator,
@@ -33,12 +33,11 @@ def create_delivery_crew(
         roadmap_time_axis: "quarters" | "years" | "horizons".
         llm: Optional LLM override (used in tests to inject a cheap model).
     """
-    if llm is None:
-        llm = get_crew_llm(llm_mode)  # Sonnet 4.6 (standard) or local (sensitive)
+    resolved_llm = llm or get_llm_for_agent("roadmap_generator", slug)
 
     rg = create_roadmap_generator(
         slug=slug,
-        llm=llm,
+        llm=resolved_llm,
         tools=get_tools_for_agent(
             "roadmap_generator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
         ),

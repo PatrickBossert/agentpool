@@ -1,6 +1,6 @@
 # agents/crews/stakeholder_management_crew.py
 from crewai import Crew, Process, LLM
-from agents.llm import get_crew_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.discovery.stakeholder_manager_agent import (
     create_stakeholder_manager,
@@ -16,11 +16,10 @@ def create_stakeholder_management_crew(
     public_interview_url_base: str = "",
     llm: LLM | None = None,
 ) -> Crew:
-    if llm is None:
-        llm = get_crew_llm(llm_mode)
+    resolved_llm = llm or get_llm_for_agent("stakeholder_manager", slug)
 
     tools = get_tools_for_agent("stakeholder_manager", slug=slug, run_id=run_id, sector=sector)
-    agent = create_stakeholder_manager(slug=slug, llm=llm, tools=tools)
+    agent = create_stakeholder_manager(slug=slug, llm=resolved_llm, tools=tools)
     task = create_stakeholder_manager_task(
         agent=agent,
         project_slug=slug,

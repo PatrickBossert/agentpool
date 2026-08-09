@@ -597,7 +597,7 @@ AGENT_CREW_NAME: dict[str, str] = {
 async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
     """Build a single-agent crew and run it. Reads all state from SQLiteStateTool."""
     from crewai import Crew, Process
-    from agents.llm import get_crew_llm
+    from agents.model_registry import get_llm_for_agent
     from agents.tools.registry import get_tools_for_agent
 
     if agent_key not in AGENT_CREW_NAME:
@@ -605,9 +605,8 @@ async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
 
     settings = get_settings()
     config = load_project_config(Path(settings.projects_dir) / slug)
-    llm_mode = config.get("llm_mode", "standard")
     sector = config.get("sector", "")
-    llm = get_crew_llm(llm_mode)
+    llm = get_llm_for_agent(agent_key, slug)
     tools = get_tools_for_agent(agent_key, slug=slug, run_id=run_id, sector=sector)
 
     if agent_key == "requirements_analyst":

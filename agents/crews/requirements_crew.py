@@ -1,6 +1,6 @@
 # agents/crews/requirements_crew.py
 from crewai import Crew, Process, LLM
-from agents.llm import get_crew_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.discovery.requirements_capture import (
     create_requirements_capture,
@@ -40,17 +40,14 @@ def create_requirements_crew(
         sector: Client sector (used by ChromaQueryTool for sector knowledge base).
         llm: Optional LLM override (used in tests to inject a cheap model).
     """
-    if llm is None:
-        llm = get_crew_llm(llm_mode)
-
     rc = create_requirements_capture(
         slug=slug,
-        llm=llm,
+        llm=llm or get_llm_for_agent("requirements_capture", slug),
         tools=get_tools_for_agent("requirements_capture", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
     ra = create_requirements_analyst(
         slug=slug,
-        llm=llm,
+        llm=llm or get_llm_for_agent("requirements_analyst", slug),
         tools=get_tools_for_agent("requirements_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
     )
 

@@ -1,6 +1,6 @@
 # agents/crews/business_plan_crew.py
 from crewai import Crew, Process, LLM
-from agents.llm import get_pam_llm, get_crew_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.delivery.visual_illustrator import (
     create_visual_illustrator,
@@ -28,18 +28,13 @@ def create_business_plan_crew(
     Args:
         slug: Project slug (used for DB/file scoping).
         run_id: crew_runs.id for this execution (used by HumanInputTool).
-        llm_mode: "standard" | "sensitive" | "fallback" — determines LLM routing.
-            Sensitive mode uses the local LLM. Standard and fallback both use Opus 4.6
-            via get_pam_llm() — business plan quality requires Opus regardless of mode.
+        llm_mode: unused - kept for signature compatibility with run_service.py's callers.
+            The model is now resolved per agent from the registry (agents/model_registry.py),
+            which reads the project's own mode rather than trusting a caller-supplied one.
         sector: Client sector (passed to tool registry).
         llm: Optional LLM override (used in tests to inject a cheap model).
     """
-    if llm is not None:
-        bpg_llm = llm  # injected override
-    elif llm_mode == "sensitive":
-        bpg_llm = get_crew_llm("sensitive")  # local LLM for sensitive data
-    else:
-        bpg_llm = get_pam_llm()  # Claude Opus 4.6
+    bpg_llm = llm or get_llm_for_agent("business_plan_generator", slug)
 
     bpg = create_business_plan_generator(
         slug=slug,
@@ -53,11 +48,8 @@ def create_business_plan_crew(
     # financials in one consistent style. He sat in delivery, where he could only see the
     # roadmap; here everything he illustrates already exists.
     vi = create_visual_illustrator(
-        # The same resolved LLM the writer uses - passing the raw `llm` argument gave the
-        # Illustrator None whenever the caller had not injected one, and CrewAI then tried
-        # to build a default and failed on an empty model name.
         slug=slug,
-        llm=bpg_llm,
+        llm=llm or get_llm_for_agent("visual_illustrator", slug),
         tools=get_tools_for_agent(
             "visual_illustrator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
         ),

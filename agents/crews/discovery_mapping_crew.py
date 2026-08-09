@@ -1,6 +1,6 @@
 # agents/crews/discovery_mapping_crew.py
 from crewai import Crew, Process, LLM
-from agents.llm import get_crew_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.discovery.value_chain_mapper import (
     create_value_chain_mapper,
@@ -36,12 +36,9 @@ def create_discovery_mapping_crew(
         discovery_links: List of {"url": str, "label": str} dicts.
         priority_doc_names: Original filenames of prioritised documents.
     """
-    if llm is None:
-        llm = get_crew_llm(llm_mode)
-
     vcm = create_value_chain_mapper(
         slug=slug,
-        llm=llm,
+        llm=llm or get_llm_for_agent("value_chain_mapper", slug),
         tools=get_tools_for_agent(
             "value_chain_mapper",
             slug=slug,
@@ -55,7 +52,7 @@ def create_discovery_mapping_crew(
     # which now runs five steps later, and taking it here would have been impossible.
     vla = create_value_lever_analyst(
         slug=slug,
-        llm=llm,
+        llm=llm or get_llm_for_agent("value_lever_analyst", slug),
         tools=get_tools_for_agent(
             "value_lever_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
         ),

@@ -234,10 +234,13 @@ def test_delivery_crew_sequential_process(mock_llm):
     assert crew.process == Process.sequential
 
 
-def test_delivery_crew_sensitive_mode_uses_local_llm(mock_llm):
-    """In sensitive mode, get_crew_llm is called with 'sensitive'."""
+def test_delivery_crew_asks_the_registry_for_the_roadmap_generator(mock_llm):
+    """No llm override: the factory must ask agents/model_registry.py for the Roadmap
+    Generator's model rather than choosing one itself. Patched where the name is looked up -
+    agents.crews.delivery_crew, which binds its own reference via `from ... import` - not
+    agents.model_registry, where it is defined."""
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]), \
-         patch("agents.crews.delivery_crew.get_crew_llm") as mock_get_llm:
+         patch("agents.crews.delivery_crew.get_llm_for_agent") as mock_get_llm:
         mock_get_llm.return_value = mock_llm
         from agents.crews.delivery_crew import create_delivery_crew
         create_delivery_crew(
@@ -245,7 +248,7 @@ def test_delivery_crew_sensitive_mode_uses_local_llm(mock_llm):
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS,
         )
-    mock_get_llm.assert_called_once_with("sensitive")
+    mock_get_llm.assert_called_once_with("roadmap_generator", "test")
 
 
 def test_delivery_crew_accepts_hitl_tool_override(mock_llm):

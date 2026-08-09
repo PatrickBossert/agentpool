@@ -122,28 +122,21 @@ def test_business_plan_crew_sequential_process(mock_llm):
     assert crew.process == Process.sequential
 
 
-def test_business_plan_crew_sensitive_mode_uses_local_llm(mock_llm):
-    """In sensitive mode, get_crew_llm is called with 'sensitive'."""
+def test_business_plan_crew_asks_the_registry_per_agent(mock_llm):
+    """No llm override: both the Writer and the Illustrator must ask
+    agents/model_registry.py by their own agent name, not share one factory-resolved model.
+    Patched where the name is looked up - agents.crews.business_plan_crew binds its own
+    reference via `from ... import` - not agents.model_registry, where it is defined."""
     with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]), \
-         patch("agents.crews.business_plan_crew.get_crew_llm") as mock_get_llm:
+         patch("agents.crews.business_plan_crew.get_llm_for_agent") as mock_get_llm:
         mock_get_llm.return_value = mock_llm
         from agents.crews.business_plan_crew import create_business_plan_crew
         create_business_plan_crew(
             slug="test", run_id=1, llm_mode="sensitive", sector="logistics"
         )
-    mock_get_llm.assert_called_once_with("sensitive")
-
-
-def test_business_plan_crew_standard_mode_uses_opus(mock_llm):
-    """Standard mode calls get_pam_llm (Opus 4.6), not get_crew_llm."""
-    with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]), \
-         patch("agents.crews.business_plan_crew.get_pam_llm") as mock_pam:
-        mock_pam.return_value = mock_llm
-        from agents.crews.business_plan_crew import create_business_plan_crew
-        create_business_plan_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics"
-        )
-    mock_pam.assert_called_once()
+    mock_get_llm.assert_any_call("business_plan_generator", "test")
+    mock_get_llm.assert_any_call("visual_illustrator", "test")
+    assert mock_get_llm.call_count == 2
 
 
 def test_business_plan_crew_accepts_hitl_tool_override(mock_llm):

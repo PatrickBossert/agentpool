@@ -1,7 +1,7 @@
 # agents/crews/pam_crew.py
 """PAM orchestration crews — Phase 1 (mapping) and Phase 2 (resume pipeline)."""
 from crewai import Crew, Process, LLM
-from agents.llm import get_pam_llm
+from agents.model_registry import get_llm_for_agent
 from agents.tools.registry import get_tools_for_agent
 from agents.pam.pam_agent import (
     create_pam_agent,
@@ -24,11 +24,10 @@ def create_pam_mapping_crew(
 
     On completion the orchestration service sets status to 'awaiting_assignment'.
     """
-    if llm is None:
-        llm = get_pam_llm()
+    resolved_llm = llm or get_llm_for_agent("pam", slug)
 
     tools = get_tools_for_agent("pam", slug=slug, run_id=orchestration_run_id)
-    pam = create_pam_agent(slug=slug, llm=llm, tools=tools)
+    pam = create_pam_agent(slug=slug, llm=resolved_llm, tools=tools)
     t1 = create_run_discovery_mapping_task(agent=pam, slug=slug)
 
     return Crew(
@@ -47,11 +46,10 @@ def create_pam_resume_crew(
     llm: LLM | None = None,
 ) -> Crew:
     """Phase 2 PAM crew: optionally discovery_interviews, then value_design → business_plan."""
-    if llm is None:
-        llm = get_pam_llm()
+    resolved_llm = llm or get_llm_for_agent("pam", slug)
 
     tools = get_tools_for_agent("pam", slug=slug, run_id=orchestration_run_id)
-    pam = create_pam_agent(slug=slug, llm=llm, tools=tools)
+    pam = create_pam_agent(slug=slug, llm=resolved_llm, tools=tools)
 
     tasks = []
     if interview_method == "agent":
