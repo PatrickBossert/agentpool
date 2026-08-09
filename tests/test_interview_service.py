@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -168,6 +169,78 @@ async def test_elaboration_press_returns_string():
     assert isinstance(result, str)
     assert len(result) > 0
     mock_client.messages.create.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# 5b. elaboration_press — a skip logs a warning with a duration
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_elaboration_press_skip_logs_warning_with_duration(caplog):
+    """A skipped press must log at warning level with a duration attached.
+
+    Secure mode runs the fast model for live follow-ups alongside the reasoning model doing
+    analysis. Whether the fast model is quick enough for that job is a later decision, and it
+    needs real numbers: the count of skips must be greppable from one campaign's logs, which
+    means every skip has to reach the log at warning level, not just return "" quietly.
+    """
+    import asyncio as _asyncio
+
+    async def slow_press_call(prompt, slug):
+        await _asyncio.sleep(0.05)
+        return "too late to matter"
+
+    with patch("api.services.interview_service._press_call", side_effect=slow_press_call):
+        from api.services.interview_service import elaboration_press
+
+        with caplog.at_level("WARNING", logger="api.services.interview_service"):
+            result = await elaboration_press(
+                question_text="What are the main challenges?",
+                response_text="It's complicated.",
+                probing_instructions="Ask for specific examples.",
+                slug="press-timing-test",
+                timeout_seconds=0.01,
+            )
+
+    assert result == ""
+    warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warning_records) == 1
+    message = warning_records[0].getMessage()
+    assert "SKIPPED" in message
+    assert re.search(r"after \d+\.\d+s", message), f"no duration in: {message}"
+
+
+@pytest.mark.asyncio
+async def test_elaboration_press_success_logs_duration(caplog):
+    """A successful press also logs its duration, so success and skip both feed the same
+    timing evidence rather than only the failure path being observable."""
+    fake_text = "Could you elaborate on that point?"
+
+    mock_content_block = MagicMock()
+    mock_content_block.text = fake_text
+    mock_response = MagicMock()
+    mock_response.content = [mock_content_block]
+    mock_client = MagicMock()
+    mock_client.messages = MagicMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+    with patch(
+        "api.services.interview_service.get_anthropic_client", return_value=mock_client
+    ):
+        from api.services.interview_service import elaboration_press
+
+        with caplog.at_level("INFO", logger="api.services.interview_service"):
+            result = await elaboration_press(
+                question_text="What are the main challenges?",
+                response_text="It's complicated.",
+                probing_instructions="Ask for specific examples.",
+                stakeholder_name="Alice",
+            )
+
+    assert result == fake_text
+    info_records = [r for r in caplog.records if r.levelname == "INFO"]
+    assert len(info_records) == 1
+    assert re.search(r"\d+\.\d+s", info_records[0].getMessage())
 
 
 # ---------------------------------------------------------------------------

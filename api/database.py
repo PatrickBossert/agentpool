@@ -2997,6 +2997,29 @@ async def fetch_interview_sessions_status(
     return counts
 
 
+async def fetch_interview_sessions_status_for_project(
+    conn: aiosqlite.Connection, *, project_id: int
+) -> dict:
+    """Return counts of sessions by status across every orchestration run for a project.
+
+    `fetch_interview_sessions_status` scopes to a single orchestration run, but
+    `orchestration_run_id` is nullable on `interview_sessions` and a project can have run more
+    than one campaign. A caller asking "does this project have live interviews right now?" - the
+    standalone Synthesis Analyst guard - needs the project-wide answer, not one run's slice of it.
+    """
+    counts = {"pending": 0, "active": 0, "completed": 0, "abandoned": 0}
+    async with conn.execute(
+        "SELECT status, COUNT(*) as n FROM interview_sessions "
+        "WHERE project_id=? GROUP BY status",
+        (project_id,),
+    ) as cur:
+        async for row in cur:
+            status = row["status"]
+            if status in counts:
+                counts[status] = row["n"]
+    return counts
+
+
 async def fetch_interview_transcripts(
     conn: aiosqlite.Connection, *, orchestration_run_id: int
 ) -> list[dict]:

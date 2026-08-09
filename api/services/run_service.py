@@ -603,6 +603,27 @@ async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
     if agent_key not in AGENT_CREW_NAME:
         raise ValueError(f"Agent '{agent_key}' is not eligible for standalone dispatch")
 
+    if agent_key == "synthesis_analyst":
+        # Casey saturates the reasoning model, and during a campaign the fast model is answering
+        # live follow-ups on the same machine. Inside the crew this cannot happen: the process is
+        # sequential and Avery blocks on HumanInputTool until a consultant confirms interviews are
+        # complete. Only this path bypasses that, so the refusal belongs here rather than in a
+        # second general mechanism.
+        from api.database import fetch_interview_sessions_status_for_project
+        async with get_connection(slug) as conn:
+            project = await fetch_project(conn, slug=slug)
+            counts = (
+                await fetch_interview_sessions_status_for_project(conn, project_id=project["id"])
+                if project else {}
+            )
+        live = (counts.get("pending", 0) or 0) + (counts.get("active", 0) or 0)
+        if live:
+            raise ValueError(
+                f"{live} interview session(s) are still pending or active. Casey reads the whole "
+                f"corpus and would compete with the model answering live follow-ups. Wait for the "
+                f"interviews to finish, or mark the outstanding sessions abandoned."
+            )
+
     settings = get_settings()
     config = load_project_config(Path(settings.projects_dir) / slug)
     sector = config.get("sector", "")

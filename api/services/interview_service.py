@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 
 import aiosqlite
@@ -256,7 +257,10 @@ async def elaboration_press(
     conversation. Returning "" is the deliberate trade; the caller moves to the next
     scripted question.
 
-    Skips are logged, so a consistently over-budget model is visible rather than quiet.
+    Both the success and the skip path log how long the call took. In secure mode this is the
+    fast model answering a person in real time, so a duration series - and a skip count
+    greppable from one campaign's logs - is the evidence a later decision about allowing a
+    hosted model for follow-ups would need.
     """
     name_clause = f" {stakeholder_name}" if stakeholder_name else ""
     prompt = (
@@ -268,11 +272,18 @@ async def elaboration_press(
         "Generate one natural follow-up question (max 2 sentences) that presses for "
         "elaboration without being confrontational. Return only the question text, no preamble."
     )
+    started = time.perf_counter()
     try:
-        return await asyncio.wait_for(_press_call(prompt, slug), timeout=timeout_seconds)
+        result = await asyncio.wait_for(_press_call(prompt, slug), timeout=timeout_seconds)
+        _log.info(
+            "elaboration_press[%s]: %.2fs, %d chars",
+            slug, time.perf_counter() - started, len(result),
+        )
+        return result
     except asyncio.TimeoutError:
         _log.warning(
-            "elaboration_press[%s]: over budget at %.1fs - skipped", slug, timeout_seconds
+            "elaboration_press[%s]: SKIPPED after %.2fs (budget %.1fs)",
+            slug, time.perf_counter() - started, timeout_seconds,
         )
         return ""
 
