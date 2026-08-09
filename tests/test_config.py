@@ -9,7 +9,6 @@ def test_settings_loads_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "s3cr3t")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setenv("LITELLM_PROXY_URL", "http://localhost:4000")
-    monkeypatch.setenv("LLAMACPP_BASE_URL", "http://localhost:10000")
     monkeypatch.setenv("CHROMA_HOST", "localhost")
     monkeypatch.setenv("CHROMA_PORT", "8002")
 

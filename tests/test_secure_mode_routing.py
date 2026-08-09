@@ -206,13 +206,25 @@ def test_a_failed_read_is_not_cached(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_sensitive_project_presses_with_the_local_model(two_projects, monkeypatch):
-    """Asserts the base URL the request went to, not that a mode helper was called.
+async def test_the_press_uses_the_project_s_fast_local_model(two_projects, monkeypatch):
+    """Agents and the live follow-up must resolve from the same place.
 
-    The defect being fixed is precisely that a correct-looking mode helper existed and the
-    interview path never consulted it, so asserting the helper would reproduce the bug.
+    Asserted on the base URL the request actually reached, not on which setting was read -
+    the defect this whole plan exists to fix was a correct-looking mode helper that a code
+    path never consulted.
     """
+    import json
+    import sqlite3
+    from pathlib import Path
     from api.services import interview_service as svc
+
+    db = Path(get_settings().database_dir) / "secure-proj.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE projects SET config_json=? WHERE slug=?",
+                     (json.dumps({"local_fast_model": "gemma4:fast",
+                                  "local_fast_url": "http://localhost:11999/v1"}), "secure-proj"))
+        conn.commit()
+
     seen = {}
 
     class FakeMessages:
@@ -229,7 +241,31 @@ async def test_a_sensitive_project_presses_with_the_local_model(two_projects, mo
 
     monkeypatch.setattr(svc, "AsyncAnthropic", FakeClient)
     await svc.elaboration_press("Q?", "short", "press", slug="secure-proj")
-    assert seen["base_url"] == get_settings().llamacpp_base_url
+    assert seen["base_url"] == "http://localhost:11999/v1"
+    assert seen["model"] == "gemma4:fast"
+
+
+@pytest.mark.asyncio
+async def test_the_press_skips_rather_than_errors_when_the_fast_tier_is_unconfigured(
+    two_projects, monkeypatch
+):
+    """A sensitive project with no fast-tier model configured must degrade to a skipped
+    follow-up, the same as an over-budget call - not raise into the endpoint and surface an
+    error page to a waiting interviewee.
+    """
+    import json
+    import sqlite3
+    from pathlib import Path
+    from api.services import interview_service as svc
+
+    db = Path(get_settings().database_dir) / "secure-proj.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE projects SET config_json=? WHERE slug=?",
+                     (json.dumps({"local_fast_model": "", "local_fast_url": ""}), "secure-proj"))
+        conn.commit()
+
+    result = await svc.elaboration_press("Q?", "short", "press", slug="secure-proj")
+    assert result == "", "an unconfigured fast tier must return no press, not raise"
 
 
 @pytest.mark.asyncio

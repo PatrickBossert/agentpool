@@ -225,11 +225,26 @@ async def speak(text: str, voice_id: str) -> bytes:
 
 
 async def _press_call(prompt: str, slug: str) -> str:
-    """The provider call, split out so the budget in elaboration_press can wrap it."""
-    settings = get_settings()
+    """The provider call, split out so the budget in elaboration_press can wrap it.
+
+    The press is the fast tier's workload by nature - short and latency-critical - so a
+    sensitive project resolves it from the same place agents do: local_fast_model and
+    local_fast_url on the project's own settings, via model_registry's own reader rather
+    than a second one. Importing inside the function, not at module scope, matches how this
+    file already handles the tts_cache/interview_service pair below (speak()) - a local
+    import for a dependency this file is not always loaded to use.
+    """
     if project_llm_mode(slug) == "sensitive":
-        client = AsyncAnthropic(base_url=settings.llamacpp_base_url, api_key="not-needed")
-        model = settings.local_llm_model
+        from agents.model_registry import LocalModelUnavailable, _project_setting, _setting_default
+        model = _project_setting(slug, "local_fast_model", _setting_default("local_fast_model"))
+        base_url = _project_setting(slug, "local_fast_url", _setting_default("local_fast_url"))
+        if not model or not base_url:
+            raise LocalModelUnavailable(
+                f"Project '{slug}' is sensitive and has no local model for the 'fast' tier. "
+                f"Set local_fast_model and local_fast_url in the project's settings. "
+                f"A hosted model is never substituted for a sensitive project."
+            )
+        client = AsyncAnthropic(base_url=base_url, api_key="not-needed")
     else:
         client = get_anthropic_client()
         model = "claude-haiku-4-5-20251001"
@@ -261,7 +276,17 @@ async def elaboration_press(
     fast model answering a person in real time, so a duration series - and a skip count
     greppable from one campaign's logs - is the evidence a later decision about allowing a
     hosted model for follow-ups would need.
+
+    An unconfigured fast tier on a sensitive project is caught here alongside the timeout,
+    not left to reach the endpoint. The agent path raises LocalModelUnavailable and stops a
+    run outright, because there is no one waiting and a hosted fallback would leak client
+    content. The press has someone waiting: it is already a best-effort enhancement that
+    turns any over-budget call into a skipped follow-up, so a misconfigured local model
+    degrades the same way rather than surfacing an error page mid-interview. The distinct
+    log line keeps "misconfigured" greppable apart from "timed out" without changing what
+    the interviewee experiences.
     """
+    from agents.model_registry import LocalModelUnavailable
     name_clause = f" {stakeholder_name}" if stakeholder_name else ""
     prompt = (
         f"You are a polite but insistent interviewer.{name_clause} has given an "
@@ -284,6 +309,12 @@ async def elaboration_press(
         _log.warning(
             "elaboration_press[%s]: SKIPPED after %.2fs (budget %.1fs)",
             slug, time.perf_counter() - started, timeout_seconds,
+        )
+        return ""
+    except LocalModelUnavailable as exc:
+        _log.warning(
+            "elaboration_press[%s]: SKIPPED, no local model configured: %s",
+            slug, exc,
         )
         return ""
 
