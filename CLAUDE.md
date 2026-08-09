@@ -216,6 +216,42 @@ always-hosted orchestrator was a hole in the secure-mode guarantee rather than a
 A sensitive project with no local model configured for a tier raises `LocalModelUnavailable`
 rather than falling back. There is no hosted fallback and no borrowing of the other tier.
 
+### Routing a call outside a crew: two protocols, one setting
+
+Anything that is not a CrewAI agent goes through `project_completion(slug, tier, messages)` in
+`api/services/llm_client.py`. Never build a provider client directly, and never take a slug's
+mode from a caller.
+
+The trap it exists to close: "route it locally" is **two different wire formats**. Agents build
+`LLM(model=f"openai/{model}", base_url=...)` and LiteLLM POSTs `{base_url}/chat/completions`.
+Reaching for `AsyncAnthropic(base_url=...)` instead POSTs `{base_url}/v1/messages` - and because
+`local_fast_url` already ends in `/v1`, actually `{base_url}/v1/v1/messages`. Ollama serves no
+`/v1/messages` at any path, so the settings agreed while every call raised `NotFoundError`. A
+test that swaps the client class cannot see this; assert against an `httpx.MockTransport` and
+read the request's real URL.
+
+The slug is required, not defaulted. `project_llm_mode("")` finds no database and answers
+`"standard"`, so a forgotten slug is a silent hosted call - which is exactly how the test
+interview dialog sent a sensitive project's answers to Anthropic while holding the slug in its
+props and discarding it.
+
+**What is covered, precisely:**
+
+| Path | Routed by `llm_mode`? |
+|------|----------------------|
+| Every crew agent, including PAM | Yes - `get_llm_for_agent` |
+| Live interview elaboration press (`interview_service._press_call`) | Yes |
+| Test-interview press (`POST /interviews/test/elaboration-press`) | Yes - slug required, 422 without it |
+| Agent Chat (`run_agent_chat`) | Yes, text and retrieved chunks |
+| Agent Chat with an **image** attached, sensitive project | **Refused** (503) - image blocks have no chat-completions equivalent here, and dropping or sending them are both wrong |
+| Skills library (`api/services/skills_service.py`, `api/routers/skill_notes.py`) | **No** - always hosted Haiku |
+
+The skills library is the one remaining hosted path. It is a deliberate gap rather than an
+oversight: the library is global across engagements, its endpoints carry no slug, and the text
+is reviewer feedback about an agent's behaviour rather than client material. It is still
+reviewer feedback typed on a sensitive engagement, so a project-scoped skills library is the
+fix if that ever stops being acceptable - not a default slug.
+
 ---
 
 ## Anchoring: themes and requirements sit where the insight lives

@@ -1,5 +1,14 @@
 # api/services/skills_service.py
-"""LLM helpers for the agent skills library."""
+"""LLM helpers for the agent skills library.
+
+The one remaining path that is always hosted, and deliberately so - see the routing table in
+CLAUDE.md. The skills library is global across engagements, none of the endpoints that reach
+these helpers carries a slug, and there is therefore no llm_mode to route by. The text is
+reviewer feedback about an agent's behaviour rather than client material, but it is still
+feedback typed during a sensitive engagement: if that stops being acceptable, the fix is a
+project-scoped skills library, not a default slug. Everything else goes through
+api/services/llm_client.py.
+"""
 from __future__ import annotations
 
 import json

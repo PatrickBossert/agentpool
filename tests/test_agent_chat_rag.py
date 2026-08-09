@@ -35,7 +35,7 @@ async def test_retrieved_chunks_reach_the_system_prompt(client):
         r.content = [MagicMock(text="ok")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls, \
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls, \
          patch("api.services.agent_chat_service.retrieve_chunks") as mock_search:
         mock_search.return_value = [
             {"text": "the warehouse runs two shifts", "filename": "ops.pdf", "doc_id": 1},
@@ -71,7 +71,7 @@ async def test_no_retrieval_results_produces_no_retrieval_section(client):
         r.content = [MagicMock(text="ok")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls, \
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls, \
          patch("api.services.agent_chat_service.retrieve_chunks", return_value=[]):
         inst = AsyncMock()
         inst.messages.create = fake_create
@@ -117,7 +117,7 @@ async def test_image_becomes_a_base64_content_block(client, tmp_path):
         r.content = [MagicMock(text="ok")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls, \
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls, \
          patch("api.services.agent_chat_service.retrieve_chunks", return_value=[]):
         inst = AsyncMock()
         inst.messages.create = fake_create
@@ -157,7 +157,7 @@ async def test_text_only_turn_sends_a_plain_string(client):
         r.content = [MagicMock(text="ok")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls, \
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls, \
          patch("api.services.agent_chat_service.retrieve_chunks", return_value=[]):
         inst = AsyncMock()
         inst.messages.create = fake_create
@@ -198,7 +198,7 @@ async def test_retrieved_chunk_attributed_with_original_name_not_uuid(client):
         r.content = [MagicMock(text="ok")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls, \
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls, \
          patch("api.services.agent_chat_service.retrieve_chunks") as mock_search:
         mock_search.return_value = [
             {"text": "revenue grew 12%", "filename": uuid_name, "doc_id": doc_id},
@@ -234,7 +234,7 @@ async def test_retrieved_chunk_without_doc_id_falls_back_to_filename(client):
         r.content = [MagicMock(text="ok")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls, \
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls, \
          patch("api.services.agent_chat_service.retrieve_chunks") as mock_search:
         mock_search.return_value = [
             {"text": "context text", "filename": "internal-note.txt", "doc_id": None},
@@ -273,7 +273,7 @@ async def test_attached_document_name_appears_without_content(client):
         r.content = [MagicMock(text="ok")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls, \
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls, \
          patch("api.services.agent_chat_service.retrieve_chunks", return_value=[]):
         inst = AsyncMock()
         inst.messages.create = fake_create

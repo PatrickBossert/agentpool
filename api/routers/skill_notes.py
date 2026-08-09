@@ -1,5 +1,10 @@
 # api/routers/skill_notes.py
-"""Agent skill notes — global learnings extracted from rejection feedback."""
+"""Agent skill notes — global learnings extracted from rejection feedback.
+
+Hosted, always: these notes are global across engagements and this endpoint carries no slug,
+so there is no llm_mode to route by. Recorded as a deliberate gap in CLAUDE.md's routing table
+alongside api/services/skills_service.py, which is hosted for the same reason.
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from anthropic import Anthropic

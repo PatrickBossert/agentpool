@@ -7,11 +7,10 @@ import base64
 import logging
 from datetime import date
 from pathlib import Path
-from anthropic import AsyncAnthropic
 
 from api.database import get_connection, get_db_path, fetch_project, fetch_documents
-from api.config import get_settings
 from api.services.chat_retrieval_service import RETRIEVAL_TOP_K, search as retrieve_chunks
+from api.services.llm_client import project_completion
 
 logger = logging.getLogger(__name__)
 
@@ -582,14 +581,13 @@ async def run_agent_chat(
     else:
         api_messages.append({"role": "user", "content": message})
 
-    client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
-    response = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
-        system=system_prompt,
-        messages=api_messages,
+    # Routed by the project's own llm_mode, like every crew agent. This panel assembles the
+    # project's outputs, retrieved chunks of the client's documents, and images from those
+    # documents; it used to send all of it to hosted Haiku whatever the project's mode was.
+    # Fast tier: short, interactive, and the same workload the live interview press is.
+    reply = await project_completion(
+        slug, "fast", api_messages, system=system_prompt, max_tokens=4096
     )
-    reply = response.content[0].text.strip()
 
     # Resolve which agent answered from the name prefix in the reply
     resolved = _parse_resolved_agent(reply, crew_agents) if is_multi else agent_name

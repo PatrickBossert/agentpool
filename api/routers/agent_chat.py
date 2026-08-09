@@ -24,6 +24,7 @@ from api.database import (
 )
 from api.services.agent_chat_service import AGENT_PERSONAS, run_agent_chat
 from api.services.ingest_service import SUPPORTED_SUFFIXES, IngestError, ingest_document
+from api.services.llm_client import LocalModelError, UnsupportedForSensitiveProject
 
 router = APIRouter(prefix="/projects", tags=["agent-chat"])
 
@@ -178,15 +179,24 @@ async def agent_chat(
     if body.agent_name not in AGENT_PERSONAS:
         raise HTTPException(status_code=404, detail=f"Unknown agent: {body.agent_name!r}")
 
-    outcome = await run_agent_chat(
-        slug,
-        body.agent_name,
-        body.message,
-        body.history,
-        injected_docs=[d.model_dump() for d in body.injected_docs],
-        injected_links=[lnk.model_dump() for lnk in body.injected_links],
-        crew_agents=body.crew_agents or None,
-    )
+    # A sensitive project's chat runs on its local model, and a local model that is
+    # unconfigured, unreachable, or handed content it cannot carry is a refusal the
+    # consultant sees - never a quiet fall back to a hosted model. Unlike the live interview
+    # press, there is no interviewee waiting on the other end, so saying so is better than
+    # skipping.
+    from agents.model_registry import LocalModelUnavailable
+    try:
+        outcome = await run_agent_chat(
+            slug,
+            body.agent_name,
+            body.message,
+            body.history,
+            injected_docs=[d.model_dump() for d in body.injected_docs],
+            injected_links=[lnk.model_dump() for lnk in body.injected_links],
+            crew_agents=body.crew_agents or None,
+        )
+    except (LocalModelUnavailable, LocalModelError, UnsupportedForSensitiveProject) as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     if outcome is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 

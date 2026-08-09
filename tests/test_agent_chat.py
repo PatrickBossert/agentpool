@@ -1,5 +1,11 @@
 # tests/test_agent_chat.py
-"""Tests for POST /projects/{slug}/agent-chat."""
+"""Tests for POST /projects/{slug}/agent-chat.
+
+The hosted client is patched at api.services.llm_client.get_anthropic_client, not in
+agent_chat_service: the chat call is routed by the project's llm_mode now, and llm_client is
+where the hosted-or-local decision - and the client lookup - happens. See
+tests/test_agent_chat_routing.py for the routing itself.
+"""
 import pytest
 import pytest_asyncio
 import aiosqlite
@@ -118,7 +124,7 @@ async def test_agent_chat_unknown_agent_returns_404(client, chat_project):
 async def test_agent_chat_project_not_found_returns_404(client, chat_project):
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text="hi")]
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls:
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls:
         inst = AsyncMock()
         inst.messages.create = AsyncMock(return_value=mock_response)
         mock_cls.return_value = inst
@@ -133,7 +139,7 @@ async def test_agent_chat_project_not_found_returns_404(client, chat_project):
 async def test_agent_chat_returns_claude_response(client, chat_project):
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text="Bob has not been interviewed yet.")]
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls:
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls:
         inst = AsyncMock()
         inst.messages.create = AsyncMock(return_value=mock_response)
         mock_cls.return_value = inst
@@ -162,7 +168,7 @@ async def test_agent_chat_interview_context_in_system_prompt(client, chat_projec
         r.content = [MagicMock(text="ok")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls:
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls:
         inst = AsyncMock()
         inst.messages.create = fake_create
         mock_cls.return_value = inst
@@ -191,7 +197,7 @@ async def test_agent_chat_passes_history_to_claude(client, chat_project):
         r.content = [MagicMock(text="I remember")]
         return r
 
-    with patch("api.services.agent_chat_service.AsyncAnthropic") as mock_cls:
+    with patch("api.services.llm_client.get_anthropic_client") as mock_cls:
         inst = AsyncMock()
         inst.messages.create = fake_create
         mock_cls.return_value = inst
