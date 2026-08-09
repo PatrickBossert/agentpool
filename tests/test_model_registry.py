@@ -141,6 +141,15 @@ def test_both_llm_paths_set_max_tokens(two_projects):
         assert getattr(llm, "max_tokens", None) == 16384, f"{slug} has no max_tokens"
 
 
+def test_pam_routes_locally_for_a_sensitive_project(two_projects):
+    """PAM holds SQLiteStateTool and can read project outputs, so an always-hosted exemption
+    was a hole in the secure-mode guarantee rather than a quality decision."""
+    from agents.model_registry import get_llm_for_agent
+    pam = get_llm_for_agent("pam", "sec-proj")
+    assert pam.base_url == "http://localhost:11434/v1"
+    assert "claude" not in pam.model
+
+
 def test_no_crew_factory_chooses_a_model():
     """Factories ask the registry. A factory that cannot choose a model cannot forget to
     consult llm_mode, which is the defect that shipped past sixteen reviews.

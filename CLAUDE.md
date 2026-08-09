@@ -205,7 +205,16 @@ Do NOT use `sky-*` or `blue-*` classes — these were replaced with `brand` toke
 
 There is no top-level `crews/` directory — everything lives under `agents/`.
 
-PAM always uses `claude-opus-4-6` regardless of sensitive mode. Other agents use `LOCAL_LLM_MODEL` when sensitive mode is enabled (routes to `LLAMACPP_BASE_URL`).
+Each agent declares a capability tier in `agents/model_registry.py` - `fast` or `deep` - and the
+project's `llm_mode` binds that tier to a model. Crew factories never choose a model; they call
+`get_llm_for_agent(agent_name, slug)`, and a source guard fails if one names a model.
+
+PAM has no exemption. It is `deep` and routes to the local model for a sensitive project like
+every other agent, because it holds `SQLiteStateTool` and can read project outputs - an
+always-hosted orchestrator was a hole in the secure-mode guarantee rather than a quality choice.
+
+A sensitive project with no local model configured for a tier raises `LocalModelUnavailable`
+rather than falling back. There is no hosted fallback and no borrowing of the other tier.
 
 ---
 
