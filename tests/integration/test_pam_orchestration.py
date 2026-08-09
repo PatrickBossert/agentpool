@@ -256,37 +256,25 @@ def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collectio
 
     try:
         test_llm = get_test_llm()
-        # Patch every LLM factory at the module where the name is bound.
-        # Patching agents.llm directly has no effect because each crew file
-        # uses `from agents.llm import get_crew_llm` (local binding).
+        # Patch the model registry at the module where the name is bound. Patching
+        # agents.model_registry directly has no effect because each crew file uses
+        # `from agents.model_registry import get_llm_for_agent` (local binding).
+        #
+        # One target per crew module now, rather than one per retired factory: every agent in
+        # every crew resolves through the same get_llm_for_agent(agent_name, slug), so the
+        # three separate targets value_design_crew used to need collapse into one.
         with ExitStack() as stack:
-            stack.enter_context(
-                patch("agents.crews.requirements_crew.get_crew_llm", return_value=test_llm)
-            )
-            stack.enter_context(
-                patch("agents.crews.value_design_crew.get_crew_llm", return_value=test_llm)
-            )
-            stack.enter_context(
-                patch("agents.crews.value_design_crew.get_pam_llm", return_value=test_llm)
-            )
-            stack.enter_context(
-                patch("agents.crews.value_design_crew.get_haiku_llm", return_value=test_llm)
-            )
-            stack.enter_context(
-                patch("agents.crews.capabilities_crew.get_crew_llm", return_value=test_llm)
-            )
-            stack.enter_context(
-                patch("agents.crews.delivery_crew.get_crew_llm", return_value=test_llm)
-            )
-            stack.enter_context(
-                patch("agents.crews.business_plan_crew.get_crew_llm", return_value=test_llm)
-            )
-            stack.enter_context(
-                patch("agents.crews.business_plan_crew.get_pam_llm", return_value=test_llm)
-            )
-            stack.enter_context(
-                patch("agents.crews.pam_crew.get_pam_llm", return_value=test_llm)
-            )
+            for module in (
+                "requirements_crew",
+                "value_design_crew",
+                "capabilities_crew",
+                "delivery_crew",
+                "business_plan_crew",
+                "pam_crew",
+            ):
+                stack.enter_context(
+                    patch(f"agents.crews.{module}.get_llm_for_agent", return_value=test_llm)
+                )
             asyncio.run(run_pam_crew(slug, orchestration_run_id))
     finally:
         if original_n8n is None:

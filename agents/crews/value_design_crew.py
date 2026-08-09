@@ -26,7 +26,9 @@ def create_value_design_crew(
     Args:
         slug: Project slug (used for DB/file scoping).
         run_id: crew_runs.id for this execution (used by HumanInputTool).
-        llm_mode: "standard" | "sensitive" | "fallback" — determines LLM routing.
+        llm_mode: unused - kept for signature compatibility with run_service.py's callers.
+            Each agent's model comes from agents/model_registry.get_llm_for_agent, which reads
+            the project's own llm_mode. A branch here would be a second authority for it.
         sector: Client sector (unused by Value Design but kept for interface consistency).
         llm: Optional LLM override (used in tests to inject a cheap model for all agents).
     """

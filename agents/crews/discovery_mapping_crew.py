@@ -28,7 +28,9 @@ def create_discovery_mapping_crew(
     Args:
         slug: Project slug.
         run_id: crew_runs.id for this execution.
-        llm_mode: LLM routing mode.
+        llm_mode: unused - kept for signature compatibility with run_service.py's callers.
+            Each agent's model comes from agents/model_registry.get_llm_for_agent, which reads
+            the project's own llm_mode. A branch here would be a second authority for it.
         sector: Client sector for ChromaDB sector queries.
         llm: Optional LLM override (used in tests).
         hitl_tool: Optional HumanInputTool override (used in tests).

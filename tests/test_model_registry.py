@@ -14,6 +14,8 @@ import pytest
 
 from api.config import get_settings
 
+_REPO_ROOT = Path(__file__).parent.parent
+
 
 @pytest.fixture
 def two_projects(tmp_path, monkeypatch):
@@ -33,6 +35,10 @@ def two_projects(tmp_path, monkeypatch):
     from api.services import chroma_client
     chroma_client._MODE_CACHE.clear()
     yield
+    # Cleared on the way out as well as in: the cache is process-global and keyed by slug, so
+    # clearing only on entry leaves this fixture's slugs resolved for the rest of the session,
+    # pointing at a tmp_path that no longer exists.
+    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 
@@ -50,7 +56,9 @@ def test_every_dispatched_agent_has_a_tier():
     passes again if one is removed. This is the shape that caught visual_illustrator missing
     from the tool registry, where the crew raised before its first task."""
     from agents.model_registry import AGENT_TIER
-    src = Path("agents/tools/registry.py").read_text()
+    # Anchored at the repo root: a cwd-relative read makes this pass having read nothing
+    # from any directory but the repo root.
+    src = (_REPO_ROOT / "agents" / "tools" / "registry.py").read_text()
     body = src.split("tool_map: dict[str, list[BaseTool]] = {")[1]
     registered = set(re.findall(r'^\s{8}"([a-z_]+)":', body, re.M))
     assert set(AGENT_TIER) == registered, (
@@ -150,6 +158,42 @@ def test_pam_routes_locally_for_a_sensitive_project(two_projects):
     assert "claude" not in pam.model
 
 
+# Every file that dispatches or builds an agent, and therefore every file that could choose a
+# model behind the registry's back. run_service.py builds the standalone dispatch and
+# agents/pam/__init__.py is where PAM's always-hosted exemption used to live - both are outside
+# agents/crews/ and both were unscanned while the guard's headline claim was that nothing
+# chooses a model.
+_GUARDED_FILES = ("api/services/run_service.py", "agents/pam/__init__.py")
+_EXPECTED_CREW_FILES = 10
+
+# A model name in any form, a retired factory, a direct LLM construction, or a mode branch.
+# The first version matched only "anthropic/claude" and the three retired factory names, so
+# `LLM(model="claude-opus-4-6", ...)` - a bare name, exactly the form _project_setting returns
+# - passed clean, and a re-added `if llm_mode == "sensitive":` passed clean too.
+_FORBIDDEN = (
+    (re.compile(r"claude"), "names a model"),
+    (re.compile(r"get_pam_llm|get_haiku_llm|get_crew_llm"), "calls a retired LLM factory"),
+    (re.compile(r"\bLLM\s*\("), "constructs an LLM directly"),
+    (re.compile(r"llm_mode\s*=="), "branches on llm_mode"),
+)
+
+
+def _guarded_paths() -> list[Path]:
+    """Anchored at the repo root, not at cwd.
+
+    `Path("agents/crews").glob(...)` is relative to the working directory, so from anywhere
+    other than the repo root it yields nothing and the guard passes having scanned no files -
+    a green headline test that reads zero bytes.
+    """
+    crews = sorted((_REPO_ROOT / "agents" / "crews").glob("*_crew.py"))
+    assert len(crews) == _EXPECTED_CREW_FILES, (
+        f"expected {_EXPECTED_CREW_FILES} crew factories, scanned {len(crews)}: {crews}. "
+        "If a crew was added or removed deliberately, update _EXPECTED_CREW_FILES - this "
+        "count is what stops the glob silently matching nothing."
+    )
+    return crews + [_REPO_ROOT / p for p in _GUARDED_FILES]
+
+
 def test_no_crew_factory_chooses_a_model():
     """Factories ask the registry. A factory that cannot choose a model cannot forget to
     consult llm_mode, which is the defect that shipped past sixteen reviews.
@@ -158,14 +202,52 @@ def test_no_crew_factory_chooses_a_model():
     raw database connections across seven before each got a guard.
     """
     offenders = []
-    for path in sorted(Path("agents/crews").glob("*_crew.py")):
+    for path in _guarded_paths():
         for number, line in enumerate(path.read_text().splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
-            if "anthropic/claude" in stripped or "get_pam_llm" in stripped \
-                    or "get_haiku_llm" in stripped or "get_crew_llm" in stripped:
-                offenders.append(f"{path}:{number}  {stripped[:70]}")
+            for pattern, why in _FORBIDDEN:
+                if pattern.search(stripped):
+                    rel = path.relative_to(_REPO_ROOT)
+                    offenders.append(f"{rel}:{number} {why}  {stripped[:70]}")
     assert not offenders, (
         "these choose a model instead of asking get_llm_for_agent:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_integration_suite_patches_names_that_exist():
+    """`pytest -m integration` is deselected by default, so nothing in a normal run notices
+    when a refactor retires a name it patches - and `patch` raises AttributeError before the
+    test body, so the failure is not even about the thing under test.
+
+    Nine targets pointing at get_crew_llm/get_pam_llm/get_haiku_llm survived the per-agent
+    model refactor this way. Resolving them here costs nothing and needs no API credit.
+    """
+    import importlib
+
+    targets = set()
+    for path in sorted((_REPO_ROOT / "tests" / "integration").glob("*.py")):
+        targets.update(re.findall(r'patch\(f?"([\w.{}]+)"', path.read_text()))
+
+    missing = []
+    for target in sorted(targets):
+        module_path, _, attribute = target.rpartition(".")
+        if "{" in target:
+            # An f-string target such as agents.crews.{module}.get_llm_for_agent: check the
+            # attribute against every module the literal prefix could name.
+            prefix = module_path.split(".{")[0]
+            package = importlib.import_module(prefix)
+            for child in sorted(Path(package.__file__).parent.glob("*_crew.py")):
+                module = importlib.import_module(f"{prefix}.{child.stem}")
+                if not hasattr(module, attribute):
+                    missing.append(f"{prefix}.{child.stem}.{attribute}")
+            continue
+        module = importlib.import_module(module_path)
+        if not hasattr(module, attribute):
+            missing.append(target)
+
+    assert not missing, (
+        "the integration suite patches names that no longer exist - patch() will raise "
+        "AttributeError before the test body runs:\n  " + "\n  ".join(missing)
     )
