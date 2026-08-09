@@ -126,6 +126,80 @@ Note for whoever revisits it: an override would send `response_text` - the inter
 answer - to Anthropic, so it is a confidentiality decision presented to a user as such, not a
 performance toggle.
 
+## Running two local models at once
+
+Two tiers means two models resident simultaneously, which is a deployment concern rather than
+application configuration. It belongs in the runbook, but the constraints shape this design and are
+recorded here.
+
+### The local path must set max_tokens
+
+`agents/llm.py` sets `max_tokens=16384` on the hosted path with the comment *"the default 4096
+clips large tool-call JSON outputs (e.g. questionnaire scripts ~8K tokens, value chain tree ~2.5K
+tokens)"*. The sensitive branch immediately below sets nothing, so secure mode clips exactly the
+outputs that comment describes. **This work must set `max_tokens` on both paths.** It is a
+pre-existing defect, but it would be indistinguishable from the local models being incapable, and
+would be diagnosed as such.
+
+### Context sizing, from measured artefacts
+
+Ollama's default `num_ctx` is 4096 and it truncates **silently** - the oldest tokens go first, which
+are the instructions. Measured against the live project:
+
+| Artefact | Approx tokens |
+|---|---|
+| `value_chain_tree` | 2,900 |
+| `value_chain_registry` | 3,482 |
+| `value_chain_model` | 12,230 |
+| `interview_scripts` (accumulated) | 130,523 |
+
+An agent's system prompt plus task plus a single `value_chain_model` read already exceeds 4096.
+Recommended starting points: **16384 for the deep model, 8192 for the fast model**, raised from
+`ollama ps` once real footprints are known.
+
+The accumulated `interview_scripts` figure is deliberately not a sizing target. Maya's merge happens
+inside `SQLiteStateTool`, not in the model's context, and Casey retrieves through `ChromaQueryTool`
+rather than reading the corpus whole. If any agent is ever asked to read that artefact directly, it
+will need a different approach rather than a larger window.
+
+### Keep-alive, and the setting that silently defeats the others
+
+```
+OLLAMA_KEEP_ALIVE=-1          # never unload; both models stay resident
+OLLAMA_MAX_LOADED_MODELS=2    # at least 2, or the models evict each other
+OLLAMA_NUM_PARALLEL=4         # concurrent requests per model
+```
+
+`OLLAMA_MAX_LOADED_MODELS` is the important one. At its default of 1 the two models evict each other
+on every alternation regardless of keep-alive and regardless of free memory, which presents as the
+local models being slow rather than as a configuration problem.
+
+Keep-alive matters because interviewees arrive at lunchtimes with hours of silence between. At the
+5 minute default the fast model is cold-loaded repeatedly, and a multi-gigabyte load from disk in
+front of a waiting interviewee is precisely the latency the press budget would then skip - so the
+budget would mask a configuration fault as a model limitation.
+
+Memory, at Q4_K_M: roughly 3 GB for a 4B fast model and 17 GB for a 27B reasoning model, before KV
+cache. On 24 GB that is workable but not comfortable, which is why the context sizes above start
+conservative and are raised from measurement rather than set optimistically.
+
+### Casey must not run while interviews are live
+
+Running the Synthesis Analyst saturates the reasoning model while the fast model is serving live
+follow-ups. Within the crew this is already impossible: `discovery_interviews_crew` is
+`Process.sequential`, Casey's task takes `context_tasks=[t2]`, and Avery's task blocks on
+`HumanInputTool` until a consultant replies "ready" - the prompt says "when all interviews are
+complete".
+
+The standalone agent dispatch bypasses it. `api/services/run_service.py:626` builds Casey's task
+with `context_tasks=[]`, so re-running Casey from the agent panel during a live campaign runs it
+immediately. That is the only path where the collision is reachable.
+
+**Standalone dispatch of `synthesis_analyst` must refuse when the project has interview sessions in
+`pending` or `active` status**, naming how many and telling the consultant to wait or to mark them
+abandoned. A refusal rather than a queue: the crew path already expresses "wait for interviews"
+correctly, and a second mechanism for the same idea is how two authorities for one fact come about.
+
 ## Deferred: the illustration pipeline
 
 `visual_illustrator` currently writes `illustration_briefs` - text prompts grounded in real project
@@ -176,6 +250,11 @@ Then:
 - **No crew factory contains a model name or a mode branch**, as a source guard - the same technique
   used for bare-filename reads and raw database connections, both of which recurred across six and
   seven sites respectively before a guard was added.
+- **Both LLM paths set `max_tokens`**, asserted on the constructed object rather than by reading the
+  source, so the sensitive branch cannot regress to the unset state it is in today.
+- **Standalone Casey refuses while sessions are pending or active**, driven through the dispatch
+  entry point rather than by calling a guard helper - the guard is worthless if the dispatch does
+  not consult it, which is the failure this codebase has recorded seven times.
 
 ## Out of scope
 
