@@ -108,6 +108,6 @@ def test_the_business_plan_crew_builds(mock_llm):
     from agents.crews.business_plan_crew import create_business_plan_crew
 
     crew = create_business_plan_crew(
-        slug="x", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm,
+        slug="x", run_id=1, sector="logistics", llm=mock_llm,
     )
     assert [a.role for a in crew.agents] == ["Business Plan Generator", "Visual Illustrator"]

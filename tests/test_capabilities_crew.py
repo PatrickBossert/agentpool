@@ -123,7 +123,7 @@ def test_capabilities_crew_has_two_agents(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.capabilities_crew import create_capabilities_crew
         crew = create_capabilities_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+            slug="test", run_id=1, sector="logistics", llm=mock_llm
         )
     assert len(crew.agents) == 2
 
@@ -132,7 +132,7 @@ def test_capabilities_crew_agent_roles(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.capabilities_crew import create_capabilities_crew
         crew = create_capabilities_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+            slug="test", run_id=1, sector="logistics", llm=mock_llm
         )
     roles = {a.role for a in crew.agents}
     assert "Enterprise Architect" in roles
@@ -144,7 +144,7 @@ def test_capabilities_crew_sequential_process(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.capabilities_crew import create_capabilities_crew
         crew = create_capabilities_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+            slug="test", run_id=1, sector="logistics", llm=mock_llm
         )
     assert crew.process == Process.sequential
 
@@ -155,7 +155,7 @@ def test_capabilities_crew_accepts_hitl_tool_override(mock_llm):
     with patch("agents.crews.capabilities_crew.get_tools_for_agent", return_value=[]) as mock_reg:
         from agents.crews.capabilities_crew import create_capabilities_crew
         create_capabilities_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             llm=mock_llm, hitl_tool=mock_hitl,
         )
     assert mock_reg.call_args_list, "get_tools_for_agent was never called"

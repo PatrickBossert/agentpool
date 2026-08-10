@@ -15,7 +15,6 @@ from agents.business_plan.business_plan_generator import (
 def create_business_plan_crew(
     slug: str,
     run_id: int,
-    llm_mode: str,
     sector: str,
     llm: LLM | None = None,
     hitl_tool=None,
@@ -28,9 +27,6 @@ def create_business_plan_crew(
     Args:
         slug: Project slug (used for DB/file scoping).
         run_id: crew_runs.id for this execution (used by HumanInputTool).
-        llm_mode: unused - kept for signature compatibility with run_service.py's callers.
-            The model is now resolved per agent from the registry (agents/model_registry.py),
-            which reads the project's own mode rather than trusting a caller-supplied one.
         sector: Client sector (passed to tool registry).
         llm: Optional LLM override (used in tests to inject a cheap model).
     """

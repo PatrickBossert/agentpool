@@ -105,7 +105,7 @@ def test_business_plan_crew_carries_the_writer_and_the_illustrator(mock_llm):
     with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]):
         from agents.crews.business_plan_crew import create_business_plan_crew
         crew = create_business_plan_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+            slug="test", run_id=1, sector="logistics", llm=mock_llm
         )
     # Named rather than counted: a count of two is equally true of the wrong two. The
     # Illustrator moved here from delivery, where he could see only the roadmap.
@@ -117,7 +117,7 @@ def test_business_plan_crew_sequential_process(mock_llm):
     with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]):
         from agents.crews.business_plan_crew import create_business_plan_crew
         crew = create_business_plan_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+            slug="test", run_id=1, sector="logistics", llm=mock_llm
         )
     assert crew.process == Process.sequential
 
@@ -132,7 +132,7 @@ def test_business_plan_crew_asks_the_registry_per_agent(mock_llm):
         mock_get_llm.return_value = mock_llm
         from agents.crews.business_plan_crew import create_business_plan_crew
         create_business_plan_crew(
-            slug="test", run_id=1, llm_mode="sensitive", sector="logistics"
+            slug="test", run_id=1, sector="logistics"
         )
     mock_get_llm.assert_any_call("business_plan_generator", "test")
     mock_get_llm.assert_any_call("visual_illustrator", "test")
@@ -145,7 +145,7 @@ def test_business_plan_crew_accepts_hitl_tool_override(mock_llm):
     with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]) as mock_reg:
         from agents.crews.business_plan_crew import create_business_plan_crew
         create_business_plan_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             llm=mock_llm, hitl_tool=mock_hitl,
         )
     # Both agents, not just the writer. Asserting a single call was only ever true because

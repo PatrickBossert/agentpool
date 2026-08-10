@@ -15,7 +15,6 @@ from agents.architecture.initiative_identifier import (
 def create_capabilities_crew(
     slug: str,
     run_id: int,
-    llm_mode: str,
     sector: str,
     llm: LLM | None = None,
     hitl_tool=None,
@@ -26,9 +25,6 @@ def create_capabilities_crew(
     Args:
         slug: Project slug (used for DB/file scoping).
         run_id: crew_runs.id for this execution (used by HumanInputTool).
-        llm_mode: unused - kept for signature compatibility with run_service.py's callers.
-            Each agent's model comes from agents/model_registry.get_llm_for_agent, which reads
-            the project's own llm_mode. A branch here would be a second authority for it.
         sector: Client sector (used by ChromaQueryTool for sector knowledge base).
         llm: Optional LLM override (used in tests to inject a cheap model).
     """

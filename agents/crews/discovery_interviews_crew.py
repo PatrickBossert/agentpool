@@ -44,7 +44,6 @@ def _format_assignments(stakeholder_assignments: list[dict]) -> str:
 def create_discovery_interviews_crew(
     slug: str,
     run_id: int,
-    llm_mode: str,
     sector: str,
     stakeholder_assignments: list[dict],
     discovery_brief: str = "",
@@ -61,11 +60,11 @@ def create_discovery_interviews_crew(
     """
     # Each agent asks the registry for its own model. This crew used to take one shared
     # get_crew_llm(llm_mode) call for all three agents, and the standalone dispatch path
-    # used to take get_pam_llm() unconditionally, reading llm_mode not at all: the Synthesis
-    # Analyst holds ChromaQueryTool over {slug}_interviews, so on a sensitive project it
-    # pulled verbatim interview answers out of the correctly-local Chroma and posted them to
-    # a hosted model. Asking per agent means there is no shared variable left to forget to
-    # branch on.
+    # used to take get_pam_llm() unconditionally, reading the project's llm_mode not at all:
+    # the Synthesis Analyst holds ChromaQueryTool over {slug}_interviews, so on a sensitive
+    # project it pulled verbatim interview answers out of the correctly-local Chroma and
+    # posted them to a hosted model. Asking per agent means there is no shared variable left
+    # to forget to branch on.
     assignments_str = _format_assignments(stakeholder_assignments)
 
     coordinator = create_interview_coordinator(

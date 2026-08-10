@@ -17,7 +17,6 @@ from agents.pam.pam_agent import (
 def create_pam_mapping_crew(
     slug: str,
     orchestration_run_id: int,
-    llm_mode: str,
     llm: LLM | None = None,
 ) -> Crew:
     """Phase 1 PAM crew: runs discovery_mapping only.
@@ -41,7 +40,6 @@ def create_pam_mapping_crew(
 def create_pam_resume_crew(
     slug: str,
     orchestration_run_id: int,
-    llm_mode: str,
     interview_method: str = "none",
     llm: LLM | None = None,
 ) -> Crew:

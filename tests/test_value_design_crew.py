@@ -127,7 +127,7 @@ def test_value_design_crew_has_two_agents(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.value_design_crew import create_value_design_crew
         crew = create_value_design_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+            slug="test", run_id=1, sector="logistics", llm=mock_llm
         )
     assert len(crew.agents) == 2
 
@@ -136,7 +136,7 @@ def test_value_design_crew_agent_roles(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.value_design_crew import create_value_design_crew
         crew = create_value_design_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+            slug="test", run_id=1, sector="logistics", llm=mock_llm
         )
     roles = {a.role for a in crew.agents}
     assert "Value Proposition Generator" in roles
@@ -148,7 +148,7 @@ def test_value_design_crew_sequential_process(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.value_design_crew import create_value_design_crew
         crew = create_value_design_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics", llm=mock_llm
+            slug="test", run_id=1, sector="logistics", llm=mock_llm
         )
     assert crew.process == Process.sequential
 
@@ -164,7 +164,7 @@ def test_value_design_crew_asks_the_registry_per_agent(mock_llm):
         mock_get_llm.return_value = mock_llm
         from agents.crews.value_design_crew import create_value_design_crew
         create_value_design_crew(
-            slug="test", run_id=1, llm_mode="sensitive", sector="logistics"
+            slug="test", run_id=1, sector="logistics"
         )
     mock_get_llm.assert_any_call("value_proposition_generator", "test")
     mock_get_llm.assert_any_call("portfolio_manager", "test")
@@ -177,7 +177,7 @@ def test_value_design_crew_accepts_hitl_tool_override(mock_llm):
     with patch("agents.crews.value_design_crew.get_tools_for_agent", return_value=[]) as mock_reg:
         from agents.crews.value_design_crew import create_value_design_crew
         create_value_design_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             llm=mock_llm, hitl_tool=mock_hitl,
         )
     assert mock_reg.call_args_list, "get_tools_for_agent was never called"

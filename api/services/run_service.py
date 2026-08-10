@@ -258,7 +258,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     """Build the named crew, run it, and return the result. Does not update DB status."""
     settings = get_settings()
     config = load_project_config(Path(settings.projects_dir) / slug)
-    llm_mode = config.get("llm_mode", "standard")
     sector = config.get("sector", "")
 
     if crew_name == "discovery_interviews":
@@ -332,7 +331,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         crew = create_discovery_interviews_crew(
             slug=slug,
             run_id=run_id,
-            llm_mode=llm_mode,
             sector=sector,
             stakeholder_assignments=stakeholder_assignments,
             discovery_brief=config.get("discovery_brief", ""),
@@ -362,7 +360,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         crew = create_discovery_mapping_crew(
             slug=slug,
             run_id=run_id,
-            llm_mode=llm_mode,
             sector=sector,
             discovery_brief=discovery_brief,
             discovery_links=discovery_links,
@@ -392,7 +389,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         crew = create_requirements_crew(
             slug=slug,
             run_id=run_id,
-            llm_mode=llm_mode,
             sector=sector,
             discovery_brief=discovery_brief,
             discovery_links=discovery_links,
@@ -401,11 +397,11 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
 
     elif crew_name == "value_design":
         from agents.crews.value_design_crew import create_value_design_crew
-        crew = create_value_design_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
+        crew = create_value_design_crew(slug=slug, run_id=run_id, sector=sector)
 
     elif crew_name == "capabilities":
         from agents.crews.capabilities_crew import create_capabilities_crew
-        crew = create_capabilities_crew(slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector)
+        crew = create_capabilities_crew(slug=slug, run_id=run_id, sector=sector)
 
     elif crew_name == "delivery":
         missing = missing_config_keys(config, "delivery")
@@ -419,7 +415,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         crew = create_delivery_crew(
             slug=slug,
             run_id=run_id,
-            llm_mode=llm_mode,
             sector=sector,
             value_stream_labels=value_stream_labels,
             stakeholder_groups=stakeholder_groups,
@@ -430,7 +425,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     elif crew_name == "business_plan":
         from agents.crews.business_plan_crew import create_business_plan_crew
         crew = create_business_plan_crew(
-            slug=slug, run_id=run_id, llm_mode=llm_mode, sector=sector,
+            slug=slug, run_id=run_id, sector=sector,
             client_name=config.get("client_name", slug),
         )
 
@@ -447,7 +442,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         crew = create_assessment_design_crew(
             slug=slug,
             run_id=run_id,
-            llm_mode=llm_mode,
             sector=sector,
             standards_references=standards_references,
             preferred_sections=preferred_sections,
@@ -465,7 +459,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         crew = create_stakeholder_management_crew(
             slug=slug,
             run_id=run_id,
-            llm_mode=llm_mode,
             sector=sector,
             public_interview_url_base=public_interview_url_base,
         )

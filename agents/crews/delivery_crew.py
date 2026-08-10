@@ -11,7 +11,6 @@ from agents.delivery.roadmap_generator import (
 def create_delivery_crew(
     slug: str,
     run_id: int,
-    llm_mode: str,
     sector: str,
     value_stream_labels: list[str],
     stakeholder_groups: list[str],
@@ -26,9 +25,6 @@ def create_delivery_crew(
     Args:
         slug: Project slug (used for DB/file scoping).
         run_id: crew_runs.id for this execution (used by HumanInputTool).
-        llm_mode: unused - kept for signature compatibility with run_service.py's callers.
-            Each agent's model comes from agents/model_registry.get_llm_for_agent, which reads
-            the project's own llm_mode. A branch here would be a second authority for it.
         sector: Client sector (passed to tool registry for ChromaDB scoping).
         value_stream_labels: Value stream names from project config.
         stakeholder_groups: Stakeholder group names from project config.

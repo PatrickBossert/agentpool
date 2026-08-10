@@ -16,7 +16,6 @@ def _build_crew(mock_llm, stakeholder_assignments=None, discovery_brief=""):
         return create_discovery_interviews_crew(
             slug="test",
             run_id=1,
-            llm_mode="standard",
             sector="logistics",
             stakeholder_assignments=stakeholder_assignments or [],
             discovery_brief=discovery_brief,
@@ -61,7 +60,7 @@ def test_discovery_interviews_crew_uses_registry(mock_llm):
     ) as mock_reg:
         from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew
         create_discovery_interviews_crew(
-            slug="myslug", run_id=5, llm_mode="standard", sector="rail",
+            slug="myslug", run_id=5, sector="rail",
             stakeholder_assignments=[], llm=mock_llm,
         )
     called_agents = {c.args[0] for c in mock_reg.call_args_list}
@@ -90,7 +89,7 @@ def test_discovery_interviews_crew_accepts_node_templates(mock_llm):
     with patch("agents.crews.discovery_interviews_crew.get_tools_for_agent", return_value=[]):
         from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew
         crew = create_discovery_interviews_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             stakeholder_assignments=[], llm=mock_llm,
             node_templates_block='{"Goods-in Inspection": {"questions": []}}',
         )
@@ -119,13 +118,13 @@ def _write_project_row(tmp_path, slug: str, llm_mode: str) -> None:
 
 def _build_crew_for_project(slug: str):
     """Build the crew the way run_service does - no llm override, so each agent asks the
-    registry, which reads the real project row set up by _write_project_row. The llm_mode
-    argument below is a required parameter the factory no longer reads at all; its value is
-    irrelevant to which model is resolved, which is the point of this test."""
+    registry, which reads the real project row set up by _write_project_row. The factory
+    itself no longer accepts an llm_mode argument at all; the point of this test is that
+    which model is resolved depends only on that row, never on a caller-supplied value."""
     with patch("agents.crews.discovery_interviews_crew.get_tools_for_agent", return_value=[]):
         from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew
         return create_discovery_interviews_crew(
-            slug=slug, run_id=1, llm_mode="standard", sector="rail",
+            slug=slug, run_id=1, sector="rail",
             stakeholder_assignments=[],
         )
 
@@ -134,13 +133,13 @@ def test_a_sensitive_project_gets_no_hosted_model_in_this_crew(monkeypatch, tmp_
     """The branch's headline guarantee, at the one crew that reads interview answers.
 
     This crew used to take one shared get_crew_llm(llm_mode) call for all three agents, and
-    llm_mode was, at one point, a declared parameter this factory never read at all - it
+    llm_mode was, at one point, a declared parameter this factory accepted but never read - it
     called get_pam_llm() unconditionally, putting all three agents, including the Synthesis
     Analyst, which holds ChromaQueryTool over {slug}_interviews, on a hosted Anthropic model.
     Each agent now asks agents/model_registry.get_llm_for_agent for its own model, which reads
     the project's real llm_mode from its own row rather than trusting a caller-supplied one -
-    so this test drives a real sensitive project row rather than passing "sensitive" to the
-    factory, which the factory no longer even looks at.
+    so this test drives a real sensitive project row; the factory has no llm_mode parameter
+    left to pass one to.
     """
     from api.config import get_settings
     from api.services import chroma_client

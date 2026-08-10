@@ -16,7 +16,7 @@ def test_requirements_crew_accepts_hitl_tool_override(mock_llm):
     with patch("agents.crews.requirements_crew.get_tools_for_agent", return_value=[]) as mock_reg:
         from agents.crews.requirements_crew import create_requirements_crew
         create_requirements_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             llm=mock_llm, hitl_tool=mock_hitl,
         )
     assert mock_reg.call_args_list, "get_tools_for_agent was never called"
@@ -65,7 +65,7 @@ def test_discovery_mapping_crew_carries_alex_and_morgan():
     mock_llm = MagicMock(spec=LLM)
     with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
         crew = create_discovery_mapping_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
+            slug="test", run_id=1, sector="rail", llm=mock_llm
         )
     # Named rather than counted: a count of two is equally true of the wrong two.
     assert [a.role for a in crew.agents] == ['Value Chain Mapper', 'Value Lever Analyst']
@@ -76,7 +76,7 @@ def test_discovery_mapping_crew_runs_a_task_for_each_of_them():
     mock_llm = MagicMock(spec=LLM)
     with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
         crew = create_discovery_mapping_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
+            slug="test", run_id=1, sector="rail", llm=mock_llm
         )
     assert len(crew.tasks) == 2
 
@@ -91,7 +91,7 @@ def test_discovery_mapping_crew_task_mentions_value_chain_model_and_tree():
     mock_llm = MagicMock(spec=LLM)
     with patch("agents.crews.discovery_mapping_crew.get_tools_for_agent", return_value=[]):
         crew = create_discovery_mapping_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="rail", llm=mock_llm
+            slug="test", run_id=1, sector="rail", llm=mock_llm
         )
     description = crew.tasks[0].description
     assert "value_chain_model" in description

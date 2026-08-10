@@ -11,7 +11,6 @@ from agents.discovery.stakeholder_manager_agent import (
 def create_stakeholder_management_crew(
     slug: str,
     run_id: int,
-    llm_mode: str,
     sector: str,
     public_interview_url_base: str = "",
     llm: LLM | None = None,

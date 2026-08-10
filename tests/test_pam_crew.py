@@ -16,7 +16,6 @@ def _build_mapping_crew(mock_llm):
         return create_pam_mapping_crew(
             slug="test",
             orchestration_run_id=1,
-            llm_mode="standard",
             llm=mock_llm,
         )
 
@@ -27,7 +26,6 @@ def _build_resume_crew(mock_llm):
         return create_pam_resume_crew(
             slug="test",
             orchestration_run_id=1,
-            llm_mode="standard",
             llm=mock_llm,
         )
 
@@ -82,7 +80,7 @@ def test_pam_crews_use_registry(mock_llm):
     """get_tools_for_agent is called with 'pam' for both crews."""
     with patch("agents.crews.pam_crew.get_tools_for_agent", return_value=[]) as mock_reg:
         from agents.crews.pam_crew import create_pam_mapping_crew
-        create_pam_mapping_crew(slug="myslug", orchestration_run_id=77, llm_mode="standard", llm=mock_llm)
+        create_pam_mapping_crew(slug="myslug", orchestration_run_id=77, llm=mock_llm)
     call = mock_reg.call_args_list[0]
     assert call.args[0] == "pam"
     assert call.kwargs.get("slug") == "myslug"
@@ -95,7 +93,6 @@ def _build_resume_crew_with_interviews(mock_llm):
         return create_pam_resume_crew(
             slug="test",
             orchestration_run_id=1,
-            llm_mode="standard",
             interview_method="agent",
             llm=mock_llm,
         )

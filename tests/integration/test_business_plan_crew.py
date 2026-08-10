@@ -47,7 +47,6 @@ def test_business_plan_crew_end_to_end(test_slug, project_id, seed_delivery_outp
     crew = create_business_plan_crew(
         slug=test_slug,
         run_id=run_id,
-        llm_mode="standard",
         sector="logistics",
         llm=llm,
     )

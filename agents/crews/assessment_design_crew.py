@@ -11,7 +11,6 @@ from agents.discovery.interaction_designer import (
 def create_assessment_design_crew(
     slug: str,
     run_id: int,
-    llm_mode: str,
     sector: str,
     standards_references: str = "",
     preferred_sections: int = 4,

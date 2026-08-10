@@ -47,7 +47,6 @@ def test_capabilities_crew_end_to_end(test_slug, project_id, seed_value_design_o
     crew = create_capabilities_crew(
         slug=test_slug,
         run_id=run_id,
-        llm_mode="standard",
         sector="logistics",
         llm=llm,
     )

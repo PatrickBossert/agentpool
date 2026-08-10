@@ -33,13 +33,10 @@ async def start_orchestration(slug: str) -> int:
 async def run_pam_phase1(slug: str, orchestration_run_id: int) -> None:
     """Run the mapping phase (discovery_mapping crew). On success set status to awaiting_assignment."""
     try:
-        settings = get_settings()
-        config = load_project_config(Path(settings.projects_dir) / slug)
         from agents.crews.pam_crew import create_pam_mapping_crew
         crew = create_pam_mapping_crew(
             slug=slug,
             orchestration_run_id=orchestration_run_id,
-            llm_mode=config.get("llm_mode", "standard"),
         )
         await crew.kickoff_async()
         async with get_connection(slug) as conn:
@@ -77,7 +74,6 @@ async def run_pam_phase2(slug: str, orchestration_run_id: int) -> None:
         crew = create_pam_resume_crew(
             slug=slug,
             orchestration_run_id=orchestration_run_id,
-            llm_mode=config.get("llm_mode", "standard"),
             interview_method=config.get("interview_method", "none"),
         )
         await crew.kickoff_async()

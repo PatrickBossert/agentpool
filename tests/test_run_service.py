@@ -36,7 +36,7 @@ async def test_build_and_run_crew_dispatches_discovery(fake_config):
         from api.services.run_service import build_and_run_crew
         result = await build_and_run_crew("acme", "requirements", run_id=1)
     mock_factory.assert_called_once_with(
-        slug="acme", run_id=1, llm_mode="standard", sector="transport",
+        slug="acme", run_id=1, sector="transport",
         discovery_brief="", discovery_links=[], priority_doc_names=[],
     )
     mock_crew.kickoff_async.assert_awaited_once()

@@ -201,7 +201,7 @@ def test_delivery_crew_carries_the_roadmap_generator(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.delivery_crew import create_delivery_crew
         crew = create_delivery_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
         )
@@ -212,7 +212,7 @@ def test_delivery_crew_agent_role(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.delivery_crew import create_delivery_crew
         crew = create_delivery_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
         )
@@ -227,7 +227,7 @@ def test_delivery_crew_sequential_process(mock_llm):
     with patch("agents.tools.registry.get_tools_for_agent", return_value=[]):
         from agents.crews.delivery_crew import create_delivery_crew
         crew = create_delivery_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS, llm=mock_llm,
         )
@@ -244,7 +244,7 @@ def test_delivery_crew_asks_the_registry_for_the_roadmap_generator(mock_llm):
         mock_get_llm.return_value = mock_llm
         from agents.crews.delivery_crew import create_delivery_crew
         create_delivery_crew(
-            slug="test", run_id=1, llm_mode="sensitive", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             value_stream_labels=_VALUE_STREAMS, stakeholder_groups=_STAKEHOLDER_GROUPS,
             roadmap_time_axis=_TIME_AXIS,
         )
@@ -257,7 +257,7 @@ def test_delivery_crew_accepts_hitl_tool_override(mock_llm):
     with patch("agents.crews.delivery_crew.get_tools_for_agent", return_value=[]) as mock_reg:
         from agents.crews.delivery_crew import create_delivery_crew
         create_delivery_crew(
-            slug="test", run_id=1, llm_mode="standard", sector="logistics",
+            slug="test", run_id=1, sector="logistics",
             value_stream_labels=["A", "B"], stakeholder_groups=["X"],
             roadmap_time_axis="quarters", llm=mock_llm, hitl_tool=mock_hitl,
         )

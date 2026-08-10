@@ -170,11 +170,18 @@ _EXPECTED_CREW_FILES = 10
 # The first version matched only "anthropic/claude" and the three retired factory names, so
 # `LLM(model="claude-opus-4-6", ...)` - a bare name, exactly the form _project_setting returns
 # - passed clean, and a re-added `if llm_mode == "sensitive":` passed clean too.
+#
+# `\bllm_mode\b` on its own subsumes the old "branches on llm_mode" pattern and also catches
+# the parameter merely being accepted again - `llm_mode: str,` in a factory signature, or
+# `llm_mode=llm_mode` at a call site. Ten factories carried exactly that dead parameter (never
+# read, only declared) until this change removed it; a narrower pattern that only caught a read
+# or a branch would let the parameter itself creep back in without ever failing this test.
 _FORBIDDEN = (
     (re.compile(r"claude"), "names a model"),
     (re.compile(r"get_pam_llm|get_haiku_llm|get_crew_llm"), "calls a retired LLM factory"),
     (re.compile(r"\bLLM\s*\("), "constructs an LLM directly"),
-    (re.compile(r"llm_mode\s*=="), "branches on llm_mode"),
+    (re.compile(r"\bllm_mode\b"), "mentions llm_mode - reads it, branches on it, or merely "
+                                   "accepts/passes it as a parameter"),
 )
 
 
@@ -213,6 +220,28 @@ def test_no_crew_factory_chooses_a_model():
                     offenders.append(f"{rel}:{number} {why}  {stripped[:70]}")
     assert not offenders, (
         "these choose a model instead of asking get_llm_for_agent:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_no_config_yaml_read_of_llm_mode():
+    """`projects.llm_mode` is the sole authority, read by project_llm_mode(slug) in
+    api/services/chroma_client.py, which fails closed - a read error returns "sensitive".
+    config.yaml used to carry a second copy, read with `config.get("llm_mode", "standard")`,
+    which fails open: a drifted YAML would silently route a sensitive project's work to a
+    hosted provider. This is the property the whole change exists to establish, asserted at
+    the source rather than at any one caller, the same shape that has already caught six
+    bare-filename reads and seven raw database connections on this codebase.
+    """
+    offenders = []
+    for base in ("api", "agents"):
+        for path in sorted((_REPO_ROOT / base).rglob("*.py")):
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if re.search(r"""config\.get\(\s*["']llm_mode["']""", line):
+                    rel = path.relative_to(_REPO_ROOT)
+                    offenders.append(f"{rel}:{number} {line.strip()}")
+    assert not offenders, (
+        "config.yaml's llm_mode copy has a reader again - the database column, read via "
+        "project_llm_mode(slug), is the only authority:\n  " + "\n  ".join(offenders)
     )
 
 

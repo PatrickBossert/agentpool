@@ -34,14 +34,19 @@ async def create_project(req: ProjectCreate) -> dict:
     (project_dir / "docs").mkdir(parents=True, exist_ok=True)
     (project_dir / "outputs").mkdir(parents=True, exist_ok=True)
 
-    # Write config.yaml atomically (tempfile + os.replace prevents partial writes)
+    # Write config.yaml atomically (tempfile + os.replace prevents partial writes).
+    # llm_mode is excluded: the database column (written below via insert_project) is
+    # the sole authority for it, and config.yaml is read with a fail-open default, so a
+    # copy here would let a drifted file route a sensitive project's work to a hosted
+    # provider. config_json below keeps it - that copy is what the Settings tab round-trips.
     config = req.model_dump()
     config_path = project_dir / "config.yaml"
     if not config_path.exists():
+        yaml_config = {k: v for k, v in config.items() if k != "llm_mode"}
         fd, tmp_path = tempfile.mkstemp(dir=project_dir, suffix=".yaml.tmp")
         try:
             with os.fdopen(fd, "w") as f:
-                yaml.dump(config, f, default_flow_style=False)
+                yaml.dump(yaml_config, f, default_flow_style=False)
             os.replace(tmp_path, config_path)
         except Exception:
             os.unlink(tmp_path)
@@ -182,13 +187,18 @@ async def update_project_settings(slug: str, settings: ProjectSettings) -> dict 
             sector=settings.sector,
             config_json=json.dumps(full_config),
         )
+    # llm_mode is excluded from config.yaml for the same reason as project creation: the
+    # database column (written above via update_project_config) is the sole authority for
+    # it, and config.yaml is read with a fail-open default. full_config keeps it for
+    # config_json, which is what the Settings tab round-trips.
     project_dir = Path(get_settings().projects_dir) / slug
     config_path = project_dir / "config.yaml"
     project_dir.mkdir(parents=True, exist_ok=True)
+    yaml_config = {k: v for k, v in full_config.items() if k != "llm_mode"}
     fd, tmp_path = tempfile.mkstemp(dir=project_dir, suffix=".yaml.tmp")
     try:
         with os.fdopen(fd, "w") as f:
-            yaml.dump(full_config, f, default_flow_style=False)
+            yaml.dump(yaml_config, f, default_flow_style=False)
         os.replace(tmp_path, config_path)
     except Exception:
         os.unlink(tmp_path)

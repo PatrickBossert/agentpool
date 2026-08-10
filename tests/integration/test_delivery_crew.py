@@ -45,7 +45,6 @@ def test_delivery_crew_end_to_end(test_slug, project_id, seed_architecture_outpu
     crew = create_delivery_crew(
         slug=test_slug,
         run_id=run_id,
-        llm_mode="standard",
         sector="logistics",
         value_stream_labels=["Operations", "IT"],
         stakeholder_groups=["Investor", "Customer", "Operations", "IT"],
