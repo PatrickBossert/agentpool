@@ -870,6 +870,11 @@ export default function AgentDetailPanel({
     .filter(o => agentKeys.has(o.agent_name) && !INTERNAL_OUTPUT_TYPES.has(o.output_type))
     .sort((a, b) => parseDbDate(b.created_at).getTime() - parseDbDate(a.created_at).getTime())
 
+  // The tab badge counts artefacts, not rows: an agent's single declared output written
+  // thirteen times is one artefact, not thirteen, and the row count read as a count of
+  // interviews sitting one below the total the Output tab actually listed.
+  const distinctOutputTypes = new Set(crewOutputs.map(o => o.output_type)).size
+
   const crewMeta = CREW_META[crewKey]
 
   // Status' output summary card counts what is *in* the current artefact, which means it
@@ -965,8 +970,8 @@ export default function AgentDetailPanel({
             }`}
           >
             {t.label}
-            {t.key === 'output' && crewOutputs.length > 0 && (
-              <span className="ml-1 text-[9px] bg-gray-200 text-gray-500 rounded-full px-1">{crewOutputs.length}</span>
+            {t.key === 'output' && distinctOutputTypes > 0 && (
+              <span className="ml-1 text-[9px] bg-gray-200 text-gray-500 rounded-full px-1">{distinctOutputTypes}</span>
             )}
           </button>
         ))}

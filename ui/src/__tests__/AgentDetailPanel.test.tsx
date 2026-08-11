@@ -213,6 +213,27 @@ describe('AgentDetailPanel - Status tab', () => {
   })
 })
 
+describe('AgentDetailPanel - the Output tab badge', () => {
+  it('counts distinct artefacts, not versions', async () => {
+    // Thirteen versions of one artefact is not thirteen outputs - it read as a count of
+    // interviews sitting one below the sixteen the tab listed.
+    const outputs: AgentOutput[] = Array.from({ length: 13 }, (_, i) => ({
+      id: i + 1,
+      agent_name: 'interaction_designer',
+      output_type: 'interview_scripts',
+      version: i + 1,
+      is_current: i === 12,
+      review_status: 'approved',
+      created_at: `2026-08-${String(i + 1).padStart(2, '0')} 10:00:00`,
+      file_path: `scripts_v${i + 1}.json`,
+    }))
+    renderPanel({ outputs })
+
+    expect(screen.queryByText('13')).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^Output\s*1$/ })).toBeInTheDocument()
+  })
+})
+
 describe('AgentDetailPanel - unsaved work across a tab change', () => {
   // beforeunload does not fire on an in-panel tab change, so a tab that holds a draft and is
   // rendered conditionally loses it the moment another tab is clicked, silently and with no
