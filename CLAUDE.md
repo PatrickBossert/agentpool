@@ -382,6 +382,17 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - Secure mode runs two local models concurrently. `OLLAMA_MAX_LOADED_MODELS` defaults to 1, which
   makes them evict each other on every alternation regardless of free memory - see
   `docs/runbook-local-models.md` before diagnosing local models as slow.
+- `GET` and `PATCH /projects/{slug}/interview-scripts/{node_label}` read and write a bare
+  `outputs/interview_scripts.json`. `insert_agent_output_sync` renames that file to
+  `interview_scripts_vN.json` on every agent write, so on any project Maya has run the GET
+  404s and the PATCH writes a file `list_interview_scripts` never reads, creating no
+  `agent_outputs` row. A human edit through that door is lost rather than merged. Resolve
+  through `current_output_path` like every other consumer - see "Resolving an output" above.
+- `build_and_run_agent` - the standalone "run this one agent" dispatch - fetches no validation
+  warnings, skill notes, or change requests, so an agent dispatched that way is missing all
+  three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
+  `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
+  re-run goes through the crew path. It is reachable from the API and from n8n.
 
 ---
 
