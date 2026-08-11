@@ -457,17 +457,42 @@ def current_script_ledger_sync(slug: str) -> dict:
     return {"scripts": [{"id": r[0], "node_id": r[1], "active": bool(r[2])} for r in rows]}
 
 
-def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -> int:
+def register_scripts_sync(
+    slug: str, scripts: dict, version: int | None, author: str, *, touch_version: bool = True
+) -> int:
     """Register any script id not already held. Returns how many were added.
 
-    INSERT OR IGNORE, never UPDATE of node_id. That is what makes automatic registration
-    safe: the succession rule forbids exactly two things, redefining an id and dropping
-    one, and appending does neither. A batch that moves a registered id is refused by the
-    validator before this ever runs, so the ledger cannot be talked into agreeing with it.
+    ON CONFLICT(script_id) DO NOTHING, never UPDATE of node_id. That is what makes automatic
+    registration safe: the succession rule forbids exactly two things, redefining an id and
+    dropping one, and appending does neither. A batch that moves a registered id is refused
+    by the validator before this ever runs, so the ledger cannot be talked into agreeing
+    with it.
 
-    last_version and last_author are refreshed for every id in the batch, including ids
-    already registered, because they record which version last changed this script and
-    who wrote it - which is a different question from where the id is anchored.
+    Deliberately not INSERT OR IGNORE: that clause swallows every constraint violation on
+    the row, not only the primary-key conflict it is meant for - a script whose JSON carries
+    an explicit `"node_label": null` hits node_label's NOT NULL and was silently dropped
+    from the whole batch with no error, no ledger row, and no signal to the caller. The next
+    batch then found the id unregistered and moved it unrefused: SC-001 published at 1.2,
+    silently re-anchored to 2.7. ON CONFLICT(script_id) DO NOTHING only suppresses the one
+    conflict it names; a NOT NULL violation still raises, the caller's except still sees it,
+    and the next merged write re-derives the id rather than losing it. script.get("node_label")
+    or "" closes the specific null case so it never reaches that constraint at all - both are
+    needed, because a future field on this row could still violate a constraint OR IGNORE
+    would otherwise have swallowed too.
+
+    active is carried at insert time, matching script_ledger_backfill.py's precedent so the
+    two seeding paths agree: a script registered for the first time is entered with whatever
+    active value it names (default True). An id already held is never rewritten here, by
+    design - this function does not attempt retirement of an existing id.
+
+    touch_version gates last_version/last_author. interview_scripts is the artefact
+    last_version measures staleness against ("reviewed at v3, changed since"), so its write
+    path always touches it. interview_script_registry is a different artefact on its own,
+    unrelated version counter - passing its version through here would make last_version go
+    backwards and hide real staleness rather than report it - so that call site passes
+    touch_version=False and this function leaves last_version/last_author alone entirely,
+    including on newly-inserted rows, which stay NULL/'' until an actual interview_scripts
+    write reaches the id.
     """
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
         row = conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)).fetchone()
@@ -482,20 +507,26 @@ def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -
             node_id = script.get("node_id")
             if not script_id or not node_id:
                 continue
+            active = 1 if script.get("active", True) else 0
+            row_version = version if touch_version else None
+            row_author = author if touch_version else ""
             cur = conn.execute(
-                "INSERT OR IGNORE INTO interview_script_ledger"
-                " (script_id, project_id, node_id, node_label, last_version, last_author)"
-                " VALUES (?,?,?,?,?,?)",
-                (script_id, project_id, node_id, script.get("node_label", ""),
-                 version, author),
+                "INSERT INTO interview_script_ledger"
+                " (script_id, project_id, node_id, node_label, active,"
+                "  last_version, last_author)"
+                " VALUES (?,?,?,?,?,?,?)"
+                " ON CONFLICT(script_id) DO NOTHING",
+                (script_id, project_id, node_id, script.get("node_label") or "", active,
+                 row_version, row_author),
             )
             added += cur.rowcount
-            conn.execute(
-                "UPDATE interview_script_ledger"
-                " SET last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
-                " WHERE script_id=?",
-                (version, author, script_id),
-            )
+            if touch_version:
+                conn.execute(
+                    "UPDATE interview_script_ledger"
+                    " SET last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
+                    " WHERE script_id=?",
+                    (version, author, script_id),
+                )
         conn.commit()
     return added
 

@@ -96,3 +96,103 @@ def test_registration_never_moves_an_id_that_is_already_registered(script_projec
     from agents.tools._db import current_script_ledger_sync
     ids = {e["id"]: e["node_id"] for e in current_script_ledger_sync(slug)["scripts"]}
     assert ids == {"SC-001": "1.2"}, "the ledger must not have followed the moved id"
+
+
+def test_a_null_node_label_does_not_silently_break_registration(script_project):
+    """Task 2 review, Critical 1: INSERT OR IGNORE suppresses every constraint violation on
+    the row, not only the primary-key conflict it was written for. node_label is NOT NULL
+    (api/database.py's _migrate_interview_script_ledger), and a script whose JSON carries an
+    explicit "node_label": null - which a model emitting JSON does - hit that constraint and
+    was dropped from the whole batch with no error and no ledger row. The *next* batch then
+    found the id unregistered and moved it unrefused: SC-001 published at 1.2, silently
+    re-anchored to 2.7, with the write path reporting "Written to" both times. This test
+    reproduces exactly that shape and would have failed against the pre-fix code with the
+    second write succeeding instead of being refused."""
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    first = _script("SC-001", "1.2", "Works Programming")
+    first["node_label"] = None
+    out1 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer", value=json.dumps({"SC-001": first}))
+    assert out1.startswith("Written to"), out1
+
+    out2 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": _script("SC-001", "2.7", "Somewhere Else")}))
+    assert out2.startswith("Error:"), f"a moved id must be refused, got: {out2}"
+
+    from agents.tools._db import current_script_ledger_sync
+    ids = {e["id"]: e["node_id"] for e in current_script_ledger_sync(slug)["scripts"]}
+    assert ids == {"SC-001": "1.2"}, "the null-label batch must still have registered SC-001"
+
+
+def test_last_version_reflects_only_ids_the_batch_actually_touched(script_project):
+    """Task 2 review, Important 2: interview_scripts merges before validation, so `parsed`
+    at the registration hook is the whole accumulated artefact, not the fragment this call
+    wrote. register_scripts_sync must be called with the pre-merge batch, or every earlier
+    script's last_version is bumped by every later, unrelated batch - and a staleness signal
+    every batch resets is not a signal."""
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+              value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+    tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+              value=json.dumps({"SC-002": _script("SC-002", "1.3", "Pipeline Design")}))
+
+    import sqlite3
+    from agents.tools._db import _db_path
+    with sqlite3.connect(_db_path(slug)) as conn:
+        rows = dict(conn.execute(
+            "SELECT script_id, last_version FROM interview_script_ledger"
+        ).fetchall())
+    assert rows["SC-001"] == 1, f"SC-001 was not in batch 2 - its last_version must stay 1, got {rows}"
+    assert rows["SC-002"] == 2
+
+
+def test_the_registry_door_never_writes_last_version(script_project):
+    """Task 2 review, Important 3: interview_script_registry and interview_scripts are two
+    different artefacts on two different agent_outputs version counters. Letting the
+    registry door refresh last_version would make it go backwards - three script batches
+    leave every row at 3, and a single registry write afterwards would reset them all to 1,
+    hiding real staleness rather than reporting it. The registry door must never touch
+    last_version/last_author at all, even for ids it registers for the first time."""
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+              value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+    tool._run(operation="write", key="interview_script_registry",
+              agent_name="interaction_designer",
+              value=json.dumps({"scripts": [
+                  {"id": "SC-001", "node_id": "1.2", "node_label": "Works Programming",
+                   "active": True},
+                  {"id": "SC-777", "node_id": "1.3", "node_label": "New via registry only",
+                   "active": True},
+              ]}))
+
+    import sqlite3
+    from agents.tools._db import _db_path
+    with sqlite3.connect(_db_path(slug)) as conn:
+        rows = dict(conn.execute(
+            "SELECT script_id, last_version FROM interview_script_ledger"
+        ).fetchall())
+    assert rows["SC-001"] == 1, f"the registry write must not touch SC-001's last_version, got {rows}"
+    assert rows["SC-777"] is None, "an id registered only via the registry door has no version yet"
+
+
+def test_the_registry_door_preserves_active_on_registration(script_project):
+    """Task 2 review, Important 4: the registry door is the one place active is carried at
+    all - interview_scripts doesn't send it. script_ledger_backfill.py (Task 1) preserves an
+    entry's active value at insert time; the live registry-door write path must agree with
+    it rather than silently defaulting every new id to active."""
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    tool._run(operation="write", key="interview_script_registry",
+              agent_name="interaction_designer",
+              value=json.dumps({"scripts": [
+                  {"id": "SC-500", "node_id": "1.2", "node_label": "Retired on arrival",
+                   "active": False},
+              ]}))
+
+    from agents.tools._db import current_script_ledger_sync
+    entry = next(e for e in current_script_ledger_sync(slug)["scripts"] if e["id"] == "SC-500")
+    assert entry["active"] is False

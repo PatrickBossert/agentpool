@@ -347,6 +347,14 @@ class SQLiteStateTool(BaseTool):
             except json.JSONDecodeError as e:
                 return f"Error: value is not valid JSON — {e}"
 
+            # The pre-merge fragment this call actually wrote, kept aside for
+            # register_scripts_sync: _merge_with_current below reassigns `parsed` to the
+            # full accumulated artefact, and last_version must record which ids THIS batch
+            # touched, not every id the artefact happens to hold (Task 2 review Important 2 -
+            # without this, batch 3 of a run bumps last_version on every script from batches
+            # 1 and 2 as well, and a staleness signal every later batch sets is not a signal).
+            batch = parsed
+
             # Merge before validating, so the validator judges the artefact that will
             # actually be stored rather than the fragment that arrived. A batch that would
             # corrupt the accumulated set is refused whole and the previous version stays
@@ -404,7 +412,7 @@ class SQLiteStateTool(BaseTool):
                 # completed.
                 try:
                     version = _output_version_sync(self.slug, new_output_id)
-                    register_scripts_sync(self.slug, parsed, version, agent_name)
+                    register_scripts_sync(self.slug, batch, version, agent_name)
                 except Exception:
                     # Never fail a durable write over the ledger. The next write re-derives
                     # it, and the validator refuses anything that would corrupt it meanwhile.
@@ -419,19 +427,23 @@ class SQLiteStateTool(BaseTool):
                 # registered id - would pass validation against a table it never populated,
                 # silently reopening the exact hole append-only registration exists to close.
                 # Same append-only call, adapted for this key's {"scripts": [{"id",
-                # "node_id", "node_label"}, ...]} shape rather than interview_scripts' dict
-                # of full script bodies.
+                # "node_id", "node_label", "active"}, ...]} shape rather than interview_scripts'
+                # dict of full script bodies. touch_version=False: this door's write has its
+                # own, unrelated agent_outputs version - passing it through would make
+                # last_version go backwards on every id this write names (Important 3).
                 try:
-                    version = _output_version_sync(self.slug, new_output_id)
                     by_id = {
                         entry.get("id"): {
                             "node_id": entry.get("node_id"),
                             "node_label": entry.get("node_label", ""),
+                            "active": entry.get("active", True),
                         }
                         for entry in parsed.get("scripts", [])
                         if isinstance(entry, dict) and entry.get("id") and entry.get("node_id")
                     }
-                    register_scripts_sync(self.slug, by_id, version, agent_name)
+                    register_scripts_sync(
+                        self.slug, by_id, None, agent_name, touch_version=False
+                    )
                 except Exception:
                     pass
 
