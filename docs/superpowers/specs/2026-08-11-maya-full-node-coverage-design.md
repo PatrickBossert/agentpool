@@ -48,10 +48,10 @@ lands on a different node than before, and the merge overwrites node `1.2`'s scr
 node's content. The result looks complete and is silently scrambled - worse than regenerating
 everything, because the damage is invisible.
 
-This is the same failure the value chain already solved. `DeriveRegistryTool` and
-`_preserve_registered_labels` exist precisely so a regenerated tree cannot rewrite the ledger.
-`interview_script_registry` already carries the mapping this needs - `{id, node_id, level,
-relationship, node_label, active}` - it simply is not treated as authoritative.
+This is the same failure the value chain already solved, and the machinery is already half here.
+`interview_script_registry` carries the mapping - `{id, node_id, level, relationship, node_label,
+active}` - and `validate_script_registry_succession` already refuses redefining or dropping an id.
+What is missing is that the write carrying the scripts never consults it. See the correction below.
 
 ## The design
 
@@ -71,20 +71,36 @@ The warning is already injected into the next run's task by `_fetch_validation_w
 how Alex received `missing_l0` and acted on it. So Maya is told what is missing without any new
 plumbing.
 
-### The script registry becomes the authority
+### The scripts door must consult the script registry
 
-`interview_script_registry` maps a script id to a node id, and that mapping is a contract: once
-`SC-005` means node `1.2`, it means node `1.2` for the life of the project.
+Correction to the account above, established by reading the code rather than assuming: the
+authority already exists, and it is already enforced - on one door only.
 
-Enforced on write, in the same place and the same spirit as the registry door's existing label
-preservation:
+`validate_script_registry_succession` already refuses moving a registered `script_id` to a
+different `node_id`, and already refuses dropping one, with reasoning that names the consequence
+("every stored citation through it silently resolves to the wrong script"). But it runs from
+`_validate_interview_script_registry`, so it fires only on a write to **`interview_script_registry`**.
 
-- A write whose `script_id` is already registered against a **different** `node_id` is refused, with
-  a message naming both nodes. The batch fails; the previous version stays current.
-- A write introducing a new `script_id` extends the registry.
-- The registry may grow and may retire - `active: false` - but may never redefine.
+The write that actually carries the scripts is checked by `_validate_interview_scripts`, which
+verifies that each script anchors to a node the **value chain** registry holds, and that the anchor
+is at the right level. It never consults the **script** registry. So a batch emitting `SC-005`
+against node `2.7` passes: the node exists, the level is right, and nothing notices that `SC-005` is
+registered against `1.2`. The merge then overwrites `1.2`'s script.
 
-This is what makes the merge safe. `merged.update(parsed)` is correct once the key is stable.
+There is partial protection by accident - if Maya rewrites the script registry to match her new
+numbering, succession refuses that write - but it depends on her writing both artefacts, and the
+scripts write is the one that lands first.
+
+This is the two-doors failure CLAUDE.md records: a rule enforced at one entrance and not the other,
+where wiring only one silently turns the other's flows into no-ops.
+
+The fix is one cross-check, not a new mechanism: `_validate_interview_scripts` gains a check that
+every script whose `script_id` is already registered carries the registered `node_id`, refusing with
+a message naming both nodes. The batch fails and the previous version stays current, which is the
+established behaviour for a refused batch.
+
+That is what makes the merge safe. `merged.update(parsed)` is correct once the key is stable, and
+the key becomes stable once both doors agree.
 
 ### Maya generates only what is missing
 
