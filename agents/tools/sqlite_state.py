@@ -295,10 +295,11 @@ class SQLiteStateToolInput(BaseModel):
     value: str = Field(default="", description="JSON string to write (required for 'write')")
 
 
-def _record_registration_failure(
-    slug: str, run_id: int, key: str, agent_name: str, ids: list, error: BaseException
+def _record_registration_state(
+    slug: str, run_id: int, key: str, agent_name: str, stored: dict,
+    error: BaseException | None,
 ) -> None:
-    """A registration a durable write must not fail over must still leave a trace.
+    """Every script the stored artefact holds that interview_script_ledger does not.
 
     Silent was the shape of the defect this whole line of review exists to close: a write
     reported "Written to" while the id it named went unregistered with nothing to show for
@@ -306,22 +307,52 @@ def _record_registration_failure(
     path the warners already use (see _WARNERS below), so a registration failure surfaces
     the same way a coverage gap or a stale tree does, rather than needing its own reporting
     mechanism nobody thinks to look at.
+
+    Re-derived from the ledger rather than reported from the exception, and recorded with
+    complete=True - the same contract the coverage warner uses, for the same reason.
+    Reporting only the ids of a batch that raised, with complete=False, produced a warning
+    that could never clear: once a later batch registered the id, nothing removed the row,
+    and Maya was still being told to rewrite a write that named an id the ledger now holds -
+    which directly contradicts her instruction not to re-emit a script that already exists.
+    A warning that outlives its problem is worse than no warning, because acting on it is
+    the wrong move.
+
+    complete=True is only honest because this call re-derives the FULL finding set for its
+    source on every interview_scripts write, exactly as a warner does: it compares the whole
+    stored artefact against the whole ledger, so an absent finding really is a fixed one. It
+    would not have been honest against the old shape, where a second batch's failure list
+    would have cleared a first batch's still-unregistered ids.
+
+    Called on every interview_scripts write, not only on a failing one, because a clean
+    write is precisely when clearing matters. `error` is carried only to name the cause in
+    the detail text when this call is the one that saw it.
     """
     try:
-        record_validation_warnings_sync(slug, run_id, "script_ledger_registration", [
-            {
+        registered = {
+            entry.get("id") for entry in _current_script_registry(slug).get("scripts", [])
+        }
+        cause = f" - {error}" if error is not None else ""
+        missing = []
+        for entry_key, script in stored.items():
+            if not isinstance(script, dict):
+                continue
+            script_id = script.get("script_id") or entry_key
+            if not isinstance(script_id, str) or script_id in registered:
+                continue
+            missing.append({
                 "subject": script_id,
                 "code": "registration_failed",
                 "measure": None,
                 "detail": (
                     f"{key} write by {agent_name} did not register {script_id!r} in "
-                    f"interview_script_ledger - {error}. The artefact file still holds it; "
+                    f"interview_script_ledger{cause}. The artefact file still holds it; "
                     "the ledger does not, so a later batch could move this id unrefused "
                     "until it is registered. Rewrite the write that named this id."
                 ),
-            }
-            for script_id in ids
-        ])
+            })
+        record_validation_warnings_sync(
+            slug, run_id, "script_ledger_registration", missing, complete=True
+        )
     except Exception:
         pass   # a warning about a failure must never itself cause one
 
@@ -437,18 +468,24 @@ class SQLiteStateTool(BaseTool):
                 # a record that goes missing when a run stops early. Run 32 wrote 41
                 # scripts, hit the iteration ceiling before its ledger write, and reported
                 # completed.
+                registration_error: BaseException | None = None
                 try:
                     version = _output_version_sync(self.slug, new_output_id)
                     register_scripts_sync(self.slug, batch, version, agent_name)
                 except Exception as e:
                     # Never fail a durable write over the ledger - but the loss must not be
-                    # silent either. batch, not parsed: register_scripts_sync commits once
-                    # for the whole call, so one id it cannot bind discards its batchmates'
-                    # registrations too, and batch (captured pre-merge, above) is exactly
-                    # and only what this write named.
-                    _record_registration_failure(
-                        self.slug, self.run_id, key, agent_name, list(batch.keys()), e
-                    )
+                    # silent either. batch, not parsed, is what register_scripts_sync is
+                    # given: it commits once for the whole call, so one id it cannot bind
+                    # discards its batchmates' registrations too, and batch (captured
+                    # pre-merge, above) is exactly and only what this write named.
+                    registration_error = e
+                # parsed, not batch, and unconditionally: the finding set is the whole
+                # stored artefact measured against the whole ledger, which is what makes
+                # complete=True honest and what lets a warning clear once a later batch
+                # registers the id it named.
+                _record_registration_state(
+                    self.slug, self.run_id, key, agent_name, parsed, registration_error
+                )
 
             warner = _WARNERS.get(key)
             if warner is not None:

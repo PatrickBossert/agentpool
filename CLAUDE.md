@@ -408,6 +408,18 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
   `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
   re-run goes through the crew path. It is reachable from the API and from n8n.
+- Retiring an interview script - `interview_script_ledger.active = 0` - is unreachable in
+  practice. `SET active` appears exactly once in the codebase
+  (`register_scripts_sync`, `agents/tools/_db.py`), its only route is an
+  `interview_scripts` write carrying `active` on a script body, and Maya's own prompt
+  (`agents/discovery/interaction_designer.py`) now tells her retirement is not done through
+  that write - step 4 limits her to nodes with no script yet plus anything sent back, so an
+  existing script is not hers to re-emit even to retire it. No UI offers it either. The
+  mechanism works and is tested; nothing can currently ask for it. Nothing depends on it
+  today - `scripts_awaiting_regeneration` filters on `active=1`, which is simply always
+  true - and the design's one dependency is deferred with a soft revert, so this is a gap
+  rather than a hole. The fix, when it is wanted, is a door (a UI action or an explicit
+  instruction), not a change to the ledger.
 
 ---
 

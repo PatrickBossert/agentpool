@@ -474,3 +474,54 @@ def test_a_registration_failure_is_recorded_not_silent(script_project, monkeypat
     assert "SC-001" in matches[0]["subject"] or "SC-001" in matches[0]["detail"]
 
 
+
+def test_a_registration_failure_warning_clears_once_the_id_registers(
+    script_project, monkeypatch
+):
+    """Final review, small item 2: a registration_failed warning must not outlive its
+    problem.
+
+    It was recorded with complete=False, so nothing ever removed it - once a later batch
+    registered the id, Maya was still being told to rewrite the write that named it, which
+    contradicts her instruction not to re-emit a script that already exists. The coverage
+    warner uses complete=True precisely so a fixed finding disappears, and the fix is to
+    match it honestly: the finding set is now re-derived from the whole stored artefact
+    against the whole ledger on every interview_scripts write, so an absent finding really
+    is a registered id rather than merely a batch that happened not to raise this time.
+    """
+    import asyncio
+    import agents.tools.sqlite_state as sqlite_state_mod
+    from api.database import get_connection, fetch_validation_warnings
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated ledger failure")
+
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    async def _codes():
+        async with get_connection(slug) as conn:
+            cur = await conn.execute("SELECT id FROM projects WHERE slug=?", (slug,))
+            project_id = (await cur.fetchone())[0]
+            rows = await fetch_validation_warnings(conn, project_id=project_id)
+        return [r for r in rows if r["code"] == "registration_failed"]
+
+    monkeypatch.setattr(sqlite_state_mod, "register_scripts_sync", _boom)
+    out1 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+    assert out1.startswith("Written to"), out1
+    assert [r["subject"] for r in asyncio.run(_codes())] == ["SC-001"]
+
+    monkeypatch.undo()   # the ledger works again, exactly as it would on the next run
+    out2 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+    assert out2.startswith("Written to"), out2
+
+    from agents.tools._db import current_script_ledger_sync
+    assert [e["id"] for e in current_script_ledger_sync(slug)["scripts"]] == ["SC-001"]
+    assert asyncio.run(_codes()) == [], (
+        "the warning must not survive the registration it was raised about - Maya would be "
+        "told to rewrite an id the ledger now holds"
+    )
