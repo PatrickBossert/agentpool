@@ -440,3 +440,186 @@ def record_validation_warnings_sync(
                     params.extend([subject, code])
             conn.execute(sql, params)
         conn.commit()
+
+
+def current_script_ledger_sync(slug: str) -> dict:
+    """The script ledger in force, in the shape the scripts-door guard already consumes.
+
+    Returning {"scripts": [...]} rather than a friendlier shape is deliberate:
+    validate_scripts_against_script_registry stays a pure function over a mapping and does
+    not change at all, so moving the ledger from a file to a table has no blast radius
+    beyond the loader.
+    """
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        rows = conn.execute(
+            "SELECT script_id, node_id, active FROM interview_script_ledger"
+        ).fetchall()
+    return {"scripts": [{"id": r[0], "node_id": r[1], "active": bool(r[2])} for r in rows]}
+
+
+def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -> int:
+    """Register any script id not already held. Returns how many were added.
+
+    ON CONFLICT(script_id) DO NOTHING, never UPDATE of node_id. That is what makes automatic
+    registration safe: the succession rule forbids exactly two things, redefining an id and
+    dropping one, and appending does neither. A batch that moves a registered id is refused
+    by the validator before this ever runs, so the ledger cannot be talked into agreeing
+    with it.
+
+    Deliberately not INSERT OR IGNORE: that clause swallows every constraint violation on
+    the row, not only the primary-key conflict it is meant for - a script whose node_label
+    is not a string (null, or any other JSON type sqlite3 cannot bind to TEXT) hits
+    node_label's NOT NULL, or fails to bind at all, and was silently dropped from the whole
+    batch with no error, no ledger row, and no signal to the caller. The next batch then
+    found the id unregistered and moved it unrefused: SC-001 published at 1.2, silently
+    re-anchored to 2.7. ON CONFLICT(script_id) DO NOTHING only suppresses the one conflict it
+    names; anything else still raises.
+
+    That raise is now mostly unreachable rather than mostly relied on: validate_scripts
+    (api/services/interview_script_model.py) refuses a non-string, non-null node_label at
+    the door, so a batch that would break the bind is never written at all. What remains
+    here is defence for the value validate_scripts does deliberately let through -
+    node_label: null - via script.get("node_label") or "" - and defence in depth for
+    anything neither of those anticipated. Round 1 of this review believed the caller's
+    except meant "the next merged write re-derives the id rather than losing it"; that
+    stopped being true the moment the caller started passing the pre-merge batch rather than
+    the full merged artefact (see the `batch` capture in sqlite_state.py) - a batch is now
+    seen once, so a registration this function fails to make is lost for good, not deferred.
+    The caller is responsible for making that loss visible rather than silent; this function
+    only has to make sure it cannot mask a move.
+
+    One commit for the whole call, not one per id: a two-script batch where only the second
+    id cannot bind loses both, because nothing before the failing row was ever committed.
+    That is deliberate - a half-registered batch is not a state worth keeping any more than a
+    half-written file is - but it means the caller's failure record (see
+    _record_registration_failure in sqlite_state.py) must name every id in the batch it
+    attempted, not only the one that raised, since none of them made it into the table.
+
+    active has exactly one authority: the UPDATE below, not the INSERT. A fresh row relies on
+    interview_script_ledger's own `active INTEGER NOT NULL DEFAULT 1` (api/database.py) rather
+    than naming a value in the INSERT, because naming one here was provably redundant -
+    review round 2 removed `active` from the INSERT's column list entirely and ran the full
+    suite with zero failures, then separately forced it to always insert active, also zero
+    failures, for three reasons that hold for every input: a fresh row with active unnamed
+    gets the same value from the column default that the INSERT used to name explicitly; a
+    fresh row with active named gets it from the UPDATE below, inside the same transaction,
+    regardless of what the INSERT wrote; and an already-held row's INSERT never lands at all
+    (ON CONFLICT DO NOTHING), so whatever the INSERT would have said about active was never
+    reachable there in the first place. script_ledger_backfill.py's insert-time active is a
+    different case, not a precedent this one needs to match: it has no follow-up UPDATE, so
+    its insert-time value genuinely is the only place active is decided. An id already held
+    keeps its node_id absolutely - that is the anchor, and the whole append-only guarantee -
+    and keeps any node_label it already carries, an empty one being filled rather than
+    restated (see the CASE below for why a label is not an anchor). active is the one field
+    the design carves out an explicit exception for ("growth is free and retirement is free with the meaning kept"), so a
+    script whose entry names active explicitly still has that value applied even when the id
+    already exists. Retiring or un-retiring an id is not redefining it and not dropping it.
+
+    last_version/last_author are always touched, on every id this call names, including a
+    fresh insert. interview_scripts is the only artefact left that reaches this function -
+    the interview_script_registry door this was written to accommodate (a second artefact on
+    its own, unrelated version counter, which would have made last_version go backwards had
+    its version been passed through here) retired with Task 3 of the script-ledger-as-a-table
+    plan, and its call site - the only one that ever passed a version this function was meant
+    to ignore - went with it.
+    """
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        row = conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            raise ValueError(f"Project not found: {slug}")
+        project_id = row[0]
+        added = 0
+        for key, script in scripts.items():
+            if not isinstance(script, dict):
+                continue
+            script_id = script.get("script_id") or key
+            node_id = script.get("node_id")
+            if not script_id or not node_id:
+                continue
+            # None when the entry doesn't name active at all. In practice that is every
+            # interview_scripts body - none of the 86 live scripts across every project
+            # carry the key - so today this function never un-retires a script that was
+            # previously retired. That is a habit of what Maya currently writes, not a rule
+            # this function enforces: validate_scripts does not reject "active" on a script
+            # body, so nothing stops a future write from carrying it and moving active here
+            # too. active is deliberately absent from the INSERT below - the column default
+            # covers a fresh row's unnamed case, and the UPDATE two statements down covers
+            # every case where a value was actually named, on both a fresh row and one
+            # already held. See the docstring for why naming it here as well was redundant
+            # rather than merely belt-and-braces.
+            active_value = script.get("active")
+            cur = conn.execute(
+                "INSERT INTO interview_script_ledger"
+                " (script_id, project_id, node_id, node_label,"
+                "  last_version, last_author)"
+                " VALUES (?,?,?,?,?,?)"
+                " ON CONFLICT(script_id) DO NOTHING",
+                (script_id, project_id, node_id, script.get("node_label") or "",
+                 version, author),
+            )
+            added += cur.rowcount
+            # A regeneration returns the row to pending. Run BEFORE the last_version bump
+            # below and carrying exactly scripts_awaiting_regeneration's own WHERE clause,
+            # so the row and the query agree by construction rather than by two authors
+            # remembering the same rule: the query stopped returning a regenerated script
+            # but the row still read changes_requested with review_return_to='agent'
+            # forever, and the row is what the review UI renders - every regenerated script
+            # showed "Sent back" beside a "changed since" chip, permanently.
+            #
+            # Conditional, not blanket, for two reasons. An approved or reviewed row is
+            # untouched, so a write can never quietly undo a reviewer's decision. And a
+            # send-back recorded AFTER the write it was reacting to has
+            # reviewed_at_version >= last_version, so this call cannot clear it - the next
+            # write, which is the actual regeneration, clears it instead.
+            #
+            # It touches review_status and review_return_to only. node_id is not reachable
+            # from here and must not become so: this runs on every id a batch names,
+            # including ids the ledger already holds, which is precisely the set the
+            # append-only rule protects.
+            conn.execute(
+                "UPDATE interview_script_ledger"
+                "   SET review_status='pending', review_return_to=NULL,"
+                "       updated_at=CURRENT_TIMESTAMP"
+                " WHERE script_id=? AND review_status='changes_requested'"
+                "   AND review_return_to='agent'"
+                "   AND COALESCE(last_version,0) <= COALESCE(reviewed_at_version,0)",
+                (script_id,),
+            )
+            # node_label is filled when the held value is empty, and never overwritten when
+            # it is not. The INSERT above is otherwise the only writer of node_label, so an
+            # id already in the table could never acquire one - which is the state all 86
+            # live rows were in, because script_ledger_backfill.py loads a JSON registry
+            # that carries id, node_id, and active but no labels at all. Reviewers saw bare
+            # "0", "1", "1.4.2" in the review UI and Maya's send-back block rendered
+            # "- SC-005 (1.2 ): note", while every script from SC-087 on would have carried
+            # a label - an inconsistent list rather than a uniformly bare one.
+            #
+            # This leaves append-only on node_id untouched. A label is display text; the
+            # anchor is the contract. Filling only an empty one also means a later batch
+            # cannot use the label to restate a script's identity, which is the property
+            # DeriveRegistryTool protects on the value chain ledger for the same reason.
+            conn.execute(
+                "UPDATE interview_script_ledger"
+                " SET node_label=CASE WHEN COALESCE(node_label,'')=''"
+                "                     THEN ? ELSE node_label END,"
+                "     last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
+                " WHERE script_id=?",
+                (script.get("node_label") or "", version, author, script_id),
+            )
+            if active_value is not None:
+                conn.execute(
+                    "UPDATE interview_script_ledger"
+                    " SET active=?, updated_at=CURRENT_TIMESTAMP WHERE script_id=?",
+                    (1 if active_value else 0, script_id),
+                )
+        conn.commit()
+    return added
+
+
+def _output_version_sync(slug: str, output_id: int) -> int:
+    """The version of one agent_outputs row, or 0 if it has gone."""
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        row = conn.execute(
+            "SELECT version FROM agent_outputs WHERE id=?", (output_id,)
+        ).fetchone()
+    return row[0] if row else 0

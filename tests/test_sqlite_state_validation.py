@@ -63,6 +63,22 @@ def clean(tmp_path, monkeypatch):
         "CREATE TABLE output_citations (output_id INTEGER, doc_id INTEGER,"
         " PRIMARY KEY (output_id, doc_id))"
     )
+    # Mirrors api/database.py's _migrate_interview_script_ledger. Needed as soon as any test
+    # here writes interview_scripts or interview_script_registry: both call
+    # register_scripts_sync as a side effect of a successful write (see
+    # agents/tools/sqlite_state.py), and _current_script_registry reads this table to guard
+    # both doors. Without it the writes still "succeed" - register_scripts_sync's failure is
+    # swallowed - but the ledger never gets populated and the guard is silently toothless.
+    conn.execute(
+        "CREATE TABLE interview_script_ledger ("
+        " script_id TEXT PRIMARY KEY, project_id INTEGER NOT NULL,"
+        " node_id TEXT NOT NULL, node_label TEXT NOT NULL DEFAULT '',"
+        " active INTEGER NOT NULL DEFAULT 1, review_status TEXT NOT NULL DEFAULT 'pending',"
+        " reviewed_at_version INTEGER, review_return_to TEXT,"
+        " last_version INTEGER, last_author TEXT NOT NULL DEFAULT '',"
+        " created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        " updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+    )
     conn.execute("INSERT INTO projects (id, slug) VALUES (1, ?)", (SLUG,))
     conn.commit()
     conn.close()
@@ -501,25 +517,6 @@ def test_a_script_with_no_anchor_is_refused_by_the_tool():
     assert "node_id" in result
 
 
-def test_a_script_registry_that_drops_an_id_is_refused_by_the_tool():
-    """The ledger may grow and may retire, but may not forget - a dropped id can be handed
-    to another script later, and every answer citing the first then resolves to the second."""
-    tool = SQLiteStateTool(slug=SLUG)
-    tool._run(
-        operation="write", key="interview_script_registry",
-        agent_name="interaction_designer",
-        value=json.dumps({"scripts": [{"id": "SC-001", "node_id": "1.2", "active": True}]}),
-    )
-
-    result = tool._run(
-        operation="write", key="interview_script_registry",
-        agent_name="interaction_designer", value=json.dumps({"scripts": []}),
-    )
-
-    assert "Written to" not in result
-    assert "SC-001" in result
-
-
 def _tagged_section(section_id: str, elicitation: str, question: str) -> dict:
     return {
         "section_id": section_id, "title": section_id, "discipline": "governance",
@@ -558,15 +555,22 @@ def test_a_scripts_write_moving_a_registered_id_is_refused(seeded_project):
 
     A guard the write does not consult is worthless, which is the whole finding this task
     exists for - the rule was already written and already enforced on the other door.
+
+    Both registration and the move now go through interview_scripts: the
+    interview_script_registry door this test used to register SC-005 through has retired
+    (Task 3 of the script-ledger-as-a-table work) - it is no longer a declared output, and a
+    write to it is refused before it ever reaches the ledger. The property under test -
+    that a write which moves an already-registered id is refused - still holds on the one
+    remaining door, so the id is registered there instead.
     """
     slug = seeded_project
     tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=0)
 
-    tool._run(operation="write", key="interview_script_registry",
+    tool._run(operation="write", key="interview_scripts",
               agent_name="interaction_designer",
-              value=json.dumps({"scripts": [
-                  {"id": "SC-005", "node_id": "1.2", "level": "L2",
-                   "relationship": "internal", "node_label": "Portfolio", "active": True}]}))
+              value=json.dumps({"SC-005": {
+                  "script_id": "SC-005", "node_id": "1.2", "level": "L2",
+                  "relationship": "internal", "node_label": "Portfolio", "sections": []}}))
 
     result = tool._run(operation="write", key="interview_scripts",
                        agent_name="interaction_designer",

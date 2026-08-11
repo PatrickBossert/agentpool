@@ -759,6 +759,58 @@ async def _migrate_agent_chat_history(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_interview_script_ledger(conn: aiosqlite.Connection) -> None:
+    """Create the interview script ledger if it does not exist.
+
+    One row per script id, and script_id is the PRIMARY KEY rather than an indexed
+    column: "one id means one node for the life of the project" becomes a constraint
+    the database enforces instead of a rule an agent must honour. Rows are retired
+    with active = 0 and never deleted - a deleted row is an id free to be handed to a
+    different script, and every stored answer citing it then resolves to the wrong
+    instrument.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS interview_script_ledger (
+            script_id           TEXT PRIMARY KEY,
+            project_id          INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            node_id             TEXT NOT NULL,
+            node_label          TEXT NOT NULL DEFAULT '',
+            active              INTEGER NOT NULL DEFAULT 1,
+            review_status       TEXT NOT NULL DEFAULT 'pending',
+            reviewed_at_version INTEGER,
+            review_return_to    TEXT,
+            last_version        INTEGER,
+            last_author         TEXT NOT NULL DEFAULT '',
+            created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
+async def _migrate_script_reviews(conn: aiosqlite.Connection) -> None:
+    """One row per review event on one script.
+
+    Separate from the ledger because "reviewed many times by different people, approved
+    once" is a history plus a current state, and collapsing them loses who said what.
+    Nothing here is ever updated or deleted.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS script_reviews (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            script_id   TEXT    NOT NULL,
+            reviewer    TEXT    NOT NULL DEFAULT '',
+            decision    TEXT    NOT NULL,
+            notes       TEXT    NOT NULL DEFAULT '',
+            at_version  INTEGER,
+            return_to   TEXT,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
 async def _migrate_blocked_writes(conn: aiosqlite.Connection) -> None:
     """Writes an agent attempted and was not permitted to make.
 
@@ -1255,7 +1307,7 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # runs again after a database's first post-upgrade open in a process - there is no test
 # that catches a missed bump, because none can: it is a fact about this constant, not
 # about behaviour.
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 4
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1358,6 +1410,8 @@ async def get_connection(slug: str):
             await _migrate_nonworking_ranges(conn)
             await _migrate_stakeholder_node_assignments(conn)
             await _migrate_agent_chat_history(conn)
+            await _migrate_interview_script_ledger(conn)
+            await _migrate_script_reviews(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)
             await _migrate_run_inputs_agent_scope(conn)

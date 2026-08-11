@@ -56,6 +56,7 @@
 
 ```python
 # tests/test_script_ledger_table.py
+import sqlite3
 import pytest
 from api.database import get_connection, fetch_project
 
@@ -81,7 +82,9 @@ async def test_the_ledger_table_exists_with_script_id_as_primary_key(tmp_path, m
                 "INSERT INTO interview_script_ledger (script_id, project_id, node_id)"
                 " VALUES ('SC-001', 1, '1.2')")
             await conn.commit()
-            with pytest.raises(Exception):
+            # sqlite3.IntegrityError specifically, not Exception: a bare Exception would
+            # pass on a typo in the SQL above and prove nothing about the primary key.
+            with pytest.raises(sqlite3.IntegrityError):
                 await conn.execute(
                     "INSERT INTO interview_script_ledger (script_id, project_id, node_id)"
                     " VALUES ('SC-001', 1, '9.9')")
@@ -847,11 +850,37 @@ git commit -m "feat(review): per-script review events with a derived ledger stat
 def test_reviewing_a_script_requires_reviewer_or_approver_authority(client, seeded_script):
     """Authority comes from the stakeholder assignment - is_reviewer / is_approver - not
     from the login role. Reuses _caller_matches_stakeholder_flag so there is exactly one
-    place this rule lives."""
+    place this rule lives.
+
+    Asserted by denying the gate rather than by accepting whatever the endpoint returns.
+    _caller_matches_stakeholder_flag returns True for sysadmin, and today every login is
+    sysadmin against an empty users table, so a live call always succeeds - a test that
+    accepted either 200 or 403 would pass with the gate deleted.
+    """
+    from unittest.mock import AsyncMock, patch
     slug, script_id = seeded_script
-    r = client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+    with patch("api.routers.script_reviews._caller_matches_stakeholder_flag",
+               new=AsyncMock(return_value=False)):
+        r = client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                        json={"decision": "reviewed"})
+    assert r.status_code == 403, r.text
+
+
+def test_approving_asks_for_approver_authority_and_reviewing_asks_for_either(
+        client, seeded_script):
+    """Which flags are demanded is the rule; the status code is only its shadow. Patched
+    where the name is looked up - api.routers.script_reviews - not where it is defined,
+    because the router binds its own reference with `from ... import`."""
+    from unittest.mock import AsyncMock, patch
+    slug, script_id = seeded_script
+    with patch("api.routers.script_reviews._caller_matches_stakeholder_flag",
+               new=AsyncMock(return_value=True)) as gate:
+        client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
                     json={"decision": "reviewed"})
-    assert r.status_code in (200, 403)
+        assert gate.call_args.kwargs["flags"] == ("is_reviewer", "is_approver")
+        client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                    json={"decision": "approved"})
+        assert gate.call_args.kwargs["flags"] == ("is_approver",)
 
 
 def test_approving_twice_is_refused_with_409(client, seeded_script):

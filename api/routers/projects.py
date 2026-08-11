@@ -515,32 +515,73 @@ async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_
     return normalise_scripts(deduped)
 
 
-@router.get("/{slug}/interview-scripts/{node_label}")
-async def get_interview_script(slug: str, node_label: str, payload: dict = Depends(require_any_auth)):
-    """Return the interview script for a single node."""
+@router.get("/{slug}/interview-scripts/{script_id}")
+async def get_interview_script(
+    slug: str, script_id: str, payload: dict = Depends(require_any_auth)
+):
+    """One script from the current artefact, resolved through the ledger.
+
+    Keyed by script_id because that is what the artefact is keyed by, what
+    _merge_with_current merges on, and what stakeholder assignments and stored answers
+    cite. The previous node_label form read a bare interview_scripts.json that
+    insert_agent_output_sync renames away on every write.
+    """
     await check_project_access(slug, payload)
-    from api.services.interview_script_model import normalise_script_fields
-
-    p = _scripts_path(slug, "interview")
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="No interview scripts found")
-    scripts = json.loads(p.read_text(encoding="utf-8"))
-    if node_label not in scripts:
-        raise HTTPException(status_code=404, detail=f"No script for node '{node_label}'")
-    return normalise_script_fields(scripts[node_label])
+    scripts = await list_interview_scripts(slug, payload)
+    if script_id not in scripts:
+        raise HTTPException(status_code=404, detail=f"No script '{script_id}'")
+    return scripts[script_id]
 
 
-@router.patch("/{slug}/interview-scripts/{node_label}")
+@router.patch("/{slug}/interview-scripts/{script_id}")
 async def patch_interview_script(
-    slug: str, node_label: str, body: InterviewScriptPatch,
+    slug: str, script_id: str, body: InterviewScriptPatch,
     payload: dict = Depends(require_org_admin_or_above),
 ):
-    """Update the interview script for a node and sync to the system template."""
+    """Edit one script, through the same door the agent writes by.
+
+    SQLiteStateTool gives the edit a version, the validators, and a ledger row recording
+    last_author as the person. Writing the file directly would skip all three, which is
+    what the previous implementation did.
+
+    node_id is taken from the stored script, never from the body: a human edit changes
+    content, never the anchor, and letting the body carry node_id would reopen the
+    id-moving hole this branch exists to close.
+    """
     await check_project_access(slug, payload)
-    p = _scripts_path(slug, "interview")
-    scripts = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-    scripts[node_label] = {**body.script, "node_label": node_label}
-    p.write_text(json.dumps(scripts, ensure_ascii=False, indent=2), encoding="utf-8")
+    from agents.tools.sqlite_state import SQLiteStateTool
+
+    scripts = await list_interview_scripts(slug, payload)
+    if script_id not in scripts:
+        raise HTTPException(status_code=404, detail=f"No script '{script_id}'")
+    merged = {script_id: {**body.script, "script_id": script_id,
+                          "node_id": scripts[script_id].get("node_id")}}
+
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=0)
+    result = tool._run(operation="write", key="interview_scripts",
+                       agent_name="interaction_designer", value=json.dumps(merged))
+    if not result.startswith("Written to"):
+        raise HTTPException(status_code=422, detail=result)
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        # node_label is COALESCEd, not overwritten blind: a partial body that omits it
+        # must not blank the ledger's copy. When the edit does carry one,
+        # script_review_service._fetch_change_requests reads l.node_label straight off
+        # this row to name the script to Maya on a send-back - leaving it stale here
+        # would keep naming the edit's own retitle by the text it just replaced.
+        # review_return_to=NULL is brief-mandated: a human edit is not the revision an
+        # outstanding changes_requested send-back was waiting for, so the edit must not
+        # leave that send-back pointing at whichever agent run picks the script up next.
+        await conn.execute(
+            "UPDATE interview_script_ledger"
+            " SET last_author=?, review_status='pending', review_return_to=NULL,"
+            "     node_label=COALESCE(?, node_label), updated_at=CURRENT_TIMESTAMP"
+            " WHERE script_id=? AND project_id=?",
+            (payload.get("sub", "human"), merged[script_id].get("node_label") or None,
+             script_id, project["id"]),
+        )
+        await conn.commit()
     updated = await auto_assign_interview_scripts(slug)
     return {"ok": True, "templates_updated": updated}
 

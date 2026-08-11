@@ -13,6 +13,8 @@ from agents.tools._db import (
     record_blocked_write_sync,
     record_run_input_sync,
     record_validation_warnings_sync,
+    register_scripts_sync,
+    _output_version_sync,
 )
 from agents.tools.ownership import OUTPUT_OWNERS, check_write
 
@@ -80,13 +82,16 @@ def _validate_value_chain_registry(parsed: dict, slug: str) -> list[str]:
 
 
 def _current_script_registry(slug: str) -> dict:
-    """The script ledger in force, or an empty one when there is none yet."""
-    path = current_output_path(slug, "interview_script_registry")
-    if path is None:
-        return {}
+    """The script ledger in force, or an empty one when there is none yet.
+
+    Reads the interview_script_ledger table. It used to read the
+    interview_script_registry artefact, which an agent wrote as the last step of a long
+    run - so the guard was checking a record that could be up to a whole run out of date.
+    """
+    from agents.tools._db import current_script_ledger_sync
     try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        return current_script_ledger_sync(slug)
+    except Exception:
         return {}
 
 
@@ -153,17 +158,10 @@ def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     return problems
 
 
-def _validate_interview_script_registry(parsed: dict, slug: str) -> list[str]:
-    from api.services.interview_script_model import validate_script_registry_succession
-
-    return validate_script_registry_succession(_current_script_registry(slug), parsed)
-
-
 _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
     "value_chain_model": _validate_value_chain_model,
     "value_chain_registry": _validate_value_chain_registry,
     "interview_scripts": _validate_interview_scripts,
-    "interview_script_registry": _validate_interview_script_registry,
 }
 
 
@@ -232,8 +230,11 @@ _WARNER_SOURCE: dict[str, str] = {
 #
 # Merging is additive on purpose. A script absent from a batch means "not in this batch",
 # never "delete this" - an agent that omits a key under context pressure would otherwise
-# silently destroy work it had already banked. Retirement is expressed in
-# interview_script_registry's active: false, where it is explicit and reversible.
+# silently destroy work it had already banked. Retirement itself is unaffected by the
+# interview_script_registry door's closure: register_scripts_sync (agents/tools/_db.py)
+# honours an explicit active on a script body both at first registration and on a row it
+# already holds, so an interview_scripts write can still retire or un-retire an id. What is
+# missing is an instruction or UI that tells Maya to send it - a gap, not a hole.
 def _preserve_registered_labels(parsed: dict, slug: str) -> dict:
     """A registered id keeps the label the ledger already holds.
 
@@ -294,6 +295,68 @@ class SQLiteStateToolInput(BaseModel):
     value: str = Field(default="", description="JSON string to write (required for 'write')")
 
 
+def _record_registration_state(
+    slug: str, run_id: int, key: str, agent_name: str, stored: dict,
+    error: BaseException | None,
+) -> None:
+    """Every script the stored artefact holds that interview_script_ledger does not.
+
+    Silent was the shape of the defect this whole line of review exists to close: a write
+    reported "Written to" while the id it named went unregistered with nothing to show for
+    it, and the next batch found the id free. record_validation_warnings_sync is the same
+    path the warners already use (see _WARNERS below), so a registration failure surfaces
+    the same way a coverage gap or a stale tree does, rather than needing its own reporting
+    mechanism nobody thinks to look at.
+
+    Re-derived from the ledger rather than reported from the exception, and recorded with
+    complete=True - the same contract the coverage warner uses, for the same reason.
+    Reporting only the ids of a batch that raised, with complete=False, produced a warning
+    that could never clear: once a later batch registered the id, nothing removed the row,
+    and Maya was still being told to rewrite a write that named an id the ledger now holds -
+    which directly contradicts her instruction not to re-emit a script that already exists.
+    A warning that outlives its problem is worse than no warning, because acting on it is
+    the wrong move.
+
+    complete=True is only honest because this call re-derives the FULL finding set for its
+    source on every interview_scripts write, exactly as a warner does: it compares the whole
+    stored artefact against the whole ledger, so an absent finding really is a fixed one. It
+    would not have been honest against the old shape, where a second batch's failure list
+    would have cleared a first batch's still-unregistered ids.
+
+    Called on every interview_scripts write, not only on a failing one, because a clean
+    write is precisely when clearing matters. `error` is carried only to name the cause in
+    the detail text when this call is the one that saw it.
+    """
+    try:
+        registered = {
+            entry.get("id") for entry in _current_script_registry(slug).get("scripts", [])
+        }
+        cause = f" - {error}" if error is not None else ""
+        missing = []
+        for entry_key, script in stored.items():
+            if not isinstance(script, dict):
+                continue
+            script_id = script.get("script_id") or entry_key
+            if not isinstance(script_id, str) or script_id in registered:
+                continue
+            missing.append({
+                "subject": script_id,
+                "code": "registration_failed",
+                "measure": None,
+                "detail": (
+                    f"{key} write by {agent_name} did not register {script_id!r} in "
+                    f"interview_script_ledger{cause}. The artefact file still holds it; "
+                    "the ledger does not, so a later batch could move this id unrefused "
+                    "until it is registered. Rewrite the write that named this id."
+                ),
+            })
+        record_validation_warnings_sync(
+            slug, run_id, "script_ledger_registration", missing, complete=True
+        )
+    except Exception:
+        pass   # a warning about a failure must never itself cause one
+
+
 class SQLiteStateTool(BaseTool):
     name: str = "SQLiteStateTool"
     description: str = (
@@ -342,6 +405,14 @@ class SQLiteStateTool(BaseTool):
             except json.JSONDecodeError as e:
                 return f"Error: value is not valid JSON — {e}"
 
+            # The pre-merge fragment this call actually wrote, kept aside for
+            # register_scripts_sync: _merge_with_current below reassigns `parsed` to the
+            # full accumulated artefact, and last_version must record which ids THIS batch
+            # touched, not every id the artefact happens to hold (Task 2 review Important 2 -
+            # without this, batch 3 of a run bumps last_version on every script from batches
+            # 1 and 2 as well, and a staleness signal every later batch sets is not a signal).
+            batch = parsed
+
             # Merge before validating, so the validator judges the artefact that will
             # actually be stored rather than the fragment that arrived. A batch that would
             # corrupt the accumulated set is refused whole and the previous version stays
@@ -389,6 +460,33 @@ class SQLiteStateTool(BaseTool):
                 )
             except (OSError, ValueError) as e:
                 return f"Error: write failed — {e}"
+
+            if key == "interview_scripts" and isinstance(parsed, dict):
+                # Registration is a side effect of the write, exactly as
+                # insert_agent_output_sync maintains is_current, and for the same reason:
+                # a correctness record whose maintenance is an agent's last instruction is
+                # a record that goes missing when a run stops early. Run 32 wrote 41
+                # scripts, hit the iteration ceiling before its ledger write, and reported
+                # completed.
+                registration_error: BaseException | None = None
+                try:
+                    version = _output_version_sync(self.slug, new_output_id)
+                    register_scripts_sync(self.slug, batch, version, agent_name)
+                except Exception as e:
+                    # Never fail a durable write over the ledger - but the loss must not be
+                    # silent either. batch, not parsed, is what register_scripts_sync is
+                    # given: it commits once for the whole call, so one id it cannot bind
+                    # discards its batchmates' registrations too, and batch (captured
+                    # pre-merge, above) is exactly and only what this write named.
+                    registration_error = e
+                # parsed, not batch, and unconditionally: the finding set is the whole
+                # stored artefact measured against the whole ledger, which is what makes
+                # complete=True honest and what lets a warning clear once a later batch
+                # registers the id it named.
+                _record_registration_state(
+                    self.slug, self.run_id, key, agent_name, parsed, registration_error
+                )
+
             warner = _WARNERS.get(key)
             if warner is not None:
                 try:

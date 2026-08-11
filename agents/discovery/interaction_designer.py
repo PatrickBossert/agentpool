@@ -2386,11 +2386,12 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
         verbose=True,
         allow_delegation=False,
         # Maya is the only agent that batches: eighty-six scripts do not fit in one response,
-        # so a full run is three reads, a dozen or more batched writes, the cumulative ledger,
-        # and the review gate. CrewAI's default of 25 is spent before the ledger is written -
-        # run 32 stopped on "Maximum iterations" at 77 scripts with the registry still holding
-        # 36, which strands every id written that run outside the succession guard. The ledger
-        # write is the last step and the one that must not be the one that gets cut.
+        # so a full run is two reads, a dozen or more batched writes, and the review gate.
+        # CrewAI's default of 25 was spent before every script was written - run 32 stopped
+        # on "Maximum iterations" at 77 of 86 scripts, which strands every one of the
+        # remaining nodes outside this run's coverage. The ledger itself is no longer hers to
+        # write (the write path maintains interview_script_ledger from what she writes to
+        # interview_scripts), but the batched writes still need the same headroom.
         max_iter=60,
     )
 
@@ -2499,13 +2500,12 @@ def create_interaction_designer_task(
             "2. Use SQLiteStateTool with operation='read', key='interview_scripts', "
             "agent_name='interaction_designer' to see which scripts already exist. An 'Error: no state "
             "found' reply means none do, and you are starting from nothing.\n"
-            "3. Use SQLiteStateTool with operation='read', key='interview_script_registry', "
-            "agent_name='interaction_designer' to see which script id is already registered against which "
-            "node. A script id means one node for the life of the project: never file a registered id "
-            "against a different node, and take the next unused number for a new script.\n"
-            "4. Generate scripts ONLY for activities with no script yet. Do not re-emit an existing "
-            "script: it may have been edited by a consultant, and re-emitting it would overwrite that "
-            "work. Reaching every node across several runs is expected - each run adds what is missing.\n"
+            "4. Generate scripts ONLY for activities with no script yet, AND for any "
+            "script listed under SCRIPTS SENT BACK FOR REVISION. Do not re-emit any other "
+            "existing script: it may have been edited by a consultant, and re-emitting it "
+            "would overwrite that work. A sent-back script is the one exception - it is "
+            "regenerated in full, addressing the note that came with it, and keeps its existing script_id"
+            " - it is the same instrument at the same node, revised, not a new one.\n"
             "5. Use SQLiteStateTool with operation='read', key='value_chain_summary', "
             "agent_name='interaction_designer' to understand the client's operations.\n"
             "6. Use ChromaQueryTool with collection='project' to gather corporate context "
@@ -3032,8 +3032,9 @@ def create_interaction_designer_task(
             "   using this template:\n"
 
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
-            "15. Output the INTERVIEW SCRIPTS you generated this run - per step 4, that is only the "
-            "nodes that had none yet, across L0, L1, L2, L3, C, A, F, and S - as a single JSON object "
+            "15. Output the INTERVIEW SCRIPTS you generated this run - per step 4, that is the "
+            "nodes that had none yet plus any sent back for revision, across L0, L1, L2, L3, C, "
+            "A, F, and S - as a single JSON object "
             "keyed by script_id. The key is the script id, never the node_label: the artefact merges "
             "by that key, so filing a script under its label would add a second copy of it rather than "
             "update the one already there. "
@@ -3174,8 +3175,11 @@ def create_interaction_designer_task(
             "merged into the current artefact by script id, so a later batch adds to the "
             "earlier ones rather than replacing them - you never need to re-send a script "
             "you have already written, and re-sending one rewrites only that script. "
-            "Omitting a script from a batch does NOT remove it; retire a script you no "
-            "longer need by setting active: false in the registry below.\n"
+            "Omitting a script from a batch does NOT remove it - it stays exactly as "
+            "already written. Retiring a script (active: false) is not something you do "
+            "through this write: step 4 already limits you to nodes with no script yet "
+            "plus any script sent back for revision, so an existing script outside that "
+            "set is not yours to re-emit even to retire it.\n"
             "   COVERAGE. One interview script per active node. Every entry in the registry "
             "with active=true owes exactly one script - every L0, L1, L2, and L3 node, and "
             "every role node (C, A, F, S) - and there is no node too small or too obvious to "
@@ -3194,28 +3198,19 @@ def create_interaction_designer_task(
             "programme is steered by.\n"
             "   Step 4 governs which of them you write on this run: a node with an existing "
             "script is done, not due for a rewrite, so generate only the ones that have "
-            "none. Work through the nodes in registry order and stop when every active node "
-            "that lacked a script has one. Reaching every node across several runs is "
+            "none, plus any script listed under SCRIPTS SENT BACK FOR REVISION - that is "
+            "the one exception, and it is regenerated even though the node already has a "
+            "script. Work through the nodes in registry order and stop when every active "
+            "node that lacked a script has one. Reaching every node across several runs is "
             "expected, and the coverage warning fed back into your next run names what is "
             "still missing - it clears when nothing is. Say in each script's research_brief "
             "what this node is and why an interview at this level is worth having, so a "
-            "reader can judge the instrument rather than guess at it.\n"
-            "   Then use SQLiteStateTool with operation='write', "
-            "key='interview_script_registry', agent_name='interaction_designer' to save the "
-            "ledger: {\"scripts\": [{\"id\": \"SC-001\", \"node_id\": \"1.2\", "
-            "\"active\": true}, ...]}. Retire a script you no longer need with active: false "
-            "rather than dropping it - a dropped id can be handed to another script later, and "
-            "every answer citing the first then resolves to the second.\n"
-            "   THE LEDGER IS CUMULATIVE. Unlike the scripts, it does not merge: what you send "
-            "replaces the whole ledger. So even though you generate only the differential, the "
-            "ledger you write must repeat every entry already registered alongside the new "
-            "ones, exactly as it stands - you read it in step 3, so send that list back with "
-            "this run's scripts appended. A ledger that drops a registered id is REFUSED, "
-            "because stored interview answers resolve their citations through it and an id it "
-            "has forgotten can be handed to a different script later.\n"
+            "reader can judge the instrument rather than guess at it. The ledger of script "
+            "ids against nodes is maintained for you by the write path - there is nothing "
+            "further for you to read or save for it.\n"
         ),
         expected_output=(
-            "Two artefacts saved via SQLiteStateTool: (1) interview_scripts.json — built "
+            "One artefact saved via SQLiteStateTool: interview_scripts.json - built "
             "across several batched writes that merge by script id, holding one integrated "
             "script for every active node in the registry - one per L0, L1, L2, and L3 node, "
             "and one per C (customer), A (audit), F (frontline), and S (corporate services) "
@@ -3229,12 +3224,9 @@ def create_interaction_designer_task(
             "sections with framing_block and synthesis_check; F scripts have exactly 9 fixed "
             "sections with framing_block and synthesis_check; S scripts have exactly 8 fixed "
             "sections with framing_block and synthesis_check; a re-run adds scripts for nodes "
-            "that had none and does not rewrite a script that already exists; "
-            "(2) interview_script_registry.json - the ledger of script ids: "
-            "{\"scripts\": [{\"id\": \"SC-001\", \"node_id\": \"1.2\", \"active\": true}, ...]}, "
-            "one entry per script that exists - this run's and every earlier run's, since the "
-            "ledger does not merge - so a registered script id is never filed against a "
-            "different node on a later run. No separate questionnaire artefact, and no other "
+            "that had none and does not rewrite a script that already exists, except for a "
+            "script sent back for revision, which is regenerated in full under its existing "
+            "script_id. No separate questionnaire artefact, and no other "
             "artefact of any kind - the in-interview synthesis_check is the only summary Maya "
             "produces, and it lives inside the script, not as a separate key."
         ),

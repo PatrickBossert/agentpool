@@ -72,6 +72,18 @@ def test_every_declared_write_is_owned_by_the_agent_told_to_make_it():
     from api.services.run_service import _CREW_AGENT_NAMES
 
     dispatched = {a for agents in _CREW_AGENT_NAMES.values() for a in agents}
+
+    # interview_script_registry finished retiring in this task: the ownership entry was
+    # already gone (the ledger it fed is now a database table, maintained as a side effect
+    # of the interview_scripts write), and Maya's prompt no longer instructs her to write
+    # it either - so the scan below no longer finds the key at all, and the exclusion that
+    # covered the gap between those two events is removed rather than left to skip nothing
+    # forever.
+    assert "interview_script_registry" not in declared, (
+        "interview_script_registry should no longer be a declared write - "
+        "the instruction to write it was supposed to be removed"
+    )
+
     for key, agents in declared.items():
         for agent in agents & dispatched:
             assert OUTPUT_OWNERS.get(key) == agent, (

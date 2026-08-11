@@ -374,6 +374,13 @@ type ReviewIntent = 'change_request' | 'correction' | 'skill'
 export const CREW_WARNING_SOURCE: Record<string, string> = {
   discovery_mapping: 'value_chain_tree',
   discovery_interviews: 'theme_anchor',
+  // Matches _WARNING_SOURCE_CREW in api/services/run_service.py. Maps a crew to a single
+  // source - assessment_design's own interview_coverage warnings are not shown here either,
+  // a pre-existing gap this entry does not touch. script_ledger_registration is picked
+  // because a registration failure is the more actionable of the two: it names a specific
+  // script id that must be rewritten, not a coverage gap that resolves itself as Maya
+  // writes more scripts.
+  assessment_design: 'script_ledger_registration',
 }
 
 const INTENT_OPTIONS: [ReviewIntent, string, string][] = [

@@ -164,6 +164,32 @@ async def notify_crew_awaiting_commit(slug: str, crew_name: str) -> None:
     )
 
 
+async def notify_script_sent_back(
+    slug: str, script_id: str, return_to: str, notes: str
+) -> None:
+    """Tell the right audience that one script has been sent back. Never raises.
+
+    A send-back to the agent notifies reviewers, because Maya will regenerate it and they
+    will need to read it again. A send-back to reviewers notifies reviewers too - they are
+    the audience either way, and the difference lies in what happens to the script, not in
+    who hears about it.
+
+    The reviewer fallback to approvers is inherited from notify_crew_awaiting_commit
+    deliberately: a project whose governing stakeholders are all approvers and none
+    reviewers would otherwise hear nothing. The reverse fallback is not applied anywhere,
+    because with no approvers there is genuinely nobody who can approve.
+    """
+    await _notify(
+        slug, script_id,
+        flags=("is_reviewer",),
+        fallback_flags=("is_approver",),
+        subject=f"{slug}: interview script {script_id} was sent back",
+        intro=(f"{script_id} has been sent back to the {return_to}. "
+               f"Note: {notes}" if notes else f"{script_id} has been sent back to the {return_to}."),
+        audience_label="reviewers",
+    )
+
+
 async def notify_crew_failed(
     slug: str, crew_name: str, *, triggered_by: str | None
 ) -> None:

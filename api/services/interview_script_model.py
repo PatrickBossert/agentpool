@@ -112,10 +112,53 @@ def validate_scripts(
         else:
             seen_script_ids.add(script_id)
 
-        if not script.get("node_id"):
+        node_id = script.get("node_id")
+        if node_id is not None and not isinstance(node_id, str):
+            # Checked before falsiness, so an integer 0 - a real anchor written with the
+            # wrong JSON type - is reported as the type error it is rather than as a
+            # missing anchor. Two proven failures, both closed here rather than downstream,
+            # because interview_script_ledger.node_id is the anchor itself and the table is
+            # append-only: whatever lands there first can never be corrected.
+            #
+            # A value sqlite3 cannot bind (a dict, a list) raises inside
+            # register_scripts_sync, which commits once per call - so one malformed script
+            # de-registers its whole batch, including the valid ids beside it. The next
+            # batch then finds those ids free and moves them unrefused, which is the
+            # run-32 hole: SC-001 published at 1.2 and silently re-anchored, the merge
+            # having already destroyed the 1.2 script.
+            #
+            # A value sqlite3 CAN bind but retypes is worse, because it deadlocks rather
+            # than corrupts: node_id is TEXT, so an integer 12 is stored as '12', and
+            # validate_scripts_against_script_registry then compares 12 != '12' on every
+            # merged batch forever. Every later interview_scripts write is refused - not
+            # only that script's - with a message printing the same value twice and no
+            # hint the difference is a type, which an agent cannot self-correct from.
+            # Under the JSON registry both sides were ints and compared equal; the table's
+            # TEXT affinity is what made this reachable.
+            problems.append(
+                f"script {label} has node_id {node_id!r}, which must be a string - the "
+                "ledger stores the anchor as text, and an id registered against a "
+                "non-string can never be corrected afterwards"
+            )
+        elif not node_id:
             problems.append(
                 f"script {label} has no node_id - anchor it to a value chain node, or to "
                 f"{ENTITY_ID!r} when it concerns the organisation as a whole"
+            )
+        node_label = script.get("node_label")
+        if node_label is not None and not isinstance(node_label, str):
+            # Refused here, not left for register_scripts_sync to discover: node_label is
+            # bound directly into interview_script_ledger.node_label (TEXT NOT NULL), and a
+            # value sqlite3 cannot bind - or can bind but violates NOT NULL - raised inside
+            # a call the write path only wraps in a bare except. A batch that hits that was
+            # written to the artefact and then silently left unregistered, so the next batch
+            # found the id free and moved it unrefused: SC-001 published at 1.2, silently
+            # re-anchored to 2.7 with no error either time. Refusing the whole batch here
+            # means registration can never fail for this reason, because it never runs
+            # against a value that could make it fail.
+            problems.append(
+                f"script {label} has node_label {node_label!r}, which must be a string or "
+                "null"
             )
         level = script.get("level")
         perspective = script.get("perspective")
@@ -193,17 +236,23 @@ def validate_scripts_against_registry(scripts: dict, registry: dict) -> list[str
         f"script {script.get('script_id') or key} is anchored to node "
         f"{script.get('node_id')!r}, which is not in the value chain registry"
         for key, script in scripts.items()
-        if script.get("node_id") not in known
+        # A non-string node_id is skipped, not reported: validate_scripts already refuses it
+        # with a message that says what is actually wrong, and this membership test is a set
+        # lookup - an unhashable node_id (a dict, a list) raises TypeError here rather than
+        # returning a problem, which would turn a refusal the writer could act on into an
+        # unhandled exception out of the tool.
+        if isinstance(script.get("node_id"), str) and script.get("node_id") not in known
     ]
 
 
 def validate_scripts_against_script_registry(scripts: dict, script_registry: dict) -> list[str]:
     """Every script whose id is registered against a different node.
 
-    The script registry is the ledger for script ids, and validate_script_registry_succession
-    already holds writes to it to that contract. This is the same rule on the other door - the
-    one that actually carries the scripts - because a rule enforced at one entrance is not
-    enforced.
+    This is the rule the interview_script_ledger table enforces structurally on
+    registration - append-only, never moving an id it already holds - checked again here on
+    the door that actually carries the scripts, because a rule enforced in only one place is
+    not enforced: a batch that moved an id would otherwise land in the artefact and only be
+    caught (if at all) after the merge had already replaced the wrong script.
 
     It matters because _merge_with_current keys on script_id: an id that moves does not add a
     script, it silently replaces the one already filed under that id, and every stored answer
@@ -226,35 +275,6 @@ def validate_scripts_against_script_registry(scripts: dict, script_registry: dic
                 f"script_id {script_id} is registered against node {held} and this batch files "
                 f"it against {script.get('node_id')} - take an unused id for the new script, "
                 f"because the merge keys on script_id and stored answers cite it"
-            )
-    return problems
-
-
-def validate_script_registry_succession(current: dict, proposed: dict) -> list[str]:
-    """Every way a proposed script ledger would break what the current one records.
-
-    Same rules as the value chain registry. Growth is free and retirement is free with the
-    meaning kept (`active: false`); redefining or dropping an id is refused. Dropping is the
-    worst: the ledger forgets, so nothing stops the id being handed to something else later,
-    and every stored citation through it silently resolves to the wrong script.
-    """
-    problems: list[str] = []
-    proposed_entries = {e.get("id"): e for e in proposed.get("scripts", [])}
-
-    for entry in current.get("scripts", []):
-        entry_id = entry.get("id")
-        successor = proposed_entries.get(entry_id)
-        if successor is None:
-            problems.append(
-                f"script_id {entry_id} is in the registry and missing from this one - retire "
-                "it with active: false rather than dropping it, so the id is never handed to "
-                "another script"
-            )
-        elif successor.get("node_id") != entry.get("node_id"):
-            problems.append(
-                f"script_id {entry_id} is registered against node {entry.get('node_id')} and "
-                f"this moves it to {successor.get('node_id')} - take an unused id for the new "
-                "script, because stored answers cite this one"
             )
     return problems
 
@@ -381,7 +401,13 @@ def validate_anchor_levels(scripts: dict, registry: dict) -> list[str]:
         if not isinstance(script, dict):
             continue
         node_id = script.get("node_id")
-        if node_id not in levels:
+        # Skipped rather than reported, for the same reason as the guard in
+        # validate_scripts_against_registry: validate_scripts already refuses a non-string
+        # node_id with a message that says what is wrong, and this membership test is a dict
+        # lookup - an unhashable node_id (a dict, a list) raises TypeError here instead,
+        # discarding that refusal and handing the writer an unhandled exception out of the
+        # tool. The guard was added to the twin lookup and missed here, one line later.
+        if not isinstance(node_id, str) or node_id not in levels:
             continue
         name = script.get("script_id") or key
         level = script.get("level")

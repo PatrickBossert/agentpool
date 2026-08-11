@@ -18,7 +18,6 @@ OUTPUT_OWNERS: dict[str, str] = {
     "value_chain_tree":            "value_chain_mapper",
     "value_levers":                "value_lever_analyst",
     "interview_scripts":           "interaction_designer",
-    "interview_script_registry":   "interaction_designer",
     "stakeholder_engagement_plan": "stakeholder_manager",
     "interview_plan":              "interview_coordinator",
     "interview_transcripts":       "stakeholder_interviewer",

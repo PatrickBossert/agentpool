@@ -470,23 +470,29 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
   const [templateAssignments, setTemplateAssignments] = useState<NodeTemplateAssignment[]>([])
   const [interviewTemplates, setInterviewTemplates] = useState<TemplateListItem[]>([])
   const [questionnaireTemplates, setQuestionnaireTemplates] = useState<TemplateListItem[]>([])
-  const [editingNode, setEditingNode] = useState<NodeTemplateAssignment | null>(null)
+  const [editingScript, setEditingScript] = useState<
+    { scriptId: string; nodeLabel: string; activityId: string | null } | null
+  >(null)
 
   const { data: settings } = useQuery({
     queryKey: ['settings', slug],
     queryFn: () => projectsApi.getSettings(slug),
   })
 
-  useEffect(() => {
+  // Extracted rather than inlined in the effect below: editing a script retitles
+  // node_template_assignments.node_label server-side (auto_assign_interview_scripts), so a
+  // saved edit must be able to re-run exactly this fetch on demand, not only on mount -
+  // otherwise this table keeps showing the pre-edit label until the page is reloaded.
+  function refreshNodeAssignments() {
     if (!slug) return
     setLoading(true)
     listNodeTemplates(slug)
       .then(assignments => setNodeAssignments(sortByActivityId(assignments)))
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [slug])
+  }
 
-  useEffect(() => {
+  function refreshTemplateAssignments() {
     if (!slug) return
     Promise.all([
       listNodeTemplates(slug),
@@ -497,7 +503,10 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
       setInterviewTemplates(interviewTpls)
       setQuestionnaireTemplates(questionnaireTpls)
     }).catch(console.error)
-  }, [slug])
+  }
+
+  useEffect(refreshNodeAssignments, [slug])
+  useEffect(refreshTemplateAssignments, [slug])
 
   async function handleTemplateChange(
     nodeLabel: string,
@@ -744,10 +753,14 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
                         </button>
                       </td>
                       <td className="py-2">
-                        {!isL1 && (
+                        {!isL1 && assignment.script_id && (
                           <button
                             type="button"
-                            onClick={() => setEditingNode(assignment)}
+                            onClick={() => setEditingScript({
+                              scriptId: assignment.script_id as string,
+                              nodeLabel: assignment.node_label,
+                              activityId: assignment.activity_id,
+                            })}
                             className="px-2.5 py-1 border border-gray-200 hover:border-brand hover:text-brand text-gray-500 text-[11px] rounded transition-colors"
                           >
                             Edit Script
@@ -763,12 +776,21 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
         )}
       </div>
 
-      {editingNode && (
+      {editingScript && (
         <InterviewTemplateEditor
           slug={slug}
-          nodeLabel={editingNode.node_label}
-          activityId={editingNode.activity_id}
-          onClose={() => setEditingNode(null)}
+          scriptId={editingScript.scriptId}
+          nodeLabel={editingScript.nodeLabel}
+          activityId={editingScript.activityId}
+          onClose={() => setEditingScript(null)}
+          onSaved={() => {
+            // A saved edit retitles node_template_assignments.node_label server-side
+            // (auto_assign_interview_scripts) - both tables built from it here would keep
+            // showing the pre-edit label until a full reload without this. The editor
+            // itself already invalidates the ['interview-scripts', slug] query it reads.
+            refreshNodeAssignments()
+            refreshTemplateAssignments()
+          }}
         />
       )}
 

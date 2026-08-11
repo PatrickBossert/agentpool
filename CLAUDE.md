@@ -222,11 +222,32 @@ Maya owes one interview script per active value chain activity. Coverage is chec
 `_fetch_validation_warnings`. Reaching every node across several runs is expected: each run adds
 only the missing nodes, and `_merge_with_current` accumulates.
 
-A script id means one node for the life of the project. Both doors enforce it now -
-`validate_script_registry_succession` on the registry write, and
-`validate_scripts_against_script_registry` on the scripts write. The second was missing, and
-because `_merge_with_current` keys on `script_id`, a moved id replaced a script rather than
-adding one.
+A script id means one node for the life of the project. `interview_scripts` is the only write
+that reaches this rule now - the separate `interview_script_registry` artefact and its write
+door retired (script-ledger-as-a-table Task 3), and `interview_script_ledger` is a table, not
+a file. Two layers enforce it: `validate_scripts_against_script_registry`
+(`api/services/interview_script_model.py`) refuses a batch that files a registered id against
+a different node before anything is written, because `_merge_with_current` keys on
+`script_id` and a moved id would otherwise replace a script rather than add one; and
+`register_scripts_sync` (`agents/tools/_db.py`) registers with `ON CONFLICT(script_id) DO
+NOTHING`, so even a write that reached the table could never move a `node_id` it already
+held. There is no `DELETE FROM interview_script_ledger` anywhere, so dropping an id
+(the JSON-artefact-era registry's other worry) is structurally impossible rather than merely
+refused.
+
+The script ledger is a table, `interview_script_ledger`, with `script_id` as its primary
+key. It is maintained by the write path: every `interview_scripts` write registers ids it
+has not seen, and never moves one it has. Maya does not write it - the JSON
+`interview_script_registry` artefact is retired, and the output type has no owner, so a
+write to it is refused. Run 32 is why: it wrote 41 scripts, hit CrewAI's default
+`max_iter` before its ledger write, and reported `completed` with 41 ids outside the
+succession guarantee.
+
+Review is per script, not per artefact version. `script_reviews` holds one row per review
+event and the ledger row carries the derived state, because a script is reviewed by
+several people and approved once. A send-back carries `review_return_to`: only `agent`
+enters Maya's differential, because a return to `reviewer` that regenerated the script
+would rewrite the instrument the reviewer was about to re-read.
 
 ### Routing a call outside a crew: two protocols, one setting
 
@@ -382,17 +403,29 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - Secure mode runs two local models concurrently. `OLLAMA_MAX_LOADED_MODELS` defaults to 1, which
   makes them evict each other on every alternation regardless of free memory - see
   `docs/runbook-local-models.md` before diagnosing local models as slow.
-- `GET` and `PATCH /projects/{slug}/interview-scripts/{node_label}` read and write a bare
-  `outputs/interview_scripts.json`. `insert_agent_output_sync` renames that file to
-  `interview_scripts_vN.json` on every agent write, so on any project Maya has run the GET
-  404s and the PATCH writes a file `list_interview_scripts` never reads, creating no
-  `agent_outputs` row. A human edit through that door is lost rather than merged. Resolve
-  through `current_output_path` like every other consumer - see "Resolving an output" above.
 - `build_and_run_agent` - the standalone "run this one agent" dispatch - fetches no validation
   warnings, skill notes, or change requests, so an agent dispatched that way is missing all
   three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
   `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
   re-run goes through the crew path. It is reachable from the API and from n8n.
+- Retiring an interview script - `interview_script_ledger.active = 0` - is unreachable in
+  practice. `SET active` appears exactly once in the codebase
+  (`register_scripts_sync`, `agents/tools/_db.py`), its only route is an
+  `interview_scripts` write carrying `active` on a script body, and Maya's own prompt
+  (`agents/discovery/interaction_designer.py`) now tells her retirement is not done through
+  that write - step 4 limits her to nodes with no script yet plus anything sent back, so an
+  existing script is not hers to re-emit even to retire it. No UI offers it either. The
+  mechanism works and is tested; nothing can currently ask for it. Nothing depends on it
+  today - `scripts_awaiting_regeneration` filters on `active=1`, which is simply always
+  true - and the design's one dependency is deferred with a soft revert, so this is a gap
+  rather than a hole. The fix, when it is wanted, is a door (a UI action or an explicit
+  instruction), not a change to the ledger.
+- `register_scripts_sync` carries a near-copy of `scripts_awaiting_regeneration`'s WHERE
+  clause to reset a regenerated script's `review_status`, and the two have **already
+  diverged**: the query filters `active=1` and `project_id`, the copy does neither. A retired
+  row sent back to the agent is therefore invisible to the query but still reset by the copy -
+  a send-back cleared without ever having been actionable. Unreachable only because
+  retirement is (see above). Extract the condition rather than copying it a third time.
 
 ---
 
