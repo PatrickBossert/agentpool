@@ -158,17 +158,10 @@ def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     return problems
 
 
-def _validate_interview_script_registry(parsed: dict, slug: str) -> list[str]:
-    from api.services.interview_script_model import validate_script_registry_succession
-
-    return validate_script_registry_succession(_current_script_registry(slug), parsed)
-
-
 _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
     "value_chain_model": _validate_value_chain_model,
     "value_chain_registry": _validate_value_chain_registry,
     "interview_scripts": _validate_interview_scripts,
-    "interview_script_registry": _validate_interview_script_registry,
 }
 
 
@@ -237,8 +230,9 @@ _WARNER_SOURCE: dict[str, str] = {
 #
 # Merging is additive on purpose. A script absent from a batch means "not in this batch",
 # never "delete this" - an agent that omits a key under context pressure would otherwise
-# silently destroy work it had already banked. Retirement is expressed in
-# interview_script_registry's active: false, where it is explicit and reversible.
+# silently destroy work it had already banked. The interview_script_registry door, which
+# used to carry explicit, reversible retirement via active: false, has retired itself -
+# there is no write path onto interview_script_ledger.active any more.
 def _preserve_registered_labels(parsed: dict, slug: str) -> dict:
     """A registered id keeps the label the ledger already holds.
 
@@ -452,37 +446,6 @@ class SQLiteStateTool(BaseTool):
                     # and only what this write named.
                     _record_registration_failure(
                         self.slug, self.run_id, key, agent_name, list(batch.keys()), e
-                    )
-            elif key == "interview_script_registry" and isinstance(parsed, dict):
-                # The other door onto the same ledger - Maya's instructions still have her
-                # write this as a cumulative summary after a batch of scripts, and until
-                # that instruction is retired this write still happens and still needs to
-                # leave the table agreeing with it. Without this hook the table only ever
-                # learns ids from agents.tools.sqlite_state's interview_scripts branch above,
-                # so a plain interview_script_registry write - including one that drops a
-                # registered id - would pass validation against a table it never populated,
-                # silently reopening the exact hole append-only registration exists to close.
-                # Same append-only call, adapted for this key's {"scripts": [{"id",
-                # "node_id", "node_label", "active"}, ...]} shape rather than interview_scripts'
-                # dict of full script bodies. touch_version=False: this door's write has its
-                # own, unrelated agent_outputs version - passing it through would make
-                # last_version go backwards on every id this write names (Important 3).
-                by_id = {
-                    entry.get("id"): {
-                        "node_id": entry.get("node_id"),
-                        "node_label": entry.get("node_label") or "",
-                        "active": entry.get("active", True),
-                    }
-                    for entry in parsed.get("scripts", [])
-                    if isinstance(entry, dict) and entry.get("id") and entry.get("node_id")
-                }
-                try:
-                    register_scripts_sync(
-                        self.slug, by_id, None, agent_name, touch_version=False
-                    )
-                except Exception as e:
-                    _record_registration_failure(
-                        self.slug, self.run_id, key, agent_name, list(by_id.keys()), e
                     )
 
             warner = _WARNERS.get(key)

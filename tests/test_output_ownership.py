@@ -72,7 +72,19 @@ def test_every_declared_write_is_owned_by_the_agent_told_to_make_it():
     from api.services.run_service import _CREW_AGENT_NAMES
 
     dispatched = {a for agents in _CREW_AGENT_NAMES.values() for a in agents}
+
+    # interview_script_registry is mid-retirement, deliberately: the ownership entry that
+    # made it writable is gone (the ledger it fed is now a table, maintained as a side effect
+    # of the interview_scripts write instead), but Maya's prompt still instructs her to write
+    # it - removing that instruction is a later task, ordered after this one on purpose so
+    # the failure mode in between is a loud, harmless refusal rather than a silent one. Left
+    # out of this scan rather than weakening the assertion for every key, so a real ownership
+    # mismatch on any other key still fails here.
+    retiring_unowned = {"interview_script_registry"}
+
     for key, agents in declared.items():
+        if key in retiring_unowned:
+            continue
         for agent in agents & dispatched:
             assert OUTPUT_OWNERS.get(key) == agent, (
                 f"{agent} is told to write {key}, owned by {OUTPUT_OWNERS.get(key)}"
