@@ -63,6 +63,22 @@ def clean(tmp_path, monkeypatch):
         "CREATE TABLE output_citations (output_id INTEGER, doc_id INTEGER,"
         " PRIMARY KEY (output_id, doc_id))"
     )
+    # Mirrors api/database.py's _migrate_interview_script_ledger. Needed as soon as any test
+    # here writes interview_scripts or interview_script_registry: both call
+    # register_scripts_sync as a side effect of a successful write (see
+    # agents/tools/sqlite_state.py), and _current_script_registry reads this table to guard
+    # both doors. Without it the writes still "succeed" - register_scripts_sync's failure is
+    # swallowed - but the ledger never gets populated and the guard is silently toothless.
+    conn.execute(
+        "CREATE TABLE interview_script_ledger ("
+        " script_id TEXT PRIMARY KEY, project_id INTEGER NOT NULL,"
+        " node_id TEXT NOT NULL, node_label TEXT NOT NULL DEFAULT '',"
+        " active INTEGER NOT NULL DEFAULT 1, review_status TEXT NOT NULL DEFAULT 'pending',"
+        " reviewed_at_version INTEGER, review_return_to TEXT,"
+        " last_version INTEGER, last_author TEXT NOT NULL DEFAULT '',"
+        " created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        " updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+    )
     conn.execute("INSERT INTO projects (id, slug) VALUES (1, ?)", (SLUG,))
     conn.commit()
     conn.close()

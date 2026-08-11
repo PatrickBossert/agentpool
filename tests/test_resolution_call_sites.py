@@ -66,11 +66,26 @@ async def test_the_levers_reader_uses_the_ledger(shadowed):
 
 @pytest.mark.asyncio
 async def test_the_script_registry_reader_uses_the_ledger(shadowed):
-    slug, _, publish = shadowed
-    await publish("interview_script_registry", {"scripts": [{"id": "SC-001"}]},
-                  {"scripts": [{"id": "SC-999"}]})
+    """Adapted from the brief-predating original, which published a shadowed
+    interview_script_registry artefact through insert_agent_output_sync and expected
+    _current_script_registry to resolve through the file ledger.
+
+    Task 2 of the script-ledger-as-a-table plan
+    (.superpowers/sdd/2026-08-11-script-ledger-as-a-table/task-2-brief.md) retired that: the
+    guard now reads agents.tools._db.current_script_ledger_sync, which is backed by the
+    interview_script_ledger table, not by any file - so there is no glob for a shadow file
+    to fool any more, and the file-publishing fixture below has nothing to seed with. What
+    still matters, and is what this test now proves, is that the reader is live against the
+    table (register_scripts_sync is the only writer left) rather than a cached snapshot.
+    """
+    slug, _, _ = shadowed
+    from agents.tools._db import register_scripts_sync
     from agents.tools.sqlite_state import _current_script_registry
-    assert _current_script_registry(slug)["scripts"][0]["id"] == "SC-001"
+
+    register_scripts_sync(
+        slug, {"SC-001": {"node_id": "1.2", "node_label": "Current"}}, 1, "tester"
+    )
+    assert [e["id"] for e in _current_script_registry(slug)["scripts"]] == ["SC-001"]
 
 
 @pytest.mark.asyncio

@@ -440,3 +440,70 @@ def record_validation_warnings_sync(
                     params.extend([subject, code])
             conn.execute(sql, params)
         conn.commit()
+
+
+def current_script_ledger_sync(slug: str) -> dict:
+    """The script ledger in force, in the shape the scripts-door guard already consumes.
+
+    Returning {"scripts": [...]} rather than a friendlier shape is deliberate:
+    validate_scripts_against_script_registry stays a pure function over a mapping and does
+    not change at all, so moving the ledger from a file to a table has no blast radius
+    beyond the loader.
+    """
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        rows = conn.execute(
+            "SELECT script_id, node_id, active FROM interview_script_ledger"
+        ).fetchall()
+    return {"scripts": [{"id": r[0], "node_id": r[1], "active": bool(r[2])} for r in rows]}
+
+
+def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -> int:
+    """Register any script id not already held. Returns how many were added.
+
+    INSERT OR IGNORE, never UPDATE of node_id. That is what makes automatic registration
+    safe: the succession rule forbids exactly two things, redefining an id and dropping
+    one, and appending does neither. A batch that moves a registered id is refused by the
+    validator before this ever runs, so the ledger cannot be talked into agreeing with it.
+
+    last_version and last_author are refreshed for every id in the batch, including ids
+    already registered, because they record which version last changed this script and
+    who wrote it - which is a different question from where the id is anchored.
+    """
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        row = conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            raise ValueError(f"Project not found: {slug}")
+        project_id = row[0]
+        added = 0
+        for key, script in scripts.items():
+            if not isinstance(script, dict):
+                continue
+            script_id = script.get("script_id") or key
+            node_id = script.get("node_id")
+            if not script_id or not node_id:
+                continue
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO interview_script_ledger"
+                " (script_id, project_id, node_id, node_label, last_version, last_author)"
+                " VALUES (?,?,?,?,?,?)",
+                (script_id, project_id, node_id, script.get("node_label", ""),
+                 version, author),
+            )
+            added += cur.rowcount
+            conn.execute(
+                "UPDATE interview_script_ledger"
+                " SET last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
+                " WHERE script_id=?",
+                (version, author, script_id),
+            )
+        conn.commit()
+    return added
+
+
+def _output_version_sync(slug: str, output_id: int) -> int:
+    """The version of one agent_outputs row, or 0 if it has gone."""
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        row = conn.execute(
+            "SELECT version FROM agent_outputs WHERE id=?", (output_id,)
+        ).fetchone()
+    return row[0] if row else 0

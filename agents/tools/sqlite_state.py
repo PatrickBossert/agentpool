@@ -13,6 +13,8 @@ from agents.tools._db import (
     record_blocked_write_sync,
     record_run_input_sync,
     record_validation_warnings_sync,
+    register_scripts_sync,
+    _output_version_sync,
 )
 from agents.tools.ownership import OUTPUT_OWNERS, check_write
 
@@ -80,13 +82,16 @@ def _validate_value_chain_registry(parsed: dict, slug: str) -> list[str]:
 
 
 def _current_script_registry(slug: str) -> dict:
-    """The script ledger in force, or an empty one when there is none yet."""
-    path = current_output_path(slug, "interview_script_registry")
-    if path is None:
-        return {}
+    """The script ledger in force, or an empty one when there is none yet.
+
+    Reads the interview_script_ledger table. It used to read the
+    interview_script_registry artefact, which an agent wrote as the last step of a long
+    run - so the guard was checking a record that could be up to a whole run out of date.
+    """
+    from agents.tools._db import current_script_ledger_sync
     try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        return current_script_ledger_sync(slug)
+    except Exception:
         return {}
 
 
@@ -389,6 +394,47 @@ class SQLiteStateTool(BaseTool):
                 )
             except (OSError, ValueError) as e:
                 return f"Error: write failed — {e}"
+
+            if key == "interview_scripts" and isinstance(parsed, dict):
+                # Registration is a side effect of the write, exactly as
+                # insert_agent_output_sync maintains is_current, and for the same reason:
+                # a correctness record whose maintenance is an agent's last instruction is
+                # a record that goes missing when a run stops early. Run 32 wrote 41
+                # scripts, hit the iteration ceiling before its ledger write, and reported
+                # completed.
+                try:
+                    version = _output_version_sync(self.slug, new_output_id)
+                    register_scripts_sync(self.slug, parsed, version, agent_name)
+                except Exception:
+                    # Never fail a durable write over the ledger. The next write re-derives
+                    # it, and the validator refuses anything that would corrupt it meanwhile.
+                    pass
+            elif key == "interview_script_registry" and isinstance(parsed, dict):
+                # The other door onto the same ledger - Maya's instructions still have her
+                # write this as a cumulative summary after a batch of scripts, and until
+                # that instruction is retired this write still happens and still needs to
+                # leave the table agreeing with it. Without this hook the table only ever
+                # learns ids from agents.tools.sqlite_state's interview_scripts branch above,
+                # so a plain interview_script_registry write - including one that drops a
+                # registered id - would pass validation against a table it never populated,
+                # silently reopening the exact hole append-only registration exists to close.
+                # Same append-only call, adapted for this key's {"scripts": [{"id",
+                # "node_id", "node_label"}, ...]} shape rather than interview_scripts' dict
+                # of full script bodies.
+                try:
+                    version = _output_version_sync(self.slug, new_output_id)
+                    by_id = {
+                        entry.get("id"): {
+                            "node_id": entry.get("node_id"),
+                            "node_label": entry.get("node_label", ""),
+                        }
+                        for entry in parsed.get("scripts", [])
+                        if isinstance(entry, dict) and entry.get("id") and entry.get("node_id")
+                    }
+                    register_scripts_sync(self.slug, by_id, version, agent_name)
+                except Exception:
+                    pass
+
             warner = _WARNERS.get(key)
             if warner is not None:
                 try:
