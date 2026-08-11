@@ -82,6 +82,15 @@ def test_every_declared_write_is_owned_by_the_agent_told_to_make_it():
     # mismatch on any other key still fails here.
     retiring_unowned = {"interview_script_registry"}
 
+    # Code review round 1, Important 4: an exclusion that can never fail is an exclusion
+    # that outlives its reason. Once the later task removes Maya's instruction, the scan
+    # simply stops finding this key at all - the line above would go on skipping nothing,
+    # silently, forever, and if any agent were ever told to write this key again the scan
+    # would silently pass it over too, which is the exact defect this test exists to catch.
+    # This fails loudly the moment the exclusion becomes obsolete, forcing its removal.
+    for key in retiring_unowned:
+        assert key in declared, f"{key} exclusion is obsolete - delete it"
+
     for key, agents in declared.items():
         if key in retiring_unowned:
             continue

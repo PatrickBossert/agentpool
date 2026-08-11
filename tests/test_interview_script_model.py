@@ -13,7 +13,6 @@ from api.services.interview_script_model import (
     normalise_script_fields,
     normalise_scripts,
     question_id,
-    validate_script_registry_succession,
     validate_scripts,
     validate_scripts_against_registry,
 )
@@ -208,36 +207,17 @@ def test_an_empty_registry_blocks_nothing():
     assert validate_scripts_against_registry(_scripts(_script(node_id="9.9")), {}) == []
 
 
-def test_a_script_id_may_not_be_redefined():
-    current = {"scripts": [{"id": "SC-001", "node_id": "1.2", "active": True}]}
-    proposed = {"scripts": [{"id": "SC-001", "node_id": "2", "active": True}]}
-    problems = validate_script_registry_succession(current, proposed)
-    assert any("SC-001" in p for p in problems)
-
-
-def test_a_script_id_may_not_be_dropped():
-    """Dropping is worse than redefining: the ledger forgets, and nothing then stops the id
-    being handed to something else later, invalidating every stored citation."""
-    current = {"scripts": [{"id": "SC-001", "node_id": "1.2", "active": True}]}
-    problems = validate_script_registry_succession(current, {"scripts": []})
-    assert any("SC-001" in p for p in problems)
-
-
-def test_retiring_and_growing_are_both_free():
-    current = {"scripts": [{"id": "SC-001", "node_id": "1.2", "active": True}]}
-    proposed = {"scripts": [
-        {"id": "SC-001", "node_id": "1.2", "active": False},
-        {"id": "SC-002", "node_id": "2", "active": True},
-    ]}
-    assert validate_script_registry_succession(current, proposed) == []
-
-
 def test_a_script_id_may_not_move_to_another_node():
     """The registry says SC-005 is node 1.2. A batch filing it against 2.7 must be refused.
 
-    validate_script_registry_succession already refuses this - on writes to the registry. The
-    write that carries the scripts never consulted it, so the batch landed and the merge, which
-    keys on script_id, overwrote 1.2's script with 2.7's content.
+    The rule this once shared with validate_script_registry_succession (deleted with the
+    retired interview_script_registry door - code review round 1, Important 2 of the
+    script-ledger-as-a-table Task 3 report: it had no production caller left once that door
+    closed, and the redefine/drop guarantee it stated now holds structurally in
+    register_scripts_sync instead - ON CONFLICT(script_id) DO NOTHING never moves node_id,
+    and nothing anywhere issues a DELETE) is enforced here on the door that actually carries
+    the scripts. Without this check the batch would land and the merge, which keys on
+    script_id, would overwrite 1.2's script with 2.7's content.
     """
     from api.services.interview_script_model import validate_scripts_against_script_registry
     registry = {"scripts": [{"id": "SC-005", "node_id": "1.2", "active": True}]}

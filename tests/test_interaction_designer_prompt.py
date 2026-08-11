@@ -50,9 +50,13 @@ def test_the_prompt_states_the_ledger_is_cumulative_and_keyed_by_script_id():
 
     While she regenerated everything, both were implicit: the ledger she sent already
     held every id, and re-emitting every script made the top-level key academic. Now a
-    run sends a partial batch, so a ledger that repeats only this run's ids is REFUSED
-    by validate_script_registry_succession, and a batch keyed by node_label files every
-    existing script a second time under a key _merge_with_current does not recognise.
+    run sends a partial batch: a ledger that repeated only this run's ids used to be
+    REFUSED by validate_script_registry_succession (deleted with the retired
+    interview_script_registry door - script-ledger-as-a-table Task 3, code review round 1,
+    Important 2), and the same guarantee now holds structurally instead - the
+    interview_script_ledger table only ever grows. A batch keyed by node_label still files
+    every existing script a second time under a key _merge_with_current does not recognise,
+    which this prompt line also guards against.
 
     Asserted here because both live in prompt prose, which nothing else guards - and the
     defect that made this branch necessary was two instructions in this same file

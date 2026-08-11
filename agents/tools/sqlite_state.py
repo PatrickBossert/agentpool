@@ -230,9 +230,11 @@ _WARNER_SOURCE: dict[str, str] = {
 #
 # Merging is additive on purpose. A script absent from a batch means "not in this batch",
 # never "delete this" - an agent that omits a key under context pressure would otherwise
-# silently destroy work it had already banked. The interview_script_registry door, which
-# used to carry explicit, reversible retirement via active: false, has retired itself -
-# there is no write path onto interview_script_ledger.active any more.
+# silently destroy work it had already banked. Retirement itself is unaffected by the
+# interview_script_registry door's closure: register_scripts_sync (agents/tools/_db.py)
+# honours an explicit active on a script body both at first registration and on a row it
+# already holds, so an interview_scripts write can still retire or un-retire an id. What is
+# missing is an instruction or UI that tells Maya to send it - a gap, not a hole.
 def _preserve_registered_labels(parsed: dict, slug: str) -> dict:
     """A registered id keeps the label the ledger already holds.
 

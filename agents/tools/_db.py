@@ -457,9 +457,7 @@ def current_script_ledger_sync(slug: str) -> dict:
     return {"scripts": [{"id": r[0], "node_id": r[1], "active": bool(r[2])} for r in rows]}
 
 
-def register_scripts_sync(
-    slug: str, scripts: dict, version: int | None, author: str, *, touch_version: bool = True
-) -> int:
+def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -> int:
     """Register any script id not already held. Returns how many were added.
 
     ON CONFLICT(script_id) DO NOTHING, never UPDATE of node_id. That is what makes automatic
@@ -506,14 +504,13 @@ def register_scripts_sync(
     names active explicitly still has that value applied even when the id already exists.
     Retiring or un-retiring an id is not redefining it and not dropping it.
 
-    touch_version gates last_version/last_author. interview_scripts is the artefact
-    last_version measures staleness against ("reviewed at v3, changed since"), so its write
-    path always touches it. interview_script_registry is a different artefact on its own,
-    unrelated version counter - passing its version through here would make last_version go
-    backwards and hide real staleness rather than report it - so that call site passes
-    touch_version=False and this function leaves last_version/last_author alone entirely,
-    including on newly-inserted rows, which stay NULL/'' until an actual interview_scripts
-    write reaches the id.
+    last_version/last_author are always touched, on every id this call names, including a
+    fresh insert. interview_scripts is the only artefact left that reaches this function -
+    the interview_script_registry door this was written to accommodate (a second artefact on
+    its own, unrelated version counter, which would have made last_version go backwards had
+    its version been passed through here) retired with Task 3 of the script-ledger-as-a-table
+    plan, and its call site - the only one that ever passed a version this function was meant
+    to ignore - went with it.
     """
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
         row = conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)).fetchone()
@@ -530,16 +527,14 @@ def register_scripts_sync(
                 continue
             # None when the entry doesn't name active at all. In practice that is every
             # interview_scripts body - none of the 86 live scripts across every project
-            # carry the key - so today this door never un-retires a script the registry
-            # door retired. That is a habit of what Maya currently writes, not a rule this
-            # function enforces: validate_scripts does not reject "active" on a script body,
-            # so nothing stops a future write from carrying it and moving active here too. A
-            # fresh row still defaults to active (script_ledger_backfill.py's own default),
-            # only an already-held row's active is left untouched when unnamed.
+            # carry the key - so today this function never un-retires a script that was
+            # previously retired. That is a habit of what Maya currently writes, not a rule
+            # this function enforces: validate_scripts does not reject "active" on a script
+            # body, so nothing stops a future write from carrying it and moving active here
+            # too. A fresh row still defaults to active (script_ledger_backfill.py's own
+            # default), only an already-held row's active is left untouched when unnamed.
             active_value = script.get("active")
             insert_active = 1 if (active_value is None or active_value) else 0
-            row_version = version if touch_version else None
-            row_author = author if touch_version else ""
             cur = conn.execute(
                 "INSERT INTO interview_script_ledger"
                 " (script_id, project_id, node_id, node_label, active,"
@@ -547,16 +542,15 @@ def register_scripts_sync(
                 " VALUES (?,?,?,?,?,?,?)"
                 " ON CONFLICT(script_id) DO NOTHING",
                 (script_id, project_id, node_id, script.get("node_label") or "",
-                 insert_active, row_version, row_author),
+                 insert_active, version, author),
             )
             added += cur.rowcount
-            if touch_version:
-                conn.execute(
-                    "UPDATE interview_script_ledger"
-                    " SET last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
-                    " WHERE script_id=?",
-                    (version, author, script_id),
-                )
+            conn.execute(
+                "UPDATE interview_script_ledger"
+                " SET last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
+                " WHERE script_id=?",
+                (version, author, script_id),
+            )
             if active_value is not None:
                 conn.execute(
                     "UPDATE interview_script_ledger"

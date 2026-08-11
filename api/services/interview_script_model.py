@@ -215,10 +215,11 @@ def validate_scripts_against_registry(scripts: dict, registry: dict) -> list[str
 def validate_scripts_against_script_registry(scripts: dict, script_registry: dict) -> list[str]:
     """Every script whose id is registered against a different node.
 
-    The script registry is the ledger for script ids, and validate_script_registry_succession
-    already holds writes to it to that contract. This is the same rule on the other door - the
-    one that actually carries the scripts - because a rule enforced at one entrance is not
-    enforced.
+    This is the rule the interview_script_ledger table enforces structurally on
+    registration - append-only, never moving an id it already holds - checked again here on
+    the door that actually carries the scripts, because a rule enforced in only one place is
+    not enforced: a batch that moved an id would otherwise land in the artefact and only be
+    caught (if at all) after the merge had already replaced the wrong script.
 
     It matters because _merge_with_current keys on script_id: an id that moves does not add a
     script, it silently replaces the one already filed under that id, and every stored answer
@@ -241,43 +242,6 @@ def validate_scripts_against_script_registry(scripts: dict, script_registry: dic
                 f"script_id {script_id} is registered against node {held} and this batch files "
                 f"it against {script.get('node_id')} - take an unused id for the new script, "
                 f"because the merge keys on script_id and stored answers cite it"
-            )
-    return problems
-
-
-def validate_script_registry_succession(current: dict, proposed: dict) -> list[str]:
-    """Every way a proposed script ledger would break what the current one records.
-
-    Same rules as the value chain registry. Growth is free and retirement is free with the
-    meaning kept (`active: false`); redefining or dropping an id is refused. Dropping is the
-    worst: the ledger forgets, so nothing stops the id being handed to something else later,
-    and every stored citation through it silently resolves to the wrong script.
-
-    This is the statement of the rule the interview_script_ledger table now enforces
-    structurally (append-only registration, never moving an id it already holds) rather than
-    the sole guard standing over it: the JSON `interview_script_registry` write door this
-    function used to guard - and the node_id/node_label type checks added solely to protect
-    the direct-to-sqlite bind on that door - retired with it. `_current_script_registry`
-    reads the table itself now, so a corrupt or type-mismatched entry can no longer reach it
-    through this path at all.
-    """
-    problems: list[str] = []
-    proposed_entries = {e.get("id"): e for e in proposed.get("scripts", [])}
-
-    for entry in current.get("scripts", []):
-        entry_id = entry.get("id")
-        successor = proposed_entries.get(entry_id)
-        if successor is None:
-            problems.append(
-                f"script_id {entry_id} is in the registry and missing from this one - retire "
-                "it with active: false rather than dropping it, so the id is never handed to "
-                "another script"
-            )
-        elif successor.get("node_id") != entry.get("node_id"):
-            problems.append(
-                f"script_id {entry_id} is registered against node {entry.get('node_id')} and "
-                f"this moves it to {successor.get('node_id')} - take an unused id for the new "
-                "script, because stored answers cite this one"
             )
     return problems
 

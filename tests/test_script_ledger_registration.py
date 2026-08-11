@@ -149,6 +149,49 @@ def test_last_version_reflects_only_ids_the_batch_actually_touched(script_projec
     assert rows["SC-002"] == 2
 
 
+def test_a_first_registration_through_interview_scripts_honours_an_explicit_active(script_project):
+    """Repointed from the retired interview_script_registry door (Task 3, code review round
+    1, Important 2). Restated because it covers a real path with no other test on it:
+    register_scripts_sync (agents/tools/_db.py) applies whatever active value a first-time
+    entry names rather than always defaulting to True - a script body carrying
+    "active": false must land retired even on its first registration, exactly as it did
+    through the door that has since closed."""
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    script = _script("SC-500", "1.2", "Retired on arrival")
+    script["active"] = False
+    tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+              value=json.dumps({"SC-500": script}))
+
+    from agents.tools._db import current_script_ledger_sync
+    entry = next(e for e in current_script_ledger_sync(slug)["scripts"] if e["id"] == "SC-500")
+    assert entry["active"] is False
+
+
+def test_retiring_an_already_registered_id_through_interview_scripts_reaches_the_table(script_project):
+    """Repointed from the retired interview_script_registry door (Task 3, code review round
+    1, Important 2). active is the one field register_scripts_sync still lets a later batch
+    change on an id it already holds - node_id, node_label, last_version, and last_author may
+    not move once set, but active may. Register SC-001 (active unspecified, defaults True),
+    then retire it in a later batch - the ledger must show active: False afterwards, with
+    node_id untouched."""
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+              value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+
+    retired = _script("SC-001", "1.2", "Works Programming")
+    retired["active"] = False
+    out = tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+                    value=json.dumps({"SC-001": retired}))
+    assert out.startswith("Written to"), out
+
+    from agents.tools._db import current_script_ledger_sync
+    entry = next(e for e in current_script_ledger_sync(slug)["scripts"] if e["id"] == "SC-001")
+    assert entry["node_id"] == "1.2"
+    assert entry["active"] is False
+
+
 def test_a_non_string_node_label_is_refused_by_the_tool(script_project):
     """Task 2 review round 2, the Critical re-raised: round 1's coalesce only closed the
     null case. node_label as an object still reached sqlite3's bind for
