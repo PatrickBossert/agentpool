@@ -109,6 +109,12 @@ _WARNING_SOURCE_CREW: dict[str, str] = {
     # Maya is the only agent who can act on a coverage gap, because she is the one who
     # writes the scripts.
     "interview_coverage": "assessment_design",
+    # Same reasoning as interview_coverage: Maya is the one who writes interview_scripts and
+    # interview_script_registry, so she is the only agent who can rewrite an id that failed
+    # to register. Without this entry, _record_registration_failure's rows were a producer
+    # with no consumer - written to validation_warnings and read by nobody, exactly the
+    # defect this fix exists to close on the reporting side, not just the write side.
+    "script_ledger_registration": "assessment_design",
 }
 
 

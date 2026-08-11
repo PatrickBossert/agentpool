@@ -528,10 +528,14 @@ def register_scripts_sync(
             node_id = script.get("node_id")
             if not script_id or not node_id:
                 continue
-            # None when the entry doesn't name active at all - interview_scripts bodies
-            # never do, so that door can never accidentally un-retire a script the registry
-            # door retired. A fresh row still defaults to active (script_ledger_backfill.py's
-            # own default), only an already-held row's active is left untouched when unnamed.
+            # None when the entry doesn't name active at all. In practice that is every
+            # interview_scripts body - none of the 86 live scripts across every project
+            # carry the key - so today this door never un-retires a script the registry
+            # door retired. That is a habit of what Maya currently writes, not a rule this
+            # function enforces: validate_scripts does not reject "active" on a script body,
+            # so nothing stops a future write from carrying it and moving active here too. A
+            # fresh row still defaults to active (script_ledger_backfill.py's own default),
+            # only an already-held row's active is left untouched when unnamed.
             active_value = script.get("active")
             insert_active = 1 if (active_value is None or active_value) else 0
             row_version = version if touch_version else None

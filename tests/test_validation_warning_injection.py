@@ -233,3 +233,65 @@ async def test_the_task_description_maya_receives_contains_the_coverage_warning(
     assert len(seen_at_kickoff) == 1
     assert "16 of 86 value chain nodes have an interview script" in seen_at_kickoff[0]
     assert seen_at_kickoff[0].endswith("\n\noriginal task body")
+
+
+@pytest.mark.asyncio
+async def test_a_registration_failure_warning_reaches_maya(crew_project):
+    """Task 2 review round 3: _record_registration_failure (agents/tools/sqlite_state.py)
+    writes real rows through the same record_validation_warnings_sync path the coverage
+    warner uses, but _WARNING_SOURCE_CREW had no 'script_ledger_registration' entry, so
+    _fetch_validation_warnings(slug, 'assessment_design') never matched it - a producer
+    with no consumer, the same shape of defect the coverage-warning gap above already was.
+    Mirrors test_a_coverage_warning_reaches_maya exactly, one source over."""
+    slug, _ = crew_project
+    from api.services.run_service import _fetch_validation_warnings
+
+    record_validation_warnings_sync(slug, 1, "script_ledger_registration", [
+        {"subject": "SC-002", "code": "registration_failed",
+         "detail": "interview_scripts write by interaction_designer did not register "
+                    "'SC-002' in interview_script_ledger - simulated failure.",
+         "measure": None}])
+
+    text = await _fetch_validation_warnings(slug, "assessment_design")
+    assert "SC-002" in text
+    assert "did not register" in text
+
+
+@pytest.mark.asyncio
+async def test_the_task_description_maya_receives_contains_the_registration_failure(
+    assessment_project,
+):
+    """The real property, not just the mechanism - mirrors
+    test_the_task_description_maya_receives_contains_the_coverage_warning, for the source
+    this round of review added a consumer for."""
+    slug = assessment_project
+    record_validation_warnings_sync(slug, 1, "script_ledger_registration", [
+        {"subject": "SC-002", "code": "registration_failed",
+         "detail": "interview_scripts write by interaction_designer did not register "
+                    "'SC-002' in interview_script_ledger - simulated failure.",
+         "measure": None}])
+
+    mock_task = MagicMock()
+    mock_task.description = "original task body"
+    mock_crew = MagicMock()
+    mock_crew.tasks = [mock_task]
+    seen_at_kickoff: list[str] = []
+
+    async def _fake_kickoff():
+        seen_at_kickoff.append(mock_task.description)
+        return "done"
+
+    mock_crew.kickoff_async = AsyncMock(side_effect=_fake_kickoff)
+
+    import agents.crews.assessment_design_crew  # noqa: F401  ensure importable before patching
+    with patch(
+        "agents.crews.assessment_design_crew.create_assessment_design_crew",
+        return_value=mock_crew,
+    ):
+        from api.services.run_service import build_and_run_crew
+        result = await build_and_run_crew(slug, "assessment_design", run_id=7)
+
+    assert result == "done"
+    assert len(seen_at_kickoff) == 1
+    assert "SC-002" in seen_at_kickoff[0]
+    assert seen_at_kickoff[0].endswith("\n\noriginal task body")

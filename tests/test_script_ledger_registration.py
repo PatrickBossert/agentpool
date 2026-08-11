@@ -295,3 +295,75 @@ def test_registry_door_retirement_of_an_already_registered_id_reaches_the_table(
     entry = next(e for e in current_script_ledger_sync(slug)["scripts"] if e["id"] == "SC-001")
     assert entry["node_id"] == "1.2"
     assert entry["active"] is False
+
+
+def test_a_non_string_node_label_via_the_registry_door_is_refused(script_project):
+    """Task 2 review round 3: the Critical was closed on interview_scripts and left open on
+    interview_script_registry - the door this same task wired up. `by_id` built node_label
+    from raw agent JSON with only `or ""`, and _validate_interview_script_registry ran
+    succession alone, checking no types at all. Reproduced against pre-round-3 code:
+
+        registry write (node_label an object) -> Written to ...
+        ledger after registry write            -> []
+        scripts write filing SC-001 at 2.7     -> Written to ...
+        ledger after                           -> [{'id': 'SC-001', 'node_id': '2.7', ...}]
+
+    The registry artefact said SC-001 was anchored at 1.2; the scripts artefact and the
+    ledger said 2.7; both writes reported success. This drives the same two-batch shape
+    through SQLiteStateTool._run on interview_script_registry and asserts refusal instead.
+    """
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    out1 = tool._run(operation="write", key="interview_script_registry",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"scripts": [
+                         {"id": "SC-001", "node_id": "1.2",
+                          "node_label": {"not": "a string"}, "active": True},
+                     ]}))
+    assert out1.startswith("Error:"), f"a non-string node_label must be refused, got: {out1}"
+    assert "node_label" in out1
+
+    from agents.tools._db import current_script_ledger_sync
+    assert current_script_ledger_sync(slug)["scripts"] == [], (
+        "a refused registry write must not have registered anything"
+    )
+
+    # Nothing was ever validly registered, so this is a first registration, not a move -
+    # it must succeed, and the ledger must agree with it rather than with the refused batch.
+    out2 = tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": _script("SC-001", "2.7", "Somewhere Else")}))
+    assert out2.startswith("Written to"), out2
+    ids = {e["id"]: e["node_id"] for e in current_script_ledger_sync(slug)["scripts"]}
+    assert ids == {"SC-001": "2.7"}
+
+
+def test_a_non_string_node_id_via_the_registry_door_is_refused(script_project):
+    """Task 2 review round 3: node_id is the column that actually carries the anchor, and
+    it has the same hole as node_label plus a worse failure mode - sqlite3's type affinity
+    silently coerces an int bind into TEXT (node_id: 12 registers as the string "12" with
+    no exception at all), so the try/except around register_scripts_sync cannot catch this
+    one even in principle. Only door-level validation can. Covers both a type that would
+    raise on bind (a list) and one that would not (an int, silently wrong instead)."""
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    out_list = tool._run(operation="write", key="interview_script_registry",
+                         agent_name="interaction_designer",
+                         value=json.dumps({"scripts": [
+                             {"id": "SC-001", "node_id": ["1.2"],
+                              "node_label": "Works Programming", "active": True},
+                         ]}))
+    assert out_list.startswith("Error:"), f"a non-string node_id must be refused, got: {out_list}"
+    assert "node_id" in out_list
+
+    out_int = tool._run(operation="write", key="interview_script_registry",
+                        agent_name="interaction_designer",
+                        value=json.dumps({"scripts": [
+                            {"id": "SC-002", "node_id": 12,
+                             "node_label": "Pipeline Design", "active": True},
+                        ]}))
+    assert out_int.startswith("Error:"), f"a non-string node_id must be refused, got: {out_int}"
+
+    from agents.tools._db import current_script_ledger_sync
+    assert current_script_ledger_sync(slug)["scripts"] == []

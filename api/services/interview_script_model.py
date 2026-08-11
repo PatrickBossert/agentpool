@@ -252,8 +252,36 @@ def validate_script_registry_succession(current: dict, proposed: dict) -> list[s
     meaning kept (`active: false`); redefining or dropping an id is refused. Dropping is the
     worst: the ledger forgets, so nothing stops the id being handed to something else later,
     and every stored citation through it silently resolves to the wrong script.
+
+    Also the type check validate_scripts carries for the interview_scripts door
+    (node_label must be a string or null), plus its own counterpart for node_id - the
+    column that actually carries the anchor, and the one succession above compares by
+    equality without ever asking whether either side is even a string. Registration for
+    this door (agents/tools/_db.py's register_scripts_sync, called from the
+    interview_script_registry branch in sqlite_state.py) builds its row straight from this
+    JSON with no validator between the two other than this function: a node_label sqlite3
+    cannot bind - or a node_id it silently coerces via type affinity, so `node_id: 12`
+    registers as `"12"` rather than raising anything - was written to the artefact and left
+    the ledger disagreeing with it, or agreeing with a value nobody wrote. Refused here, at
+    the only door this write has, rather than left for the bind to discover.
     """
     problems: list[str] = []
+    for entry in proposed.get("scripts", []):
+        entry_id = entry.get("id")
+        node_id = entry.get("node_id")
+        if node_id is not None and not isinstance(node_id, str):
+            problems.append(
+                f"script_id {entry_id!r} has node_id {node_id!r}, which must be a string - "
+                "it is the column that carries the anchor, bound directly into "
+                "interview_script_ledger.node_id"
+            )
+        node_label = entry.get("node_label")
+        if node_label is not None and not isinstance(node_label, str):
+            problems.append(
+                f"script_id {entry_id!r} has node_label {node_label!r}, which must be a "
+                "string or null"
+            )
+
     proposed_entries = {e.get("id"): e for e in proposed.get("scripts", [])}
 
     for entry in current.get("scripts", []):
