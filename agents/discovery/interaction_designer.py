@@ -2385,6 +2385,13 @@ def create_interaction_designer(slug: str, llm: LLM, tools: list[BaseTool]) -> A
         tools=tools,
         verbose=True,
         allow_delegation=False,
+        # Maya is the only agent that batches: eighty-six scripts do not fit in one response,
+        # so a full run is three reads, a dozen or more batched writes, the cumulative ledger,
+        # and the review gate. CrewAI's default of 25 is spent before the ledger is written -
+        # run 32 stopped on "Maximum iterations" at 77 scripts with the registry still holding
+        # 36, which strands every id written that run outside the succession guard. The ledger
+        # write is the last step and the one that must not be the one that gets cut.
+        max_iter=60,
     )
 
 
