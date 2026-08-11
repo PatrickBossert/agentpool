@@ -495,14 +495,24 @@ def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -
     _record_registration_failure in sqlite_state.py) must name every id in the batch it
     attempted, not only the one that raised, since none of them made it into the table.
 
-    active is carried at insert time, matching script_ledger_backfill.py's precedent so the
-    two seeding paths agree: a script registered for the first time is entered with whatever
-    active value it names (default True). An id already held has its node_id, node_label,
-    last_version, and last_author left exactly alone - none of those may move once set - but
-    active is the one field the design carves out an explicit exception for
-    ("growth is free and retirement is free with the meaning kept"), so a script whose entry
-    names active explicitly still has that value applied even when the id already exists.
-    Retiring or un-retiring an id is not redefining it and not dropping it.
+    active has exactly one authority: the UPDATE below, not the INSERT. A fresh row relies on
+    interview_script_ledger's own `active INTEGER NOT NULL DEFAULT 1` (api/database.py) rather
+    than naming a value in the INSERT, because naming one here was provably redundant -
+    review round 2 removed `active` from the INSERT's column list entirely and ran the full
+    suite with zero failures, then separately forced it to always insert active, also zero
+    failures, for three reasons that hold for every input: a fresh row with active unnamed
+    gets the same value from the column default that the INSERT used to name explicitly; a
+    fresh row with active named gets it from the UPDATE below, inside the same transaction,
+    regardless of what the INSERT wrote; and an already-held row's INSERT never lands at all
+    (ON CONFLICT DO NOTHING), so whatever the INSERT would have said about active was never
+    reachable there in the first place. script_ledger_backfill.py's insert-time active is a
+    different case, not a precedent this one needs to match: it has no follow-up UPDATE, so
+    its insert-time value genuinely is the only place active is decided. An id already held
+    has its node_id, node_label, last_version, and last_author left exactly alone - none of
+    those may move once set - but active is the one field the design carves out an explicit
+    exception for ("growth is free and retirement is free with the meaning kept"), so a
+    script whose entry names active explicitly still has that value applied even when the id
+    already exists. Retiring or un-retiring an id is not redefining it and not dropping it.
 
     last_version/last_author are always touched, on every id this call names, including a
     fresh insert. interview_scripts is the only artefact left that reaches this function -
@@ -531,18 +541,20 @@ def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -
             # previously retired. That is a habit of what Maya currently writes, not a rule
             # this function enforces: validate_scripts does not reject "active" on a script
             # body, so nothing stops a future write from carrying it and moving active here
-            # too. A fresh row still defaults to active (script_ledger_backfill.py's own
-            # default), only an already-held row's active is left untouched when unnamed.
+            # too. active is deliberately absent from the INSERT below - the column default
+            # covers a fresh row's unnamed case, and the UPDATE two statements down covers
+            # every case where a value was actually named, on both a fresh row and one
+            # already held. See the docstring for why naming it here as well was redundant
+            # rather than merely belt-and-braces.
             active_value = script.get("active")
-            insert_active = 1 if (active_value is None or active_value) else 0
             cur = conn.execute(
                 "INSERT INTO interview_script_ledger"
-                " (script_id, project_id, node_id, node_label, active,"
+                " (script_id, project_id, node_id, node_label,"
                 "  last_version, last_author)"
-                " VALUES (?,?,?,?,?,?,?)"
+                " VALUES (?,?,?,?,?,?)"
                 " ON CONFLICT(script_id) DO NOTHING",
                 (script_id, project_id, node_id, script.get("node_label") or "",
-                 insert_active, version, author),
+                 version, author),
             )
             added += cur.rowcount
             conn.execute(

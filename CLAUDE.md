@@ -222,11 +222,18 @@ Maya owes one interview script per active value chain activity. Coverage is chec
 `_fetch_validation_warnings`. Reaching every node across several runs is expected: each run adds
 only the missing nodes, and `_merge_with_current` accumulates.
 
-A script id means one node for the life of the project. Both doors enforce it now -
-`validate_script_registry_succession` on the registry write, and
-`validate_scripts_against_script_registry` on the scripts write. The second was missing, and
-because `_merge_with_current` keys on `script_id`, a moved id replaced a script rather than
-adding one.
+A script id means one node for the life of the project. `interview_scripts` is the only write
+that reaches this rule now - the separate `interview_script_registry` artefact and its write
+door retired (script-ledger-as-a-table Task 3), and `interview_script_ledger` is a table, not
+a file. Two layers enforce it: `validate_scripts_against_script_registry`
+(`api/services/interview_script_model.py`) refuses a batch that files a registered id against
+a different node before anything is written, because `_merge_with_current` keys on
+`script_id` and a moved id would otherwise replace a script rather than add one; and
+`register_scripts_sync` (`agents/tools/_db.py`) registers with `ON CONFLICT(script_id) DO
+NOTHING`, so even a write that reached the table could never move a `node_id` it already
+held. There is no `DELETE FROM interview_script_ledger` anywhere, so dropping an id
+(the JSON-artefact-era registry's other worry) is structurally impossible rather than merely
+refused.
 
 ### Routing a call outside a crew: two protocols, one setting
 
