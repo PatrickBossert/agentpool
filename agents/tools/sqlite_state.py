@@ -130,6 +130,7 @@ def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
         validate_levers_unnamed_in_unaided_sections,
         validate_scripts,
         validate_scripts_against_registry,
+        validate_scripts_against_script_registry,
     )
 
     problems = validate_scripts(parsed, disciplines=_project_disciplines(slug))
@@ -143,6 +144,12 @@ def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     # Maya may or may not follow.
     problems.extend(validate_elicitation_order(parsed))
     problems.extend(validate_levers_unnamed_in_unaided_sections(parsed, _current_levers(slug)))
+    # The script registry is the ledger for script ids, and succession already holds writes to
+    # it to that contract. This is the same rule on the door the scripts actually come through:
+    # the merge keys on script_id, so an id that moves replaces rather than adds.
+    problems.extend(
+        validate_scripts_against_script_registry(parsed, _current_script_registry(slug))
+    )
     return problems
 
 

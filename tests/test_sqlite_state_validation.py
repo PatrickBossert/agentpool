@@ -549,6 +549,51 @@ def test_prompted_before_unaided_is_refused_by_the_tool():
     assert "unaided" in result
 
 
+@pytest.fixture
+def seeded_project():
+    """A project whose value_chain_registry already holds 1.2 and 2.7 as active L2 activities.
+
+    So the pre-existing anchor checks (validate_scripts_against_registry, validate_anchor_levels)
+    pass on both nodes and this test fails for its own reason - the script registry - rather
+    than an unrelated one.
+
+    Plain, not `@pytest_asyncio.fixture`: nothing in this file touches asyncio: `clean`, the
+    tool's `_run`, and every helper here are synchronous, mirroring the rest of the module.
+    """
+    tool = SQLiteStateTool(slug=SLUG)
+    _write_registry_payload(
+        tool, _registry_payload(("1.2", "Portfolio", "L2"), ("2.7", "Elsewhere", "L2"))
+    )
+    return SLUG
+
+
+def test_a_scripts_write_moving_a_registered_id_is_refused(seeded_project):
+    """Driven through SQLiteStateTool's write, not by calling the validator.
+
+    A guard the write does not consult is worthless, which is the whole finding this task
+    exists for - the rule was already written and already enforced on the other door.
+    """
+    slug = seeded_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=0)
+
+    tool._run(operation="write", key="interview_script_registry",
+              agent_name="interaction_designer",
+              value=json.dumps({"scripts": [
+                  {"id": "SC-005", "node_id": "1.2", "level": "L2",
+                   "relationship": "internal", "node_label": "Portfolio", "active": True}]}))
+
+    result = tool._run(operation="write", key="interview_scripts",
+                       agent_name="interaction_designer",
+                       value=json.dumps({"SC-005": {
+                           "script_id": "SC-005", "node_id": "2.7", "level": "L2",
+                           "relationship": "internal", "node_label": "Elsewhere",
+                           "sections": []}}))
+    # Adapted from the brief: the tool's actual refusal-on-invalid-content prefix is "Error:",
+    # not "Refused:" - the latter is reserved for check_write's ownership refusals.
+    assert "Written to" not in result
+    assert "SC-005" in result and "1.2" in result
+
+
 def test_naming_a_lever_in_an_unaided_section_is_refused_by_the_tool():
     """The anchoring the ordering rule alone cannot catch: a section tagged unprompted that
     quotes the annual report's own phrasing is prompted in everything but the tag."""

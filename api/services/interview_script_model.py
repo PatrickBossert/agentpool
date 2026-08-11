@@ -141,6 +141,39 @@ def validate_scripts_against_registry(scripts: dict, registry: dict) -> list[str
     ]
 
 
+def validate_scripts_against_script_registry(scripts: dict, script_registry: dict) -> list[str]:
+    """Every script whose id is registered against a different node.
+
+    The script registry is the ledger for script ids, and validate_script_registry_succession
+    already holds writes to it to that contract. This is the same rule on the other door - the
+    one that actually carries the scripts - because a rule enforced at one entrance is not
+    enforced.
+
+    It matters because _merge_with_current keys on script_id: an id that moves does not add a
+    script, it silently replaces the one already filed under that id, and every stored answer
+    citing it then resolves to the wrong instrument.
+
+    An empty registry accepts anything, which is what a first run needs.
+    """
+    registered = {
+        entry.get("id"): entry.get("node_id")
+        for entry in script_registry.get("scripts", [])
+    }
+    if not registered:
+        return []
+    problems: list[str] = []
+    for key, script in scripts.items():
+        script_id = script.get("script_id") or key
+        held = registered.get(script_id)
+        if held is not None and script.get("node_id") != held:
+            problems.append(
+                f"script_id {script_id} is registered against node {held} and this batch files "
+                f"it against {script.get('node_id')} - take an unused id for the new script, "
+                f"because the merge keys on script_id and stored answers cite it"
+            )
+    return problems
+
+
 def validate_script_registry_succession(current: dict, proposed: dict) -> list[str]:
     """Every way a proposed script ledger would break what the current one records.
 

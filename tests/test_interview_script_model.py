@@ -152,3 +152,41 @@ def test_retiring_and_growing_are_both_free():
         {"id": "SC-002", "node_id": "2", "active": True},
     ]}
     assert validate_script_registry_succession(current, proposed) == []
+
+
+def test_a_script_id_may_not_move_to_another_node():
+    """The registry says SC-005 is node 1.2. A batch filing it against 2.7 must be refused.
+
+    validate_script_registry_succession already refuses this - on writes to the registry. The
+    write that carries the scripts never consulted it, so the batch landed and the merge, which
+    keys on script_id, overwrote 1.2's script with 2.7's content.
+    """
+    from api.services.interview_script_model import validate_scripts_against_script_registry
+    registry = {"scripts": [{"id": "SC-005", "node_id": "1.2", "active": True}]}
+    scripts = {"SC-005": {"script_id": "SC-005", "node_id": "2.7"}}
+    problems = validate_scripts_against_script_registry(scripts, registry)
+    assert len(problems) == 1
+    assert "SC-005" in problems[0] and "1.2" in problems[0] and "2.7" in problems[0]
+
+
+def test_an_unregistered_script_id_is_free():
+    """Growth is free. A new id is how every script starts."""
+    from api.services.interview_script_model import validate_scripts_against_script_registry
+    registry = {"scripts": [{"id": "SC-005", "node_id": "1.2", "active": True}]}
+    scripts = {"SC-090": {"script_id": "SC-090", "node_id": "3.4"}}
+    assert validate_scripts_against_script_registry(scripts, registry) == []
+
+
+def test_a_registered_id_kept_on_its_own_node_is_free():
+    """Re-emitting a script for the node it already serves is a revision, not a move."""
+    from api.services.interview_script_model import validate_scripts_against_script_registry
+    registry = {"scripts": [{"id": "SC-005", "node_id": "1.2", "active": True}]}
+    scripts = {"SC-005": {"script_id": "SC-005", "node_id": "1.2"}}
+    assert validate_scripts_against_script_registry(scripts, registry) == []
+
+
+def test_an_empty_script_registry_accepts_anything():
+    """A first run has no registry, and must not be blocked by one it has not written yet."""
+    from api.services.interview_script_model import validate_scripts_against_script_registry
+    scripts = {"SC-001": {"script_id": "SC-001", "node_id": "0"}}
+    assert validate_scripts_against_script_registry(scripts, {}) == []
