@@ -43,3 +43,28 @@ def test_the_prompt_states_the_one_script_per_active_node_rule():
         "counts one script per active node and warns until every one has one"
     )
     assert "not every L3" not in src, "the old selection rule is back"
+
+
+def test_the_prompt_states_the_ledger_is_cumulative_and_keyed_by_script_id():
+    """Two rules that only became load-bearing once Maya emitted the differential.
+
+    While she regenerated everything, both were implicit: the ledger she sent already
+    held every id, and re-emitting every script made the top-level key academic. Now a
+    run sends a partial batch, so a ledger that repeats only this run's ids is REFUSED
+    by validate_script_registry_succession, and a batch keyed by node_label files every
+    existing script a second time under a key _merge_with_current does not recognise.
+
+    Asserted here because both live in prompt prose, which nothing else guards - and the
+    defect that made this branch necessary was two instructions in this same file
+    disagreeing with each other.
+    """
+    src = _src()
+    assert "THE LEDGER IS CUMULATIVE" in src, (
+        "Maya emits only the differential, so a ledger carrying just this run's ids "
+        "drops every earlier one and the succession guard refuses the write"
+    )
+    assert "keyed by script_id" in src
+    assert "keyed by node_label" not in src, (
+        "the artefact and _merge_with_current both key on script_id: filing by "
+        "node_label double-writes every script that already exists"
+    )
