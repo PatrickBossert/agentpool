@@ -18,13 +18,14 @@ an earlier draft of this test did, only works if create_assessment_design_crew r
 real crewai.Crew instance, and this codebase's own convention for this exact boundary
 (established in the two files above) mocks the factory return value instead.
 """
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 import yaml
 
-from api.database import get_connection, insert_project
+from api.database import get_connection, fetch_project, insert_project
 from api.config import get_settings
 
 SLUG = "maya-revision-test"
@@ -91,6 +92,101 @@ async def test_a_script_sent_back_to_the_agent_reaches_the_task_maya_receives(
     assert len(seen_at_kickoff) == 1
     assert "SC-042" in seen_at_kickoff[0]
     assert "the maturity anchors are wrong" in seen_at_kickoff[0]
+    # The injection must prepend, not replace - a regression that swapped the description
+    # instead of prefixing it would still satisfy the assertions above.
+    assert seen_at_kickoff[0].endswith("\n\noriginal task body")
+
+
+def _minimal_script(script_id, node_id, label):
+    """The smallest body validate_scripts (api/services/interview_script_model.py) accepts -
+    matches the working shape in tests/test_script_ledger_registration.py."""
+    return {
+        "script_id": script_id, "node_id": node_id, "node_label": label,
+        "level": "L2", "relationship": "internal", "sections": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_regenerated_script_stops_being_injected_on_the_next_run(assessment_project):
+    """Code review round 1, Important 1: without a version filter, a send-back never
+    clears, and Maya regenerates the same script on every future run forever - rewriting
+    text a consultant may have edited to address the very note that sent it back, which is
+    precisely the harm step 4's differential exists to prevent.
+
+    Driven through a real interview_scripts write (via SQLiteStateTool, the same path
+    register_scripts_sync reaches in production), a real record_script_review, and two real
+    build_and_run_crew calls with a real interview_scripts write in between them -
+    asserting on the description each run actually hands to Maya, never on
+    scripts_awaiting_regeneration's return value or on last_version directly.
+    """
+    from agents.tools.sqlite_state import SQLiteStateTool
+
+    slug = assessment_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    out = tool._run(
+        operation="write", key="interview_scripts", agent_name="interaction_designer",
+        value=json.dumps({"SC-042": _minimal_script("SC-042", "3.3.2", "Billing")}),
+    )
+    assert out.startswith("Written to"), out
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        cur = await conn.execute(
+            "SELECT last_version FROM interview_script_ledger WHERE script_id=?",
+            ("SC-042",),
+        )
+        row = await cur.fetchone()
+        current_version = row[0]
+
+        from api.services.script_review_service import record_script_review
+        await record_script_review(
+            conn, project_id=project["id"], script_id="SC-042", reviewer="bo",
+            decision="changes_requested", notes="the maturity anchors are wrong",
+            at_version=current_version, return_to="agent",
+        )
+
+    async def _run_and_capture(run_id):
+        mock_task = MagicMock()
+        mock_task.description = "original task body"
+        mock_crew = MagicMock()
+        mock_crew.tasks = [mock_task]
+        seen: list[str] = []
+
+        async def _fake_kickoff():
+            seen.append(mock_task.description)
+            return "ok"
+
+        mock_crew.kickoff_async = AsyncMock(side_effect=_fake_kickoff)
+
+        import agents.crews.assessment_design_crew  # noqa: F401
+        with patch(
+            "agents.crews.assessment_design_crew.create_assessment_design_crew",
+            return_value=mock_crew,
+        ):
+            from api.services.run_service import build_and_run_crew
+            await build_and_run_crew(slug, "assessment_design", run_id=run_id)
+        return seen[0]
+
+    run_1 = await _run_and_capture(101)
+    run_1_injected = "SC-042" in run_1
+    assert run_1_injected, "RUN 1 must inject the send-back before any regeneration"
+
+    # Regenerate SC-042 through a real interview_scripts write, exactly as Maya would after
+    # reading the injected block - register_scripts_sync bumps last_version because this
+    # batch names SC-042 again.
+    out2 = tool._run(
+        operation="write", key="interview_scripts", agent_name="interaction_designer",
+        value=json.dumps({"SC-042": _minimal_script("SC-042", "3.3.2", "Billing")}),
+    )
+    assert out2.startswith("Written to"), out2
+
+    run_2 = await _run_and_capture(102)
+    run_2_injected = "SC-042" in run_2
+    assert not run_2_injected, (
+        "RUN 2 must NOT re-inject SC-042 - last_version has moved past reviewed_at_version, "
+        "so the note has been addressed"
+    )
 
 
 @pytest.mark.asyncio

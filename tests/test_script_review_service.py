@@ -78,6 +78,31 @@ async def test_a_send_back_must_say_where_it_is_going(project):
 
 
 @pytest.mark.asyncio
+async def test_a_regenerated_script_no_longer_awaits_regeneration(project):
+    """A send-back must clear on evidence the work was done, not on the assumption that a
+    kickoff meant it was - the run that regenerates a script may die before reaching any
+    close-out call, and a close-out would then discard a request that was never actually
+    fulfilled just as wrongly as never clearing would repeat one that was. last_version
+    advancing past reviewed_at_version is register_scripts_sync's own signal that a later
+    batch named this script_id again; scripts_awaiting_regeneration reads that signal
+    directly rather than relying on a caller to mark the row done."""
+    from api.services.script_review_service import scripts_awaiting_regeneration
+    await record_script_review(project, project_id=1, script_id="SC-001", reviewer="bo",
+                               decision="changes_requested", notes="regenerate this",
+                               at_version=5, return_to="agent")
+    pending = await scripts_awaiting_regeneration(project, project_id=1)
+    assert [p["script_id"] for p in pending] == ["SC-001"]
+
+    # register_scripts_sync's own effect on a batch that names this script_id again.
+    await project.execute(
+        "UPDATE interview_script_ledger SET last_version=6 WHERE script_id='SC-001'")
+    await project.commit()
+
+    pending = await scripts_awaiting_regeneration(project, project_id=1)
+    assert pending == [], "last_version has moved past reviewed_at_version - the note was addressed"
+
+
+@pytest.mark.asyncio
 async def test_only_a_send_back_to_the_agent_awaits_regeneration(project):
     """The load-bearing distinction. A return to reviewers must never reach Maya, or
     'please look at this again' rewrites the instrument out from under the reviewer."""

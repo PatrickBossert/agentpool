@@ -83,6 +83,19 @@ async def scripts_awaiting_regeneration(conn: aiosqlite.Connection, *, project_i
 
     Only return_to = 'agent'. A return to reviewers is a human-to-human loop and must
     never reach Maya's differential.
+
+    A row clears on evidence the work was done, not on the assumption that a kickoff meant
+    it was: reviewed_at_version records the last_version a script was AT when the
+    changes_requested review was recorded (record_script_review's at_version, stamped from
+    the ledger row the reviewer actually read). register_scripts_sync bumps last_version
+    past that only for a batch that actually names this script_id again, so
+    last_version <= reviewed_at_version is true until the agent regenerates it and false
+    from the moment she does - no separate close-out call needed, and nothing to forget if
+    the run that regenerated it never reaches a close-out at all. Mirrors the ordinary
+    review gate: agent_outputs.is_current advances on a real write, not on a caller's say-so.
+    A row with reviewed_at_version NULL (should not occur via record_script_review, which
+    always stamps one, but guarded rather than assumed) is treated as still pending, since
+    there is no version to compare against yet.
     """
     conn.row_factory = aiosqlite.Row
     cur = await conn.execute(
@@ -91,7 +104,8 @@ async def scripts_awaiting_regeneration(conn: aiosqlite.Connection, *, project_i
         "         ORDER BY r.id DESC LIMIT 1) AS notes"
         "  FROM interview_script_ledger l"
         " WHERE l.project_id=? AND l.review_status='changes_requested'"
-        "   AND l.review_return_to='agent' AND l.active=1",
+        "   AND l.review_return_to='agent' AND l.active=1"
+        "   AND (l.reviewed_at_version IS NULL OR l.last_version <= l.reviewed_at_version)",
         (project_id,),
     )
     return [dict(r) for r in await cur.fetchall()]

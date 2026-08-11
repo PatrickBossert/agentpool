@@ -60,3 +60,24 @@ def test_the_prompt_tells_her_a_sent_back_script_is_the_differential_exception()
     src = _src()
     assert "SCRIPTS SENT BACK FOR REVISION" in src
     assert "keeps its existing script_id" in src
+
+
+def test_the_output_step_keys_by_script_id_not_node_label():
+    """Carried over from the deleted test_the_prompt_states_the_ledger_is_cumulative_and_
+    keyed_by_script_id (code review round 1, Important 3): that test bundled this
+    assertion with the retired ledger clause, and replacing it with the two new ledger/
+    differential tests silently dropped coverage of a still-live property at the OUTPUT
+    step (interaction_designer.py, step 15) - the same edit that removed the ledger clause
+    also touched the line immediately above this one.
+
+    The artefact and _merge_with_current both key by script_id: filing a batch by
+    node_label would double-write every script that already exists under a key the merge
+    does not recognise. Asserted here because both live in prompt prose, which nothing
+    else guards.
+    """
+    src = _src()
+    assert "keyed by script_id" in src
+    assert "keyed by node_label" not in src, (
+        "the artefact and _merge_with_current both key on script_id: filing by "
+        "node_label double-writes every script that already exists"
+    )
