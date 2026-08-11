@@ -22,10 +22,14 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 
 describe('MayaOutputExtra', () => {
   it('renders every script it is given, including one with an unrecognised perspective', async () => {
-    // The current two buckets drop anything outside them silently - no message, no count.
+    // The old two buckets dropped anything outside them silently - no message, no count.
+    // SC-2 is the shape the endpoint actually serves for a role script: normalise_scripts
+    // moves the role letter out of `level` and into `perspective`, leaving level null. That
+    // shape matched neither hardcoded level set, so every role script vanished. Fixtures
+    // carrying a level inside the old VC_LEVELS set cannot see this - they render either way.
     vi.mocked(projectsApi.getInterviewScripts).mockResolvedValue({
       'SC-1': { script_id: 'SC-1', node_id: '1',   level: 'L1', perspective: null, node_label: 'Property', sections: [] },
-      'SC-2': { script_id: 'SC-2', node_id: '1.F', level: 'L1', perspective: 'F',  node_label: 'Frontline', sections: [] },
+      'SC-2': { script_id: 'SC-2', node_id: '1.F', level: null, perspective: 'F',  node_label: 'Frontline', sections: [] },
       'SC-3': { script_id: 'SC-3', node_id: '9',   level: 'L3', perspective: 'X',  node_label: 'Odd one',   sections: [] },
     } as never)
     render(<Wrapper><MayaOutputExtra slug="p" /></Wrapper>)
