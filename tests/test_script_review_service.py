@@ -41,9 +41,16 @@ async def test_a_script_can_be_reviewed_by_several_people(project):
 
 @pytest.mark.asyncio
 async def test_a_script_is_approved_only_once(project):
+    """AlreadyApprovedError is a ValueError subclass, so this refusal is still catchable
+    by any existing caller that only knows about ValueError - see
+    api.services.script_review_service.AlreadyApprovedError for why the router needs the
+    narrower type rather than pattern-matching this message."""
+    from api.services.script_review_service import AlreadyApprovedError
     await record_script_review(project, project_id=1, script_id="SC-001",
                                reviewer="ana", decision="approved", at_version=5)
-    with pytest.raises(ValueError, match="already approved"):
+    # Asserted on type, not on message wording - callers (the router included) branch
+    # on AlreadyApprovedError, not on what the message happens to say.
+    with pytest.raises(AlreadyApprovedError):
         await record_script_review(project, project_id=1, script_id="SC-001",
                                    reviewer="bo", decision="approved", at_version=5)
 

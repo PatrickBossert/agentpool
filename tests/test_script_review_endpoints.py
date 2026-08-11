@@ -92,6 +92,10 @@ async def test_approving_asks_for_approver_authority_and_reviewing_asks_for_eith
 
 @pytest.mark.asyncio
 async def test_approving_twice_is_refused_with_409(client, seeded_script):
+    """The status code is classified on AlreadyApprovedError's type, not on the wording
+    of its message - deliberately not asserting a message substring here, since that
+    would recouple this test to the exact wording the router no longer depends on. See
+    api/services/script_review_service.py:AlreadyApprovedError."""
     slug, script_id = seeded_script
     first = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
                                json={"decision": "approved"})
@@ -99,7 +103,7 @@ async def test_approving_twice_is_refused_with_409(client, seeded_script):
     r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
                            json={"decision": "approved"})
     assert r.status_code == 409, r.text
-    assert "already approved" in r.text
+    assert r.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -108,6 +112,35 @@ async def test_a_send_back_without_a_target_is_refused_with_422(client, seeded_s
     r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
                            json={"decision": "changes_requested", "notes": "no"})
     assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_failed_notification_does_not_fail_the_request(client, seeded_script):
+    """The review is committed to the database before the notification is ever attempted.
+    If notify_script_sent_back raises anyway - despite its own blanket except - the
+    endpoint must not turn an already-recorded review into a failed request.
+
+    Patched at api.services.commit_notify_service.notify_script_sent_back: the router
+    imports it with a deferred `from ... import` inside the handler body (matching the
+    convention notify_crew_ready_for_approval uses in api/routers/commits.py), so the
+    name is looked up fresh from its defining module on every call rather than bound
+    once at router import time - there is no separate router-module reference to patch
+    the way there is for _caller_matches_stakeholder_flag.
+    """
+    slug, script_id = seeded_script
+    with patch("api.services.commit_notify_service.notify_script_sent_back",
+               new=AsyncMock(side_effect=RuntimeError("smtp exploded"))):
+        r = await client.post(
+            f"/projects/{slug}/script-ledger/{script_id}/review",
+            json={"decision": "changes_requested", "notes": "fix it", "return_to": "agent"},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["review_status"] == "changes_requested"
+
+    ledger = await client.get(f"/projects/{slug}/script-ledger")
+    row = {row["script_id"]: row for row in ledger.json()}[script_id]
+    assert row["review_status"] == "changes_requested"
+    assert row["review_return_to"] == "agent"
 
 
 @pytest.mark.asyncio

@@ -10,13 +10,17 @@ restricted yet.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.auth import check_project_access, require_any_auth
 from api.database import fetch_project, get_connection
 from api.services.commit_service import _caller_matches_stakeholder_flag
-from api.services.script_review_service import record_script_review
+from api.services.script_review_service import AlreadyApprovedError, record_script_review
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["script-reviews"])
 
@@ -68,14 +72,28 @@ async def review_script(
                 notes=body.notes, at_version=row["last_version"] or 0,
                 return_to=body.return_to,
             )
+        except AlreadyApprovedError as e:
+            # A conflict with stored state, not a malformed request - branching on the
+            # exception's type rather than its message means a reworded message cannot
+            # silently reclassify this as a 422.
+            raise HTTPException(status_code=409, detail=str(e))
         except ValueError as e:
-            # "already approved" is a conflict with stored state; everything else the
-            # service refuses is a malformed request.
-            raise HTTPException(
-                status_code=409 if "already approved" in str(e) else 422, detail=str(e)
-            )
+            # Everything else the service refuses (unknown decision, a send-back with
+            # no target) is a malformed request.
+            raise HTTPException(status_code=422, detail=str(e))
 
     if body.decision == "changes_requested":
         from api.services.commit_notify_service import notify_script_sent_back
-        await notify_script_sent_back(slug, script_id, body.return_to or "", body.notes)
+        # The review is already committed above; a failed notification must not turn a
+        # recorded review into a failed request. notify_script_sent_back already wraps
+        # its own body in a blanket except, so this is redundant today - but that
+        # guarantee lives two modules away, and a bare call here would silently start
+        # relying on it staying that way. Defended locally too, so this endpoint's own
+        # contract does not depend on a helper it does not own.
+        try:
+            await notify_script_sent_back(slug, script_id, body.return_to or "", body.notes)
+        except Exception:
+            log.exception(
+                "could not notify about script %s sent back on %s", script_id, slug
+            )
     return updated

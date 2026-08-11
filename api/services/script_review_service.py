@@ -12,6 +12,18 @@ VALID_DECISIONS = ("reviewed", "approved", "changes_requested")
 VALID_RETURN_TO = ("agent", "reviewer")
 
 
+class AlreadyApprovedError(ValueError):
+    """Raised when a second approval is attempted while the row is already approved.
+
+    A ValueError subclass so any existing caller catching ValueError still works
+    unchanged; a distinct type so a caller that needs to tell this conflict apart from
+    a malformed request (an unknown decision, a send-back with no target) can branch on
+    the exception's type rather than pattern-matching its message text. The router uses
+    this to choose 409 vs 422 - branching on wording would silently reclassify a
+    conflict as a bad request the moment the message was reworded.
+    """
+
+
 async def record_script_review(
     conn: aiosqlite.Connection, *, project_id: int, script_id: str, reviewer: str,
     decision: str, notes: str = "", at_version: int = 0, return_to: str | None = None,
@@ -39,7 +51,9 @@ async def record_script_review(
     if row is None:
         raise ValueError(f"no ledger row for script_id '{script_id}'")
     if decision == "approved" and row[0] == "approved":
-        raise ValueError(f"script {script_id} is already approved - send it back first")
+        raise AlreadyApprovedError(
+            f"script {script_id} cannot re-approve, send it back first"
+        )
 
     await conn.execute(
         "INSERT INTO script_reviews"
