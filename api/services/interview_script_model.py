@@ -112,7 +112,35 @@ def validate_scripts(
         else:
             seen_script_ids.add(script_id)
 
-        if not script.get("node_id"):
+        node_id = script.get("node_id")
+        if node_id is not None and not isinstance(node_id, str):
+            # Checked before falsiness, so an integer 0 - a real anchor written with the
+            # wrong JSON type - is reported as the type error it is rather than as a
+            # missing anchor. Two proven failures, both closed here rather than downstream,
+            # because interview_script_ledger.node_id is the anchor itself and the table is
+            # append-only: whatever lands there first can never be corrected.
+            #
+            # A value sqlite3 cannot bind (a dict, a list) raises inside
+            # register_scripts_sync, which commits once per call - so one malformed script
+            # de-registers its whole batch, including the valid ids beside it. The next
+            # batch then finds those ids free and moves them unrefused, which is the
+            # run-32 hole: SC-001 published at 1.2 and silently re-anchored, the merge
+            # having already destroyed the 1.2 script.
+            #
+            # A value sqlite3 CAN bind but retypes is worse, because it deadlocks rather
+            # than corrupts: node_id is TEXT, so an integer 12 is stored as '12', and
+            # validate_scripts_against_script_registry then compares 12 != '12' on every
+            # merged batch forever. Every later interview_scripts write is refused - not
+            # only that script's - with a message printing the same value twice and no
+            # hint the difference is a type, which an agent cannot self-correct from.
+            # Under the JSON registry both sides were ints and compared equal; the table's
+            # TEXT affinity is what made this reachable.
+            problems.append(
+                f"script {label} has node_id {node_id!r}, which must be a string - the "
+                "ledger stores the anchor as text, and an id registered against a "
+                "non-string can never be corrected afterwards"
+            )
+        elif not node_id:
             problems.append(
                 f"script {label} has no node_id - anchor it to a value chain node, or to "
                 f"{ENTITY_ID!r} when it concerns the organisation as a whole"
@@ -208,7 +236,12 @@ def validate_scripts_against_registry(scripts: dict, registry: dict) -> list[str
         f"script {script.get('script_id') or key} is anchored to node "
         f"{script.get('node_id')!r}, which is not in the value chain registry"
         for key, script in scripts.items()
-        if script.get("node_id") not in known
+        # A non-string node_id is skipped, not reported: validate_scripts already refuses it
+        # with a message that says what is actually wrong, and this membership test is a set
+        # lookup - an unhashable node_id (a dict, a list) raises TypeError here rather than
+        # returning a problem, which would turn a refusal the writer could act on into an
+        # unhandled exception out of the tool.
+        if isinstance(script.get("node_id"), str) and script.get("node_id") not in known
     ]
 
 

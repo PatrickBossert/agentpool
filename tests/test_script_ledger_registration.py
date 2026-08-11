@@ -37,6 +37,37 @@ def script_project(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture
+def script_project_no_registry(tmp_path, monkeypatch):
+    """The same project with no value chain registry at all.
+
+    Not a contrived state: it is the documented first-run case, and it is also where any
+    project whose value_chain_registry.json is corrupt or unreadable ends up, because
+    _current_registry (agents/tools/sqlite_state.py) fails open to {}. Both anchor
+    validators return [] on an empty registry - deliberately, so a first run is not
+    blocked - which means node_id's own shape is unguarded here unless validate_scripts
+    guards it. Every anchor-shape defect this file covers is reachable through this
+    fixture and invisible through the one above.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path / "db"))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    from api.config import get_settings
+    get_settings.cache_clear()
+    slug = "reg-test-bare"
+    (tmp_path / "db").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "projects" / slug / "outputs").mkdir(parents=True, exist_ok=True)
+    import asyncio
+    from api.database import get_connection
+
+    async def _init():
+        async with get_connection(slug) as conn:
+            await conn.execute("INSERT INTO projects (slug) VALUES (?)", (slug,))
+            await conn.commit()
+    asyncio.run(_init())
+    yield slug
+    get_settings.cache_clear()
+
+
 def _script(script_id, node_id, label):
     # The brief's helper omitted script_id and relationship, both required by
     # validate_scripts (api/services/interview_script_model.py:94) - without them every
@@ -233,6 +264,133 @@ def test_a_non_string_node_label_is_refused_by_the_tool(script_project):
     assert out3.startswith("Error:"), f"a moved id must be refused, got: {out3}"
     ids = {e["id"]: e["node_id"] for e in current_script_ledger_sync(slug)["scripts"]}
     assert ids == {"SC-001": "1.2"}
+
+
+def test_an_unbindable_node_id_cannot_de_register_the_valid_scripts_beside_it(
+    script_project_no_registry,
+):
+    """Final review, Critical 1(a): node_id was type-checked nowhere.
+
+    validate_scripts tested node_id for falsiness only, so a node_id that is an object
+    passed the door. register_scripts_sync then cannot bind it and commits once per call,
+    so ONE malformed script discards its whole batch's registrations - including the valid
+    SC-001 beside it. The next batch finds SC-001 unregistered,
+    validate_scripts_against_script_registry has nothing to compare against, and SC-001 is
+    permanently re-anchored - with the merge having already replaced the 1.2 script that
+    stored answers cite. That is the run-32 hole, reached through a different door.
+
+    Driven through SQLiteStateTool._run, on a project with no value chain registry,
+    because that is the state in which no other validator looks at node_id at all.
+    """
+    slug = script_project_no_registry
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    good = _script("SC-001", "1.2", "Works Programming")
+    bad = _script("SC-002", "1.3", "Pipeline Design")
+    bad["node_id"] = {"ref": "1.3"}
+    out1 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": good, "SC-002": bad}))
+    assert out1.startswith("Error:"), f"an object node_id must be refused, got: {out1}"
+    assert "SC-002" in out1 and "node_id" in out1
+
+    from agents.tools._db import current_script_ledger_sync
+    assert current_script_ledger_sync(slug)["scripts"] == [], (
+        "a refused batch must leave nothing registered - and, crucially, must not have "
+        "published SC-001 to the artefact while leaving its id free for a later batch"
+    )
+
+    # The corrected batch is what may register, and SC-001 is anchored once and for all.
+    out2 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": good,
+                                       "SC-002": _script("SC-002", "1.3", "Pipeline Design")}))
+    assert out2.startswith("Written to"), out2
+    out3 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": _script("SC-001", "9.9", "Elsewhere")}))
+    assert out3.startswith("Error:"), f"a moved id must be refused, got: {out3}"
+    ids = {e["id"]: e["node_id"] for e in current_script_ledger_sync(slug)["scripts"]}
+    assert ids == {"SC-001": "1.2", "SC-002": "1.3"}
+
+
+def test_an_integer_node_id_cannot_deadlock_every_later_scripts_write(
+    script_project_no_registry,
+):
+    """Final review, Critical 1(b): the failure moving the ledger into SQLite introduced.
+
+    interview_script_ledger.node_id is TEXT, so sqlite3 stores an integer 12 as '12'.
+    validate_scripts_against_script_registry then compares 12 != '12' and reports a move on
+    every merged write from then on - and because interview_scripts merges before it
+    validates, the poisoned entry is re-presented on every later batch. So an unrelated new
+    script is refused too, forever, by a message that prints the same value twice with no
+    hint that the difference is a type. Under the old JSON registry both sides were ints
+    and compared equal; only the table made this reachable.
+
+    Both assertions below fail against the unguarded validator: the first because the
+    integer write is accepted, the second because the write after it is refused.
+    """
+    slug = script_project_no_registry
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    numeric = _script("SC-001", "1.2", "Works Programming")
+    numeric["node_id"] = 12
+    out1 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": numeric}))
+    assert out1.startswith("Error:"), f"an integer node_id must be refused, got: {out1}"
+    assert "SC-001" in out1 and "node_id" in out1
+
+    out2 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-002": _script("SC-002", "1.3", "Pipeline Design")}))
+    assert out2.startswith("Written to"), (
+        "an unrelated later write must not be refused - that is the deadlock this guards: "
+        f"got {out2}"
+    )
+
+    from agents.tools._db import current_script_ledger_sync
+    ids = {e["id"]: e["node_id"] for e in current_script_ledger_sync(slug)["scripts"]}
+    assert ids == {"SC-002": "1.3"}
+
+
+def test_registration_refuses_to_move_an_id_when_called_directly(script_project):
+    """Final review, Important 2: the append-only clause had no test that could fail.
+
+    Every other test of this property drives through SQLiteStateTool, where
+    validate_scripts_against_script_registry refuses the moved batch first - so the write
+    never reaches register_scripts_sync at all, and the ledger assertion is satisfied by
+    the write not happening. Swapping ON CONFLICT DO NOTHING for DO UPDATE SET node_id=...
+    left all 1392 tests green.
+
+    The SQL clause is the last defence, not a redundant one: _current_script_registry
+    (agents/tools/sqlite_state.py) catches bare Exception and returns {}, and an empty
+    registry accepts anything - in that window nothing but this clause stops an id moving.
+    So this calls register_scripts_sync directly, with no validator in front of it.
+    """
+    from agents.tools._db import register_scripts_sync, _db_path
+    import sqlite3
+
+    slug = script_project
+    added = register_scripts_sync(
+        slug, {"SC-001": _script("SC-001", "1.2", "Works Programming")}, 1,
+        "interaction_designer")
+    assert added == 1
+
+    moved = register_scripts_sync(
+        slug, {"SC-001": _script("SC-001", "2.7", "Somewhere Else")}, 2,
+        "interaction_designer")
+
+    with sqlite3.connect(_db_path(slug)) as conn:
+        row = conn.execute(
+            "SELECT node_id, node_label FROM interview_script_ledger WHERE script_id=?",
+            ("SC-001",),
+        ).fetchone()
+    assert row[0] == "1.2", "the anchor an id already carries is never moved"
+    assert row[1] == "Works Programming", (
+        "a label already recorded is not restated either - only an empty one is filled"
+    )
+    assert moved == 0, "an id already held is never added again"
 
 
 def test_a_registration_failure_is_recorded_not_silent(script_project, monkeypatch):
