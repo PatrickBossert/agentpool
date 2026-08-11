@@ -213,6 +213,55 @@ describe('AgentDetailPanel - Status tab', () => {
   })
 })
 
+describe('AgentDetailPanel - the Output tab badge', () => {
+  it('counts distinct artefacts, not versions', async () => {
+    // Thirteen versions of one artefact is not thirteen outputs - it read as a count of
+    // interviews sitting one below the sixteen the tab listed.
+    const outputs: AgentOutput[] = Array.from({ length: 13 }, (_, i) => ({
+      id: i + 1,
+      agent_name: 'interaction_designer',
+      output_type: 'interview_scripts',
+      version: i + 1,
+      is_current: i === 12,
+      review_status: 'approved',
+      created_at: `2026-08-${String(i + 1).padStart(2, '0')} 10:00:00`,
+      file_path: `scripts_v${i + 1}.json`,
+    }))
+    renderPanel({ outputs })
+
+    expect(screen.queryByText('13')).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^Output\s*1$/ })).toBeInTheDocument()
+  })
+
+  it('excludes a demoted row from the count, so a superseded type stops counting', async () => {
+    // Same thirteen versions of interview_scripts (one current, twelve not), plus the real
+    // second artefact (interview_script_registry, current), plus the stale value_chain_registry
+    // row an ownership guard demoted (is_current: false) - id 107 in the live sp-gs-am data.
+    // Demoted is exactly "not currently owned"; the badge should read 2, not 3.
+    const scripts: AgentOutput[] = Array.from({ length: 13 }, (_, i) => ({
+      id: i + 1,
+      agent_name: 'interaction_designer',
+      output_type: 'interview_scripts',
+      version: i + 1,
+      is_current: i === 12,
+      review_status: 'approved',
+      created_at: `2026-08-${String(i + 1).padStart(2, '0')} 10:00:00`,
+      file_path: `scripts_v${i + 1}.json`,
+    }))
+    const outputs: AgentOutput[] = [
+      ...scripts,
+      { id: 100, agent_name: 'interaction_designer', output_type: 'value_chain_registry',
+        version: 1, is_current: false, review_status: 'approved', created_at: '2026-08-04 15:53:29', file_path: 'value_chain_registry_v1.json' },
+      { id: 101, agent_name: 'interaction_designer', output_type: 'interview_script_registry',
+        version: 1, is_current: true, review_status: 'approved', created_at: '2026-08-05 10:00:00', file_path: 'interview_script_registry_v1.json' },
+    ]
+    renderPanel({ outputs })
+
+    expect(await screen.findByRole('button', { name: /^Output\s*2$/ })).toBeInTheDocument()
+    expect(screen.queryByText('3')).not.toBeInTheDocument()
+  })
+})
+
 describe('AgentDetailPanel - unsaved work across a tab change', () => {
   // beforeunload does not fire on an in-panel tab change, so a tab that holds a draft and is
   // rendered conditionally loses it the moment another tab is clicked, silently and with no

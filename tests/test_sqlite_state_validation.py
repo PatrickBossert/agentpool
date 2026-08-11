@@ -549,6 +549,37 @@ def test_prompted_before_unaided_is_refused_by_the_tool():
     assert "unaided" in result
 
 
+# `seeded_project` now lives in tests/conftest.py, self-contained, so
+# tests/test_coverage_validation.py can share it rather than duplicate it. It points at its
+# own tmp_path-scoped project rather than SLUG, so the string this fixture returns differs
+# from SLUG - every test below uses the returned slug rather than the module constant.
+def test_a_scripts_write_moving_a_registered_id_is_refused(seeded_project):
+    """Driven through SQLiteStateTool's write, not by calling the validator.
+
+    A guard the write does not consult is worthless, which is the whole finding this task
+    exists for - the rule was already written and already enforced on the other door.
+    """
+    slug = seeded_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=0)
+
+    tool._run(operation="write", key="interview_script_registry",
+              agent_name="interaction_designer",
+              value=json.dumps({"scripts": [
+                  {"id": "SC-005", "node_id": "1.2", "level": "L2",
+                   "relationship": "internal", "node_label": "Portfolio", "active": True}]}))
+
+    result = tool._run(operation="write", key="interview_scripts",
+                       agent_name="interaction_designer",
+                       value=json.dumps({"SC-005": {
+                           "script_id": "SC-005", "node_id": "2.7", "level": "L2",
+                           "relationship": "internal", "node_label": "Elsewhere",
+                           "sections": []}}))
+    # Adapted from the brief: the tool's actual refusal-on-invalid-content prefix is "Error:",
+    # not "Refused:" - the latter is reserved for check_write's ownership refusals.
+    assert "Written to" not in result
+    assert "SC-005" in result and "1.2" in result
+
+
 def test_naming_a_lever_in_an_unaided_section_is_refused_by_the_tool():
     """The anchoring the ordering rule alone cannot catch: a section tagged unprompted that
     quotes the annual report's own phrasing is prompted in everything but the tag."""

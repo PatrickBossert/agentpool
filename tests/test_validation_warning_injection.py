@@ -4,11 +4,14 @@ The machine half of the feedback loop: no reviewer involvement, just an agent re
 own findings from the previous run. open and acknowledged both reach it; dismissed does
 not, because that asymmetry is the whole meaning of a disposition.
 """
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 import pytest_asyncio
+import yaml
 from api.config import get_settings
 from api.database import (
-    get_connection, fetch_validation_warnings, dispose_validation_warning,
+    get_connection, fetch_validation_warnings, dispose_validation_warning, insert_project,
 )
 from agents.tools._db import record_validation_warnings_sync
 
@@ -26,6 +29,32 @@ async def crew_project(tmp_path, monkeypatch):
         async with conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
             project_id = (await cur.fetchone())[0]
     yield slug, project_id
+    get_settings.cache_clear()
+
+
+ASSESSMENT_SLUG = "coverage-inject-crew-test"
+
+
+@pytest_asyncio.fixture
+async def assessment_project(tmp_path, monkeypatch):
+    """A project with a config.yaml, so build_and_run_crew's own config load succeeds -
+    the assessment_design branch needs it, unlike the other tests in this file which only
+    exercise _fetch_validation_warnings directly."""
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    projects_dir = tmp_path / "projects"
+    monkeypatch.setenv("PROJECTS_DIR", str(projects_dir))
+    get_settings.cache_clear()
+    project_dir = projects_dir / ASSESSMENT_SLUG
+    project_dir.mkdir(parents=True)
+    (project_dir / "config.yaml").write_text(
+        yaml.dump({"llm_mode": "standard", "sector": "utilities"})
+    )
+    async with get_connection(ASSESSMENT_SLUG) as conn:
+        await insert_project(
+            conn, slug=ASSESSMENT_SLUG, llm_mode="standard", sector="utilities",
+            config_json="{}",
+        )
+    yield ASSESSMENT_SLUG
     get_settings.cache_clear()
 
 
@@ -141,3 +170,66 @@ def test_build_and_run_crew_prepends_warnings_before_kickoff():
     assert "_fetch_validation_warnings" in src, "warnings are never fetched in the run"
     assert src.index("_fetch_validation_warnings") < src.index("kickoff_async"), \
         "warnings must be injected before the crew runs"
+
+
+@pytest.mark.asyncio
+async def test_a_coverage_warning_reaches_maya(crew_project):
+    """The gap the review found: 'interview_coverage' warnings were recorded through the
+    real production path (record_validation_warnings_sync, the function
+    SQLiteStateTool's coverage warner calls) but _WARNING_SOURCE_CREW had no entry for the
+    source, so _fetch_validation_warnings(slug, 'assessment_design') always returned "" -
+    Maya's crew_name never matched any source. This is narrower than
+    test_the_task_description_maya_receives_contains_the_coverage_warning below; it isolates
+    the fetch-and-scope step the fix actually touches."""
+    slug, _ = crew_project
+    from api.services.run_service import _fetch_validation_warnings
+
+    record_validation_warnings_sync(slug, 1, "interview_coverage", [
+        {"subject": None, "code": "incomplete_coverage",
+         "detail": "16 of 86 value chain nodes have an interview script. Missing: 1.1, 1.1.1",
+         "measure": 0.186}])
+
+    text = await _fetch_validation_warnings(slug, "assessment_design")
+    assert "16 of 86 value chain nodes have an interview script" in text
+
+
+@pytest.mark.asyncio
+async def test_the_task_description_maya_receives_contains_the_coverage_warning(
+    assessment_project,
+):
+    """The real property, not just the mechanism: a coverage warning recorded through the
+    production path lands in the task description build_and_run_crew hands to Maya's own
+    crew, before kickoff. Mirrors
+    test_change_request_text_reaches_the_task_before_kickoff in
+    tests/test_change_request_injection.py - same pattern, applied to the door this fix
+    closes."""
+    slug = assessment_project
+    record_validation_warnings_sync(slug, 1, "interview_coverage", [
+        {"subject": None, "code": "incomplete_coverage",
+         "detail": "16 of 86 value chain nodes have an interview script. Missing: 1.1, 1.1.1",
+         "measure": 0.186}])
+
+    mock_task = MagicMock()
+    mock_task.description = "original task body"
+    mock_crew = MagicMock()
+    mock_crew.tasks = [mock_task]
+    seen_at_kickoff: list[str] = []
+
+    async def _fake_kickoff():
+        seen_at_kickoff.append(mock_task.description)
+        return "done"
+
+    mock_crew.kickoff_async = AsyncMock(side_effect=_fake_kickoff)
+
+    import agents.crews.assessment_design_crew  # noqa: F401  ensure importable before patching
+    with patch(
+        "agents.crews.assessment_design_crew.create_assessment_design_crew",
+        return_value=mock_crew,
+    ):
+        from api.services.run_service import build_and_run_crew
+        result = await build_and_run_crew(slug, "assessment_design", run_id=7)
+
+    assert result == "done"
+    assert len(seen_at_kickoff) == 1
+    assert "16 of 86 value chain nodes have an interview script" in seen_at_kickoff[0]
+    assert seen_at_kickoff[0].endswith("\n\noriginal task body")

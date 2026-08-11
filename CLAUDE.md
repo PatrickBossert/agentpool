@@ -216,6 +216,18 @@ always-hosted orchestrator was a hole in the secure-mode guarantee rather than a
 A sensitive project with no local model configured for a tier raises `LocalModelUnavailable`
 rather than falling back. There is no hosted fallback and no borrowing of the other tier.
 
+Maya owes one interview script per active value chain activity. Coverage is checked on every
+`interview_scripts` write by `api/services/coverage_validation.py` and reported as
+`incomplete_coverage` into `validation_warnings`, which the next run reads back through
+`_fetch_validation_warnings`. Reaching every node across several runs is expected: each run adds
+only the missing nodes, and `_merge_with_current` accumulates.
+
+A script id means one node for the life of the project. Both doors enforce it now -
+`validate_script_registry_succession` on the registry write, and
+`validate_scripts_against_script_registry` on the scripts write. The second was missing, and
+because `_merge_with_current` keys on `script_id`, a moved id replaced a script rather than
+adding one.
+
 ### Routing a call outside a crew: two protocols, one setting
 
 Anything that is not a CrewAI agent goes through `project_completion(slug, tier, messages)` in
@@ -370,6 +382,17 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - Secure mode runs two local models concurrently. `OLLAMA_MAX_LOADED_MODELS` defaults to 1, which
   makes them evict each other on every alternation regardless of free memory - see
   `docs/runbook-local-models.md` before diagnosing local models as slow.
+- `GET` and `PATCH /projects/{slug}/interview-scripts/{node_label}` read and write a bare
+  `outputs/interview_scripts.json`. `insert_agent_output_sync` renames that file to
+  `interview_scripts_vN.json` on every agent write, so on any project Maya has run the GET
+  404s and the PATCH writes a file `list_interview_scripts` never reads, creating no
+  `agent_outputs` row. A human edit through that door is lost rather than merged. Resolve
+  through `current_output_path` like every other consumer - see "Resolving an output" above.
+- `build_and_run_agent` - the standalone "run this one agent" dispatch - fetches no validation
+  warnings, skill notes, or change requests, so an agent dispatched that way is missing all
+  three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
+  `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
+  re-run goes through the crew path. It is reachable from the API and from n8n.
 
 ---
 

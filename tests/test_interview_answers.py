@@ -172,6 +172,59 @@ async def test_an_entity_anchored_script_has_no_chain(seeded_session):
 
 
 @pytest.mark.asyncio
+async def test_a_new_format_role_scripts_answer_row_carries_the_role_not_the_tier(
+    seeded_session, monkeypatch
+):
+    """A script written after the level/perspective split names its role in `perspective`,
+    with `level` now always the structural tier ('L1'). Storing `level` verbatim would tag
+    a frontline technician's answer 'L1' - indistinguishable from a GM's L1 interview - and
+    the citation frame built from the row would lose the one thing that told a reader which
+    kind of interview this evidence came from. Asserted at record_answers, the actual call
+    site, and on the document handed to Chroma - not on answer_document/answer_metadata in
+    isolation, which would pass on a correct row regardless of whether record_answers ever
+    put the right value there.
+    """
+    role_script = {**SCRIPT, "node_id": "1.F", "level": "L1", "perspective": "F"}
+    captured: list[list[dict]] = []
+    monkeypatch.setattr(svc, "index_answers",
+                         lambda slug, rows: captured.append(rows) or len(rows))
+
+    async with get_connection(SLUG) as conn:
+        await record_answers(conn, SLUG, seeded_session, PAIRS[:1], script=role_script)
+        rows = await fetch_interview_answers(conn, session_id=seeded_session)
+
+    assert rows[0]["level"] == "F", "the role, not the tier, must land in the evidence row"
+
+    assert len(captured) == 1 and len(captured[0]) == 1
+    indexed_row = captured[0][0]
+    assert indexed_row["level"] == "F"
+    doc = svc.answer_document(indexed_row)
+    assert "| F |" in doc, f"the citation frame lost the role letter: {doc!r}"
+    assert "| L1 |" not in doc
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_role_scripts_answer_row_still_carries_the_role(seeded_session):
+    """A script written before the split names its role directly in `level`, with no
+    `perspective` key at all - unaffected by the fix above, which only changes behaviour
+    when `perspective` is actually set."""
+    legacy_script = {**SCRIPT, "node_id": "1.F", "level": "F"}
+    async with get_connection(SLUG) as conn:
+        await record_answers(conn, SLUG, seeded_session, PAIRS[:1], script=legacy_script)
+        rows = await fetch_interview_answers(conn, session_id=seeded_session)
+    assert rows[0]["level"] == "F"
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_scripts_answer_row_still_carries_its_tier(seeded_session):
+    """A non-role script has no perspective to prefer, so its tier is unaffected."""
+    async with get_connection(SLUG) as conn:
+        await record_answers(conn, SLUG, seeded_session, PAIRS[:1], script=SCRIPT)
+        rows = await fetch_interview_answers(conn, session_id=seeded_session)
+    assert rows[0]["level"] == "L2"
+
+
+@pytest.mark.asyncio
 async def test_a_chain_anchored_script_records_its_chain(seeded_session):
     async with get_connection(SLUG) as conn:
         await record_answers(conn, SLUG, seeded_session, PAIRS[:1], script=SCRIPT)

@@ -130,6 +130,7 @@ def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
         validate_levers_unnamed_in_unaided_sections,
         validate_scripts,
         validate_scripts_against_registry,
+        validate_scripts_against_script_registry,
     )
 
     problems = validate_scripts(parsed, disciplines=_project_disciplines(slug))
@@ -143,6 +144,12 @@ def _validate_interview_scripts(parsed: dict, slug: str) -> list[str]:
     # Maya may or may not follow.
     problems.extend(validate_elicitation_order(parsed))
     problems.extend(validate_levers_unnamed_in_unaided_sections(parsed, _current_levers(slug)))
+    # The script registry is the ledger for script ids, and succession already holds writes to
+    # it to that contract. This is the same rule on the door the scripts actually come through:
+    # the merge keys on script_id, so an id that moves replaces rather than adds.
+    problems.extend(
+        validate_scripts_against_script_registry(parsed, _current_script_registry(slug))
+    )
     return problems
 
 
@@ -179,6 +186,14 @@ def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
     return validate_tree_structure(parsed, previous or None)
 
 
+def _warn_interview_coverage(parsed: object, slug: str) -> list[dict]:
+    from api.services.coverage_validation import validate_node_coverage
+
+    if not isinstance(parsed, dict):
+        return []
+    return validate_node_coverage(parsed, _current_registry(slug))
+
+
 # Warners differ from validators in two ways that matter, and both are why they are a
 # separate map rather than another _VALIDATORS entry:
 #
@@ -194,6 +209,7 @@ def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
 _WARNERS: dict[str, Callable[[object, str], list[dict]]] = {
     "value_chain_tree": _warn_value_chain_tree,
     "themes": _warn_themes,
+    "interview_scripts": _warn_interview_coverage,
 }
 
 # The `source` recorded against each warning, so a reviewer can tell a tree finding from a
@@ -201,6 +217,7 @@ _WARNERS: dict[str, Callable[[object, str], list[dict]]] = {
 _WARNER_SOURCE: dict[str, str] = {
     "value_chain_tree": "value_chain_tree",
     "themes": "theme_anchor",
+    "interview_scripts": "interview_coverage",
 }
 
 
@@ -331,6 +348,15 @@ class SQLiteStateTool(BaseTool):
             # current - the refusal costs the batch, never the work already banked.
             if key in _MERGE_ON_WRITE and isinstance(parsed, dict):
                 parsed = _merge_with_current(key, parsed, self.slug)
+                if key == "interview_scripts":
+                    # Scripts written before the level/perspective split filed a role
+                    # node's letter in `level` with no `perspective` at all. Normalising
+                    # here, before validation, means a batch that never touches those old
+                    # entries still merges cleanly - without this, every future write would
+                    # be refused outright the moment the old entries it is merged with fail
+                    # the new level/perspective schema.
+                    from api.services.interview_script_model import normalise_scripts
+                    parsed = normalise_scripts(parsed)
                 value = json.dumps(parsed, indent=2)
 
             # The ledger's labels are not the writer's to restate. Applied before the

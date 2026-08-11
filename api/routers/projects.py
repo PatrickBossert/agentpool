@@ -452,8 +452,12 @@ async def publish_node_template(slug: str, node_label: str, body: PublishNodeTem
         raise HTTPException(status_code=404, detail=f"Node '{node_label}' not found in interview_scripts.json")
 
     entry = dict(scripts[node_label])
-    # Strip non-template fields, keep only template-compatible ones
-    for field in ("node_label", "level", "research_brief", "study_objectives"):
+    # Strip non-template fields, keep only template-compatible ones. `perspective` is
+    # `level`'s other half since the split - a template published from a role-node script
+    # (e.g. level: 'L1', perspective: 'F') must lose its role identity exactly as it used to
+    # lose the role letter `level` carried alone, or a customer template would carry 'C' into
+    # the stored schema and identify which stakeholder segment originated it.
+    for field in ("node_label", "level", "perspective", "research_brief", "study_objectives"):
         entry.pop(field, None)
 
     schema_json = json.dumps(entry)
@@ -490,9 +494,14 @@ async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_
 
     dedupe_script_map still runs - two scripts inside one artefact can normalise to the
     same label, and it also drops values that are not interviews.
+
+    normalise_scripts runs last, on the way out, so a script written before the
+    level/perspective split (level: "F", no perspective) is served to the UI in the shape
+    every renderer built for the split expects, with no migration of the file on disk.
     """
     await check_project_access(slug, payload)
     from agents.tools._db import current_output_path
+    from api.services.interview_script_model import normalise_scripts
     from api.services.interview_scripts_service import dedupe_script_map
 
     outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
@@ -500,22 +509,25 @@ async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_
     if current is None:
         return {}
     try:
-        return dedupe_script_map(json.loads(current.read_text(encoding="utf-8")))
+        deduped = dedupe_script_map(json.loads(current.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError):
         return {}
+    return normalise_scripts(deduped)
 
 
 @router.get("/{slug}/interview-scripts/{node_label}")
 async def get_interview_script(slug: str, node_label: str, payload: dict = Depends(require_any_auth)):
     """Return the interview script for a single node."""
     await check_project_access(slug, payload)
+    from api.services.interview_script_model import normalise_script_fields
+
     p = _scripts_path(slug, "interview")
     if not p.exists():
         raise HTTPException(status_code=404, detail="No interview scripts found")
     scripts = json.loads(p.read_text(encoding="utf-8"))
     if node_label not in scripts:
         raise HTTPException(status_code=404, detail=f"No script for node '{node_label}'")
-    return scripts[node_label]
+    return normalise_script_fields(scripts[node_label])
 
 
 @router.patch("/{slug}/interview-scripts/{node_label}")

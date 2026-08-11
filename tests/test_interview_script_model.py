@@ -10,6 +10,8 @@ import pytest
 from api.services.interview_script_model import (
     LEVELS,
     RELATIONSHIPS,
+    normalise_script_fields,
+    normalise_scripts,
     question_id,
     validate_script_registry_succession,
     validate_scripts,
@@ -25,11 +27,12 @@ REGISTRY = {"activities": [
 
 
 def _script(script_id="SC-001", node_id="1.2", level="L2", relationship="internal",
-            sections=None) -> dict:
+            sections=None, perspective=None) -> dict:
     return {
         "script_id": script_id,
         "node_id": node_id,
         "level": level,
+        "perspective": perspective,
         "relationship": relationship,
         "node_label": "Planned Maintenance L2 Interview",
         # Tags are required from the moment the vocabularies exist, so the default fixture
@@ -107,8 +110,9 @@ def test_the_relationship_vocabulary_is_closed():
         {"internal", "customer", "regulator", "supplier", "partner"})
 
 
-def test_every_script_type_is_known():
-    assert LEVELS == frozenset({"L0", "L1", "L2", "L3", "C", "A", "F", "S"})
+def test_every_tier_is_known():
+    """`level` is the structural tier only now - the four role letters live in `perspective`."""
+    assert LEVELS == frozenset({"L0", "L1", "L2", "L3"})
 
 
 def test_a_script_anchored_to_an_unknown_node_is_refused():
@@ -118,11 +122,85 @@ def test_a_script_anchored_to_an_unknown_node_is_refused():
 
 def test_an_external_script_anchors_to_the_entity():
     """A regulator regulates the entity and a customer of the entity may sit in another
-    company - both are still about node 0."""
-    regulator = _script(script_id="SC-010", node_id="0", level="A", relationship="regulator")
-    customer = _script(script_id="SC-011", node_id="0", level="C", relationship="customer")
+    company - both are still about node 0, which is L0."""
+    regulator = _script(script_id="SC-010", node_id="0", level="L0", perspective="A",
+                         relationship="regulator")
+    customer = _script(script_id="SC-011", node_id="0", level="L0", perspective="C",
+                        relationship="customer")
     assert validate_scripts(_scripts(regulator, customer)) == []
     assert validate_scripts_against_registry(_scripts(regulator, customer), REGISTRY) == []
+
+
+@pytest.mark.parametrize("bad", ["x", "role", ""])
+def test_an_unknown_perspective_is_refused(bad):
+    problems = validate_scripts(_scripts(_script(perspective=bad)))
+    assert any("perspective" in p for p in problems)
+
+
+def test_a_null_perspective_is_the_default_and_is_free():
+    assert validate_scripts(_scripts(_script(perspective=None))) == []
+
+
+def test_a_role_script_may_omit_the_tier():
+    """A script normalised from one written before the split carries perspective with no
+    tier at all - the tier was never recorded for it, and refusing it invents a defect
+    that is really just missing history."""
+    s = _script(level=None, perspective="F")
+    assert validate_scripts(_scripts(s)) == []
+
+
+def test_a_non_role_script_must_still_carry_a_real_tier():
+    """Only a role script's tier is allowed to be missing. An ordinary script with no
+    perspective and no valid level is still refused."""
+    problems = validate_scripts(_scripts(_script(level=None, perspective=None)))
+    assert any("level" in p for p in problems)
+
+
+def test_a_role_script_with_an_invalid_non_null_tier_is_refused():
+    problems = validate_scripts(_scripts(_script(level="not-a-tier", perspective="F")))
+    assert any("level" in p for p in problems)
+
+
+def test_normalise_reads_a_pre_split_role_letter_as_level_null_perspective_set():
+    """Scripts written before the split filed the role letter straight into `level`, with
+    no `perspective` key at all - exactly what the sixteen scripts on the live project
+    carry today."""
+    legacy = {"script_id": "SC-014", "node_id": "1.F", "level": "F"}
+    normalised = normalise_script_fields(legacy)
+    assert normalised["level"] is None
+    assert normalised["perspective"] == "F"
+
+
+def test_normalise_leaves_an_already_split_script_alone():
+    modern = _script(level="L1", perspective="F")
+    assert normalise_script_fields(modern) == modern
+
+
+def test_normalise_leaves_an_ordinary_script_alone():
+    ordinary = _script(level="L2", perspective=None)
+    assert normalise_script_fields(ordinary) == ordinary
+
+
+def test_normalise_scripts_applies_across_the_whole_map():
+    scripts = {
+        "SC-014": {"script_id": "SC-014", "node_id": "1.F", "level": "F"},
+        "SC-015": {"script_id": "SC-015", "node_id": "1.2", "level": "L2"},
+    }
+    normalised = normalise_scripts(scripts)
+    assert normalised["SC-014"]["level"] is None
+    assert normalised["SC-014"]["perspective"] == "F"
+    assert normalised["SC-015"]["level"] == "L2"
+    assert normalised["SC-015"].get("perspective") is None
+
+
+def test_a_legacy_script_survives_normalisation_and_validation_together():
+    """The actual write-path sequence: a script written before the split is normalised,
+    then validated as part of a merged batch, and must not be refused."""
+    legacy = {"script_id": "SC-014", "node_id": "1.F", "level": "F",
+              "relationship": "internal", "node_label": "Frontline",
+              "sections": []}
+    normalised = normalise_scripts({"SC-014": legacy})
+    assert validate_scripts(normalised) == []
 
 
 def test_an_empty_registry_blocks_nothing():
@@ -152,3 +230,41 @@ def test_retiring_and_growing_are_both_free():
         {"id": "SC-002", "node_id": "2", "active": True},
     ]}
     assert validate_script_registry_succession(current, proposed) == []
+
+
+def test_a_script_id_may_not_move_to_another_node():
+    """The registry says SC-005 is node 1.2. A batch filing it against 2.7 must be refused.
+
+    validate_script_registry_succession already refuses this - on writes to the registry. The
+    write that carries the scripts never consulted it, so the batch landed and the merge, which
+    keys on script_id, overwrote 1.2's script with 2.7's content.
+    """
+    from api.services.interview_script_model import validate_scripts_against_script_registry
+    registry = {"scripts": [{"id": "SC-005", "node_id": "1.2", "active": True}]}
+    scripts = {"SC-005": {"script_id": "SC-005", "node_id": "2.7"}}
+    problems = validate_scripts_against_script_registry(scripts, registry)
+    assert len(problems) == 1
+    assert "SC-005" in problems[0] and "1.2" in problems[0] and "2.7" in problems[0]
+
+
+def test_an_unregistered_script_id_is_free():
+    """Growth is free. A new id is how every script starts."""
+    from api.services.interview_script_model import validate_scripts_against_script_registry
+    registry = {"scripts": [{"id": "SC-005", "node_id": "1.2", "active": True}]}
+    scripts = {"SC-090": {"script_id": "SC-090", "node_id": "3.4"}}
+    assert validate_scripts_against_script_registry(scripts, registry) == []
+
+
+def test_a_registered_id_kept_on_its_own_node_is_free():
+    """Re-emitting a script for the node it already serves is a revision, not a move."""
+    from api.services.interview_script_model import validate_scripts_against_script_registry
+    registry = {"scripts": [{"id": "SC-005", "node_id": "1.2", "active": True}]}
+    scripts = {"SC-005": {"script_id": "SC-005", "node_id": "1.2"}}
+    assert validate_scripts_against_script_registry(scripts, registry) == []
+
+
+def test_an_empty_script_registry_accepts_anything():
+    """A first run has no registry, and must not be blocked by one it has not written yet."""
+    from api.services.interview_script_model import validate_scripts_against_script_registry
+    scripts = {"SC-001": {"script_id": "SC-001", "node_id": "0"}}
+    assert validate_scripts_against_script_registry(scripts, {}) == []

@@ -29,6 +29,13 @@ def _s(level, node):
     return {"SC-001": {"script_id": "SC-001", "level": level, "node_id": node}}
 
 
+def _ps(level, perspective, node):
+    """A script written after the level/perspective split: the role lives in `perspective`,
+    not `level`."""
+    return {"SC-001": {"script_id": "SC-001", "level": level, "perspective": perspective,
+                        "node_id": node}}
+
+
 def test_the_run_26_defect_is_caught():
     problems = validate_anchor_levels(_s("L0", "1"), REGISTRY)
     assert len(problems) == 1
@@ -47,6 +54,24 @@ def test_a_role_script_must_anchor_to_its_own_role_node():
     assert validate_anchor_levels(_s("S", "0.S"), REGISTRY) == []
     problems = validate_anchor_levels(_s("A", "1.1"), REGISTRY)
     assert len(problems) == 1 and "0.A" in problems[0]
+
+
+def test_a_new_format_role_script_must_anchor_to_its_own_role_node():
+    """The same rule as test_a_role_script_must_anchor_to_its_own_role_node, but on a script
+    shaped the way the split actually produces one: `level` holds the tier ('L1'/'L0'), and
+    the role lives in `perspective`.
+
+    Before the extension, this check only ever read `level`, and a new-format script's
+    `level` is always a plain tier - never a role letter - so the check silently never fired
+    for any script written after the split. A customer script misanchored to the plain chain
+    "1" instead of its role node "1.C" is exactly what it would have let through.
+    """
+    assert validate_anchor_levels(_ps("L1", "C", "1.C"), REGISTRY) == []
+    assert validate_anchor_levels(_ps("L1", "F", "1.F"), REGISTRY) == []
+    assert validate_anchor_levels(_ps("L0", "A", "0.A"), REGISTRY) == []
+    assert validate_anchor_levels(_ps("L0", "S", "0.S"), REGISTRY) == []
+    problems = validate_anchor_levels(_ps("L1", "C", "1"), REGISTRY)
+    assert len(problems) == 1 and "not a C role node" in problems[0]
 
 
 def test_role_checks_are_skipped_when_the_registry_has_no_role_nodes():

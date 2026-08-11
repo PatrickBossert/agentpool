@@ -28,9 +28,6 @@ const LEVEL_TITLE: Record<string, string> = {
   S:  'Corporate Services',
 }
 
-const VC_LEVELS  = new Set(['L0', 'L1', 'L2', 'L3'])
-const EXT_LEVELS = new Set(['C', 'A', 'F', 'S'])
-
 function Block({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -151,7 +148,10 @@ function SectionBlock({ section, index }: { section: InterviewSection; index: nu
 
 function ScriptCard({ script }: { script: InterviewScript }) {
   const [expanded, setExpanded] = useState(false)
-  const badgeCls = LEVEL_BADGE[script.level] ?? 'bg-gray-100 text-gray-600'
+  // Perspective, when the script carries one, is what a stakeholder recognises - "Frontline",
+  // not "L1" - so the badge and title read from it first and fall back to the tier.
+  const badgeKey = script.perspective ?? script.level
+  const badgeCls = LEVEL_BADGE[badgeKey] ?? 'bg-gray-100 text-gray-600'
   const totalQuestions = (script.sections ?? []).reduce((n, s) => n + (s.questions?.length ?? 0), 0)
 
   return (
@@ -166,9 +166,9 @@ function ScriptCard({ script }: { script: InterviewScript }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5 flex-wrap">
             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${badgeCls}`}>
-              {script.level}
+              {badgeKey}
             </span>
-            <span className="text-[10px] text-gray-500">{LEVEL_TITLE[script.level] ?? script.level}</span>
+            <span className="text-[10px] text-gray-500">{LEVEL_TITLE[badgeKey] ?? badgeKey}</span>
             <span className="text-xs font-medium text-gray-800 truncate">{script.node_label}</span>
           </div>
           <p className="text-[10px] text-gray-400 line-clamp-1">{script.research_brief}</p>
@@ -300,8 +300,10 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
 
   if (scripts.length === 0) return null
 
-  const vcScripts  = scripts.filter(s => VC_LEVELS.has(s.level))
-  const extScripts = scripts.filter(s => EXT_LEVELS.has(s.level))
+  // Split on perspective, not level. The previous version filtered on two hardcoded level sets and
+  // rendered nothing outside them, so a script with an unexpected level vanished with no message.
+  const vcScripts  = scripts.filter(s => !s.perspective)
+  const extScripts = scripts.filter(s => !!s.perspective)
 
   return (
     <div className="space-y-4">

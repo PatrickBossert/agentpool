@@ -71,6 +71,17 @@ async def record_answers(
     # mentioned.
     chain = node_id.split(".")[0] if node_id and node_id != "0" else None
 
+    # The tag this table has always carried under `level` is "what kind of interview was
+    # this" - which, for a role-node script, is the role (a customer's answer reads
+    # differently from a frontline technician's), not the structural tier the split now
+    # keeps separately in `perspective`. Preferring `perspective` when it is set reproduces
+    # that pre-split meaning for both shapes: a script written after the split names its
+    # role there; a script written before it, or normalised from one, still names it in
+    # `level` directly. Either way this table - and the citation frame built from it in
+    # answer_document - keeps showing "F"/"A"/"C"/"S" for a role interview and the tier for
+    # an ordinary one, exactly as it always did.
+    evidence_level = script.get("perspective") or script.get("level") or ""
+
     written_ids: list[int] = []
     for pair in qa_pairs:
         section, question = _locate(script, pair["question_id"])
@@ -93,7 +104,7 @@ async def record_answers(
             node_id=node_id,
             node_label=script.get("node_label", ""),
             chain=chain,
-            level=script.get("level", ""),
+            level=evidence_level,
             relationship=script.get("relationship", ""),
             party_id=session.get("party_id"),
             discipline=tags.get("discipline") or "",
@@ -119,7 +130,14 @@ async def script_for_session(conn, slug: str, session: dict) -> dict | None:
     authoritative. Sessions created before script ids existed fall back to node_label, which
     is what they were keyed on. A session whose script cannot be resolved returns None rather
     than guessing - tagging answers from the wrong script is worse than leaving them untagged.
+
+    Normalised on the way out, same as the two GET /interview-scripts* endpoints - this reads
+    the raw current artefact directly rather than through either of them, so without this a
+    script written before the level/perspective split (level: 'F', no perspective) would be
+    the one shape in the system still handed out as-is.
     """
+    from api.services.interview_script_model import normalise_script_fields
+
     path = current_output_path(slug, "interview_scripts")
     if path is None:
         return None
@@ -139,10 +157,10 @@ async def script_for_session(conn, slug: str, session: dict) -> dict | None:
 
     script_id = row["script_id"] if row else None
     if script_id and script_id in scripts:
-        return scripts[script_id]
+        return normalise_script_fields(scripts[script_id])
     for script in scripts.values():
         if isinstance(script, dict) and script.get("node_label") == session["node_label"]:
-            return script
+            return normalise_script_fields(script)
     return None
 
 

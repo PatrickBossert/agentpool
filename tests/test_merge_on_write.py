@@ -140,3 +140,36 @@ async def test_the_tool_refuses_a_script_filed_at_the_wrong_altitude(maya_projec
     assert "altitude" in result
     assert latest_output_path(outputs / "interview_scripts.json") is None, \
         "a refused write must leave no file behind"
+
+
+@pytest.mark.asyncio
+async def test_a_batch_merges_cleanly_with_a_pre_split_script_already_banked(maya_project):
+    """The sixteen scripts already on the live project carry level: 'F' and no perspective -
+    exactly what interview_scripts.json held before the level/perspective split existed.
+
+    Merge runs before validation, so those old entries sit inside every future write's
+    merged set. Without normalising them on the way in, `validate_scripts` would refuse the
+    whole batch on a level it was never asked to validate - costing every script banked
+    since, not just the new one - the moment any agent writes another script to this
+    project.
+    """
+    slug, outputs = maya_project
+    legacy = {
+        "script_id": "SC-014", "node_id": "1", "level": "F", "node_label": "F interview",
+        "relationship": "internal", "sections": [{
+            "section_id": "S1", "title": "Context", "discipline": "governance",
+            "question_intent": "context", "elicitation": "unprompted",
+            "questions": [{"id": "Q1.1", "text": "How does this work today?"}],
+        }],
+    }
+    (outputs / "interview_scripts.json").write_text(json.dumps({"SC-014": legacy}))
+
+    result = _write(slug, _script("SC-015", "2", "L1"))
+    assert not result.startswith("Error"), result
+
+    got = _current(outputs)
+    assert sorted(got) == ["SC-014", "SC-015"]
+    # Normalised on the way in: the pre-split entry now carries the split shape, with no
+    # tier recorded (it was never written down) and the role moved to `perspective`.
+    assert got["SC-014"]["level"] is None
+    assert got["SC-014"]["perspective"] == "F"
