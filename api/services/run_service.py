@@ -106,6 +106,9 @@ async def _fetch_skill_notes(crew_name: str) -> str:
 _WARNING_SOURCE_CREW: dict[str, str] = {
     "value_chain_tree": "discovery_mapping",
     "theme_anchor": "discovery_interviews",
+    # Maya is the only agent who can act on a coverage gap, because she is the one who
+    # writes the scripts.
+    "interview_coverage": "assessment_design",
 }
 
 
