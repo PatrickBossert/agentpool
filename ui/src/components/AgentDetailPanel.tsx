@@ -870,10 +870,14 @@ export default function AgentDetailPanel({
     .filter(o => agentKeys.has(o.agent_name) && !INTERNAL_OUTPUT_TYPES.has(o.output_type))
     .sort((a, b) => parseDbDate(b.created_at).getTime() - parseDbDate(a.created_at).getTime())
 
-  // The tab badge counts artefacts, not rows: an agent's single declared output written
-  // thirteen times is one artefact, not thirteen, and the row count read as a count of
-  // interviews sitting one below the total the Output tab actually listed.
-  const distinctOutputTypes = new Set(crewOutputs.map(o => o.output_type)).size
+  // The tab badge counts current artefacts, not rows: an agent's single declared output
+  // written thirteen times is one artefact, not thirteen, and the row count read as a count
+  // of interviews sitting one below the total the Output tab actually listed. Currency is
+  // what makes this coherent with demotion as a data-fix tool - a row an ownership guard has
+  // since demoted (is_current=0) is exactly a type this agent no longer currently owns, so it
+  // stops counting here too. This also generalises: an output type since superseded by
+  // another agent's write no longer counts against this crew.
+  const distinctOutputTypes = new Set(crewOutputs.filter(o => o.is_current).map(o => o.output_type)).size
 
   const crewMeta = CREW_META[crewKey]
 
