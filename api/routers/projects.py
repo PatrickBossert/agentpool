@@ -490,9 +490,14 @@ async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_
 
     dedupe_script_map still runs - two scripts inside one artefact can normalise to the
     same label, and it also drops values that are not interviews.
+
+    normalise_scripts runs last, on the way out, so a script written before the
+    level/perspective split (level: "F", no perspective) is served to the UI in the shape
+    every renderer built for the split expects, with no migration of the file on disk.
     """
     await check_project_access(slug, payload)
     from agents.tools._db import current_output_path
+    from api.services.interview_script_model import normalise_scripts
     from api.services.interview_scripts_service import dedupe_script_map
 
     outputs_dir = Path(get_settings().projects_dir) / slug / "outputs"
@@ -500,22 +505,25 @@ async def list_interview_scripts(slug: str, payload: dict = Depends(require_any_
     if current is None:
         return {}
     try:
-        return dedupe_script_map(json.loads(current.read_text(encoding="utf-8")))
+        deduped = dedupe_script_map(json.loads(current.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError):
         return {}
+    return normalise_scripts(deduped)
 
 
 @router.get("/{slug}/interview-scripts/{node_label}")
 async def get_interview_script(slug: str, node_label: str, payload: dict = Depends(require_any_auth)):
     """Return the interview script for a single node."""
     await check_project_access(slug, payload)
+    from api.services.interview_script_model import normalise_script_fields
+
     p = _scripts_path(slug, "interview")
     if not p.exists():
         raise HTTPException(status_code=404, detail="No interview scripts found")
     scripts = json.loads(p.read_text(encoding="utf-8"))
     if node_label not in scripts:
         raise HTTPException(status_code=404, detail=f"No script for node '{node_label}'")
-    return scripts[node_label]
+    return normalise_script_fields(scripts[node_label])
 
 
 @router.patch("/{slug}/interview-scripts/{node_label}")

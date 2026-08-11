@@ -460,7 +460,12 @@ export interface InterviewScript {
   node_id?: string
   relationship?: 'internal' | 'customer' | 'regulator' | 'supplier' | 'partner'
   node_label: string
+  /** The structural tier - L0 to L3 - even for a role-node script. */
   level: string
+  /** Who the interviewee speaks as, on a role node: audit, corporate services, customer, or
+   *  frontline. Null for an ordinary L0-L3 script. Separate from `level` so the same node
+   *  files at one tier regardless of which role, if any, the script also carries. */
+  perspective: 'A' | 'S' | 'C' | 'F' | null
   research_brief: string
   study_objectives: string[]
   welcome_message: string

@@ -15,7 +15,16 @@ from api.services.value_chain_model import ENTITY_ID
 # not from eleven internal managers.
 RELATIONSHIPS = frozenset({"internal", "customer", "regulator", "supplier", "partner"})
 
-LEVELS = frozenset({"L0", "L1", "L2", "L3", "C", "A", "F", "S"})
+# The structural tier. A role node's script also carries one - the tier of the node it is
+# filed against, e.g. "L0" for 0.A and 0.S, "L1" for <L1>.C and <L1>.F - so "what tier is
+# this interview at?" never needs to special-case the four role letters.
+LEVELS = frozenset({"L0", "L1", "L2", "L3"})
+
+# Who the interviewee speaks as, on a role node. A, S, C, and F used to be filed in `level`
+# itself, which made the same node file differently in the registry (which always records
+# its structural tier) and the script (which recorded the role instead). Ordinary nodes
+# carry perspective: null.
+_ROLE_LEVELS = ("C", "A", "F", "S")
 
 QUESTION_INTENTS = frozenset({"context", "evidence", "maturity", "challenge", "opportunity"})
 
@@ -52,6 +61,36 @@ def question_id(script_id: str, section_id: str, question_no: int) -> str:
     return f"{script_id}.{section_id}.Q{question_no}"
 
 
+def normalise_script_fields(script: dict) -> dict:
+    """Read a script written before the level/perspective split as the two-field shape.
+
+    Every script written before the split filed a role node's letter - C, A, F, or S -
+    directly in `level`, with no `perspective` at all. Read that way here: `level: None,
+    perspective: <letter>`. Nothing on disk is rewritten by this function - it is applied
+    wherever a script is read, so the scripts already written keep working with every
+    validator and every renderer built for the split, with no migration script and no
+    version bump.
+    """
+    if not isinstance(script, dict):
+        return script
+    level = script.get("level")
+    if level in _ROLE_LEVELS and script.get("perspective") is None:
+        script = dict(script)
+        script["level"] = None
+        script["perspective"] = level
+    return script
+
+
+def normalise_scripts(scripts: dict) -> dict:
+    """normalise_script_fields applied across a whole script map."""
+    if not isinstance(scripts, dict):
+        return scripts
+    return {
+        key: normalise_script_fields(value) if isinstance(value, dict) else value
+        for key, value in scripts.items()
+    }
+
+
 def validate_scripts(
     scripts: dict, disciplines: tuple[str, ...] = DEFAULT_DISCIPLINES
 ) -> list[str]:
@@ -78,10 +117,27 @@ def validate_scripts(
                 f"script {label} has no node_id - anchor it to a value chain node, or to "
                 f"{ENTITY_ID!r} when it concerns the organisation as a whole"
             )
-        if script.get("level") not in LEVELS:
+        level = script.get("level")
+        perspective = script.get("perspective")
+        if perspective is not None and perspective not in _ROLE_LEVELS:
             problems.append(
-                f"script {label} has level {script.get('level')!r}, which is not one of "
-                f"{sorted(LEVELS)}"
+                f"script {label} has perspective {perspective!r}, which is not one of "
+                f"{sorted(_ROLE_LEVELS)} or null"
+            )
+        if perspective is None:
+            if level not in LEVELS:
+                problems.append(
+                    f"script {label} has level {level!r}, which is not one of {sorted(LEVELS)}"
+                )
+        elif level is not None and level not in LEVELS:
+            # A role-node script normally carries both - level the tier, perspective the role.
+            # A script written before the split, or normalised on read from one, carries
+            # perspective with level left null: that is accepted here rather than refused,
+            # because the tier was never recorded for it and refusing invents a defect that
+            # is really just missing history.
+            problems.append(
+                f"script {label} has level {level!r}, which is not one of {sorted(LEVELS)} "
+                "or null when perspective is set"
             )
         if script.get("relationship") not in RELATIONSHIPS:
             problems.append(
@@ -286,9 +342,6 @@ def lever_status(lever: dict, answers: list[dict]) -> str:
     return "confirmed_prompted"
 
 
-_ROLE_LEVELS = ("C", "A", "F", "S")
-
-
 def validate_anchor_levels(scripts: dict, registry: dict) -> list[str]:
     """Every script whose level disagrees with the level of the node it anchors to.
 
@@ -305,6 +358,12 @@ def validate_anchor_levels(scripts: dict, registry: dict) -> list[str]:
     The role checks activate only once the registry actually holds role nodes. A project
     whose value chain predates them must not be blocked by a rule about nodes it has never
     had.
+
+    The role a script is judged against is `perspective` when the script carries one, and
+    falls back to `level` otherwise - a script written before the level/perspective split
+    still names its role in `level` (e.g. "F" with no perspective at all), and this is the
+    same fallback `normalise_scripts` applies, so a script judged here before that
+    normalisation runs is judged the same way as one judged after.
     """
     levels = {
         entry.get("id"): entry.get("level")
@@ -326,6 +385,7 @@ def validate_anchor_levels(scripts: dict, registry: dict) -> list[str]:
             continue
         name = script.get("script_id") or key
         level = script.get("level")
+        perspective = script.get("perspective")
 
         if level in ("L0", "L1", "L2", "L3"):
             node_level = levels[node_id]
@@ -335,12 +395,16 @@ def validate_anchor_levels(scripts: dict, registry: dict) -> list[str]:
                     f"which is {node_level}. A script filed at the wrong altitude sends its "
                     f"evidence to the wrong level of the value chain."
                 )
-        elif level in _ROLE_LEVELS and has_role_nodes:
+
+        role = perspective if perspective in _ROLE_LEVELS else (
+            level if level in _ROLE_LEVELS else None
+        )
+        if role and has_role_nodes:
             suffix = str(node_id).rsplit(".", 1)[-1]
-            if suffix != level:
-                expected = f"0.{level}" if level in ("A", "S") else f"<entity>.{level}"
+            if suffix != role:
+                expected = f"0.{role}" if role in ("A", "S") else f"<entity>.{role}"
                 problems.append(
-                    f"script {name} is a {level} interview anchored to node {node_id!r}, "
-                    f"which is not a {level} role node. Anchor it to {expected}."
+                    f"script {name} is a {role} interview anchored to node {node_id!r}, "
+                    f"which is not a {role} role node. Anchor it to {expected}."
                 )
     return problems

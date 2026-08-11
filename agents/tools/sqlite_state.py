@@ -348,6 +348,15 @@ class SQLiteStateTool(BaseTool):
             # current - the refusal costs the batch, never the work already banked.
             if key in _MERGE_ON_WRITE and isinstance(parsed, dict):
                 parsed = _merge_with_current(key, parsed, self.slug)
+                if key == "interview_scripts":
+                    # Scripts written before the level/perspective split filed a role
+                    # node's letter in `level` with no `perspective` at all. Normalising
+                    # here, before validation, means a batch that never touches those old
+                    # entries still merges cleanly - without this, every future write would
+                    # be refused outright the moment the old entries it is merged with fail
+                    # the new level/perspective schema.
+                    from api.services.interview_script_model import normalise_scripts
+                    parsed = normalise_scripts(parsed)
                 value = json.dumps(parsed, indent=2)
 
             # The ledger's labels are not the writer's to restate. Applied before the
