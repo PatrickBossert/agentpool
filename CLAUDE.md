@@ -235,6 +235,20 @@ held. There is no `DELETE FROM interview_script_ledger` anywhere, so dropping an
 (the JSON-artefact-era registry's other worry) is structurally impossible rather than merely
 refused.
 
+The script ledger is a table, `interview_script_ledger`, with `script_id` as its primary
+key. It is maintained by the write path: every `interview_scripts` write registers ids it
+has not seen, and never moves one it has. Maya does not write it - the JSON
+`interview_script_registry` artefact is retired, and the output type has no owner, so a
+write to it is refused. Run 32 is why: it wrote 41 scripts, hit CrewAI's default
+`max_iter` before its ledger write, and reported `completed` with 41 ids outside the
+succession guarantee.
+
+Review is per script, not per artefact version. `script_reviews` holds one row per review
+event and the ledger row carries the derived state, because a script is reviewed by
+several people and approved once. A send-back carries `review_return_to`: only `agent`
+enters Maya's differential, because a return to `reviewer` that regenerated the script
+would rewrite the instrument the reviewer was about to re-read.
+
 ### Routing a call outside a crew: two protocols, one setting
 
 Anything that is not a CrewAI agent goes through `project_completion(slug, tier, messages)` in
@@ -389,12 +403,6 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - Secure mode runs two local models concurrently. `OLLAMA_MAX_LOADED_MODELS` defaults to 1, which
   makes them evict each other on every alternation regardless of free memory - see
   `docs/runbook-local-models.md` before diagnosing local models as slow.
-- `GET` and `PATCH /projects/{slug}/interview-scripts/{node_label}` read and write a bare
-  `outputs/interview_scripts.json`. `insert_agent_output_sync` renames that file to
-  `interview_scripts_vN.json` on every agent write, so on any project Maya has run the GET
-  404s and the PATCH writes a file `list_interview_scripts` never reads, creating no
-  `agent_outputs` row. A human edit through that door is lost rather than merged. Resolve
-  through `current_output_path` like every other consumer - see "Resolving an output" above.
 - `build_and_run_agent` - the standalone "run this one agent" dispatch - fetches no validation
   warnings, skill notes, or change requests, so an agent dispatched that way is missing all
   three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
