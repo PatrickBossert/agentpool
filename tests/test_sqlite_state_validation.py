@@ -549,24 +549,10 @@ def test_prompted_before_unaided_is_refused_by_the_tool():
     assert "unaided" in result
 
 
-@pytest.fixture
-def seeded_project():
-    """A project whose value_chain_registry already holds 1.2 and 2.7 as active L2 activities.
-
-    So the pre-existing anchor checks (validate_scripts_against_registry, validate_anchor_levels)
-    pass on both nodes and this test fails for its own reason - the script registry - rather
-    than an unrelated one.
-
-    Plain, not `@pytest_asyncio.fixture`: nothing in this file touches asyncio: `clean`, the
-    tool's `_run`, and every helper here are synchronous, mirroring the rest of the module.
-    """
-    tool = SQLiteStateTool(slug=SLUG)
-    _write_registry_payload(
-        tool, _registry_payload(("1.2", "Portfolio", "L2"), ("2.7", "Elsewhere", "L2"))
-    )
-    return SLUG
-
-
+# `seeded_project` now lives in tests/conftest.py, self-contained, so
+# tests/test_coverage_validation.py can share it rather than duplicate it. It points at its
+# own tmp_path-scoped project rather than SLUG, so the string this fixture returns differs
+# from SLUG - every test below uses the returned slug rather than the module constant.
 def test_a_scripts_write_moving_a_registered_id_is_refused(seeded_project):
     """Driven through SQLiteStateTool's write, not by calling the validator.
 

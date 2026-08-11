@@ -186,6 +186,14 @@ def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
     return validate_tree_structure(parsed, previous or None)
 
 
+def _warn_interview_coverage(parsed: object, slug: str) -> list[dict]:
+    from api.services.coverage_validation import validate_node_coverage
+
+    if not isinstance(parsed, dict):
+        return []
+    return validate_node_coverage(parsed, _current_registry(slug))
+
+
 # Warners differ from validators in two ways that matter, and both are why they are a
 # separate map rather than another _VALIDATORS entry:
 #
@@ -201,6 +209,7 @@ def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
 _WARNERS: dict[str, Callable[[object, str], list[dict]]] = {
     "value_chain_tree": _warn_value_chain_tree,
     "themes": _warn_themes,
+    "interview_scripts": _warn_interview_coverage,
 }
 
 # The `source` recorded against each warning, so a reviewer can tell a tree finding from a
@@ -208,6 +217,7 @@ _WARNERS: dict[str, Callable[[object, str], list[dict]]] = {
 _WARNER_SOURCE: dict[str, str] = {
     "value_chain_tree": "value_chain_tree",
     "themes": "theme_anchor",
+    "interview_scripts": "interview_coverage",
 }
 
 
