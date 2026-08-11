@@ -45,30 +45,18 @@ def test_the_prompt_states_the_one_script_per_active_node_rule():
     assert "not every L3" not in src, "the old selection rule is back"
 
 
-def test_the_prompt_states_the_ledger_is_cumulative_and_keyed_by_script_id():
-    """Two rules that only became load-bearing once Maya emitted the differential.
-
-    While she regenerated everything, both were implicit: the ledger she sent already
-    held every id, and re-emitting every script made the top-level key academic. Now a
-    run sends a partial batch: a ledger that repeated only this run's ids used to be
-    REFUSED by validate_script_registry_succession (deleted with the retired
-    interview_script_registry door - script-ledger-as-a-table Task 3, code review round 1,
-    Important 2), and the same guarantee now holds structurally instead - the
-    interview_script_ledger table only ever grows. A batch keyed by node_label still files
-    every existing script a second time under a key _merge_with_current does not recognise,
-    which this prompt line also guards against.
-
-    Asserted here because both live in prompt prose, which nothing else guards - and the
-    defect that made this branch necessary was two instructions in this same file
-    disagreeing with each other.
-    """
+def test_the_prompt_no_longer_asks_maya_to_write_a_ledger():
+    """The ledger is maintained by the write path. An instruction to write one would now
+    produce a refused write on every run, because the output type lost its ownership entry
+    when the artefact retired."""
     src = _src()
-    assert "THE LEDGER IS CUMULATIVE" in src, (
-        "Maya emits only the differential, so a ledger carrying just this run's ids "
-        "drops every earlier one and the succession guard refuses the write"
-    )
-    assert "keyed by script_id" in src
-    assert "keyed by node_label" not in src, (
-        "the artefact and _merge_with_current both key on script_id: filing by "
-        "node_label double-writes every script that already exists"
-    )
+    assert "THE LEDGER IS CUMULATIVE" not in src
+    assert "interview_script_registry" not in src
+
+
+def test_the_prompt_tells_her_a_sent_back_script_is_the_differential_exception():
+    """Step 4 says generate only what is missing. Without naming the exception, a revision
+    request is an instruction she has been told to ignore."""
+    src = _src()
+    assert "SCRIPTS SENT BACK FOR REVISION" in src
+    assert "keeps its existing script_id" in src

@@ -18,10 +18,13 @@ even though `.description` never mentioned them; the LLM read the promise in
 `expected_output` and tried to keep it. Tests here check both fields.
 
 Her task also never read what already exists before generating, so a re-run
-regenerated the whole set from the registry as though starting fresh - wasteful, and
-it churns script text a consultant may have edited by hand. She now reads
-`interview_scripts` and `interview_script_registry` first and generates only for
-activities that do not have a script yet.
+regenerated the whole set as though starting fresh - wasteful, and it churns script
+text a consultant may have edited by hand. She now reads `interview_scripts` first
+and generates only for activities that do not have a script yet. The script ledger
+itself (script id against node) is no longer hers to read or write - it is a database
+table the write path maintains from what she writes to `interview_scripts`, and an
+instruction to read or write it as a SQLiteStateTool key would now produce a refused
+write, because that key retired.
 """
 from unittest.mock import MagicMock
 
@@ -104,11 +107,16 @@ def test_maya_reads_what_exists_before_generating(task_description):
     assert "operation='read', key='interview_scripts'" in task_description, (
         "must read the existing scripts"
     )
-    assert "operation='read', key='interview_script_registry'" in task_description, (
-        "must read the script ledger"
-    )
     lowered = task_description.lower()
     assert "only" in lowered and "missing" in lowered, "must say to generate only what is missing"
+
+
+def test_maya_no_longer_reads_or_writes_the_ledger(task_description):
+    """The ledger (script id against node) is a database table the write path maintains
+    from what she writes to `interview_scripts` - it is no longer an artefact of hers.
+    `interview_script_registry` retired: an instruction to read or write it as a
+    SQLiteStateTool key would now produce a refused write on every run."""
+    assert "interview_script_registry" not in task_description
 
 
 @pytest.mark.parametrize("sampling_phrase", [

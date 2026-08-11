@@ -73,27 +73,18 @@ def test_every_declared_write_is_owned_by_the_agent_told_to_make_it():
 
     dispatched = {a for agents in _CREW_AGENT_NAMES.values() for a in agents}
 
-    # interview_script_registry is mid-retirement, deliberately: the ownership entry that
-    # made it writable is gone (the ledger it fed is now a table, maintained as a side effect
-    # of the interview_scripts write instead), but Maya's prompt still instructs her to write
-    # it - removing that instruction is a later task, ordered after this one on purpose so
-    # the failure mode in between is a loud, harmless refusal rather than a silent one. Left
-    # out of this scan rather than weakening the assertion for every key, so a real ownership
-    # mismatch on any other key still fails here.
-    retiring_unowned = {"interview_script_registry"}
-
-    # Code review round 1, Important 4: an exclusion that can never fail is an exclusion
-    # that outlives its reason. Once the later task removes Maya's instruction, the scan
-    # simply stops finding this key at all - the line above would go on skipping nothing,
-    # silently, forever, and if any agent were ever told to write this key again the scan
-    # would silently pass it over too, which is the exact defect this test exists to catch.
-    # This fails loudly the moment the exclusion becomes obsolete, forcing its removal.
-    for key in retiring_unowned:
-        assert key in declared, f"{key} exclusion is obsolete - delete it"
+    # interview_script_registry finished retiring in this task: the ownership entry was
+    # already gone (the ledger it fed is now a database table, maintained as a side effect
+    # of the interview_scripts write), and Maya's prompt no longer instructs her to write
+    # it either - so the scan below no longer finds the key at all, and the exclusion that
+    # covered the gap between those two events is removed rather than left to skip nothing
+    # forever.
+    assert "interview_script_registry" not in declared, (
+        "interview_script_registry should no longer be a declared write - "
+        "the instruction to write it was supposed to be removed"
+    )
 
     for key, agents in declared.items():
-        if key in retiring_unowned:
-            continue
         for agent in agents & dispatched:
             assert OUTPUT_OWNERS.get(key) == agent, (
                 f"{agent} is told to write {key}, owned by {OUTPUT_OWNERS.get(key)}"

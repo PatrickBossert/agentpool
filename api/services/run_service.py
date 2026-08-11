@@ -155,6 +155,42 @@ async def _fetch_validation_warnings(slug: str, crew_name: str) -> str:
     )
 
 
+async def _fetch_regeneration_requests(slug: str, crew_name: str) -> str:
+    """Scripts a reviewer sent back to the agent, as a prompt block naming the exception to
+    step 4's differential.
+
+    Only assessment_design owns this - Maya is the only agent who writes interview_scripts,
+    so she is the only one who can regenerate one. scripts_awaiting_regeneration already
+    filters to review_return_to='agent': a send-back to reviewers is a human-to-human loop
+    and must never reach her.
+
+    The import is local, not module-level, so a caller that patches
+    api.services.script_review_service.scripts_awaiting_regeneration reaches this call - a
+    module-level `from ... import` would bind this module's own reference at import time and
+    the patch would silently miss it.
+    """
+    if crew_name != "assessment_design":
+        return ""
+    from api.services.script_review_service import scripts_awaiting_regeneration
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return ""
+        pending = await scripts_awaiting_regeneration(conn, project_id=project["id"])
+    if not pending:
+        return ""
+    lines = "\n".join(
+        f"- {p['script_id']} ({p['node_id']} {p['node_label']}): {p['notes']}"
+        for p in pending
+    )
+    return (
+        "SCRIPTS SENT BACK FOR REVISION. Regenerate each of these in full, addressing the "
+        "note. They already have a script, so step 4's differential would otherwise skip "
+        "them - these are the exception:\n" + lines
+    )
+
+
 async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[int]]:
     """Open change requests for output types this crew's own agents produce, and the ids
     to close after.
@@ -498,6 +534,11 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     if warning_text:
         for task in crew.tasks:
             task.description = warning_text + "\n\n" + task.description
+
+    regeneration_text = await _fetch_regeneration_requests(slug, crew_name)
+    if regeneration_text:
+        for task in crew.tasks:
+            task.description = regeneration_text + "\n\n" + task.description
 
     result = await crew.kickoff_async()
 
