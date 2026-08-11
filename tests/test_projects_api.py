@@ -374,3 +374,58 @@ async def test_publishing_a_template_finds_the_current_scripts(auth_client, vers
     assert tpl["name"] == "Frontline"
     schema = json.loads(tpl["schema_json"])
     assert schema["sections"][0]["section_id"] == "S1"
+
+
+PUBLISH_ROLE_NODE_LABEL = "FrontlineRoleInterview"
+PUBLISH_ROLE_SCRIPTS = {
+    PUBLISH_ROLE_NODE_LABEL: {
+        "node_label": PUBLISH_ROLE_NODE_LABEL, "level": "L1", "perspective": "F",
+        "research_brief": "b",
+        "sections": [{"section_id": "S1", "title": "Opening", "questions": []}],
+    }
+}
+
+
+@pytest_asyncio.fixture
+async def versioned_role_scripts_project(create_project):
+    slug = create_project
+    from agents.tools._db import insert_agent_output_sync
+
+    outputs = Path(get_settings().projects_dir) / slug / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    draft = outputs / "interview_scripts.json"
+    draft.write_text(json.dumps(PUBLISH_ROLE_SCRIPTS))
+    insert_agent_output_sync(slug, "interview_coordinator", "interview_scripts", str(draft))
+    assert not draft.exists()
+    return slug
+
+
+@pytest.mark.asyncio
+async def test_publishing_a_role_node_template_strips_its_perspective(
+    auth_client, versioned_role_scripts_project
+):
+    """`level` alone used to carry a role node's identity ('F'), and was stripped. Since the
+    split, that identity moved to `perspective` - stripping only `level` would leave a
+    published template announcing which stakeholder segment ('F') it was written for, in the
+    one place role nuance is explicitly not supposed to live (see value_chain_mapper's "Do
+    NOT put role nuance on the node" rule - a template is exactly that kind of shared,
+    reusable node-level artefact).
+    """
+    slug = versioned_role_scripts_project
+    resp = await auth_client.post(
+        f"/projects/{slug}/node-templates/{PUBLISH_ROLE_NODE_LABEL}/publish",
+        json={"name": "Frontline Role", "description": ""},
+    )
+    assert resp.status_code == 200
+    template_id = resp.json()["template_id"]
+
+    import aiosqlite
+    from api.database import fetch_template, get_system_db_path, init_system_db
+
+    async with aiosqlite.connect(str(get_system_db_path())) as sys_conn:
+        sys_conn.row_factory = aiosqlite.Row
+        await init_system_db(sys_conn)
+        tpl = await fetch_template(sys_conn, template_id)
+    schema = json.loads(tpl["schema_json"])
+    assert "level" not in schema
+    assert "perspective" not in schema

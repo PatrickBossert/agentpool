@@ -452,8 +452,12 @@ async def publish_node_template(slug: str, node_label: str, body: PublishNodeTem
         raise HTTPException(status_code=404, detail=f"Node '{node_label}' not found in interview_scripts.json")
 
     entry = dict(scripts[node_label])
-    # Strip non-template fields, keep only template-compatible ones
-    for field in ("node_label", "level", "research_brief", "study_objectives"):
+    # Strip non-template fields, keep only template-compatible ones. `perspective` is
+    # `level`'s other half since the split - a template published from a role-node script
+    # (e.g. level: 'L1', perspective: 'F') must lose its role identity exactly as it used to
+    # lose the role letter `level` carried alone, or a customer template would carry 'C' into
+    # the stored schema and identify which stakeholder segment originated it.
+    for field in ("node_label", "level", "perspective", "research_brief", "study_objectives"):
         entry.pop(field, None)
 
     schema_json = json.dumps(entry)
