@@ -393,6 +393,56 @@ def test_registration_refuses_to_move_an_id_when_called_directly(script_project)
     assert moved == 0, "an id already held is never added again"
 
 
+def test_a_ledger_row_with_no_label_gets_one_from_the_next_write(script_project):
+    """Final review, Important 4: node_label was blank on all 86 live rows, and nothing in
+    the code could ever fill one.
+
+    register_scripts_sync's INSERT is the only writer of node_label, ON CONFLICT DO NOTHING
+    means an existing row never reaches it, and the follow-up UPDATE touched only
+    last_version, last_author, and active. script_ledger_backfill.py loads a JSON registry
+    carrying id, node_id, and active - no labels - so every backfilled row held ''
+    permanently, and the review UI showed a bare "1.2" where a name belonged.
+
+    Driven from the row shape a real backfill produces, then written through the real tool.
+    """
+    import asyncio
+    import sqlite3
+    from api.database import get_connection
+    from api.services.script_ledger_backfill import backfill_script_ledger
+    from agents.tools._db import _db_path
+
+    slug = script_project
+
+    async def _backfill():
+        async with get_connection(slug) as conn:
+            cur = await conn.execute("SELECT id FROM projects WHERE slug=?", (slug,))
+            project_id = (await cur.fetchone())[0]
+            return await backfill_script_ledger(
+                conn, project_id=project_id,
+                registry={"scripts": [{"id": "SC-001", "node_id": "1.2", "active": True}]},
+            )
+    assert asyncio.run(_backfill()) == 1
+
+    with sqlite3.connect(_db_path(slug)) as conn:
+        assert conn.execute(
+            "SELECT node_label FROM interview_script_ledger WHERE script_id=?", ("SC-001",)
+        ).fetchone()[0] == "", "precondition: a backfilled row has no label at all"
+
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    out = tool._run(operation="write", key="interview_scripts",
+                    agent_name="interaction_designer",
+                    value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+    assert out.startswith("Written to"), out
+
+    with sqlite3.connect(_db_path(slug)) as conn:
+        node_id, node_label = conn.execute(
+            "SELECT node_id, node_label FROM interview_script_ledger WHERE script_id=?",
+            ("SC-001",),
+        ).fetchone()
+    assert node_label == "Works Programming"
+    assert node_id == "1.2", "filling a label must not move the anchor"
+
+
 def test_a_registration_failure_is_recorded_not_silent(script_project, monkeypatch):
     """Task 2 review round 2: a registration exception must leave a trace, not vanish into
     a bare except. Forces register_scripts_sync to raise for reasons the door validation

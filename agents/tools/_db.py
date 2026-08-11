@@ -508,9 +508,10 @@ def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -
     reachable there in the first place. script_ledger_backfill.py's insert-time active is a
     different case, not a precedent this one needs to match: it has no follow-up UPDATE, so
     its insert-time value genuinely is the only place active is decided. An id already held
-    has its node_id, node_label, last_version, and last_author left exactly alone - none of
-    those may move once set - but active is the one field the design carves out an explicit
-    exception for ("growth is free and retirement is free with the meaning kept"), so a
+    keeps its node_id absolutely - that is the anchor, and the whole append-only guarantee -
+    and keeps any node_label it already carries, an empty one being filled rather than
+    restated (see the CASE below for why a label is not an anchor). active is the one field
+    the design carves out an explicit exception for ("growth is free and retirement is free with the meaning kept"), so a
     script whose entry names active explicitly still has that value applied even when the id
     already exists. Retiring or un-retiring an id is not redefining it and not dropping it.
 
@@ -557,11 +558,53 @@ def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -
                  version, author),
             )
             added += cur.rowcount
+            # A regeneration returns the row to pending. Run BEFORE the last_version bump
+            # below and carrying exactly scripts_awaiting_regeneration's own WHERE clause,
+            # so the row and the query agree by construction rather than by two authors
+            # remembering the same rule: the query stopped returning a regenerated script
+            # but the row still read changes_requested with review_return_to='agent'
+            # forever, and the row is what the review UI renders - every regenerated script
+            # showed "Sent back" beside a "changed since" chip, permanently.
+            #
+            # Conditional, not blanket, for two reasons. An approved or reviewed row is
+            # untouched, so a write can never quietly undo a reviewer's decision. And a
+            # send-back recorded AFTER the write it was reacting to has
+            # reviewed_at_version >= last_version, so this call cannot clear it - the next
+            # write, which is the actual regeneration, clears it instead.
+            #
+            # It touches review_status and review_return_to only. node_id is not reachable
+            # from here and must not become so: this runs on every id a batch names,
+            # including ids the ledger already holds, which is precisely the set the
+            # append-only rule protects.
             conn.execute(
                 "UPDATE interview_script_ledger"
-                " SET last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
+                "   SET review_status='pending', review_return_to=NULL,"
+                "       updated_at=CURRENT_TIMESTAMP"
+                " WHERE script_id=? AND review_status='changes_requested'"
+                "   AND review_return_to='agent'"
+                "   AND COALESCE(last_version,0) <= COALESCE(reviewed_at_version,0)",
+                (script_id,),
+            )
+            # node_label is filled when the held value is empty, and never overwritten when
+            # it is not. The INSERT above is otherwise the only writer of node_label, so an
+            # id already in the table could never acquire one - which is the state all 86
+            # live rows were in, because script_ledger_backfill.py loads a JSON registry
+            # that carries id, node_id, and active but no labels at all. Reviewers saw bare
+            # "0", "1", "1.4.2" in the review UI and Maya's send-back block rendered
+            # "- SC-005 (1.2 ): note", while every script from SC-087 on would have carried
+            # a label - an inconsistent list rather than a uniformly bare one.
+            #
+            # This leaves append-only on node_id untouched. A label is display text; the
+            # anchor is the contract. Filling only an empty one also means a later batch
+            # cannot use the label to restate a script's identity, which is the property
+            # DeriveRegistryTool protects on the value chain ledger for the same reason.
+            conn.execute(
+                "UPDATE interview_script_ledger"
+                " SET node_label=CASE WHEN COALESCE(node_label,'')=''"
+                "                     THEN ? ELSE node_label END,"
+                "     last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
                 " WHERE script_id=?",
-                (version, author, script_id),
+                (script.get("node_label") or "", version, author, script_id),
             )
             if active_value is not None:
                 conn.execute(

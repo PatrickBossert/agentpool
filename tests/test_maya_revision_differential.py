@@ -256,6 +256,81 @@ async def test_a_backfilled_script_with_no_recorded_version_injects_on_its_first
 
 
 @pytest.mark.asyncio
+async def test_a_regenerated_script_returns_to_pending_on_the_ledger_row(assessment_project):
+    """Final review, Important 5: review_status never came back from changes_requested.
+
+    After Maya regenerates, the QUERY clears correctly - scripts_awaiting_regeneration
+    stops returning the row, which the test above already proves. The ROW did not: it still
+    read review_status='changes_requested', review_return_to='agent', with last_version
+    ahead of reviewed_at_version. The row is what the review UI renders, so every
+    regenerated script showed "Sent back" forever, beside a "changed since" chip. The
+    design promises derived state on the ledger row; the derived state was stale.
+
+    SC-099 is the control, and it is deliberately an *approved* script rather than an
+    untouched one: a blanket reset in register_scripts_sync would be invisible against a
+    row that was already pending.
+    """
+    from agents.tools.sqlite_state import SQLiteStateTool
+    from api.services.script_review_service import record_script_review
+
+    slug = assessment_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    out = tool._run(
+        operation="write", key="interview_scripts", agent_name="interaction_designer",
+        value=json.dumps({"SC-042": _minimal_script("SC-042", "3.3.2", "Billing"),
+                          "SC-099": _minimal_script("SC-099", "3.3.3", "Metering")}),
+    )
+    assert out.startswith("Written to"), out
+
+    async def _row(script_id):
+        async with get_connection(slug) as conn:
+            conn.row_factory = None
+            cur = await conn.execute(
+                "SELECT review_status, review_return_to, last_version, reviewed_at_version"
+                "  FROM interview_script_ledger WHERE script_id=?",
+                (script_id,),
+            )
+            return await cur.fetchone()
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        version = (await _row("SC-042"))[2]
+        await record_script_review(
+            conn, project_id=project["id"], script_id="SC-042", reviewer="bo",
+            decision="changes_requested", notes="the maturity anchors are wrong",
+            at_version=version, return_to="agent",
+        )
+        await record_script_review(
+            conn, project_id=project["id"], script_id="SC-099", reviewer="bo",
+            decision="approved", notes="", at_version=version,
+        )
+
+    assert (await _row("SC-042"))[0] == "changes_requested"
+    assert (await _row("SC-099"))[0] == "approved"
+
+    # The regeneration, through the real write path - and it names SC-099 too, exactly as a
+    # batch Maya writes would, so the control is genuinely written and not merely ignored.
+    out2 = tool._run(
+        operation="write", key="interview_scripts", agent_name="interaction_designer",
+        value=json.dumps({"SC-042": _minimal_script("SC-042", "3.3.2", "Billing"),
+                          "SC-099": _minimal_script("SC-099", "3.3.3", "Metering")}),
+    )
+    assert out2.startswith("Written to"), out2
+
+    status, return_to, last_version, reviewed_at = await _row("SC-042")
+    assert status == "pending", (
+        "a regenerated script must not still read 'Sent back' in the review UI"
+    )
+    assert return_to is None, "and must not still be pointed at the agent"
+    assert last_version > reviewed_at, "precondition: the regeneration really did land"
+
+    assert (await _row("SC-099"))[0] == "approved", (
+        "a script nobody sent back keeps the decision a reviewer recorded on it"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_crew_other_than_assessment_design_never_queries_regeneration(
     assessment_project,
 ):
