@@ -196,3 +196,102 @@ def test_the_registry_door_preserves_active_on_registration(script_project):
     from agents.tools._db import current_script_ledger_sync
     entry = next(e for e in current_script_ledger_sync(slug)["scripts"] if e["id"] == "SC-500")
     assert entry["active"] is False
+
+
+def test_a_non_string_node_label_is_refused_by_the_tool(script_project):
+    """Task 2 review round 2, the Critical re-raised: round 1's coalesce only closed the
+    null case. node_label as an object still reached sqlite3's bind for
+    interview_script_ledger.node_label with no validation in between - the re-reviewer
+    drove it through the real write path and got "Written to" both times, with SC-001
+    published at 1.2, never registered (register_scripts_sync's exception was swallowed),
+    and silently re-anchored to 2.7 on the second write.
+
+    The fix is at the door, not in register_scripts_sync: validate_scripts now refuses a
+    node_label that is neither a string nor null, so a batch that could break the bind is
+    never written at all, and registration can never be reached with a value it cannot
+    handle. This drives that through SQLiteStateTool._run (not the validator function
+    directly), asserts the refusal, then separately establishes SC-001 legitimately and
+    asserts a later batch still cannot move it - the ledger must never have been left in a
+    state a bad write could exploit.
+    """
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    bad = _script("SC-001", "1.2", "Works Programming")
+    bad["node_label"] = {"not": "a string"}
+    out1 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer", value=json.dumps({"SC-001": bad}))
+    assert out1.startswith("Error:"), f"a non-string node_label must be refused, got: {out1}"
+    assert "node_label" in out1
+
+    from agents.tools._db import current_script_ledger_sync
+    assert current_script_ledger_sync(slug)["scripts"] == [], (
+        "a refused write must not have registered anything"
+    )
+
+    out2 = tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+    assert out2.startswith("Written to"), out2
+
+    out3 = tool._run(operation="write", key="interview_scripts",
+                     agent_name="interaction_designer",
+                     value=json.dumps({"SC-001": _script("SC-001", "2.7", "Somewhere Else")}))
+    assert out3.startswith("Error:"), f"a moved id must be refused, got: {out3}"
+    ids = {e["id"]: e["node_id"] for e in current_script_ledger_sync(slug)["scripts"]}
+    assert ids == {"SC-001": "1.2"}
+
+
+def test_a_registration_failure_is_recorded_not_silent(script_project, monkeypatch):
+    """Task 2 review round 2: a registration exception must leave a trace, not vanish into
+    a bare except. Forces register_scripts_sync to raise for reasons the door validation
+    cannot anticipate (round 1's silent swallow is what let the node_label defect exist
+    undetected in the first place) and asserts a validation_warnings row names the id."""
+    import asyncio
+    import agents.tools.sqlite_state as sqlite_state_mod
+    from api.database import get_connection, fetch_validation_warnings
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated ledger failure")
+
+    monkeypatch.setattr(sqlite_state_mod, "register_scripts_sync", _boom)
+
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    out = tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+                    value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+    assert out.startswith("Written to"), out   # the durable write must still succeed
+
+    async def _read():
+        async with get_connection(slug) as conn:
+            cur = await conn.execute("SELECT id FROM projects WHERE slug=?", (slug,))
+            project_id = (await cur.fetchone())[0]
+            return await fetch_validation_warnings(conn, project_id=project_id)
+    rows = asyncio.run(_read())
+    matches = [r for r in rows if r["code"] == "registration_failed"]
+    assert len(matches) == 1
+    assert "SC-001" in matches[0]["subject"] or "SC-001" in matches[0]["detail"]
+
+
+def test_registry_door_retirement_of_an_already_registered_id_reaches_the_table(script_project):
+    """Task 2 review round 2, small finding 2: active is the one mutation the registry door
+    is allowed to make to an id it does not own the anchor of. Register SC-001 through
+    interview_scripts (active unspecified, defaults True), then retire it through
+    interview_script_registry - the ledger must show active: False afterwards, and node_id
+    must be untouched."""
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    tool._run(operation="write", key="interview_scripts", agent_name="interaction_designer",
+              value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+
+    out = tool._run(operation="write", key="interview_script_registry",
+                    agent_name="interaction_designer",
+                    value=json.dumps({"scripts": [
+                        {"id": "SC-001", "node_id": "1.2", "node_label": "Works Programming",
+                         "active": False},
+                    ]}))
+    assert out.startswith("Written to"), out
+
+    from agents.tools._db import current_script_ledger_sync
+    entry = next(e for e in current_script_ledger_sync(slug)["scripts"] if e["id"] == "SC-001")
+    assert entry["node_id"] == "1.2"
+    assert entry["active"] is False

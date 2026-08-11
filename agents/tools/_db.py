@@ -469,21 +469,42 @@ def register_scripts_sync(
     with it.
 
     Deliberately not INSERT OR IGNORE: that clause swallows every constraint violation on
-    the row, not only the primary-key conflict it is meant for - a script whose JSON carries
-    an explicit `"node_label": null` hits node_label's NOT NULL and was silently dropped
-    from the whole batch with no error, no ledger row, and no signal to the caller. The next
-    batch then found the id unregistered and moved it unrefused: SC-001 published at 1.2,
-    silently re-anchored to 2.7. ON CONFLICT(script_id) DO NOTHING only suppresses the one
-    conflict it names; a NOT NULL violation still raises, the caller's except still sees it,
-    and the next merged write re-derives the id rather than losing it. script.get("node_label")
-    or "" closes the specific null case so it never reaches that constraint at all - both are
-    needed, because a future field on this row could still violate a constraint OR IGNORE
-    would otherwise have swallowed too.
+    the row, not only the primary-key conflict it is meant for - a script whose node_label
+    is not a string (null, or any other JSON type sqlite3 cannot bind to TEXT) hits
+    node_label's NOT NULL, or fails to bind at all, and was silently dropped from the whole
+    batch with no error, no ledger row, and no signal to the caller. The next batch then
+    found the id unregistered and moved it unrefused: SC-001 published at 1.2, silently
+    re-anchored to 2.7. ON CONFLICT(script_id) DO NOTHING only suppresses the one conflict it
+    names; anything else still raises.
+
+    That raise is now mostly unreachable rather than mostly relied on: validate_scripts
+    (api/services/interview_script_model.py) refuses a non-string, non-null node_label at
+    the door, so a batch that would break the bind is never written at all. What remains
+    here is defence for the value validate_scripts does deliberately let through -
+    node_label: null - via script.get("node_label") or "" - and defence in depth for
+    anything neither of those anticipated. Round 1 of this review believed the caller's
+    except meant "the next merged write re-derives the id rather than losing it"; that
+    stopped being true the moment the caller started passing the pre-merge batch rather than
+    the full merged artefact (see the `batch` capture in sqlite_state.py) - a batch is now
+    seen once, so a registration this function fails to make is lost for good, not deferred.
+    The caller is responsible for making that loss visible rather than silent; this function
+    only has to make sure it cannot mask a move.
+
+    One commit for the whole call, not one per id: a two-script batch where only the second
+    id cannot bind loses both, because nothing before the failing row was ever committed.
+    That is deliberate - a half-registered batch is not a state worth keeping any more than a
+    half-written file is - but it means the caller's failure record (see
+    _record_registration_failure in sqlite_state.py) must name every id in the batch it
+    attempted, not only the one that raised, since none of them made it into the table.
 
     active is carried at insert time, matching script_ledger_backfill.py's precedent so the
     two seeding paths agree: a script registered for the first time is entered with whatever
-    active value it names (default True). An id already held is never rewritten here, by
-    design - this function does not attempt retirement of an existing id.
+    active value it names (default True). An id already held has its node_id, node_label,
+    last_version, and last_author left exactly alone - none of those may move once set - but
+    active is the one field the design carves out an explicit exception for
+    ("growth is free and retirement is free with the meaning kept"), so a script whose entry
+    names active explicitly still has that value applied even when the id already exists.
+    Retiring or un-retiring an id is not redefining it and not dropping it.
 
     touch_version gates last_version/last_author. interview_scripts is the artefact
     last_version measures staleness against ("reviewed at v3, changed since"), so its write
@@ -507,7 +528,12 @@ def register_scripts_sync(
             node_id = script.get("node_id")
             if not script_id or not node_id:
                 continue
-            active = 1 if script.get("active", True) else 0
+            # None when the entry doesn't name active at all - interview_scripts bodies
+            # never do, so that door can never accidentally un-retire a script the registry
+            # door retired. A fresh row still defaults to active (script_ledger_backfill.py's
+            # own default), only an already-held row's active is left untouched when unnamed.
+            active_value = script.get("active")
+            insert_active = 1 if (active_value is None or active_value) else 0
             row_version = version if touch_version else None
             row_author = author if touch_version else ""
             cur = conn.execute(
@@ -516,8 +542,8 @@ def register_scripts_sync(
                 "  last_version, last_author)"
                 " VALUES (?,?,?,?,?,?,?)"
                 " ON CONFLICT(script_id) DO NOTHING",
-                (script_id, project_id, node_id, script.get("node_label") or "", active,
-                 row_version, row_author),
+                (script_id, project_id, node_id, script.get("node_label") or "",
+                 insert_active, row_version, row_author),
             )
             added += cur.rowcount
             if touch_version:
@@ -526,6 +552,12 @@ def register_scripts_sync(
                     " SET last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
                     " WHERE script_id=?",
                     (version, author, script_id),
+                )
+            if active_value is not None:
+                conn.execute(
+                    "UPDATE interview_script_ledger"
+                    " SET active=?, updated_at=CURRENT_TIMESTAMP WHERE script_id=?",
+                    (1 if active_value else 0, script_id),
                 )
         conn.commit()
     return added

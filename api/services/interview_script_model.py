@@ -117,6 +117,21 @@ def validate_scripts(
                 f"script {label} has no node_id - anchor it to a value chain node, or to "
                 f"{ENTITY_ID!r} when it concerns the organisation as a whole"
             )
+        node_label = script.get("node_label")
+        if node_label is not None and not isinstance(node_label, str):
+            # Refused here, not left for register_scripts_sync to discover: node_label is
+            # bound directly into interview_script_ledger.node_label (TEXT NOT NULL), and a
+            # value sqlite3 cannot bind - or can bind but violates NOT NULL - raised inside
+            # a call the write path only wraps in a bare except. A batch that hits that was
+            # written to the artefact and then silently left unregistered, so the next batch
+            # found the id free and moved it unrefused: SC-001 published at 1.2, silently
+            # re-anchored to 2.7 with no error either time. Refusing the whole batch here
+            # means registration can never fail for this reason, because it never runs
+            # against a value that could make it fail.
+            problems.append(
+                f"script {label} has node_label {node_label!r}, which must be a string or "
+                "null"
+            )
         level = script.get("level")
         perspective = script.get("perspective")
         if perspective is not None and perspective not in _ROLE_LEVELS:

@@ -299,6 +299,37 @@ class SQLiteStateToolInput(BaseModel):
     value: str = Field(default="", description="JSON string to write (required for 'write')")
 
 
+def _record_registration_failure(
+    slug: str, run_id: int, key: str, agent_name: str, ids: list, error: BaseException
+) -> None:
+    """A registration a durable write must not fail over must still leave a trace.
+
+    Silent was the shape of the defect this whole line of review exists to close: a write
+    reported "Written to" while the id it named went unregistered with nothing to show for
+    it, and the next batch found the id free. record_validation_warnings_sync is the same
+    path the warners already use (see _WARNERS below), so a registration failure surfaces
+    the same way a coverage gap or a stale tree does, rather than needing its own reporting
+    mechanism nobody thinks to look at.
+    """
+    try:
+        record_validation_warnings_sync(slug, run_id, "script_ledger_registration", [
+            {
+                "subject": script_id,
+                "code": "registration_failed",
+                "measure": None,
+                "detail": (
+                    f"{key} write by {agent_name} did not register {script_id!r} in "
+                    f"interview_script_ledger - {error}. The artefact file still holds it; "
+                    "the ledger does not, so a later batch could move this id unrefused "
+                    "until it is registered. Rewrite the write that named this id."
+                ),
+            }
+            for script_id in ids
+        ])
+    except Exception:
+        pass   # a warning about a failure must never itself cause one
+
+
 class SQLiteStateTool(BaseTool):
     name: str = "SQLiteStateTool"
     description: str = (
@@ -413,10 +444,15 @@ class SQLiteStateTool(BaseTool):
                 try:
                     version = _output_version_sync(self.slug, new_output_id)
                     register_scripts_sync(self.slug, batch, version, agent_name)
-                except Exception:
-                    # Never fail a durable write over the ledger. The next write re-derives
-                    # it, and the validator refuses anything that would corrupt it meanwhile.
-                    pass
+                except Exception as e:
+                    # Never fail a durable write over the ledger - but the loss must not be
+                    # silent either. batch, not parsed: register_scripts_sync commits once
+                    # for the whole call, so one id it cannot bind discards its batchmates'
+                    # registrations too, and batch (captured pre-merge, above) is exactly
+                    # and only what this write named.
+                    _record_registration_failure(
+                        self.slug, self.run_id, key, agent_name, list(batch.keys()), e
+                    )
             elif key == "interview_script_registry" and isinstance(parsed, dict):
                 # The other door onto the same ledger - Maya's instructions still have her
                 # write this as a cumulative summary after a batch of scripts, and until
@@ -431,21 +467,23 @@ class SQLiteStateTool(BaseTool):
                 # dict of full script bodies. touch_version=False: this door's write has its
                 # own, unrelated agent_outputs version - passing it through would make
                 # last_version go backwards on every id this write names (Important 3).
-                try:
-                    by_id = {
-                        entry.get("id"): {
-                            "node_id": entry.get("node_id"),
-                            "node_label": entry.get("node_label", ""),
-                            "active": entry.get("active", True),
-                        }
-                        for entry in parsed.get("scripts", [])
-                        if isinstance(entry, dict) and entry.get("id") and entry.get("node_id")
+                by_id = {
+                    entry.get("id"): {
+                        "node_id": entry.get("node_id"),
+                        "node_label": entry.get("node_label") or "",
+                        "active": entry.get("active", True),
                     }
+                    for entry in parsed.get("scripts", [])
+                    if isinstance(entry, dict) and entry.get("id") and entry.get("node_id")
+                }
+                try:
                     register_scripts_sync(
                         self.slug, by_id, None, agent_name, touch_version=False
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    _record_registration_failure(
+                        self.slug, self.run_id, key, agent_name, list(by_id.keys()), e
+                    )
 
             warner = _WARNERS.get(key)
             if warner is not None:
