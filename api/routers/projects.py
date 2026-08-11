@@ -565,12 +565,21 @@ async def patch_interview_script(
 
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
+        # node_label is COALESCEd, not overwritten blind: a partial body that omits it
+        # must not blank the ledger's copy. When the edit does carry one,
+        # script_review_service._fetch_change_requests reads l.node_label straight off
+        # this row to name the script to Maya on a send-back - leaving it stale here
+        # would keep naming the edit's own retitle by the text it just replaced.
+        # review_return_to=NULL is brief-mandated: a human edit is not the revision an
+        # outstanding changes_requested send-back was waiting for, so the edit must not
+        # leave that send-back pointing at whichever agent run picks the script up next.
         await conn.execute(
             "UPDATE interview_script_ledger"
             " SET last_author=?, review_status='pending', review_return_to=NULL,"
-            "     updated_at=CURRENT_TIMESTAMP"
+            "     node_label=COALESCE(?, node_label), updated_at=CURRENT_TIMESTAMP"
             " WHERE script_id=? AND project_id=?",
-            (payload.get("sub", "human"), script_id, project["id"]),
+            (payload.get("sub", "human"), merged[script_id].get("node_label") or None,
+             script_id, project["id"]),
         )
         await conn.commit()
     updated = await auto_assign_interview_scripts(slug)

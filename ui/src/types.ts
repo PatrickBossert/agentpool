@@ -513,6 +513,11 @@ export interface InterviewSessionsResponse {
 export interface NodeTemplateAssignment {
   node_label: string
   activity_id: string | null
+  /** The interview_scripts artefact's own key, carried on the assignment row so a
+   *  consumer never has to rebuild it by matching node_label against the scripts map -
+   *  that match is exactly what auto_assign_service.py calls "the original defect":
+   *  node_label is the script's own retitleable text, not a stable identifier. */
+  script_id?: string | null
   level?: 'L1' | 'L2' | 'L3'
   interview_template_id: number | null
   questionnaire_template_id: number | null

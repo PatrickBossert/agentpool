@@ -1,10 +1,25 @@
 // ui/src/components/InterviewTemplateEditor.tsx
 import { useState, useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
 import { X } from 'lucide-react'
 import { apiClient } from '../api/client'
 
 const INPUT = 'w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand placeholder:text-gray-400'
 const BTN_SM = 'text-xs px-3 py-1.5 rounded transition-colors'
+
+// The server's own explanation - a refused write's detail names exactly which field is
+// wrong (e.g. "script SC-001 has a section with no section_id") - beats a fixed string in
+// every case, including the one a fixed string cannot describe at all: a legacy script with
+// no node_id is refused identically to a bad new section, and only the real detail tells the
+// two apart.
+function describeError(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err)) {
+    const detail = err.response?.data?.detail
+    if (typeof detail === 'string' && detail) return detail
+  }
+  return fallback
+}
 
 interface Question {
   id: string
@@ -16,7 +31,11 @@ interface Question {
 }
 
 interface Section {
+  section_id: string
   title: string
+  discipline: string
+  question_intent: string
+  elicitation: string
   questions: Question[]
 }
 
@@ -36,9 +55,16 @@ interface Props {
   nodeLabel: string
   activityId: string | null
   onClose: () => void
+  /** Called after a save the server accepted, so a caller holding its own copy of this
+   *  script's node_label (or of the interview-scripts list this scriptId came from) knows
+   *  to refetch rather than keep showing what was true before the edit. */
+  onSaved?: () => void
 }
 
-export default function InterviewTemplateEditor({ slug, scriptId, nodeLabel, activityId, onClose }: Props) {
+export default function InterviewTemplateEditor({
+  slug, scriptId, nodeLabel, activityId, onClose, onSaved,
+}: Props) {
+  const queryClient = useQueryClient()
   const [script, setScript] = useState<Script | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -51,8 +77,10 @@ export default function InterviewTemplateEditor({ slug, scriptId, nodeLabel, act
     try {
       const r = await apiClient.get<Script>(`/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`)
       setScript(r.data)
-    } catch {
-      setError('No interview script found for this node. Run the Assessment Design crew first.')
+    } catch (err) {
+      setError(describeError(
+        err, 'No interview script found for this node. Run the Assessment Design crew first.',
+      ))
     } finally {
       setLoading(false)
     }
@@ -68,8 +96,14 @@ export default function InterviewTemplateEditor({ slug, scriptId, nodeLabel, act
       await apiClient.patch(`/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`, { script })
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
-    } catch {
-      setError('Save failed.')
+      // The server-side save already retitled node_template_assignments to match
+      // (auto_assign_interview_scripts) and superseded the interview-scripts artefact this
+      // scriptId resolves through - neither is true of anything cached client-side until
+      // this fires.
+      queryClient.invalidateQueries({ queryKey: ['interview-scripts', slug] })
+      onSaved?.()
+    } catch (err) {
+      setError(describeError(err, 'Save failed.'))
     } finally {
       setSaving(false)
     }
@@ -80,7 +114,30 @@ export default function InterviewTemplateEditor({ slug, scriptId, nodeLabel, act
   }
 
   function addSection() {
-    setScript(s => s ? { ...s, sections: [...s.sections, { title: '', questions: [] }] } : s)
+    setScript(s => {
+      if (!s) return s
+      const last = s.sections[s.sections.length - 1]
+      const section: Section = {
+        // A unique, stable id - not the title, which is free text and gets rewritten. The
+        // validator refuses any section with no section_id at all, which is what an empty
+        // string here used to do to every save.
+        section_id: `S${Date.now()}`,
+        title: '',
+        // Inherited from the previous section where one exists, rather than a fixed guess:
+        // discipline is a project-specific closed list this component is never given, so the
+        // one tag already proven valid for this project is safer than a constant that only
+        // happens to be in the default set. elicitation specifically mirrors the previous
+        // section rather than defaulting to 'unprompted': once a script has any 'prompted'
+        // section, every later 'unprompted' one is refused, so copying forward is what keeps
+        // a freshly appended section valid regardless of where in that ordering the script
+        // currently is.
+        discipline: last?.discipline || 'governance',
+        question_intent: last?.question_intent || 'context',
+        elicitation: last?.elicitation || 'unprompted',
+        questions: [],
+      }
+      return { ...s, sections: [...s.sections, section] }
+    })
   }
 
   function removeSection(si: number) {

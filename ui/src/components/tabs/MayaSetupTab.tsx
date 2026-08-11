@@ -479,31 +479,20 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
     queryFn: () => projectsApi.getSettings(slug),
   })
 
-  // The script id an "Edit Script" button opens is resolved from the live artefact, not
-  // stored on the template assignment row: node_template_assignments is keyed by
-  // node_label and knows nothing about script_id, which is the interview_scripts artefact's
-  // own key. A node with no script yet (Maya has not run, or the node predates her) has no
-  // entry here, and the button for that row is withheld below rather than opening an editor
-  // with nothing to load.
-  const { data: scriptsMap } = useQuery({
-    queryKey: ['interview-scripts', slug],
-    queryFn: () => projectsApi.getInterviewScripts(slug),
-  })
-  const scriptIdForNode: Record<string, string> = {}
-  for (const script of Object.values(scriptsMap ?? {})) {
-    if (script.script_id && script.node_label) scriptIdForNode[script.node_label] = script.script_id
-  }
-
-  useEffect(() => {
+  // Extracted rather than inlined in the effect below: editing a script retitles
+  // node_template_assignments.node_label server-side (auto_assign_interview_scripts), so a
+  // saved edit must be able to re-run exactly this fetch on demand, not only on mount -
+  // otherwise this table keeps showing the pre-edit label until the page is reloaded.
+  function refreshNodeAssignments() {
     if (!slug) return
     setLoading(true)
     listNodeTemplates(slug)
       .then(assignments => setNodeAssignments(sortByActivityId(assignments)))
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [slug])
+  }
 
-  useEffect(() => {
+  function refreshTemplateAssignments() {
     if (!slug) return
     Promise.all([
       listNodeTemplates(slug),
@@ -514,7 +503,10 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
       setInterviewTemplates(interviewTpls)
       setQuestionnaireTemplates(questionnaireTpls)
     }).catch(console.error)
-  }, [slug])
+  }
+
+  useEffect(refreshNodeAssignments, [slug])
+  useEffect(refreshTemplateAssignments, [slug])
 
   async function handleTemplateChange(
     nodeLabel: string,
@@ -761,11 +753,11 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
                         </button>
                       </td>
                       <td className="py-2">
-                        {!isL1 && scriptIdForNode[assignment.node_label] && (
+                        {!isL1 && assignment.script_id && (
                           <button
                             type="button"
                             onClick={() => setEditingScript({
-                              scriptId: scriptIdForNode[assignment.node_label],
+                              scriptId: assignment.script_id as string,
                               nodeLabel: assignment.node_label,
                               activityId: assignment.activity_id,
                             })}
@@ -791,6 +783,14 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
           nodeLabel={editingScript.nodeLabel}
           activityId={editingScript.activityId}
           onClose={() => setEditingScript(null)}
+          onSaved={() => {
+            // A saved edit retitles node_template_assignments.node_label server-side
+            // (auto_assign_interview_scripts) - both tables built from it here would keep
+            // showing the pre-edit label until a full reload without this. The editor
+            // itself already invalidates the ['interview-scripts', slug] query it reads.
+            refreshNodeAssignments()
+            refreshTemplateAssignments()
+          }}
         />
       )}
 
