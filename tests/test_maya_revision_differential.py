@@ -256,22 +256,61 @@ async def test_a_backfilled_script_with_no_recorded_version_injects_on_its_first
 
 
 @pytest.mark.asyncio
-async def test_a_crew_other_than_assessment_design_never_queries_regeneration(tmp_path, monkeypatch):
+async def test_a_crew_other_than_assessment_design_never_queries_regeneration(
+    assessment_project,
+):
     """_fetch_regeneration_requests is gated on crew_name before it ever touches the
-    database - only Maya's crew can act on a script send-back."""
-    get_settings.cache_clear()
-    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
-    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    database - only Maya's crew can act on a script send-back. Without the gate, every
+    crew's tasks get her send-backs prepended.
+
+    Final review, Important 3: the previous version of this test passed with the guard
+    deleted. It ran against "some-other-slug", a project that does not exist, so
+    `if not project: return ""` produced both the empty string and the un-called mock for
+    entirely the wrong reason - and the docstring's claim that the gate fires "before it
+    ever touches the database" was then false while the test still went green.
+
+    So this drives a real project with a real send-back actually recorded against a real
+    ledger row, and proves the data is reachable by asserting the positive case on the same
+    slug in the same test. The probe delegates to the real function rather than stubbing
+    it, so neither half of the assertion can be satisfied by an empty database.
+    """
+    import api.services.script_review_service as script_review_service
+    from agents.tools.sqlite_state import SQLiteStateTool
     from api.services.run_service import _fetch_regeneration_requests
 
-    with patch(
-        "api.services.script_review_service.scripts_awaiting_regeneration",
-        new=AsyncMock(return_value=[
-            {"script_id": "SC-042", "node_id": "3.3.2", "node_label": "Billing",
-             "notes": "should never be reached"}]),
-    ) as mocked:
-        text = await _fetch_regeneration_requests("some-other-slug", "discovery_mapping")
+    slug = assessment_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+    out = tool._run(
+        operation="write", key="interview_scripts", agent_name="interaction_designer",
+        value=json.dumps({"SC-042": _minimal_script("SC-042", "3.3.2", "Billing")}),
+    )
+    assert out.startswith("Written to"), out
 
-    assert text == ""
-    mocked.assert_not_called()
-    get_settings.cache_clear()
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        cur = await conn.execute(
+            "SELECT last_version FROM interview_script_ledger WHERE script_id=?",
+            ("SC-042",),
+        )
+        current_version = (await cur.fetchone())[0]
+        await script_review_service.record_script_review(
+            conn, project_id=project["id"], script_id="SC-042", reviewer="bo",
+            decision="changes_requested", notes="the maturity anchors are wrong",
+            at_version=current_version, return_to="agent",
+        )
+
+    probe = AsyncMock(side_effect=script_review_service.scripts_awaiting_regeneration)
+    with patch(
+        "api.services.script_review_service.scripts_awaiting_regeneration", new=probe
+    ):
+        text = await _fetch_regeneration_requests(slug, "discovery_mapping")
+
+    assert text == "", (
+        "a non-Maya crew must receive no send-back block, on a project that really has one"
+    )
+    probe.assert_not_called()
+
+    # The positive control, same slug, same send-back: without it, an empty result above
+    # proves nothing about the gate.
+    reachable = await _fetch_regeneration_requests(slug, "assessment_design")
+    assert "SC-042" in reachable and "the maturity anchors are wrong" in reachable
