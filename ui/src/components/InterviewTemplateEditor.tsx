@@ -32,12 +32,13 @@ interface Script {
 
 interface Props {
   slug: string
+  scriptId: string
   nodeLabel: string
   activityId: string | null
   onClose: () => void
 }
 
-export default function InterviewTemplateEditor({ slug, nodeLabel, activityId, onClose }: Props) {
+export default function InterviewTemplateEditor({ slug, scriptId, nodeLabel, activityId, onClose }: Props) {
   const [script, setScript] = useState<Script | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -48,14 +49,14 @@ export default function InterviewTemplateEditor({ slug, nodeLabel, activityId, o
     setLoading(true)
     setError(null)
     try {
-      const r = await apiClient.get<Script>(`/projects/${slug}/interview-scripts/${encodeURIComponent(nodeLabel)}`)
+      const r = await apiClient.get<Script>(`/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`)
       setScript(r.data)
     } catch {
       setError('No interview script found for this node. Run the Assessment Design crew first.')
     } finally {
       setLoading(false)
     }
-  }, [slug, nodeLabel])
+  }, [slug, scriptId])
 
   useEffect(() => { load() }, [load])
 
@@ -64,7 +65,7 @@ export default function InterviewTemplateEditor({ slug, nodeLabel, activityId, o
     setSaving(true)
     setError(null)
     try {
-      await apiClient.patch(`/projects/${slug}/interview-scripts/${encodeURIComponent(nodeLabel)}`, { script })
+      await apiClient.patch(`/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`, { script })
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch {

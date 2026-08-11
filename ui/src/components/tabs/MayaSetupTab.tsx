@@ -470,12 +470,29 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
   const [templateAssignments, setTemplateAssignments] = useState<NodeTemplateAssignment[]>([])
   const [interviewTemplates, setInterviewTemplates] = useState<TemplateListItem[]>([])
   const [questionnaireTemplates, setQuestionnaireTemplates] = useState<TemplateListItem[]>([])
-  const [editingNode, setEditingNode] = useState<NodeTemplateAssignment | null>(null)
+  const [editingScript, setEditingScript] = useState<
+    { scriptId: string; nodeLabel: string; activityId: string | null } | null
+  >(null)
 
   const { data: settings } = useQuery({
     queryKey: ['settings', slug],
     queryFn: () => projectsApi.getSettings(slug),
   })
+
+  // The script id an "Edit Script" button opens is resolved from the live artefact, not
+  // stored on the template assignment row: node_template_assignments is keyed by
+  // node_label and knows nothing about script_id, which is the interview_scripts artefact's
+  // own key. A node with no script yet (Maya has not run, or the node predates her) has no
+  // entry here, and the button for that row is withheld below rather than opening an editor
+  // with nothing to load.
+  const { data: scriptsMap } = useQuery({
+    queryKey: ['interview-scripts', slug],
+    queryFn: () => projectsApi.getInterviewScripts(slug),
+  })
+  const scriptIdForNode: Record<string, string> = {}
+  for (const script of Object.values(scriptsMap ?? {})) {
+    if (script.script_id && script.node_label) scriptIdForNode[script.node_label] = script.script_id
+  }
 
   useEffect(() => {
     if (!slug) return
@@ -744,10 +761,14 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
                         </button>
                       </td>
                       <td className="py-2">
-                        {!isL1 && (
+                        {!isL1 && scriptIdForNode[assignment.node_label] && (
                           <button
                             type="button"
-                            onClick={() => setEditingNode(assignment)}
+                            onClick={() => setEditingScript({
+                              scriptId: scriptIdForNode[assignment.node_label],
+                              nodeLabel: assignment.node_label,
+                              activityId: assignment.activity_id,
+                            })}
                             className="px-2.5 py-1 border border-gray-200 hover:border-brand hover:text-brand text-gray-500 text-[11px] rounded transition-colors"
                           >
                             Edit Script
@@ -763,12 +784,13 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
         )}
       </div>
 
-      {editingNode && (
+      {editingScript && (
         <InterviewTemplateEditor
           slug={slug}
-          nodeLabel={editingNode.node_label}
-          activityId={editingNode.activity_id}
-          onClose={() => setEditingNode(null)}
+          scriptId={editingScript.scriptId}
+          nodeLabel={editingScript.nodeLabel}
+          activityId={editingScript.activityId}
+          onClose={() => setEditingScript(null)}
         />
       )}
 
