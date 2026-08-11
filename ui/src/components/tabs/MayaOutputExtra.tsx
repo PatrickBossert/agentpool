@@ -2,10 +2,23 @@
 // Maya's Output tab extra: generated interview scripts organised by level
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
 import { ScriptReviewRow } from './ScriptReviewRow'
 import type { InterviewQuestion, InterviewScript, InterviewSection } from '../../types'
+
+// The server's own explanation - 403 (not a reviewer/approver), 409 (already approved), 422
+// (a send-back with no valid target) - beats a fixed string, because a fixed string cannot
+// tell the person which of those three happened. Mirrors describeError in
+// InterviewTemplateEditor.tsx, which closed the same gap for the script editor's save path.
+function describeError(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err)) {
+    const detail = err.response?.data?.detail
+    if (typeof detail === 'string' && detail) return detail
+  }
+  return fallback
+}
 
 const LEVEL_BADGE: Record<string, string> = {
   L0: 'bg-purple-100 text-purple-700',
@@ -289,21 +302,24 @@ function ScriptCard({ script }: { script: InterviewScript }) {
 
 export default function MayaOutputExtra({ slug }: { slug: string }) {
   const qc = useQueryClient()
+  const [reviewError, setReviewError] = useState<string | null>(null)
 
   const { data: scriptsMap, isLoading } = useQuery({
     queryKey: ['interview-scripts', slug],
     queryFn: () => projectsApi.getInterviewScripts(slug),
   })
 
-  const { data: ledgerRows } = useQuery({
+  const { data: ledgerRows, isError: ledgerFailed } = useQuery({
     queryKey: ['script-ledger', slug],
     queryFn: () => projectsApi.getScriptLedger(slug),
   })
 
-  function handleReview(scriptId: string, decision: string, returnTo?: string) {
+  function handleReview(scriptId: string, decision: string, returnTo?: string, notes?: string) {
+    setReviewError(null)
     projectsApi
-      .reviewScript(slug, scriptId, { decision, return_to: returnTo })
+      .reviewScript(slug, scriptId, { decision, return_to: returnTo, notes })
       .then(() => qc.invalidateQueries({ queryKey: ['script-ledger', slug] }))
+      .catch((err) => setReviewError(describeError(err, 'Could not record that review.')))
   }
 
   if (isLoading) {
@@ -321,16 +337,26 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-4">
-      {ledgerRows && ledgerRows.length > 0 && (
+      {(ledgerFailed || (ledgerRows && ledgerRows.length > 0)) && (
         <div className="space-y-2">
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
             Script Review Ledger
           </p>
-          <div>
-            {ledgerRows.map((row) => (
-              <ScriptReviewRow key={row.script_id} row={row} onReview={handleReview} />
-            ))}
-          </div>
+          {ledgerFailed ? (
+            // Distinct from "no rows" - an empty ledger and a failed fetch used to render
+            // identically (nothing), leaving no way to tell "could not load" from "nothing
+            // to review".
+            <p className="text-[11px] text-red-600">Could not load the script review ledger.</p>
+          ) : (
+            <div>
+              {ledgerRows!.map((row) => (
+                <ScriptReviewRow key={row.script_id} row={row} onReview={handleReview} />
+              ))}
+            </div>
+          )}
+          {reviewError && (
+            <p className="text-[11px] text-red-600">{reviewError}</p>
+          )}
         </div>
       )}
       {vcScripts.length > 0 && (
