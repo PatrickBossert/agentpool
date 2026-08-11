@@ -725,6 +725,17 @@ export interface Milestone {
   created_at: string
 }
 
+export interface ScriptLedgerRow {
+  script_id: string
+  node_id: string
+  node_label: string
+  review_status: 'pending' | 'reviewed' | 'approved' | 'changes_requested'
+  reviewed_at_version: number | null
+  review_return_to: 'agent' | 'reviewer' | null
+  last_version: number | null
+  last_author: string
+}
+
 // A structural finding a validator raised and did not refuse. Recorded when an agent
 // writes, dispositioned by a reviewer, and carried back into the agent's next run unless
 // dismissed.

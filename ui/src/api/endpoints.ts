@@ -173,6 +173,13 @@ export const projectsApi = {
 
   lineage: (slug: string): Promise<LineageResponse> =>
     apiClient.get<LineageResponse>(`/projects/${slug}/lineage`).then((r) => r.data),
+
+  getScriptLedger: (slug: string): Promise<import('../types').ScriptLedgerRow[]> =>
+    apiClient.get(`/projects/${slug}/script-ledger`).then((r) => r.data),
+
+  reviewScript: (slug: string, scriptId: string,
+                 body: { decision: string; notes?: string; return_to?: string }) =>
+    apiClient.post(`/projects/${slug}/script-ledger/${scriptId}/review`, body).then((r) => r.data),
 }
 
 export const skillNotesApi = {

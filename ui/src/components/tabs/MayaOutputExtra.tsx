@@ -1,9 +1,10 @@
 // ui/src/components/tabs/MayaOutputExtra.tsx
 // Maya's Output tab extra: generated interview scripts organised by level
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
+import { ScriptReviewRow } from './ScriptReviewRow'
 import type { InterviewQuestion, InterviewScript, InterviewSection } from '../../types'
 
 const LEVEL_BADGE: Record<string, string> = {
@@ -287,10 +288,23 @@ function ScriptCard({ script }: { script: InterviewScript }) {
 }
 
 export default function MayaOutputExtra({ slug }: { slug: string }) {
+  const qc = useQueryClient()
+
   const { data: scriptsMap, isLoading } = useQuery({
     queryKey: ['interview-scripts', slug],
     queryFn: () => projectsApi.getInterviewScripts(slug),
   })
+
+  const { data: ledgerRows } = useQuery({
+    queryKey: ['script-ledger', slug],
+    queryFn: () => projectsApi.getScriptLedger(slug),
+  })
+
+  function handleReview(scriptId: string, decision: string, returnTo?: string) {
+    projectsApi
+      .reviewScript(slug, scriptId, { decision, return_to: returnTo })
+      .then(() => qc.invalidateQueries({ queryKey: ['script-ledger', slug] }))
+  }
 
   if (isLoading) {
     return <p className="text-xs text-gray-400 animate-pulse py-3">Loading interview scripts…</p>
@@ -307,6 +321,18 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-4">
+      {ledgerRows && ledgerRows.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+            Script Review Ledger
+          </p>
+          <div>
+            {ledgerRows.map((row) => (
+              <ScriptReviewRow key={row.script_id} row={row} onReview={handleReview} />
+            ))}
+          </div>
+        </div>
+      )}
       {vcScripts.length > 0 && (
         <div className="space-y-2">
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
