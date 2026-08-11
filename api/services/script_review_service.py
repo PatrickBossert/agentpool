@@ -93,9 +93,18 @@ async def scripts_awaiting_regeneration(conn: aiosqlite.Connection, *, project_i
     from the moment she does - no separate close-out call needed, and nothing to forget if
     the run that regenerated it never reaches a close-out at all. Mirrors the ordinary
     review gate: agent_outputs.is_current advances on a real write, not on a caller's say-so.
-    A row with reviewed_at_version NULL (should not occur via record_script_review, which
-    always stamps one, but guarded rather than assumed) is treated as still pending, since
-    there is no version to compare against yet.
+
+    Code review round 2: the nullable column here is last_version, not reviewed_at_version.
+    reviewed_at_version can never be NULL through record_script_review - the router always
+    passes at_version=row["last_version"] or 0. last_version can: interview_script_ledger's
+    column has no default, and script_ledger_backfill.py's INSERT deliberately omits it,
+    because the JSON registry it loads (issued before per-batch versioning existed) carries
+    no version for those ids. Comparing NULL <= 0 in SQL evaluates to NULL, which is not
+    true, so a backfilled row sent back for revision failed this WHERE clause and never
+    reached Maya on its first run - the send-back was recorded, visible on the ledger
+    endpoint, and notified, but silently never injected. COALESCE both sides to 0 so a
+    never-registered version reads as "older than any reviewed_at_version", which is the
+    correct reading: no evidence of a fresh write means the row is still owed one.
     """
     conn.row_factory = aiosqlite.Row
     cur = await conn.execute(
@@ -105,7 +114,7 @@ async def scripts_awaiting_regeneration(conn: aiosqlite.Connection, *, project_i
         "  FROM interview_script_ledger l"
         " WHERE l.project_id=? AND l.review_status='changes_requested'"
         "   AND l.review_return_to='agent' AND l.active=1"
-        "   AND (l.reviewed_at_version IS NULL OR l.last_version <= l.reviewed_at_version)",
+        "   AND COALESCE(l.last_version, 0) <= COALESCE(l.reviewed_at_version, 0)",
         (project_id,),
     )
     return [dict(r) for r in await cur.fetchall()]

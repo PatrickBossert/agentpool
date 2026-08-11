@@ -106,6 +106,33 @@ def _minimal_script(script_id, node_id, label):
     }
 
 
+async def _run_assessment_design_and_capture(slug, run_id):
+    """Drive one real build_and_run_crew call for assessment_design, mocking only the
+    crew factory and Crew.tasks/kickoff_async (this file's established boundary - see the
+    module docstring), and return the description Maya's task actually carried at
+    kickoff."""
+    mock_task = MagicMock()
+    mock_task.description = "original task body"
+    mock_crew = MagicMock()
+    mock_crew.tasks = [mock_task]
+    seen: list[str] = []
+
+    async def _fake_kickoff():
+        seen.append(mock_task.description)
+        return "ok"
+
+    mock_crew.kickoff_async = AsyncMock(side_effect=_fake_kickoff)
+
+    import agents.crews.assessment_design_crew  # noqa: F401
+    with patch(
+        "agents.crews.assessment_design_crew.create_assessment_design_crew",
+        return_value=mock_crew,
+    ):
+        from api.services.run_service import build_and_run_crew
+        await build_and_run_crew(slug, "assessment_design", run_id=run_id)
+    return seen[0]
+
+
 @pytest.mark.asyncio
 async def test_a_regenerated_script_stops_being_injected_on_the_next_run(assessment_project):
     """Code review round 1, Important 1: without a version filter, a send-back never
@@ -146,29 +173,7 @@ async def test_a_regenerated_script_stops_being_injected_on_the_next_run(assessm
             at_version=current_version, return_to="agent",
         )
 
-    async def _run_and_capture(run_id):
-        mock_task = MagicMock()
-        mock_task.description = "original task body"
-        mock_crew = MagicMock()
-        mock_crew.tasks = [mock_task]
-        seen: list[str] = []
-
-        async def _fake_kickoff():
-            seen.append(mock_task.description)
-            return "ok"
-
-        mock_crew.kickoff_async = AsyncMock(side_effect=_fake_kickoff)
-
-        import agents.crews.assessment_design_crew  # noqa: F401
-        with patch(
-            "agents.crews.assessment_design_crew.create_assessment_design_crew",
-            return_value=mock_crew,
-        ):
-            from api.services.run_service import build_and_run_crew
-            await build_and_run_crew(slug, "assessment_design", run_id=run_id)
-        return seen[0]
-
-    run_1 = await _run_and_capture(101)
+    run_1 = await _run_assessment_design_and_capture(slug, 101)
     run_1_injected = "SC-042" in run_1
     assert run_1_injected, "RUN 1 must inject the send-back before any regeneration"
 
@@ -181,12 +186,73 @@ async def test_a_regenerated_script_stops_being_injected_on_the_next_run(assessm
     )
     assert out2.startswith("Written to"), out2
 
-    run_2 = await _run_and_capture(102)
+    run_2 = await _run_assessment_design_and_capture(slug, 102)
     run_2_injected = "SC-042" in run_2
     assert not run_2_injected, (
         "RUN 2 must NOT re-inject SC-042 - last_version has moved past reviewed_at_version, "
         "so the note has been addressed"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_backfilled_script_with_no_recorded_version_injects_on_its_first_send_back(
+    assessment_project,
+):
+    """Code review round 2: the nullable column scripts_awaiting_regeneration must guard is
+    last_version, not reviewed_at_version. interview_script_ledger.last_version has no
+    default, and script_ledger_backfill.py deliberately omits it when loading a legacy JSON
+    registry - those ids predate per-batch versioning and simply never had one. SQL's
+    NULL <= 0 evaluates to NULL, not true, so a naive guard on reviewed_at_version alone let
+    a backfilled row disappear from the WHERE clause the moment it was sent back: the
+    send-back was recorded, visible on the ledger endpoint, and notified, but never reached
+    Maya - not on this run, and not ever, since once she does write something last_version
+    becomes >= 1, permanently greater than reviewed_at_version=0.
+
+    Driven through the real backfill_script_ledger, not a hand-inserted row: every ledger
+    row this file's other tests build goes through SQLiteStateTool/register_scripts_sync,
+    which always stamps a version, so none of them can produce the row shape a real backfill
+    does. Asserted on the description build_and_run_crew's first real run actually hands to
+    Maya, matching this file's other tests.
+    """
+    from api.services.script_ledger_backfill import backfill_script_ledger
+    from api.services.script_review_service import record_script_review
+
+    slug = assessment_project
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        inserted = await backfill_script_ledger(
+            conn, project_id=project["id"],
+            registry={"scripts": [
+                {"id": "SC-777", "node_id": "4.1", "node_label": "Legacy Onboarding",
+                 "active": True},
+            ]},
+        )
+        assert inserted == 1
+
+        cur = await conn.execute(
+            "SELECT last_version FROM interview_script_ledger WHERE script_id=?",
+            ("SC-777",),
+        )
+        row = await cur.fetchone()
+        assert row["last_version"] is None, (
+            "precondition: a real backfill leaves last_version unset - the row shape this "
+            "test exists to cover"
+        )
+
+        # Mirrors api/routers/script_reviews.py's own at_version derivation exactly:
+        # at_version=row["last_version"] or 0.
+        await record_script_review(
+            conn, project_id=project["id"], script_id="SC-777", reviewer="bo",
+            decision="changes_requested", notes="check the maturity anchors on this one too",
+            at_version=row["last_version"] or 0, return_to="agent",
+        )
+
+    run_1 = await _run_assessment_design_and_capture(slug, 201)
+    assert "SC-777" in run_1, (
+        "a backfilled script with no recorded version must still inject on its first "
+        "send-back"
+    )
+    assert "check the maturity anchors on this one too" in run_1
 
 
 @pytest.mark.asyncio
