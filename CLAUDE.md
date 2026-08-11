@@ -420,14 +420,6 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   true - and the design's one dependency is deferred with a soft revert, so this is a gap
   rather than a hole. The fix, when it is wanted, is a door (a UI action or an explicit
   instruction), not a change to the ledger.
-- A dict or list `node_id` in an `interview_scripts` batch raises `TypeError: unhashable
-  type` out of `SQLiteStateTool._run` instead of returning the refusal `validate_scripts`
-  has already computed. `validate_scripts_against_registry` skips a non-string `node_id`;
-  `validate_anchor_levels` (`api/services/interview_script_model.py`, `if node_id not in
-  levels`) does the same lookup one line later and does not. The anchor is safe - the write
-  aborts before the file is touched - but the agent gets an exception rather than a message
-  it can act on, and it only bites when a `value_chain_registry` exists, which is every real
-  project. Two lines, in a file that already carries the guard's twin.
 - `register_scripts_sync` carries a near-copy of `scripts_awaiting_regeneration`'s WHERE
   clause to reset a regenerated script's `review_status`, and the two have **already
   diverged**: the query filters `active=1` and `project_id`, the copy does neither. A retired

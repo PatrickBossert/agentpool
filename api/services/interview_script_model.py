@@ -401,7 +401,13 @@ def validate_anchor_levels(scripts: dict, registry: dict) -> list[str]:
         if not isinstance(script, dict):
             continue
         node_id = script.get("node_id")
-        if node_id not in levels:
+        # Skipped rather than reported, for the same reason as the guard in
+        # validate_scripts_against_registry: validate_scripts already refuses a non-string
+        # node_id with a message that says what is wrong, and this membership test is a dict
+        # lookup - an unhashable node_id (a dict, a list) raises TypeError here instead,
+        # discarding that refusal and handing the writer an unhandled exception out of the
+        # tool. The guard was added to the twin lookup and missed here, one line later.
+        if not isinstance(node_id, str) or node_id not in levels:
             continue
         name = script.get("script_id") or key
         level = script.get("level")

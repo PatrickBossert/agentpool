@@ -525,3 +525,44 @@ def test_a_registration_failure_warning_clears_once_the_id_registers(
         "the warning must not survive the registration it was raised about - Maya would be "
         "told to rewrite an id the ledger now holds"
     )
+
+
+def test_an_unhashable_node_id_is_refused_not_raised_when_a_registry_exists(script_project):
+    """Final re-review residual: the guard was added to one of two identical lookups.
+
+    validate_scripts_against_registry skips a non-string node_id before its set lookup.
+    validate_anchor_levels does the same membership test one line later, against a dict, and
+    did not - so a dict or list node_id raised TypeError: unhashable type out of
+    SQLiteStateTool._run, discarding the refusal validate_scripts had already computed.
+
+    It only bites when the registry is populated, because both validators return early on an
+    empty one. Every real project has a populated registry, and the two tests covering the
+    Critical both use the no-registry fixture - which is exactly why nothing saw this. This
+    one uses script_project, which has activities, and asserts the tool returns a refusal
+    string rather than raising, because a refusal is something the writing agent can act on
+    and an exception out of the tool is not.
+    """
+    slug = script_project
+    tool = SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=1)
+
+    for label, bad_node_id in (("dict", {"ref": "1.2"}), ("list", ["1.2"])):
+        script = _script("SC-001", "1.2", "Works Programming")
+        script["node_id"] = bad_node_id
+        out = tool._run(operation="write", key="interview_scripts",
+                        agent_name="interaction_designer",
+                        value=json.dumps({"SC-001": script}))
+        assert out.startswith("Error:"), (
+            f"an unhashable node_id ({label}) must come back as a refusal, got: {out}"
+        )
+        assert "node_id" in out
+
+    # And the anchor is untouched by the attempts: a legitimate write still lands, and a
+    # later batch still cannot move it.
+    ok = tool._run(operation="write", key="interview_scripts",
+                   agent_name="interaction_designer",
+                   value=json.dumps({"SC-001": _script("SC-001", "1.2", "Works Programming")}))
+    assert ok.startswith("Written to"), ok
+    from agents.tools._db import current_script_ledger_sync
+    assert {e["id"]: e["node_id"] for e in current_script_ledger_sync(slug)["scripts"]} == {
+        "SC-001": "1.2"
+    }
