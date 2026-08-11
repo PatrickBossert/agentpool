@@ -216,6 +216,18 @@ always-hosted orchestrator was a hole in the secure-mode guarantee rather than a
 A sensitive project with no local model configured for a tier raises `LocalModelUnavailable`
 rather than falling back. There is no hosted fallback and no borrowing of the other tier.
 
+Maya owes one interview script per active value chain activity. Coverage is checked on every
+`interview_scripts` write by `api/services/coverage_validation.py` and reported as
+`incomplete_coverage` into `validation_warnings`, which the next run reads back through
+`_fetch_validation_warnings`. Reaching every node across several runs is expected: each run adds
+only the missing nodes, and `_merge_with_current` accumulates.
+
+A script id means one node for the life of the project. Both doors enforce it now -
+`validate_script_registry_succession` on the registry write, and
+`validate_scripts_against_script_registry` on the scripts write. The second was missing, and
+because `_merge_with_current` keys on `script_id`, a moved id replaced a script rather than
+adding one.
+
 ### Routing a call outside a crew: two protocols, one setting
 
 Anything that is not a CrewAI agent goes through `project_completion(slug, tier, messages)` in
