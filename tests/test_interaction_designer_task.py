@@ -111,10 +111,44 @@ def test_maya_reads_what_exists_before_generating(task_description):
     assert "only" in lowered and "missing" in lowered, "must say to generate only what is missing"
 
 
+@pytest.mark.parametrize("sampling_phrase", [
+    "do not write one script per node",
+    "not every l3",
+    "node you have chosen",
+    "why that node was chosen",
+    "a script for every l3 activity",
+])
+def test_maya_is_not_told_to_sample_the_nodes(task, sampling_phrase):
+    """The contract is one script per active node, so the sampling rule must be gone.
+
+    This asserts the ABSENCE of the contradicting instruction rather than the presence
+    of the new one, because presence could not fail. The predecessor of this test looked
+    for "every active", which step 1 has said since before this contract existed - while
+    the write instruction 700 lines below it still opened "Do not write one script per
+    node" and told her to select among L2 and L3. The prompt stated both contracts at
+    once, the validator implemented only one of them, and the test saw only the agreeable
+    half: it passed against the prompt that produced sixteen scripts for eighty-six nodes.
+    """
+    assert sampling_phrase not in task.description.lower(), (
+        f"the sampling rule survives in the task description: {sampling_phrase!r}. "
+        "It contradicts the one-script-per-active-node contract the coverage validator "
+        "warns against, so the re-run loop never converges and the warning never clears"
+    )
+
+
+def test_expected_output_promises_a_script_for_every_node(task):
+    """expected_output is an instruction too - the summary artefacts got written because
+    it promised them - so the contract has to hold there as well as in the steps."""
+    assert "selected" not in task.expected_output.lower(), (
+        "expected_output still promises scripts for 'selected' L2 and L3 nodes"
+    )
+    assert "every active node" in task.expected_output.lower()
+
+
 def test_maya_is_told_the_contract_is_every_node(task_description):
-    """Sixteen was defensible because no target was stated. State it."""
-    lowered = task_description.lower()
-    assert "every active" in lowered or "one interview script for every" in lowered
+    """Sixteen was defensible because no target was stated. State it, at the point of
+    writing - step 1 already said it and the write instruction disagreed."""
+    assert "one interview script per active node" in task_description.lower()
 
 
 def test_maya_is_not_told_to_write_undeclared_keys(task):
