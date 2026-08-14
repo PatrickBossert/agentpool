@@ -569,6 +569,146 @@ git commit -m "feat(review): approve is refused until somebody has read the scri
 
 ---
 
+### Task 4a: The caller can ask what they are allowed to do
+
+**Files:**
+- Create: `api/routers/permissions.py`
+- Modify: `api/main.py` (register the router), `ui/src/api/endpoints.ts`, `ui/src/types.ts`
+- Test: `tests/test_my_permissions.py`
+
+**Interfaces:**
+- Consumes: `_caller_matches_stakeholder_flag(slug, payload, *, flags) -> bool` from `api/services/commit_service.py`.
+- Produces: `GET /projects/{slug}/my-permissions` returning `{"can_review": bool, "can_approve": bool}`; `projectsApi.getMyPermissions(slug) -> Promise<MyPermissions>`; `interface MyPermissions { can_review: boolean; can_approve: boolean }`.
+
+Without this, the UI cannot know whether to offer Approve, and the alternative - offering it to
+everyone and letting the server's 403 explain - teaches a reviewer that the button is broken
+rather than that the action is not theirs.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_my_permissions.py
+"""What the caller may do, asked once rather than inferred from a refusal.
+
+Authority already lives in _caller_matches_stakeholder_flag - the stakeholder flags
+is_reviewer and is_approver, not the login role. This endpoint reports that same decision
+so the UI can offer only what the server would accept. It deliberately does not re-implement
+the rule: a second copy would drift, and the copy the UI trusted would be the wrong one.
+"""
+from unittest.mock import AsyncMock, patch
+
+
+def test_it_reports_what_the_shared_authority_check_says(client, seeded_project_slug):
+    slug = seeded_project_slug
+    with patch("api.routers.permissions._caller_matches_stakeholder_flag",
+               new=AsyncMock(side_effect=[True, False])) as gate:
+        r = client.get(f"/projects/{slug}/my-permissions")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"can_review": True, "can_approve": False}
+    # The flags each question asks are the rule; the booleans are only its shadow.
+    assert gate.call_args_list[0].kwargs["flags"] == ("is_reviewer", "is_approver")
+    assert gate.call_args_list[1].kwargs["flags"] == ("is_approver",)
+
+
+def test_a_caller_with_neither_flag_is_told_so(client, seeded_project_slug):
+    slug = seeded_project_slug
+    with patch("api.routers.permissions._caller_matches_stakeholder_flag",
+               new=AsyncMock(return_value=False)):
+        r = client.get(f"/projects/{slug}/my-permissions")
+    assert r.json() == {"can_review": False, "can_approve": False}
+
+
+def test_an_unknown_project_is_404_not_a_silent_false(client):
+    r = client.get("/projects/no-such-project/my-permissions")
+    assert r.status_code == 404, r.text
+```
+
+Write the `seeded_project_slug` fixture against `tests/conftest.py`'s existing `client` fixture -
+read it rather than inventing one. Patch where the name is **looked up**
+(`api.routers.permissions`), not where it is defined: the router binds its own reference with
+`from ... import`, and CLAUDE.md records four tests that got this wrong and hid a live bug for
+weeks.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `./venv/bin/pytest tests/test_my_permissions.py -v`
+Expected: FAIL - 404 on every call, because the router does not exist.
+
+- [ ] **Step 3: Write the router**
+
+Create `api/routers/permissions.py`:
+
+```python
+# api/routers/permissions.py
+"""What the calling user may do on one project.
+
+The rule itself lives in _caller_matches_stakeholder_flag and is not restated here. Authority
+comes from the stakeholder assignment - is_reviewer and is_approver - rather than the login
+role, and that helper is what commit and submission already consult.
+
+It currently answers True for a sysadmin, and every login is sysadmin against an empty users
+table, so this reports true for everyone today. That is the same latency the rest of the
+authority model has, and it tightens with no change here once real accounts exist.
+"""
+from fastapi import APIRouter, Depends, HTTPException
+
+from api.auth import require_any_auth, check_project_access
+from api.database import get_connection, fetch_project
+from api.services.commit_service import _caller_matches_stakeholder_flag
+
+router = APIRouter(prefix="/projects", tags=["permissions"])
+
+
+@router.get("/{slug}/my-permissions")
+async def get_my_permissions(slug: str, payload: dict = Depends(require_any_auth)):
+    await check_project_access(slug, payload)
+    async with get_connection(slug) as conn:
+        if not await fetch_project(conn, slug=slug):
+            raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    return {
+        "can_review": await _caller_matches_stakeholder_flag(
+            slug, payload, flags=("is_reviewer", "is_approver")),
+        "can_approve": await _caller_matches_stakeholder_flag(
+            slug, payload, flags=("is_approver",)),
+    }
+```
+
+Register it in `api/main.py` beside the other routers.
+
+- [ ] **Step 4: Add the client call and type**
+
+In `ui/src/types.ts`:
+
+```ts
+export interface MyPermissions {
+  can_review: boolean
+  can_approve: boolean
+}
+```
+
+In `ui/src/api/endpoints.ts`:
+
+```ts
+  getMyPermissions: (slug: string): Promise<import('../types').MyPermissions> =>
+    apiClient.get(`/projects/${slug}/my-permissions`).then((r) => r.data),
+```
+
+- [ ] **Step 5: Run the tests, power-check, then commit**
+
+Power-check by swapping the two flag tuples in Step 3 and confirming the first test fails on
+the `flags` assertions rather than on the booleans - the flags each question asks are the
+property, and two booleans that happen to be right for the wrong reason would pass a weaker
+test. Report the observed failure verbatim, then restore.
+
+Run the full backend suite twice with identical counts, and `npx tsc --noEmit` from `ui/`.
+
+```bash
+git add api/routers/permissions.py api/main.py ui/src/api/endpoints.ts ui/src/types.ts tests/test_my_permissions.py
+git commit -m "feat(auth): report what the caller may do, rather than making them find out"
+```
+
+---
+
 ### Task 5: A stale edit is refused rather than silently winning
 
 **Files:**
@@ -874,12 +1014,10 @@ In `MayaOutputExtra.tsx`, hold the open script in state. `onOpen` fetches that s
 closing it invalidates both `['interview-scripts', slug]` and `['script-ledger', slug]` so the
 count and status refresh.
 
-Derive `canApprove` from whether the review POST for `approved` would be permitted. There is no
-endpoint that reports the caller's flags today, so pass `canApprove` as `true` and let the
-server's 403 surface through the existing error handling - **say in your report that you did
-this**, because a UI that offers a button the server refuses is a worse experience than one
-that hides it, and a `GET /projects/{slug}/me/permissions` is the honest fix if this becomes
-annoying.
+Derive `canApprove` from `projectsApi.getMyPermissions(slug)` (Task 4a), keyed
+`['my-permissions', slug]`. While the query is loading, render the row without an Approve
+button rather than with a disabled one - a button that appears and then becomes clickable reads
+as a bug, and a missing one that appears reads as loading.
 
 - [ ] **Step 5: Run the tests, power-check, then commit**
 
@@ -963,10 +1101,11 @@ git commit -m "docs: record where reviewing happens and what the count means"
 | All three reading exits count; `approved` excluded | 3 |
 | Approve gated server-side on ≥ 1 review | 4 |
 | One person may review then approve | 4 |
+| Caller can ask what they may do (approve gate legible in the UI) | 4a |
 | Version conflict refused with 409 | 5 |
 | Reviewing happens in the document, three exits | 6 |
 | Send-back carries a note and a target | 6 |
-| List shows node id, count, gated Approve | 7 |
+| List shows node id, count, gated Approve | 7 (gate driven by 4a) |
 | End-to-end proof and CLAUDE.md | 8 |
 | Soft revert, retirement door, review workbench | none - deferred by the spec |
 
