@@ -193,3 +193,23 @@ it('offers the exits to a reader who may review', () => {
   expect(screen.getByRole('button', { name: /reviewed, no changes/i })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /edit questions/i })).toBeInTheDocument()
 })
+
+it('will not open the full editor while a typed title is unsaved', async () => {
+  // The editor fetches its own copy of the script and PATCHes from that, so an unsaved title
+  // in the panel is not in the body it sends. Leaving this clickable silently discarded the
+  // typed title, recorded an 'edited' review for a change the reviewer never made, and closed
+  // the panel - losing the input with no warning. Same guard, and same wording, as
+  // "Reviewed, no changes".
+  render(<ScriptReviewPanel slug="p" script={script} row={row} canReview onClose={() => {}} />)
+  const editQuestions = screen.getByRole('button', { name: /edit questions/i })
+  expect(editQuestions).not.toBeDisabled()
+
+  fireEvent.change(screen.getByLabelText(/script title/i), { target: { value: 'Retitled' } })
+  expect(editQuestions).toBeDisabled()
+  expect(editQuestions).toHaveAttribute('title', 'Save or discard the title change first')
+
+  // And it comes back once the title is no longer dirty.
+  fireEvent.change(screen.getByLabelText(/script title/i),
+                   { target: { value: script.node_label } })
+  expect(editQuestions).not.toBeDisabled()
+})

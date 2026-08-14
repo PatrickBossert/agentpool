@@ -203,7 +203,13 @@ export function ScriptReviewPanel({ slug, script, row, canReview = true, onClose
                   Maya. This is where that editor was always meant to land. */}
               <button
                 onClick={() => setEditingQuestions(true)}
-                disabled={busy || saving}
+                // Blocked while the title is dirty, for the same reason as "Reviewed, no
+                // changes" below: the editor fetches its own copy of the script and PATCHes
+                // from that, so an unsaved title here is not in the body it sends. Leaving this
+                // clickable silently discarded the typed title, recorded an 'edited' review for
+                // a change the reviewer never made, and closed the panel.
+                disabled={busy || saving || dirty}
+                title={dirty ? 'Save or discard the title change first' : undefined}
                 className={`${BTN} border border-gray-200 text-gray-600 hover:border-gray-400 disabled:opacity-50`}
               >
                 <ListChecks size={12} className="inline mr-1" /> Edit questions
