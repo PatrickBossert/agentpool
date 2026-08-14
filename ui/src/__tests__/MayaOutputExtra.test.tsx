@@ -94,4 +94,53 @@ describe('MayaOutputExtra', () => {
 
     expect(await screen.findByText(/not permitted to review this script/i)).toBeInTheDocument()
   })
+
+  it('opens the row that was clicked, not another one, and refreshes both queries on close', async () => {
+    // Two scripts, not one: a lookup by the wrong key (a hardcoded id, or the first entry
+    // regardless of which row was clicked) renders SC-1's content under SC-2's Open button
+    // and would pass silently against a single-script fixture.
+    const TWO_SCRIPTS = {
+      'SC-1': { script_id: 'SC-1', node_id: '1', level: 'L1', perspective: null, node_label: 'Property', sections: [] },
+      'SC-2': { script_id: 'SC-2', node_id: '2', level: 'L1', perspective: null, node_label: 'Leasing', sections: [] },
+    }
+    const TWO_LEDGER_ROWS = [
+      { script_id: 'SC-1', node_id: '1', node_label: 'Property',
+        review_status: 'pending' as const, reviewed_at_version: null,
+        review_return_to: null, last_version: 2, last_author: 'interaction_designer', review_count: 1 },
+      { script_id: 'SC-2', node_id: '2', node_label: 'Leasing',
+        review_status: 'pending' as const, reviewed_at_version: null,
+        review_return_to: null, last_version: 4, last_author: 'interaction_designer', review_count: 1 },
+    ]
+    vi.mocked(projectsApi.getInterviewScripts).mockResolvedValue(TWO_SCRIPTS as never)
+    vi.mocked(projectsApi.getScriptLedger).mockResolvedValue(TWO_LEDGER_ROWS as never)
+
+    // A dedicated client (not the shared Wrapper's) so invalidateQueries can be spied on
+    // directly, rather than inferred from a refetch that a stale cache might skip.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries')
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MayaOutputExtra slug="p" />
+      </QueryClientProvider>,
+    )
+
+    const openButtons = await screen.findAllByRole('button', { name: /open/i })
+    expect(openButtons).toHaveLength(2)
+    await userEvent.click(openButtons[1]) // second row rendered is SC-2 / Leasing
+
+    // The panel's title field is seeded from the opened script's node_label - a display
+    // value, so this cannot be satisfied by the row list's own plain-text label.
+    expect(await screen.findByDisplayValue('Leasing')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Property')).not.toBeInTheDocument()
+
+    invalidateSpy.mockClear()
+    await userEvent.click(screen.getByRole('button', { name: '×' }))
+
+    const invalidatedKeys = invalidateSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey: unknown[] }).queryKey,
+    )
+    expect(invalidatedKeys).toContainEqual(['interview-scripts', 'p'])
+    expect(invalidatedKeys).toContainEqual(['script-ledger', 'p'])
+  })
 })
