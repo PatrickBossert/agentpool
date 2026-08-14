@@ -64,7 +64,10 @@ describe('InterviewTemplateEditor - routes and saves by script_id, not node_labe
     getMock.mockReset()
     patchMock.mockReset()
     getMock.mockResolvedValue({ data: SCRIPT })
-    patchMock.mockResolvedValue({ data: { ok: true, templates_updated: 1 } })
+    // patch_interview_script used to return templates_updated (from the now-retired
+    // auto_assign_interview_scripts call it made after every save); the endpoint's real
+    // response shape today is just { ok: true }.
+    patchMock.mockResolvedValue({ data: { ok: true } })
   })
 
   it('GETs the script keyed by scriptId, never by the displayed node label', async () => {

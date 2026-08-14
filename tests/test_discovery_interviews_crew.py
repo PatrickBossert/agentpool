@@ -83,8 +83,15 @@ def test_discovery_interviews_crew_accepts_discovery_brief(mock_llm):
 def test_discovery_interviews_crew_accepts_node_templates(mock_llm):
     """node_templates_block reaches the Coordinator task too.
 
-    run_service assembles this block from the project's node templates, so
-    dropping it silently wasted that work.
+    run_service used to assemble this block from node_template_assignments and pass it
+    through on every discovery_interviews dispatch. That table (and the assembly) was
+    retired in the same change that removed publish_node_template - it duplicated a
+    node_label-keyed copy of content the Coordinator's own task already reads directly
+    from the interview_scripts artefact via SQLiteStateTool. No production caller passes
+    node_templates_block any more; the parameter and this test are kept only because the
+    plumbing is harmless (it defaults to "" and the coordinator prompt already handles
+    the empty case) and re-adding a caller is a smaller change than re-adding the
+    parameter if this is ever needed again.
     """
     with patch("agents.crews.discovery_interviews_crew.get_tools_for_agent", return_value=[]):
         from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew

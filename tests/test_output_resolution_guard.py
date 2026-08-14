@@ -50,15 +50,19 @@ def test_no_project_database_is_opened_outside_the_shared_helper():
 
     system.db is a different database with different needs and is not covered here. The brief
     for this guard proposed excluding lines that mention a variable named `sys_db_path` or
-    `sys_path`, but five real, legitimate call sites outside api/database.py and api/main.py
-    open system.db through exactly those two spellings (api/routers/projects.py,
-    api/services/run_service.py, api/services/auto_assign_service.py twice, and
-    api/services/interview_service.py) - a name-only match would have exempted every one of
-    them, which is correct today but only by convention. Matching how the path was *derived*
-    instead - the variable traces back to a `get_system_db_path()` call somewhere earlier in
-    the same file - holds even if a future system.db open picks a differently-spelled variable,
-    and still flags a project-db open that happens to reuse one of these names but was not
-    actually built from get_system_db_path().
+    `sys_path`, but at the time this guard was written there were five real, legitimate call
+    sites outside api/database.py and api/main.py that opened system.db through exactly those
+    two spellings (api/routers/projects.py, api/services/run_service.py,
+    api/services/auto_assign_service.py twice, and api/services/interview_service.py) - a
+    name-only match would have exempted every one of them, which was correct then but only by
+    convention. (api/services/auto_assign_service.py and its two system.db opens no longer
+    exist - that module was retired along with node_template_assignments, leaving three such
+    call sites rather than five - but the point stands for whichever call sites exist at any
+    given time.) Matching how the path was *derived* instead - the variable traces back to a
+    `get_system_db_path()` call somewhere earlier in the same file - holds even if a future
+    system.db open picks a differently-spelled variable, and still flags a project-db open
+    that happens to reuse one of these names but was not actually built from
+    get_system_db_path().
     """
     root = Path(__file__).resolve().parents[1]
     # Legitimate raw opens: the helpers themselves, and one startup admin scan that runs

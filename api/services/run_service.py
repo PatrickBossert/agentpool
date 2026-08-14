@@ -346,9 +346,17 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
                 if a["stakeholder_id"] in stakeholder_map
             ]
 
-        # node_templates_block used to be built from node_template_assignments - retired
-        # along with that table (its interview_template_id was never populated by any
-        # surviving writer). create_discovery_interviews_crew defaults it to "" and the
+        # node_templates_block used to be built from node_template_assignments, retired along
+        # with that table. This is a real prompt change on any project where assessment_design
+        # had already run: dispatch_crew called auto_assign_interview_scripts after that crew
+        # (and after discovery_interviews and questionnaire_builder) completed, so
+        # interview_template_id was populated in practice and this block was not empty. It is
+        # safe to drop rather than replace because it duplicated content the Interview
+        # Coordinator already reads for itself: the block was a template schema copied from a
+        # node's own script, keyed by node_label, and the coordinator's task (step 1) reads the
+        # live interview_scripts artefact directly via SQLiteStateTool - the same scripts the
+        # block was built from, without node_label as an intermediate join key.
+        # create_discovery_interviews_crew defaults node_templates_block to "" and the
         # coordinator prompt already handles the empty case.
         from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew
         crew = create_discovery_interviews_crew(

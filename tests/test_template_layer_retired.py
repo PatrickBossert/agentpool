@@ -9,14 +9,31 @@ project.
 import pytest
 
 
-@pytest.mark.asyncio
-async def test_the_node_templates_routes_are_gone(client):
-    # The brief's sample called client.get(...) synchronously; the `client` fixture in
-    # conftest.py is an httpx.AsyncClient, so that returned an unawaited coroutine rather
-    # than exercising the route. Awaited here to actually hit the (removed) endpoint.
-    r = await client.get("/projects/any-slug/node-templates")
-    assert r.status_code == 404, (
-        f"the retired routes must not answer, got {r.status_code}"
+def test_the_node_templates_routes_are_gone():
+    """Asserted against the route table, not a response.
+
+    A request-level version of this test (`client.get("/projects/any-slug/node-templates")`,
+    asserting 404) cannot distinguish "the route is gone" from "the route exists and answered
+    404 anyway": the old GET handler's own preamble was `if not get_db_path(slug).exists():
+    raise HTTPException(404)`, and `any-slug` has no database, so the *live* route already
+    returned 404 for exactly this request. The route could be fully restored, and that
+    version of the test would stay green.
+
+    Checking the route table catches all three retired routes (GET, PUT, and POST .../publish
+    all share the `/node-templates` path segment) in one assertion, and does not depend on
+    any handler's internal 404 logic.
+
+    Power-checked: temporarily re-mounted a stand-in for the old GET handler on the real
+    `app` and confirmed this assertion fails (`AssertionError: retired /node-templates routes
+    are still registered: ['/projects/{slug}/node-templates']`) before removing it again.
+    """
+    from api.main import app
+
+    node_template_paths = sorted({
+        r.path for r in app.routes if "node-template" in getattr(r, "path", "")
+    })
+    assert node_template_paths == [], (
+        f"retired /node-templates routes are still registered: {node_template_paths}"
     )
 
 
