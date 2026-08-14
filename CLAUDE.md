@@ -192,6 +192,16 @@ must deduplicate or it repeats the same instruction N times.
 
 Do NOT use `sky-*` or `blue-*` classes — these were replaced with `brand` tokens.
 
+Reviewing an interview script happens in the document, not the list. `ScriptReviewRow` is the
+approver's view - node id, title, status, review count, and a gated Approve - and
+`ScriptReviewPanel` is where a reviewer reads the instrument and leaves by one of three exits,
+each of which records a review: `edited`, `changes_requested`, or `reviewed`. `approved` is
+excluded from the count so an approval cannot satisfy its own gate, and the gate is enforced in
+`record_script_review`, not only by a disabled button.
+
+A script is shown by its value chain node id. `script_id` remains the identity - stakeholder
+assignments and stored answers cite it - and is never displayed.
+
 ---
 
 ## Crew / agent conventions
