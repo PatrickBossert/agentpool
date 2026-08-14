@@ -2,19 +2,25 @@
 // One row of the script review ledger: status, a staleness indicator, and the two actions
 // left in the list once reading moved to ScriptReviewPanel - Open, always, and Approve,
 // gated on permission and on the script having actually been read.
-import { Check, CircleDashed, RotateCcw, ShieldCheck } from 'lucide-react'
+import { Check, CircleDashed, Pencil, RotateCcw, ShieldCheck } from 'lucide-react'
 import type { ScriptLedgerRow } from '../../types'
 
-const LABEL: Record<ScriptLedgerRow['review_status'], string> = {
+// Keyed on the full union so adding a review_status without a label or an icon is a compile
+// error. Exported because ScriptReviewRow.test.tsx checks both maps against
+// script_review_service.VALID_DECISIONS - the producer - rather than against a list copied
+// out of here, which would agree with itself forever.
+export const LABEL: Record<ScriptLedgerRow['review_status'], string> = {
   pending: 'Awaiting review',
   reviewed: 'Reviewed',
+  edited: 'Edited',
   approved: 'Approved',
   changes_requested: 'Sent back',
 }
 
-const ICON: Record<ScriptLedgerRow['review_status'], typeof Check> = {
+export const ICON: Record<ScriptLedgerRow['review_status'], typeof Check> = {
   pending: CircleDashed,
   reviewed: Check,
+  edited: Pencil,
   approved: ShieldCheck,
   changes_requested: RotateCcw,
 }
@@ -37,7 +43,15 @@ export function ScriptReviewRow(
   const stale = row.reviewed_at_version !== null
     && row.last_version !== null
     && row.reviewed_at_version < row.last_version
-  const Icon = ICON[row.review_status]
+  // Both lookups carry a fallback the types say is unreachable, and it is not defensive
+  // clutter: interview_script_ledger.review_status is an unconstrained TEXT column with no
+  // CHECK, written straight from a decision string, so the wire can hand this component a
+  // value neither map knows. Without the ?? the missing entry reaches JSX as `undefined`,
+  // React throws "Element type is invalid", and there is no error boundary anywhere in
+  // Maya's Output tab - one unknown status took the whole tab down. An unrecognised status
+  // now renders as a neutral marker beside its own raw text, which is legible and survivable.
+  const Icon = ICON[row.review_status] ?? CircleDashed
+  const label = LABEL[row.review_status] ?? row.review_status
 
   return (
     <div className="flex items-center gap-2 py-1.5 text-xs border-b border-surface-raised">
@@ -46,7 +60,7 @@ export function ScriptReviewRow(
           nothing to a reviewer, while 1.4.2 is the reference used everywhere else in the app. */}
       <span className="font-mono text-muted w-20 shrink-0">{row.node_id}</span>
       <span className="text-secondary truncate flex-1">{row.node_label || row.node_id}</span>
-      <span className="text-muted shrink-0">{LABEL[row.review_status]}</span>
+      <span className="text-muted shrink-0">{label}</span>
       <span className="text-muted shrink-0">
         {row.review_count} review{row.review_count === 1 ? '' : 's'}
       </span>

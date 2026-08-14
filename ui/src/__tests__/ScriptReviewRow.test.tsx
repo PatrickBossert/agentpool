@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { render, screen, fireEvent } from '@testing-library/react'
-import { vi } from 'vitest'
-import { ScriptReviewRow } from '../components/tabs/ScriptReviewRow'
+import { expect, it, vi } from 'vitest'
+import { ICON, LABEL, ScriptReviewRow } from '../components/tabs/ScriptReviewRow'
+import type { ScriptLedgerRow } from '../types'
 
 const base = {
   script_id: 'SC-001', node_id: '1.2', node_label: 'Works Programming',
@@ -90,4 +95,76 @@ it('opens the script rather than judging it from the list', () => {
   expect(onOpen).toHaveBeenCalledWith('SC-042')
   expect(screen.queryByRole('button', { name: /mark reviewed/i })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /send back/i })).not.toBeInTheDocument()
+})
+
+// ── Every status the backend can actually write ────────────────────────────────
+//
+// record_script_review sets review_status = decision, so the values this component must
+// render are exactly script_review_service.VALID_DECISIONS plus 'pending' (the column
+// default, and what a human edit resets the row to). The list is read out of the Python
+// rather than restated here on purpose: a copy would have agreed with itself when 'edited'
+// was added to VALID_DECISIONS and not to this component, which is precisely how
+// ICON['edited'] came to be undefined - tsc saw a total Record over a union that was
+// simply too narrow, and all 412 frontend tests passed while "Save changes" crashed the
+// list it returned to.
+const VALID_DECISIONS: string[] = (() => {
+  const source = readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../../api/services/script_review_service.py',
+    ),
+    'utf-8',
+  )
+  const match = source.match(/^VALID_DECISIONS\s*=\s*\(([^)]*)\)/m)
+  if (!match) throw new Error('VALID_DECISIONS not found in script_review_service.py')
+  return [...match[1].matchAll(/["']([^"']+)["']/g)].map((m) => m[1])
+})()
+
+const RENDERABLE_STATUSES = ['pending', ...VALID_DECISIONS]
+
+it('reads the real VALID_DECISIONS, so this file cannot silently test nothing', () => {
+  // A regex that stopped matching would leave every loop below iterating an empty list and
+  // passing vacuously - the failure mode of a test derived from a foreign file.
+  expect(VALID_DECISIONS).toContain('reviewed')
+  expect(VALID_DECISIONS).toContain('edited')
+  expect(VALID_DECISIONS.length).toBeGreaterThanOrEqual(4)
+})
+
+it('has a label and an icon for every decision the backend can write', () => {
+  for (const status of RENDERABLE_STATUSES) {
+    expect(Object.keys(LABEL), `no label for review_status '${status}'`).toContain(status)
+    expect(Object.keys(ICON), `no icon for review_status '${status}'`).toContain(status)
+  }
+})
+
+it('renders a row at every status the backend can write, with a named status and an icon', () => {
+  for (const status of RENDERABLE_STATUSES) {
+    const row = { ...base, review_status: status as ScriptLedgerRow['review_status'] }
+    const { container, unmount } = render(
+      <ScriptReviewRow row={row} onOpen={() => {}} onApprove={() => {}} canApprove={false} />,
+    )
+    // An svg proves a component rendered rather than a bare `undefined` reaching JSX -
+    // which is the actual crash: "Element type is invalid ... but got: undefined".
+    expect(container.querySelector('svg'), `no icon rendered for '${status}'`).not.toBeNull()
+    // The mapped label, not the raw token: falling back to the wire value is survivable but
+    // is not the finished surface, and asserting the token would accept the fallback.
+    expect(
+      screen.getByText(LABEL[status as ScriptLedgerRow['review_status']]),
+      `'${status}' did not render its own label`,
+    ).toBeInTheDocument()
+    unmount()
+  }
+})
+
+it('renders a status neither map knows without taking the tab down with it', () => {
+  // review_status is an unconstrained TEXT column with no CHECK constraint, so this is a
+  // reachable state rather than a hypothetical one - and the Output tab has no error
+  // boundary, so an unrenderable row is not a broken row, it is a blank tab.
+  render(
+    <ScriptReviewRow
+      row={{ ...base, review_status: 'quarantined' as ScriptLedgerRow['review_status'] }}
+      onOpen={() => {}} onApprove={() => {}} canApprove={false} />,
+  )
+  expect(screen.getByText('1.2')).toBeInTheDocument()
+  expect(screen.getByText('quarantined')).toBeInTheDocument()
 })

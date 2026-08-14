@@ -716,7 +716,14 @@ export interface ScriptLedgerRow {
   script_id: string
   node_id: string
   node_label: string
-  review_status: 'pending' | 'reviewed' | 'approved' | 'changes_requested'
+  // Every value record_script_review can write, plus 'pending' - the column's default and
+  // the only one no decision produces. It sets review_status = decision, so this union must
+  // stay a superset of script_review_service.VALID_DECISIONS: 'edited' was added there and
+  // not here, and because a narrower union makes a Record<> over it look total, tsc reported
+  // nothing while ICON['edited'] came back undefined and the row crashed on render.
+  // tests/ScriptReviewRow.test.tsx now reads VALID_DECISIONS out of the Python and fails if
+  // this drifts again.
+  review_status: 'pending' | 'reviewed' | 'edited' | 'approved' | 'changes_requested'
   reviewed_at_version: number | null
   review_return_to: 'agent' | 'reviewer' | null
   last_version: number | null
