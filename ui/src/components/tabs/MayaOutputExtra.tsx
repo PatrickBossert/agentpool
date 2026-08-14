@@ -415,7 +415,12 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
         </div>
       )}
       {openScript && openRow && (
-        <ScriptReviewPanel slug={slug} script={openScript} row={openRow} onClose={closePanel} />
+        // can_review was produced by /my-permissions and consumed nowhere. It gates the
+        // panel's exits - the same authority the PATCH and the review endpoint now both
+        // consult - so a reader who may not review is shown the script rather than three
+        // buttons the server would refuse.
+        <ScriptReviewPanel slug={slug} script={openScript} row={openRow}
+                           canReview={!!permissions?.can_review} onClose={closePanel} />
       )}
     </div>
   )

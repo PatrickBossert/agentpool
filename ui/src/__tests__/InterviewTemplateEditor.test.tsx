@@ -44,7 +44,9 @@ const SCRIPT = {
   ],
 }
 
-function renderEditor(overrides: Partial<{ scriptId: string; nodeLabel: string }> = {}) {
+function renderEditor(
+  overrides: Partial<{ scriptId: string; nodeLabel: string; baseVersion: number | null }> = {},
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
@@ -53,6 +55,7 @@ function renderEditor(overrides: Partial<{ scriptId: string; nodeLabel: string }
         scriptId={overrides.scriptId ?? 'SC-001'}
         nodeLabel={overrides.nodeLabel ?? 'Old Node Label'}
         activityId="1.2"
+        baseVersion={overrides.baseVersion}
         onClose={() => {}}
       />
     </QueryClientProvider>,
@@ -88,6 +91,32 @@ describe('InterviewTemplateEditor - routes and saves by script_id, not node_labe
 
     await waitFor(() => expect(patchMock).toHaveBeenCalledTimes(1))
     expect(patchMock.mock.calls[0][0]).toBe('/projects/proj-1/interview-scripts/SC-001')
+  })
+
+  it('sends the version it was opened against, so a stale save is refused', async () => {
+    // This editor PATCHed without base_version while the panel's title path already sent
+    // one, so the full-editing path - the one that rewrites questions - was the half still
+    // carrying last-write-wins. Asserted on the request body, not on a prop being accepted.
+    renderEditor({ baseVersion: 7 })
+    await screen.findByDisplayValue('Welcome')
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(patchMock).toHaveBeenCalledTimes(1))
+    expect(patchMock.mock.calls[0][1]).toMatchObject({ base_version: 7 })
+  })
+
+  it('sends no base_version when it has none, rather than a null the server must interpret', async () => {
+    // A backfilled ledger row carries NULL for last_version. The endpoint treats an absent
+    // base_version as "no evidence this is stale" and accepts; sending null would be a
+    // different request for the same situation.
+    renderEditor({ baseVersion: null })
+    await screen.findByDisplayValue('Welcome')
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(patchMock).toHaveBeenCalledTimes(1))
+    expect(patchMock.mock.calls[0][1]).not.toHaveProperty('base_version')
   })
 
   it('a newly added section is sent with the fields the validator requires', async () => {

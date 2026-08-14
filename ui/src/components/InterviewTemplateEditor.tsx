@@ -54,6 +54,13 @@ interface Props {
   scriptId: string
   nodeLabel: string
   activityId: string | null
+  /** The ledger's last_version at the moment this editor was opened, sent with the save so
+   *  the server can refuse it if somebody else wrote in between. Optional because a caller
+   *  with nothing to be stale against (no ledger row, a backfilled row carrying NULL) is
+   *  better served by an accepted edit than by a refusal on no evidence - the endpoint makes
+   *  the same choice for the same reason. Omitting it is last-write-wins, which is how this
+   *  codebase has already lost a human edit to a silent overwrite once. */
+  baseVersion?: number | null
   onClose: () => void
   /** Called after a save the server accepted, so a caller holding its own copy of this
    *  script's node_label (or of the interview-scripts list this scriptId came from) knows
@@ -62,7 +69,7 @@ interface Props {
 }
 
 export default function InterviewTemplateEditor({
-  slug, scriptId, nodeLabel, activityId, onClose, onSaved,
+  slug, scriptId, nodeLabel, activityId, baseVersion, onClose, onSaved,
 }: Props) {
   const queryClient = useQueryClient()
   const [script, setScript] = useState<Script | null>(null)
@@ -93,7 +100,13 @@ export default function InterviewTemplateEditor({
     setSaving(true)
     setError(null)
     try {
-      await apiClient.patch(`/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`, { script })
+      // Spread rather than always sent: base_version: undefined and an absent key survive
+      // JSON serialisation identically, but a caller asserting on the request body should
+      // see the shape the component actually means.
+      await apiClient.patch(
+        `/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`,
+        { script, ...(baseVersion != null ? { base_version: baseVersion } : {}) },
+      )
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
       // The server-side save superseded the interview-scripts artefact this scriptId

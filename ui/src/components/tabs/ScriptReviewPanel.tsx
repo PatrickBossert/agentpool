@@ -7,8 +7,9 @@
 // afterthought bolted onto a list row.
 import { useState } from 'react'
 import axios from 'axios'
-import { Check, RotateCcw, Save } from 'lucide-react'
+import { Check, ListChecks, RotateCcw, Save } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
+import InterviewTemplateEditor from '../InterviewTemplateEditor'
 import { ScriptCard, type ReviewableScript } from './MayaOutputExtra'
 import type { ScriptLedgerRow } from '../../types'
 
@@ -32,14 +33,20 @@ interface Props {
   slug: string
   script: ReviewableScript
   row: ScriptLedgerRow
+  /** Whether this caller may record a review at all - GET /my-permissions' can_review, which
+   *  is now the same authority the PATCH and the review endpoint both consult. False renders
+   *  the script read-only rather than offering exits the server would refuse. Optional and
+   *  defaulting to true so a caller that has not asked is not silently locked out. */
+  canReview?: boolean
   onClose: () => void
 }
 
-export function ScriptReviewPanel({ slug, script, row, onClose }: Props) {
+export function ScriptReviewPanel({ slug, script, row, canReview = true, onClose }: Props) {
   const [title, setTitle] = useState(script.node_label)
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false)
   const [sendingBack, setSendingBack] = useState(false)
+  const [editingQuestions, setEditingQuestions] = useState(false)
   const [note, setNote] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -81,6 +88,23 @@ export function ScriptReviewPanel({ slug, script, row, onClose }: Props) {
       setError(describeError(err, 'Save failed.'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  // The full editor saves for itself - it owns the sections, questions, and probes, and it
+  // already versions and validates them through the same PATCH. All that is left here is to
+  // record that a human read this script and changed it, which is the panel's whole purpose.
+  // Recorded after the save landed, same ordering and same reason as handleSaveChanges: a
+  // rejected PATCH means nothing was changed, and an 'edited' review claiming otherwise is a
+  // lie the ledger cannot retract.
+  async function handleQuestionsSaved() {
+    setError(null)
+    setEditingQuestions(false)
+    try {
+      await recordReview('edited')
+      onClose()
+    } catch (err) {
+      setError(describeError(err, 'The script was saved, but the review was not recorded.'))
     }
   }
 
@@ -126,7 +150,12 @@ export function ScriptReviewPanel({ slug, script, row, onClose }: Props) {
         <div className="border-t border-gray-200 px-5 py-3 shrink-0 space-y-2">
           {error && <p className="text-xs text-red-600">{error}</p>}
 
-          {sendingBack ? (
+          {!canReview ? (
+            <p className="text-xs text-gray-500 text-right">
+              You can read this script, but not review it. Ask an assigned reviewer or
+              approver to record a decision.
+            </p>
+          ) : sendingBack ? (
             <div className="space-y-2">
               <label htmlFor="script-review-feedback" className="text-xs text-gray-600 block">
                 Feedback
@@ -166,6 +195,19 @@ export function ScriptReviewPanel({ slug, script, row, onClose }: Props) {
             </div>
           ) : (
             <div className="flex justify-end gap-2">
+              {/* Sections, questions, and probes. The header input above edits the title and
+                  nothing else, and for the length of this branch that was the only editable
+                  thing left anywhere in the application - MayaSetupTab's mount of this editor
+                  went with the template-assignment layer and nothing replaced it, so a
+                  reviewer who spotted a bad question could only send the whole script back to
+                  Maya. This is where that editor was always meant to land. */}
+              <button
+                onClick={() => setEditingQuestions(true)}
+                disabled={busy || saving}
+                className={`${BTN} border border-gray-200 text-gray-600 hover:border-gray-400 disabled:opacity-50`}
+              >
+                <ListChecks size={12} className="inline mr-1" /> Edit questions
+              </button>
               <button
                 onClick={() => setSendingBack(true)}
                 disabled={busy || saving}
@@ -192,6 +234,22 @@ export function ScriptReviewPanel({ slug, script, row, onClose }: Props) {
           )}
         </div>
       </div>
+
+      {editingQuestions && (
+        <InterviewTemplateEditor
+          slug={slug}
+          scriptId={row.script_id}
+          nodeLabel={script.node_label}
+          activityId={script.node_id ?? null}
+          // The same version this panel opened against, so a save that lands behind
+          // somebody else's is refused rather than silently overwriting it. The editor
+          // PATCHed without it until now, which left the full-editing path carrying the
+          // stale-edit hole the title path had already closed.
+          baseVersion={row.last_version}
+          onClose={() => setEditingQuestions(false)}
+          onSaved={handleQuestionsSaved}
+        />
+      )}
     </div>
   )
 }
