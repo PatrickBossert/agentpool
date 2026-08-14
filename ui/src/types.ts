@@ -736,3 +736,11 @@ export interface ValidationWarning {
   disposition: 'open' | 'acknowledged' | 'dismissed'
   disposition_note: string | null
 }
+
+// What the caller may do on one project, asked once rather than inferred from a 403.
+// Mirrors _caller_matches_stakeholder_flag's two questions - review authority is the
+// wider of the two, approval authority the narrower.
+export interface MyPermissions {
+  can_review: boolean
+  can_approve: boolean
+}

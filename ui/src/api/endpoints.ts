@@ -180,6 +180,9 @@ export const projectsApi = {
   reviewScript: (slug: string, scriptId: string,
                  body: { decision: string; notes?: string; return_to?: string }) =>
     apiClient.post(`/projects/${slug}/script-ledger/${scriptId}/review`, body).then((r) => r.data),
+
+  getMyPermissions: (slug: string): Promise<import('../types').MyPermissions> =>
+    apiClient.get(`/projects/${slug}/my-permissions`).then((r) => r.data),
 }
 
 export const skillNotesApi = {

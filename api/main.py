@@ -31,6 +31,7 @@ from api.routers import system as system_router
 from api.routers import commits as commits_router
 from api.routers import value_chain as value_chain_router
 from api.routers import script_reviews as script_reviews_router
+from api.routers import permissions as permissions_router
 
 
 async def _mark_stale_runs_failed(database_dir: str) -> None:
@@ -169,4 +170,5 @@ app.include_router(system_router.router)
 app.include_router(commits_router.router)
 app.include_router(value_chain_router.router)
 app.include_router(script_reviews_router.router)
+app.include_router(permissions_router.router)
 app.include_router(validations_router.router)
