@@ -46,6 +46,10 @@ async def test_a_script_is_approved_only_once(project):
     api.services.script_review_service.AlreadyApprovedError for why the router needs the
     narrower type rather than pattern-matching this message."""
     from api.services.script_review_service import AlreadyApprovedError
+    # A read satisfies the separate not-yet-reviewed gate (see test_approve_gate.py) so
+    # the approval below succeeds for the reason this test is actually about.
+    await record_script_review(project, project_id=1, script_id="SC-001",
+                               reviewer="ana", decision="reviewed", at_version=5)
     await record_script_review(project, project_id=1, script_id="SC-001",
                                reviewer="ana", decision="approved", at_version=5)
     # Asserted on type, not on message wording - callers (the router included) branch
@@ -57,6 +61,10 @@ async def test_a_script_is_approved_only_once(project):
 
 @pytest.mark.asyncio
 async def test_a_send_back_clears_approval_and_records_its_target(project):
+    # A read satisfies the separate not-yet-reviewed gate (see test_approve_gate.py) so
+    # the approval below succeeds for the reason this test is actually about.
+    await record_script_review(project, project_id=1, script_id="SC-001",
+                               reviewer="ana", decision="reviewed", at_version=5)
     await record_script_review(project, project_id=1, script_id="SC-001",
                                reviewer="ana", decision="approved", at_version=5)
     row = await record_script_review(project, project_id=1, script_id="SC-001",

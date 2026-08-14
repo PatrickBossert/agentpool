@@ -97,6 +97,10 @@ async def test_approving_twice_is_refused_with_409(client, seeded_script):
     would recouple this test to the exact wording the router no longer depends on. See
     api/services/script_review_service.py:AlreadyApprovedError."""
     slug, script_id = seeded_script
+    # A read satisfies the separate not-yet-reviewed gate (see test_approve_gate.py) so
+    # the first approval below succeeds for the reason this test is actually about.
+    await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                       json={"decision": "reviewed"})
     first = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
                                json={"decision": "approved"})
     assert first.status_code == 200, first.text

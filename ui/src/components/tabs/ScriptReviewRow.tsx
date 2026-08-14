@@ -1,32 +1,39 @@
 // ui/src/components/tabs/ScriptReviewRow.tsx
 // One row of the script review ledger: status, a staleness indicator, and the two actions
-// (mark reviewed, send back) that drive the review endpoints from Task 5.
-import { useState } from 'react'
-import { Check, CircleDashed, RotateCcw, ShieldCheck } from 'lucide-react'
+// left in the list once reading moved to ScriptReviewPanel - Open, always, and Approve,
+// gated on permission and on the script having actually been read.
+import { Check, CircleDashed, Pencil, RotateCcw, ShieldCheck } from 'lucide-react'
 import type { ScriptLedgerRow } from '../../types'
 
-const LABEL: Record<ScriptLedgerRow['review_status'], string> = {
+// Keyed on the full union so adding a review_status without a label or an icon is a compile
+// error. Exported because ScriptReviewRow.test.tsx checks both maps against
+// script_review_service.VALID_DECISIONS - the producer - rather than against a list copied
+// out of here, which would agree with itself forever.
+export const LABEL: Record<ScriptLedgerRow['review_status'], string> = {
   pending: 'Awaiting review',
   reviewed: 'Reviewed',
+  edited: 'Edited',
   approved: 'Approved',
   changes_requested: 'Sent back',
 }
 
-const ICON: Record<ScriptLedgerRow['review_status'], typeof Check> = {
+export const ICON: Record<ScriptLedgerRow['review_status'], typeof Check> = {
   pending: CircleDashed,
   reviewed: Check,
+  edited: Pencil,
   approved: ShieldCheck,
   changes_requested: RotateCcw,
 }
 
 export function ScriptReviewRow(
-  { row, onReview }: {
+  { row, onOpen, onApprove, canApprove }: {
     row: ScriptLedgerRow
-    // notes and returnTo travel together: returnTo decides whether Maya regenerates the
-    // script (`agent`) or a human picks the thread back up (`reviewer`), and notes is the
-    // text injected into Maya's prompt when it does. Neither has a meaning on its own for
-    // 'reviewed' or 'approved', so both stay optional rather than always-required.
-    onReview: (scriptId: string, decision: string, returnTo?: string, notes?: string) => void
+    onOpen: (scriptId: string) => void
+    onApprove: (scriptId: string) => void
+    // Absent (or false) hides Approve entirely rather than rendering it disabled - the
+    // caller collapses "not permitted" and "permission still loading" into the same value
+    // deliberately, since a button that appears and then becomes clickable reads as a bug.
+    canApprove: boolean
   },
 ) {
   // Staleness is computed here from two numbers on the wire rather than sent as a boolean:
@@ -36,54 +43,42 @@ export function ScriptReviewRow(
   const stale = row.reviewed_at_version !== null
     && row.last_version !== null
     && row.reviewed_at_version < row.last_version
-  const Icon = ICON[row.review_status]
-
-  // The send-back form is inline and collapsed by default - this is a ledger row, not the
-  // review workbench - but it must collect both a note and a target before it can send,
-  // because the target is what decides whether Maya regenerates the script at all.
-  const [sendingBack, setSendingBack] = useState(false)
-  const [note, setNote] = useState('')
-
-  function submitSendBack(target: 'agent' | 'reviewer') {
-    onReview(row.script_id, 'changes_requested', target, note)
-    setSendingBack(false)
-    setNote('')
-  }
+  // Both lookups carry a fallback the types say is unreachable, and it is not defensive
+  // clutter: interview_script_ledger.review_status is an unconstrained TEXT column with no
+  // CHECK, written straight from a decision string, so the wire can hand this component a
+  // value neither map knows. Without the ?? the missing entry reaches JSX as `undefined`,
+  // React throws "Element type is invalid", and there is no error boundary anywhere in
+  // Maya's Output tab - one unknown status took the whole tab down. An unrecognised status
+  // now renders as a neutral marker beside its own raw text, which is legible and survivable.
+  const Icon = ICON[row.review_status] ?? CircleDashed
+  const label = LABEL[row.review_status] ?? row.review_status
 
   return (
     <div className="flex items-center gap-2 py-1.5 text-xs border-b border-surface-raised">
       <Icon size={12} className="text-muted shrink-0" />
-      <span className="font-mono text-muted w-16 shrink-0">{row.script_id}</span>
+      {/* Identity is the node id, not the script id - SC-042 is a citation token that means
+          nothing to a reviewer, while 1.4.2 is the reference used everywhere else in the app. */}
+      <span className="font-mono text-muted w-20 shrink-0">{row.node_id}</span>
       <span className="text-secondary truncate flex-1">{row.node_label || row.node_id}</span>
-      <span className="text-muted shrink-0">{LABEL[row.review_status]}</span>
+      <span className="text-muted shrink-0">{label}</span>
+      <span className="text-muted shrink-0">
+        {row.review_count} review{row.review_count === 1 ? '' : 's'}
+      </span>
       {stale && (
         <span className="text-amber-600 shrink-0">
           changed since (v{row.reviewed_at_version} → v{row.last_version})
         </span>
       )}
-      {sendingBack ? (
-        <div className="flex items-center gap-1 shrink-0">
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="What needs to change?"
-            aria-label="Send-back note"
-            className="text-xs border border-surface-raised rounded px-1.5 py-0.5 w-40 bg-transparent text-primary"
-          />
-          <button onClick={() => submitSendBack('agent')}
-                  className="text-brand hover:underline shrink-0">To agent</button>
-          <button onClick={() => submitSendBack('reviewer')}
-                  className="text-muted hover:underline shrink-0">To reviewer</button>
-          <button onClick={() => { setSendingBack(false); setNote('') }}
-                  className="text-muted hover:underline shrink-0">Cancel</button>
-        </div>
-      ) : (
-        <>
-          <button onClick={() => onReview(row.script_id, 'reviewed')}
-                  className="text-brand hover:underline shrink-0">Mark reviewed</button>
-          <button onClick={() => setSendingBack(true)}
-                  className="text-muted hover:underline shrink-0">Send back</button>
-        </>
+      <button onClick={() => onOpen(row.script_id)}
+              className="text-brand hover:underline shrink-0">Open</button>
+      {canApprove && (
+        <button
+          onClick={() => onApprove(row.script_id)}
+          disabled={row.review_count === 0}
+          className="text-brand hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+        >
+          Approve
+        </button>
       )}
     </div>
   )

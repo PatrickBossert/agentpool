@@ -94,6 +94,61 @@ async def test_get_session_with_script_returns_session_and_script(tmp_path):
     assert mock_script.call_args.args[2]["node_label"] == "exec_interview"
 
 
+@pytest.mark.asyncio
+async def test_get_session_with_script_keeps_the_questionnaire_key(tmp_path):
+    """questionnaire used to be resolved via node_template_assignments (retired along with
+    that table - 1 of its 103 rows ever had a questionnaire_template_id). The key stays in
+    the returned dict, always None, per the removal brief's "keep the key in the returned
+    dict so the frontend contract does not change" - though as of this task no file under
+    ui/src actually reads result.questionnaire (checked by grep), so the real risk this
+    guards against is not a live frontend break but a later change silently dropping the key
+    from the dict with nothing to catch it.
+    """
+    slug = "fake-project-q"
+    fake_db = tmp_path / "data" / f"{slug}.db"
+    fake_db.parent.mkdir(parents=True)
+    fake_db.touch()
+
+    fake_session = {
+        "id": 1,
+        "project_id": 7,
+        "session_token": "tok-q",
+        "node_label": "exec_interview",
+        "status": "pending",
+    }
+    fake_script = {"script_id": "SC-001", "questions": ["Q1"], "voice_id": "abc123"}
+
+    with (
+        patch(
+            "api.services.interview_service._find_session_db", new_callable=AsyncMock
+        ) as mock_find,
+        patch(
+            "api.services.interview_service.fetch_interview_session",
+            new_callable=AsyncMock,
+        ) as mock_fetch,
+        patch(
+            "api.services.interview_service.script_for_session",
+            new_callable=AsyncMock,
+        ) as mock_script,
+        patch("api.services.interview_service.get_settings") as mock_settings,
+        patch("aiosqlite.connect"),
+    ):
+        mock_find.return_value = str(fake_db)
+        mock_fetch.return_value = fake_session
+        mock_script.return_value = fake_script
+        settings_obj = MagicMock()
+        settings_obj.projects_dir = str(tmp_path / "projects")
+        mock_settings.return_value = settings_obj
+
+        from api.services.interview_service import get_session_with_script
+
+        result = await get_session_with_script("tok-q")
+
+    assert result is not None
+    assert set(result.keys()) == {"session", "script", "branding", "questionnaire"}
+    assert result["questionnaire"] is None
+
+
 # ---------------------------------------------------------------------------
 # 3. generate_deepgram_token — raises when key not set
 # ---------------------------------------------------------------------------

@@ -54,6 +54,13 @@ interface Props {
   scriptId: string
   nodeLabel: string
   activityId: string | null
+  /** The ledger's last_version at the moment this editor was opened, sent with the save so
+   *  the server can refuse it if somebody else wrote in between. Optional because a caller
+   *  with nothing to be stale against (no ledger row, a backfilled row carrying NULL) is
+   *  better served by an accepted edit than by a refusal on no evidence - the endpoint makes
+   *  the same choice for the same reason. Omitting it is last-write-wins, which is how this
+   *  codebase has already lost a human edit to a silent overwrite once. */
+  baseVersion?: number | null
   onClose: () => void
   /** Called after a save the server accepted, so a caller holding its own copy of this
    *  script's node_label (or of the interview-scripts list this scriptId came from) knows
@@ -62,7 +69,7 @@ interface Props {
 }
 
 export default function InterviewTemplateEditor({
-  slug, scriptId, nodeLabel, activityId, onClose, onSaved,
+  slug, scriptId, nodeLabel, activityId, baseVersion, onClose, onSaved,
 }: Props) {
   const queryClient = useQueryClient()
   const [script, setScript] = useState<Script | null>(null)
@@ -93,13 +100,17 @@ export default function InterviewTemplateEditor({
     setSaving(true)
     setError(null)
     try {
-      await apiClient.patch(`/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`, { script })
+      // Spread rather than always sent: base_version: undefined and an absent key survive
+      // JSON serialisation identically, but a caller asserting on the request body should
+      // see the shape the component actually means.
+      await apiClient.patch(
+        `/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`,
+        { script, ...(baseVersion != null ? { base_version: baseVersion } : {}) },
+      )
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
-      // The server-side save already retitled node_template_assignments to match
-      // (auto_assign_interview_scripts) and superseded the interview-scripts artefact this
-      // scriptId resolves through - neither is true of anything cached client-side until
-      // this fires.
+      // The server-side save superseded the interview-scripts artefact this scriptId
+      // resolves through - nothing cached client-side reflects that until this fires.
       queryClient.invalidateQueries({ queryKey: ['interview-scripts', slug] })
       onSaved?.()
     } catch (err) {
@@ -342,7 +353,7 @@ export default function InterviewTemplateEditor({
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 shrink-0">
           {error && !loading ? <p className="text-xs text-red-400">{error}</p> : (
-            saved ? <p className="text-xs text-green-600">Saved and template updated.</p> : <span />
+            saved ? <p className="text-xs text-green-600">Saved.</p> : <span />
           )}
           <div className="flex gap-2">
             <button onClick={onClose} className={`${BTN_SM} text-gray-400 hover:text-gray-700`}>Close</button>
@@ -352,7 +363,7 @@ export default function InterviewTemplateEditor({
                 disabled={saving}
                 className={`${BTN_SM} bg-brand hover:bg-brand-dark disabled:opacity-50 text-white`}
               >
-                {saving ? 'Saving…' : 'Save & Sync Template'}
+                {saving ? 'Saving…' : 'Save'}
               </button>
             )}
           </div>

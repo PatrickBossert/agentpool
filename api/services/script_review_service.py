@@ -8,7 +8,7 @@ decision.
 """
 import aiosqlite
 
-VALID_DECISIONS = ("reviewed", "approved", "changes_requested")
+VALID_DECISIONS = ("reviewed", "edited", "approved", "changes_requested")
 VALID_RETURN_TO = ("agent", "reviewer")
 
 
@@ -21,6 +21,16 @@ class AlreadyApprovedError(ValueError):
     the exception's type rather than pattern-matching its message text. The router uses
     this to choose 409 vs 422 - branching on wording would silently reclassify a
     conflict as a bad request the moment the message was reworded.
+    """
+
+
+class NotYetReviewedError(ValueError):
+    """Raised when approval is attempted against a script nobody has read yet.
+
+    An approver should not be able to approve an interview script nobody has read. A
+    disabled Approve button in the UI is only a hint; this is the gate that actually
+    holds, so it must be enforced here rather than relying on the caller to have checked
+    review_count first.
     """
 
 
@@ -54,6 +64,11 @@ async def record_script_review(
         raise AlreadyApprovedError(
             f"script {script_id} cannot re-approve, send it back first"
         )
+    if decision == "approved":
+        if await review_count(conn, project_id=project_id, script_id=script_id) == 0:
+            raise NotYetReviewedError(
+                f"script {script_id} has no reviews - it must be read before it is approved"
+            )
 
     await conn.execute(
         "INSERT INTO script_reviews"
@@ -76,6 +91,23 @@ async def record_script_review(
         (script_id, project_id),
     )
     return dict(await cur.fetchone())
+
+
+async def review_count(conn: aiosqlite.Connection, *, project_id: int, script_id: str) -> int:
+    """How many times a human has read this script and said something about it.
+
+    Derived on every read rather than stored. A stored counter is a second source of truth
+    for something one query answers, and a derived field going stale has already cost this
+    codebase a fix round.
+
+    'approved' is excluded: an approval must not satisfy its own gate.
+    """
+    cur = await conn.execute(
+        "SELECT COUNT(*) FROM script_reviews"
+        " WHERE project_id=? AND script_id=? AND decision != 'approved'",
+        (project_id, script_id),
+    )
+    return (await cur.fetchone())[0]
 
 
 async def scripts_awaiting_regeneration(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:

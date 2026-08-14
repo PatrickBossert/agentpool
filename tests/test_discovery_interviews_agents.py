@@ -47,6 +47,27 @@ def test_coordinator_task_writes_interview_plan():
     assert "interview_plan" in kwargs["description"]
 
 
+def test_coordinator_task_asks_for_the_script_id_in_every_plan_entry():
+    """The plan is where script_id enters the system, so the prompt is where it is asked for.
+
+    Deliberately a weak assertion about a prompt rather than a strong one about behaviour -
+    what actually guarantees a stored script_id is InterviewSessionTool._create, which
+    resolves an omitted id from the label itself (tests/test_session_script_citation.py).
+    This only holds the near end of the plumbing: the coordinator's example session entry
+    used to show stakeholder_id, name, node_label, and voice_config, and an entry the
+    example does not contain is one the model has no reason to emit.
+    """
+    from agents.discovery.interview_coordinator import create_interview_coordinator_task
+    agent = _mock_agent()
+    with patch("agents.discovery.interview_coordinator.Task") as MockTask:
+        MockTask.return_value = MagicMock()
+        create_interview_coordinator_task(agent=agent, stakeholder_assignments="")
+    _, kwargs = MockTask.call_args
+    assert '"script_id"' in kwargs["description"], (
+        "the session entry example must carry script_id, not just prose about it"
+    )
+
+
 def test_coordinator_task_injects_assignments():
     """Task description includes injected stakeholder assignment data."""
     from agents.discovery.interview_coordinator import create_interview_coordinator_task

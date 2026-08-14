@@ -18,7 +18,12 @@ from pydantic import BaseModel
 from api.auth import check_project_access, require_any_auth
 from api.database import fetch_project, get_connection
 from api.services.commit_service import _caller_matches_stakeholder_flag
-from api.services.script_review_service import AlreadyApprovedError, record_script_review
+from api.services.script_review_service import (
+    AlreadyApprovedError,
+    NotYetReviewedError,
+    record_script_review,
+    review_count,
+)
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +47,11 @@ async def get_script_ledger(slug: str, payload: dict = Depends(require_any_auth)
             "SELECT * FROM interview_script_ledger WHERE project_id=? ORDER BY script_id",
             (project["id"],),
         )
-        return [dict(r) for r in await cur.fetchall()]
+        rows = [dict(r) for r in await cur.fetchall()]
+        for row in rows:
+            row["review_count"] = await review_count(
+                conn, project_id=project["id"], script_id=row["script_id"])
+        return rows
 
 
 @router.post("/{slug}/script-ledger/{script_id}/review")
@@ -72,7 +81,7 @@ async def review_script(
                 notes=body.notes, at_version=row["last_version"] or 0,
                 return_to=body.return_to,
             )
-        except AlreadyApprovedError as e:
+        except (AlreadyApprovedError, NotYetReviewedError) as e:
             # A conflict with stored state, not a malformed request - branching on the
             # exception's type rather than its message means a reworded message cannot
             # silently reclassify this as a 422.

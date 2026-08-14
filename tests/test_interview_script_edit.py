@@ -18,6 +18,7 @@ row exactly as a live run would leave it, rather than a hand-built table row.
 import json
 import shutil
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -230,3 +231,103 @@ async def test_editing_a_sent_back_script_clears_the_outstanding_return_to(
     ledger = (await client.get(f"/projects/{slug}/script-ledger")).json()
     row = next(x for x in ledger if x["script_id"] == "SC-001")
     assert row["review_return_to"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_edit_from_a_superseded_version_is_refused(client, seeded_scripts):
+    """Several reviewers can edit, so last-write-wins silently discards somebody's work and
+    they have no way to learn it happened. This codebase has already lost a human edit to a
+    silent write once."""
+    slug = seeded_scripts
+    ledger = {r["script_id"]: r for r in (await client.get(f"/projects/{slug}/script-ledger")).json()}
+    opened_at = ledger["SC-001"]["last_version"]
+    before = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+
+    first = await client.patch(f"/projects/{slug}/interview-scripts/SC-001",
+                                json={"script": {**before["SC-001"], "node_label": "Ana's edit"},
+                                      "base_version": opened_at})
+    assert first.status_code == 200, first.text
+
+    # Bo opened the same version Ana did, and saves after her.
+    second = await client.patch(f"/projects/{slug}/interview-scripts/SC-001",
+                                 json={"script": {**before["SC-001"], "node_label": "Bo's edit"},
+                                       "base_version": opened_at})
+    assert second.status_code == 409, second.text
+
+    after = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+    assert after["SC-001"]["node_label"] == "Ana's edit", "the first edit must survive"
+
+
+@pytest.mark.asyncio
+async def test_an_edit_with_no_base_version_still_works(client, seeded_scripts):
+    """base_version is optional so an older client, or a caller with nothing to be stale
+    against, is not broken by the check."""
+    slug = seeded_scripts
+    before = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+    r = await client.patch(f"/projects/{slug}/interview-scripts/SC-001",
+                            json={"script": {**before["SC-001"], "node_label": "No base"}})
+    assert r.status_code == 200, r.text
+
+
+# ── The edit and the review answer to one authority ────────────────────────────
+#
+# ScriptReviewPanel's "Save changes" calls this PATCH and then POSTs a review, and checks
+# neither. While the PATCH used require_org_admin_or_above (a login role) and the review used
+# _caller_matches_stakeholder_flag (a stakeholder flag), the two could disagree in either
+# direction and both disagreements were silent damage:
+#
+#   is_reviewer, not org_admin -> /my-permissions says can_review, the panel offers Save
+#                                 changes, the PATCH 403s.
+#   org_admin, not a flagged stakeholder -> the PATCH succeeds, the review 403s, the artefact
+#                                 is versioned with no review recorded, onClose never fires,
+#                                 and the panel's row is stale - so retrying 409s, naming
+#                                 someone else as the editor. It was them.
+#
+# Latent while every login is sysadmin against an empty users table, which is exactly why no
+# existing test could see it: they all pass through the helper's first branch. These patch the
+# helper where each router *looks it up*, per CLAUDE.md's patch-target rule.
+
+@pytest.mark.asyncio
+async def test_a_caller_the_shared_authority_refuses_cannot_edit(client, seeded_scripts):
+    slug = seeded_scripts
+    before = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+    with patch("api.routers.projects._caller_matches_stakeholder_flag",
+               new=AsyncMock(return_value=False)):
+        r = await client.patch(
+            f"/projects/{slug}/interview-scripts/SC-001",
+            json={"script": {**before["SC-001"], "node_label": "Not mine to change"}})
+    assert r.status_code == 403, r.text
+
+    # And the refusal actually held - a 403 that still wrote would be worse than none.
+    after = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+    assert after["SC-001"]["node_label"] != "Not mine to change"
+
+
+@pytest.mark.asyncio
+async def test_the_edit_asks_the_same_question_as_the_review_it_is_paired_with(
+        client, seeded_scripts):
+    """Same helper, same flags - so the panel's two calls cannot disagree.
+
+    Asserted on the flags rather than on two 200s: both endpoints returning 200 for a
+    sysadmin is true whatever authority either consults, which is precisely how the
+    mismatch survived the branch.
+    """
+    slug = seeded_scripts
+    before = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+
+    with patch("api.routers.projects._caller_matches_stakeholder_flag",
+               new=AsyncMock(return_value=True)) as edit_gate:
+        r = await client.patch(f"/projects/{slug}/interview-scripts/SC-001",
+                                json={"script": {**before["SC-001"], "node_label": "Edited"}})
+    assert r.status_code == 200, r.text
+
+    with patch("api.routers.script_reviews._caller_matches_stakeholder_flag",
+               new=AsyncMock(return_value=True)) as review_gate:
+        r = await client.post(f"/projects/{slug}/script-ledger/SC-001/review",
+                               json={"decision": "edited"})
+    assert r.status_code == 200, r.text
+
+    assert edit_gate.call_args.kwargs["flags"] == ("is_reviewer", "is_approver")
+    assert edit_gate.call_args.kwargs["flags"] == review_gate.call_args.kwargs["flags"], (
+        "the save and the review it records must answer to the same authority"
+    )

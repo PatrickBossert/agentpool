@@ -180,6 +180,15 @@ export const projectsApi = {
   reviewScript: (slug: string, scriptId: string,
                  body: { decision: string; notes?: string; return_to?: string }) =>
     apiClient.post(`/projects/${slug}/script-ledger/${scriptId}/review`, body).then((r) => r.data),
+
+  // Carries base_version so the server can refuse a save made against a version someone
+  // else has already superseded - see PATCH /interview-scripts/{script_id}'s 409.
+  patchInterviewScript: (slug: string, scriptId: string,
+                         body: { script: unknown; base_version?: number | null }) =>
+    apiClient.patch(`/projects/${slug}/interview-scripts/${scriptId}`, body).then((r) => r.data),
+
+  getMyPermissions: (slug: string): Promise<import('../types').MyPermissions> =>
+    apiClient.get(`/projects/${slug}/my-permissions`).then((r) => r.data),
 }
 
 export const skillNotesApi = {

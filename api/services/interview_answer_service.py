@@ -126,10 +126,23 @@ async def record_answers(
 async def script_for_session(conn, slug: str, session: dict) -> dict | None:
     """The script this session was conducted from.
 
-    By script_id through the node assignment, because that is the anchor auto_assign makes
-    authoritative. Sessions created before script ids existed fall back to node_label, which
-    is what they were keyed on. A session whose script cannot be resolved returns None rather
-    than guessing - tagging answers from the wrong script is worse than leaving them untagged.
+    By the session's own script_id, because a session is for exactly one script and that
+    column is the authority on which one. Sessions created before the column existed fall
+    back to a node_label scan, which is what they were keyed on - label matching cannot
+    distinguish two scripts that normalise to the same label, which is exactly why the
+    column exists. A session whose script cannot be resolved returns None rather than
+    guessing - tagging answers from the wrong script is worse than leaving them untagged.
+
+    That last sentence used to be a claim rather than a description. The code fell through
+    from a failed script_id lookup straight into the label scan, so a session naming a
+    script the current artefact no longer holds was silently cited to a same-labelled
+    neighbour - and the scan itself returned its first match, guessing whenever a label was
+    shared. The two branches are now exclusive, and the scan refuses an ambiguous label:
+
+      script_id set   -> that script, or None. The scan is not consulted; the session
+                         already answered the question and got it wrong, or the instrument
+                         is gone. Either way a neighbour is not it.
+      script_id NULL  -> the label scan, and only if exactly one script carries the label.
 
     Normalised on the way out, same as the two GET /interview-scripts* endpoints - this reads
     the raw current artefact directly rather than through either of them, so without this a
@@ -148,20 +161,19 @@ async def script_for_session(conn, slug: str, session: dict) -> dict | None:
     if not isinstance(scripts, dict):
         return None
 
-    async with conn.execute(
-        "SELECT script_id FROM node_template_assignments "
-        "WHERE project_id = ? AND node_label = ?",
-        (session["project_id"], session["node_label"]),
-    ) as cur:
-        row = await cur.fetchone()
+    # The session names its own script, and that is the end of the question - resolved or
+    # not. Falling through to the label scan here is what turned "cannot resolve" into
+    # "resolved to something else".
+    script_id = session.get("script_id")
+    if script_id:
+        script = scripts.get(script_id)
+        return normalise_script_fields(script) if isinstance(script, dict) else None
 
-    script_id = row["script_id"] if row else None
-    if script_id and script_id in scripts:
-        return normalise_script_fields(scripts[script_id])
-    for script in scripts.values():
-        if isinstance(script, dict) and script.get("node_label") == session["node_label"]:
-            return normalise_script_fields(script)
-    return None
+    # Only for a session created before the column existed. One match is an answer; two are
+    # not, and neither is zero.
+    matches = [s for s in scripts.values()
+               if isinstance(s, dict) and s.get("node_label") == session["node_label"]]
+    return normalise_script_fields(matches[0]) if len(matches) == 1 else None
 
 
 _META_FIELDS = ("script_id", "section_id", "question_id", "node_id", "chain", "level",

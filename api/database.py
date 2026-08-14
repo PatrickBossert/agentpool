@@ -385,6 +385,7 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
             session_token         TEXT NOT NULL UNIQUE,
             status                TEXT NOT NULL DEFAULT 'pending',
             voice_config          TEXT,
+            script_id             TEXT,
             transcript_json       TEXT,
             ratings_json          TEXT,
             checkpoint_json       TEXT,
@@ -416,6 +417,22 @@ async def _migrate_interview_sessions_checkpoint(conn: aiosqlite.Connection) -> 
     await conn.commit()
 
 
+async def _migrate_interview_sessions_script_id(conn: aiosqlite.Connection) -> None:
+    """Give a session the id of the script it is for.
+
+    The citation from a stored answer back to its instrument used to be re-derived by
+    matching node_template_assignments on node_label. Label matching is what makes
+    publish_node_template 404 against an artefact keyed by script_id, and a label is not
+    unique - two scripts can normalise to the same one. A session is for exactly one
+    script, so it carries it.
+    """
+    cur = await conn.execute("PRAGMA table_info(interview_sessions)")
+    cols = {row[1] for row in await cur.fetchall()}
+    if "script_id" not in cols:
+        await conn.execute("ALTER TABLE interview_sessions ADD COLUMN script_id TEXT")
+    await conn.commit()
+
+
 async def _migrate_output_changes_kind(conn: aiosqlite.Connection) -> None:
     """Record what kind of feedback a change is, and whether it has been acted upon.
 
@@ -436,34 +453,6 @@ async def _migrate_output_changes_kind(conn: aiosqlite.Connection) -> None:
         )
     if "applied_run_id" not in cols:
         await conn.execute("ALTER TABLE output_changes ADD COLUMN applied_run_id INTEGER")
-    await conn.commit()
-
-
-async def _migrate_node_template_assignments(conn: aiosqlite.Connection) -> None:
-    """Create node_template_assignments table if it doesn't exist."""
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS node_template_assignments (
-            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id                INTEGER NOT NULL REFERENCES projects(id),
-            node_label                TEXT    NOT NULL,
-            activity_id               TEXT,
-            script_id                 TEXT,
-            level                     TEXT    DEFAULT 'L2',
-            interview_template_id     INTEGER,
-            questionnaire_template_id INTEGER,
-            created_at                TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE(project_id, node_label)
-        )
-    """)
-    async with conn.execute("PRAGMA table_info(node_template_assignments)") as cur:
-        cols = {row["name"] async for row in cur}
-    if "activity_id" not in cols:
-        await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN activity_id TEXT")
-    if "level" not in cols:
-        await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN level TEXT DEFAULT 'L2'")
-    if "script_id" not in cols:
-        await conn.execute("ALTER TABLE node_template_assignments ADD COLUMN script_id TEXT")
     await conn.commit()
 
 
@@ -1307,7 +1296,7 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # runs again after a database's first post-upgrade open in a process - there is no test
 # that catches a missed bump, because none can: it is a fact about this constant, not
 # about behaviour.
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1399,7 +1388,6 @@ async def get_connection(slug: str):
             await _migrate_campaigns(conn)
             await _migrate_stakeholder_assignments(conn)
             await _migrate_interview_sessions(conn)
-            await _migrate_node_template_assignments(conn)
             await _migrate_interview_sessions_ratings(conn)
             await _migrate_interview_sessions_checkpoint(conn)
             await _migrate_interview_answers(conn)
@@ -1412,6 +1400,7 @@ async def get_connection(slug: str):
             await _migrate_agent_chat_history(conn)
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
+            await _migrate_interview_sessions_script_id(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)
             await _migrate_run_inputs_agent_scope(conn)
@@ -2999,12 +2988,15 @@ async def insert_interview_session(
     node_label: str,
     session_token: str,
     voice_config: str | None = None,
+    script_id: str | None = None,
 ) -> int:
     cur = await conn.execute(
         "INSERT INTO interview_sessions "
-        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token, voice_config) "
-        "VALUES (?,?,?,?,?,?)",
-        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token, voice_config),
+        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token,"
+        " voice_config, script_id) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token,
+         voice_config, script_id),
     )
     await conn.commit()
     return cur.lastrowid
@@ -3182,69 +3174,6 @@ async def delete_template(conn, template_id: int) -> bool:
     )
     await conn.commit()
     return cur.rowcount > 0
-
-
-# ── Node Template Assignments ─────────────────────────────────────────────────
-
-async def fetch_node_template_assignments(conn, project_id: int) -> list:
-    async with conn.execute(
-        "SELECT node_label, activity_id, script_id, level, interview_template_id, "
-        "questionnaire_template_id FROM node_template_assignments WHERE project_id=? "
-        "ORDER BY node_label",
-        (project_id,),
-    ) as cur:
-        return [dict(r) async for r in cur]
-
-
-async def upsert_node_template_assignment(
-    conn, project_id: int, node_label: str,
-    interview_template_id, questionnaire_template_id,
-    activity_id: str | None = None,
-    level: str | None = None,
-    script_id: str | None = None,
-) -> None:
-    """Match on script_id when there is one, on node_label when there is not.
-
-    Rows written before script ids existed have none, and matching on the id alone would put
-    a second assignment beside every one of them. Keying on node_label was the original
-    defect: the label is the script's own title, so retitling a script made it look like a
-    new node and orphaned the assignment it already had.
-    """
-    if script_id:
-        async with conn.execute(
-            "SELECT id FROM node_template_assignments WHERE project_id=? AND script_id=?",
-            (project_id, script_id),
-        ) as cur:
-            existing = await cur.fetchone()
-        if existing:
-            # activity_id is set, not COALESCEd. The old COALESCE kept a stale anchor
-            # forever: a script that moved node reported success and silently did not move.
-            await conn.execute("""
-                UPDATE node_template_assignments
-                   SET node_label=?, activity_id=?, level=COALESCE(?, level),
-                       interview_template_id=?, questionnaire_template_id=?,
-                       updated_at=datetime('now')
-                 WHERE id=?
-            """, (node_label, activity_id, level, interview_template_id,
-                  questionnaire_template_id, existing["id"]))
-            await conn.commit()
-            return
-
-    await conn.execute("""
-        INSERT INTO node_template_assignments
-            (project_id, node_label, activity_id, script_id, level, interview_template_id,
-             questionnaire_template_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(project_id, node_label) DO UPDATE SET
-            activity_id=COALESCE(excluded.activity_id, activity_id),
-            script_id=COALESCE(excluded.script_id, script_id),
-            level=COALESCE(excluded.level, level),
-            interview_template_id=excluded.interview_template_id,
-            questionnaire_template_id=excluded.questionnaire_template_id,
-            updated_at=datetime('now')
-    """, (project_id, node_label, activity_id, script_id, level or "L2",
-          interview_template_id, questionnaire_template_id))
-    await conn.commit()
 
 
 async def fetch_interview_sessions_for_run(

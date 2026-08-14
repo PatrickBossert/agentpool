@@ -69,9 +69,13 @@ def create_interview_coordinator_task(
             "Steps:\n"
             "1. Use SQLiteStateTool with operation='read', key='interview_scripts', "
             "agent_name='interview_coordinator' to retrieve the scripts written by the "
-            "Interaction Designer. Each script is keyed by node_label.\n"
+            "Interaction Designer. The map is keyed by script_id (e.g. 'SC-001'), and each "
+            "script carries its own node_label.\n"
             "2. For each stakeholder listed in the assignments above:\n"
-            "   a. Look up the script for their node_label in the interview_scripts map.\n"
+            "   a. Find the script whose node_label matches theirs, and keep the key it is "
+            "held under - that key is the script_id, and it is what every answer from this "
+            "session will be cited by. Two scripts can carry the same node_label, so the id "
+            "must be recorded now: it cannot be recovered from the label afterwards.\n"
             "   b. Resolve their voice_config using the lookup table above "
             "(match on language + country_code; fall back to en/GB if no entry matches).\n"
             "   c. Produce a session entry:\n"
@@ -79,6 +83,7 @@ def create_interview_coordinator_task(
             "        \"stakeholder_id\": 1,\n"
             "        \"name\": \"Alice Chen\",\n"
             "        \"node_label\": \"Goods-in Inspection\",\n"
+            "        \"script_id\": \"SC-001\",\n"
             "        \"voice_config\": {\n"
             "          \"language\": \"en\",\n"
             "          \"country_code\": \"NZ\",\n"
@@ -93,8 +98,8 @@ def create_interview_coordinator_task(
         ),
         expected_output=(
             "A JSON interview_plan array saved via SQLiteStateTool, containing one session entry "
-            "per assigned stakeholder with voice_config. session_token is not included - it is "
-            "assigned in code when the session is created."
+            "per assigned stakeholder with script_id and voice_config. session_token is not "
+            "included - it is assigned in code when the session is created."
         ),
         agent=agent,
         context=context,

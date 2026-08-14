@@ -464,7 +464,6 @@ export default function Architecture() {
               { table: 'campaigns', desc: 'Interview campaign tracking', cols: 'id, project_id, value_stream_name, campaign_name, interview_start, interview_close' },
               { table: 'interview_responses', desc: 'Imported interview data', cols: 'id, stakeholder_id, campaign_id, raw_data' },
               { table: 'reminder_emails', desc: 'Email reminder queue', cols: 'id, project_id, campaign_id, stakeholder_id, subject, body, escalation_level, status' },
-              { table: 'node_template_assignments', desc: 'Interview template → node mapping', cols: 'id, project_id, node_label, interview_template_id, questionnaire_template_id' },
             ].map(({ table, desc, cols }) => (
               <div key={table} className="border-b border-slate-800 py-2">
                 <div className="flex items-baseline gap-2">

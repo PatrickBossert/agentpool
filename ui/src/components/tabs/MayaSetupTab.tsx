@@ -1,14 +1,20 @@
 // ui/src/components/tabs/MayaSetupTab.tsx
-// Maya's Setup tab: interview programme reference, value chain node coverage, and manual
-// node template assignment (moved from the retired Value Chain page's Templates tab)
-import { useState, useEffect } from 'react'
+// Maya's Setup tab: interview programme reference and discipline configuration.
+//
+// This used to also carry value chain node coverage and manual node template assignment,
+// both read from node_template_assignments - a table whose level column said 'L2' on
+// every one of its 103 rows regardless of the node, and whose publish action 404d on every
+// real project (it looked up by node_label in an artefact keyed by script_id). Retired
+// along with that table. The editor it exposed - InterviewTemplateEditor - now opens from
+// ScriptReviewPanel on the Output tab, which is where a human reads the script before
+// changing it. It was unmounted for the length of this branch, which left sections,
+// questions, and probes editable nowhere at all; the note here promising "a later task"
+// was the only record that anything was missing.
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Info, Plus, X } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
-import { listTemplates } from '../../api/templates'
-import { listNodeTemplates, putNodeTemplate, publishNodeTemplate } from '../../api/nodeTemplates'
-import InterviewTemplateEditor from '../InterviewTemplateEditor'
-import type { NodeTemplateAssignment, ProjectSettings, TemplateListItem } from '../../types'
+import type { ProjectSettings } from '../../types'
 
 /**
  * The vertical axis Casey groups maturity themes by, edited where the instruments are
@@ -91,22 +97,6 @@ function DisciplineEditor({ slug, settings }: { slug: string; settings?: Project
       </div>
     </div>
   )
-}
-
-function sortByActivityId(assignments: NodeTemplateAssignment[]): NodeTemplateAssignment[] {
-  return [...assignments].sort((a, b) => {
-    if (!a.activity_id && !b.activity_id) return a.node_label.localeCompare(b.node_label)
-    if (!a.activity_id) return 1
-    if (!b.activity_id) return -1
-    const aParts = a.activity_id.split('.').map(Number)
-    const bParts = b.activity_id.split('.').map(Number)
-    const len = Math.max(aParts.length, bParts.length)
-    for (let i = 0; i < len; i++) {
-      const diff = (aParts[i] ?? 0) - (bParts[i] ?? 0)
-      if (diff !== 0) return diff
-    }
-    return 0
-  })
 }
 
 interface TypeDetail {
@@ -280,20 +270,6 @@ const INTERVIEW_TYPE_DETAILS: Record<string, TypeDetail> = {
   },
 }
 
-const LEVEL_BADGE: Record<string, string> = {
-  L0: 'bg-purple-100 text-purple-700',
-  L1: 'bg-indigo-100 text-indigo-700',
-  L2: 'bg-blue-100 text-blue-700',
-  L3: 'bg-teal-100 text-teal-700',
-}
-
-const LEVEL_INTERVIEW_NAME: Record<string, string> = {
-  L0: 'Portfolio / Board',
-  L1: 'Strategy & Capability',
-  L2: 'Decision Architecture',
-  L3: 'Execution Fidelity',
-}
-
 const INTERVIEW_TYPES = [
   {
     code: 'L0',
@@ -457,93 +433,12 @@ function InterviewTypeDialog({ code, onClose }: { code: string; onClose: () => v
 }
 
 export default function MayaSetupTab({ slug }: { slug: string }) {
-  const [nodeAssignments, setNodeAssignments] = useState<NodeTemplateAssignment[]>([])
-  const [loading, setLoading] = useState(true)
   const [inspectCode, setInspectCode] = useState<string | null>(null)
-
-  // ── Node template assignment - moved from the old Value Chain page's Templates
-  // tab. Per-level generation is meant to supersede this eventually, but that
-  // generation does not exist yet, so manual assignment stays the only route to
-  // control until it does. Kept as its own state, separate from nodeAssignments
-  // above, since the two sections were independent on the old page and merging
-  // them is out of scope for a faithful move. ────────────────────────────────
-  const [templateAssignments, setTemplateAssignments] = useState<NodeTemplateAssignment[]>([])
-  const [interviewTemplates, setInterviewTemplates] = useState<TemplateListItem[]>([])
-  const [questionnaireTemplates, setQuestionnaireTemplates] = useState<TemplateListItem[]>([])
-  const [editingScript, setEditingScript] = useState<
-    { scriptId: string; nodeLabel: string; activityId: string | null } | null
-  >(null)
 
   const { data: settings } = useQuery({
     queryKey: ['settings', slug],
     queryFn: () => projectsApi.getSettings(slug),
   })
-
-  // Extracted rather than inlined in the effect below: editing a script retitles
-  // node_template_assignments.node_label server-side (auto_assign_interview_scripts), so a
-  // saved edit must be able to re-run exactly this fetch on demand, not only on mount -
-  // otherwise this table keeps showing the pre-edit label until the page is reloaded.
-  function refreshNodeAssignments() {
-    if (!slug) return
-    setLoading(true)
-    listNodeTemplates(slug)
-      .then(assignments => setNodeAssignments(sortByActivityId(assignments)))
-      .catch(console.error)
-      .finally(() => setLoading(false))
-  }
-
-  function refreshTemplateAssignments() {
-    if (!slug) return
-    Promise.all([
-      listNodeTemplates(slug),
-      listTemplates('interview'),
-      listTemplates('questionnaire'),
-    ]).then(([assignments, interviewTpls, questionnaireTpls]) => {
-      setTemplateAssignments(sortByActivityId(assignments))
-      setInterviewTemplates(interviewTpls)
-      setQuestionnaireTemplates(questionnaireTpls)
-    }).catch(console.error)
-  }
-
-  useEffect(refreshNodeAssignments, [slug])
-  useEffect(refreshTemplateAssignments, [slug])
-
-  async function handleTemplateChange(
-    nodeLabel: string,
-    field: 'interview_template_id' | 'questionnaire_template_id',
-    value: number | null,
-  ) {
-    const current = templateAssignments.find((a) => a.node_label === nodeLabel)
-    const updated: NodeTemplateAssignment = current
-      ? { ...current, [field]: value }
-      : { node_label: nodeLabel, activity_id: null, interview_template_id: null, questionnaire_template_id: null, [field]: value }
-
-    setTemplateAssignments((prev) =>
-      prev.some((a) => a.node_label === nodeLabel)
-        ? prev.map((a) => (a.node_label === nodeLabel ? updated : a))
-        : [...prev, updated],
-    )
-
-    try {
-      await putNodeTemplate(slug, nodeLabel, {
-        interview_template_id: updated.interview_template_id,
-        questionnaire_template_id: updated.questionnaire_template_id,
-      })
-    } catch (e) {
-      console.error('Auto-save failed', e)
-    }
-  }
-
-  async function handlePublish(nodeLabel: string) {
-    const name = window.prompt(`Template name for "${nodeLabel}":`)
-    if (!name || !name.trim()) return
-    try {
-      await publishNodeTemplate(slug, nodeLabel, { name: name.trim(), description: '' })
-    } catch (e) {
-      console.error('Publish failed', e)
-      alert('Publish failed - check that the interview script has been generated for this node.')
-    }
-  }
 
   const standardsRefs = settings?.standards_references
 
@@ -598,201 +493,6 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
           ))}
         </div>
       </div>
-
-      {/* Value chain coverage */}
-      <div>
-        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Value Chain Coverage</p>
-        <p className="text-[11px] text-gray-400 mb-3">
-          Interview type is hard-assigned by node level. L1 / L2 / L3 scripts use the library structure tailored to each node's context.
-        </p>
-        {loading ? (
-          <p className="text-xs text-gray-400 animate-pulse py-4">Loading value chain…</p>
-        ) : nodeAssignments.length === 0 ? (
-          <p className="text-xs text-gray-400 italic py-4">
-            No nodes yet — run the Value Chain crew (Alex) first.
-          </p>
-        ) : (
-          <div className="overflow-x-auto -mx-1">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-gray-400">
-                  <th className="pb-1.5 pr-2 font-medium w-10">#</th>
-                  <th className="pb-1.5 pr-3 font-medium">Node</th>
-                  <th className="pb-1.5 pr-3 font-medium">Level</th>
-                  <th className="pb-1.5 font-medium">Interview type</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {nodeAssignments.map(a => {
-                  const isL1 = a.level === 'L1'
-                  const badgeCls = LEVEL_BADGE[a.level ?? ''] ?? 'bg-gray-100 text-gray-500'
-                  const typeName = a.level ? (LEVEL_INTERVIEW_NAME[a.level] ?? a.level) : '—'
-                  return (
-                    <tr key={a.node_label} className={isL1 ? 'bg-gray-50' : ''}>
-                      <td className="py-2 pr-2 font-mono text-[10px] text-gray-400 whitespace-nowrap">
-                        {a.activity_id ?? '-'}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <span className={`text-xs ${isL1 ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
-                          {a.node_label}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-3">
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${badgeCls}`}>
-                          {a.level ?? '—'}
-                        </span>
-                      </td>
-                      <td className="py-2 text-[11px] text-gray-600">
-                        {typeName}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div className="mt-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
-          <p className="text-[10px] text-gray-400">
-            <span className="font-medium text-gray-500">C · A · F · S</span> templates are generated for stakeholders assigned these levels in the Stakeholder Registry.
-          </p>
-        </div>
-      </div>
-
-      {/* Node Template Assignment - moved from the old Value Chain page's Templates
-          tab, unchanged. Assigns a saved interview or questionnaire template to a
-          specific node, overriding the generated default above. Per-level generation
-          is meant to replace this eventually, but that generation does not exist
-          yet, so this stays the only way to assign templates. */}
-      <div>
-        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Node Template Assignment</p>
-        <p className="text-[11px] text-gray-400 mb-3">
-          Assign interview and questionnaire templates to each value chain node. Changes save automatically.
-        </p>
-
-        {templateAssignments.length === 0 ? (
-          <p className="text-xs text-gray-400 italic py-4">
-            Run the Value Chain crew first to generate nodes.
-          </p>
-        ) : (
-          <div className="overflow-x-auto -mx-1">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-gray-400">
-                  <th className="pb-1.5 pr-2 font-medium w-10">#</th>
-                  <th className="pb-1.5 pr-3 font-medium">Node</th>
-                  <th className="pb-1.5 pr-3 font-medium">Interview Template</th>
-                  <th className="pb-1.5 pr-3 font-medium">Questionnaire Template</th>
-                  <th className="pb-1.5 pr-3 font-medium">Publish</th>
-                  <th className="pb-1.5 font-medium">Script</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {templateAssignments.map((assignment) => {
-                  const isL1 = assignment.level === 'L1'
-                  return (
-                    <tr key={assignment.node_label} className={isL1 ? 'bg-gray-50' : ''}>
-                      <td className="py-2 pr-2 font-mono text-[10px] text-gray-400 whitespace-nowrap">
-                        {assignment.activity_id ?? '-'}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <div className={isL1 ? 'font-semibold text-gray-900 text-xs' : 'font-medium text-gray-700 text-xs'}>
-                          {assignment.node_label}
-                        </div>
-                        {isL1 && (
-                          <span className="text-[9px] text-brand bg-brand/10 px-1.5 py-0.5 rounded font-medium">L1 Leadership</span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <select
-                          value={assignment.interview_template_id ?? ''}
-                          onChange={(e) =>
-                            handleTemplateChange(
-                              assignment.node_label,
-                              'interview_template_id',
-                              e.target.value ? Number(e.target.value) : null,
-                            )
-                          }
-                          className="bg-white border border-gray-200 rounded px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand w-full max-w-[10rem]"
-                        >
-                          <option value="">- None -</option>
-                          {interviewTemplates.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="py-2 pr-3">
-                        <select
-                          value={assignment.questionnaire_template_id ?? ''}
-                          onChange={(e) =>
-                            handleTemplateChange(
-                              assignment.node_label,
-                              'questionnaire_template_id',
-                              e.target.value ? Number(e.target.value) : null,
-                            )
-                          }
-                          className="bg-white border border-gray-200 rounded px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand w-full max-w-[10rem]"
-                        >
-                          <option value="">- None -</option>
-                          {questionnaireTemplates.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="py-2 pr-3">
-                        <button
-                          type="button"
-                          onClick={() => handlePublish(assignment.node_label)}
-                          className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-[11px] rounded transition-colors"
-                        >
-                          Publish
-                        </button>
-                      </td>
-                      <td className="py-2">
-                        {!isL1 && assignment.script_id && (
-                          <button
-                            type="button"
-                            onClick={() => setEditingScript({
-                              scriptId: assignment.script_id as string,
-                              nodeLabel: assignment.node_label,
-                              activityId: assignment.activity_id,
-                            })}
-                            className="px-2.5 py-1 border border-gray-200 hover:border-brand hover:text-brand text-gray-500 text-[11px] rounded transition-colors"
-                          >
-                            Edit Script
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {editingScript && (
-        <InterviewTemplateEditor
-          slug={slug}
-          scriptId={editingScript.scriptId}
-          nodeLabel={editingScript.nodeLabel}
-          activityId={editingScript.activityId}
-          onClose={() => setEditingScript(null)}
-          onSaved={() => {
-            // A saved edit retitles node_template_assignments.node_label server-side
-            // (auto_assign_interview_scripts) - both tables built from it here would keep
-            // showing the pre-edit label until a full reload without this. The editor
-            // itself already invalidates the ['interview-scripts', slug] query it reads.
-            refreshNodeAssignments()
-            refreshTemplateAssignments()
-          }}
-        />
-      )}
 
     </div>
   )

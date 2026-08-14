@@ -510,19 +510,6 @@ export interface InterviewSessionsResponse {
   summary: SessionSummary
 }
 
-export interface NodeTemplateAssignment {
-  node_label: string
-  activity_id: string | null
-  /** The interview_scripts artefact's own key, carried on the assignment row so a
-   *  consumer never has to rebuild it by matching node_label against the scripts map -
-   *  that match is exactly what auto_assign_service.py calls "the original defect":
-   *  node_label is the script's own retitleable text, not a stable identifier. */
-  script_id?: string | null
-  level?: 'L1' | 'L2' | 'L3'
-  interview_template_id: number | null
-  questionnaire_template_id: number | null
-}
-
 export interface TemplateListItem {
   id: number
   name: string
@@ -729,11 +716,19 @@ export interface ScriptLedgerRow {
   script_id: string
   node_id: string
   node_label: string
-  review_status: 'pending' | 'reviewed' | 'approved' | 'changes_requested'
+  // Every value record_script_review can write, plus 'pending' - the column's default and
+  // the only one no decision produces. It sets review_status = decision, so this union must
+  // stay a superset of script_review_service.VALID_DECISIONS: 'edited' was added there and
+  // not here, and because a narrower union makes a Record<> over it look total, tsc reported
+  // nothing while ICON['edited'] came back undefined and the row crashed on render.
+  // tests/ScriptReviewRow.test.tsx now reads VALID_DECISIONS out of the Python and fails if
+  // this drifts again.
+  review_status: 'pending' | 'reviewed' | 'edited' | 'approved' | 'changes_requested'
   reviewed_at_version: number | null
   review_return_to: 'agent' | 'reviewer' | null
   last_version: number | null
   last_author: string
+  review_count: number
 }
 
 // A structural finding a validator raised and did not refuse. Recorded when an agent
@@ -748,4 +743,12 @@ export interface ValidationWarning {
   measure: number | null
   disposition: 'open' | 'acknowledged' | 'dismissed'
   disposition_note: string | null
+}
+
+// What the caller may do on one project, asked once rather than inferred from a 403.
+// Mirrors _caller_matches_stakeholder_flag's two questions - review authority is the
+// wider of the two, approval authority the narrower.
+export interface MyPermissions {
+  can_review: boolean
+  can_approve: boolean
 }

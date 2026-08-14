@@ -6,6 +6,7 @@ import axios from 'axios'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
 import { ScriptReviewRow } from './ScriptReviewRow'
+import { ScriptReviewPanel } from './ScriptReviewPanel'
 import type { InterviewQuestion, InterviewScript, InterviewSection } from '../../types'
 
 // The server's own explanation - 403 (not a reviewer/approver), 409 (already approved), 422
@@ -160,11 +161,19 @@ function SectionBlock({ section, index }: { section: InterviewSection; index: nu
   )
 }
 
-function ScriptCard({ script }: { script: InterviewScript }) {
+// Loose enough for ScriptReviewPanel to open on a script it fetched for editing, and equally
+// satisfied by a full InterviewScript from GET /interview-scripts - node_label and sections
+// are what ScriptCard actually dereferences without an optional-chain fallback; everything
+// else it reads defensively.
+export type ReviewableScript = Partial<InterviewScript> & Pick<InterviewScript, 'node_label' | 'sections'>
+
+export function ScriptCard({ script }: { script: ReviewableScript }) {
   const [expanded, setExpanded] = useState(false)
   // Perspective, when the script carries one, is what a stakeholder recognises - "Frontline",
-  // not "L1" - so the badge and title read from it first and fall back to the tier.
-  const badgeKey = script.perspective ?? script.level
+  // not "L1" - so the badge and title read from it first and fall back to the tier. The
+  // final '' is a type-safety net, not a state anyone sees - a real InterviewScript always
+  // carries level, and ScriptReviewPanel's edit path never touches it.
+  const badgeKey = script.perspective ?? script.level ?? ''
   const badgeCls = LEVEL_BADGE[badgeKey] ?? 'bg-gray-100 text-gray-600'
   const totalQuestions = (script.sections ?? []).reduce((n, s) => n + (s.questions?.length ?? 0), 0)
 
@@ -201,11 +210,11 @@ function ScriptCard({ script }: { script: InterviewScript }) {
             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Research Brief</p>
             <p className="text-[11px] text-gray-700 leading-relaxed">{script.research_brief}</p>
           </div>
-          {script.study_objectives?.length > 0 && (
+          {(script.study_objectives ?? []).length > 0 && (
             <div>
               <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Study Objectives</p>
               <ul className="space-y-0.5">
-                {script.study_objectives.map((obj, i) => (
+                {(script.study_objectives ?? []).map((obj, i) => (
                   <li key={i} className="flex items-start gap-1.5">
                     <span className="text-gray-300 mt-0.5 flex-shrink-0">·</span>
                     <p className="text-[11px] text-gray-600 leading-relaxed">{obj}</p>
@@ -303,6 +312,7 @@ function ScriptCard({ script }: { script: InterviewScript }) {
 export default function MayaOutputExtra({ slug }: { slug: string }) {
   const qc = useQueryClient()
   const [reviewError, setReviewError] = useState<string | null>(null)
+  const [openScriptId, setOpenScriptId] = useState<string | null>(null)
 
   const { data: scriptsMap, isLoading } = useQuery({
     queryKey: ['interview-scripts', slug],
@@ -314,12 +324,28 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
     queryFn: () => projectsApi.getScriptLedger(slug),
   })
 
-  function handleReview(scriptId: string, decision: string, returnTo?: string, notes?: string) {
+  // Undefined while loading collapses into "not permitted" for canApprove below - a missing
+  // Approve button while permissions are still in flight, never a disabled one that becomes
+  // clickable once the response lands.
+  const { data: permissions } = useQuery({
+    queryKey: ['my-permissions', slug],
+    queryFn: () => projectsApi.getMyPermissions(slug),
+  })
+
+  function handleApprove(scriptId: string) {
     setReviewError(null)
     projectsApi
-      .reviewScript(slug, scriptId, { decision, return_to: returnTo, notes })
+      .reviewScript(slug, scriptId, { decision: 'approved' })
       .then(() => qc.invalidateQueries({ queryKey: ['script-ledger', slug] }))
-      .catch((err) => setReviewError(describeError(err, 'Could not record that review.')))
+      .catch((err) => setReviewError(describeError(err, 'Could not approve that script.')))
+  }
+
+  function closePanel() {
+    setOpenScriptId(null)
+    // Both the script content and the ledger row may have changed while the panel was open
+    // (a save, a review, a send-back) - the list must reflect either without a manual refresh.
+    qc.invalidateQueries({ queryKey: ['interview-scripts', slug] })
+    qc.invalidateQueries({ queryKey: ['script-ledger', slug] })
   }
 
   if (isLoading) {
@@ -334,6 +360,9 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
   // rendered nothing outside them, so a script with an unexpected level vanished with no message.
   const vcScripts  = scripts.filter(s => !s.perspective)
   const extScripts = scripts.filter(s => !!s.perspective)
+
+  const openScript = openScriptId ? scriptsMap?.[openScriptId] : undefined
+  const openRow = openScriptId ? ledgerRows?.find((r) => r.script_id === openScriptId) : undefined
 
   return (
     <div className="space-y-4">
@@ -350,7 +379,13 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
           ) : (
             <div>
               {ledgerRows!.map((row) => (
-                <ScriptReviewRow key={row.script_id} row={row} onReview={handleReview} />
+                <ScriptReviewRow
+                  key={row.script_id}
+                  row={row}
+                  onOpen={setOpenScriptId}
+                  onApprove={handleApprove}
+                  canApprove={!!permissions?.can_approve}
+                />
               ))}
             </div>
           )}
@@ -378,6 +413,14 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
             {extScripts.map((s, i) => <ScriptCard key={i} script={s} />)}
           </div>
         </div>
+      )}
+      {openScript && openRow && (
+        // can_review was produced by /my-permissions and consumed nowhere. It gates the
+        // panel's exits - the same authority the PATCH and the review endpoint now both
+        // consult - so a reader who may not review is shown the script rather than three
+        // buttons the server would refuse.
+        <ScriptReviewPanel slug={slug} script={openScript} row={openRow}
+                           canReview={!!permissions?.can_review} onClose={closePanel} />
       )}
     </div>
   )
