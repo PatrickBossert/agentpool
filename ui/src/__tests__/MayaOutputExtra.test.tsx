@@ -2,7 +2,7 @@
 // Level carries the tier, perspective carries the role - MayaOutputExtra used to split on two
 // hardcoded level sets and render nothing outside them, so a script with an unrecognised level
 // vanished with no message and no count.
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -93,6 +93,43 @@ describe('MayaOutputExtra', () => {
     await userEvent.click(await screen.findByRole('button', { name: /approve/i }))
 
     expect(await screen.findByText(/not permitted to review this script/i)).toBeInTheDocument()
+  })
+
+  // GET /my-permissions was added specifically because canApprove had been hardcoded true,
+  // and nothing proved the replacement was consumed: beforeEach mocks can_approve: true for
+  // every test in this file, so putting `canApprove={true}` back passed all 412 of them. The
+  // endpoint only earns its keep if a false answer is honoured, so that is what this asserts.
+  it('offers no Approve when the server says this caller may not approve', async () => {
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue(
+      { can_review: true, can_approve: false } as never,
+    )
+    vi.mocked(projectsApi.getInterviewScripts).mockResolvedValue(ONE_SCRIPT as never)
+    // review_count 3, so the row's own "has anybody read it" gate is satisfied - otherwise
+    // an absent Approve would be explained by the wrong thing.
+    vi.mocked(projectsApi.getScriptLedger).mockResolvedValue(
+      [{ ...LEDGER_ROW, review_count: 3 }] as never,
+    )
+    render(<Wrapper><MayaOutputExtra slug="p" /></Wrapper>)
+
+    // Wait for the row itself, and for the permissions answer to have arrived, before
+    // concluding anything from an absence.
+    expect(await screen.findByRole('button', { name: /open/i })).toBeInTheDocument()
+    await waitFor(() => expect(projectsApi.getMyPermissions).toHaveBeenCalledWith('p'))
+    await waitFor(() => expect(screen.getByText(/3 reviews/i)).toBeInTheDocument())
+
+    expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
+  })
+
+  it('offers Approve when the server says this caller may', async () => {
+    // The positive half. Without it the test above is satisfied by a component that never
+    // renders Approve at all, which is not the behaviour being protected.
+    vi.mocked(projectsApi.getInterviewScripts).mockResolvedValue(ONE_SCRIPT as never)
+    vi.mocked(projectsApi.getScriptLedger).mockResolvedValue(
+      [{ ...LEDGER_ROW, review_count: 3 }] as never,
+    )
+    render(<Wrapper><MayaOutputExtra slug="p" /></Wrapper>)
+
+    expect(await screen.findByRole('button', { name: /approve/i })).toBeInTheDocument()
   })
 
   it('opens the row that was clicked, not another one, and refreshes both queries on close', async () => {
