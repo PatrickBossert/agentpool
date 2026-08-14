@@ -8,7 +8,7 @@ decision.
 """
 import aiosqlite
 
-VALID_DECISIONS = ("reviewed", "approved", "changes_requested")
+VALID_DECISIONS = ("reviewed", "edited", "approved", "changes_requested")
 VALID_RETURN_TO = ("agent", "reviewer")
 
 
@@ -76,6 +76,23 @@ async def record_script_review(
         (script_id, project_id),
     )
     return dict(await cur.fetchone())
+
+
+async def review_count(conn: aiosqlite.Connection, *, project_id: int, script_id: str) -> int:
+    """How many times a human has read this script and said something about it.
+
+    Derived on every read rather than stored. A stored counter is a second source of truth
+    for something one query answers, and a derived field going stale has already cost this
+    codebase a fix round.
+
+    'approved' is excluded: an approval must not satisfy its own gate.
+    """
+    cur = await conn.execute(
+        "SELECT COUNT(*) FROM script_reviews"
+        " WHERE project_id=? AND script_id=? AND decision != 'approved'",
+        (project_id, script_id),
+    )
+    return (await cur.fetchone())[0]
 
 
 async def scripts_awaiting_regeneration(conn: aiosqlite.Connection, *, project_id: int) -> list[dict]:
