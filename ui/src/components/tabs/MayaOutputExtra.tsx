@@ -160,11 +160,17 @@ function SectionBlock({ section, index }: { section: InterviewSection; index: nu
   )
 }
 
-function ScriptCard({ script }: { script: InterviewScript }) {
+// Loose enough for ScriptReviewPanel to open on a script it fetched for editing, and equally
+// satisfied by a full InterviewScript from GET /interview-scripts - node_label and sections
+// are what ScriptCard actually dereferences without an optional-chain fallback; everything
+// else it reads defensively.
+export type ReviewableScript = Partial<InterviewScript> & Pick<InterviewScript, 'node_label' | 'sections'>
+
+export function ScriptCard({ script }: { script: ReviewableScript }) {
   const [expanded, setExpanded] = useState(false)
   // Perspective, when the script carries one, is what a stakeholder recognises - "Frontline",
   // not "L1" - so the badge and title read from it first and fall back to the tier.
-  const badgeKey = script.perspective ?? script.level
+  const badgeKey = script.perspective ?? script.level ?? '—'
   const badgeCls = LEVEL_BADGE[badgeKey] ?? 'bg-gray-100 text-gray-600'
   const totalQuestions = (script.sections ?? []).reduce((n, s) => n + (s.questions?.length ?? 0), 0)
 
@@ -201,11 +207,11 @@ function ScriptCard({ script }: { script: InterviewScript }) {
             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Research Brief</p>
             <p className="text-[11px] text-gray-700 leading-relaxed">{script.research_brief}</p>
           </div>
-          {script.study_objectives?.length > 0 && (
+          {(script.study_objectives ?? []).length > 0 && (
             <div>
               <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Study Objectives</p>
               <ul className="space-y-0.5">
-                {script.study_objectives.map((obj, i) => (
+                {(script.study_objectives ?? []).map((obj, i) => (
                   <li key={i} className="flex items-start gap-1.5">
                     <span className="text-gray-300 mt-0.5 flex-shrink-0">·</span>
                     <p className="text-[11px] text-gray-600 leading-relaxed">{obj}</p>

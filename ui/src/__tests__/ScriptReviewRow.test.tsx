@@ -7,6 +7,7 @@ const base = {
   script_id: 'SC-001', node_id: '1.2', node_label: 'Works Programming',
   review_status: 'reviewed' as const, reviewed_at_version: 3,
   review_return_to: null, last_version: 5, last_author: 'interaction_designer',
+  review_count: 1,
 }
 
 it('marks a review as stale when the script changed after it was read', () => {

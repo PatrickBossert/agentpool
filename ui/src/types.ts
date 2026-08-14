@@ -721,6 +721,7 @@ export interface ScriptLedgerRow {
   review_return_to: 'agent' | 'reviewer' | null
   last_version: number | null
   last_author: string
+  review_count: number
 }
 
 // A structural finding a validator raised and did not refuse. Recorded when an agent
