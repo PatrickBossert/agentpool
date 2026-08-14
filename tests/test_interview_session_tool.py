@@ -171,7 +171,8 @@ def _setup_sync_db(tmp_path):
                 node_label TEXT NOT NULL,
                 session_token TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL DEFAULT 'pending',
-                voice_config TEXT, transcript_json TEXT, started_at TEXT, completed_at TEXT,
+                voice_config TEXT, script_id TEXT,
+                transcript_json TEXT, started_at TEXT, completed_at TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)

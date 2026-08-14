@@ -133,6 +133,17 @@ async def script_for_session(conn, slug: str, session: dict) -> dict | None:
     column exists. A session whose script cannot be resolved returns None rather than
     guessing - tagging answers from the wrong script is worse than leaving them untagged.
 
+    That last sentence used to be a claim rather than a description. The code fell through
+    from a failed script_id lookup straight into the label scan, so a session naming a
+    script the current artefact no longer holds was silently cited to a same-labelled
+    neighbour - and the scan itself returned its first match, guessing whenever a label was
+    shared. The two branches are now exclusive, and the scan refuses an ambiguous label:
+
+      script_id set   -> that script, or None. The scan is not consulted; the session
+                         already answered the question and got it wrong, or the instrument
+                         is gone. Either way a neighbour is not it.
+      script_id NULL  -> the label scan, and only if exactly one script carries the label.
+
     Normalised on the way out, same as the two GET /interview-scripts* endpoints - this reads
     the raw current artefact directly rather than through either of them, so without this a
     script written before the level/perspective split (level: 'F', no perspective) would be
@@ -150,16 +161,19 @@ async def script_for_session(conn, slug: str, session: dict) -> dict | None:
     if not isinstance(scripts, dict):
         return None
 
-    # The session names its own script. The label scan below stays as a fallback for a
-    # session created before that column existed; it cannot distinguish two scripts that
-    # normalise to the same label, which is exactly why the column exists.
+    # The session names its own script, and that is the end of the question - resolved or
+    # not. Falling through to the label scan here is what turned "cannot resolve" into
+    # "resolved to something else".
     script_id = session.get("script_id")
-    if script_id and script_id in scripts:
-        return normalise_script_fields(scripts[script_id])
-    for script in scripts.values():
-        if isinstance(script, dict) and script.get("node_label") == session["node_label"]:
-            return normalise_script_fields(script)
-    return None
+    if script_id:
+        script = scripts.get(script_id)
+        return normalise_script_fields(script) if isinstance(script, dict) else None
+
+    # Only for a session created before the column existed. One match is an answer; two are
+    # not, and neither is zero.
+    matches = [s for s in scripts.values()
+               if isinstance(s, dict) and s.get("node_label") == session["node_label"]]
+    return normalise_script_fields(matches[0]) if len(matches) == 1 else None
 
 
 _META_FIELDS = ("script_id", "section_id", "question_id", "node_id", "chain", "level",
