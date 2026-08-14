@@ -4,7 +4,7 @@
 // vanished with no message and no count.
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import MayaOutputExtra from '../components/tabs/MayaOutputExtra'
@@ -15,6 +15,7 @@ vi.mock('../api/endpoints', () => ({
     getInterviewScripts: vi.fn(),
     getScriptLedger: vi.fn(),
     reviewScript: vi.fn(),
+    getMyPermissions: vi.fn(),
   },
 }))
 
@@ -26,6 +27,7 @@ const LEDGER_ROW = {
   script_id: 'SC-1', node_id: '1', node_label: 'Property',
   review_status: 'pending' as const, reviewed_at_version: null,
   review_return_to: null, last_version: 2, last_author: 'interaction_designer',
+  review_count: 1,
 }
 
 function Wrapper({ children }: { children: React.ReactNode }) {
@@ -34,6 +36,15 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe('MayaOutputExtra', () => {
+  beforeEach(() => {
+    // Every render queries permissions unconditionally now (Approve is gated on it) - a
+    // default resolved value keeps tests that don't care about permissions from hanging
+    // on an unmocked call.
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue(
+      { can_review: true, can_approve: true } as never,
+    )
+  })
+
   it('renders every script it is given, including one with an unrecognised perspective', async () => {
     // The old two buckets dropped anything outside them silently - no message, no count.
     // SC-2 is the shape the endpoint actually serves for a role script: normalise_scripts
@@ -65,7 +76,7 @@ describe('MayaOutputExtra', () => {
     expect(await screen.findByText(/could not load the script review ledger/i)).toBeInTheDocument()
   })
 
-  it('surfaces the server detail when a review is refused, rather than doing nothing', async () => {
+  it('surfaces the server detail when an approval is refused, rather than doing nothing', async () => {
     // The backend refuses a review with 403 (not a reviewer/approver), 409 (already
     // approved), or 422 (a send-back with no valid target) - all of which the person needs
     // to be told. Without a .catch, the button appeared to work and nothing happened.
@@ -79,7 +90,7 @@ describe('MayaOutputExtra', () => {
     )
     render(<Wrapper><MayaOutputExtra slug="p" /></Wrapper>)
 
-    await userEvent.click(await screen.findByRole('button', { name: /mark reviewed/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /approve/i }))
 
     expect(await screen.findByText(/not permitted to review this script/i)).toBeInTheDocument()
   })

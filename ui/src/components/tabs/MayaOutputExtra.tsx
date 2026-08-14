@@ -6,6 +6,7 @@ import axios from 'axios'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
 import { ScriptReviewRow } from './ScriptReviewRow'
+import { ScriptReviewPanel } from './ScriptReviewPanel'
 import type { InterviewQuestion, InterviewScript, InterviewSection } from '../../types'
 
 // The server's own explanation - 403 (not a reviewer/approver), 409 (already approved), 422
@@ -311,6 +312,7 @@ export function ScriptCard({ script }: { script: ReviewableScript }) {
 export default function MayaOutputExtra({ slug }: { slug: string }) {
   const qc = useQueryClient()
   const [reviewError, setReviewError] = useState<string | null>(null)
+  const [openScriptId, setOpenScriptId] = useState<string | null>(null)
 
   const { data: scriptsMap, isLoading } = useQuery({
     queryKey: ['interview-scripts', slug],
@@ -322,12 +324,28 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
     queryFn: () => projectsApi.getScriptLedger(slug),
   })
 
-  function handleReview(scriptId: string, decision: string, returnTo?: string, notes?: string) {
+  // Undefined while loading collapses into "not permitted" for canApprove below - a missing
+  // Approve button while permissions are still in flight, never a disabled one that becomes
+  // clickable once the response lands.
+  const { data: permissions } = useQuery({
+    queryKey: ['my-permissions', slug],
+    queryFn: () => projectsApi.getMyPermissions(slug),
+  })
+
+  function handleApprove(scriptId: string) {
     setReviewError(null)
     projectsApi
-      .reviewScript(slug, scriptId, { decision, return_to: returnTo, notes })
+      .reviewScript(slug, scriptId, { decision: 'approved' })
       .then(() => qc.invalidateQueries({ queryKey: ['script-ledger', slug] }))
-      .catch((err) => setReviewError(describeError(err, 'Could not record that review.')))
+      .catch((err) => setReviewError(describeError(err, 'Could not approve that script.')))
+  }
+
+  function closePanel() {
+    setOpenScriptId(null)
+    // Both the script content and the ledger row may have changed while the panel was open
+    // (a save, a review, a send-back) - the list must reflect either without a manual refresh.
+    qc.invalidateQueries({ queryKey: ['interview-scripts', slug] })
+    qc.invalidateQueries({ queryKey: ['script-ledger', slug] })
   }
 
   if (isLoading) {
@@ -342,6 +360,9 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
   // rendered nothing outside them, so a script with an unexpected level vanished with no message.
   const vcScripts  = scripts.filter(s => !s.perspective)
   const extScripts = scripts.filter(s => !!s.perspective)
+
+  const openScript = openScriptId ? scriptsMap?.[openScriptId] : undefined
+  const openRow = openScriptId ? ledgerRows?.find((r) => r.script_id === openScriptId) : undefined
 
   return (
     <div className="space-y-4">
@@ -358,7 +379,13 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
           ) : (
             <div>
               {ledgerRows!.map((row) => (
-                <ScriptReviewRow key={row.script_id} row={row} onReview={handleReview} />
+                <ScriptReviewRow
+                  key={row.script_id}
+                  row={row}
+                  onOpen={setOpenScriptId}
+                  onApprove={handleApprove}
+                  canApprove={!!permissions?.can_approve}
+                />
               ))}
             </div>
           )}
@@ -386,6 +413,9 @@ export default function MayaOutputExtra({ slug }: { slug: string }) {
             {extScripts.map((s, i) => <ScriptCard key={i} script={s} />)}
           </div>
         </div>
+      )}
+      {openScript && openRow && (
+        <ScriptReviewPanel slug={slug} script={openScript} row={openRow} onClose={closePanel} />
       )}
     </div>
   )
