@@ -126,10 +126,12 @@ async def record_answers(
 async def script_for_session(conn, slug: str, session: dict) -> dict | None:
     """The script this session was conducted from.
 
-    By script_id through the node assignment, because that is the anchor auto_assign makes
-    authoritative. Sessions created before script ids existed fall back to node_label, which
-    is what they were keyed on. A session whose script cannot be resolved returns None rather
-    than guessing - tagging answers from the wrong script is worse than leaving them untagged.
+    By the session's own script_id, because a session is for exactly one script and that
+    column is the authority on which one. Sessions created before the column existed fall
+    back to a node_label scan, which is what they were keyed on - label matching cannot
+    distinguish two scripts that normalise to the same label, which is exactly why the
+    column exists. A session whose script cannot be resolved returns None rather than
+    guessing - tagging answers from the wrong script is worse than leaving them untagged.
 
     Normalised on the way out, same as the two GET /interview-scripts* endpoints - this reads
     the raw current artefact directly rather than through either of them, so without this a
@@ -148,14 +150,10 @@ async def script_for_session(conn, slug: str, session: dict) -> dict | None:
     if not isinstance(scripts, dict):
         return None
 
-    async with conn.execute(
-        "SELECT script_id FROM node_template_assignments "
-        "WHERE project_id = ? AND node_label = ?",
-        (session["project_id"], session["node_label"]),
-    ) as cur:
-        row = await cur.fetchone()
-
-    script_id = row["script_id"] if row else None
+    # The session names its own script. The label scan below stays as a fallback for a
+    # session created before that column existed; it cannot distinguish two scripts that
+    # normalise to the same label, which is exactly why the column exists.
+    script_id = session.get("script_id")
     if script_id and script_id in scripts:
         return normalise_script_fields(scripts[script_id])
     for script in scripts.values():

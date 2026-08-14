@@ -385,6 +385,7 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
             session_token         TEXT NOT NULL UNIQUE,
             status                TEXT NOT NULL DEFAULT 'pending',
             voice_config          TEXT,
+            script_id             TEXT,
             transcript_json       TEXT,
             ratings_json          TEXT,
             checkpoint_json       TEXT,
@@ -413,6 +414,22 @@ async def _migrate_interview_sessions_checkpoint(conn: aiosqlite.Connection) -> 
         cols = {row["name"] async for row in cur}
     if "checkpoint_json" not in cols:
         await conn.execute("ALTER TABLE interview_sessions ADD COLUMN checkpoint_json TEXT")
+    await conn.commit()
+
+
+async def _migrate_interview_sessions_script_id(conn: aiosqlite.Connection) -> None:
+    """Give a session the id of the script it is for.
+
+    The citation from a stored answer back to its instrument used to be re-derived by
+    matching node_template_assignments on node_label. Label matching is what makes
+    publish_node_template 404 against an artefact keyed by script_id, and a label is not
+    unique - two scripts can normalise to the same one. A session is for exactly one
+    script, so it carries it.
+    """
+    cur = await conn.execute("PRAGMA table_info(interview_sessions)")
+    cols = {row[1] for row in await cur.fetchall()}
+    if "script_id" not in cols:
+        await conn.execute("ALTER TABLE interview_sessions ADD COLUMN script_id TEXT")
     await conn.commit()
 
 
@@ -1307,7 +1324,7 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # runs again after a database's first post-upgrade open in a process - there is no test
 # that catches a missed bump, because none can: it is a fact about this constant, not
 # about behaviour.
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1412,6 +1429,7 @@ async def get_connection(slug: str):
             await _migrate_agent_chat_history(conn)
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
+            await _migrate_interview_sessions_script_id(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)
             await _migrate_run_inputs_agent_scope(conn)
@@ -2999,12 +3017,15 @@ async def insert_interview_session(
     node_label: str,
     session_token: str,
     voice_config: str | None = None,
+    script_id: str | None = None,
 ) -> int:
     cur = await conn.execute(
         "INSERT INTO interview_sessions "
-        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token, voice_config) "
-        "VALUES (?,?,?,?,?,?)",
-        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token, voice_config),
+        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token,"
+        " voice_config, script_id) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token,
+         voice_config, script_id),
     )
     await conn.commit()
     return cur.lastrowid
