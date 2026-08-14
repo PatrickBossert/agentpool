@@ -417,10 +417,10 @@ async def test_a_crew_finishing_starts_nothing_further(client):
 
     This version calls dispatch_crew directly (the entry point asyncio.create_task
     actually schedules) and lets it run its real success path, with only
-    build_and_run_crew (no CrewAI), the awaiting-commit notification (no email) and the
-    two auto-assign passes (which are in _AUTO_ASSIGN_CREWS for assessment_design and
-    would otherwise run for real, leaving this test's behaviour resting on their early
-    return continuing to hold) replaced.
+    build_and_run_crew (no CrewAI) and the awaiting-commit notification (no email)
+    replaced. dispatch_crew used to also run two auto-assign passes here (assessment_design
+    was in _AUTO_ASSIGN_CREWS) - retired along with node_template_assignments, so there is
+    nothing left to patch out.
 
     **assessment_design is committed by the fixture, deliberately.** Without that commit,
     a dispatch_crew that had grown `await start_ready_downstream(...)` would find
@@ -448,10 +448,6 @@ async def test_a_crew_finishing_starts_nothing_further(client):
         "api.services.run_service.build_and_run_crew", AsyncMock(return_value="ok")
     ), patch(
         "api.services.commit_notify_service.notify_crew_awaiting_commit", AsyncMock()
-    ), patch(
-        "api.services.auto_assign_service.auto_assign_interview_scripts", AsyncMock()
-    ), patch(
-        "api.services.auto_assign_service.auto_assign_questionnaire_scripts", AsyncMock()
     ):
         await dispatch_crew(slug=SLUG, crew_name="assessment_design", run_id=run_id)
 

@@ -10,7 +10,6 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
-import aiosqlite
 from api.config import get_settings, load_project_config
 from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_agent_outputs, fetch_stakeholder_assignments, fetch_stakeholders
 from api.routers.ws import push_log
@@ -347,32 +346,10 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
                 if a["stakeholder_id"] in stakeholder_map
             ]
 
-        # Fetch node template assignments for script designer
-        from api.database import fetch_node_template_assignments, get_system_db_path, init_system_db, fetch_template
-        import json as _json
-
-        node_templates = {}
-        async with get_connection(slug) as conn:
-            project = await fetch_project(conn, slug=slug)
-            assignments = await fetch_node_template_assignments(conn, project["id"])
-        for assignment in assignments:
-            tid = assignment["interview_template_id"]
-            if tid:
-                # Fetch template schema from system.db
-                sys_db_path = get_system_db_path()
-                async with aiosqlite.connect(str(sys_db_path)) as sys_conn:
-                    sys_conn.row_factory = aiosqlite.Row
-                    await init_system_db(sys_conn)
-                    tpl = await fetch_template(sys_conn, tid)
-                if tpl:
-                    try:
-                        schema = _json.loads(tpl["schema_json"])
-                    except Exception:
-                        schema = None
-                    node_templates[assignment["node_label"]] = schema
-
-        node_templates_block = _json.dumps(node_templates, indent=2) if node_templates else ""
-
+        # node_templates_block used to be built from node_template_assignments - retired
+        # along with that table (its interview_template_id was never populated by any
+        # surviving writer). create_discovery_interviews_crew defaults it to "" and the
+        # coordinator prompt already handles the empty case.
         from agents.crews.discovery_interviews_crew import create_discovery_interviews_crew
         crew = create_discovery_interviews_crew(
             slug=slug,
@@ -380,7 +357,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             sector=sector,
             stakeholder_assignments=stakeholder_assignments,
             discovery_brief=config.get("discovery_brief", ""),
-            node_templates_block=node_templates_block,
         )
 
     elif crew_name == "discovery_mapping":
@@ -567,9 +543,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     return result
 
 
-_AUTO_ASSIGN_CREWS = {"discovery_interviews", "questionnaire_builder", "assessment_design"}
-
-
 async def dispatch_crew(
     slug: str, crew_name: str, run_id: int, *, triggered_by: str | None = None
 ) -> None:
@@ -583,14 +556,6 @@ async def dispatch_crew(
         from api.services.commit_notify_service import notify_crew_awaiting_commit
         await notify_crew_awaiting_commit(slug, crew_name)
 
-        # Auto-assign scripts to node templates after interview/questionnaire runs
-        if crew_name in _AUTO_ASSIGN_CREWS:
-            from api.services.auto_assign_service import (
-                auto_assign_interview_scripts,
-                auto_assign_questionnaire_scripts,
-            )
-            await auto_assign_interview_scripts(slug)
-            await auto_assign_questionnaire_scripts(slug)
         await push_log(slug, json.dumps({"type": "crew_completed", "crew": crew_name, "run_id": run_id}))
     except Exception as e:
         try:

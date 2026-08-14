@@ -96,10 +96,8 @@ export default function InterviewTemplateEditor({
       await apiClient.patch(`/projects/${slug}/interview-scripts/${encodeURIComponent(scriptId)}`, { script })
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
-      // The server-side save already retitled node_template_assignments to match
-      // (auto_assign_interview_scripts) and superseded the interview-scripts artefact this
-      // scriptId resolves through - neither is true of anything cached client-side until
-      // this fires.
+      // The server-side save superseded the interview-scripts artefact this scriptId
+      // resolves through - nothing cached client-side reflects that until this fires.
       queryClient.invalidateQueries({ queryKey: ['interview-scripts', slug] })
       onSaved?.()
     } catch (err) {
@@ -342,7 +340,7 @@ export default function InterviewTemplateEditor({
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 shrink-0">
           {error && !loading ? <p className="text-xs text-red-400">{error}</p> : (
-            saved ? <p className="text-xs text-green-600">Saved and template updated.</p> : <span />
+            saved ? <p className="text-xs text-green-600">Saved.</p> : <span />
           )}
           <div className="flex gap-2">
             <button onClick={onClose} className={`${BTN_SM} text-gray-400 hover:text-gray-700`}>Close</button>
@@ -352,7 +350,7 @@ export default function InterviewTemplateEditor({
                 disabled={saving}
                 className={`${BTN_SM} bg-brand hover:bg-brand-dark disabled:opacity-50 text-white`}
               >
-                {saving ? 'Saving…' : 'Save & Sync Template'}
+                {saving ? 'Saving…' : 'Save'}
               </button>
             )}
           </div>

@@ -12,7 +12,6 @@ import logging
 import time
 from pathlib import Path
 
-import aiosqlite
 import httpx
 
 from api.config import get_settings
@@ -22,10 +21,6 @@ from api.services.interview_answer_service import record_answers, script_for_ses
 from api.database import (
     complete_interview_session,
     fetch_interview_session,
-    fetch_node_template_assignments,
-    fetch_template,
-    get_system_db_path,
-    init_system_db,
     interview_db_connection,
     save_interview_checkpoint,
 )
@@ -136,33 +131,11 @@ async def get_session_with_script(session_token: str) -> dict | None:
         except (json.JSONDecodeError, TypeError):
             session_dict["voice_config"] = None
 
-    # Fetch questionnaire template for this node if assigned
+    # questionnaire used to be resolved via node_template_assignments (retired along with
+    # that table - 1 of its 103 rows ever had a questionnaire_template_id, and
+    # questionnaires moved inline when questionnaire_builder was removed). The key stays in
+    # the returned dict so the frontend contract does not change.
     questionnaire = None
-    try:
-        # Re-open the DB to get project id and node assignments
-        async with interview_db_connection(db_path) as qconn:
-            async with qconn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
-                proj_row = await cur.fetchone()
-            if proj_row:
-                node_assignments = await fetch_node_template_assignments(qconn, proj_row["id"])
-                node_label = session_dict["node_label"]
-                node_assignment = next(
-                    (a for a in node_assignments if a["node_label"] == node_label), None
-                )
-                if node_assignment and node_assignment["questionnaire_template_id"]:
-                    qid = node_assignment["questionnaire_template_id"]
-                    sys_db_path = get_system_db_path()
-                    async with aiosqlite.connect(str(sys_db_path)) as sys_conn:
-                        sys_conn.row_factory = aiosqlite.Row
-                        await init_system_db(sys_conn)
-                        tpl = await fetch_template(sys_conn, qid)
-                    if tpl:
-                        try:
-                            questionnaire = json.loads(tpl["schema_json"])
-                        except Exception:
-                            questionnaire = None
-    except Exception:
-        pass
 
     return {"session": session_dict, "script": script, "branding": branding, "questionnaire": questionnaire}
 

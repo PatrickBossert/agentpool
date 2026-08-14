@@ -81,7 +81,7 @@ describe('InterviewTemplateEditor - routes and saves by script_id, not node_labe
     renderEditor()
     await screen.findByDisplayValue('Welcome')
 
-    await userEvent.click(await screen.findByRole('button', { name: /save & sync template/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^save$/i }))
 
     await waitFor(() => expect(patchMock).toHaveBeenCalledTimes(1))
     expect(patchMock.mock.calls[0][0]).toBe('/projects/proj-1/interview-scripts/SC-001')
@@ -92,7 +92,7 @@ describe('InterviewTemplateEditor - routes and saves by script_id, not node_labe
     await screen.findByDisplayValue('Welcome')
 
     await userEvent.click(screen.getByRole('button', { name: /\+ add section/i }))
-    await userEvent.click(screen.getByRole('button', { name: /save & sync template/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
 
     await waitFor(() => expect(patchMock).toHaveBeenCalledTimes(1))
     const sentSections = (patchMock.mock.calls[0][1] as { script: typeof SCRIPT }).script.sections
@@ -120,7 +120,7 @@ describe('InterviewTemplateEditor - routes and saves by script_id, not node_labe
     renderEditor()
     await screen.findByDisplayValue('Welcome')
 
-    await userEvent.click(screen.getByRole('button', { name: /save & sync template/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
 
     // The message is rendered twice - once inline in the body, once in the footer - so
     // this asserts at least one, rather than assuming uniqueness the component doesn't
