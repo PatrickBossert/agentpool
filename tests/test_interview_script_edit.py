@@ -230,3 +230,39 @@ async def test_editing_a_sent_back_script_clears_the_outstanding_return_to(
     ledger = (await client.get(f"/projects/{slug}/script-ledger")).json()
     row = next(x for x in ledger if x["script_id"] == "SC-001")
     assert row["review_return_to"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_edit_from_a_superseded_version_is_refused(client, seeded_scripts):
+    """Several reviewers can edit, so last-write-wins silently discards somebody's work and
+    they have no way to learn it happened. This codebase has already lost a human edit to a
+    silent write once."""
+    slug = seeded_scripts
+    ledger = {r["script_id"]: r for r in (await client.get(f"/projects/{slug}/script-ledger")).json()}
+    opened_at = ledger["SC-001"]["last_version"]
+    before = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+
+    first = await client.patch(f"/projects/{slug}/interview-scripts/SC-001",
+                                json={"script": {**before["SC-001"], "node_label": "Ana's edit"},
+                                      "base_version": opened_at})
+    assert first.status_code == 200, first.text
+
+    # Bo opened the same version Ana did, and saves after her.
+    second = await client.patch(f"/projects/{slug}/interview-scripts/SC-001",
+                                 json={"script": {**before["SC-001"], "node_label": "Bo's edit"},
+                                       "base_version": opened_at})
+    assert second.status_code == 409, second.text
+
+    after = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+    assert after["SC-001"]["node_label"] == "Ana's edit", "the first edit must survive"
+
+
+@pytest.mark.asyncio
+async def test_an_edit_with_no_base_version_still_works(client, seeded_scripts):
+    """base_version is optional so an older client, or a caller with nothing to be stale
+    against, is not broken by the check."""
+    slug = seeded_scripts
+    before = (await client.get(f"/projects/{slug}/interview-scripts")).json()
+    r = await client.patch(f"/projects/{slug}/interview-scripts/SC-001",
+                            json={"script": {**before["SC-001"], "node_label": "No base"}})
+    assert r.status_code == 200, r.text

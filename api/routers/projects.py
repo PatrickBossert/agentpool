@@ -322,6 +322,7 @@ async def get_value_chain_registry(slug: str, payload: dict = Depends(require_an
 
 class InterviewScriptPatch(BaseModel):
     script: dict
+    base_version: int | None = None
 
 
 def _scripts_path(slug: str, kind: str) -> Path:
@@ -400,6 +401,31 @@ async def patch_interview_script(
     scripts = await list_interview_scripts(slug, payload)
     if script_id not in scripts:
         raise HTTPException(status_code=404, detail=f"No script '{script_id}'")
+
+    if body.base_version is not None:
+        # last_version is nullable - rows loaded by the backfill carry NULL because no
+        # SQLiteStateTool write has touched them since. A NULL held[0] means "we don't
+        # know this row's version", not "it is current", so `held[0] > body.base_version`
+        # would be NULL under plain SQL comparison and silently drop the row from a WHERE
+        # clause rather than refuse or accept the edit - the exact trap CLAUDE.md warns
+        # about. We choose to accept the edit in that case: refusing a save we have no
+        # evidence is stale would block every first edit after a backfill for no reason,
+        # and the row gets a real last_version the moment this write completes, so the
+        # gap closes itself rather than accumulating risk.
+        async with get_connection(slug) as conn:
+            project = await fetch_project(conn, slug=slug)
+            cur = await conn.execute(
+                "SELECT last_version, last_author FROM interview_script_ledger"
+                " WHERE script_id=? AND project_id=?", (script_id, project["id"]))
+            held = await cur.fetchone()
+        if held and held[0] is not None and held[0] > body.base_version:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"{script_id} was changed by {held[1] or 'someone else'} since you "
+                        f"opened it (you have v{body.base_version}, current is v{held[0]}) - "
+                        f"reopen it and reapply your changes"),
+            )
+
     merged = {script_id: {**body.script, "script_id": script_id,
                           "node_id": scripts[script_id].get("node_id")}}
 
