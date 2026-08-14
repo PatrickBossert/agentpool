@@ -5,7 +5,11 @@
 // both read from node_template_assignments - a table whose level column said 'L2' on
 // every one of its 103 rows regardless of the node, and whose publish action 404d on every
 // real project (it looked up by node_label in an artefact keyed by script_id). Retired
-// along with that table; the editor it exposed moves to the Output tab in a later task.
+// along with that table. The editor it exposed - InterviewTemplateEditor - now opens from
+// ScriptReviewPanel on the Output tab, which is where a human reads the script before
+// changing it. It was unmounted for the length of this branch, which left sections,
+// questions, and probes editable nowhere at all; the note here promising "a later task"
+// was the only record that anything was missing.
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Info, Plus, X } from 'lucide-react'
