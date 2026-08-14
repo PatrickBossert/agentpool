@@ -24,6 +24,16 @@ class AlreadyApprovedError(ValueError):
     """
 
 
+class NotYetReviewedError(ValueError):
+    """Raised when approval is attempted against a script nobody has read yet.
+
+    An approver should not be able to approve an interview script nobody has read. A
+    disabled Approve button in the UI is only a hint; this is the gate that actually
+    holds, so it must be enforced here rather than relying on the caller to have checked
+    review_count first.
+    """
+
+
 async def record_script_review(
     conn: aiosqlite.Connection, *, project_id: int, script_id: str, reviewer: str,
     decision: str, notes: str = "", at_version: int = 0, return_to: str | None = None,
@@ -54,6 +64,11 @@ async def record_script_review(
         raise AlreadyApprovedError(
             f"script {script_id} cannot re-approve, send it back first"
         )
+    if decision == "approved":
+        if await review_count(conn, project_id=project_id, script_id=script_id) == 0:
+            raise NotYetReviewedError(
+                f"script {script_id} has no reviews - it must be read before it is approved"
+            )
 
     await conn.execute(
         "INSERT INTO script_reviews"

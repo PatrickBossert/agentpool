@@ -20,6 +20,7 @@ from api.database import fetch_project, get_connection
 from api.services.commit_service import _caller_matches_stakeholder_flag
 from api.services.script_review_service import (
     AlreadyApprovedError,
+    NotYetReviewedError,
     record_script_review,
     review_count,
 )
@@ -80,7 +81,7 @@ async def review_script(
                 notes=body.notes, at_version=row["last_version"] or 0,
                 return_to=body.return_to,
             )
-        except AlreadyApprovedError as e:
+        except (AlreadyApprovedError, NotYetReviewedError) as e:
             # A conflict with stored state, not a malformed request - branching on the
             # exception's type rather than its message means a reworded message cannot
             # silently reclassify this as a 422.

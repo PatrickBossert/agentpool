@@ -301,6 +301,12 @@ async def test_a_regenerated_script_returns_to_pending_on_the_ledger_row(assessm
             decision="changes_requested", notes="the maturity anchors are wrong",
             at_version=version, return_to="agent",
         )
+        # A read satisfies the separate not-yet-reviewed gate (see test_approve_gate.py)
+        # so the approval below succeeds for the reason this control is actually about.
+        await record_script_review(
+            conn, project_id=project["id"], script_id="SC-099", reviewer="bo",
+            decision="reviewed", notes="", at_version=version,
+        )
         await record_script_review(
             conn, project_id=project["id"], script_id="SC-099", reviewer="bo",
             decision="approved", notes="", at_version=version,
