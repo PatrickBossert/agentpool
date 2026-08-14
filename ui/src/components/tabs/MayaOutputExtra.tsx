@@ -169,8 +169,10 @@ export type ReviewableScript = Partial<InterviewScript> & Pick<InterviewScript, 
 export function ScriptCard({ script }: { script: ReviewableScript }) {
   const [expanded, setExpanded] = useState(false)
   // Perspective, when the script carries one, is what a stakeholder recognises - "Frontline",
-  // not "L1" - so the badge and title read from it first and fall back to the tier.
-  const badgeKey = script.perspective ?? script.level ?? '—'
+  // not "L1" - so the badge and title read from it first and fall back to the tier. The
+  // final '' is a type-safety net, not a state anyone sees - a real InterviewScript always
+  // carries level, and ScriptReviewPanel's edit path never touches it.
+  const badgeKey = script.perspective ?? script.level ?? ''
   const badgeCls = LEVEL_BADGE[badgeKey] ?? 'bg-gray-100 text-gray-600'
   const totalQuestions = (script.sections ?? []).reduce((n, s) => n + (s.questions?.length ?? 0), 0)
 

@@ -74,6 +74,7 @@ it('sends back to reviewers, not Maya, when that is the target the reader chose'
 
 it('surfaces a stale-save refusal rather than failing silently', async () => {
   patchMock.mockRejectedValueOnce({
+    isAxiosError: true,
     response: { data: { detail: 'SC-042 was changed by ana since you opened it' } },
   })
   render(<ScriptReviewPanel slug="p" script={script} row={row} onClose={() => {}} />)

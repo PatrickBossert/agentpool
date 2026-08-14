@@ -6,21 +6,21 @@
 // read the script - the review is the artefact of having opened this panel, not an
 // afterthought bolted onto a list row.
 import { useState } from 'react'
+import axios from 'axios'
 import { Check, RotateCcw, Save } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
 import { ScriptCard, type ReviewableScript } from './MayaOutputExtra'
 import type { ScriptLedgerRow } from '../../types'
 
-// Duck-types the error shape rather than gating on axios's own `isAxiosError` flag. A
-// server rejection surfaced through axios always carries `response.data.detail`, and
-// nothing here needs the flag to trust that shape - checking for it only means a plain
-// object shaped like a failed response (which is exactly what a stale-save 409 looks like
-// once axios has unwrapped it) gets treated as untrusted and replaced with a fixed string
-// that names none of what went wrong.
+// The server's own explanation - a stale-save 409 names who changed it and which version -
+// beats a fixed string. Mirrors describeError in InterviewTemplateEditor.tsx and
+// MayaOutputExtra.tsx: apiClient is a genuine axios.create() instance, so every error off
+// the real request path already carries isAxiosError:true, and axios.isAxiosError gets the
+// AxiosError narrowing for free rather than trusting any object that merely has a
+// `.response` property.
 function describeError(err: unknown, fallback: string): string {
-  if (err && typeof err === 'object' && 'response' in err) {
-    const response = (err as { response?: { data?: { detail?: unknown } } }).response
-    const detail = response?.data?.detail
+  if (axios.isAxiosError(err)) {
+    const detail = err.response?.data?.detail
     if (typeof detail === 'string' && detail) return detail
   }
   return fallback
