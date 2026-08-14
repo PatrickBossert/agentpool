@@ -418,6 +418,16 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
   `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
   re-run goes through the crew path. It is reachable from the API and from n8n.
+- The Interview Coordinator still matches a stakeholder to a script by `node_label` when it
+  plans a session, because `stakeholder_assignments` carries no script id. The match is now made
+  once and recorded on `interview_sessions.script_id` rather than re-derived per answer, so the
+  ambiguity is no longer repeated - but the single arbitrary choice at plan time remains, and
+  `_resolve_script_id` deliberately stores NULL rather than guessing when a label is ambiguous.
+  The real fix is a `script_id` column on `stakeholder_assignments`.
+- `api.database.insert_interview_session` has no production caller - `InterviewSessionTool._create`
+  is the only thing that inserts a session. The helper is driven by tests alone, which is exactly
+  how a branch once extended it with a `script_id` column that production never populated. Delete
+  it, or make it the producer; do not leave both.
 - Retiring an interview script - `interview_script_ledger.active = 0` - is unreachable in
   practice. `SET active` appears exactly once in the codebase
   (`register_scripts_sync`, `agents/tools/_db.py`), its only route is an
