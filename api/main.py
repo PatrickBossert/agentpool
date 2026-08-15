@@ -3,8 +3,9 @@ import asyncio
 import contextlib
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from api.auth import create_access_token, decode_token
 from api.config import get_settings
 from api.services.scheduler_service import scheduler_loop
 import api.services.pam_report_job  # noqa: F401 - registers JOB_REGISTRY["pam_daily_report"]
@@ -144,7 +145,37 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Refreshed-Token"],
 )
+
+
+@app.middleware("http")
+async def roll_session(request: Request, call_next):
+    """Re-issue a caller's bearer token on every authenticated request.
+
+    ACCESS_TOKEN_EXPIRE_HOURS is thirty days, but rolling it forward on use means an active
+    reviewer's session never actually reaches that ceiling - only an abandoned one does. A
+    request carrying no token, or an invalid/expired one, is left alone here; the endpoint's
+    own auth dependency (or lack of one, for the accept/reset routes) decides what happens to
+    it. Reads and re-decodes the raw header rather than trusting a dependency's result, since
+    unauthenticated routes never populate one.
+    """
+    response = await call_next(request)
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[len("Bearer "):]
+        try:
+            payload = decode_token(token, get_settings().jwt_secret)
+        except HTTPException:
+            payload = None
+        if payload is not None:
+            refreshed = create_access_token(
+                payload["sub"], payload["role"], get_settings().jwt_secret,
+                org_id=payload.get("org_id"),
+            )
+            response.headers["X-Refreshed-Token"] = refreshed
+    return response
+
 
 app.include_router(projects.router)
 app.include_router(run.router)

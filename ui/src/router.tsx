@@ -1,9 +1,10 @@
 // ui/src/router.tsx
 import { createBrowserRouter, Navigate, useParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
-import { useAuth } from './context/AuthContext'
+import { useAuth, ProtectedRoute } from './context/AuthContext'
 import AppLayout from './components/AppLayout'
 import Login from './pages/Login'
+import AcceptInvite from './pages/AcceptInvite'
 import Dashboard from './pages/Dashboard'
 import Documents from './pages/Documents'
 import Roadmap from './pages/Roadmap'
@@ -33,12 +34,6 @@ import Team from './pages/Team'
 import Schedule from './pages/Schedule'
 import DataArchitecture from './pages/DataArchitecture'
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { token } = useAuth()
-  if (!token) return <Navigate to="/login" replace />
-  return <>{children}</>
-}
-
 type Role = 'sysadmin' | 'org_admin' | 'reviewer'
 
 function AdminRoute({ children, allow }: { children: ReactNode; allow: Role[] }) {
@@ -64,6 +59,13 @@ export const routes = [
   {
     path: '/login',
     element: <Login />,
+  },
+  {
+    // Somebody accepting an invite has no session yet - a route behind ProtectedRoute would
+    // bounce them to login, and they cannot log in, because setting the password is what
+    // they came here to do. Deliberately outside the guard, like /login itself.
+    path: '/accept-invite/:token',
+    element: <AcceptInvite />,
   },
   {
     path: '/interview/:sessionToken',

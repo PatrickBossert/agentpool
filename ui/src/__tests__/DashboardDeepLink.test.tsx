@@ -20,6 +20,9 @@ const AUTH_SUB = 'deep-link-tester'
 
 vi.mock('../context/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  // Always a live session in this suite, so the guard is a pass-through - matching
+  // ProtectedRoute's real behaviour once useAuth().token is truthy.
+  ProtectedRoute: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: () => ({
     token: 'test-token',
     user: { sub: AUTH_SUB, role: 'reviewer', exp: 9999999999 },

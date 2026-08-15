@@ -31,6 +31,11 @@ export const authApi = {
     form.append('password', password)
     return apiClient.post<TokenResponse>('/auth/login', form).then((r) => r.data)
   },
+
+  // Unauthenticated by design - accepting an invite is how a person gets a session in the
+  // first place, so this must not rely on one already existing.
+  accept: (token: string, password: string): Promise<TokenResponse> =>
+    apiClient.post<TokenResponse>('/auth/accept', { token, password }).then((r) => r.data),
 }
 
 export const projectsApi = {

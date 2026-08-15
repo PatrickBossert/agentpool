@@ -2,7 +2,7 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../api/endpoints'
-import { useAuth } from '../context/AuthContext'
+import { useAuth, RETURN_TO_KEY } from '../context/AuthContext'
 import type { UserPayload } from '../types'
 import logoUrl from '../assets/TR_Logo_strapiline.png'
 
@@ -27,6 +27,16 @@ export default function Login() {
         // token may not be a valid JWT (e.g. in tests)
       }
       login(resp.access_token, payload)
+      // A link followed with no live session takes priority over the last-opened project -
+      // it is the one specific page somebody was sent to, not wherever they happened to be
+      // last time. Cleared on read so an unrelated later visit to /login does not resurrect
+      // an old destination.
+      const returnTo = sessionStorage.getItem(RETURN_TO_KEY)
+      if (returnTo) {
+        sessionStorage.removeItem(RETURN_TO_KEY)
+        navigate(returnTo)
+        return
+      }
       const lastProject = localStorage.getItem(`ap_last_project:${payload.sub}`)
       navigate(lastProject ? `/${lastProject}` : '/')
     } catch {

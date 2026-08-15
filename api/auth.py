@@ -6,7 +6,9 @@ from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_HOURS = 24
+# Thirty days, rolled forward on every authenticated request (see api/main.py's
+# roll_session middleware) - so an active reviewer never sees the login page twice.
+ACCESS_TOKEN_EXPIRE_HOURS = 24 * 30
 
 _bearer = HTTPBearer()
 
