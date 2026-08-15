@@ -199,6 +199,44 @@ async def test_clearing_and_resetting_a_role_after_accepting_does_not_mint_a_sec
 
 
 @pytest.mark.asyncio
+async def test_repairing_an_undeliverable_row_issues_exactly_one_invite(client, seeded_project_slug):
+    """Round 3: the trigger only tracked "a role was newly added" (had_role), so the repair
+    round 2 opened up - PATCHing a real email onto a row that already held a role with none -
+    passed validation but never invited anyone. Dougie McCrone's actual shape: a role already
+    set, no email. Fixing his email is supposed to be the moment his invite is finally issued;
+    before this fix it silently was not, and resend-invite then 404'd with nothing to resend -
+    both repair routes were dead ends for the one live row that motivated this task.
+
+    Driven end to end: seed the Dougie shape, PATCH in a valid email, confirm exactly one
+    invite is issued naming that email; then a second, unrelated PATCH afterwards issues
+    none - the row is now already both privileged and deliverable, so nothing about it is
+    newly completing.
+    """
+    slug = seeded_project_slug
+    from api.database import fetch_project, insert_stakeholder
+
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        sid = await insert_stakeholder(
+            conn, project_id=project["id"], name="Dougie", email="", is_reviewer=True,
+        )
+
+    with patch("api.routers.stakeholders.issue_invite", new=AsyncMock()) as invite:
+        repaired = await client.patch(f"/projects/{slug}/stakeholders/{sid}",
+                                      json={"email": "dougie@example.com"})
+        assert repaired.status_code == 200, repaired.text
+        assert repaired.json()["email"] == "dougie@example.com"
+    assert invite.await_count == 1, "the email repair must be the moment the invite is issued"
+    assert invite.await_args.kwargs["email"] == "dougie@example.com"
+
+    with patch("api.routers.stakeholders.issue_invite", new=AsyncMock()) as second_invite:
+        again = await client.patch(f"/projects/{slug}/stakeholders/{sid}",
+                                   json={"job_title": "Head of Audit"})
+        assert again.status_code == 200, again.text
+    second_invite.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_put_refuses_a_role_reaching_no_email_through_the_effective_state(client, seeded_project_slug):
     """PUT is a full replace of the fields StakeholderIn declares, but is_project_admin and
     is_governor are not among them - so a PUT validated only against its own body, rather
@@ -300,6 +338,30 @@ async def test_revoking_governor_actually_clears_the_flag(client, seeded_project
         )
 
     r = await client.patch(f"/projects/{SLUG}/stakeholders/{sid}", json={"is_governor": False})
+    assert r.status_code == 200, r.text
+    assert r.json()["is_governor"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_falsy_non_bool_revocation_is_also_honoured(client, seeded_project_slug):
+    """{"is_governor": 0} used to be silently dropped and return 200 with the flag still
+    set. _declared_fields_only matched only the Python singleton False, not falsy values in
+    general - 0 is falsy but `0 is False` is False in Python, so it fell through both checks:
+    _reject_undeclared_role_flags's truthy test let it pass (0 is not truthy, so it did not
+    read as an attempt to grant), and the old `is False` match then failed to recognise it as
+    the revocation it plainly was, dropping it a second time. Any falsy value explicitly
+    supplied must now be honoured as a revocation, the same as an explicit False."""
+    slug = seeded_project_slug
+    from api.database import fetch_project, insert_stakeholder
+
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        sid = await insert_stakeholder(
+            conn, project_id=project["id"], name="Gov Three", email="gov3@example.com",
+            is_governor=True,
+        )
+
+    r = await client.patch(f"/projects/{SLUG}/stakeholders/{sid}", json={"is_governor": 0})
     assert r.status_code == 200, r.text
     assert r.json()["is_governor"] is False
 

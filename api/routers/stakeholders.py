@@ -131,7 +131,7 @@ def _holds_other_role(flags: dict) -> bool:
 
 def _declared_fields_only(body: BaseModel, **dump_kwargs) -> dict:
     """model_dump(), stripped of whatever extra="allow" let through - except an explicit
-    False for is_project_admin/is_governor, which must still reach the write.
+    falsy value for is_project_admin/is_governor, which must still reach the write as False.
 
     The frontend's FormData sends interview_status, interview_invited_at and
     interview_completed_at, which neither model declares - with extra="allow", those would
@@ -141,15 +141,25 @@ def _declared_fields_only(body: BaseModel, **dump_kwargs) -> dict:
     save from the UI would 500 the moment "allow" was chosen over "ignore" without this.
 
     is_project_admin/is_governor get special treatment: _reject_undeclared_role_flags already
-    guarantees a truthy attempt at either never reaches this function, so anything left here
-    is an explicit False - revoking a role that was seeded outside the API (e.g. directly in
-    the database, or before this task existed) is the natural repair for a row Important-1's
+    guarantees a truthy attempt at either never reaches this function, so anything supplied
+    and left here is falsy - revoking a role that was seeded outside the API (e.g. directly
+    in the database, or before this task existed) is the natural repair for a row Important-1's
     guard would otherwise refuse to touch, and dropping it here would refuse that repair
     silently while returning 200 - the exact regression review round 2 found.
+
+    Matched with "falsy", not "is False": {"is_governor": 0} is falsy but not the Python
+    singleton False, and _reject_undeclared_role_flags's own truthy check already lets it
+    through as "not an attempt to grant" - review round 3 found that an `is False` match here
+    then silently dropped it a second time rather than treating it as the revocation it
+    plainly is. Anything actually truthy (true, "false" as a non-empty string, 1) is refused
+    loudly by _reject_undeclared_role_flags before this function ever runs.
     """
     extras = dict(body.model_extra or {})
-    revocations = {f: extras.pop(f) for f in _UNDECLARED_ROLE_FLAGS
-                   if extras.get(f) is False}
+    revocations = {}
+    for f in _UNDECLARED_ROLE_FLAGS:
+        if f in extras and not extras[f]:
+            revocations[f] = False
+            extras.pop(f)
     dumped = body.model_dump(exclude=set(extras), **dump_kwargs)
     dumped.update(revocations)
     return dumped
@@ -158,8 +168,16 @@ def _declared_fields_only(body: BaseModel, **dump_kwargs) -> dict:
 def _reject_undeclared_role_flags(body: BaseModel) -> None:
     """is_project_admin and is_governor used to be silently dropped - a POST of
     {"is_governor": true} returned 201 with is_governor still false, and nothing told the
-    caller their request was ignored. Neither model supports setting them yet (that needs an
-    authority check this task does not build), so the write is refused loudly instead."""
+    caller their request was ignored. Granting either still needs an authority check this
+    task does not build (only a project_admin ought to be able to create another one), so any
+    truthy attempt is refused loudly instead of accepted and quietly ignored.
+
+    Clearing either is deliberately the opposite: permitted, API-writable (see
+    _declared_fields_only), and irreversible through this API once done - revocation is the
+    safe direction, and it is the repair review round 2 required so an already-undeliverable
+    row (a role, no email) is not locked out of ever losing the role that makes it so. That
+    asymmetry is intentional, not an oversight the grant-side refusal happens to share.
+    """
     extra = body.model_extra or {}
     attempted = [f for f in _UNDECLARED_ROLE_FLAGS if extra.get(f)]
     if attempted:
@@ -169,12 +187,19 @@ def _reject_undeclared_role_flags(body: BaseModel) -> None:
         )
 
 
+def _has_valid_email(flags: dict) -> bool:
+    """Whether this flag dict's email is present and looks like an address - deliverability
+    in isolation, independent of whether a role is held. _is_undeliverable below is this
+    combined with _holds_other_role; _issue_invite_if_newly_privileged needs the two apart,
+    since a row can go from role-with-no-email to role-with-email without ever losing the
+    role, and that transition is itself what must trigger the invite."""
+    email = (flags.get("email") or "").strip()
+    return bool(email) and bool(_EMAIL_RE.match(email))
+
+
 def _is_undeliverable(flags: dict) -> bool:
     """Has a role beyond participant, but no address that could actually be delivered to."""
-    if not _holds_other_role(flags):
-        return False
-    email = (flags.get("email") or "").strip()
-    return not email or not _EMAIL_RE.match(email)
+    return _holds_other_role(flags) and not _has_valid_email(flags)
 
 
 def _validate_deliverable_role(before: dict | None, effective: dict) -> None:
@@ -253,30 +278,47 @@ async def _has_linked_login(slug: str, email: str) -> bool:
 
 
 async def _issue_invite_if_newly_privileged(slug: str, before: dict | None, after: dict) -> None:
-    """Setting any role other than participant on somebody with no linked login issues the
-    invite - the moment it is first set, not on every later write that touches the row, and
-    not at all once a login already exists.
+    """Issues the invite the moment the row *becomes* deliverable-and-privileged - holding a
+    role beyond participant with a valid email - not only the moment a role first appears,
+    and not at all once a login already exists.
 
-    Two independent conditions, both required:
+    `after` must be both privileged and deliverable, or nothing happens - `_validate_
+    deliverable_role` already refuses any write that would leave it privileged with no
+    address, so this is mostly a redundant guard, not the load-bearing one.
 
-    - "newly set" - `before` held no role beyond participant. Required even though issuing
-      an invite never creates a login (only accept_token does, on acceptance): without this,
-      adding a second role to an already-invited-but-not-yet-accepted stakeholder (is_reviewer
-      already true, is_approver newly added) would fire a second time, since nothing else
-      changed in between.
-    - "no linked login yet" - _has_linked_login is false. Required for the case the first
-      condition alone cannot see: a role cleared back to participant-only and then re-set on
-      someone who *has* since accepted. Without this conjunct, that write reads as "newly
-      set" again and mints a second, unused, seven-day-live token onto a login that can
-      already authenticate. If that token were ever delivered, accept_token's existing-user
-      branch runs `UPDATE users SET hashed_pw=?` - an unsolicited password-reset credential,
-      created by nothing more than an administrator toggling a checkbox, with no audit entry
-      and no notification to the person it targets.
+    Given that, this fires unless `before` was *already* both privileged and deliverable -
+    i.e. unless this write left something that was already fully set up untouched. Two
+    distinct ways a write can be the one that newly completes that state, both covered by the
+    single "was before already both?" check rather than tracked separately:
+
+    - a role newly appears on a person who already had a valid email (the original case: is
+      granted a role for the first time);
+    - review round 3's repair path - an email newly becomes valid on a person who already
+      held a role but had nowhere to deliver to (Dougie McCrone's actual shape: is_reviewer
+      already set, email ""). The first version of this predicate only tracked the first
+      case, via `had_role` - so PATCHing in a real email for an already-undeliverable row
+      passed _validate_deliverable_role (now permitted, per Important 1) but never triggered
+      an invite: the guard's own stated invariant, deliverable-and-privileged implies
+      invited-or-already-logged-in, was unreachable for the one live row that motivated the
+      whole task.
+
+    Adding a *second* role to someone already both privileged and deliverable (is_reviewer
+    already true, is_approver newly added) does not re-trigger this, because "before already
+    both" is already satisfied - nothing there needed completing.
+
+    The login conjunct (_has_linked_login) still guards the case neither branch above can
+    see: a role cleared back to participant-only and then re-set on someone who *has* since
+    accepted. That write reads as "before was not already both" again (after clearing, before
+    held no role), so without this conjunct it would mint a second, unused, seven-day-live
+    token onto a login that can already authenticate. If that token were ever delivered,
+    accept_token's existing-user branch runs `UPDATE users SET hashed_pw=?` - an unsolicited
+    password-reset credential, created by nothing more than an administrator toggling a
+    checkbox, with no audit entry and no notification to the person it targets.
     """
-    if not _holds_other_role(after):
+    if not (_holds_other_role(after) and _has_valid_email(after)):
         return
-    had_role = _holds_other_role(before) if before else False
-    if had_role:
+    before = before or {}
+    if _holds_other_role(before) and _has_valid_email(before):
         return
     if await _has_linked_login(slug, after["email"]):
         return
