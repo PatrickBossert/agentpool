@@ -4,6 +4,13 @@
 		reverse_proxy localhost:8000
 	}
 
+	# Agent log stream - the dashboard opens this against the page origin, so it has to be
+	# forwarded here as well as /api. Caddy upgrades a WebSocket handshake through
+	# reverse_proxy without further configuration.
+	handle /ws/* {
+		reverse_proxy localhost:8000
+	}
+
 	# Dashboard and all SPA routes (including public interview under /dashboard/interview/*)
 	handle /dashboard* {
 		reverse_proxy localhost:3000
