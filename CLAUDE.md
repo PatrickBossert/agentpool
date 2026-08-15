@@ -177,6 +177,35 @@ no-ops — notes that save, display in the UI, and never reach the agent. `Rerun
 out**, posting one review per crew output, so anything assembling review feedback into a prompt
 must deduplicate or it repeats the same instruction N times.
 
+Authority on a project is read, never inferred. `caller_roles(slug, payload)` in
+`api/services/authority_service.py` walks JWT to `users`, to `project_memberships` for that
+slug, to the `stakeholders` row it names, and returns the roles that row carries -
+`project_admin`, `governor`, `approver`, `reviewer`, or `participant`. It previously matched
+the caller's account email against a stakeholder email - `_caller_matches_stakeholder_flag`
+in `api/services/commit_service.py` - behind an
+`if payload.get("role") == "sysadmin": return True` that did all the work in practice because
+`users` was empty, granting content authority to whoever could administer accounts.
+
+`is_sys_admin` is global and implies `project_admin` on every project, so a newly created
+project - which has no stakeholders, and therefore nobody the walk could ever reach - can be
+bootstrapped. It implies nothing about content. Administration and content are different axes.
+Note that no gate reads `project_admin` or `governor` yet: the four call sites
+(`permissions.py`, `projects.py`'s script edit, `script_reviews.py`, `commit_service.py`) all
+test for `reviewer` or `approver`, and stakeholder administration is still gated on the login
+role via `require_org_admin_or_above`. The two roles are carried and reported, not enforced.
+
+`caller_roles` must never create a database. It returns the roles gathered so far rather than
+calling `get_connection(slug)` on a slug whose file does not exist, because every gated
+endpoint calls it and a caller probing slugs would otherwise materialise one file per guess.
+`_stakeholder_matches_invite` in `invite_service.py` carries the same guard, for the same
+reason.
+
+Setting any role other than `is_participant` on a person with no login issues an invite; a
+participant never gets one, because they are reached by interview URL and token. One live
+invite per person **per project** - not per person, since a second engagement must not
+overwrite the first one's `project_slug` and `stakeholder_id` - re-issuable when the email is
+lost, and the same `auth_tokens` table serves password resets.
+
 ---
 
 ## Frontend conventions
