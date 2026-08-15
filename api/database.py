@@ -280,6 +280,8 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
             is_participant      INTEGER NOT NULL DEFAULT 0,
             is_reviewer         INTEGER NOT NULL DEFAULT 0,
             is_approver         INTEGER NOT NULL DEFAULT 0,
+            is_project_admin    INTEGER NOT NULL DEFAULT 0,
+            is_governor         INTEGER NOT NULL DEFAULT 0,
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -294,9 +296,11 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
         ("entity",         "TEXT NOT NULL DEFAULT ''"),
         ("mobile",         "TEXT NOT NULL DEFAULT ''"),
         ("comms_channel",  "TEXT NOT NULL DEFAULT 'email'"),
-        ("is_participant", "INTEGER NOT NULL DEFAULT 0"),
-        ("is_reviewer",    "INTEGER NOT NULL DEFAULT 0"),
-        ("is_approver",    "INTEGER NOT NULL DEFAULT 0"),
+        ("is_participant",   "INTEGER NOT NULL DEFAULT 0"),
+        ("is_reviewer",      "INTEGER NOT NULL DEFAULT 0"),
+        ("is_approver",      "INTEGER NOT NULL DEFAULT 0"),
+        ("is_project_admin", "INTEGER NOT NULL DEFAULT 0"),
+        ("is_governor",      "INTEGER NOT NULL DEFAULT 0"),
     ]:
         if col not in cols:
             await conn.execute(f"ALTER TABLE stakeholders ADD COLUMN {col} {defn}")
@@ -430,6 +434,23 @@ async def _migrate_interview_sessions_script_id(conn: aiosqlite.Connection) -> N
     cols = {row[1] for row in await cur.fetchall()}
     if "script_id" not in cols:
         await conn.execute("ALTER TABLE interview_sessions ADD COLUMN script_id TEXT")
+    await conn.commit()
+
+
+async def _migrate_stakeholder_roles(conn: aiosqlite.Connection) -> None:
+    """The two roles the stakeholder record was missing.
+
+    is_participant, is_reviewer, and is_approver already lived here; project_admin and
+    governor complete the set rather than starting a second one. Authority is then read
+    from the row that holds the person's name and address, instead of being inferred by
+    matching that address against a separate account.
+    """
+    cur = await conn.execute("PRAGMA table_info(stakeholders)")
+    cols = {row[1] for row in await cur.fetchall()}
+    for name in ("is_project_admin", "is_governor"):
+        if name not in cols:
+            await conn.execute(
+                f"ALTER TABLE stakeholders ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
     await conn.commit()
 
 
@@ -1296,7 +1317,7 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # runs again after a database's first post-upgrade open in a process - there is no test
 # that catches a missed bump, because none can: it is a fact about this constant, not
 # about behaviour.
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1401,6 +1422,7 @@ async def get_connection(slug: str):
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
             await _migrate_interview_sessions_script_id(conn)
+            await _migrate_stakeholder_roles(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)
             await _migrate_run_inputs_agent_scope(conn)
@@ -2300,6 +2322,8 @@ async def insert_stakeholder(
     is_participant: bool = False,
     is_reviewer: bool = False,
     is_approver: bool = False,
+    is_project_admin: bool = False,
+    is_governor: bool = False,
 ) -> int:
     """Insert a stakeholder row. Returns new id."""
     cur = await conn.execute(
@@ -2309,8 +2333,8 @@ async def insert_stakeholder(
             activity, disposition, location, country_code, timezone,
             preferred_language, currency,
             level, entity, mobile, comms_channel,
-            is_participant, is_reviewer, is_approver)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            is_participant, is_reviewer, is_approver, is_project_admin, is_governor)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             project_id, name, job_title, organisation, email, slack_handle,
             _json.dumps(stakeholder_groups or []),
@@ -2320,6 +2344,7 @@ async def insert_stakeholder(
             location, country_code, timezone, preferred_language, currency,
             level, entity, mobile, comms_channel,
             int(is_participant), int(is_reviewer), int(is_approver),
+            int(is_project_admin), int(is_governor),
         ),
     )
     await conn.commit()
@@ -2333,6 +2358,8 @@ def _deserialize_stakeholder(row: dict) -> dict:
     row["is_participant"] = bool(row.get("is_participant", 0))
     row["is_reviewer"] = bool(row.get("is_reviewer", 0))
     row["is_approver"] = bool(row.get("is_approver", 0))
+    row["is_project_admin"] = bool(row.get("is_project_admin", 0))
+    row["is_governor"] = bool(row.get("is_governor", 0))
     return row
 
 
@@ -2365,7 +2392,7 @@ _STAKEHOLDER_UPDATABLE_FIELDS = frozenset({
     "activity", "disposition", "location", "country_code", "timezone",
     "preferred_language", "currency",
     "level", "entity", "mobile", "comms_channel",
-    "is_participant", "is_reviewer", "is_approver",
+    "is_participant", "is_reviewer", "is_approver", "is_project_admin", "is_governor",
 })
 
 
@@ -2384,7 +2411,8 @@ async def update_stakeholder(
     for key in ("stakeholder_groups", "value_streams"):
         if key in fields and isinstance(fields[key], list):
             fields[key] = _json.dumps(fields[key])
-    for key in ("is_participant", "is_reviewer", "is_approver"):
+    for key in ("is_participant", "is_reviewer", "is_approver",
+                "is_project_admin", "is_governor"):
         if key in fields:
             fields[key] = int(bool(fields[key]))
 
