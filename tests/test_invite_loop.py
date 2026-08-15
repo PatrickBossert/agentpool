@@ -191,6 +191,74 @@ async def test_inviting_the_same_person_to_a_second_project_keeps_both_live(tmp_
 
 
 @pytest.mark.asyncio
+async def test_a_second_invite_does_not_overwrite_the_existing_login_password(tmp_path, monkeypatch):
+    """CRITICAL: an invite must never change an existing account's password.
+
+    _has_linked_login is scoped per project by design, so the same email can legitimately be
+    invited onto a second engagement while it already holds a login from a first one - this
+    file's own test_inviting_the_same_person_to_a_second_project_keeps_both_live proves that
+    is intended. Before this fix, redeeming that second invite ran the same
+    `UPDATE users SET hashed_pw=?` a brand new signup does. Chained with resend-invite
+    returning the raw token to the API caller (api/routers/stakeholders.py), any
+    project_admin on any project - not just this one - could add an existing user's email
+    (including a sysadmin's) as a stakeholder here, fetch the token, and redeem it with a
+    password of their own choosing: full account takeover from three individually reasonable
+    pieces. Only a reset-purpose token, which the account owner triggers themselves to their
+    own address, may set a password on an existing account.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    slug_a, slug_b = "proj-a-takeover", "proj-b-takeover"
+    email = "victim@example.com"
+    try:
+        async with get_connection(slug_a) as conn:
+            await insert_project(conn, slug=slug_a, llm_mode="standard", sector="", config_json="{}")
+            project_a = await fetch_project(conn, slug=slug_a)
+            sid_a = await insert_stakeholder(
+                conn, project_id=project_a["id"], name="Victim", email=email, is_reviewer=True)
+        async with get_connection(slug_b) as conn:
+            await insert_project(conn, slug=slug_b, llm_mode="standard", sector="", config_json="{}")
+            project_b = await fetch_project(conn, slug=slug_b)
+            sid_b = await insert_stakeholder(
+                conn, project_id=project_b["id"], name="Victim", email=email, is_reviewer=True)
+
+        # The victim accepts the first invite for real, choosing their own password.
+        raw_a = await issue_invite(email=email, project_slug=slug_a, stakeholder_id=sid_a)
+        victim = await accept_token(raw_a, "victims-real-password")
+        assert victim is not None
+
+        from api.auth import verify_password
+        from api.database import get_system_connection, fetch_user
+        async with get_system_connection() as conn:
+            before = await fetch_user(conn, username=email)
+        assert verify_password("victims-real-password", before["hashed_pw"])
+
+        # An "attacker" with admin rights only on project B adds the same email there and
+        # redeems the resulting invite with a password of their own choosing.
+        raw_b = await issue_invite(email=email, project_slug=slug_b, stakeholder_id=sid_b)
+        attacker_result = await accept_token(raw_b, "attacker-chosen-password")
+        assert attacker_result is not None
+
+        async with get_system_connection() as conn:
+            after = await fetch_user(conn, username=email)
+        # The password must be exactly what it was before the second invite was redeemed -
+        # not the one the second acceptance just typed in.
+        assert after["hashed_pw"] == before["hashed_pw"]
+        assert verify_password("victims-real-password", after["hashed_pw"])
+        assert not verify_password("attacker-chosen-password", after["hashed_pw"])
+
+        # And the point of the second invite - a membership on project B - still lands; the
+        # fix must not have traded the takeover for silently dropping the membership instead.
+        async with get_system_connection() as conn:
+            cur = await conn.execute(
+                "SELECT project_slug, stakeholder_id FROM project_memberships WHERE user_id=?"
+                " ORDER BY project_slug", (after["id"],))
+            assert [tuple(r) for r in await cur.fetchall()] == [(slug_a, sid_a), (slug_b, sid_b)]
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
 async def test_a_stakeholder_id_with_no_row_on_the_project_is_not_linked(tmp_path, monkeypatch):
     """A token whose stakeholder_id does not name any row on its own project must refuse the
     whole acceptance - not create a rightless login, and not spend the token.

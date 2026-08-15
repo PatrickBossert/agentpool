@@ -206,6 +206,20 @@ async def accept_token(raw_token: str, password: str, *, purpose: str | None = N
       stamped used - specifically so a corrected invite can still be redeemed. A refusal that
       still spent the token, or still created a login with no rights, would have no recovery
       short of hand-editing the database.
+
+    CRITICAL, and easy to reintroduce: an invite must never change an existing account's
+    password. _has_linked_login (the caller that decides whether to issue an invite at all)
+    is scoped per project *by design*, so the same email legitimately gets invited onto a
+    second, third, ... engagement while already holding a login from the first one. Redeeming
+    that second invite must only create the new project_memberships row - not touch
+    hashed_pw. Before this was enforced here, any project_admin on any project could add an
+    existing user's email (including a sysadmin's) as a stakeholder on their own project,
+    call resend-invite to obtain the raw token (it is returned to the API caller), and redeem
+    it with a password of their own choosing - overwriting that person's global password.
+    Chained, that is privilege escalation to full account takeover, from three individually
+    reasonable pieces. Only a reset-purpose token - which the account owner triggers
+    themselves, to their own address, via /auth/reset-request - may ever set a password on an
+    account that already exists.
     """
     async with get_system_connection() as conn:
         row = await _find_live_token(conn, raw_token, purpose=purpose)
@@ -218,7 +232,6 @@ async def accept_token(raw_token: str, password: str, *, purpose: str | None = N
             ):
                 return None
 
-        hashed_pw = hash_password(password)
         user = await fetch_user(conn, username=row["email"])
         if user is None:
             # role="reviewer" is load-bearing, not a placeholder: check_project_access only
@@ -229,15 +242,22 @@ async def accept_token(raw_token: str, password: str, *, purpose: str | None = N
                 username=row["email"],
                 email=row["email"],
                 role="reviewer",
-                hashed_pw=hashed_pw,
+                hashed_pw=hash_password(password),
             )
             if not ok:
                 return None
-        else:
+        elif row["purpose"] == "reset":
+            # The one case an existing account's password may change here: a reset, which
+            # only the account owner can have started (they had to receive it at their own
+            # address). row["purpose"] is the *token's own* stored purpose, not the caller's
+            # requested filter, so this still holds for a direct call that passed no filter.
             await conn.execute(
-                "UPDATE users SET hashed_pw=? WHERE id=?", (hashed_pw, user["id"])
+                "UPDATE users SET hashed_pw=? WHERE id=?", (hash_password(password), user["id"])
             )
             await conn.commit()
+        # else: purpose == "invite" and the account already exists - only the membership
+        # below is new. The password stays whatever it already was; they already have a
+        # login and should use it, not the one just typed into this form.
         user = await fetch_user(conn, username=row["email"])
 
         if row["project_slug"] and row["stakeholder_id"] is not None:

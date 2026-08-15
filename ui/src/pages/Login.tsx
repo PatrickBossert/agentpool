@@ -2,7 +2,7 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../api/endpoints'
-import { useAuth, RETURN_TO_KEY } from '../context/AuthContext'
+import { useAuth, RETURN_TO_KEY, parseToken } from '../context/AuthContext'
 import type { UserPayload } from '../types'
 import logoUrl from '../assets/TR_Logo_strapiline.png'
 
@@ -20,12 +20,9 @@ export default function Login() {
     setLoading(true)
     try {
       const resp = await authApi.login(username, password)
-      let payload = { sub: '', role: 'sysadmin', exp: 0 } as UserPayload
-      try {
-        payload = JSON.parse(atob(resp.access_token.split('.')[1]))
-      } catch {
-        // token may not be a valid JWT (e.g. in tests)
-      }
+      // parseToken returns null for a token that is not a valid JWT (e.g. in tests) -
+      // fall back to a usable default rather than passing null on to login().
+      const payload = parseToken(resp.access_token) ?? ({ sub: '', role: 'sysadmin', exp: 0 } as UserPayload)
       login(resp.access_token, payload)
       // A link followed with no live session takes priority over the last-opened project -
       // it is the one specific page somebody was sent to, not wherever they happened to be

@@ -9,7 +9,7 @@ import { useState, FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { KeyRound } from 'lucide-react'
 import { authApi } from '../api/endpoints'
-import { useAuth } from '../context/AuthContext'
+import { useAuth, parseToken } from '../context/AuthContext'
 import type { UserPayload } from '../types'
 import logoUrl from '../assets/TR_Logo_strapiline.png'
 
@@ -42,12 +42,9 @@ export default function AcceptInvite() {
     setLoading(true)
     try {
       const resp = await authApi.accept(token, password)
-      let payload = { sub: '', role: 'reviewer', exp: 0 } as UserPayload
-      try {
-        payload = JSON.parse(atob(resp.access_token.split('.')[1]))
-      } catch {
-        // token may not be a valid JWT (e.g. in tests)
-      }
+      // parseToken returns null for a token that is not a valid JWT (e.g. in tests) -
+      // fall back to a usable default rather than passing null on to login().
+      const payload = parseToken(resp.access_token) ?? ({ sub: '', role: 'reviewer', exp: 0 } as UserPayload)
       login(resp.access_token, payload)
       navigate('/')
     } catch {
