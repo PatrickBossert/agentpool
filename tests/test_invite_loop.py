@@ -1,5 +1,5 @@
 # tests/test_invite_loop.py
-"""One live invite per person, and the same machinery does resets.
+"""One live invite per (person, project), and the same machinery does resets.
 
 The trigger is a role, not a person: adding a stakeholder does nothing, and setting any
 flag other than is_participant on somebody with no login issues an invite. A participant
@@ -45,6 +45,10 @@ async def test_accepting_an_invite_creates_the_login_and_the_link(seeded_person)
     raw = await issue_invite(email=email, project_slug=slug, stakeholder_id=stakeholder_id)
     user = await accept_token(raw, "correct horse battery staple")
     assert user is not None and user["username"] == email
+    # role is load-bearing: check_project_access's membership branch only fires for
+    # role=="reviewer" - any other value would deny every project-scoped request outright,
+    # and nothing else in this file would notice.
+    assert user["role"] == "reviewer"
 
     from api.database import get_system_connection
     async with get_system_connection() as conn:
@@ -116,18 +120,82 @@ async def test_a_reset_for_an_unknown_address_reveals_nothing(seeded_person):
 
 
 @pytest.mark.asyncio
-async def test_a_mismatched_stakeholder_id_is_not_linked(tmp_path, monkeypatch):
-    """A token whose stakeholder_id does not name a real row on its own project must not
-    be linked - not to nothing, and not to whichever row happens to sit at that id on a
-    different project.
+async def test_purpose_is_enforced_on_redemption(seeded_person):
+    """An invite token cannot be redeemed as a reset, or vice versa, once a caller names the
+    purpose it expects - the two endpoints pass this, even though accept_token itself accepts
+    either purpose when the caller (this file's other tests) omits it."""
+    slug, stakeholder_id, email = seeded_person
+    raw = await issue_invite(email=email, project_slug=slug, stakeholder_id=stakeholder_id)
+    assert await accept_token(raw, "pw", purpose="reset") is None
+    assert await accept_token(raw, "pw", purpose="invite") is not None
+
+
+@pytest.mark.asyncio
+async def test_inviting_the_same_person_to_a_second_project_keeps_both_live(tmp_path, monkeypatch):
+    """One live invite per (person, project), not per person - a second engagement must not
+    silently overwrite the first one's project_slug and stakeholder_id."""
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    slug_a, slug_b = "proj-a", "proj-b"
+    email = "dual@example.com"
+    try:
+        async with get_connection(slug_a) as conn:
+            await insert_project(conn, slug=slug_a, llm_mode="standard", sector="", config_json="{}")
+            project_a = await fetch_project(conn, slug=slug_a)
+            sid_a = await insert_stakeholder(
+                conn, project_id=project_a["id"], name="Dual", email=email, is_reviewer=True)
+        async with get_connection(slug_b) as conn:
+            await insert_project(conn, slug=slug_b, llm_mode="standard", sector="", config_json="{}")
+            project_b = await fetch_project(conn, slug=slug_b)
+            sid_b = await insert_stakeholder(
+                conn, project_id=project_b["id"], name="Dual", email=email, is_approver=True)
+
+        raw_a = await issue_invite(email=email, project_slug=slug_a, stakeholder_id=sid_a)
+        raw_b = await issue_invite(email=email, project_slug=slug_b, stakeholder_id=sid_b)
+        assert raw_a != raw_b
+
+        from api.database import get_system_connection
+        async with get_system_connection() as conn:
+            cur = await conn.execute(
+                "SELECT project_slug FROM auth_tokens WHERE email=? AND used_at IS NULL"
+                " ORDER BY project_slug", (email,))
+            assert [r[0] for r in await cur.fetchall()] == [slug_a, slug_b]
+
+        # A bare reissue is ambiguous now that two live invites exist - it must refuse to
+        # guess rather than silently pick one.
+        assert await reissue_invite(email=email) is None
+        refreshed_a = await reissue_invite(email=email, project_slug=slug_a)
+        assert refreshed_a is not None and refreshed_a != raw_a
+
+        # Both invites still redeem correctly, to their own project.
+        user = await accept_token(refreshed_a, "pw")
+        assert user is not None
+        async with get_system_connection() as conn:
+            cur = await conn.execute(
+                "SELECT project_slug, stakeholder_id FROM project_memberships WHERE user_id=?"
+                " ORDER BY project_slug", (user["id"],))
+            assert [tuple(r) for r in await cur.fetchall()] == [(slug_a, sid_a)]
+        user2 = await accept_token(raw_b, "pw")
+        assert user2 is not None and user2["id"] == user["id"]
+        async with get_system_connection() as conn:
+            cur = await conn.execute(
+                "SELECT project_slug, stakeholder_id FROM project_memberships WHERE user_id=?"
+                " ORDER BY project_slug", (user["id"],))
+            assert [tuple(r) for r in await cur.fetchall()] == [(slug_a, sid_a), (slug_b, sid_b)]
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_a_stakeholder_id_with_no_row_on_the_project_is_not_linked(tmp_path, monkeypatch):
+    """A token whose stakeholder_id does not name any row on its own project must refuse the
+    whole acceptance - not create a rightless login, and not spend the token.
 
     project_memberships.stakeholder_id lives in system.db while the stakeholder lives in the
-    project database, so no foreign key can catch a mismatch, and stakeholder ids restart at
-    1 in every project file. A reviewer drove this on an earlier task: linking a user on
-    project B with project A's stakeholder id returned B's *other* stakeholder's roles.
-    accept_token is the main caller of link_membership, so it must refuse to link rather than
-    trust the id blindly. The login itself is still created - the person proved they hold the
-    invite - only the membership is withheld.
+    project database, so no foreign key can catch a mismatch. accept_token is the main caller
+    of link_membership, so it must refuse rather than trust the id blindly - and refusing
+    means refusing the acceptance outright, leaving the token live so a corrected invite can
+    still be redeemed.
     """
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     get_settings.cache_clear()
@@ -141,13 +209,58 @@ async def test_a_mismatched_stakeholder_id_is_not_linked(tmp_path, monkeypatch):
     try:
         raw = await issue_invite(email=email, project_slug=slug, stakeholder_id=1)
         user = await accept_token(raw, "pw")
-        assert user is not None, "the login is still created"
+        assert user is None, "an unverifiable stakeholder id must refuse the whole acceptance"
 
-        from api.database import get_system_connection
+        from api.database import get_system_connection, fetch_user
         async with get_system_connection() as conn:
+            assert await fetch_user(conn, username=email) is None, "no login must be created"
             cur = await conn.execute(
-                "SELECT project_slug, stakeholder_id FROM project_memberships WHERE user_id=?",
-                (user["id"],))
-            assert await cur.fetchall() == [], "an unverifiable stakeholder id must not be linked"
+                "SELECT used_at FROM auth_tokens WHERE email=?", (email,))
+            row = await cur.fetchone()
+            assert row is not None and row[0] is None, "the token must stay live for a fix"
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_an_invite_naming_someone_elses_stakeholder_id_is_not_linked(tmp_path, monkeypatch):
+    """Existence alone is not identity. Stakeholder ids restart at 1 in every project file, so
+    project 'beta' having *a* stakeholder at id 1 is the ordinary case, not the exceptional
+    one - and it is not Alice merely because her invite happens to name that id.
+
+    Reproduces the shape a reviewer drove on an earlier task: alpha's id 1 is Alice (governor,
+    project_admin); beta's id 1 is Bob (participant only). An invite issued to Alice's email
+    but naming project beta with stakeholder_id=1 must not link her login to Bob's row - it
+    must refuse the whole acceptance, the same as an id that resolves to nobody at all.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    slug_a, slug_b = "alpha", "beta"
+    try:
+        async with get_connection(slug_a) as conn:
+            await insert_project(conn, slug=slug_a, llm_mode="standard", sector="", config_json="{}")
+            project_a = await fetch_project(conn, slug=slug_a)
+            await insert_stakeholder(
+                conn, project_id=project_a["id"], name="Alice", email="alice@example.com",
+                is_governor=True, is_project_admin=True,
+            )
+
+        async with get_connection(slug_b) as conn:
+            await insert_project(conn, slug=slug_b, llm_mode="standard", sector="", config_json="{}")
+            project_b = await fetch_project(conn, slug=slug_b)
+            await insert_stakeholder(
+                conn, project_id=project_b["id"], name="Bob", email="bob@example.com",
+                is_participant=True,
+            )
+
+        # Both projects' first stakeholder is id 1 - separate database files, separate
+        # autoincrement sequences.
+        raw = await issue_invite(email="alice@example.com", project_slug=slug_b, stakeholder_id=1)
+        user = await accept_token(raw, "pw")
+        assert user is None, "id 1 on beta is Bob, not Alice - must not link, must not log in"
+
+        from api.database import get_system_connection, fetch_user
+        async with get_system_connection() as conn:
+            assert await fetch_user(conn, username="alice@example.com") is None
     finally:
         get_settings.cache_clear()

@@ -5,27 +5,43 @@ One token table backs both purposes: an 'invite' creates the users row and the p
 membership together; a 'reset' only replaces the password on a login that already exists,
 which is why its token carries no project_slug or stakeholder_id.
 
-Tokens are stored hashed with the same bcrypt hash_password/verify_password used for account
-passwords - never the raw value, and never logged. Because a hash cannot be reversed, a
-re-issued invite necessarily mints a brand new token onto the same row rather than resending
-the original: the old link dies, which is the correct trade for a token that sets a password.
+Tokens are hashed with a fast deterministic digest (sha256), not bcrypt. bcrypt is a slow KDF
+- the right tool for a low-entropy secret a human chose, because slowness is what makes
+guessing expensive. A token from secrets.token_urlsafe(32) is 256 bits of randomness; nothing
+is gained by slowing down its hash, and everything is lost by doing so inside an unauthenticated
+request handler: bcrypt's random salt means the same raw value hashes to a different string
+every time, so a lookup can only be done by re-hashing and comparing candidate rows in a loop.
+On this table that loop runs against every *unused* row for every accept, unauthenticated and
+unrated - forty ordinary outstanding invites (the expected shape of "one live invite per
+person") turned a single /auth/accept call into a 13-second, event-loop-blocking scan that
+stalled the whole API for every other request in flight. sha256 gives an indexed
+`WHERE token_hash = ?` equality lookup instead - the token_hash column's UNIQUE constraint
+already carries an index, so this is a single-row fetch regardless of table size. Raw tokens
+are still never stored or logged; only their digest is.
 
-One live invite per person is enforced by refreshing the existing unused row instead of
-inserting a second - two live invites would let two people each set a password against a
-single stakeholder record.
+Re-issuing an invite necessarily mints a brand new token onto the same row rather than
+resending the original: a hash cannot be reversed to recover what was sent, and a lost email
+should stay dead. One live invite is kept per (person, project) - not per person - since a
+second invite for a different engagement must not silently overwrite the first one's
+project_slug and stakeholder_id.
 
 accept_token is the main caller of link_membership. project_memberships.stakeholder_id lives
 in system.db while the stakeholder itself lives in the project's own database, so no foreign
-key can catch a mismatch - and stakeholder ids restart at 1 in every project file. A
-mislinked id does not fail; it silently resolves to an unrelated person's rights. So before
-linking, this module checks that the stakeholder id named on the token actually exists on the
-project named on the token, and refuses to link (though the login itself is still created)
-if it does not.
+key can catch a mismatch - and stakeholder ids restart at 1 in every project file, so an id
+that resolves to *someone* is the ordinary case, not the exceptional one. Existence alone is
+not proof of identity: checking only "does this id exist on this project" passes for another
+stakeholder's id just as readily as for the intended one. The token also carries the email it
+was issued to, so accept_token compares that email against the resolved stakeholder's own
+email and refuses the entire acceptance - no login, no membership, token left live - on any
+mismatch, rather than degrading to a login with no rights. That leaves room for the invite to
+be corrected and re-issued; stamping the token used on a refused link would have destroyed
+that path along with the wrong one.
 """
+import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from api.auth import hash_password, verify_password
+from api.auth import hash_password
 from api.database import (
     get_connection,
     get_db_path,
@@ -33,6 +49,7 @@ from api.database import (
     fetch_project,
     fetch_stakeholder,
     fetch_user,
+    fetch_user_org,
     insert_user,
     link_membership,
 )
@@ -45,30 +62,43 @@ def _future(days: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(days=days)).strftime(_DT_FORMAT)
 
 
-def _is_expired(expires_at: str) -> bool:
-    naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
-    return datetime.strptime(expires_at, _DT_FORMAT) < naive_now
+def _now_str() -> str:
+    return datetime.now(timezone.utc).strftime(_DT_FORMAT)
 
 
-async def _find_live_token(conn, raw_token: str):
-    """Return the unused, unexpired row whose hash matches raw_token, or None.
+def _hash_token(raw: str) -> str:
+    """Fast, deterministic digest - see the module docstring for why not bcrypt."""
+    return hashlib.sha256(raw.encode()).hexdigest()
 
-    Tokens are hashed with bcrypt, which salts randomly, so the same raw value hashes to a
-    different string every time - there is no deterministic digest to look up by equality.
-    Every unused, unexpired row is checked with verify_password instead.
+
+async def _find_live_token(conn, raw_token: str, *, purpose: str | None = None):
+    """Return the unused, unexpired row for this token, or None.
+
+    A single indexed equality lookup (token_hash carries a UNIQUE index), not a scan - the
+    property Critical 2 was about. expires_at is compared in SQL as a string, not parsed with
+    strptime in Python: _DT_FORMAT sorts lexicographically the same as chronologically, and a
+    malformed value here (arguably shouldn't be able to occur, but nothing that has ever
+    written this column runs its output through validation) must not raise inside a request
+    handler and 500 every acceptance for every other row.
     """
-    cur = await conn.execute("SELECT * FROM auth_tokens WHERE used_at IS NULL")
-    async for row in cur:
-        row = dict(row)
-        if _is_expired(row["expires_at"]):
-            continue
-        if verify_password(raw_token, row["token_hash"]):
-            return row
-    return None
+    sql = "SELECT * FROM auth_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at > ?"
+    params = [_hash_token(raw_token), _now_str()]
+    if purpose is not None:
+        sql += " AND purpose=?"
+        params.append(purpose)
+    cur = await conn.execute(sql, params)
+    row = await cur.fetchone()
+    return dict(row) if row else None
 
 
-async def _stakeholder_belongs_to_project(project_slug: str, stakeholder_id: int) -> bool:
-    """Whether stakeholder_id names a real row on project_slug's own database.
+async def _stakeholder_matches_invite(project_slug: str, stakeholder_id: int, email: str) -> bool:
+    """Whether stakeholder_id names a row on project_slug's own database AND that row's own
+    email matches the one this token was issued to.
+
+    Existence is not identity: stakeholder ids restart at 1 in every project file, so an id
+    that resolves to *some* stakeholder is the ordinary case, not the exceptional one. The
+    email comparison is what actually ties the invite to the person it names rather than to
+    whichever record happens to occupy that integer.
 
     Mirrors the get_db_path(...).exists() guard in authority_service.caller_roles: a slug
     with no database yet has no stakeholders either way, and this must not create one as a
@@ -83,18 +113,22 @@ async def _stakeholder_belongs_to_project(project_slug: str, stakeholder_id: int
         stakeholder = await fetch_stakeholder(
             conn, stakeholder_id=stakeholder_id, project_id=project["id"]
         )
-        return stakeholder is not None
+        if stakeholder is None:
+            return False
+        return stakeholder["email"].strip().lower() == email.strip().lower()
 
 
 async def issue_invite(email: str, project_slug: str, stakeholder_id: int) -> str:
-    """Issue (or refresh) the one live invite for this email. Returns the raw token."""
+    """Issue (or refresh) the one live invite for this (email, project_slug). Returns the raw
+    token."""
     raw = secrets.token_urlsafe(32)
-    token_hash = hash_password(raw)
+    token_hash = _hash_token(raw)
     expires_at = _future(_TOKEN_EXPIRY_DAYS)
     async with get_system_connection() as conn:
         cur = await conn.execute(
-            "SELECT id FROM auth_tokens WHERE email=? AND purpose='invite' AND used_at IS NULL",
-            (email,),
+            "SELECT id FROM auth_tokens WHERE email=? AND project_slug=? AND purpose='invite'"
+            " AND used_at IS NULL",
+            (email, project_slug),
         )
         row = await cur.fetchone()
         if row is None:
@@ -106,54 +140,79 @@ async def issue_invite(email: str, project_slug: str, stakeholder_id: int) -> st
             )
         else:
             await conn.execute(
-                "UPDATE auth_tokens SET token_hash=?, project_slug=?, stakeholder_id=?,"
-                " expires_at=? WHERE id=?",
-                (token_hash, project_slug, stakeholder_id, expires_at, row["id"]),
+                "UPDATE auth_tokens SET token_hash=?, stakeholder_id=?, expires_at=? WHERE id=?",
+                (token_hash, stakeholder_id, expires_at, row["id"]),
             )
         await conn.commit()
     return raw
 
 
-async def reissue_invite(email: str) -> str | None:
-    """Mint a new token onto the live invite row for this email.
+async def reissue_invite(email: str, project_slug: str | None = None) -> str | None:
+    """Mint a new token onto the live invite row for this email, refreshing hash and expiry.
 
-    Returns None if there is no live invite to refresh. The superseded raw value cannot be
-    recovered - its hash is overwritten - so the old link stops working.
+    Invites are now kept live per (email, project_slug), so a bare email can be ambiguous
+    once somebody holds more than one outstanding invite. project_slug disambiguates when
+    given; without it, this only proceeds when exactly one live invite matches - it will not
+    guess which one to refresh. Returns None when there is nothing (or nothing unambiguous)
+    to refresh. The superseded raw value cannot be recovered - its hash is overwritten - so
+    the old link stops working.
     """
     raw = secrets.token_urlsafe(32)
-    token_hash = hash_password(raw)
+    token_hash = _hash_token(raw)
     expires_at = _future(_TOKEN_EXPIRY_DAYS)
     async with get_system_connection() as conn:
-        cur = await conn.execute(
-            "SELECT id FROM auth_tokens WHERE email=? AND purpose='invite' AND used_at IS NULL",
-            (email,),
-        )
-        row = await cur.fetchone()
-        if row is None:
+        sql = "SELECT id FROM auth_tokens WHERE email=? AND purpose='invite' AND used_at IS NULL"
+        params = [email]
+        if project_slug is not None:
+            sql += " AND project_slug=?"
+            params.append(project_slug)
+        cur = await conn.execute(sql, params)
+        rows = await cur.fetchall()
+        if len(rows) != 1:
             return None
         await conn.execute(
             "UPDATE auth_tokens SET token_hash=?, expires_at=? WHERE id=?",
-            (token_hash, expires_at, row["id"]),
+            (token_hash, expires_at, rows[0]["id"]),
         )
         await conn.commit()
     return raw
 
 
-async def accept_token(raw_token: str, password: str) -> dict | None:
+async def accept_token(raw_token: str, password: str, *, purpose: str | None = None) -> dict | None:
     """Redeem an invite or reset token: create or update the login, link if invited.
 
-    Refuses (returns None) a token that does not resolve to a live, unused, unexpired row -
-    which is what makes a token single-use: accept_token never looks at used_at as a hint to
-    ignore, it is the refusal itself.
+    Refuses (returns None):
+    - a token that does not resolve to a live, unused, unexpired row (also what makes a
+      token single-use - accept_token never treats used_at as a hint to ignore, the refusal
+      is the enforcement);
+    - a token carrying the wrong purpose, when the caller names one (the router passes
+      purpose="invite" for /auth/accept and purpose="reset" for /auth/reset, so one cannot
+      be redeemed as the other; direct callers, including this module's own tests, may omit
+      it and accept either);
+    - an invite whose stakeholder_id does not resolve, on its own project, to a stakeholder
+      whose email matches the one the token was issued to. This refusal covers the whole
+      acceptance - no login is created or updated, and the token is left live rather than
+      stamped used - specifically so a corrected invite can still be redeemed. A refusal that
+      still spent the token, or still created a login with no rights, would have no recovery
+      short of hand-editing the database.
     """
     async with get_system_connection() as conn:
-        row = await _find_live_token(conn, raw_token)
+        row = await _find_live_token(conn, raw_token, purpose=purpose)
         if row is None:
             return None
+
+        if row["project_slug"] and row["stakeholder_id"] is not None:
+            if not await _stakeholder_matches_invite(
+                row["project_slug"], row["stakeholder_id"], row["email"]
+            ):
+                return None
 
         hashed_pw = hash_password(password)
         user = await fetch_user(conn, username=row["email"])
         if user is None:
+            # role="reviewer" is load-bearing, not a placeholder: check_project_access only
+            # attempts the project_memberships lookup for role=="reviewer" - any other value
+            # denies every project-scoped request outright regardless of membership.
             ok = await insert_user(
                 conn,
                 username=row["email"],
@@ -171,15 +230,12 @@ async def accept_token(raw_token: str, password: str) -> dict | None:
         user = await fetch_user(conn, username=row["email"])
 
         if row["project_slug"] and row["stakeholder_id"] is not None:
-            if await _stakeholder_belongs_to_project(row["project_slug"], row["stakeholder_id"]):
-                await link_membership(
-                    conn,
-                    user_id=user["id"],
-                    project_slug=row["project_slug"],
-                    stakeholder_id=row["stakeholder_id"],
-                )
-            # else: refuse to link - the id does not name a real person on this project, so
-            # linking it would silently grant whoever happens to sit at that id instead.
+            await link_membership(
+                conn,
+                user_id=user["id"],
+                project_slug=row["project_slug"],
+                stakeholder_id=row["stakeholder_id"],
+            )
 
         await conn.execute(
             "UPDATE auth_tokens SET used_at=CURRENT_TIMESTAMP WHERE id=?", (row["id"],)
@@ -191,17 +247,20 @@ async def accept_token(raw_token: str, password: str) -> dict | None:
 async def issue_reset(email: str) -> str | None:
     """Issue a reset token for an existing login. Returns None for an unknown address.
 
-    None rather than a raised error, so a caller (the /auth/reset-request endpoint) cannot
-    use the response to tell known addresses from unknown ones.
+    None rather than a raised error, so the /auth/reset-request endpoint cannot use the
+    response to tell known addresses from unknown ones. That property has to hold under
+    timing too, not just under the return value: the SELECT/INSERT-or-UPDATE/commit run
+    unconditionally, for a known and an unknown address alike, and the result is only
+    discarded afterwards for an unknown one. An unknown address does leave behind a token row
+    whose raw value was never returned to anyone and so can never be redeemed - inert, if
+    untidy - which is the trade for not letting a fast path leak account existence by timing.
     """
+    raw = secrets.token_urlsafe(32)
+    token_hash = _hash_token(raw)
+    expires_at = _future(_TOKEN_EXPIRY_DAYS)
     async with get_system_connection() as conn:
         user = await fetch_user(conn, username=email)
-        if user is None:
-            return None
 
-        raw = secrets.token_urlsafe(32)
-        token_hash = hash_password(raw)
-        expires_at = _future(_TOKEN_EXPIRY_DAYS)
         cur = await conn.execute(
             "SELECT id FROM auth_tokens WHERE email=? AND purpose='reset' AND used_at IS NULL",
             (email,),
@@ -219,4 +278,21 @@ async def issue_reset(email: str) -> str | None:
                 (token_hash, expires_at, row["id"]),
             )
         await conn.commit()
+
+        if user is None:
+            return None
     return raw
+
+
+async def org_id_for_session(user: dict) -> int | None:
+    """org_id to embed in a session token, matching /auth/login's issuance exactly.
+
+    Without this an org_admin who resets or accepts gets a session that reads org_id as None,
+    which check_project_access takes as "no org" - 403 on every project until they log out
+    and back in.
+    """
+    if user["role"] != "org_admin":
+        return None
+    async with get_system_connection() as conn:
+        org_row = await fetch_user_org(conn, user_id=user["id"])
+    return org_row["org_id"] if org_row else None
