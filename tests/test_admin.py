@@ -270,3 +270,157 @@ async def test_promoting_an_account_to_sysadmin_moves_the_flag_with_it():
     assert "sys_admin" in await caller_roles(
         "any-project", {"sub": "promoted", "role": "sysadmin"}
     )
+
+
+@pytest.mark.asyncio
+async def test_org_admin_cannot_promote_anyone_to_sysadmin():
+    """svc_create_user refuses an org_admin who tries to create a sysadmin; svc_update_user
+    took no calling_payload at all, so the same org_admin could create a reviewer and then
+    promote it through PATCH /auth/users/{id} - which is require_org_admin_or_above.
+
+    Asserted through caller_roles as well as the status code, because the status code alone
+    says only that the request was refused: what makes the escalation matter on this branch
+    is that is_sys_admin now travels with the role, so a promotion that got through would
+    hand its target project_admin on every project in the system.
+    """
+    from api.services.authority_service import caller_roles
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/auth/orgs", json={"slug": "org-esc", "name": "Escalation Ltd"},
+            headers=auth(sysadmin_token()),
+        )
+        org_id = resp.json()["id"]
+
+        created = await client.post(
+            "/auth/users",
+            json={
+                "username": "climber", "email": "climber@test.com",
+                "password": "secret123", "role": "reviewer",
+            },
+            headers=auth(org_admin_token(org_id)),
+        )
+        assert created.status_code == 201
+        user_id = created.json()["id"]
+
+        resp = await client.patch(
+            f"/auth/users/{user_id}",
+            json={"email": "climber@test.com", "role": "sysadmin"},
+            headers=auth(org_admin_token(org_id)),
+        )
+        assert resp.status_code == 409
+
+    assert await caller_roles(
+        "any-project", {"sub": "climber", "role": "sysadmin"}
+    ) == set()
+
+
+@pytest.mark.asyncio
+async def test_org_admin_cannot_promote_themselves_to_sysadmin():
+    """The same door turned on the caller's own account, which is how the re-review reached
+    it: an org_admin needs nobody else's cooperation to self-promote."""
+    from api.services.authority_service import caller_roles
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/auth/orgs", json={"slug": "org-self", "name": "Self Ltd"},
+            headers=auth(sysadmin_token()),
+        )
+        org_id = resp.json()["id"]
+
+        created = await client.post(
+            "/auth/users",
+            json={
+                "username": "orgadmin", "email": "orgadmin@test.com",
+                "password": "secret123", "role": "org_admin",
+            },
+            headers=auth(sysadmin_token()),
+        )
+        assert created.status_code == 201
+        own_id = created.json()["id"]
+
+        resp = await client.patch(
+            f"/auth/users/{own_id}",
+            json={"email": "orgadmin@test.com", "role": "sysadmin"},
+            headers=auth(org_admin_token(org_id)),
+        )
+        assert resp.status_code == 409
+
+    assert "sys_admin" not in await caller_roles(
+        "any-project", {"sub": "orgadmin", "role": "org_admin"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_is_told_apart_from_a_user_that_does_not_exist():
+    """409, not the 404 svc_update_user answers for an unknown id. Without the distinction
+    the test above would pass just as well against a guard that refused every PATCH, or
+    against one that never found the user in the first place."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.patch(
+            "/auth/users/99999",
+            json={"email": "nobody@test.com", "role": "reviewer"},
+            headers=auth(sysadmin_token()),
+        )
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_sysadmin_may_still_promote():
+    """The other side of the guard. A refusal wired unconditionally onto this door would
+    close the finding and break the only legitimate route to a second sysadmin."""
+    from api.services.authority_service import caller_roles
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/auth/users",
+            json={
+                "username": "deputy", "email": "deputy@test.com",
+                "password": "secret123", "role": "reviewer",
+            },
+            headers=auth(sysadmin_token()),
+        )
+        user_id = created.json()["id"]
+
+        resp = await client.patch(
+            f"/auth/users/{user_id}",
+            json={"email": "deputy@test.com", "role": "sysadmin"},
+            headers=auth(sysadmin_token()),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "sysadmin"
+
+    assert "sys_admin" in await caller_roles(
+        "any-project", {"sub": "deputy", "role": "sysadmin"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_org_admin_may_still_make_ordinary_edits():
+    """The guard is on the role asked for, not on the caller: an org_admin editing an email
+    address, or setting any role short of sysadmin, is ordinary administration."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/auth/orgs", json={"slug": "org-edit", "name": "Edit Ltd"},
+            headers=auth(sysadmin_token()),
+        )
+        org_id = resp.json()["id"]
+
+        created = await client.post(
+            "/auth/users",
+            json={
+                "username": "ordinary", "email": "ordinary@test.com",
+                "password": "secret123", "role": "reviewer",
+            },
+            headers=auth(org_admin_token(org_id)),
+        )
+        user_id = created.json()["id"]
+
+        resp = await client.patch(
+            f"/auth/users/{user_id}",
+            json={"email": "moved@test.com", "role": "org_admin"},
+            headers=auth(org_admin_token(org_id)),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["email"] == "moved@test.com"
+        assert resp.json()["role"] == "org_admin"

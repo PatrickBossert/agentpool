@@ -8,6 +8,7 @@ from api.services.admin_service import (
     svc_list_registry, svc_register_project, svc_unregister_project,
     svc_list_users, svc_create_user, svc_update_user, svc_delete_user,
     svc_list_user_projects, svc_grant_project_access, svc_revoke_project_access,
+    ForbiddenRoleChange,
 )
 
 router = APIRouter(prefix="/auth", tags=["admin"])
@@ -159,9 +160,16 @@ async def create_user(req: UserCreate, payload: dict = Depends(require_org_admin
     return user
 
 
-@router.patch("/users/{user_id}", dependencies=[Depends(require_org_admin_or_above)])
-async def update_user_endpoint(user_id: int, req: UserUpdate):
-    user = await svc_update_user(user_id, req.email, req.role, req.password)
+@router.patch("/users/{user_id}")
+async def update_user_endpoint(
+    user_id: int, req: UserUpdate, payload: dict = Depends(require_org_admin_or_above)
+):
+    try:
+        user = await svc_update_user(
+            user_id, req.email, req.role, req.password, calling_payload=payload
+        )
+    except ForbiddenRoleChange:
+        raise HTTPException(status_code=409, detail="Forbidden role")
     if not user:
         _404(f"User {user_id} not found")
     return user

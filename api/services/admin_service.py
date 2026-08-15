@@ -17,6 +17,17 @@ from api.database import (
 )
 
 
+class ForbiddenRoleChange(Exception):
+    """An org_admin tried to hand out sysadmin.
+
+    svc_create_user answers this case by returning None, which the router turns into a 409 -
+    but None already means "no such user" on the update path, and answering a refused
+    promotion with 404 would both mislead the caller and leave a test unable to tell the
+    refusal from a user that was simply never created. Same rule, same 409, told apart from
+    "not found" by being raised rather than returned.
+    """
+
+
 async def _send_welcome_email(email: str, username: str, password: str) -> None:
     """Send one-time welcome email with credentials via Resend. Silently skips if no API key."""
     settings = get_settings()
@@ -180,8 +191,23 @@ async def svc_create_user(
 
 
 async def svc_update_user(
-    user_id: int, email: str, role: str, password: str | None
+    user_id: int, email: str, role: str, password: str | None, calling_payload: dict
 ) -> dict | None:
+    """Edit a login. Returns the user dict (without hashed_pw), or None if there is no such
+    user; raises ForbiddenRoleChange if the caller may not grant the role asked for.
+
+    The same guard svc_create_user carries, on the door that had none. PATCH
+    /auth/users/{id} is require_org_admin_or_above, so without it an org_admin who could not
+    *create* a sysadmin could create a reviewer and then promote it - or promote themselves.
+    That has been an escalation for as long as login has minted the JWT role from
+    user["role"]; what makes it this branch's business is that is_sys_admin now travels with
+    the role, so caller_roles reads the promotion back as project_admin on every project in
+    the system. The walk is where authority is read, so the guard belongs on every path that
+    can change what the walk will say.
+    """
+    if calling_payload.get("role") == "org_admin" and role == "sysadmin":
+        raise ForbiddenRoleChange("org_admin cannot grant sysadmin")
+
     async with get_system_connection() as conn:
         user = await fetch_user_by_id(conn, user_id=user_id)
         if not user:
