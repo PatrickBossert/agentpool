@@ -8,7 +8,7 @@ from api.auth import require_any_auth, require_org_admin_or_above, check_project
 from api.config import get_settings
 from api.database import (
     get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config,
-    get_system_connection, insert_project_registry,
+    get_system_connection, register_project_if_unregistered, resolve_home_org_id,
 )
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
 # The one authority for "may this caller act on this project's scripts", shared with
@@ -44,17 +44,31 @@ async def create_project_endpoint(
     if get_db_path(req.client_slug).exists():
         response.status_code = 200
     result = await create_project(req)
-    # Auto-register to org for org_admin
-    if payload.get("role") == "org_admin":
-        org_id = payload.get("org_id")
+    # Every project is registered, whatever the creator's role.
+    #
+    # This used to be gated on `payload.get("role") == "org_admin"`, and a sysadmin's token
+    # carries no org_id - so on a deployment where the sysadmin creates everything, nothing
+    # was ever registered, and check_project_access refuses every org_admin on every slug for
+    # want of a registry row. The gate made the hole permanent: the only role that would have
+    # produced rows was the one already locked out.
+    #
+    # The creator's own organisation wins when their token names one, so an org_admin does not
+    # create a project they are then refused on. A creator with no org_id - every sysadmin -
+    # registers to the home organisation, which init_system_db guarantees exists.
+    #
+    # register_project_if_unregistered rather than insert_project_registry: this endpoint
+    # answers 200 to a re-POST of an existing slug, and the latter is an upsert. Using it here
+    # would let a re-POST silently drag an engagement back out of whichever organisation an
+    # operator had moved it to through POST /auth/projects.
+    async with get_system_connection() as sys_conn:
+        org_id = payload.get("org_id") or await resolve_home_org_id(sys_conn)
         if org_id:
-            async with get_system_connection() as sys_conn:
-                await insert_project_registry(
-                    sys_conn,
-                    slug=req.client_slug,
-                    org_id=org_id,
-                    display_name=req.client_slug,
-                )
+            await register_project_if_unregistered(
+                sys_conn,
+                slug=req.client_slug,
+                org_id=org_id,
+                display_name=req.client_slug,
+            )
     return result
 
 

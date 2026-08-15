@@ -2834,6 +2834,30 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
     await conn.commit()
 
+    # The home organisation, seeded here rather than left to an operator step.
+    #
+    # check_project_access resolves a non-sysadmin org_admin by comparing the JWT's org_id to
+    # the project_registry row for the slug, and falls through to 403 when there is no row. On
+    # the live deployment both organisations and project_registry held zero rows, which was
+    # harmless only because the sole account was a sysadmin and returns before the registry is
+    # consulted at all - the first org_admin ever appointed would have been locked out of every
+    # project in the system, with project_memberships looking perfectly correct throughout.
+    #
+    # This belongs here, and not in the backfill script or an operator runbook step, because
+    # the defect was self-reinforcing: nothing created the data and nothing ever would. A fix
+    # that depends on somebody remembering to run something re-creates that same hole on the
+    # next fresh deployment. init_system_db is idempotent, has no version gate, and runs on
+    # every system connection, so seeding here makes "there is an organisation to register
+    # against" total rather than conditional - and INSERT OR IGNORE keys on the slug, so an
+    # operator renaming the organisation through PATCH /auth/orgs/{id} is not overwritten on
+    # the next connection.
+    settings = get_settings()
+    await conn.execute(
+        "INSERT OR IGNORE INTO organisations (slug, name) VALUES (?,?)",
+        (settings.home_org_slug, settings.home_org_name),
+    )
+    await conn.commit()
+
 
 @asynccontextmanager
 async def get_system_connection():
@@ -3298,6 +3322,30 @@ async def fetch_organisation(conn: aiosqlite.Connection, *, org_id: int) -> dict
         return dict(row) if row else None
 
 
+async def fetch_organisation_by_slug(
+    conn: aiosqlite.Connection, *, slug: str
+) -> dict | None:
+    async with conn.execute("SELECT * FROM organisations WHERE slug=?", (slug,)) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def resolve_home_org_id(conn: aiosqlite.Connection) -> int | None:
+    """The organisation this installation's engagements belong to, or None.
+
+    Resolved by `home_org_slug` and by nothing else. Deliberately *not* "the only row", and
+    deliberately not the lowest id: both would silently change answer the moment a second
+    organisation is created through POST /auth/orgs, and the wrong answer here hands an
+    unrelated organisation's admin a real engagement rather than merely failing.
+
+    None is reachable only if the row has been deleted through DELETE /auth/orgs/{id} on a
+    connection that was opened before the delete - init_system_db re-seeds it on the next one -
+    so callers treat it as "cannot register yet", never as "pick something else".
+    """
+    org = await fetch_organisation_by_slug(conn, slug=get_settings().home_org_slug)
+    return org["id"] if org else None
+
+
 async def update_organisation(conn: aiosqlite.Connection, *, org_id: int, name: str) -> None:
     await conn.execute("UPDATE organisations SET name=? WHERE id=?", (name, org_id))
     await conn.commit()
@@ -3368,11 +3416,43 @@ async def fetch_user_org(conn: aiosqlite.Connection, *, user_id: int) -> dict | 
 async def insert_project_registry(
     conn: aiosqlite.Connection, *, slug: str, org_id: int, display_name: str
 ) -> None:
+    """Assign a slug to an organisation, replacing any assignment it already had.
+
+    An upsert, not `INSERT OR IGNORE`. This is what `POST /auth/projects` calls, and that door
+    exists so an operator can say which organisation owns an engagement. Now that project
+    creation registers *every* project rather than only an org_admin's, on-conflict-ignore
+    would have made that door a permanent no-op: every slug already has a row, so the operator's
+    correction would return 201 and change nothing - the silent kind of failure, and on the
+    table that decides who reaches which engagement.
+
+    Registration at creation deliberately does not come through here; it uses
+    `register_project_if_unregistered`, so re-POSTing an existing slug cannot drag an
+    engagement back out of the organisation an operator moved it to.
+    """
     await conn.execute(
+        "INSERT INTO project_registry (slug, org_id, display_name) VALUES (?,?,?)"
+        " ON CONFLICT(slug) DO UPDATE SET org_id=excluded.org_id,"
+        " display_name=excluded.display_name",
+        (slug, org_id, display_name),
+    )
+    await conn.commit()
+
+
+async def register_project_if_unregistered(
+    conn: aiosqlite.Connection, *, slug: str, org_id: int, display_name: str
+) -> bool:
+    """Give a slug an organisation only if it has none. Returns True if a row was written.
+
+    The creation path's verb. `POST /projects` answers 200 rather than 409 on an existing
+    slug, so it is also the repair path for a project that predates registration - and it must
+    not double as a way to reassign one.
+    """
+    cur = await conn.execute(
         "INSERT OR IGNORE INTO project_registry (slug, org_id, display_name) VALUES (?,?,?)",
         (slug, org_id, display_name),
     )
     await conn.commit()
+    return cur.rowcount > 0
 
 
 async def fetch_project_registry(
