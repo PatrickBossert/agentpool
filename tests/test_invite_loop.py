@@ -7,12 +7,16 @@ never gets one - they are reached by interview URL and token, as they always wer
 """
 import pytest
 import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
 
+from api.auth import decode_token
 from api.config import get_settings
 from api.database import get_connection, insert_project, insert_stakeholder, fetch_project
 from api.services.invite_service import (
     issue_invite, reissue_invite, accept_token, issue_reset,
 )
+
+_JWT_SECRET = "test-secret"  # conftest.py's os.environ.setdefault - never overridden here
 
 
 @pytest_asyncio.fixture
@@ -264,3 +268,94 @@ async def test_an_invite_naming_someone_elses_stakeholder_id_is_not_linked(tmp_p
             assert await fetch_user(conn, username="alice@example.com") is None
     finally:
         get_settings.cache_clear()
+
+
+# ── Router-level tests ──────────────────────────────────────────────────────────
+#
+# accept_token's own return value was tested above, but the router wraps it: it mints the
+# session token (which must carry org_id the same way /auth/login does) and it pins which
+# purpose each endpoint will redeem. Neither of those wrappings had ever been exercised over
+# HTTP - a reviewer confirmed by dropping org_id= from _login_response and dropping both
+# purpose= arguments, then running the full suite: 1439 passed, unchanged. That is "the guard
+# tested, the caller that uses it not," which is the exact failure shape CLAUDE.md records
+# this project shipping five times already.
+
+
+@pytest.mark.asyncio
+async def test_accept_over_http_omits_org_id_for_a_reviewer(seeded_person):
+    slug, stakeholder_id, email = seeded_person
+    raw = await issue_invite(email=email, project_slug=slug, stakeholder_id=stakeholder_id)
+
+    from api.main import app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        resp = await ac.post("/auth/accept", json={"token": raw, "password": "correct horse"})
+    assert resp.status_code == 200
+    payload = decode_token(resp.json()["access_token"], _JWT_SECRET)
+    assert payload.get("org_id") is None
+
+
+@pytest.mark.asyncio
+async def test_reset_over_http_embeds_org_id_for_an_org_admin(tmp_path, monkeypatch):
+    """The router's session must match /auth/login's own issuance: an org_admin whose session
+    lacks org_id reads as "no org" in check_project_access and 403s on every project until
+    they log out and back in. Goes via reset rather than accept, because accept_token always
+    creates new logins with role="reviewer" - an org_admin login has to already exist."""
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+        from api.database import (
+            get_system_connection, insert_organisation, insert_org_membership, insert_user,
+        )
+        async with get_system_connection() as conn:
+            org_id = await insert_organisation(conn, slug="acme", name="Acme")
+            await insert_user(conn, username="boss@example.com", email="boss@example.com",
+                               role="org_admin", hashed_pw="x")
+            cur = await conn.execute(
+                "SELECT id FROM users WHERE username=?", ("boss@example.com",))
+            uid = (await cur.fetchone())[0]
+            await insert_org_membership(conn, user_id=uid, org_id=org_id, role="org_admin")
+
+        reset_raw = await issue_reset(email="boss@example.com")
+        assert reset_raw is not None
+
+        from api.main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post("/auth/reset", json={"token": reset_raw, "password": "new-pw"})
+        assert resp.status_code == 200
+        payload = decode_token(resp.json()["access_token"], _JWT_SECRET)
+        assert payload.get("org_id") == org_id
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_a_reset_token_is_refused_at_accept_and_still_redeemable_at_reset(seeded_person):
+    """purpose is enforced by the router, not just supported by accept_token - this exercises
+    the caller that actually supplies purpose=, which is the half nothing tested before."""
+    slug, stakeholder_id, email = seeded_person
+    raw = await issue_invite(email=email, project_slug=slug, stakeholder_id=stakeholder_id)
+    assert await accept_token(raw, "first password") is not None  # create the login
+    reset_raw = await issue_reset(email=email)
+    assert reset_raw is not None
+
+    from api.main import app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        refused = await ac.post("/auth/accept", json={"token": reset_raw, "password": "x"})
+        assert refused.status_code == 400
+
+        redeemed = await ac.post("/auth/reset", json={"token": reset_raw, "password": "y"})
+        assert redeemed.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_reset_for_an_unknown_address_persists_no_row(seeded_person):
+    """issue_reset does the same DB work for a known and an unknown address to keep the
+    timing flat, but only a known address may persist a row - otherwise an unauthenticated
+    caller could spray addresses and grow auth_tokens forever for free."""
+    assert await issue_reset(email="sprayed@example.com") is None
+
+    from api.database import get_system_connection
+    async with get_system_connection() as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) FROM auth_tokens WHERE email=?", ("sprayed@example.com",))
+        assert (await cur.fetchone())[0] == 0

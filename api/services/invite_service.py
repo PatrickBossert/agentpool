@@ -79,7 +79,12 @@ async def _find_live_token(conn, raw_token: str, *, purpose: str | None = None):
     strptime in Python: _DT_FORMAT sorts lexicographically the same as chronologically, and a
     malformed value here (arguably shouldn't be able to occur, but nothing that has ever
     written this column runs its output through validation) must not raise inside a request
-    handler and 500 every acceptance for every other row.
+    handler and 500 every acceptance for every other row. Note the direction this fails in: a
+    garbage string such as "not-a-date" sorts *above* any real timestamp, so a malformed row
+    reads as still-live rather than as expired - fails open on its own single row rather than
+    failing closed (raising) for every row. Only _future() ever writes this column, so a
+    malformed value should not occur in practice; the trade only matters if something else
+    ever does.
     """
     sql = "SELECT * FROM auth_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at > ?"
     params = [_hash_token(raw_token), _now_str()]
@@ -156,6 +161,12 @@ async def reissue_invite(email: str, project_slug: str | None = None) -> str | N
     guess which one to refresh. Returns None when there is nothing (or nothing unambiguous)
     to refresh. The superseded raw value cannot be recovered - its hash is overwritten - so
     the old link stops working.
+
+    Note for whatever calls this without a project_slug: None conflates "nothing to refresh"
+    with "ambiguous - more than one live invite, which project?" Nothing outside this file's
+    own tests calls reissue_invite yet, so this is a recorded gap rather than a live one; a
+    caller that needs to tell the two apart should pass project_slug, or this should grow a
+    distinct return for the ambiguous case before anything does.
     """
     raw = secrets.token_urlsafe(32)
     token_hash = _hash_token(raw)
@@ -249,11 +260,16 @@ async def issue_reset(email: str) -> str | None:
 
     None rather than a raised error, so the /auth/reset-request endpoint cannot use the
     response to tell known addresses from unknown ones. That property has to hold under
-    timing too, not just under the return value: the SELECT/INSERT-or-UPDATE/commit run
-    unconditionally, for a known and an unknown address alike, and the result is only
-    discarded afterwards for an unknown one. An unknown address does leave behind a token row
-    whose raw value was never returned to anyone and so can never be redeemed - inert, if
-    untidy - which is the trade for not letting a fast path leak account existence by timing.
+    timing too, not just under the return value: the SELECT/INSERT-or-UPDATE run
+    unconditionally, for a known and an unknown address alike, so the two cost the same up to
+    the point of persisting. Only the persistence differs - a known address commits, an
+    unknown one rolls back the same statement it just ran, so both do identical work but only
+    one leaves a row behind. An unauthenticated caller could otherwise spray addresses and
+    grow this table forever for free, which is a real incident someone reproduced: 200
+    sprayed addresses left 203 rows before this. Discarding via rollback rather than skipping
+    the INSERT outright is what keeps the timing flat instead of trading one oracle (existence
+    by response) for another (existence by row count over time, or by the write itself being
+    measurably cheaper to skip than to do).
     """
     raw = secrets.token_urlsafe(32)
     token_hash = _hash_token(raw)
@@ -277,10 +293,11 @@ async def issue_reset(email: str) -> str | None:
                 "UPDATE auth_tokens SET token_hash=?, expires_at=? WHERE id=?",
                 (token_hash, expires_at, row["id"]),
             )
-        await conn.commit()
 
         if user is None:
+            await conn.rollback()
             return None
+        await conn.commit()
     return raw
 
 

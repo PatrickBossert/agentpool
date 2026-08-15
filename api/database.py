@@ -2783,6 +2783,13 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             used_at        DATETIME,
             created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+
+        -- issue_invite/reissue_invite/issue_reset all look up "the live row for this
+        -- (email, purpose)" before writing. Without this index that lookup is a full table
+        -- scan, and it is on the unauthenticated /auth/reset-request path - growing linearly
+        -- with table size is exactly the property token_hash's own index was added to close
+        -- on the accept path.
+        CREATE INDEX IF NOT EXISTS idx_auth_tokens_email_purpose ON auth_tokens(email, purpose);
     """)
     await conn.commit()
 
