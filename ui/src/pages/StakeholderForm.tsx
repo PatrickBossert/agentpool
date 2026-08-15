@@ -2,9 +2,24 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import axios from 'axios'
 import { stakeholdersApi, projectsApi, valueChainApi } from '../api/endpoints'
 import { COUNTRY_DATA, COUNTRY_OPTIONS } from '../utils/countryData'
 import type { Stakeholder } from '../types'
+
+// The server's own explanation beats a fixed string here more than anywhere else on this
+// form: _validate_deliverable_role's 422 - "email is required to invite a stakeholder
+// holding a role beyond participant" - is the only thing in the product that tells an
+// administrator they have just created a role nobody can be invited to. Swallowed into
+// "Save failed. Please try again.", it read as a transient fault, and retrying reproduced
+// it exactly. Mirrors describeError in ScriptReviewPanel.tsx and MayaOutputExtra.tsx.
+function describeError(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err)) {
+    const detail = err.response?.data?.detail
+    if (typeof detail === 'string' && detail) return detail
+  }
+  return fallback
+}
 
 type FormData = Omit<Stakeholder, 'id' | 'created_at'>
 
@@ -231,8 +246,8 @@ export default function StakeholderForm() {
         await stakeholdersApi.create(slug!, form)
       }
       navigate(`/${slug}/stakeholders`)
-    } catch {
-      setError('Save failed. Please try again.')
+    } catch (err) {
+      setError(describeError(err, 'Save failed. Please try again.'))
     } finally {
       setSaving(false)
     }

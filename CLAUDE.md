@@ -189,10 +189,47 @@ in `api/services/commit_service.py` - behind an
 `is_sys_admin` is global and implies `project_admin` on every project, so a newly created
 project - which has no stakeholders, and therefore nobody the walk could ever reach - can be
 bootstrapped. It implies nothing about content. Administration and content are different axes.
-Note that no gate reads `project_admin` or `governor` yet: the four call sites
-(`permissions.py`, `projects.py`'s script edit, `script_reviews.py`, `commit_service.py`) all
-test for `reviewer` or `approver`, and stakeholder administration is still gated on the login
-role via `require_org_admin_or_above`. The two roles are carried and reported, not enforced.
+No gate reads `project_admin` or `governor`. Both are carried and reported, never enforced -
+stakeholder administration is still gated on the login role via `require_org_admin_or_above`.
+Every gate tests one of exactly two conditions, and the pair is stated once in
+`authority_service.py`:
+
+| Gate | Roles | Where |
+|------|-------|-------|
+| `caller_may_contribute` | `{reviewer, approver}` | `POST /{slug}/review`, `PATCH /{slug}/reviews/{id}`, `POST /{slug}/changes`, `PATCH /{slug}/validation-warnings/{id}` |
+| `caller_may_approve` | `{approver}` | `DELETE /{slug}/reviews/{id}`, `PUT` and `POST .../migrate` on `/{slug}/value-chain-model`, `POST /{slug}/outputs/{id}/revert`, `POST /{slug}/agent-chat/upload`, `POST /{slug}/agent-chat/link` |
+
+Four older call sites hold the same two rules under their own names, and are *not* uniform -
+the earlier wording here said they "all test for `reviewer` or `approver`", which was wrong of
+two of them. Precisely: `commit_service.caller_may_commit` and `script_reviews.py`'s
+**approval** branch test `{approver}` alone; `commit_service.caller_may_submit`,
+`script_reviews.py`'s non-approval branches, `projects.py`'s script edit, and
+`permissions.py`'s report test the disjunction.
+
+**`check_project_access` is not one of these gates.** It asks whether the caller belongs to
+the engagement, and membership *is* read access by design - its `reviewer` branch returns on
+a `project_memberships` row with no role test whatever. That was safe only while `users` held
+no rows; the invite loop creates the principal class it was never guarding against, so every
+door behind it that writes must also ask `caller_roles`. Add a write door and it needs one of
+the two gates above; a pure read needs neither. Two writes deliberately have neither: `POST
+/{slug}/agent-chat` and `DELETE /{slug}/agent-chat/history` write only rows keyed to the
+caller's own `username`, which is a personal scratchpad attached to read access rather than
+authority over anything.
+
+Clearing a stakeholder's last non-participant flag, or deleting the row, removes the
+`project_memberships` row - `_revoke_membership_if_no_longer_privileged` in
+`stakeholders.py`, the mirror of `_issue_invite_if_newly_privileged` beside it. Without that
+the flags said one thing and `check_project_access` another. The `users` row stays: it is a
+global login that may hold memberships on other engagements. Revocation is keyed on
+`stakeholder_id`, not on the email, because the email may have been edited since the invite
+was accepted - and an administrator-granted membership (`insert_project_membership`, NULL
+`stakeholder_id`) is deliberately out of its reach. Re-granting the role afterwards issues a
+fresh invite, which is the route back: redeeming it restores the membership and sends the
+person to sign in with the password they already have.
+
+`is_sys_admin` is derived from `role` by `insert_user` and `update_user`, not passed in.
+Nothing wrote it before, so a sysadmin created through `POST /auth/users` carried
+`is_sys_admin=0` and behaved differently under `caller_roles` from one flagged by hand.
 
 `caller_roles` must never create a database. It returns the roles gathered so far rather than
 calling `get_connection(slug)` on a slug whose file does not exist, because every gated
