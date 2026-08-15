@@ -2674,6 +2674,7 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             role        TEXT NOT NULL DEFAULT 'sysadmin',
             hashed_pw   TEXT NOT NULL,
             project_slug TEXT,
+            is_sys_admin INTEGER NOT NULL DEFAULT 0,
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -2715,6 +2716,7 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             project_slug TEXT    NOT NULL,
+            stakeholder_id INTEGER,
             created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, project_slug)
         );
@@ -2793,6 +2795,17 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
         await conn.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
     # Migrate legacy 'consultant' role to 'sysadmin'
     await conn.execute("UPDATE users SET role='sysadmin' WHERE role='consultant'")
+    await conn.commit()
+
+    # Column upgrades for existing system databases: CREATE TABLE IF NOT EXISTS above does
+    # nothing once the table already exists, so new columns need an explicit ALTER TABLE.
+    for table, column, decl in (
+        ("users", "is_sys_admin", "INTEGER NOT NULL DEFAULT 0"),
+        ("project_memberships", "stakeholder_id", "INTEGER"),
+    ):
+        cur = await conn.execute(f"PRAGMA table_info({table})")
+        if column not in {row[1] for row in await cur.fetchall()}:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
     await conn.commit()
 
 
@@ -3372,6 +3385,23 @@ async def insert_project_membership(
         return True
     except aiosqlite.IntegrityError:
         return False
+
+
+async def link_membership(
+    conn: aiosqlite.Connection, *, user_id: int, project_slug: str, stakeholder_id: int
+) -> None:
+    """Point a login at the person record it is on this project.
+
+    Upserts on the existing UNIQUE(user_id, project_slug): a person has one membership per
+    engagement, and re-linking corrects it rather than creating a second.
+    """
+    await conn.execute(
+        "INSERT INTO project_memberships (user_id, project_slug, stakeholder_id)"
+        " VALUES (?,?,?)"
+        " ON CONFLICT(user_id, project_slug) DO UPDATE SET stakeholder_id=excluded.stakeholder_id",
+        (user_id, project_slug, stakeholder_id),
+    )
+    await conn.commit()
 
 
 async def delete_project_membership(
