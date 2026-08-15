@@ -10,7 +10,7 @@ sys_admin implies project_admin on every project and nothing else. Without it a 
 created project has no stakeholders and no way to add one. The line that matters is
 administration versus content, not global versus per-project.
 """
-from api.database import get_system_connection, get_connection, fetch_project, fetch_user
+from api.database import get_db_path, get_system_connection, get_connection, fetch_project, fetch_user
 
 _FLAG_ROLES = (
     ("is_project_admin", "project_admin"),
@@ -42,6 +42,15 @@ async def caller_roles(slug: str, payload: dict) -> set[str]:
 
     stakeholder_id = row[0] if row else None
     if stakeholder_id is None:
+        return roles
+
+    # get_connection(slug) creates the project's database - mkdir, connect, init_db, and
+    # the full migration block - on a slug that has none. Every gated endpoint calls this
+    # function now, so an authority check must not have that side effect: a caller probing
+    # slugs would otherwise materialise a database file per guess. A project that has never
+    # been created has no stakeholders either way, so the answer is the same roles gathered
+    # so far, just without the database write.
+    if not get_db_path(slug).exists():
         return roles
 
     async with get_connection(slug) as conn:

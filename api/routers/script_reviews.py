@@ -1,12 +1,10 @@
 # api/routers/script_reviews.py
 """Per-script review endpoints.
 
-Authority is the stakeholder assignment, not the login role: is_reviewer and is_approver
-on the stakeholders table already drive who may commit and who may submit, through
-_caller_matches_stakeholder_flag. Reusing it means there is one place this rule lives,
-and it tightens automatically when real accounts exist - today every login is sysadmin
-against an empty users table, so its first branch always fires and nothing is actually
-restricted yet.
+Authority is read from caller_roles(slug, payload) - the walk from JWT to user to
+membership to the stakeholder row that carries the person's role flags. It is the one
+place this rule lives, and it is real now: there is no sysadmin bypass for content
+authority, only for project administration.
 """
 from __future__ import annotations
 
@@ -17,7 +15,7 @@ from pydantic import BaseModel
 
 from api.auth import check_project_access, require_any_auth
 from api.database import fetch_project, get_connection
-from api.services.commit_service import _caller_matches_stakeholder_flag
+from api.services.authority_service import caller_roles
 from api.services.script_review_service import (
     AlreadyApprovedError,
     NotYetReviewedError,
@@ -60,8 +58,9 @@ async def review_script(
     payload: dict = Depends(require_any_auth),
 ):
     await check_project_access(slug, payload)
-    flags = ("is_approver",) if body.decision == "approved" else ("is_reviewer", "is_approver")
-    if not await _caller_matches_stakeholder_flag(slug, payload, flags=flags):
+    roles = await caller_roles(slug, payload)
+    needed = {"approver"} if body.decision == "approved" else {"reviewer", "approver"}
+    if not (roles & needed):
         raise HTTPException(status_code=403, detail="Not permitted to review this script")
 
     async with get_connection(slug) as conn:

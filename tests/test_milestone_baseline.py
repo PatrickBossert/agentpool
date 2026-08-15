@@ -5,15 +5,28 @@ due_date is editable, so re-planning after a slip overwrites the original commit
 every comparison afterwards measures actual against the revised plan. A project that slips
 four times and is re-planned four times shows as perfectly on track - each milestone met
 the date it was most recently given.
+
+Activation and re-baselining are both approver-gated (caller_may_commit, see
+api/services/authority_service.py). None of these tests are about that gate, so it is
+granted throughout - the client fixture's sysadmin token names no real user, so an
+unpatched call would 403 before any of the baselining behaviour under test ran.
 """
 import shutil
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from api.config import get_settings
 
 SLUG = "ms-baseline-test"
+
+
+@pytest.fixture(autouse=True)
+def _granted_approver():
+    with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)), \
+         patch("api.routers.milestones.caller_may_commit", new=AsyncMock(return_value=True)):
+        yield
 PROJECT = {
     "client_slug": SLUG,
     "llm_mode": "standard",

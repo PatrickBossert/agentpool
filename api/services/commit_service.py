@@ -14,15 +14,13 @@ from api.database import (
     fetch_agent_outputs,
     fetch_output_changes,
     fetch_project,
-    fetch_stakeholders,
-    fetch_user,
     get_connection,
-    get_system_connection,
     insert_approval_commit,
     insert_output_change,
     latest_commit_at,
     link_commit_outputs,
 )
+from api.services.authority_service import caller_roles
 from api.services.run_service import _CREW_AGENT_NAMES
 
 log = logging.getLogger(__name__)
@@ -42,61 +40,23 @@ class CrewRunInProgress(Exception):
         super().__init__(f"Crew '{crew_name}' has a run in progress - cannot commit yet")
 
 
-async def _caller_matches_stakeholder_flag(
-    slug: str, payload: dict, *, flags: tuple[str, ...]
-) -> bool:
-    """Whether this caller matches a stakeholder carrying any of the given flags.
-
-    The intent is that only governing roles act, but nothing links a login to a
-    stakeholder record: the users table is empty and every login is sysadmin. So the
-    rule permits the platform operator, and otherwise matches the caller's account
-    email against a stakeholder flagged with one of `flags`. Today the first branch
-    always fires; the restriction becomes real when accounts exist, with no code
-    change.
-    """
-    if payload.get("role") == "sysadmin":
-        return True
-
-    async with get_system_connection() as sys_conn:
-        user = await fetch_user(sys_conn, username=payload.get("sub", ""))
-    email = ((user or {}).get("email") or "").strip().lower()
-    if not email:
-        # A stakeholder with no email can never be matched either - the join needs
-        # both sides to have one.
-        return False
-
-    async with get_connection(slug) as conn:
-        project = await fetch_project(conn, slug=slug)
-        if not project:
-            return False
-        stakeholders = await fetch_stakeholders(conn, project_id=project["id"])
-
-    return any(
-        ((s.get("email") or "").strip().lower() == email)
-        and any(s.get(flag) for flag in flags)
-        for s in stakeholders
-    )
-
-
 async def caller_may_commit(slug: str, payload: dict) -> bool:
     """Whether this caller may commit in this project.
 
-    Only a stakeholder flagged is_approver may commit - see
-    _caller_matches_stakeholder_flag for the shared lookup and its caveats.
+    Only a caller holding the approver role - read from caller_roles(slug, payload),
+    the walk from JWT to user to membership to stakeholder - may commit.
     """
-    return await _caller_matches_stakeholder_flag(slug, payload, flags=("is_approver",))
+    roles = await caller_roles(slug, payload)
+    return "approver" in roles
 
 
 async def caller_may_submit(slug: str, payload: dict) -> bool:
     """Whether this caller may mark a crew ready for approval.
 
     Wider than committing: a contributor who reviews but does not govern may submit.
-    The shape is otherwise identical, and carries the same caveat - the sysadmin
-    branch always fires today because the users table is empty.
     """
-    return await _caller_matches_stakeholder_flag(
-        slug, payload, flags=("is_reviewer", "is_approver")
-    )
+    roles = await caller_roles(slug, payload)
+    return bool(roles & {"reviewer", "approver"})
 
 
 async def commit_crew(

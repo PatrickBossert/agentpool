@@ -3,13 +3,25 @@
 
 In this project the only door is a reviewer's note. Chat and inline editing arrive
 later and write the same rows with a different source.
+
+Committing is approver-gated (caller_may_commit, see api/services/authority_service.py).
+None of these tests are about that gate, so it is granted throughout - the client
+fixture's sysadmin token names no real user, so an unpatched commit would 403 before
+any of the change-recording behaviour under test ran.
 """
 import pytest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from api.config import get_settings
 
 SLUG = "changes-test"
+
+
+@pytest.fixture(autouse=True)
+def _granted_approver():
+    with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)):
+        yield
 PROJECT = {
     "client_slug": SLUG,
     "llm_mode": "standard",

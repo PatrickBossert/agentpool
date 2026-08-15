@@ -7,6 +7,7 @@ call here is awaited, and PRAGMA foreign_keys = ON means the projects row goes i
 the ledger row. Assertions are scoped to the one script this fixture created.
 """
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -15,6 +16,16 @@ from api.config import get_settings
 from api.database import get_connection
 
 SLUG = "approve-gate-test"
+
+@pytest_asyncio.fixture(autouse=True)
+async def _granted_approver():
+    """These tests are about the not-yet-reviewed gate the service itself enforces, not
+    about authority - so caller_roles is patched to grant approver throughout. The client
+    fixture's sysadmin token names no real user, and caller_roles now correctly answers
+    empty for one, per the walk every gate reads onto as of this task."""
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"approver"})):
+        yield
 
 
 @pytest_asyncio.fixture

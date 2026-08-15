@@ -11,6 +11,7 @@ import pytest_asyncio
 from api.config import get_settings
 from api.database import (
     get_connection,
+    get_db_path,
     get_system_connection,
     insert_project,
     insert_stakeholder,
@@ -158,3 +159,46 @@ async def test_a_membership_on_another_project_confers_nothing_here(seeded_autho
     slug_a, slug_b, payload = seeded_authority_two_projects
     assert "approver" in await caller_roles(slug_a, payload)
     assert await caller_roles(slug_b, payload) == set()
+
+
+@pytest.mark.asyncio
+async def test_a_membership_naming_an_unbuilt_project_creates_no_database(
+        tmp_path, monkeypatch):
+    """get_connection(slug) creates the project's database on first touch - mkdir, connect,
+    init_db, and the full migration block. Every gated endpoint now calls caller_roles, so
+    a caller naming a slug that was never created must not have that side effect: a
+    get_db_path(slug).exists() guard closes it before get_connection is ever reached.
+
+    The membership row points at a stakeholder_id on a project that has no database at
+    all - the state a stale or guessed slug would leave a membership in - so the only way
+    this test could pass by accident is if the guard were missing and get_connection's
+    own migration happened to leave the walk with the same answer, which it would not:
+    fetch_project would find no project either, so the answer is identical either way and
+    only the absence of the file distinguishes a correct implementation from a wasteful one.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    slug = "never-created-project"
+
+    async with get_system_connection() as sys_conn:
+        await insert_user(
+            sys_conn, username="ghost@example.com", email="ghost@example.com",
+            role="reviewer", hashed_pw="x",
+        )
+        cur = await sys_conn.execute(
+            "SELECT id FROM users WHERE username=?", ("ghost@example.com",)
+        )
+        ghost_id = (await cur.fetchone())[0]
+        await link_membership(
+            sys_conn, user_id=ghost_id, project_slug=slug, stakeholder_id=1
+        )
+        await sys_conn.commit()
+
+    db_path = get_db_path(slug)
+    assert not db_path.exists(), "fixture setup must not itself create the database"
+
+    roles = await caller_roles(slug, {"sub": "ghost@example.com", "role": "reviewer"})
+
+    assert roles == set()
+    assert not db_path.exists(), "an authority check must not materialise a project database"
+    get_settings.cache_clear()
