@@ -29,6 +29,8 @@ def _granted_approver(request):
     with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)), \
          patch("api.routers.commits.caller_may_submit", new=AsyncMock(return_value=True)):
         yield
+
+
 PROJECT = {
     "client_slug": "commit-api-test",
     "llm_mode": "standard",
@@ -316,7 +318,7 @@ async def test_a_role_with_no_project_access_is_refused_before_approval_is_check
 
 @pytest.mark.asyncio
 @pytest.mark.real_authority
-async def test_caller_may_commit_matches_approver_by_membership_link(client):
+async def test_caller_may_commit_matches_approver_by_membership_link(client, tmp_path, monkeypatch):
     """The rule that used to bite once real accounts existed, now proven for real.
 
     caller_may_commit reads caller_roles: JWT -> user -> membership -> the linked
@@ -331,10 +333,23 @@ async def test_caller_may_commit_matches_approver_by_membership_link(client):
     gate onto does not check membership. Proving both halves matters - a
     caller_may_commit that always returned False would still pass a 403-only test,
     and one that fell back to an email match would silently reopen the hole.
+
+    Isolated onto its own DATABASE_DIR, per CLAUDE.md's rerun trap: this test writes a
+    system-db user, a system-db membership, and a project-db stakeholder that share a
+    UNIQUE(user_id, project_slug) constraint with nothing scoped to this test's own row.
+    Run against the shared /tmp/agentpool_test, a second run's insert_project_membership
+    hits that constraint, returns False silently (api/database.py's insert helpers do not
+    raise on a duplicate), and the *first* run's link_membership survives - stale, but
+    pointing at a stakeholder id (1) the project db reissues on every fresh run, so the
+    second run's deliberately-unlinked stakeholder resolves against the first run's stale
+    link and the "still refused" assertion below gets a 201 instead. That failure is
+    byte-identical to the one a reintroduced email-match hole would produce at the same
+    assertion, which is exactly why this test must not be able to poison itself.
     """
     from httpx import ASGITransport, AsyncClient
 
     from api.auth import create_access_token
+    from api.config import get_settings
     from api.database import (
         fetch_project,
         fetch_user,
@@ -346,6 +361,9 @@ async def test_caller_may_commit_matches_approver_by_membership_link(client):
         link_membership,
     )
     from api.main import app
+
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
 
     await client.post("/projects", json=PROJECT)
 
@@ -401,3 +419,5 @@ async def test_caller_may_commit_matches_approver_by_membership_link(client):
             json={"crew_name": "discovery_mapping", "notes": ""},
         )
         assert allowed.status_code == 201
+
+    get_settings.cache_clear()

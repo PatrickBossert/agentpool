@@ -52,6 +52,11 @@ async def test_it_reports_what_the_shared_authority_check_says(client, seeded_pr
     # The roles the response is built from are the rule; the booleans are only its shadow.
     gate.assert_awaited_once()
     assert gate.await_args.args[0] == slug
+    # And the caller it asked about, not just the project - the client fixture's token
+    # names "admin" as a sysadmin; asserting only the slug would pass identically if the
+    # endpoint asked caller_roles about the wrong person.
+    assert gate.await_args.args[1]["sub"] == "admin"
+    assert gate.await_args.args[1]["role"] == "sysadmin"
 
 
 @pytest.mark.asyncio

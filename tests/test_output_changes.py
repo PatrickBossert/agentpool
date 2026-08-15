@@ -22,6 +22,8 @@ SLUG = "changes-test"
 def _granted_approver():
     with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)):
         yield
+
+
 PROJECT = {
     "client_slug": SLUG,
     "llm_mode": "standard",

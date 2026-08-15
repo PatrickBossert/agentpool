@@ -27,6 +27,8 @@ def _granted_approver():
     with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)), \
          patch("api.routers.milestones.caller_may_commit", new=AsyncMock(return_value=True)):
         yield
+
+
 PROJECT = {
     "client_slug": SLUG,
     "llm_mode": "standard",
@@ -205,3 +207,15 @@ async def test_rebaselining_something_never_baselined_is_refused(client):
     m = await _milestone(client, title="New scope", due_date="2026-09-01")
     r = await _rebaseline(client, m["id"], baseline_date="2026-09-15", reason="CR-030")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rebaselining_demands_the_commit_role(client):
+    """Re-baselining is approver-gated the same rule as activation - a caller
+    caller_may_commit refuses must be refused here too, or the gate is decoration."""
+    await _project(client)
+    await client.post(f"/projects/{SLUG}/activate")
+    m = await _milestone(client)
+    with patch("api.routers.milestones.caller_may_commit", new=AsyncMock(return_value=False)):
+        r = await _rebaseline(client, m["id"], baseline_date="2026-08-24", reason="CR-014")
+    assert r.status_code == 403

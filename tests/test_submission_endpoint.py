@@ -31,6 +31,8 @@ def _granted_approver(request):
     with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)), \
          patch("api.routers.commits.caller_may_submit", new=AsyncMock(return_value=True)):
         yield
+
+
 PROJECT = {
     "client_slug": "submit-test",
     "llm_mode": "standard",
@@ -108,15 +110,46 @@ async def test_activating_twice_is_harmless(client):
 
 
 @pytest.mark.asyncio
+async def test_submitting_demands_the_submit_role(client):
+    """Only /commits is exercised with a real refusal elsewhere in this suite - a caller
+    caller_may_submit refuses must be refused here too, or the gate is decoration."""
+    await client.post("/projects", json=PROJECT)
+    with patch("api.routers.commits.caller_may_submit", new=AsyncMock(return_value=False)):
+        resp = await client.post(
+            f"/projects/{SLUG}/submissions",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_activating_demands_the_commit_role(client):
+    """Activation is approver-gated the same way commit is - a caller caller_may_commit
+    refuses must be refused here too."""
+    await client.post("/projects", json=PROJECT)
+    with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=False)):
+        resp = await client.post(f"/projects/{SLUG}/activate")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
 @pytest.mark.real_authority
 async def test_a_reviewer_may_submit_but_not_commit(client):
-    """The pairing that proves both permission rules are right.
+    """The pairing that proves the commit rule is right for a caller who genuinely holds
+    the weaker role, not just for one that holds no role at all.
 
-    A reviewer who does not govern clears check_project_access via project
-    membership, and caller_roles walks that membership to a stakeholder flagged
-    is_reviewer - so caller_may_submit lets the submission through. That same
-    stakeholder is not flagged is_approver, so caller_may_commit still refuses.
-    Without this pairing, either rule could be wrong and the suite would not notice.
+    A reviewer who does not govern clears check_project_access via project membership,
+    and caller_roles walks that membership to a stakeholder flagged is_reviewer - so
+    caller_may_submit lets the submission through. That same stakeholder is not flagged
+    is_approver, so caller_may_commit still refuses: the load-bearing half of this test is
+    that refusal.
+
+    The submitted == 201 assertion is not, on its own, a test of caller_may_submit -
+    it would pass identically with that gate deleted, since 201 is also the wide-open
+    default. Its job here is only to establish that this caller is real (membership,
+    stakeholder, reviewer flag all genuinely wired) before the commit refusal that
+    actually matters. See test_submitting_demands_the_submit_role for the test that
+    would catch caller_may_submit itself being deleted or inverted.
     """
     from httpx import ASGITransport, AsyncClient
 

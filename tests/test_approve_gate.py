@@ -17,6 +17,7 @@ from api.database import get_connection
 
 SLUG = "approve-gate-test"
 
+
 @pytest_asyncio.fixture(autouse=True)
 async def _granted_approver():
     """These tests are about the not-yet-reviewed gate the service itself enforces, not

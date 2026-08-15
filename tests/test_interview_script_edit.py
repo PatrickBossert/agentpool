@@ -338,8 +338,12 @@ async def test_the_edit_asks_the_same_question_as_the_review_it_is_paired_with(
                                 json={"script": {**before["SC-001"], "node_label": "Edited"}})
     assert r.status_code == 200, r.text
 
+    # 'edited' - not 'reviewed' - matches the sequence ScriptReviewPanel.tsx's "Save
+    # changes" actually sends: the PATCH above, then recordReview('edited'). Both take
+    # the same {"reviewer", "approver"} branch, so this changes no authority coverage,
+    # but it is the real pairing the docstring above is about.
     with patch("api.routers.script_reviews.caller_roles",
                new=AsyncMock(return_value={"reviewer"})):
         r = await client.post(f"/projects/{slug}/script-ledger/SC-001/review",
-                               json={"decision": "reviewed"})
+                               json={"decision": "edited"})
     assert r.status_code == 200, r.text
