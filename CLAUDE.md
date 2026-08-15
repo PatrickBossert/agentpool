@@ -290,15 +290,30 @@ hole. Two accidental discoveries meant the enumeration was wrong twice, so it wa
 properly: 96 handlers are mounted under a path containing `{slug}`, and the check is whether
 each one calls `check_project_access`. Reproduce it with an AST walk over `api/routers/*.py`
 that joins each `APIRouter(prefix=...)` to its `@router.<method>` paths - not with a grep for
-a dependency name, which is what missed it both times. **Ninety of the ninety-six call it.**
-The six that do not:
+a dependency name, which is what missed it both times. **Ninety-two of the ninety-six call
+it.** The four that do not:
 
 | Door | Why not |
 |------|---------|
-| `GET /projects/{slug}/branding/image` | Deliberate - no auth at all. The interview page renders it for a participant who has no login. |
-| `DELETE /auth/projects/{slug}` | Registry administration, `require_sysadmin`. Global by nature; there is no membership to check. |
-| `POST` and `DELETE /auth/users/{user_id}/projects/{slug}` | Membership administration, `require_org_admin_or_above`. **Open:** an org_admin of one organisation can grant or revoke a membership on another organisation's slug. Same shape as the holes above, on the admin surface. |
-| `WEBSOCKET /ws/{slug}` | **Open, and unauthenticated entirely** - no token, no dependency. Streams agent log lines for any slug to anyone who can reach the port. `useWebSocket.ts` connects with no credential, so closing it needs a token-passing scheme (subprotocol or query parameter) before a gate can exist at all. |
+| `GET /projects/{slug}/branding/image` | Deliberate - no auth at all. The interview page renders it for a participant who has no login. If that image ever becomes client-confidential the fix is session-token scoping, not `check_project_access`. |
+| `DELETE /auth/projects/{slug}` | Registry administration, `require_sysadmin`. Global by nature, and a sysadmin passes the floor unconditionally, so the call would be a no-op. |
+| `WEBSOCKET /ws/{slug}` | **Open, and unauthenticated entirely** - no token, no dependency. Streams agent log lines for any slug to anyone who can reach the port. `useWebSocket.ts` connects with no credential, so closing it needs a token-passing scheme (subprotocol or query parameter) before a gate can exist at all. The largest remaining exposure on this surface. |
+
+**The sweep counts routes whose *path* holds `{slug}` and nothing else.** A project-scoped
+door taking its slug from the request *body* does not appear in it - `POST
+/api/interviews/test/elaboration-press` is that shape, and does call `check_project_access`,
+but the technique cannot see it. Ninety-six is not a completeness guarantee.
+
+`POST` and `DELETE /auth/users/{user_id}/projects/{slug}` were the sweep's most important
+find and are closed. They write the `project_memberships` table that every
+`check_project_access` reads, and they never asked whose engagement the slug was, so an
+org_admin could grant themselves a row on another organisation's project and then pass every
+gate in the API as a legitimate member. **A gate that reads a table is worth nothing if a
+caller can write themselves into it** - the other holes bypassed the floor, this one
+manufactured it. Scoping rather than new policy: `svc_create_user` already forces `org_id`
+to the caller's own, and the floor's own org_admin branch already compares
+`project_registry.org_id` to the JWT's. `sysadmin` keeps its early return, so administering
+across organisations stays a sysadmin capability.
 
 `GET /projects/{slug}/pam-report` and `GET /api/interviews/sessions/{slug}` were the two
 found by this sweep and are now closed. The second was the sharpest hole on the branch: it

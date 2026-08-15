@@ -41,6 +41,13 @@ The second is the worse of the two by some distance. A session token is the only
 the rest of the interview API checks, so an unscoped read of that list is not merely a
 disclosure - it is a way in through the public half of the interview router as somebody
 else's interviewee.
+
+The sweep also found the one door that matters more than any of them, covered last here:
+`POST` and `DELETE /auth/users/{user_id}/projects/{slug}` write the `project_memberships`
+table that every `check_project_access` reads. Unscoped, an org_admin could grant themselves
+a row on another organisation's slug and walk through every gate on this branch as a
+legitimate member. Everything else here bypassed the floor; that one manufactured it, and
+its tests assert on the row rather than the status code for exactly that reason.
 """
 import pytest
 import pytest_asyncio
@@ -554,4 +561,98 @@ async def test_probing_an_unknown_slug_creates_no_database(doors, tmp_path):
     ) == (403, ACCESS_DENIED)
     assert not get_db_path(unknown).exists(), (
         "a refused read must not materialise a project database"
+    )
+
+
+# ── The door that manufactures the floor ──────────────────────────────────────
+#
+# `POST` and `DELETE /auth/users/{user_id}/projects/{slug}` write and delete
+# `project_memberships` rows - the table every `check_project_access` on this codebase
+# reads. Both were `require_org_admin_or_above` with no slug scoping, so an org_admin of one
+# organisation could grant themselves a membership on another organisation's slug and then
+# walk through every gate in the API as a legitimate member. The other holes closed on this
+# branch bypassed the floor; this one manufactured it, which is why it is worth more than
+# the rest put together.
+#
+# The status code is the weaker half of each assertion here. The row is the thing that must
+# not come into being, so the row is what is asserted.
+
+GRANT = "/auth/users/{user_id}/projects/{slug}"
+
+
+async def _user_id(username: str) -> int:
+    async with get_system_connection() as sys_conn:
+        user = await fetch_user(sys_conn, username=username)
+    return user["id"]
+
+
+async def _membership_exists(user_id: int, slug: str) -> bool:
+    async with get_system_connection() as sys_conn:
+        cur = await sys_conn.execute(
+            "SELECT 1 FROM project_memberships WHERE user_id=? AND project_slug=?",
+            (user_id, slug),
+        )
+        return await cur.fetchone() is not None
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_cannot_grant_access_to_another_organisations_project(doors):
+    target = await _user_id("door-outsider")
+    assert not await _membership_exists(target, SLUG_B), "precondition"
+
+    resp = await doors["admin_a"].post(GRANT.format(user_id=target, slug=SLUG_B))
+
+    assert _refusal(resp) == (403, ACCESS_DENIED)
+    assert not await _membership_exists(target, SLUG_B), (
+        "the membership row came into being anyway - the refusal is decoration"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_grant_confers_no_access_afterwards(doors):
+    """The consequence, stated where it lands rather than one layer away. A row in
+    `project_memberships` is the whole of what `check_project_access` asks for, so if the
+    grant had gone through, this caller would read project B's engagement immediately."""
+    target = await _user_id("door-outsider")
+    await doors["admin_a"].post(GRANT.format(user_id=target, slug=SLUG_B))
+
+    assert _refusal(
+        await doors["outsider"].get(f"/projects/{SLUG_B}/milestones")
+    ) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_may_still_grant_access_to_their_own_project(doors):
+    """The success side. Without it a gate refusing every grant would satisfy the two tests
+    above, and the operator flow in `UserForm.tsx` would be dead rather than scoped."""
+    target = await _user_id("door-outsider")
+
+    resp = await doors["admin_a"].post(GRANT.format(user_id=target, slug=SLUG_A))
+
+    assert resp.status_code == 201, resp.text
+    assert await _membership_exists(target, SLUG_A)
+    # And it is a real membership, not merely a row: the granted caller now reads project A.
+    assert (await doors["outsider"].get(f"/projects/{SLUG_A}/milestones")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_cannot_revoke_another_organisations_membership(doors):
+    """Revocation needs the same scoping for the opposite reason: an org_admin who could
+    delete rows on any slug could cut a rival engagement's reviewers out of their own
+    project. The pre-existing row is seeded first, so "the row is still there" is a real
+    assertion rather than a vacuous one about a row that never existed."""
+    target = await _user_id("door-outsider")
+    async with get_system_connection() as sys_conn:
+        await sys_conn.execute(
+            "INSERT INTO project_memberships (user_id, project_slug) VALUES (?,?)",
+            (target, SLUG_B),
+        )
+        await sys_conn.commit()
+    assert await _membership_exists(target, SLUG_B), "precondition"
+
+    resp = await doors["admin_a"].delete(GRANT.format(user_id=target, slug=SLUG_B))
+
+    assert _refusal(resp) == (403, ACCESS_DENIED)
+    assert await _membership_exists(target, SLUG_B), (
+        "the membership was deleted anyway - the refusal is decoration"
     )

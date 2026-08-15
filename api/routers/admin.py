@@ -1,7 +1,9 @@
 # api/routers/admin.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from api.auth import require_sysadmin, require_org_admin_or_above, get_token_payload
+from api.auth import (
+    check_project_access, require_sysadmin, require_org_admin_or_above, get_token_payload,
+)
 from api.services.admin_service import (
     svc_list_orgs, svc_create_org, svc_get_org, svc_update_org, svc_delete_org,
     svc_list_org_members, svc_add_org_member, svc_update_org_member_role, svc_remove_org_member,
@@ -188,14 +190,38 @@ async def list_user_projects(user_id: int):
     return await svc_list_user_projects(user_id)
 
 
-@router.post("/users/{user_id}/projects/{slug}", status_code=201, dependencies=[Depends(require_org_admin_or_above)])
-async def grant_project_access(user_id: int, slug: str):
+# These two take their dependency in the signature rather than in the decorator, unlike
+# their neighbours, because they need the payload: `check_project_access` is not a FastAPI
+# dependency (it needs the slug at call time) and has to be called in the handler body.
+#
+# Why it belongs here at all. Every gate on this codebase's project doors ultimately reads
+# `project_memberships`, so a door that *writes* that table without asking whose engagement
+# the slug is decides the answer for all of them. Without the check an org_admin of one
+# organisation could grant themselves - or anyone - a membership on another organisation's
+# slug, and then walk through every `check_project_access` in the API as a legitimate
+# member. The other holes closed on this branch bypassed the floor; this one manufactured
+# it.
+#
+# Scoping, not new policy: `svc_create_user` already forces `org_id` to the caller's own,
+# and `check_project_access`'s org_admin branch already compares `project_registry.org_id`
+# against the JWT's. An org_admin acting outside their own organisation is refused
+# everywhere the question has been asked - these two simply never asked. `sysadmin` keeps
+# its early return, so administering across organisations remains a sysadmin capability.
+
+@router.post("/users/{user_id}/projects/{slug}", status_code=201)
+async def grant_project_access(
+    user_id: int, slug: str, payload: dict = Depends(require_org_admin_or_above)
+):
+    await check_project_access(slug, payload)
     ok = await svc_grant_project_access(user_id, slug)
     if not ok:
         raise HTTPException(status_code=409, detail="Access already granted")
     return {"ok": True}
 
 
-@router.delete("/users/{user_id}/projects/{slug}", status_code=204, dependencies=[Depends(require_org_admin_or_above)])
-async def revoke_project_access(user_id: int, slug: str):
+@router.delete("/users/{user_id}/projects/{slug}", status_code=204)
+async def revoke_project_access(
+    user_id: int, slug: str, payload: dict = Depends(require_org_admin_or_above)
+):
+    await check_project_access(slug, payload)
     await svc_revoke_project_access(user_id, slug)
