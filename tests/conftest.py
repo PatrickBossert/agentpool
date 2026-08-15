@@ -38,6 +38,14 @@ os.environ.setdefault("TAVILY_API_KEY", "")
 os.environ.setdefault("ELEVENLABS_API_KEY", "")
 os.environ.setdefault("DEEPGRAM_API_KEY", "")
 os.environ.setdefault("N8N_WEBHOOK_URL", "")
+# The home organisation, for the same reason as everything above it: .env is read directly by
+# pydantic-settings, and a deployment that renamed its consultancy - which is the entire reason
+# these are settings rather than constants - would otherwise change what the suite asserts.
+# Pinning here settles the .env half. The other half is on the tests: the two that name the home
+# organisation read get_settings() rather than the literal, so an operator who exports
+# HOME_ORG_SLUG in their shell (which beats a setdefault) still gets a green suite.
+os.environ.setdefault("HOME_ORG_SLUG", "future-edge")
+os.environ.setdefault("HOME_ORG_NAME", "Future Edge Consulting")
 
 Path("/tmp/agentpool_test").mkdir(exist_ok=True)
 Path("/tmp/agentpool_test_projects").mkdir(exist_ok=True)

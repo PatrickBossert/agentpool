@@ -93,11 +93,16 @@ async def test_the_home_organisation_is_seeded_by_init_system_db(isolated_dirs):
     precisely because the defect was self-reinforcing - nothing created the data and nothing
     ever would. A fix that waits for somebody to remember re-creates the hole on the next
     fresh deployment, so this asserts that merely opening the system database is enough.
+
+    Read from the settings, not written as "future-edge"/"Future Edge Consulting". The whole
+    reason these are settings is that a fork or a renamed deployment can be itself, and a
+    literal here would mean such a deployment could not run its own suite.
     """
+    settings = get_settings()
     async with get_system_connection() as conn:
-        org = await fetch_organisation_by_slug(conn, slug="future-edge")
+        org = await fetch_organisation_by_slug(conn, slug=settings.home_org_slug)
         assert org is not None, "a fresh system database has no home organisation"
-        assert org["name"] == "Future Edge Consulting"
+        assert org["name"] == settings.home_org_name
         assert await resolve_home_org_id(conn) == org["id"]
 
 
@@ -205,6 +210,52 @@ async def test_a_project_created_by_a_sysadmin_is_reachable_by_an_org_admin(isol
 
 
 @pytest.mark.asyncio
+async def test_creation_resolves_the_home_organisation_by_slug_not_by_lowest_id(
+    isolated_dirs, monkeypatch
+):
+    """The endpoint's resolver, not the helper's - and they are different properties.
+
+    `test_home_org_resolution_follows_the_slug_and_nothing_else` pins `resolve_home_org_id`.
+    Nothing pinned that `POST /projects` *calls* it: the seeded home organisation is always the
+    lowest id in a fresh database, so an inline `SELECT id FROM organisations ORDER BY id
+    LIMIT 1` at the endpoint agrees with the helper on every other test in this file and the
+    whole suite stays green. That is CLAUDE.md's canonical failure - `check_write` tested, the
+    tool calling it not - and it is the same coincidence already caught once at the helper.
+
+    What it would permit is not hypothetical: a system database holding an organisation created
+    ahead of the seed hands every sysadmin-created project to that organisation's admins.
+
+    So the home organisation here is deliberately the *higher* id. Lowest-id and by-slug give
+    different answers, and only the by-slug answer lets `higher` through and refuses `lower`.
+    """
+    async with get_system_connection() as conn:
+        lower = await resolve_home_org_id(conn)          # the seeded default, id 1
+        higher = await insert_organisation(conn, slug="later-consultancy", name="Later Ltd")
+    assert higher > lower, "the fixture only bites if the new organisation has the higher id"
+
+    monkeypatch.setenv("HOME_ORG_SLUG", "later-consultancy")
+    get_settings.cache_clear()
+
+    sysadmin = _client_for("slugres-sysadmin", "sysadmin")
+    async with sysadmin:
+        r = await sysadmin.post("/projects", json=_project_body("registry-slugres"))
+        assert r.status_code in (200, 201), r.text
+
+    higher_admin = _client_for("slugres-higher", "org_admin", org_id=higher)
+    lower_admin = _client_for("slugres-lower", "org_admin", org_id=lower)
+    async with higher_admin, lower_admin:
+        r = await higher_admin.get("/projects/registry-slugres/status")
+        assert r.status_code == 200, (
+            "the endpoint did not register to the organisation HOME_ORG_SLUG names: " + r.text
+        )
+        r = await lower_admin.get("/projects/registry-slugres/status")
+        assert r.status_code == 403, (
+            "the endpoint registered to the lowest-id organisation instead: " + r.text
+        )
+        assert r.json()["detail"] == ACCESS_DENIED
+
+
+@pytest.mark.asyncio
 async def test_an_org_admin_creating_a_project_keeps_it_in_their_own_organisation(
     isolated_dirs,
 ):
@@ -270,6 +321,145 @@ async def test_an_operator_can_still_move_an_engagement_to_another_organisation(
             assert r.status_code in (200, 201), r.text
         r = await acme_admin.get("/projects/registry-moved/status")
         assert r.status_code == 200, f"re-creating the project moved it back: {r.text}"
+
+
+@pytest.mark.asyncio
+async def test_reassigning_a_project_without_a_name_keeps_the_one_it_has(isolated_dirs):
+    """`POST /auth/projects` defaults `display_name` to `""`, and the upsert would overwrite.
+
+    Moving an engagement between organisations is the door's purpose; blanking its curated name
+    on the way past is not something anybody asked for, and `OrgDetail.tsx` renders the column
+    straight, so the operator would simply see the slug appear.
+    """
+    sysadmin = _client_for("name-sysadmin", "sysadmin")
+    async with sysadmin:
+        r = await sysadmin.post("/projects", json=_project_body("registry-named"))
+        assert r.status_code in (200, 201), r.text
+        async with get_system_connection() as conn:
+            acme = await insert_organisation(conn, slug="acme", name="Acme Ltd")
+        r = await sysadmin.post(
+            "/auth/projects",
+            json={
+                "slug": "registry-named",
+                "org_id": acme,
+                "display_name": "Grampian Sustainable Aviation",
+            },
+        )
+        assert r.status_code == 201, r.text
+
+        # Reassign again, this time saying nothing about the name.
+        async with get_system_connection() as conn:
+            home = await resolve_home_org_id(conn)
+        r = await sysadmin.post(
+            "/auth/projects", json={"slug": "registry-named", "org_id": home}
+        )
+        assert r.status_code == 201, r.text
+
+    async with get_system_connection() as conn:
+        row = await fetch_project_registry(conn, slug="registry-named")
+    assert row["org_id"] == home, "the reassignment itself did not happen"
+    assert row["display_name"] == "Grampian Sustainable Aviation"
+
+
+@pytest.mark.asyncio
+async def test_creation_fails_loudly_when_there_is_no_organisation_to_register_against(
+    isolated_dirs, monkeypatch
+):
+    """A project nobody can reach must not be handed back as a 201.
+
+    Silently skipping registration produces exactly the invisible state this branch exists to
+    eliminate - and worse than the original, because the operator has just been told it worked.
+
+    The state cannot be reached by deleting rows: every `get_system_connection` runs
+    `init_system_db`, which re-seeds the home organisation before the handler's own query, so
+    deleting it and then calling the endpoint simply finds it there again. `resolve_home_org_id`
+    is therefore patched to its documented `None`, and what is under test is the endpoint's
+    handling of that contract - the helper is annotated `int | None` and says in as many words
+    that callers must treat None as "cannot register yet".
+
+    Patched at `api.routers.projects`, where the name is looked up, not at `api.database`,
+    where it is defined - the router binds its own reference with `from ... import`, and
+    CLAUDE.md records four crew tests that patched the definition and silently tested nothing.
+    """
+    async def _no_home(conn):
+        return None
+
+    monkeypatch.setattr("api.routers.projects.resolve_home_org_id", _no_home)
+
+    sysadmin = _client_for("loud-sysadmin", "sysadmin")
+    async with sysadmin:
+        r = await sysadmin.post("/projects", json=_project_body("registry-loud"))
+    assert r.status_code == 500, f"an unregistrable project was created quietly: {r.text}"
+    assert "could not be registered" in r.json()["detail"]
+    assert "HOME_ORG_SLUG" in r.json()["detail"]
+
+
+# ── Deleting an organisation ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_home_organisation_cannot_be_deleted(isolated_dirs):
+    """It is what creation resolves against, and it can be empty of projects.
+
+    So a rule that only counted registered projects would wave it straight through, and the
+    next `POST /projects` would 500 with nothing to register against.
+    """
+    async with get_system_connection() as conn:
+        home = await resolve_home_org_id(conn)
+
+    sysadmin = _client_for("del-sysadmin", "sysadmin")
+    async with sysadmin:
+        r = await sysadmin.delete(f"/auth/orgs/{home}")
+        assert r.status_code == 409, r.text
+        assert "home organisation" in r.json()["detail"]
+        assert "HOME_ORG_SLUG" in r.json()["detail"]
+
+    async with get_system_connection() as conn:
+        assert await resolve_home_org_id(conn) == home, "the home organisation went anyway"
+
+
+@pytest.mark.asyncio
+async def test_an_organisation_still_owning_projects_cannot_be_deleted(isolated_dirs):
+    """The cascade would unregister every one of them in a single 204.
+
+    A different failure from the one above and caught by a different condition: this
+    organisation is not the home organisation, so the home rule says nothing about it. Asserted
+    through a door as well as a row - the point of refusing is that the access survives.
+    """
+    sysadmin = _client_for("del2-sysadmin", "sysadmin")
+    async with sysadmin:
+        async with get_system_connection() as conn:
+            acme = await insert_organisation(conn, slug="acme", name="Acme Ltd")
+        r = await sysadmin.post("/projects", json=_project_body("registry-owned"))
+        assert r.status_code in (200, 201), r.text
+        r = await sysadmin.post(
+            "/auth/projects", json={"slug": "registry-owned", "org_id": acme}
+        )
+        assert r.status_code == 201, r.text
+
+        r = await sysadmin.delete(f"/auth/orgs/{acme}")
+        assert r.status_code == 409, r.text
+        assert "registry-owned" in r.json()["detail"], "the refusal did not name what is in the way"
+
+    admin = _client_for("del2-admin", "org_admin", org_id=acme)
+    async with admin:
+        r = await admin.get("/projects/registry-owned/status")
+        assert r.status_code == 200, f"the refused delete cascaded anyway: {r.text}"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_non_home_organisation_can_still_be_deleted(isolated_dirs):
+    """The guard is two conditions, not a blanket refusal - the door still works."""
+    async with get_system_connection() as conn:
+        spare = await insert_organisation(conn, slug="spare", name="Spare Ltd")
+
+    sysadmin = _client_for("del3-sysadmin", "sysadmin")
+    async with sysadmin:
+        r = await sysadmin.delete(f"/auth/orgs/{spare}")
+        assert r.status_code == 204, r.text
+
+    async with get_system_connection() as conn:
+        assert await fetch_organisation_by_slug(conn, slug="spare") is None
 
 
 # ── The backfill ──────────────────────────────────────────────────────────────
@@ -349,12 +539,27 @@ async def test_backfill_skips_a_backup_copy_and_a_shell(unregistered_estate):
     )
     sqlite3.connect(unregistered_estate / "probe-shell.db").close()
 
+    # The third shape, and the one that actually occurs on the live deployment: a full schema
+    # with an empty `projects` table. `vc-sort-check.db` is exactly this - `list_all_projects`
+    # drops it too - and it is why the operator runbook expects three registrations from four
+    # `.db` files. Without this case the report's own count could go on being wrong.
+    empty = unregistered_estate / "vc-sort-check.db"
+    shutil.copy2(unregistered_estate / "backfill-one.db", empty)
+    with sqlite3.connect(empty) as c:
+        c.execute("DELETE FROM projects")
+        c.commit()
+
     report = backfill_project_registry(apply=True)
     assert sorted(report["registered"]) == ["backfill-one", "backfill-two"]
     reasons = {s["file"]: s["reason"] for s in report["skipped"]}
     assert "backfill-one.pre-interview-reset-2026-08-04.db" in reasons
     assert "backup" in reasons["backfill-one.pre-interview-reset-2026-08-04.db"]
-    assert "probe-shell.db" in reasons
+    assert "no projects table" in reasons["probe-shell.db"]
+    # Told apart from the shell above, not lumped in with it: one is a database that never had
+    # the schema, the other has all of it and no project. Only the operator reading the report
+    # can tell whether either is a surprise, and they cannot if both say the same thing.
+    assert "projects table is empty" in reasons["vc-sort-check.db"]
 
     async with get_system_connection() as conn:
         assert await fetch_project_registry(conn, slug="probe-shell") is None
+        assert await fetch_project_registry(conn, slug="vc-sort-check") is None

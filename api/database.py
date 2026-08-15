@@ -3428,11 +3428,18 @@ async def insert_project_registry(
     Registration at creation deliberately does not come through here; it uses
     `register_project_if_unregistered`, so re-POSTing an existing slug cannot drag an
     engagement back out of the organisation an operator moved it to.
+
+    An empty `display_name` leaves the stored one alone rather than blanking it. The door's
+    request model defaults `display_name` to `""`, so reassigning a project to another
+    organisation - which is the whole point of the door - would otherwise wipe a curated name
+    as a side effect, and `OrgDetail.tsx` would start showing the slug. Empty means "not
+    specified" here, not "set it to empty"; clearing a name is not something this door offers.
     """
     await conn.execute(
         "INSERT INTO project_registry (slug, org_id, display_name) VALUES (?,?,?)"
         " ON CONFLICT(slug) DO UPDATE SET org_id=excluded.org_id,"
-        " display_name=excluded.display_name",
+        " display_name=CASE WHEN excluded.display_name = '' THEN project_registry.display_name"
+        "                   ELSE excluded.display_name END",
         (slug, org_id, display_name),
     )
     await conn.commit()

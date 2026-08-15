@@ -17,6 +17,30 @@ from api.database import (
 )
 
 
+class OrganisationInUse(Exception):
+    """Deleting this organisation would recreate the defect this branch exists to close.
+
+    `organisations` is the parent of `project_registry` under ON DELETE CASCADE, and
+    `check_project_access` resolves an org_admin by reading exactly that table. So a single
+    successful 204 here silently unregisters every project the organisation owned - no error,
+    no warning, and an org_admin refused on engagements they held a moment earlier, with
+    `project_memberships` looking perfectly correct throughout. That is precisely the state
+    this branch found the live deployment in, reachable again in one call.
+
+    Two conditions, because they catch different failures and neither implies the other:
+
+      home     - the organisation `home_org_slug` names. Project *creation* resolves against
+                 it, so deleting it breaks new projects as well as existing access. It can be
+                 entirely empty of projects, so a projects-only rule would wave it through.
+      in use   - any organisation that still owns registered projects. Catches the non-home
+                 organisation the first condition says nothing about.
+
+    Raised rather than returned: `svc_delete_org` already returns False for "no such
+    organisation", and answering a refusal with 404 would tell the operator the opposite of
+    what happened.
+    """
+
+
 class ForbiddenRoleChange(Exception):
     """An org_admin tried to hand out sysadmin.
 
@@ -87,10 +111,29 @@ async def svc_update_org(org_id: int, name: str) -> dict | None:
 
 
 async def svc_delete_org(org_id: int) -> bool:
+    """Delete an organisation that nothing depends on. See OrganisationInUse for why not."""
     async with get_system_connection() as conn:
         org = await fetch_organisation(conn, org_id=org_id)
         if not org:
             return False
+        home_slug = get_settings().home_org_slug
+        if org["slug"] == home_slug:
+            raise OrganisationInUse(
+                f"'{org['slug']}' is the home organisation (HOME_ORG_SLUG={home_slug})."
+                " Every project created without an organisation of its own is registered"
+                " against it, so deleting it would break project creation as well as"
+                " unregistering what it owns. Point HOME_ORG_SLUG at another organisation"
+                " first if this one is really to go."
+            )
+        owned = await fetch_org_projects(conn, org_id=org_id)
+        if owned:
+            names = ", ".join(sorted(p["slug"] for p in owned))
+            raise OrganisationInUse(
+                f"'{org['slug']}' still owns {len(owned)} registered project(s): {names}."
+                " Deleting it would cascade through project_registry and silently remove"
+                " every org_admin's access to them. Reassign them through POST /auth/projects"
+                " or unregister them through DELETE /auth/projects/{slug} first."
+            )
         await delete_organisation(conn, org_id=org_id)
         return True
 

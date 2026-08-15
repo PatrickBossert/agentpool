@@ -191,6 +191,12 @@ operator moved it to. `scripts/backfill_project_registry.py` covers projects cre
 this - a script and not a migration, because `get_connection(slug)` would run the migration
 block for probe-materialised slugs that are not projects.
 
+`DELETE /auth/orgs/{id}` refuses (409) the home organisation, and any organisation still owning
+registered projects. `organisations` is the parent of `project_registry` under ON DELETE
+CASCADE, so one successful 204 silently unregisters everything it owned and recreates the
+defect above. Two conditions because neither implies the other: the home organisation can be
+empty of projects, and an organisation full of them need not be the home one.
+
 **There are two review doors, and anything touching review feedback must serve both:**
 
 | Door | Handler | Called from |

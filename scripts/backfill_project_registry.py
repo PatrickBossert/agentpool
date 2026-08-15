@@ -49,22 +49,33 @@ class BackfillRefused(Exception):
     """The run cannot proceed and nothing has been written."""
 
 
-def _project_slug_in(db_path: Path) -> str | None:
-    """The slug this database claims to be, or None if it is not a project database.
+def _project_slug_in(db_path: Path) -> tuple[str | None, str]:
+    """The slug this database claims to be, with the reason when it claims none.
 
     Read-only, so a probe cannot be turned into a project by being looked at.
+
+    The three "no" cases are reported apart rather than as one message, because they are three
+    different things an operator might need to act on and only one of them is ever surprising:
+
+      unreadable  - locked, corrupt, or not SQLite at all. Worth a look.
+      no table    - no `projects` table. A probe-materialised shell, or another system
+                    database's backup copy. Expected.
+      empty table - the full schema with zero project rows. This is `vc-sort-check` on the
+                    live deployment, and `list_all_projects` does not show it either, so it is
+                    not a project going missing - it is a database that never became one.
     """
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return None
+    except sqlite3.Error as exc:
+        return None, f"cannot be opened read-only ({exc})"
     with contextlib.closing(conn):
         try:
-            cur = conn.execute("SELECT slug FROM projects ORDER BY id LIMIT 1")
-            row = cur.fetchone()
+            row = conn.execute("SELECT slug FROM projects ORDER BY id LIMIT 1").fetchone()
         except sqlite3.Error:
-            return None
-    return row[0] if row else None
+            return None, "no projects table - not a project database"
+    if row is None:
+        return None, "projects table is empty - never became a project"
+    return row[0], ""
 
 
 def backfill_project_registry(
@@ -121,11 +132,9 @@ def backfill_project_registry(
             if db_path.name == "system.db":
                 continue
             stem = db_path.stem
-            claimed = _project_slug_in(db_path)
+            claimed, why_not = _project_slug_in(db_path)
             if claimed is None:
-                report["skipped"].append(
-                    {"file": db_path.name, "reason": "no projects row - not a project database"}
-                )
+                report["skipped"].append({"file": db_path.name, "reason": why_not})
                 continue
             if claimed != stem:
                 report["skipped"].append({
