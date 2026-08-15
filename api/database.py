@@ -815,9 +815,16 @@ async def _migrate_script_reviews(conn: aiosqlite.Connection) -> None:
             notes       TEXT    NOT NULL DEFAULT '',
             at_version  INTEGER,
             return_to   TEXT,
+            forced      INTEGER NOT NULL DEFAULT 0,
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    async with conn.execute("PRAGMA table_info(script_reviews)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "forced" not in cols:
+        await conn.execute(
+            "ALTER TABLE script_reviews ADD COLUMN forced INTEGER NOT NULL DEFAULT 0"
+        )
     await conn.commit()
 
 
@@ -1317,7 +1324,7 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # runs again after a database's first post-upgrade open in a process - there is no test
 # that catches a missed bump, because none can: it is a fact about this constant, not
 # about behaviour.
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the

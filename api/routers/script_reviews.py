@@ -32,6 +32,7 @@ class ScriptReviewRequest(BaseModel):
     decision: str
     notes: str = ""
     return_to: str | None = None
+    forced: bool = False
 
 
 @router.get("/{slug}/script-ledger")
@@ -78,7 +79,7 @@ async def review_script(
                 conn, project_id=project["id"], script_id=script_id,
                 reviewer=payload.get("sub", ""), decision=body.decision,
                 notes=body.notes, at_version=row["last_version"] or 0,
-                return_to=body.return_to,
+                return_to=body.return_to, forced=body.forced,
             )
         except (AlreadyApprovedError, NotYetReviewedError) as e:
             # A conflict with stored state, not a malformed request - branching on the
