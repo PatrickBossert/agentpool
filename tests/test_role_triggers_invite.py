@@ -228,6 +228,83 @@ async def test_put_refuses_a_role_reaching_no_email_through_the_effective_state(
 
 
 @pytest.mark.asyncio
+async def test_an_already_undeliverable_row_can_still_be_edited(client, seeded_project_slug):
+    """Important-1, round 2: the first version of _validate_deliverable_role validated only
+    the merged effective state, not the transition into it - so a row already undeliverable
+    (Dougie McCrone's actual shape on the live project: a role, no email) could never be
+    touched again by any write. A job-title-only PATCH 422'd quoting "email is required"
+    about a field the request never mentioned, and a PUT actually revoking the role that made
+    the row undeliverable was refused for the very reason it was trying to fix - worse than
+    doing nothing, since it turned a data-quality problem into one only a direct database
+    edit could repair.
+
+    Driven end to end against a seeded Dougie-shaped row (is_governor=True, email=""):
+    - a PUT that changes nothing about role or email succeeds;
+    - a PATCH touching only an unrelated field succeeds;
+    - a write that ADDS a new role while still emailless is still refused - being already
+      broken is not licence to break it further;
+    - a PUT that explicitly revokes the offending role - the actual repair - succeeds and
+      really clears the flag.
+    """
+    slug = seeded_project_slug
+    from api.database import fetch_project, insert_stakeholder
+
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        sid = await insert_stakeholder(
+            conn, project_id=project["id"], name="Dougie", email="", is_governor=True,
+        )
+
+    with patch("api.routers.stakeholders.issue_invite", new=AsyncMock()) as invite:
+        put_noop = await client.put(f"/projects/{slug}/stakeholders/{sid}",
+                                    json={"name": "Dougie", "email": ""})
+    assert put_noop.status_code == 200, put_noop.text
+    invite.assert_not_awaited()
+
+    with patch("api.routers.stakeholders.issue_invite", new=AsyncMock()) as invite:
+        patch_noop = await client.patch(f"/projects/{slug}/stakeholders/{sid}",
+                                        json={"job_title": "Head"})
+    assert patch_noop.status_code == 200, patch_noop.text
+    assert patch_noop.json()["job_title"] == "Head"
+    invite.assert_not_awaited()
+
+    with patch("api.routers.stakeholders.issue_invite", new=AsyncMock()) as invite:
+        worse = await client.patch(f"/projects/{slug}/stakeholders/{sid}",
+                                   json={"is_reviewer": True})
+    assert worse.status_code == 422, worse.text
+    invite.assert_not_awaited()
+
+    with patch("api.routers.stakeholders.issue_invite", new=AsyncMock()) as invite:
+        revoke = await client.put(f"/projects/{slug}/stakeholders/{sid}",
+                                  json={"name": "Dougie", "email": "", "is_governor": False})
+    assert revoke.status_code == 200, revoke.text
+    assert revoke.json()["is_governor"] is False
+    invite.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_revoking_governor_actually_clears_the_flag(client, seeded_project_slug):
+    """Before this fix, an explicit False for is_governor was silently dropped by
+    _declared_fields_only before the merge - the write returned 200 but the flag stayed set,
+    and nothing told the caller (recorded as Minor 2 in round 1's review). Setting True is
+    still refused (see test_project_admin_and_governor_are_refused_not_silently_ignored);
+    only an explicit False may reach the write."""
+    slug = seeded_project_slug
+    from api.database import fetch_project, insert_stakeholder
+
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        sid = await insert_stakeholder(
+            conn, project_id=project["id"], name="Gov Two", email="gov2@example.com",
+            is_governor=True,
+        )
+
+    r = await client.patch(f"/projects/{SLUG}/stakeholders/{sid}", json={"is_governor": False})
+    assert r.status_code == 200, r.text
+    assert r.json()["is_governor"] is False
+
+
+@pytest.mark.asyncio
 async def test_patch_with_an_explicit_null_does_not_500_or_clear_the_column(client, seeded_project_slug):
     """Every StakeholderPatch field is optional (X | None) and exclude_unset alone keeps an
     explicit null in the dump - and every one of these columns is NOT NULL. A client clearing
@@ -269,21 +346,36 @@ async def test_project_admin_and_governor_are_refused_not_silently_ignored(clien
 
 
 @pytest.mark.asyncio
-async def test_extra_frontend_fields_still_pass_through_unharmed(client, seeded_project_slug):
+async def test_extra_frontend_fields_are_stripped_not_crashed_on(client, seeded_project_slug):
     """The models allow (rather than forbid) unknown keys so that interview_status,
     interview_invited_at and interview_completed_at - which ui/src/pages/StakeholderForm.tsx
-    sends on every save and which neither model declares - keep working. This is the
-    regression the "allow" choice would otherwise open: model_dump() includes allowed extras
-    by default, and unpacking them into insert_stakeholder/update_stakeholder as **fields
-    would crash on an unknown keyword argument were they not stripped back out before the
-    write."""
+    sends on every save and which neither model declares - keep working. They are stripped
+    before the write (_declared_fields_only), not passed through to it: model_dump() would
+    otherwise include allowed extras by default, and unpacking that into
+    insert_stakeholder/update_stakeholder as **fields would crash on an unknown keyword
+    argument. Covers all three doors - POST, PUT and PATCH each build their own dict through
+    _declared_fields_only, so a bug in any one of the three would not show up by exercising
+    only POST."""
     slug = seeded_project_slug
-    r = await client.post(f"/projects/{slug}/stakeholders",
-                          json={"name": "Extra Fields", "email": "extra@example.com",
-                                "interview_status": "completed",
-                                "interview_invited_at": "2026-01-01T00:00:00Z",
-                                "interview_completed_at": "2026-01-02T00:00:00Z"})
-    assert r.status_code in (200, 201), r.text
+    extras = {"interview_status": "completed",
+             "interview_invited_at": "2026-01-01T00:00:00Z",
+             "interview_completed_at": "2026-01-02T00:00:00Z"}
+
+    create = await client.post(f"/projects/{slug}/stakeholders",
+                               json={"name": "Extra Fields", "email": "extra@example.com",
+                                     **extras})
+    assert create.status_code == 201, create.text
+    sid = create.json()["id"]
+
+    put = await client.put(f"/projects/{slug}/stakeholders/{sid}",
+                           json={"name": "Extra Fields", "email": "extra@example.com",
+                                 **extras})
+    assert put.status_code == 200, put.text
+
+    patch = await client.patch(f"/projects/{slug}/stakeholders/{sid}",
+                               json={"job_title": "Updated", **extras})
+    assert patch.status_code == 200, patch.text
+    assert patch.json()["job_title"] == "Updated"
 
 
 @pytest.mark.asyncio
@@ -313,6 +405,53 @@ async def test_resend_invite_with_nothing_live_is_404(client, seeded_project_slu
 
     r = await client.post(f"/projects/{slug}/stakeholders/{sid}/resend-invite")
     assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_refuses_once_the_person_already_has_a_login(client, seeded_project_slug):
+    """resend-invite used to bypass _has_linked_login entirely - driven end to end in round 2
+    review: a live unused invite for an address that already has a login and a membership on
+    this project, resend-invite returned 200 with a fresh token, /auth/accept redeemed it, and
+    users.hashed_pw was overwritten. That is the same unsolicited password-reset credential
+    _issue_invite_if_newly_privileged's login conjunct exists to prevent, reached through the
+    door this task's first round added. Confirms both the refusal and that no fresh token was
+    actually minted onto the row - a real, unmocked read against auth_tokens, not merely a
+    status code."""
+    slug = seeded_project_slug
+    email = "already-resend@example.com"
+    await _purge_system_login(email)
+    try:
+        # A live, unused invite - the ordinary case resend-invite exists for.
+        create = await client.post(f"/projects/{slug}/stakeholders",
+                                   json={"name": "Already", "email": email,
+                                         "is_reviewer": True})
+        sid = create.json()["id"]
+
+        async with get_system_connection() as conn:
+            cur = await conn.execute(
+                "SELECT token_hash FROM auth_tokens WHERE email=? AND project_slug=?"
+                " AND purpose='invite' AND used_at IS NULL", (email, slug))
+            before_hash = (await cur.fetchone())[0]
+
+        # ...but this person already has a login and membership on this project.
+        async with get_system_connection() as conn:
+            await insert_user(conn, username=email, email=email, role="reviewer",
+                              hashed_pw="x")
+            cur = await conn.execute("SELECT id FROM users WHERE username=?", (email,))
+            uid = (await cur.fetchone())[0]
+            await link_membership(conn, user_id=uid, project_slug=slug, stakeholder_id=sid)
+
+        r = await client.post(f"/projects/{slug}/stakeholders/{sid}/resend-invite")
+        assert r.status_code == 409, r.text
+
+        async with get_system_connection() as conn:
+            cur = await conn.execute(
+                "SELECT token_hash FROM auth_tokens WHERE email=? AND project_slug=?"
+                " AND purpose='invite' AND used_at IS NULL", (email, slug))
+            after_hash = (await cur.fetchone())[0]
+        assert after_hash == before_hash, "resend must not mint a fresh token once a login is linked"
+    finally:
+        await _purge_system_login(email)
 
 
 @pytest.mark.asyncio

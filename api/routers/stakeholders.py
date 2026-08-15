@@ -130,17 +130,29 @@ def _holds_other_role(flags: dict) -> bool:
 
 
 def _declared_fields_only(body: BaseModel, **dump_kwargs) -> dict:
-    """model_dump(), stripped of whatever extra="allow" let through.
+    """model_dump(), stripped of whatever extra="allow" let through - except an explicit
+    False for is_project_admin/is_governor, which must still reach the write.
 
     The frontend's FormData sends interview_status, interview_invited_at and
-    interview_completed_at, which neither model declares - with extra="allow", those (and a
-    falsy is_project_admin/is_governor, which _reject_undeclared_role_flags does not refuse)
-    would otherwise land in the dict unpacked into insert_stakeholder/update_stakeholder as
+    interview_completed_at, which neither model declares - with extra="allow", those would
+    otherwise land in the dict unpacked into insert_stakeholder/update_stakeholder as
     **fields. Neither accepts unknown keyword arguments - insert_stakeholder would TypeError,
     update_stakeholder raises ValueError via _STAKEHOLDER_UPDATABLE_FIELDS - so every real
-    save from the UI would 500 the moment "allow" was chosen over "ignore" without this."""
-    extras = set(body.model_extra or {})
-    return body.model_dump(exclude=extras, **dump_kwargs)
+    save from the UI would 500 the moment "allow" was chosen over "ignore" without this.
+
+    is_project_admin/is_governor get special treatment: _reject_undeclared_role_flags already
+    guarantees a truthy attempt at either never reaches this function, so anything left here
+    is an explicit False - revoking a role that was seeded outside the API (e.g. directly in
+    the database, or before this task existed) is the natural repair for a row Important-1's
+    guard would otherwise refuse to touch, and dropping it here would refuse that repair
+    silently while returning 200 - the exact regression review round 2 found.
+    """
+    extras = dict(body.model_extra or {})
+    revocations = {f: extras.pop(f) for f in _UNDECLARED_ROLE_FLAGS
+                   if extras.get(f) is False}
+    dumped = body.model_dump(exclude=set(extras), **dump_kwargs)
+    dumped.update(revocations)
+    return dumped
 
 
 def _reject_undeclared_role_flags(body: BaseModel) -> None:
@@ -157,26 +169,56 @@ def _reject_undeclared_role_flags(body: BaseModel) -> None:
         )
 
 
-def _validate_deliverable_role(effective: dict) -> None:
-    """Refuse rather than store quietly: a role that cannot be delivered - set with no
-    address to deliver it to, or an address that cannot be one - is a state somebody must be
-    told about. Applies on every write, not only the moment a role first appears, since
-    Dougie McCrone's row already exists in this state on the live project and nothing today
-    catches it."""
-    if not _holds_other_role(effective):
+def _is_undeliverable(flags: dict) -> bool:
+    """Has a role beyond participant, but no address that could actually be delivered to."""
+    if not _holds_other_role(flags):
+        return False
+    email = (flags.get("email") or "").strip()
+    return not email or not _EMAIL_RE.match(email)
+
+
+def _validate_deliverable_role(before: dict | None, effective: dict) -> None:
+    """Refuse a write that INTRODUCES the undeliverable state - a role with no address that
+    could be delivered to - not one that merely leaves an already-undeliverable row alone, or
+    repairs it.
+
+    Dougie McCrone's row already exists in this state on the live project. The first version
+    of this guard refused every write that merely left an already-bad row bad, which - because
+    it validated the merged effective state, not the transition into it - locked his row out
+    of every edit whatsoever: a job-title-only PATCH 422'd quoting "email is required", and a
+    PUT actually revoking the role that made his row undeliverable was refused for the very
+    reason it was trying to fix. That is worse than doing nothing: it turns a data-quality
+    problem into one only a direct database edit can repair.
+
+    So this only refuses when the write makes things worse than they were:
+    - `before` is None (create) - any undeliverable state is new, refuse unconditionally.
+    - `before` was already deliverable and `effective` is not - the write broke it (cleared
+      or corrupted the email, or added a role with none), refuse.
+    - `before` was already undeliverable and `effective` still is, but this write adds a role
+      that was not already set - "adds a role to a person with no email" is still refused
+      even though the row is not new, since it is still a role newly created with nowhere to
+      deliver it.
+    - `before` was already undeliverable and `effective` still is, but every role flag that
+      was set before is still set (nothing added) - permitted. Covers an unrelated field edit
+      (job title) and a partial revocation that still leaves some other role standing.
+    """
+    if not _is_undeliverable(effective):
         return
+    if before is not None and _is_undeliverable(before):
+        newly_added_role = any(effective.get(f) and not before.get(f) for f in _ROLE_FLAGS)
+        if not newly_added_role:
+            return
     email = (effective.get("email") or "").strip()
     if not email:
         raise HTTPException(
             status_code=422,
             detail="email is required to invite a stakeholder holding a role beyond participant",
         )
-    if not _EMAIL_RE.match(email):
-        raise HTTPException(
-            status_code=422,
-            detail="email must be a valid address to invite a stakeholder holding a role "
-                   "beyond participant",
-        )
+    raise HTTPException(
+        status_code=422,
+        detail="email must be a valid address to invite a stakeholder holding a role "
+               "beyond participant",
+    )
 
 
 async def _fetch_stakeholder_row(slug: str, stakeholder_id: int) -> dict | None:
@@ -266,7 +308,7 @@ async def create_stakeholder_endpoint(slug: str, body: StakeholderIn, payload: d
     await check_project_access(slug, payload)
     _reject_undeclared_role_flags(body)
     data = _declared_fields_only(body)
-    _validate_deliverable_role(data)
+    _validate_deliverable_role(None, data)
     result = await create_stakeholder(slug, data)
     if result is None:
         _404(slug)
@@ -284,10 +326,9 @@ async def update_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stak
     # is_governor are not among them - carrying `before`'s values forward for those two (and
     # validating the merge, not the bare body) is what stops an unrelated PUT from either
     # silently clearing them or walking around the 422 that create/PATCH already enforce for
-    # the exact same effective state. See Important 4 in the review this responds to: a PUT
-    # of {"name": "Gov", "email": ""} onto an existing governor used to return 200.
+    # the exact same effective state.
     effective = {**before, **data} if before else data
-    _validate_deliverable_role(effective)
+    _validate_deliverable_role(before, effective)
     result = await update_stakeholder_svc(slug, stakeholder_id, data)
     if result is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
@@ -314,7 +355,7 @@ async def patch_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stake
     if not patch_fields:
         return before
     effective = {**before, **patch_fields}
-    _validate_deliverable_role(effective)
+    _validate_deliverable_role(before, effective)
     result = await update_stakeholder_svc(slug, stakeholder_id, patch_fields)
     if result is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
@@ -336,8 +377,18 @@ async def resend_invite_endpoint(slug: str, stakeholder_id: int, payload: dict =
 
     Returns the raw token in the response rather than emailing it: this branch has no wired
     outbound-email path for invites (Resend is used elsewhere for interview links, not this),
-    and building one is a larger change than a resend button warrants. An operator copies the
-    token into an accept link and delivers it by hand for now.
+    and building one is a larger change than a resend button warrants. Note too that there is
+    no page anywhere in ui/src that redeems a token - /auth/accept exists on the API only, so
+    "deliver it by hand" currently describes a link with nowhere to send someone. Building
+    that redemption page is Task 8's job, not this one's.
+
+    _has_linked_login guards this the same way it guards _issue_invite_if_newly_privileged,
+    and for the same reason: reissuing mints a fresh token regardless of whether the old one
+    was ever used, and delivering it to someone who can already log in on this project would
+    let accept_token's existing-user branch silently overwrite their password. Without this,
+    an explicit resend was a second, milder door to the exact hazard the write-triggered path
+    already closed - milder only because it needs a deliberate operator action rather than a
+    checkbox toggle, not because the consequence differs.
     """
     await check_project_access(slug, payload)
     row = await _fetch_stakeholder_row(slug, stakeholder_id)
@@ -346,6 +397,11 @@ async def resend_invite_endpoint(slug: str, stakeholder_id: int, payload: dict =
     email = (row.get("email") or "").strip()
     if not email:
         raise HTTPException(status_code=422, detail="email is required to resend an invite")
+    if await _has_linked_login(slug, email):
+        raise HTTPException(
+            status_code=409,
+            detail="this person already has a login linked to this project - nothing to resend",
+        )
     raw = await reissue_invite(email, project_slug=slug)
     if raw is None:
         raise HTTPException(status_code=404, detail="No live invite to resend for this stakeholder")
