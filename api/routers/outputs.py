@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.auth import require_any_auth, check_project_access
 from api.database import get_connection, fetch_project, revert_to_version
 from api.models import OutputResponse
+from api.services.authority_service import caller_may_approve
 from api.services.project_service import get_project_outputs, get_project_status
 
 router = APIRouter(prefix="/projects", tags=["outputs"])
@@ -20,7 +21,14 @@ async def list_outputs(slug: str, payload: dict = Depends(require_any_auth)):
 
 @router.post("/{slug}/outputs/{output_id}/revert", response_model=OutputResponse)
 async def revert_output(slug: str, output_id: int, payload: dict = Depends(require_any_auth)):
+    """Repoint an output type at an earlier version. Approver-gated: this moves
+    agent_outputs.is_current - the authority on which version everything downstream
+    reads - and unlinks the newer files from disk on the way."""
     await check_project_access(slug, payload)
+    if not await caller_may_approve(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only an approver may revert an output"
+        )
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:

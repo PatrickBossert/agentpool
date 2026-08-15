@@ -66,3 +66,45 @@ async def caller_roles(slug: str, payload: dict) -> set[str]:
     if person is not None:
         roles |= {role for flag, role in _FLAG_ROLES if person[flag]}
     return roles
+
+
+# ── The two gates every content write is held to ──────────────────────────────
+#
+# `check_project_access` answers a different question from these: it asks whether the
+# caller belongs to the engagement at all, and membership *is* read access by design. It
+# has no role test, so before this branch its "reviewer" arm was the whole of the
+# authority on several write doors - safe only because `users` held no rows and the
+# principal class "authenticated non-admin with a project membership" was empty. The
+# invite loop populates that class, so the doors need the role test the walk was built to
+# provide.
+#
+# Two gates, not one per door, so a reviewer looking at any write door can tell which of
+# them it is behind without reading its body:
+#
+#   contribute - leaving feedback on somebody else's work. A review, a change request, a
+#                disposition on a validation warning. Nothing here alters what the project
+#                currently says; it records what somebody thinks of it.
+#   approve    - changing or discarding what the project currently says. A revert, a save
+#                of the canonical value chain, deleting a review someone else recorded.
+#
+# The rule lives here rather than inline in each router, because a condition copied into
+# several call sites is a condition that has already started to diverge - see the
+# register_scripts_sync / scripts_awaiting_regeneration entry in CLAUDE.md. Routers
+# translate the refusal into a 403; they do not decide it.
+#
+# `commit_service.caller_may_commit` and `caller_may_submit` are the same two rules under
+# older names, reached through the same walk. They are left as they are - the branch's
+# verified Critical chain runs through them - so treat this comment as the place the rule
+# is stated and those two as call sites of it.
+CONTRIBUTOR_ROLES = frozenset({"reviewer", "approver"})
+APPROVER_ROLES = frozenset({"approver"})
+
+
+async def caller_may_contribute(slug: str, payload: dict) -> bool:
+    """Whether this caller may record feedback against this project's work."""
+    return bool(await caller_roles(slug, payload) & CONTRIBUTOR_ROLES)
+
+
+async def caller_may_approve(slug: str, payload: dict) -> bool:
+    """Whether this caller may change or discard this project's canonical state."""
+    return bool(await caller_roles(slug, payload) & APPROVER_ROLES)

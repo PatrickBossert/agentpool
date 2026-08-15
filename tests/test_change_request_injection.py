@@ -15,6 +15,23 @@ from api.database import get_connection, insert_output_change, insert_project
 SLUG = "injection-test"
 CREW_SLUG = "injection-crew-test"
 
+@pytest.fixture(autouse=True)
+def _granted_authority():
+    """This module is about what reaches the agent's task, not about who may post a
+    review. The client fixture's sysadmin token names no real user, so caller_may_contribute
+    correctly answers False for it and both review doors would 403 before recording anything.
+
+    Not a weakening of the gate: tests/test_write_door_authority.py drives every one of
+    these doors over HTTP as a real member with and without the flag, so deleting the gate
+    fails there. Patched on the router module, where the name is looked up - the routers
+    bind their own reference via `from ... import`, so patching authority_service itself
+    would miss them (CLAUDE.md's four-crew-tests entry).
+    """
+    with patch("api.routers.reviews.caller_may_contribute", new=AsyncMock(return_value=True)):
+        yield
+
+
+
 
 @pytest_asyncio.fixture
 async def project(tmp_path, monkeypatch):

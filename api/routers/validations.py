@@ -13,6 +13,7 @@ from api.database import (
     get_connection, get_db_path, fetch_project,
     fetch_validation_warnings, dispose_validation_warning,
 )
+from api.services.authority_service import caller_may_contribute
 
 router = APIRouter(prefix="/projects", tags=["validations"])
 
@@ -53,7 +54,18 @@ async def dispose_warning(
     req: DispositionRequest,
     payload: dict = Depends(require_any_auth),
 ):
+    """Record what was decided about a warning.
+
+    Gated as feedback, not as an approval: a disposition says "we looked at this", which
+    is the same authority as leaving a review. Reading the warnings stays open to every
+    member - a warning nobody can see cannot inform anything.
+    """
     await check_project_access(slug, payload)
+    if not await caller_may_contribute(slug, payload):
+        raise HTTPException(
+            status_code=403,
+            detail="Only a reviewer or approver may dispose of a validation warning",
+        )
     if req.disposition not in _DISPOSITIONS:
         raise HTTPException(
             status_code=422,

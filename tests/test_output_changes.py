@@ -20,7 +20,13 @@ SLUG = "changes-test"
 
 @pytest.fixture(autouse=True)
 def _granted_approver():
-    with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)):
+    """POST /{slug}/changes now asks caller_may_contribute as well - a change request is
+    feedback the agent reads back, so it is the same authority as submitting a review
+    rather than the wide-open door membership alone used to leave it. Granted here for the
+    same reason caller_may_commit already was; tests/test_write_door_authority.py is where
+    that gate is proven over HTTP against a real member."""
+    with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)), \
+         patch("api.routers.commits.caller_may_contribute", new=AsyncMock(return_value=True)):
         yield
 
 

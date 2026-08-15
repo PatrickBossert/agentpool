@@ -6,6 +6,23 @@ from unittest.mock import patch, AsyncMock
 
 SLUG = "upload-test"
 
+@pytest.fixture(autouse=True)
+def _granted_authority():
+    """This module is about ingestion, file handling and the documents row, not about who
+    may attach a document. The client fixture's sysadmin token names no real user, so
+    caller_may_approve correctly answers False for it and every upload here would 403.
+
+    Not a weakening of the gate: tests/test_write_door_authority.py drives every one of
+    these doors over HTTP as a real member with and without the flag, so deleting the gate
+    fails there. Patched on the router module, where the name is looked up - the routers
+    bind their own reference via `from ... import`, so patching authority_service itself
+    would miss them (CLAUDE.md's four-crew-tests entry).
+    """
+    with patch("api.routers.agent_chat.caller_may_approve", new=AsyncMock(return_value=True)):
+        yield
+
+
+
 
 async def _make_project(client):
     await client.post("/projects", json={

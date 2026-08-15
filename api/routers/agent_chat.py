@@ -23,6 +23,7 @@ from api.database import (
     update_project_config,
 )
 from api.services.agent_chat_service import AGENT_PERSONAS, run_agent_chat
+from api.services.authority_service import caller_may_approve
 from api.services.ingest_service import SUPPORTED_SUFFIXES, IngestError, ingest_document
 from api.services.llm_client import LocalModelError, UnsupportedForSensitiveProject
 
@@ -225,7 +226,21 @@ async def chat_upload(
     file: UploadFile = File(...),
     payload: dict = Depends(require_any_auth),
 ):
+    """Attach a file to a chat - which also files it in the project's document library.
+
+    Approver-gated, because that second half is the same act as POST
+    /{slug}/documents/upload: a row in `documents`, an entry in discovery_document_ids,
+    and a Chroma ingest every later run retrieves from. That door has always been
+    require_org_admin_or_above, so this one had become the weaker way through it - a
+    corpus write behind nothing but membership. It fits neither "feedback" nor exactly
+    "canonical state", so it takes the stricter of the two gates.
+    """
     await check_project_access(slug, payload)
+    if not await caller_may_approve(slug, payload):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an approver may add a document to this project",
+        )
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
@@ -308,7 +323,15 @@ async def chat_add_link(
     body: LinkRequest,
     payload: dict = Depends(require_any_auth),
 ):
+    """Add a link to the project's discovery sources. Gated like the upload beside it,
+    and for the same reason: the link is written into the project's config_json and read
+    by every later discovery run, not held against this one conversation."""
     await check_project_access(slug, payload)
+    if not await caller_may_approve(slug, payload):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an approver may add a discovery link to this project",
+        )
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 

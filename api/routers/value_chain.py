@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from api.auth import check_project_access, require_any_auth
 from api.database import get_db_path
+from api.services.authority_service import caller_may_approve
 from api.services.value_chain_model import validate_model
 from api.services.value_chain_store import load_model, migrate_project, save_model
 
@@ -37,8 +38,16 @@ async def get_value_chain_model(slug: str, payload: dict = Depends(require_any_a
 async def put_value_chain_model(
     slug: str, body: ModelSave, payload: dict = Depends(require_any_auth)
 ):
-    """Save a new working version. Reports every problem at once rather than the first."""
+    """Save a new working version. Reports every problem at once rather than the first.
+
+    Approver-gated: the tree is the canonical spine every theme, requirement, and
+    interview script anchors to, and this door replaces it wholesale.
+    """
     await check_project_access(slug, payload)
+    if not await caller_may_approve(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only an approver may save the value chain model"
+        )
     _require_project(slug)
 
     problems = validate_model(body.model)
@@ -55,7 +64,13 @@ async def put_value_chain_model(
 async def migrate_value_chain_model(
     slug: str, payload: dict = Depends(require_any_auth)
 ):
+    """Build the model from the registry. Same gate as PUT, and for the same reason -
+    it goes through save_model and lands a new canonical version."""
     await check_project_access(slug, payload)
+    if not await caller_may_approve(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only an approver may migrate the value chain model"
+        )
     _require_project(slug)
     try:
         return await migrate_project(slug, saved_by=payload.get("sub", ""))
