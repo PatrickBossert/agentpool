@@ -168,6 +168,35 @@ no error, no warning, just rows that stay unmigrated forever on every existing d
 - 404 helper: `_404(msg)` raises `HTTPException(404)`
 - No ORM — all SQL is raw strings in `api/database.py`
 
+**Every project gets a `project_registry` row at creation, whatever the creator's role.**
+`check_project_access` resolves an `org_admin` by comparing the JWT's `org_id` to that row and
+falls through to 403 when there is none. Registration used to be gated on the creator being an
+`org_admin`, and a `sysadmin`'s token carries no `org_id` - so on a deployment where the
+sysadmin creates everything, `project_registry` and `organisations` both held zero rows and the
+first `org_admin` ever appointed would have been locked out of every project. It was invisible
+because `sysadmin` returns before the registry is consulted, and `project_memberships` - where
+the diagnosis would go - looks perfectly correct throughout.
+
+There is **one** organisation: the consultancy, `home_org_slug` / `home_org_name`, seeded by
+`init_system_db` so it exists on every deployment without an operator step. Not one per client.
+A creator's own `org_id` wins when their token names one; otherwise the home organisation is
+resolved **by slug** - never "the only row" and never the lowest id, since the wrong answer
+hands an unrelated organisation's admin a real engagement.
+
+Two verbs, and they are not interchangeable: `insert_project_registry` is an **upsert** and
+backs `POST /auth/projects`, the operator's "this engagement belongs to that organisation";
+`register_project_if_unregistered` is `INSERT OR IGNORE` and backs project creation, which
+answers 200 to a re-POST and so must not drag an engagement back out of the organisation an
+operator moved it to. `scripts/backfill_project_registry.py` covers projects created before
+this - a script and not a migration, because `get_connection(slug)` would run the migration
+block for probe-materialised slugs that are not projects.
+
+`DELETE /auth/orgs/{id}` refuses (409) the home organisation, and any organisation still owning
+registered projects. `organisations` is the parent of `project_registry` under ON DELETE
+CASCADE, so one successful 204 silently unregisters everything it owned and recreates the
+defect above. Two conditions because neither implies the other: the home organisation can be
+empty of projects, and an organisation full of them need not be the home one.
+
 **There are two review doors, and anything touching review feedback must serve both:**
 
 | Door | Handler | Called from |

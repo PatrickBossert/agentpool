@@ -8,7 +8,7 @@ from api.auth import require_any_auth, require_org_admin_or_above, check_project
 from api.config import get_settings
 from api.database import (
     get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config,
-    get_system_connection, insert_project_registry,
+    get_system_connection, register_project_if_unregistered, resolve_home_org_id,
 )
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
 # The one authority for "may this caller act on this project's scripts", shared with
@@ -44,17 +44,56 @@ async def create_project_endpoint(
     if get_db_path(req.client_slug).exists():
         response.status_code = 200
     result = await create_project(req)
-    # Auto-register to org for org_admin
-    if payload.get("role") == "org_admin":
-        org_id = payload.get("org_id")
-        if org_id:
-            async with get_system_connection() as sys_conn:
-                await insert_project_registry(
-                    sys_conn,
-                    slug=req.client_slug,
-                    org_id=org_id,
-                    display_name=req.client_slug,
-                )
+    # Every project is registered, whatever the creator's role.
+    #
+    # This used to be gated on `payload.get("role") == "org_admin"`, and a sysadmin's token
+    # carries no org_id - so on a deployment where the sysadmin creates everything, nothing
+    # was ever registered, and check_project_access refuses every org_admin on every slug for
+    # want of a registry row. The gate made the hole permanent: the only role that would have
+    # produced rows was the one already locked out.
+    #
+    # The creator's own organisation wins when their token carries one, so an org_admin who
+    # belongs to an organisation does not create a project they are then refused on. Everyone
+    # else registers to the home organisation, which init_system_db guarantees exists: every
+    # sysadmin, and also an org_admin with no org_membership row, since login only embeds
+    # org_id when there is one. That second caller is still refused on what they just created -
+    # unchanged from before this branch, and a question for whoever appoints an org_admin
+    # without an organisation, not for this endpoint.
+    #
+    # The home organisation is resolved by resolve_home_org_id and must stay that way. It
+    # looks up `home_org_slug`; the tempting inline "SELECT id FROM organisations ORDER BY id
+    # LIMIT 1" agrees with it on a fresh database purely because the seed happens to be
+    # inserted first, and disagrees the moment a system database holds an organisation created
+    # ahead of the seed - at which point every sysadmin-created project is handed to the wrong
+    # organisation's admins.
+    #
+    # register_project_if_unregistered rather than insert_project_registry: this endpoint
+    # answers 200 to a re-POST of an existing slug, and the latter is an upsert. Using it here
+    # would let a re-POST silently drag an engagement back out of whichever organisation an
+    # operator had moved it to through POST /auth/projects.
+    async with get_system_connection() as sys_conn:
+        org_id = payload.get("org_id") or await resolve_home_org_id(sys_conn)
+        if not org_id:
+            # Loudly, because an unregistered project is exactly the invisible state this
+            # branch exists to eliminate - a 201 here would hand back a project no org_admin
+            # can ever reach and say nothing about it. Reachable only if the home organisation
+            # has been deleted, which DELETE /auth/orgs/{id} now refuses; the project itself is
+            # already created, so re-POSTing the same slug registers it once the operator has
+            # restored the organisation.
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Project '{req.client_slug}' was created but could not be registered:"
+                    f" no organisation with slug '{get_settings().home_org_slug}'"
+                    " (HOME_ORG_SLUG). Restore it, then re-POST this project to register it."
+                ),
+            )
+        await register_project_if_unregistered(
+            sys_conn,
+            slug=req.client_slug,
+            org_id=org_id,
+            display_name=req.client_slug,
+        )
     return result
 
 

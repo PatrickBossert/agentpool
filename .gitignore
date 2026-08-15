@@ -18,6 +18,11 @@ data/*.sqlite
 data/*.sqlite3
 *.db
 *.sqlite
+# SQLite's WAL sidecars. `*.db` does not match `foo.db-wal`, so a running API server leaves
+# these showing as untracked next to databases that are themselves ignored - and a `git add -A`
+# then stages live client data. Found exactly that way.
+*.db-wal
+*.db-shm
 *.sqlite3
 
 # ── Project data (client-specific) ──────────────────────────────

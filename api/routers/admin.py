@@ -8,7 +8,7 @@ from api.services.admin_service import (
     svc_list_registry, svc_register_project, svc_unregister_project,
     svc_list_users, svc_create_user, svc_update_user, svc_delete_user,
     svc_list_user_projects, svc_grant_project_access, svc_revoke_project_access,
-    ForbiddenRoleChange,
+    ForbiddenRoleChange, OrganisationInUse,
 )
 
 router = APIRouter(prefix="/auth", tags=["admin"])
@@ -60,7 +60,13 @@ async def update_org(org_id: int, req: OrgUpdate):
 
 @router.delete("/orgs/{org_id}", status_code=204, dependencies=[Depends(require_sysadmin)])
 async def delete_org(org_id: int):
-    if not await svc_delete_org(org_id):
+    # 409 and the reason in full: this refusal is the operator's only warning that a 204 here
+    # would have cascaded through project_registry and taken every org_admin's access with it.
+    try:
+        deleted = await svc_delete_org(org_id)
+    except OrganisationInUse as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not deleted:
         _404(f"Org {org_id} not found")
 
 

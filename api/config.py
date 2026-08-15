@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     resend_api_key: str = ""
     from_email: str = "TaskReimagination.ai <noreply@taskreimagination.ai>"
+    # The one organisation every engagement belongs to. Not one organisation per client:
+    # this is a project-based application that happens to hold organisation entities, so the
+    # organisation is the consultancy and an org_admin appointed in it reaches every
+    # engagement. init_system_db seeds this row, and project creation registers against it
+    # whenever the creator's own token carries no org_id - which is every sysadmin.
+    #
+    # Configurable so a fork of this deployment is not obliged to be Future Edge, and looked
+    # up by slug rather than by "the only row" so that a second organisation appearing later
+    # cannot quietly change which one new projects are registered to.
+    home_org_slug: str = "future-edge"
+    home_org_name: str = "Future Edge Consulting"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

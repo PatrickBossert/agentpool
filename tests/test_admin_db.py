@@ -34,8 +34,16 @@ async def test_org_crud(sys_conn):
     await update_organisation(sys_conn, org_id=org_id, name="Acme Ltd")
     org = await fetch_organisation(sys_conn, org_id=org_id)
     assert org["name"] == "Acme Ltd"
+    # Two, not one: init_system_db seeds the home organisation - the consultancy every
+    # engagement belongs to - so a system database is never without one. See the comment at
+    # the seed in api/database.py, and tests/test_project_registry.py for why.
+    #
+    # Read from the setting rather than written as "future-edge": the slug is configurable so a
+    # fork or a renamed deployment can be itself, and a literal here would mean such a
+    # deployment could not run its own suite.
+    from api.config import get_settings
     orgs = await fetch_all_organisations(sys_conn)
-    assert len(orgs) == 1
+    assert {o["slug"] for o in orgs} == {get_settings().home_org_slug, "acme"}
     await delete_organisation(sys_conn, org_id=org_id)
     assert await fetch_organisation(sys_conn, org_id=org_id) is None
 
