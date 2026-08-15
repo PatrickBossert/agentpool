@@ -189,8 +189,12 @@ async def reissue_invite(email: str, project_slug: str | None = None) -> str | N
     return raw
 
 
-async def accept_token(raw_token: str, password: str, *, purpose: str | None = None) -> dict | None:
+async def accept_token(
+    raw_token: str, password: str, *, purpose: str | None = None
+) -> tuple[dict, bool] | None:
     """Redeem an invite or reset token: create or update the login, link if invited.
+
+    Returns `(user, issue_session)` on success, `None` on refusal.
 
     Refuses (returns None):
     - a token that does not resolve to a live, unused, unexpired row (also what makes a
@@ -212,14 +216,21 @@ async def accept_token(raw_token: str, password: str, *, purpose: str | None = N
     is scoped per project *by design*, so the same email legitimately gets invited onto a
     second, third, ... engagement while already holding a login from the first one. Redeeming
     that second invite must only create the new project_memberships row - not touch
-    hashed_pw. Before this was enforced here, any project_admin on any project could add an
-    existing user's email (including a sysadmin's) as a stakeholder on their own project,
-    call resend-invite to obtain the raw token (it is returned to the API caller), and redeem
-    it with a password of their own choosing - overwriting that person's global password.
-    Chained, that is privilege escalation to full account takeover, from three individually
-    reasonable pieces. Only a reset-purpose token - which the account owner triggers
-    themselves, to their own address, via /auth/reset-request - may ever set a password on an
-    account that already exists.
+    hashed_pw. Only a reset-purpose token - which the account owner triggers themselves, to
+    their own address, via /auth/reset-request - may ever set a password on an account that
+    already exists.
+
+    `issue_session` closes the escalation that survives the password fix on its own: even
+    with hashed_pw left untouched, a caller who blindly turned every successful acceptance
+    into a session would hand the *redeemer* a live JWT as the *victim* - sub, role, and all
+    - the moment an invite named an email that already had a login, silently, since the
+    password was never touched and the victim has no reason to notice. Accepting an invite
+    for a known email is a membership grant, not an authentication event; only the account
+    owner, using their real password, may authenticate as themselves. `issue_session` is True
+    exactly when this call either created a brand-new users row or redeemed a reset-purpose
+    token (row["purpose"], the token's own stored purpose - not the purpose= filter a caller
+    passed in, so this still holds when a direct caller omits it); the router
+    (api/routers/invites.py) must not mint a session when it is False.
     """
     async with get_system_connection() as conn:
         row = await _find_live_token(conn, raw_token, purpose=purpose)
@@ -233,6 +244,7 @@ async def accept_token(raw_token: str, password: str, *, purpose: str | None = N
                 return None
 
         user = await fetch_user(conn, username=row["email"])
+        newly_created = user is None
         if user is None:
             # role="reviewer" is load-bearing, not a placeholder: check_project_access only
             # attempts the project_memberships lookup for role=="reviewer" - any other value
@@ -272,7 +284,8 @@ async def accept_token(raw_token: str, password: str, *, purpose: str | None = N
             "UPDATE auth_tokens SET used_at=CURRENT_TIMESTAMP WHERE id=?", (row["id"],)
         )
         await conn.commit()
-    return user
+    issue_session = newly_created or row["purpose"] == "reset"
+    return user, issue_session
 
 
 async def issue_reset(email: str) -> str | None:

@@ -220,14 +220,30 @@ async def roll_session(request: Request, call_next):
     if datetime.now(timezone.utc) - issued_at >= timedelta(days=ABSOLUTE_SESSION_EXPIRE_DAYS):
         return response
 
-    current = await _current_session_claims(payload["sub"])
-    if current is None or current[0] != payload.get("role"):
+    # From here on, any failure (a DB hiccup inside _current_session_claims's system-db
+    # lookup is the realistic one) must leave the response exactly as call_next produced it.
+    # This runs after an endpoint has already succeeded - an exception escaping this
+    # middleware would convert that success into a 500 for a caller whose request was
+    # otherwise fine, purely because the *bonus* of a rolled session couldn't be computed.
+    # Simply not rolling is always a safe fallback: the caller's existing token, if still
+    # unexpired, keeps working on their next request regardless.
+    try:
+        current = await _current_session_claims(payload["sub"])
+        if current is None or current[0] != payload.get("role"):
+            return response
+
+        role, org_id = current
+        refreshed = create_access_token(
+            payload["sub"], role, get_settings().jwt_secret, org_id=org_id, iat=issued_at,
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "roll_session: could not roll %s's session - leaving the response unrolled "
+            "rather than failing an already-successful request", payload.get("sub"),
+        )
         return response
 
-    role, org_id = current
-    refreshed = create_access_token(
-        payload["sub"], role, get_settings().jwt_secret, org_id=org_id, iat=issued_at,
-    )
     response.headers["X-Refreshed-Token"] = refreshed
     return response
 

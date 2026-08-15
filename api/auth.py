@@ -35,14 +35,27 @@ def create_access_token(
     `iat` defaults to now - the moment a login, accept, or reset issues a brand new session.
     api/main.py's roll_session middleware passes the *original* iat back in on every reissue
     instead of taking that default, so a session's issued-at time survives every roll even
-    though `exp` keeps moving forward. That is what lets the middleware enforce
-    ABSOLUTE_SESSION_EXPIRE_DAYS as a ceiling the rolling expiry can approach but never
-    outlive - without a preserved iat, every roll would look like a session started right
-    now, and the absolute cap would never bind.
+    though `exp` keeps moving forward. That is what lets ABSOLUTE_SESSION_EXPIRE_DAYS act as
+    a ceiling the rolling expiry can approach but never outlive - without a preserved iat,
+    every roll would look like a session started right now, and the absolute cap would never
+    bind.
+
+    `exp` itself is clamped to `iat + ABSOLUTE_SESSION_EXPIRE_DAYS` when that is sooner than
+    the ordinary thirty-day rolling window - not only "future rolls get refused past the
+    cap" (roll_session's own age check) but "no single roll can mint an exp that reaches
+    past it" in the first place. Without the clamp, a roll on day eighty-nine would still
+    hand out a full thirty-day exp landing on day one-nineteen, and decode_token has no
+    other check that would catch a session outliving the cap - it only rejects an *expired*
+    token, and iat is not itself an expiry claim. For a brand-new session (iat defaults to
+    now) the clamp never binds, since now + 90 days is always later than now + 30 days.
     """
     now = datetime.now(timezone.utc)
-    expire = now + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    payload: dict = {"sub": username, "role": role, "exp": expire, "iat": iat or now}
+    effective_iat = iat or now
+    expire = min(
+        now + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS),
+        effective_iat + timedelta(days=ABSOLUTE_SESSION_EXPIRE_DAYS),
+    )
+    payload: dict = {"sub": username, "role": role, "exp": expire, "iat": effective_iat}
     if org_id is not None:
         payload["org_id"] = org_id
     return jwt.encode(payload, secret, algorithm=ALGORITHM)

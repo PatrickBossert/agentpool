@@ -123,16 +123,34 @@ async def test_a_refused_request_is_not_rolled(seeded_project_slug):
     """"Authenticated" in the middleware's docstring means only "carried a decodable token" -
     a token that decodes fine but names nobody with access still gets refused by
     check_project_access, and a refusal must not be rewarded with another thirty days
-    anyway. Gating on a 2xx response is what closes that."""
-    secret = get_settings().jwt_secret
-    token = create_access_token("nobody-with-access", "reviewer", secret)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test",
-        headers={"Authorization": f"Bearer {token}"},
-    ) as ac:
-        r = await ac.get(f"/projects/{seeded_project_slug}/my-permissions")
-    assert r.status_code == 403
-    assert "X-Refreshed-Token" not in r.headers
+    anyway. Gating on a 2xx response is what closes that.
+
+    The account here must actually exist, with a role matching the token's - otherwise
+    _current_session_claims's own existence/role check would refuse the roll on its own,
+    and this test would pass identically whether or not the 2xx gate existed at all (the 404
+    test above is what isolates that check; this one must isolate the gate)."""
+    email = "no-membership-reviewer@example.com"
+    await _purge_system_login(email)
+    try:
+        async with get_system_connection() as conn:
+            await insert_user(
+                conn, username=email, email=email, role="reviewer",
+                hashed_pw="not-a-real-hash-just-a-row",
+            )
+        # Deliberately no link_membership call - this account exists, with the role the
+        # token claims, but holds no membership on seeded_project_slug.
+
+        secret = get_settings().jwt_secret
+        token = create_access_token(email, "reviewer", secret)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as ac:
+            r = await ac.get(f"/projects/{seeded_project_slug}/my-permissions")
+        assert r.status_code == 403
+        assert "X-Refreshed-Token" not in r.headers
+    finally:
+        await _purge_system_login(email)
 
 
 @pytest.mark.asyncio
@@ -227,16 +245,90 @@ async def test_a_session_older_than_the_absolute_cap_is_not_rolled(seeded_projec
 
 
 @pytest.mark.asyncio
-async def test_a_rolled_token_preserves_the_original_iat(client, seeded_project_slug):
-    """The absolute cap above only binds if rolling does not quietly reset iat to "now" on
-    every reissue - that would make the cap unreachable by construction. The client fixture's
-    token is minted at test start with iat close to now, so the rolled token's iat must come
-    back unchanged, not later."""
+async def test_a_roll_near_the_absolute_cap_is_clamped_to_it(seeded_project_slug):
+    """The cap bounds session *lifetime*, not just how often a session may roll. A roll one
+    day inside ABSOLUTE_SESSION_EXPIRE_DAYS is still a roll (the test above only covers a
+    roll refused entirely, past the cap) - but api/auth.py's create_access_token must clamp
+    the reissued exp to iat + ABSOLUTE_SESSION_EXPIRE_DAYS rather than handing out the full
+    ordinary thirty-day window, or a roll on day eighty-nine would still mint an exp landing
+    on day one-nineteen: decode_token only rejects an *expired* token, and iat is not itself
+    an expiry claim, so nothing else would ever catch a session that outlived the cap by up
+    to thirty days.
+    """
     secret = get_settings().jwt_secret
-    original_token = client.headers["Authorization"].split(" ", 1)[1]
-    original_iat = jwt.decode(original_token, secret, algorithms=["HS256"])["iat"]
+    now = datetime.now(timezone.utc)
+    old_iat = now - timedelta(days=ABSOLUTE_SESSION_EXPIRE_DAYS - 1)  # one day inside the cap
+    token = jwt.encode(
+        {"sub": "admin", "role": "sysadmin", "iat": old_iat, "exp": now + timedelta(hours=1)},
+        secret, algorithm="HS256",
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ac:
+        r = await ac.get(f"/projects/{seeded_project_slug}/my-permissions")
+    assert r.status_code == 200
+    refreshed_payload = jwt.decode(r.headers["X-Refreshed-Token"], secret, algorithms=["HS256"])
 
-    r = await client.get(f"/projects/{seeded_project_slug}/my-permissions")
+    deadline = old_iat + timedelta(days=ABSOLUTE_SESSION_EXPIRE_DAYS)
+    full_roll = now + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    assert refreshed_payload["exp"] <= deadline.timestamp() + 1  # tolerate second-rounding
+    assert refreshed_payload["exp"] < full_roll.timestamp(), (
+        "a roll this close to the absolute cap must not still grant the full rolling window"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_token_preserves_the_original_iat(seeded_project_slug):
+    """The absolute cap above only binds if rolling does not quietly reset iat to "now" on
+    every reissue - that would make the cap unreachable by construction.
+
+    Round 1's version of this test used the shared `client` fixture's token, minted mere
+    milliseconds before the request. iat is second-resolution (jose's jwt.encode truncates
+    via timegm), so a freshly-recomputed iat and the preserved original one round to the
+    same integer by coincidence almost every time the test runs - the assertion could not
+    tell "preserved" from "silently reset to now" apart, and stayed green when the reviewer
+    deleted `iat=issued_at` from api/main.py's roll_session entirely. Anchoring the original
+    iat several days in the past (but still inside ABSOLUTE_SESSION_EXPIRE_DAYS, so the roll
+    is not itself refused by the cap test above) removes the coincidence: a reset-to-now iat
+    and the real, preserved one are then unmistakably different values.
+    """
+    secret = get_settings().jwt_secret
+    old_iat = datetime.now(timezone.utc) - timedelta(days=5)
+    token = jwt.encode(
+        {
+            "sub": "admin", "role": "sysadmin", "iat": old_iat,
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        },
+        secret, algorithm="HS256",
+    )
+    original_iat = jwt.decode(token, secret, algorithms=["HS256"])["iat"]
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ac:
+        r = await ac.get(f"/projects/{seeded_project_slug}/my-permissions")
     assert r.status_code == 200
     refreshed_payload = jwt.decode(r.headers["X-Refreshed-Token"], secret, algorithms=["HS256"])
     assert refreshed_payload["iat"] == original_iat
+
+
+@pytest.mark.asyncio
+async def test_a_failed_claims_lookup_does_not_break_an_already_successful_response(
+    client, seeded_project_slug,
+):
+    """Computing the roll is a bonus on top of an already-decided, already-successful
+    response - not a precondition of it. _current_session_claims does a real system-db
+    lookup (and, for an org_admin, a second one inside org_id_for_session); a failure there
+    must leave the response exactly as the endpoint produced it, not convert a success the
+    caller already earned into a 500 purely because the extra thirty days couldn't be
+    computed this time.
+    """
+    from unittest.mock import AsyncMock, patch
+    with patch(
+        "api.main._current_session_claims", new=AsyncMock(side_effect=RuntimeError("db down")),
+    ):
+        r = await client.get(f"/projects/{seeded_project_slug}/my-permissions")
+    assert r.status_code == 200
+    assert "X-Refreshed-Token" not in r.headers

@@ -8,6 +8,7 @@ import type {
   ProjectSettings,
   OutputContent,
   TokenResponse,
+  AcceptResponse,
   RoadmapData,
   FinancialSummary,
   HumanReview,
@@ -33,9 +34,11 @@ export const authApi = {
   },
 
   // Unauthenticated by design - accepting an invite is how a person gets a session in the
-  // first place, so this must not rely on one already existing.
-  accept: (token: string, password: string): Promise<TokenResponse> =>
-    apiClient.post<TokenResponse>('/auth/accept', { token, password }).then((r) => r.data),
+  // first place, so this must not rely on one already existing. access_token comes back
+  // null when the invite named an email that already has a login: that redemption only
+  // grants the membership, not a session - see AcceptResponse and api/routers/invites.py.
+  accept: (token: string, password: string): Promise<AcceptResponse> =>
+    apiClient.post<AcceptResponse>('/auth/accept', { token, password }).then((r) => r.data),
 }
 
 export const projectsApi = {

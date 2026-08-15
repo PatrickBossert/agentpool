@@ -47,12 +47,15 @@ async def seeded_person(tmp_path, monkeypatch):
 async def test_accepting_an_invite_creates_the_login_and_the_link(seeded_person):
     slug, stakeholder_id, email = seeded_person
     raw = await issue_invite(email=email, project_slug=slug, stakeholder_id=stakeholder_id)
-    user = await accept_token(raw, "correct horse battery staple")
-    assert user is not None and user["username"] == email
+    result = await accept_token(raw, "correct horse battery staple")
+    assert result is not None
+    user, issue_session = result
+    assert user["username"] == email
     # role is load-bearing: check_project_access's membership branch only fires for
     # role=="reviewer" - any other value would deny every project-scoped request outright,
     # and nothing else in this file would notice.
     assert user["role"] == "reviewer"
+    assert issue_session, "a brand-new login must be allowed to sign in immediately"
 
     from api.database import get_system_connection
     async with get_system_connection() as conn:
@@ -105,8 +108,10 @@ async def test_a_reset_sets_a_new_password_on_an_existing_login(seeded_person):
     await accept_token(raw, "old password")
     reset = await issue_reset(email=email)
     assert reset is not None
-    user = await accept_token(reset, "new password")
-    assert user is not None
+    result = await accept_token(reset, "new password")
+    assert result is not None
+    _user, issue_session = result
+    assert issue_session, "a reset must always be allowed to sign in - it is how the person recovers access"
 
     from api.auth import verify_password
     from api.database import get_system_connection, fetch_user
@@ -172,15 +177,23 @@ async def test_inviting_the_same_person_to_a_second_project_keeps_both_live(tmp_
         assert refreshed_a is not None and refreshed_a != raw_a
 
         # Both invites still redeem correctly, to their own project.
-        user = await accept_token(refreshed_a, "pw")
-        assert user is not None
+        result = await accept_token(refreshed_a, "pw")
+        assert result is not None
+        user, issue_session = result
+        assert issue_session, "the first acceptance for this email is a brand-new login"
         async with get_system_connection() as conn:
             cur = await conn.execute(
                 "SELECT project_slug, stakeholder_id FROM project_memberships WHERE user_id=?"
                 " ORDER BY project_slug", (user["id"],))
             assert [tuple(r) for r in await cur.fetchall()] == [(slug_a, sid_a)]
-        user2 = await accept_token(raw_b, "pw")
-        assert user2 is not None and user2["id"] == user["id"]
+        result2 = await accept_token(raw_b, "pw")
+        assert result2 is not None
+        user2, issue_session2 = result2
+        assert user2["id"] == user["id"]
+        assert not issue_session2, (
+            "the second invite redeems against an email that already has a login - "
+            "granting the membership must not also mint a session"
+        )
         async with get_system_connection() as conn:
             cur = await conn.execute(
                 "SELECT project_slug, stakeholder_id FROM project_memberships WHERE user_id=?"
@@ -224,8 +237,10 @@ async def test_a_second_invite_does_not_overwrite_the_existing_login_password(tm
 
         # The victim accepts the first invite for real, choosing their own password.
         raw_a = await issue_invite(email=email, project_slug=slug_a, stakeholder_id=sid_a)
-        victim = await accept_token(raw_a, "victims-real-password")
-        assert victim is not None
+        victim_result = await accept_token(raw_a, "victims-real-password")
+        assert victim_result is not None
+        _victim, victim_issue_session = victim_result
+        assert victim_issue_session, "the victim's own first acceptance is a brand-new login"
 
         from api.auth import verify_password
         from api.database import get_system_connection, fetch_user
@@ -238,6 +253,11 @@ async def test_a_second_invite_does_not_overwrite_the_existing_login_password(tm
         raw_b = await issue_invite(email=email, project_slug=slug_b, stakeholder_id=sid_b)
         attacker_result = await accept_token(raw_b, "attacker-chosen-password")
         assert attacker_result is not None
+        _attacker_user, attacker_issue_session = attacker_result
+        assert not attacker_issue_session, (
+            "redeeming an invite for an email that already has a login must not mint a "
+            "session - see the HTTP-level test below for the router enforcing this"
+        )
 
         async with get_system_connection() as conn:
             after = await fetch_user(conn, username=email)
@@ -360,6 +380,86 @@ async def test_accept_over_http_omits_org_id_for_a_reviewer(seeded_person):
     assert resp.status_code == 200
     payload = decode_token(resp.json()["access_token"], _JWT_SECRET)
     assert payload.get("org_id") is None
+
+
+@pytest.mark.asyncio
+async def test_accepting_an_invite_for_an_already_registered_email_mints_no_session(
+    tmp_path, monkeypatch,
+):
+    """CRITICAL, round 2: closing the password overwrite (test_a_second_invite_does_not_
+    overwrite_the_existing_login_password, above) was not enough on its own. accept_token
+    still returned the *victim's own user row*, and the router turned every successful
+    return into a session minted from that row's username/role/org_id - so redeeming an
+    invite for an already-registered email handed the redeemer a live JWT *as that person,
+    at their real privilege level*, silently, because the password was never touched and the
+    victim has no reason to notice.
+
+    Drives the full chain over HTTP rather than calling accept_token directly - the earlier,
+    direct-call version of this test could not see the escalation, because accept_token's own
+    return value (a user dict) looked identical whether or not the router was about to mint a
+    session from it. The property lives one layer up, in what the router does with what
+    accept_token returns.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    victim_email = "sysadmin-victim@example.com"
+    try:
+        from api.auth import hash_password, verify_password
+        from api.database import get_system_connection, insert_user, fetch_user
+
+        # The victim already holds a privileged login, created independently of any invite.
+        async with get_system_connection() as conn:
+            await insert_user(
+                conn, username=victim_email, email=victim_email, role="sysadmin",
+                hashed_pw=hash_password("victims-real-password"),
+            )
+            before = await fetch_user(conn, username=victim_email)
+
+        # An admin on some other project adds the victim's email as a stakeholder there and
+        # obtains the raw invite token exactly as POST /projects/{slug}/stakeholders/{id}/
+        # resend-invite would hand it back.
+        slug = "attacker-project"
+        async with get_connection(slug) as conn:
+            await insert_project(conn, slug=slug, llm_mode="standard", sector="", config_json="{}")
+            project = await fetch_project(conn, slug=slug)
+            sid = await insert_stakeholder(
+                conn, project_id=project["id"], name="Victim", email=victim_email,
+                is_reviewer=True,
+            )
+        raw = await issue_invite(email=victim_email, project_slug=slug, stakeholder_id=sid)
+
+        from api.main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post(
+                "/auth/accept", json={"token": raw, "password": "attacker-chosen-password"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert not body.get("access_token"), (
+            "an invite redeemed against an already-registered email must not mint a "
+            f"session - got a response carrying one: {body!r}"
+        )
+
+        # The password must still be exactly what it was - not the attacker's redemption
+        # password, and this is the second, independent proof (alongside the direct-call
+        # test above) that it was never touched.
+        async with get_system_connection() as conn:
+            after = await fetch_user(conn, username=victim_email)
+        assert after["hashed_pw"] == before["hashed_pw"]
+        assert verify_password("victims-real-password", after["hashed_pw"])
+        assert not verify_password("attacker-chosen-password", after["hashed_pw"])
+
+        # The one thing this acceptance is entitled to grant - the project B membership -
+        # still lands; the fix must not have traded the takeover for silently dropping the
+        # invite's entire purpose.
+        async with get_system_connection() as conn:
+            cur = await conn.execute(
+                "SELECT project_slug, stakeholder_id FROM project_memberships WHERE user_id=?",
+                (after["id"],))
+            assert [tuple(r) for r in await cur.fetchall()] == [(slug, sid)]
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

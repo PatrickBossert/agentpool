@@ -153,6 +153,17 @@ export interface TokenResponse {
   token_type: string
 }
 
+// POST /auth/accept's response - unlike /auth/login, accepting an invite does not always
+// mint a session: redeeming one for an email that already has a login only grants the
+// project membership, since that person already holds credentials and must sign in with
+// them (see api/routers/invites.py's CRITICAL note). access_token is null in that case.
+export interface AcceptResponse {
+  access_token: string | null
+  token_type: string
+  already_registered?: boolean
+  detail?: string
+}
+
 export interface UserPayload {
   sub: string
   role: 'sysadmin' | 'org_admin' | 'reviewer'
