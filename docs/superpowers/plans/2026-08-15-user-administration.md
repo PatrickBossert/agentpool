@@ -755,20 +755,31 @@ async def test_a_token_cannot_be_used_twice(seeded_person):
 
 
 @pytest.mark.asyncio
-async def test_reissuing_returns_the_same_live_invite_rather_than_a_second(seeded_person):
-    """One live invite per person. Re-issuing is for a lost email, not a parallel token -
-    two live invites means two passwords can be set and only one membership exists."""
+async def test_reissuing_replaces_the_live_invite_rather_than_adding_a_second(seeded_person):
+    """One live invite per person, and re-issuing mints a new token onto the same row.
+
+    Tokens are stored hashed, so the original raw value cannot be recovered to resend -
+    re-issue necessarily refreshes the hash and the expiry, which stops the old link
+    working. That is the only implementable reading of "resend the invite", and it is
+    arguably the safer one: a lost email stays dead.
+
+    Two live invites would be the real defect - two people could each set a password while
+    only one membership exists.
+    """
     slug, stakeholder_id, email = seeded_person
     first = await issue_invite(email=email, project_slug=slug, stakeholder_id=stakeholder_id)
     second = await reissue_invite(email=email)
-    assert second is not None
-    assert await accept_token(first, "pw") is None or second == first
+    assert second is not None and second != first
 
     from api.database import get_system_connection
     async with get_system_connection() as conn:
         cur = await conn.execute(
             "SELECT COUNT(*) FROM auth_tokens WHERE email=? AND used_at IS NULL", (email,))
-        assert (await cur.fetchone())[0] == 1
+        assert (await cur.fetchone())[0] == 1, "re-issue must replace, not add"
+
+    # The superseded link is dead, and the fresh one works.
+    assert await accept_token(first, "pw") is None
+    assert await accept_token(second, "pw") is not None
 
 
 @pytest.mark.asyncio
@@ -833,8 +844,10 @@ Create `api/services/invite_service.py`. The behaviours the tests above pin down
 - `issue_invite` generates a token with `secrets.token_urlsafe(32)`, stores only its hash, sets
   `expires_at` seven days out, and returns the raw value once. If a live unused invite already
   exists for that email, it returns that one refreshed rather than creating a second.
-- `reissue_invite` refreshes the live invite's expiry and returns a usable raw token for the same
-  row, so the count of unused rows stays at one.
+- `reissue_invite` mints a **new** token onto the same row, refreshing the hash and the expiry,
+  and returns the new raw value. The superseded link stops working - the stored hash is gone -
+  and the count of unused rows stays at one. Storing the raw token so the identical link could
+  be resent is the alternative, and it is the wrong trade for a token that sets a password.
 - `accept_token` looks the token up by hash, refuses a used or expired one by returning `None`,
   creates the `users` row with `hash_password(password)` if none exists or updates the password if
   one does, calls `link_membership` when the token carries a `project_slug`, stamps `used_at`, and
