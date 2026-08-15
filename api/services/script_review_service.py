@@ -37,6 +37,7 @@ class NotYetReviewedError(ValueError):
 async def record_script_review(
     conn: aiosqlite.Connection, *, project_id: int, script_id: str, reviewer: str,
     decision: str, notes: str = "", at_version: int = 0, return_to: str | None = None,
+    forced: bool = False,
 ) -> dict:
     """Append a review event and update the ledger row's derived state.
 
@@ -44,6 +45,9 @@ async def record_script_review(
     approved, and it must be sent back first. A send-back must name its target, because
     both defaults are wrong - to the agent it rewrites an instrument a reviewer is about
     to re-read, to the reviewer it silently drops a request for regeneration.
+
+    An approver may override the not-yet-reviewed gate with forced=True, but the record
+    must show they did - the default stays refusal, and the override is never silent.
     """
     if decision not in VALID_DECISIONS:
         raise ValueError(f"unknown decision '{decision}'")
@@ -64,7 +68,7 @@ async def record_script_review(
         raise AlreadyApprovedError(
             f"script {script_id} cannot re-approve, send it back first"
         )
-    if decision == "approved":
+    if decision == "approved" and not forced:
         if await review_count(conn, project_id=project_id, script_id=script_id) == 0:
             raise NotYetReviewedError(
                 f"script {script_id} has no reviews - it must be read before it is approved"
@@ -72,9 +76,10 @@ async def record_script_review(
 
     await conn.execute(
         "INSERT INTO script_reviews"
-        " (project_id, script_id, reviewer, decision, notes, at_version, return_to)"
-        " VALUES (?,?,?,?,?,?,?)",
-        (project_id, script_id, reviewer, decision, notes, at_version, return_to),
+        " (project_id, script_id, reviewer, decision, notes, at_version, return_to, forced)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (project_id, script_id, reviewer, decision, notes, at_version, return_to,
+         int(forced)),
     )
     await conn.execute(
         "UPDATE interview_script_ledger"

@@ -3,13 +3,33 @@
 
 In this project the only door is a reviewer's note. Chat and inline editing arrive
 later and write the same rows with a different source.
+
+Committing is approver-gated (caller_may_commit, see api/services/authority_service.py).
+None of these tests are about that gate, so it is granted throughout - the client
+fixture's sysadmin token names no real user, so an unpatched commit would 403 before
+any of the change-recording behaviour under test ran.
 """
 import pytest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from api.config import get_settings
 
 SLUG = "changes-test"
+
+
+@pytest.fixture(autouse=True)
+def _granted_approver():
+    """POST /{slug}/changes now asks caller_may_contribute as well - a change request is
+    feedback the agent reads back, so it is the same authority as submitting a review
+    rather than the wide-open door membership alone used to leave it. Granted here for the
+    same reason caller_may_commit already was; tests/test_write_door_authority.py is where
+    that gate is proven over HTTP against a real member."""
+    with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)), \
+         patch("api.routers.commits.caller_may_contribute", new=AsyncMock(return_value=True)):
+        yield
+
+
 PROJECT = {
     "client_slug": SLUG,
     "llm_mode": "standard",

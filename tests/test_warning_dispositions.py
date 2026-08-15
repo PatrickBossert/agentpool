@@ -12,6 +12,25 @@ from api.database import (
 )
 from agents.tools._db import record_validation_warnings_sync
 
+@pytest.fixture(autouse=True)
+def _granted_authority():
+    """This module is about the disposition rules - which values are legal, which need a
+    reason, and when a dismissal expires - not about who may record one. The client fixture's
+    sysadmin token names no real user, so caller_may_contribute correctly answers False.
+
+    Not a weakening of the gate: tests/test_write_door_authority.py drives every one of
+    these doors over HTTP as a real member with and without the flag, so deleting the gate
+    fails there. Patched on the router module, where the name is looked up - the routers
+    bind their own reference via `from ... import`, so patching authority_service itself
+    would miss them (CLAUDE.md's four-crew-tests entry).
+    """
+    from unittest.mock import AsyncMock, patch
+
+    with patch("api.routers.validations.caller_may_contribute", new=AsyncMock(return_value=True)):
+        yield
+
+
+
 
 @pytest_asyncio.fixture
 async def disp_project(tmp_path, monkeypatch):

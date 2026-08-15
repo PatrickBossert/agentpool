@@ -14,15 +14,13 @@ from api.database import (
     fetch_agent_outputs,
     fetch_output_changes,
     fetch_project,
-    fetch_stakeholders,
-    fetch_user,
     get_connection,
-    get_system_connection,
     insert_approval_commit,
     insert_output_change,
     latest_commit_at,
     link_commit_outputs,
 )
+from api.services.authority_service import caller_may_approve, caller_may_contribute
 from api.services.run_service import _CREW_AGENT_NAMES
 
 log = logging.getLogger(__name__)
@@ -42,61 +40,25 @@ class CrewRunInProgress(Exception):
         super().__init__(f"Crew '{crew_name}' has a run in progress - cannot commit yet")
 
 
-async def _caller_matches_stakeholder_flag(
-    slug: str, payload: dict, *, flags: tuple[str, ...]
-) -> bool:
-    """Whether this caller matches a stakeholder carrying any of the given flags.
-
-    The intent is that only governing roles act, but nothing links a login to a
-    stakeholder record: the users table is empty and every login is sysadmin. So the
-    rule permits the platform operator, and otherwise matches the caller's account
-    email against a stakeholder flagged with one of `flags`. Today the first branch
-    always fires; the restriction becomes real when accounts exist, with no code
-    change.
-    """
-    if payload.get("role") == "sysadmin":
-        return True
-
-    async with get_system_connection() as sys_conn:
-        user = await fetch_user(sys_conn, username=payload.get("sub", ""))
-    email = ((user or {}).get("email") or "").strip().lower()
-    if not email:
-        # A stakeholder with no email can never be matched either - the join needs
-        # both sides to have one.
-        return False
-
-    async with get_connection(slug) as conn:
-        project = await fetch_project(conn, slug=slug)
-        if not project:
-            return False
-        stakeholders = await fetch_stakeholders(conn, project_id=project["id"])
-
-    return any(
-        ((s.get("email") or "").strip().lower() == email)
-        and any(s.get(flag) for flag in flags)
-        for s in stakeholders
-    )
-
-
 async def caller_may_commit(slug: str, payload: dict) -> bool:
     """Whether this caller may commit in this project.
 
-    Only a stakeholder flagged is_approver may commit - see
-    _caller_matches_stakeholder_flag for the shared lookup and its caveats.
+    Committing changes what the project currently says, so it is the approve gate under an
+    older name. Delegating rather than re-testing "approver" in caller_roles(...) is the
+    point: this was the fourth copy of the same two-line rule, and CLAUDE.md's own worked
+    example of what goes wrong is two copies of a WHERE clause that had already diverged
+    without anybody noticing. They had not diverged; now they cannot.
     """
-    return await _caller_matches_stakeholder_flag(slug, payload, flags=("is_approver",))
+    return await caller_may_approve(slug, payload)
 
 
 async def caller_may_submit(slug: str, payload: dict) -> bool:
     """Whether this caller may mark a crew ready for approval.
 
-    Wider than committing: a contributor who reviews but does not govern may submit.
-    The shape is otherwise identical, and carries the same caveat - the sysadmin
-    branch always fires today because the users table is empty.
+    Wider than committing: a contributor who reviews but does not govern may submit, which
+    is exactly the contribute gate. See caller_may_commit above for why this delegates.
     """
-    return await _caller_matches_stakeholder_flag(
-        slug, payload, flags=("is_reviewer", "is_approver")
-    )
+    return await caller_may_contribute(slug, payload)
 
 
 async def commit_crew(

@@ -56,18 +56,16 @@ async def seeded_script():
 
 @pytest.mark.asyncio
 async def test_reviewing_a_script_requires_reviewer_or_approver_authority(client, seeded_script):
-    """Authority comes from the stakeholder assignment - is_reviewer / is_approver - not
-    from the login role. Reuses _caller_matches_stakeholder_flag so there is exactly one
-    place this rule lives.
+    """Authority comes from caller_roles(slug, payload) - the walk from JWT to user to
+    membership to stakeholder flags - not from the login role. Reuses that one function
+    so there is exactly one place this rule lives.
 
-    Asserted by denying the gate rather than by accepting whatever the endpoint returns.
-    _caller_matches_stakeholder_flag returns True for sysadmin, and today every login is
-    sysadmin against an empty users table, so a live call always succeeds - a test that
-    accepted either 200 or 403 would pass with the gate deleted.
+    Asserted by denying the gate rather than by accepting whatever the endpoint returns:
+    a test that accepted either 200 or 403 would pass with the gate deleted.
     """
     slug, script_id = seeded_script
-    with patch("api.routers.script_reviews._caller_matches_stakeholder_flag",
-               new=AsyncMock(return_value=False)):
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value=set())):
         r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
                                json={"decision": "reviewed"})
     assert r.status_code == 403, r.text
@@ -76,18 +74,25 @@ async def test_reviewing_a_script_requires_reviewer_or_approver_authority(client
 @pytest.mark.asyncio
 async def test_approving_asks_for_approver_authority_and_reviewing_asks_for_either(
         client, seeded_script):
-    """Which flags are demanded is the rule; the status code is only its shadow. Patched
+    """Which roles are demanded is the rule; the status code is only its shadow. Patched
     where the name is looked up - api.routers.script_reviews - not where it is defined,
     because the router binds its own reference with `from ... import`."""
     slug, script_id = seeded_script
-    with patch("api.routers.script_reviews._caller_matches_stakeholder_flag",
-               new=AsyncMock(return_value=True)) as gate:
-        await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
-                           json={"decision": "reviewed"})
-        assert gate.call_args.kwargs["flags"] == ("is_reviewer", "is_approver")
-        await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
-                           json={"decision": "approved"})
-        assert gate.call_args.kwargs["flags"] == ("is_approver",)
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"reviewer"})):
+        r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                               json={"decision": "reviewed"})
+        assert r.status_code == 200, r.text
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"reviewer"})):
+        r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                               json={"decision": "approved"})
+        assert r.status_code == 403, r.text
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"approver"})):
+        r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                               json={"decision": "approved"})
+        assert r.status_code == 200, r.text
 
 
 @pytest.mark.asyncio
@@ -95,26 +100,38 @@ async def test_approving_twice_is_refused_with_409(client, seeded_script):
     """The status code is classified on AlreadyApprovedError's type, not on the wording
     of its message - deliberately not asserting a message substring here, since that
     would recouple this test to the exact wording the router no longer depends on. See
-    api/services/script_review_service.py:AlreadyApprovedError."""
+    api/services/script_review_service.py:AlreadyApprovedError.
+
+    This is about the conflict the service raises once a review already exists, not
+    about authority, so caller_roles is patched to grant approver for the whole test -
+    the client fixture's sysadmin token names no real user, and caller_roles now
+    answers empty for one, per the walk this task wires every gate onto.
+    """
     slug, script_id = seeded_script
-    # A read satisfies the separate not-yet-reviewed gate (see test_approve_gate.py) so
-    # the first approval below succeeds for the reason this test is actually about.
-    await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
-                       json={"decision": "reviewed"})
-    first = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"approver"})):
+        # A read satisfies the separate not-yet-reviewed gate (see test_approve_gate.py) so
+        # the first approval below succeeds for the reason this test is actually about.
+        await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                           json={"decision": "reviewed"})
+        first = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                                   json={"decision": "approved"})
+        assert first.status_code == 200, first.text
+        r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
                                json={"decision": "approved"})
-    assert first.status_code == 200, first.text
-    r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
-                           json={"decision": "approved"})
     assert r.status_code == 409, r.text
     assert r.json()["detail"]
 
 
 @pytest.mark.asyncio
 async def test_a_send_back_without_a_target_is_refused_with_422(client, seeded_script):
+    """Validation, not authority - caller_roles is patched to grant approver so the
+    request reaches the service's own refusal rather than the gate's."""
     slug, script_id = seeded_script
-    r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
-                           json={"decision": "changes_requested", "notes": "no"})
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"approver"})):
+        r = await client.post(f"/projects/{slug}/script-ledger/{script_id}/review",
+                               json={"decision": "changes_requested", "notes": "no"})
     assert r.status_code == 422, r.text
 
 
@@ -129,10 +146,12 @@ async def test_a_failed_notification_does_not_fail_the_request(client, seeded_sc
     convention notify_crew_ready_for_approval uses in api/routers/commits.py), so the
     name is looked up fresh from its defining module on every call rather than bound
     once at router import time - there is no separate router-module reference to patch
-    the way there is for _caller_matches_stakeholder_flag.
+    the way there is for caller_roles.
     """
     slug, script_id = seeded_script
-    with patch("api.services.commit_notify_service.notify_script_sent_back",
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"approver"})), \
+         patch("api.services.commit_notify_service.notify_script_sent_back",
                new=AsyncMock(side_effect=RuntimeError("smtp exploded"))):
         r = await client.post(
             f"/projects/{slug}/script-ledger/{script_id}/review",

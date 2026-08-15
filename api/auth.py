@@ -6,7 +6,14 @@ from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_HOURS = 24
+# Thirty days, rolled forward on every authenticated request (see api/main.py's
+# roll_session middleware) - so an active reviewer never sees the login page twice.
+ACCESS_TOKEN_EXPIRE_HOURS = 24 * 30
+# The roll above has no ceiling of its own - a token used once a month would refresh
+# forever. This is the belt to the middleware's user-existence-check braces: a session
+# started this long ago must re-authenticate even if the rolling exp would otherwise still
+# be comfortably in the future and the account still exists in good standing.
+ABSOLUTE_SESSION_EXPIRE_DAYS = 90
 
 _bearer = HTTPBearer()
 
@@ -20,10 +27,35 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(
-    username: str, role: str, secret: str, *, org_id: int | None = None
+    username: str, role: str, secret: str, *, org_id: int | None = None,
+    iat: datetime | None = None,
 ) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    payload: dict = {"sub": username, "role": role, "exp": expire}
+    """Mint a session token.
+
+    `iat` defaults to now - the moment a login, accept, or reset issues a brand new session.
+    api/main.py's roll_session middleware passes the *original* iat back in on every reissue
+    instead of taking that default, so a session's issued-at time survives every roll even
+    though `exp` keeps moving forward. That is what lets ABSOLUTE_SESSION_EXPIRE_DAYS act as
+    a ceiling the rolling expiry can approach but never outlive - without a preserved iat,
+    every roll would look like a session started right now, and the absolute cap would never
+    bind.
+
+    `exp` itself is clamped to `iat + ABSOLUTE_SESSION_EXPIRE_DAYS` when that is sooner than
+    the ordinary thirty-day rolling window - not only "future rolls get refused past the
+    cap" (roll_session's own age check) but "no single roll can mint an exp that reaches
+    past it" in the first place. Without the clamp, a roll on day eighty-nine would still
+    hand out a full thirty-day exp landing on day one-nineteen, and decode_token has no
+    other check that would catch a session outliving the cap - it only rejects an *expired*
+    token, and iat is not itself an expiry claim. For a brand-new session (iat defaults to
+    now) the clamp never binds, since now + 90 days is always later than now + 30 days.
+    """
+    now = datetime.now(timezone.utc)
+    effective_iat = iat or now
+    expire = min(
+        now + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS),
+        effective_iat + timedelta(days=ABSOLUTE_SESSION_EXPIRE_DAYS),
+    )
+    payload: dict = {"sub": username, "role": role, "exp": expire, "iat": effective_iat}
     if org_id is not None:
         payload["org_id"] = org_id
     return jwt.encode(payload, secret, algorithm=ALGORITHM)

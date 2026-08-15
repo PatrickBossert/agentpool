@@ -29,6 +29,22 @@ from api.database import fetch_project, get_connection
 SLUG = "interview-script-edit-test"
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _granted_approver():
+    """Every test in this file is about the edit path's own behaviour - versioning,
+    staleness, ledger bookkeeping - not about authority, so caller_roles is granted
+    approver on both doors throughout. The client fixture's sysadmin token names no real
+    user, and caller_roles now correctly answers empty for one, per the walk every gate
+    reads onto as of this task. The two tests further down that are actually about
+    authority override this locally with a nested patch.
+    """
+    with patch("api.routers.projects.caller_roles",
+               new=AsyncMock(return_value={"approver"})), \
+         patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"approver"})):
+        yield
+
+
 def _valid_scripts() -> dict:
     """Mirrors tests/test_sqlite_state_validation.py's _valid_scripts - the minimal script
     body that clears validate_scripts, validate_scripts_against_registry (empty registry
@@ -273,8 +289,8 @@ async def test_an_edit_with_no_base_version_still_works(client, seeded_scripts):
 #
 # ScriptReviewPanel's "Save changes" calls this PATCH and then POSTs a review, and checks
 # neither. While the PATCH used require_org_admin_or_above (a login role) and the review used
-# _caller_matches_stakeholder_flag (a stakeholder flag), the two could disagree in either
-# direction and both disagreements were silent damage:
+# the stakeholder flag, the two could disagree in either direction and both disagreements
+# were silent damage:
 #
 #   is_reviewer, not org_admin -> /my-permissions says can_review, the panel offers Save
 #                                 changes, the PATCH 403s.
@@ -283,16 +299,16 @@ async def test_an_edit_with_no_base_version_still_works(client, seeded_scripts):
 #                                 and the panel's row is stale - so retrying 409s, naming
 #                                 someone else as the editor. It was them.
 #
-# Latent while every login is sysadmin against an empty users table, which is exactly why no
-# existing test could see it: they all pass through the helper's first branch. These patch the
-# helper where each router *looks it up*, per CLAUDE.md's patch-target rule.
+# Both endpoints now read caller_roles(slug, payload) - one function - so they cannot
+# disagree. These patch it where each router *looks it up*, per CLAUDE.md's patch-target
+# rule, overriding this module's autouse grant to prove the refusal path still holds.
 
 @pytest.mark.asyncio
 async def test_a_caller_the_shared_authority_refuses_cannot_edit(client, seeded_scripts):
     slug = seeded_scripts
     before = (await client.get(f"/projects/{slug}/interview-scripts")).json()
-    with patch("api.routers.projects._caller_matches_stakeholder_flag",
-               new=AsyncMock(return_value=False)):
+    with patch("api.routers.projects.caller_roles",
+               new=AsyncMock(return_value=set())):
         r = await client.patch(
             f"/projects/{slug}/interview-scripts/SC-001",
             json={"script": {**before["SC-001"], "node_label": "Not mine to change"}})
@@ -306,28 +322,28 @@ async def test_a_caller_the_shared_authority_refuses_cannot_edit(client, seeded_
 @pytest.mark.asyncio
 async def test_the_edit_asks_the_same_question_as_the_review_it_is_paired_with(
         client, seeded_scripts):
-    """Same helper, same flags - so the panel's two calls cannot disagree.
+    """Same function, same roles - so the panel's two calls cannot disagree.
 
-    Asserted on the flags rather than on two 200s: both endpoints returning 200 for a
-    sysadmin is true whatever authority either consults, which is precisely how the
-    mismatch survived the branch.
+    Asserted on the roles demanded rather than on two 200s: both endpoints returning 200
+    for a sysadmin is true whatever authority either consults, which is precisely how the
+    mismatch survived the branch. A caller holding only "reviewer" - not "approver" -
+    is used because that is exactly the case the two doors could previously disagree on.
     """
     slug = seeded_scripts
     before = (await client.get(f"/projects/{slug}/interview-scripts")).json()
 
-    with patch("api.routers.projects._caller_matches_stakeholder_flag",
-               new=AsyncMock(return_value=True)) as edit_gate:
+    with patch("api.routers.projects.caller_roles",
+               new=AsyncMock(return_value={"reviewer"})):
         r = await client.patch(f"/projects/{slug}/interview-scripts/SC-001",
                                 json={"script": {**before["SC-001"], "node_label": "Edited"}})
     assert r.status_code == 200, r.text
 
-    with patch("api.routers.script_reviews._caller_matches_stakeholder_flag",
-               new=AsyncMock(return_value=True)) as review_gate:
+    # 'edited' - not 'reviewed' - matches the sequence ScriptReviewPanel.tsx's "Save
+    # changes" actually sends: the PATCH above, then recordReview('edited'). Both take
+    # the same {"reviewer", "approver"} branch, so this changes no authority coverage,
+    # but it is the real pairing the docstring above is about.
+    with patch("api.routers.script_reviews.caller_roles",
+               new=AsyncMock(return_value={"reviewer"})):
         r = await client.post(f"/projects/{slug}/script-ledger/SC-001/review",
                                json={"decision": "edited"})
     assert r.status_code == 200, r.text
-
-    assert edit_gate.call_args.kwargs["flags"] == ("is_reviewer", "is_approver")
-    assert edit_gate.call_args.kwargs["flags"] == review_gate.call_args.kwargs["flags"], (
-        "the save and the review it records must answer to the same authority"
-    )

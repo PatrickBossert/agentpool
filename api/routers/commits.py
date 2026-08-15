@@ -18,6 +18,7 @@ from api.database import (
     output_exists,
     set_project_status,
 )
+from api.services.authority_service import caller_may_contribute
 from api.services.autostart_service import start_ready_downstream
 from api.services.commit_service import (
     CrewRunInProgress,
@@ -170,8 +171,18 @@ async def get_crew_readiness(slug: str, payload: dict = Depends(require_any_auth
 async def create_change(
     slug: str, req: ChangeRequest, payload: dict = Depends(require_any_auth)
 ):
-    """Record a change asked of an output. The only door in this project is a note."""
+    """Record a change asked of an output. The only door in this project is a note.
+
+    Gated like a review rather than like a commit: a change request is feedback on the
+    work, and the agent reads it back on the next run - so it is the same authority as
+    submitting one, not the narrower authority to commit. The three doors above already
+    call caller_may_commit or caller_may_submit; this one had nothing but membership.
+    """
     await check_project_access(slug, payload)
+    if not await caller_may_contribute(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only a reviewer or approver may request a change"
+        )
     _require_project(slug)
 
     async with get_connection(slug) as conn:

@@ -9,6 +9,25 @@ import pytest
 from api.config import get_settings
 from tests.test_value_chain_migration import MERMAID, REGISTRY
 
+@pytest.fixture(autouse=True)
+def _granted_authority():
+    """This module is about what migration builds and what it refuses, not about who may run
+    it. The client fixture's sysadmin token names no real user, so caller_may_approve
+    correctly answers False for it.
+
+    Not a weakening of the gate: tests/test_write_door_authority.py drives every one of
+    these doors over HTTP as a real member with and without the flag, so deleting the gate
+    fails there. Patched on the router module, where the name is looked up - the routers
+    bind their own reference via `from ... import`, so patching authority_service itself
+    would miss them (CLAUDE.md's four-crew-tests entry).
+    """
+    from unittest.mock import AsyncMock, patch
+
+    with patch("api.routers.value_chain.caller_may_approve", new=AsyncMock(return_value=True)):
+        yield
+
+
+
 SLUG = "vc-migrate-test"
 PROJECT = {
     "client_slug": SLUG,

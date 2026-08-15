@@ -177,6 +177,140 @@ no-ops — notes that save, display in the UI, and never reach the agent. `Rerun
 out**, posting one review per crew output, so anything assembling review feedback into a prompt
 must deduplicate or it repeats the same instruction N times.
 
+Authority on a project is read, never inferred. `caller_roles(slug, payload)` in
+`api/services/authority_service.py` walks JWT to `users`, to `project_memberships` for that
+slug, to the `stakeholders` row it names, and returns the roles that row carries -
+`project_admin`, `governor`, `approver`, `reviewer`, or `participant`. It previously matched
+the caller's account email against a stakeholder email - `_caller_matches_stakeholder_flag`
+in `api/services/commit_service.py` - behind an
+`if payload.get("role") == "sysadmin": return True` that did all the work in practice because
+`users` was empty, granting content authority to whoever could administer accounts.
+
+`is_sys_admin` is global and implies `project_admin` on every project, so a newly created
+project - which has no stakeholders, and therefore nobody the walk could ever reach - can be
+bootstrapped. It implies nothing about content. Administration and content are different axes.
+No gate reads `project_admin` or `governor`. Both are carried and reported, never enforced -
+stakeholder administration is still gated on the login role via `require_org_admin_or_above`.
+Every gate tests one of exactly two conditions, and the pair is stated once in
+`authority_service.py`:
+
+| Gate | Roles | Where |
+|------|-------|-------|
+| `caller_may_contribute` | `{reviewer, approver}` | `POST /{slug}/review`, `PATCH /{slug}/reviews/{id}`, `POST /{slug}/changes`, `PATCH /{slug}/validation-warnings/{id}` |
+| `caller_may_approve` | `{approver}` | `DELETE /{slug}/reviews/{id}`, `PUT` and `POST .../migrate` on `/{slug}/value-chain-model`, `POST /{slug}/outputs/{id}/revert`, `POST /{slug}/agent-chat/upload`, `POST /{slug}/agent-chat/link` |
+
+Four older call sites hold the same two rules under their own names, and are *not* uniform -
+the earlier wording here said they "all test for `reviewer` or `approver`", which was wrong of
+two of them. `commit_service.caller_may_commit` and `caller_may_submit` now **delegate** to
+`caller_may_approve` and `caller_may_contribute` rather than restating the role sets, so the
+rule exists once; the remaining two read `caller_roles` inline and are not uniform.
+Precisely: `script_reviews.py`'s **approval** branch tests `{approver}` alone; its
+non-approval branches, `projects.py`'s script edit, and `permissions.py`'s report test the
+disjunction.
+
+**`check_project_access` is not one of these gates.** It asks whether the caller belongs to
+the engagement, and membership *is* read access by design - its `reviewer` branch returns on
+a `project_memberships` row with no role test whatever, and its `sysadmin` and `org_admin`
+branches return before looking at anything. That was safe only while `users` held no rows;
+the invite loop creates the principal class it was never guarding against.
+
+**Two axes, and a new write door belongs to exactly one of them.** Which it is turns on what
+the door writes, not on how consequential it feels:
+
+| Axis | Asked by | Decided | Scope |
+|------|----------|---------|-------|
+| **Administration** | `Depends(require_org_admin_or_above)` (or `require_sysadmin`) | before the handler runs, from the JWT's `role` | the login, globally |
+| **Content** | `caller_may_contribute` / `caller_may_approve` in the handler body, after `check_project_access` | from the walk | this person, this project |
+
+*Administration* is running the engagement: stakeholders and their roles, campaigns and
+reminder emails, the document library, starting a run or an orchestration, PAM assignment,
+and `PATCH /{slug}/settings`. Twenty-five project-scoped doors across `campaigns.py` (10),
+`stakeholders.py` (7), `documents.py` (3), `assignment.py` (2), `orchestrate.py`, `run.py`
+and `projects.py` take `require_org_admin_or_above` and **no** content gate, as does project
+creation itself. That is deliberate: a consultant configures the engagement, and a
+client-side approver does not, however senior they are on the project.
+
+*Content* is acting on what the crews produced: reviews, change requests, warning
+dispositions, commits, submissions, activation, the canonical value chain, reverts,
+milestone re-baselining, script reviews and script edits. Sixteen doors ask the walk.
+
+The two axes cross in exactly one place, on purpose. `POST /{slug}/agent-chat/upload` is
+approver-gated while `POST /{slug}/documents/upload` is administration - the same `documents`
+row and the same Chroma ingest, reached by different people, because the chat door exists for
+the approver reading an agent's output. It is the one door where content authority buys a
+corpus write, and it is gated on `caller_may_approve` (the stricter of the two) for that
+reason.
+
+**So, for a new door:** does it change how the engagement is *run* - who is on it, what is
+scheduled, what gets started, what is configured? Administration; copy its neighbours in that
+router. Does it record an opinion about, or change, what the project currently *says*?
+Content - `caller_may_contribute` for the former, `caller_may_approve` for the latter. Never
+`check_project_access` alone, which is read access. A pure read needs neither.
+
+Four sets of writes have neither gate. The first three are deliberate:
+
+- `POST /{slug}/agent-chat` and `DELETE /{slug}/agent-chat/history` write only rows keyed to
+  the caller's own `username` - a personal scratchpad attached to read access, not authority.
+- `/api/interviews/{session_token}/...` authenticates by the session token itself; a
+  participant has no login for the walk to start from.
+- `/auth/*`, `/admin/skills/*`, templates and skill notes carry no slug, so there is nothing
+  to walk. They take login-role dependencies instead.
+- **Not deliberate:** `milestones.py` and `nonworking.py` alias `require_any_auth` to the name
+  `get_current_user` and call neither `check_project_access` nor a content gate, so every door
+  there except `POST /{milestone_id}/rebaseline` (which asks `caller_may_commit`) is a
+  project-scoped write behind bare authentication. `POST /{slug}/branding/image` is the same
+  under `get_token_payload`. Pre-existing, untouched, and not the pattern to copy.
+
+Clearing a stakeholder's last non-participant flag, or deleting the row, removes the
+`project_memberships` row - `_revoke_membership_if_no_longer_privileged` in
+`stakeholders.py`, the mirror of `_issue_invite_if_newly_privileged` beside it. Without that
+the flags said one thing and `check_project_access` another. The `users` row stays: it is a
+global login that may hold memberships on other engagements. Revocation is keyed on
+`stakeholder_id`, not on the email, because the email may have been edited since the invite
+was accepted - and an administrator-granted membership (`insert_project_membership`, NULL
+`stakeholder_id`) is deliberately out of its reach. Re-granting the role afterwards issues a
+fresh invite, which is the route back: redeeming it restores the membership and sends the
+person to sign in with the password they already have.
+
+**Changing a stakeholder's email is a change of person, not of detail.** "Dougie has left,
+Sam has the seat now" is the ordinary handover edit, and it moves no flag - so the two
+transition handlers above, which both key on the *role* changing, saw nothing happen while
+the membership (keyed on `stakeholder_id`, which an email edit cannot dislodge) kept the
+departed holder's login reading the engagement indefinitely. `_revoke_membership_if_
+reassigned` cuts it, and the `_is_reassignment` conjunct in `_issue_invite_if_newly_
+privileged` invites the arriving holder as the fresh grant they are: both halves, in that
+order, or the seat has either two occupants or none. Addresses are compared
+`.strip().lower()`, matching `_stakeholder_matches_invite` rather than inventing a third
+convention, so a casing or whitespace correction is not a handover - it must not be, since
+`users.username` is `TEXT UNIQUE` under binary collation and a spurious handover would revoke
+a live membership and then invite an address whose login already holds one. The departed
+holder's unredeemed invite needs no clean-up: `_stakeholder_matches_invite` re-reads the
+row's own email at redemption and refuses a token that no longer matches it.
+
+`is_sys_admin` is derived from `role` by `insert_user` and `update_user`, not passed in.
+Nothing wrote it before, so a sysadmin created through `POST /auth/users` carried
+`is_sys_admin=0` and behaved differently under `caller_roles` from one flagged by hand.
+
+Because it is derived, **every path that can set `role` needs the caller guard**, not only
+the creation path. `svc_create_user` refuses an `org_admin` who names `sysadmin`;
+`svc_update_user` carries the same rule, raising `ForbiddenRoleChange` (409) rather than
+returning `None`, which on that function already means "no such user" and would have answered
+a refused promotion with 404. Without it an `org_admin` could create a reviewer and promote
+it - or promote themselves - and `caller_roles` would read the result back as `project_admin`
+on every project in the system.
+
+`caller_roles` must never create a database. It returns the roles gathered so far rather than
+calling `get_connection(slug)` on a slug whose file does not exist, because every gated
+endpoint calls it and a caller probing slugs would otherwise materialise one file per guess.
+`_stakeholder_matches_invite` in `invite_service.py` carries the same guard, for the same
+reason.
+
+Setting any role other than `is_participant` on a person with no login issues an invite; a
+participant never gets one, because they are reached by interview URL and token. One live
+invite per person **per project** - not per person, since a second engagement must not
+overwrite the first one's `project_slug` and `stakeholder_id` - re-issuable when the email is
+lost, and the same `auth_tokens` table serves password resets.
+
 ---
 
 ## Frontend conventions

@@ -1,9 +1,12 @@
 # tests/test_commit_endpoint.py
 """Committing a crew's outputs, and who is allowed to.
 
-The identity model cannot yet express "only approvers commit": the users table is
-empty and every login is sysadmin. The rule is written so it is correct now and
-tightens by itself once per-user accounts exist.
+Authority is read from caller_roles(slug, payload) - see api/services/authority_service.py.
+Only test_caller_may_commit_matches_approver_by_membership_link exercises that rule
+directly; every other test here is about the commit/readiness/autostart machinery, so
+caller_may_commit and caller_may_submit are granted throughout by the autouse fixture
+below - the client fixture's sysadmin token names no real user, so an unpatched call
+would 403 before any of that machinery ran.
 """
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -14,6 +17,20 @@ from api.config import get_settings
 from api.database import get_connection
 
 SLUG = "commit-api-test"
+
+
+@pytest.fixture(autouse=True)
+def _granted_approver(request):
+    if "real_authority" in request.keywords:
+        # This test proves caller_may_commit itself - patching it here would make the
+        # thing under test into the thing granting the test its pass.
+        yield
+        return
+    with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)), \
+         patch("api.routers.commits.caller_may_submit", new=AsyncMock(return_value=True)):
+        yield
+
+
 PROJECT = {
     "client_slug": "commit-api-test",
     "llm_mode": "standard",
@@ -300,18 +317,39 @@ async def test_a_role_with_no_project_access_is_refused_before_approval_is_check
 
 
 @pytest.mark.asyncio
-async def test_caller_may_commit_matches_approver_by_email(client):
-    """The rule that will bite once real accounts exist.
+@pytest.mark.real_authority
+async def test_caller_may_commit_matches_approver_by_membership_link(client, tmp_path, monkeypatch):
+    """The rule that used to bite once real accounts existed, now proven for real.
 
-    A "reviewer" with project membership clears check_project_access, so this
-    exercises caller_may_commit itself: refused while no stakeholder record matches
-    the caller's account email as an approver, then let through once one exists.
-    Proving both halves matters - a caller_may_commit that always returned False
-    would still pass a 403-only test.
+    caller_may_commit reads caller_roles: JWT -> user -> membership -> the linked
+    stakeholder row's flags. A "reviewer" with project membership clears
+    check_project_access, so this exercises caller_may_commit itself: refused while
+    the membership names no stakeholder, then let through once link_membership points
+    it at one flagged is_approver.
+
+    A stakeholder whose email happens to match the caller's account email, with no
+    link, must still refuse - that coincidence is exactly what the previous
+    (email-matching) implementation traded on, and the walk this task wires every
+    gate onto does not check membership. Proving both halves matters - a
+    caller_may_commit that always returned False would still pass a 403-only test,
+    and one that fell back to an email match would silently reopen the hole.
+
+    Isolated onto its own DATABASE_DIR, per CLAUDE.md's rerun trap: this test writes a
+    system-db user, a system-db membership, and a project-db stakeholder that share a
+    UNIQUE(user_id, project_slug) constraint with nothing scoped to this test's own row.
+    Run against the shared /tmp/agentpool_test, a second run's insert_project_membership
+    hits that constraint, returns False silently (api/database.py's insert helpers do not
+    raise on a duplicate), and the *first* run's link_membership survives - stale, but
+    pointing at a stakeholder id (1) the project db reissues on every fresh run, so the
+    second run's deliberately-unlinked stakeholder resolves against the first run's stale
+    link and the "still refused" assertion below gets a 201 instead. That failure is
+    byte-identical to the one a reintroduced email-match hole would produce at the same
+    assertion, which is exactly why this test must not be able to poison itself.
     """
     from httpx import ASGITransport, AsyncClient
 
     from api.auth import create_access_token
+    from api.config import get_settings
     from api.database import (
         fetch_project,
         fetch_user,
@@ -320,8 +358,12 @@ async def test_caller_may_commit_matches_approver_by_email(client):
         insert_project_membership,
         insert_stakeholder,
         insert_user,
+        link_membership,
     )
     from api.main import app
+
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
 
     await client.post("/projects", json=PROJECT)
 
@@ -340,20 +382,19 @@ async def test_caller_may_commit_matches_approver_by_email(client):
         base_url="http://test",
         headers={"Authorization": f"Bearer {token}"},
     ) as ac:
-        # No stakeholder yet matches this caller's email as an approver.
+        # No stakeholder is linked to this membership yet.
         refused = await ac.post(
             "/projects/commit-api-test/commits",
             json={"crew_name": "discovery_mapping", "notes": ""},
         )
         assert refused.status_code == 403
 
-        # StakeholderIn (api/routers/stakeholders.py:45-46) does declare is_reviewer
-        # and is_approver, so posting through the endpoint would work too - but going
-        # straight to the database keeps this a unit test of caller_may_commit, not
-        # of the stakeholders endpoint's auth and validation.
+        # A stakeholder sharing the caller's email exists, but nothing links it to the
+        # membership - so it must confer nothing. This is the exact coincidence the old
+        # email-matching rule traded on.
         async with get_connection(SLUG) as conn:
             project = await fetch_project(conn, slug=SLUG)
-            await insert_stakeholder(
+            stakeholder_id = await insert_stakeholder(
                 conn,
                 project_id=project["id"],
                 name="Reviewer One",
@@ -361,8 +402,22 @@ async def test_caller_may_commit_matches_approver_by_email(client):
                 is_approver=True,
             )
 
+        still_refused = await ac.post(
+            "/projects/commit-api-test/commits",
+            json={"crew_name": "discovery_mapping", "notes": ""},
+        )
+        assert still_refused.status_code == 403
+
+        # Linking the membership to that stakeholder is what actually grants it.
+        async with get_system_connection() as sys_conn:
+            await link_membership(
+                sys_conn, user_id=user["id"], project_slug=SLUG, stakeholder_id=stakeholder_id
+            )
+
         allowed = await ac.post(
             "/projects/commit-api-test/commits",
             json={"crew_name": "discovery_mapping", "notes": ""},
         )
         assert allowed.status_code == 201
+
+    get_settings.cache_clear()

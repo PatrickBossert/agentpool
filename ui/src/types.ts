@@ -153,6 +153,17 @@ export interface TokenResponse {
   token_type: string
 }
 
+// POST /auth/accept's response - unlike /auth/login, accepting an invite does not always
+// mint a session: redeeming one for an email that already has a login only grants the
+// project membership, since that person already holds credentials and must sign in with
+// them (see api/routers/invites.py's CRITICAL note). access_token is null in that case.
+export interface AcceptResponse {
+  access_token: string | null
+  token_type: string
+  already_registered?: boolean
+  detail?: string
+}
+
 export interface UserPayload {
   sub: string
   role: 'sysadmin' | 'org_admin' | 'reviewer'
@@ -746,8 +757,8 @@ export interface ValidationWarning {
 }
 
 // What the caller may do on one project, asked once rather than inferred from a 403.
-// Mirrors _caller_matches_stakeholder_flag's two questions - review authority is the
-// wider of the two, approval authority the narrower.
+// Mirrors caller_roles' two questions (api/services/authority_service.py) - review
+// authority is the wider of the two, approval authority the narrower.
 export interface MyPermissions {
   can_review: boolean
   can_approve: boolean

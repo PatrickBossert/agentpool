@@ -13,7 +13,7 @@ from api.database import (
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
 # The one authority for "may this caller act on this project's scripts", shared with
 # api/routers/script_reviews.py and api/routers/permissions.py rather than restated.
-from api.services.commit_service import _caller_matches_stakeholder_flag
+from api.services.authority_service import caller_roles
 from api.services.project_service import (
     create_project,
     get_project_status,
@@ -398,25 +398,23 @@ async def patch_interview_script(
     content, never the anchor, and letting the body carry node_id would reopen the
     id-moving hole this branch exists to close.
 
-    Authority is the stakeholder flag, not the login role. This used to be
-    require_org_admin_or_above while POST /script-ledger/{id}/review next door used
-    _caller_matches_stakeholder_flag, and ScriptReviewPanel's "Save changes" calls both in
-    sequence - so the two could disagree, in either direction, and the panel checked
-    neither. An is_reviewer whose login is not org_admin was offered the button by
-    /my-permissions and refused by the PATCH. Worse, an org_admin who is not a flagged
-    stakeholder got the opposite: the PATCH succeeded, the follow-up review 403'd, the
-    artefact was versioned with no review recorded, and the panel's own row was left stale -
-    so retrying returned 409 naming someone else as the editor. It was them.
+    Authority is read from caller_roles, not the login role. This used to be
+    require_org_admin_or_above while POST /script-ledger/{id}/review next door used the
+    stakeholder flag, and ScriptReviewPanel's "Save changes" calls both in sequence - so
+    the two could disagree, in either direction, and the panel checked neither. An
+    is_reviewer whose login is not org_admin was offered the button by /my-permissions
+    and refused by the PATCH. Worse, an org_admin who is not a flagged stakeholder got
+    the opposite: the PATCH succeeded, the follow-up review 403'd, the artefact was
+    versioned with no review recorded, and the panel's own row was left stale - so
+    retrying returned 409 naming someone else as the editor. It was them.
 
-    Same flags as the review endpoint's non-approval path, which makes /my-permissions'
-    can_review true for the thing it is named after: editing a script and reviewing it are
-    now the same authority. Latent today - every login is sysadmin against an empty users
-    table - and real the moment accounts exist.
+    Same roles as the review endpoint's non-approval path, which makes /my-permissions'
+    can_review true for the thing it is named after: editing a script and reviewing it
+    are the same authority.
     """
     await check_project_access(slug, payload)
-    if not await _caller_matches_stakeholder_flag(
-        slug, payload, flags=("is_reviewer", "is_approver")
-    ):
+    roles = await caller_roles(slug, payload)
+    if not (roles & {"reviewer", "approver"}):
         raise HTTPException(status_code=403, detail="Not permitted to edit this script")
 
     from agents.tools.sqlite_state import SQLiteStateTool

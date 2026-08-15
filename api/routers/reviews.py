@@ -1,4 +1,13 @@
 # api/routers/reviews.py
+"""The two review doors, and the removal of a review.
+
+check_project_access is membership, and membership is read access - it carries no role
+test at all, so on its own it let anybody who had ever accepted an invite record a
+review, resolve somebody else's, or delete one. Each write door below therefore also
+asks the authority walk: recording feedback needs `caller_may_contribute`, and deleting
+a review somebody else recorded needs `caller_may_approve`. See
+api/services/authority_service.py for why those are the two gates.
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from aiosqlite import IntegrityError as AioSQLiteIntegrityError
@@ -13,6 +22,7 @@ from api.database import (
     update_review,
     delete_hitl_review,
 )
+from api.services.authority_service import caller_may_approve, caller_may_contribute
 from api.services.project_service import get_pending_reviews
 
 router = APIRouter(prefix="/projects", tags=["reviews"])
@@ -22,12 +32,21 @@ class ReviewRequest(BaseModel):
     output_id: int
     decision: str  # "approved" | "changes_requested"
     notes: str = ""
+    # Self-declared, and left that way deliberately for now: the recorded author is
+    # whatever the body says, not payload["sub"]. The gate below establishes that the
+    # caller may review at all, which is the hole that mattered; who a stored review is
+    # attributed to is a separate change, and one RerunDialog and AgentStatusTab both
+    # depend on the current shape of.
     reviewer: str = "consultant"
 
 
 @router.post("/{slug}/review", status_code=201)
 async def submit_review(slug: str, req: ReviewRequest, payload: dict = Depends(require_any_auth)):
     await check_project_access(slug, payload)
+    if not await caller_may_contribute(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only a reviewer or approver may review this project's work"
+        )
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     async with get_connection(slug) as conn:
@@ -80,6 +99,10 @@ class HITLReviewRequest(BaseModel):
 @router.patch("/{slug}/reviews/{review_id}", status_code=200)
 async def resolve_hitl_review(slug: str, review_id: int, req: HITLReviewRequest, payload: dict = Depends(require_any_auth)):
     await check_project_access(slug, payload)
+    if not await caller_may_contribute(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only a reviewer or approver may resolve a review"
+        )
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     if req.intent not in _INTENTS:
@@ -113,7 +136,13 @@ async def resolve_hitl_review(slug: str, review_id: int, req: HITLReviewRequest,
 
 @router.delete("/{slug}/reviews/{review_id}", status_code=204)
 async def delete_review(slug: str, review_id: int, payload: dict = Depends(require_any_auth)):
+    """Remove a review. Approver-gated, unlike recording one: this discards somebody
+    else's recorded judgement, and there is no record left afterwards to say it happened."""
     await check_project_access(slug, payload)
+    if not await caller_may_approve(slug, payload):
+        raise HTTPException(
+            status_code=403, detail="Only an approver may delete a review"
+        )
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     async with get_connection(slug) as conn:

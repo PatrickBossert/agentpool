@@ -280,6 +280,8 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
             is_participant      INTEGER NOT NULL DEFAULT 0,
             is_reviewer         INTEGER NOT NULL DEFAULT 0,
             is_approver         INTEGER NOT NULL DEFAULT 0,
+            is_project_admin    INTEGER NOT NULL DEFAULT 0,
+            is_governor         INTEGER NOT NULL DEFAULT 0,
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -294,9 +296,11 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
         ("entity",         "TEXT NOT NULL DEFAULT ''"),
         ("mobile",         "TEXT NOT NULL DEFAULT ''"),
         ("comms_channel",  "TEXT NOT NULL DEFAULT 'email'"),
-        ("is_participant", "INTEGER NOT NULL DEFAULT 0"),
-        ("is_reviewer",    "INTEGER NOT NULL DEFAULT 0"),
-        ("is_approver",    "INTEGER NOT NULL DEFAULT 0"),
+        ("is_participant",   "INTEGER NOT NULL DEFAULT 0"),
+        ("is_reviewer",      "INTEGER NOT NULL DEFAULT 0"),
+        ("is_approver",      "INTEGER NOT NULL DEFAULT 0"),
+        ("is_project_admin", "INTEGER NOT NULL DEFAULT 0"),
+        ("is_governor",      "INTEGER NOT NULL DEFAULT 0"),
     ]:
         if col not in cols:
             await conn.execute(f"ALTER TABLE stakeholders ADD COLUMN {col} {defn}")
@@ -430,6 +434,23 @@ async def _migrate_interview_sessions_script_id(conn: aiosqlite.Connection) -> N
     cols = {row[1] for row in await cur.fetchall()}
     if "script_id" not in cols:
         await conn.execute("ALTER TABLE interview_sessions ADD COLUMN script_id TEXT")
+    await conn.commit()
+
+
+async def _migrate_stakeholder_roles(conn: aiosqlite.Connection) -> None:
+    """The two roles the stakeholder record was missing.
+
+    is_participant, is_reviewer, and is_approver already lived here; project_admin and
+    governor complete the set rather than starting a second one. Authority is then read
+    from the row that holds the person's name and address, instead of being inferred by
+    matching that address against a separate account.
+    """
+    cur = await conn.execute("PRAGMA table_info(stakeholders)")
+    cols = {row[1] for row in await cur.fetchall()}
+    for name in ("is_project_admin", "is_governor"):
+        if name not in cols:
+            await conn.execute(
+                f"ALTER TABLE stakeholders ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
     await conn.commit()
 
 
@@ -794,9 +815,16 @@ async def _migrate_script_reviews(conn: aiosqlite.Connection) -> None:
             notes       TEXT    NOT NULL DEFAULT '',
             at_version  INTEGER,
             return_to   TEXT,
+            forced      INTEGER NOT NULL DEFAULT 0,
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    async with conn.execute("PRAGMA table_info(script_reviews)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "forced" not in cols:
+        await conn.execute(
+            "ALTER TABLE script_reviews ADD COLUMN forced INTEGER NOT NULL DEFAULT 0"
+        )
     await conn.commit()
 
 
@@ -1296,7 +1324,7 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # runs again after a database's first post-upgrade open in a process - there is no test
 # that catches a missed bump, because none can: it is a fact about this constant, not
 # about behaviour.
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 7
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1401,6 +1429,7 @@ async def get_connection(slug: str):
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
             await _migrate_interview_sessions_script_id(conn)
+            await _migrate_stakeholder_roles(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)
             await _migrate_run_inputs_agent_scope(conn)
@@ -2300,6 +2329,8 @@ async def insert_stakeholder(
     is_participant: bool = False,
     is_reviewer: bool = False,
     is_approver: bool = False,
+    is_project_admin: bool = False,
+    is_governor: bool = False,
 ) -> int:
     """Insert a stakeholder row. Returns new id."""
     cur = await conn.execute(
@@ -2309,8 +2340,8 @@ async def insert_stakeholder(
             activity, disposition, location, country_code, timezone,
             preferred_language, currency,
             level, entity, mobile, comms_channel,
-            is_participant, is_reviewer, is_approver)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            is_participant, is_reviewer, is_approver, is_project_admin, is_governor)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             project_id, name, job_title, organisation, email, slack_handle,
             _json.dumps(stakeholder_groups or []),
@@ -2320,6 +2351,7 @@ async def insert_stakeholder(
             location, country_code, timezone, preferred_language, currency,
             level, entity, mobile, comms_channel,
             int(is_participant), int(is_reviewer), int(is_approver),
+            int(is_project_admin), int(is_governor),
         ),
     )
     await conn.commit()
@@ -2333,6 +2365,8 @@ def _deserialize_stakeholder(row: dict) -> dict:
     row["is_participant"] = bool(row.get("is_participant", 0))
     row["is_reviewer"] = bool(row.get("is_reviewer", 0))
     row["is_approver"] = bool(row.get("is_approver", 0))
+    row["is_project_admin"] = bool(row.get("is_project_admin", 0))
+    row["is_governor"] = bool(row.get("is_governor", 0))
     return row
 
 
@@ -2365,7 +2399,7 @@ _STAKEHOLDER_UPDATABLE_FIELDS = frozenset({
     "activity", "disposition", "location", "country_code", "timezone",
     "preferred_language", "currency",
     "level", "entity", "mobile", "comms_channel",
-    "is_participant", "is_reviewer", "is_approver",
+    "is_participant", "is_reviewer", "is_approver", "is_project_admin", "is_governor",
 })
 
 
@@ -2384,7 +2418,8 @@ async def update_stakeholder(
     for key in ("stakeholder_groups", "value_streams"):
         if key in fields and isinstance(fields[key], list):
             fields[key] = _json.dumps(fields[key])
-    for key in ("is_participant", "is_reviewer", "is_approver"):
+    for key in ("is_participant", "is_reviewer", "is_approver",
+                "is_project_admin", "is_governor"):
         if key in fields:
             fields[key] = int(bool(fields[key]))
 
@@ -2646,6 +2681,7 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             role        TEXT NOT NULL DEFAULT 'sysadmin',
             hashed_pw   TEXT NOT NULL,
             project_slug TEXT,
+            is_sys_admin INTEGER NOT NULL DEFAULT 0,
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -2687,6 +2723,7 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             project_slug TEXT    NOT NULL,
+            stakeholder_id INTEGER,
             created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, project_slug)
         );
@@ -2734,6 +2771,25 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             id           INTEGER PRIMARY KEY CHECK (id = 1),
             last_tick_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash     TEXT    NOT NULL UNIQUE,
+            email          TEXT    NOT NULL,
+            project_slug   TEXT,
+            stakeholder_id INTEGER,
+            purpose        TEXT    NOT NULL,
+            expires_at     DATETIME NOT NULL,
+            used_at        DATETIME,
+            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- issue_invite/reissue_invite/issue_reset all look up "the live row for this
+        -- (email, purpose)" before writing. Without this index that lookup is a full table
+        -- scan, and it is on the unauthenticated /auth/reset-request path - growing linearly
+        -- with table size is exactly the property token_hash's own index was added to close
+        -- on the accept path.
+        CREATE INDEX IF NOT EXISTS idx_auth_tokens_email_purpose ON auth_tokens(email, purpose);
     """)
     await conn.commit()
 
@@ -2765,6 +2821,17 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
         await conn.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
     # Migrate legacy 'consultant' role to 'sysadmin'
     await conn.execute("UPDATE users SET role='sysadmin' WHERE role='consultant'")
+    await conn.commit()
+
+    # Column upgrades for existing system databases: CREATE TABLE IF NOT EXISTS above does
+    # nothing once the table already exists, so new columns need an explicit ALTER TABLE.
+    for table, column, decl in (
+        ("users", "is_sys_admin", "INTEGER NOT NULL DEFAULT 0"),
+        ("project_memberships", "stakeholder_id", "INTEGER"),
+    ):
+        cur = await conn.execute(f"PRAGMA table_info({table})")
+        if column not in {row[1] for row in await cur.fetchall()}:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
     await conn.commit()
 
 
@@ -2931,11 +2998,19 @@ async def insert_user(
     hashed_pw: str,
     project_slug: str | None = None,
 ) -> bool:
-    """Returns True if inserted, False if username already exists."""
+    """Returns True if inserted, False if username already exists.
+
+    is_sys_admin is derived from the role rather than passed in, because it is not
+    independent of it and nothing was setting it: every account created through
+    POST /admin/users got role='sysadmin' with is_sys_admin=0, and behaved differently
+    under caller_roles - which reads only the column - from one set up by hand. Two
+    sysadmins, same role string, different authority, nothing on either row to say why.
+    """
     try:
         await conn.execute(
-            "INSERT INTO users (username, email, role, hashed_pw, project_slug) VALUES (?,?,?,?,?)",
-            (username, email, role, hashed_pw, project_slug),
+            "INSERT INTO users (username, email, role, hashed_pw, project_slug, is_sys_admin)"
+            " VALUES (?,?,?,?,?,?)",
+            (username, email, role, hashed_pw, project_slug, 1 if role == "sysadmin" else 0),
         )
         await conn.commit()
         return True
@@ -3346,6 +3421,23 @@ async def insert_project_membership(
         return False
 
 
+async def link_membership(
+    conn: aiosqlite.Connection, *, user_id: int, project_slug: str, stakeholder_id: int
+) -> None:
+    """Point a login at the person record it is on this project.
+
+    Upserts on the existing UNIQUE(user_id, project_slug): a person has one membership per
+    engagement, and re-linking corrects it rather than creating a second.
+    """
+    await conn.execute(
+        "INSERT INTO project_memberships (user_id, project_slug, stakeholder_id)"
+        " VALUES (?,?,?)"
+        " ON CONFLICT(user_id, project_slug) DO UPDATE SET stakeholder_id=excluded.stakeholder_id",
+        (user_id, project_slug, stakeholder_id),
+    )
+    await conn.commit()
+
+
 async def delete_project_membership(
     conn: aiosqlite.Connection, *, user_id: int, project_slug: str
 ) -> None:
@@ -3354,6 +3446,33 @@ async def delete_project_membership(
         (user_id, project_slug),
     )
     await conn.commit()
+
+
+async def delete_project_membership_by_stakeholder(
+    conn: aiosqlite.Connection, *, project_slug: str, stakeholder_id: int
+) -> int:
+    """Unlink whatever login this project's stakeholder row is reached through.
+
+    The exact inverse of link_membership, and keyed the same way. Deliberately not
+    expressed as "look the email up in users, then delete_project_membership": the
+    stakeholder's email may have been edited since the invite was accepted, in which case
+    it no longer matches the users row that membership actually points at, and the
+    revocation would find nothing and report success. stakeholder_id is the link
+    caller_roles walks, so it is the link revocation has to cut.
+
+    A membership granted by an administrator through /admin (insert_project_membership)
+    carries a NULL stakeholder_id and is untouched by this - it was never a consequence
+    of a stakeholder's role flags, so clearing those flags must not withdraw it.
+
+    Returns the number of memberships removed, so a caller can tell "revoked" from
+    "there was nothing to revoke".
+    """
+    cur = await conn.execute(
+        "DELETE FROM project_memberships WHERE project_slug=? AND stakeholder_id=?",
+        (project_slug, stakeholder_id),
+    )
+    await conn.commit()
+    return cur.rowcount or 0
 
 
 async def fetch_user_project_memberships(
@@ -3407,15 +3526,20 @@ async def update_user(
     role: str,
     hashed_pw: str | None = None,
 ) -> None:
+    """is_sys_admin moves with the role for the same reason insert_user derives it: it is
+    a projection of the role, not a second fact about the account. Setting it only at
+    creation would fix the divergence for new accounts and leave it wide open on the one
+    edit that can introduce it - promoting somebody to sysadmin through PUT /admin/users."""
+    is_sys_admin = 1 if role == "sysadmin" else 0
     if hashed_pw:
         await conn.execute(
-            "UPDATE users SET email=?, role=?, hashed_pw=? WHERE id=?",
-            (email, role, hashed_pw, user_id),
+            "UPDATE users SET email=?, role=?, hashed_pw=?, is_sys_admin=? WHERE id=?",
+            (email, role, hashed_pw, is_sys_admin, user_id),
         )
     else:
         await conn.execute(
-            "UPDATE users SET email=?, role=? WHERE id=?",
-            (email, role, user_id),
+            "UPDATE users SET email=?, role=?, is_sys_admin=? WHERE id=?",
+            (email, role, is_sys_admin, user_id),
         )
     await conn.commit()
 

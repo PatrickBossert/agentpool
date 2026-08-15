@@ -5,15 +5,30 @@ due_date is editable, so re-planning after a slip overwrites the original commit
 every comparison afterwards measures actual against the revised plan. A project that slips
 four times and is re-planned four times shows as perfectly on track - each milestone met
 the date it was most recently given.
+
+Activation and re-baselining are both approver-gated (caller_may_commit, see
+api/services/authority_service.py). None of these tests are about that gate, so it is
+granted throughout - the client fixture's sysadmin token names no real user, so an
+unpatched call would 403 before any of the baselining behaviour under test ran.
 """
 import shutil
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from api.config import get_settings
 
 SLUG = "ms-baseline-test"
+
+
+@pytest.fixture(autouse=True)
+def _granted_approver():
+    with patch("api.routers.commits.caller_may_commit", new=AsyncMock(return_value=True)), \
+         patch("api.routers.milestones.caller_may_commit", new=AsyncMock(return_value=True)):
+        yield
+
+
 PROJECT = {
     "client_slug": SLUG,
     "llm_mode": "standard",
@@ -192,3 +207,15 @@ async def test_rebaselining_something_never_baselined_is_refused(client):
     m = await _milestone(client, title="New scope", due_date="2026-09-01")
     r = await _rebaseline(client, m["id"], baseline_date="2026-09-15", reason="CR-030")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rebaselining_demands_the_commit_role(client):
+    """Re-baselining is approver-gated the same rule as activation - a caller
+    caller_may_commit refuses must be refused here too, or the gate is decoration."""
+    await _project(client)
+    await client.post(f"/projects/{SLUG}/activate")
+    m = await _milestone(client)
+    with patch("api.routers.milestones.caller_may_commit", new=AsyncMock(return_value=False)):
+        r = await _rebaseline(client, m["id"], baseline_date="2026-08-24", reason="CR-014")
+    assert r.status_code == 403

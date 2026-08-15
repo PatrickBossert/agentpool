@@ -2,9 +2,11 @@
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from api.auth import ABSOLUTE_SESSION_EXPIRE_DAYS, create_access_token, decode_token
 from api.config import get_settings
 from api.services.scheduler_service import scheduler_loop
 import api.services.pam_report_job  # noqa: F401 - registers JOB_REGISTRY["pam_daily_report"]
@@ -32,6 +34,7 @@ from api.routers import commits as commits_router
 from api.routers import value_chain as value_chain_router
 from api.routers import script_reviews as script_reviews_router
 from api.routers import permissions as permissions_router
+from api.routers import invites as invites_router
 
 
 async def _mark_stale_runs_failed(database_dir: str) -> None:
@@ -143,7 +146,107 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Refreshed-Token"],
 )
+
+
+async def _current_session_claims(username: str) -> tuple[str, int | None] | None:
+    """The role (and org_id, for an org_admin) this username currently holds, or None if it
+    no longer exists.
+
+    Looked up fresh on every roll rather than copied off the token's own claims - a token
+    only proves who was granted a role at the moment it was issued, not who still holds it.
+    Without this, a revoked or demoted account's old token would keep rolling forward for
+    another thirty days on its next use, silently defeating the revocation - a deleted
+    account still gets treated as sysadmin if that is what its last token said. The env-var
+    admin is not a system DB row, so it is checked against settings directly, the same
+    special case /auth/login makes.
+    """
+    settings = get_settings()
+    if username == settings.admin_username:
+        return "sysadmin", None
+    from api.database import get_system_connection, fetch_user
+    from api.services.invite_service import org_id_for_session
+
+    async with get_system_connection() as conn:
+        user = await fetch_user(conn, username=username)
+    if user is None:
+        return None
+    return user["role"], await org_id_for_session(user)
+
+
+@app.middleware("http")
+async def roll_session(request: Request, call_next):
+    """Re-issue a caller's bearer token on every successfully-authenticated request.
+
+    ACCESS_TOKEN_EXPIRE_HOURS is thirty days, but rolling it forward on use means an active
+    reviewer's session never actually reaches that ceiling - only an abandoned one does. A
+    request carrying no token, or an invalid/expired one, is left alone here; the endpoint's
+    own auth dependency (or lack of one, for the accept/reset routes) decides what happens to
+    it. Reads and re-decodes the raw header rather than trusting a dependency's result, since
+    unauthenticated routes never populate one.
+
+    "Successfully-authenticated" is doing real work in that first sentence: a token that
+    merely *decodes* is not the same as a request that was *allowed in* - a 403 (wrong role
+    for this route) or a 404 still carries a perfectly valid signature. Gating on a 2xx
+    response is what stops a request that was refused from being handed another thirty days
+    anyway.
+
+    Two more checks sit between "decodes" and "gets rolled": the caller must still exist
+    with the same role (_current_session_claims - closes the revocation gap), and the
+    session's original iat must still be inside ABSOLUTE_SESSION_EXPIRE_DAYS
+    (create_access_token's iat parameter - closes the "rolled forever" gap for a token that
+    is stolen rather than revoked, where there is no account state to notice).
+    """
+    response = await call_next(request)
+    if not (200 <= response.status_code < 300):
+        return response
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        return response
+    token = auth_header[len("Bearer "):]
+    try:
+        payload = decode_token(token, get_settings().jwt_secret)
+    except HTTPException:
+        return response
+
+    issued_at_ts = payload.get("iat")
+    if issued_at_ts is None:
+        # No iat to anchor an absolute deadline to - fail safe (no roll) rather than treat
+        # an unmeasurable session age as automatically within the cap.
+        return response
+    issued_at = datetime.fromtimestamp(issued_at_ts, tz=timezone.utc)
+    if datetime.now(timezone.utc) - issued_at >= timedelta(days=ABSOLUTE_SESSION_EXPIRE_DAYS):
+        return response
+
+    # From here on, any failure (a DB hiccup inside _current_session_claims's system-db
+    # lookup is the realistic one) must leave the response exactly as call_next produced it.
+    # This runs after an endpoint has already succeeded - an exception escaping this
+    # middleware would convert that success into a 500 for a caller whose request was
+    # otherwise fine, purely because the *bonus* of a rolled session couldn't be computed.
+    # Simply not rolling is always a safe fallback: the caller's existing token, if still
+    # unexpired, keeps working on their next request regardless.
+    try:
+        current = await _current_session_claims(payload["sub"])
+        if current is None or current[0] != payload.get("role"):
+            return response
+
+        role, org_id = current
+        refreshed = create_access_token(
+            payload["sub"], role, get_settings().jwt_secret, org_id=org_id, iat=issued_at,
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "roll_session: could not roll %s's session - leaving the response unrolled "
+            "rather than failing an already-successful request", payload.get("sub"),
+        )
+        return response
+
+    response.headers["X-Refreshed-Token"] = refreshed
+    return response
+
 
 app.include_router(projects.router)
 app.include_router(run.router)
@@ -172,3 +275,4 @@ app.include_router(value_chain_router.router)
 app.include_router(script_reviews_router.router)
 app.include_router(permissions_router.router)
 app.include_router(validations_router.router)
+app.include_router(invites_router.router)
