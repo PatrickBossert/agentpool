@@ -54,7 +54,18 @@ async def get_sessions_for_project(slug: str, payload: dict = Depends(require_an
     Requires auth: this is the one endpoint in an otherwise-public router that returns
     session_token values, and a token is the only credential the rest of the interview
     API checks.
+
+    Which is why `require_any_auth` alone was never enough. It asks whether the caller has
+    a login, not which engagement that login is on, so any valid token could read every
+    interview credential for any slug - and then walk in through the public half of this
+    router as the interviewee. `check_project_access` is the membership floor and answers
+    the question that was missing.
+
+    It also runs before `get_connection`, which creates a project database on first touch:
+    without it, a caller guessing slugs materialised a database file per guess. That is
+    the same side effect the `get_db_path(...).exists()` guard closes in `caller_roles`.
     """
+    await check_project_access(slug, payload)
     async with get_connection(slug) as conn:
         # 1. Look up project by slug
         async with conn.execute(

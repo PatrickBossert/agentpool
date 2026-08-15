@@ -1,10 +1,11 @@
-"""The milestone, non-working-calendar, and branding doors, driven over HTTP.
+"""The milestone, calendar, branding, PAM-report, and interview-session doors, over HTTP.
 
-Both routers used to import `require_any_auth` under the alias `get_current_user`, so every
-handler read `Depends(get_current_user)` and looked exactly like a properly gated one. Neither
-called `check_project_access`, and neither applied a second gate - which made every door in
-them a project-scoped read or write that *any* valid token could make against *any* slug.
-`POST /{slug}/branding/image` was the same defect under `get_token_payload`.
+`milestones.py` and `nonworking.py` used to import `require_any_auth` under the alias
+`get_current_user`, so every handler read `Depends(get_current_user)` and looked exactly like
+a properly gated one. Neither called `check_project_access`, and neither applied a second
+gate - which made every door in them a project-scoped read or write that *any* valid token
+could make against *any* slug. `POST /{slug}/branding/image` was the same defect under
+`get_token_payload`.
 
 The cross-project case is the whole point, and it is what an "anonymous is refused" test would
 have missed entirely: before this branch a legitimate, fully-privileged administrator of
@@ -14,11 +15,12 @@ org_admin login whose organisation owns project A and not project B - and every 
 receives on B is `check_project_access` and nothing else, since it clears the administration
 dependency on its login role alone.
 
-The three callers are chosen so that each refusal is attributable to one gate:
+The callers are chosen so that each refusal is attributable to one gate:
 
   outsider  - a real login with no membership anywhere. Refused by the membership floor.
   member    - a real login, membership on A, a stakeholder row flagged is_participant only.
               Clears the floor; refused on writes by the administration axis.
+  approver  - the same wiring with is_reviewer and is_approver, for the content gate.
   admin_a   - org_admin of the organisation owning A. Clears the administration axis
               everywhere, and the floor only on A.
 
@@ -26,6 +28,19 @@ Refusals are asserted on their `detail` as well as their status, because a calle
 two gates at once tells you nothing about either. "Access denied to this project" is
 `check_project_access`; "Org admin or above required" is `require_org_admin_or_above`; "Only
 an approver may re-baseline a milestone" is the content gate.
+
+Two further reads were found by sweeping every handler mounted under a `/projects/{slug}`
+prefix - by behaviour, not by name, because the alias hid two files from a `require_any_auth`
+grep and `pam_report.py` then hid from the alias sweep by not aliasing. Both are covered at
+the foot of this module:
+
+  GET /projects/{slug}/pam-report        - run status, milestone variance, output summaries
+  GET /api/interviews/sessions/{slug}    - every stakeholder's `session_token`
+
+The second is the worse of the two by some distance. A session token is the only credential
+the rest of the interview API checks, so an unscoped read of that list is not merely a
+disclosure - it is a way in through the public half of the interview router as somebody
+else's interviewee.
 """
 import pytest
 import pytest_asyncio
@@ -149,6 +164,33 @@ async def doors(tmp_path, monkeypatch, client):
     await _seed_member(SLUG_A, username="door-member", is_participant=True)
     await _seed_member(SLUG_A, username="door-approver", is_reviewer=True, is_approver=True)
 
+    # A real orchestration run and a real interview session on project A, so
+    # GET /api/interviews/sessions/{slug} has an actual session_token to hand out. Without
+    # one the endpoint answers an empty list to everybody, and "a member may read it" could
+    # not tell a working read from a broken one. Written with raw SQL rather than
+    # api.database.insert_interview_session, which CLAUDE.md records as having no
+    # production caller and being driven by tests alone - leaning on it here would add
+    # another test to the pile keeping a dead helper alive.
+    async with get_connection(SLUG_A) as conn:
+        project = await fetch_project(conn, slug=SLUG_A)
+        cur = await conn.execute(
+            "INSERT INTO orchestration_runs (project_id, status) VALUES (?, 'running')",
+            (project["id"],),
+        )
+        run_id = cur.lastrowid
+        cur = await conn.execute(
+            "SELECT id FROM stakeholders WHERE project_id=? ORDER BY id LIMIT 1",
+            (project["id"],),
+        )
+        stakeholder_id = (await cur.fetchone())["id"]
+        await conn.execute(
+            "INSERT INTO interview_sessions"
+            " (project_id, orchestration_run_id, stakeholder_id, node_label, session_token)"
+            " VALUES (?,?,?,?,?)",
+            (project["id"], run_id, stakeholder_id, "1.2 Portfolio", "tok-alpha-secret"),
+        )
+        await conn.commit()
+
     outsider = _client_for("door-outsider", "reviewer")
     member = _client_for("door-member", "reviewer")
     approver = _client_for("door-approver", "reviewer")
@@ -162,6 +204,7 @@ async def doors(tmp_path, monkeypatch, client):
             "admin_a": admin_a,
             "milestone_a": milestone_ids[SLUG_A],
             "milestone_b": milestone_ids[SLUG_B],
+            "org_b": org_b,
         }
 
     get_settings.cache_clear()
@@ -426,3 +469,89 @@ async def test_rebaselining_is_not_on_the_administration_axis(doors):
         json={"baseline_date": "2026-09-24", "reason": "CR-020"},
     )
     assert _refusal(r) == (403, APPROVER_REQUIRED)
+
+
+# ── The two reads the behavioural sweep found ─────────────────────────────────
+#
+# Neither router aliased anything, which is why neither turned up in the sweep that found
+# `milestones.py` and `nonworking.py`. Both are pure `check_project_access` omissions of the
+# same shape: a `/projects/{slug}`-scoped read behind `require_any_auth`, which asks whether
+# the caller has a login and never which engagement the login is on.
+#
+# `admin_a` carries the weight here for the same reason as above - it is a real, legitimate,
+# fully-privileged administrator, refused only because the engagement is not its own.
+
+PAM_REPORT = "/projects/{slug}/pam-report"
+SESSIONS = "/api/interviews/sessions/{slug}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template", [PAM_REPORT, SESSIONS])
+async def test_a_caller_with_no_membership_cannot_read_it(doors, template):
+    path = template.format(slug=SLUG_A)
+    assert _refusal(await doors["outsider"].get(path)) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template", [PAM_REPORT, SESSIONS])
+async def test_an_administrator_of_another_engagement_cannot_read_it(doors, template):
+    """The cross-project case. `admin_a` clears every login-role check these doors have;
+    remove `check_project_access` and both of these become successes."""
+    path = template.format(slug=SLUG_B)
+    assert _refusal(await doors["admin_a"].get(path)) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template", [PAM_REPORT, SESSIONS])
+async def test_a_member_may_still_read_it(doors, template):
+    """The success side, and not decoration: without it the module is satisfied by a gate
+    that refuses everyone, which closes the door rather than gating it. `member` holds a
+    participant stakeholder and no other role at all - membership is read access."""
+    path = template.format(slug=SLUG_A)
+    resp = await doors["member"].get(path)
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_reading_interview_sessions_really_does_hand_out_a_session_token(doors):
+    """Why the sessions door is the sharper of the two, checked rather than merely claimed.
+
+    A session token is the only credential the public half of `api/routers/interviews.py`
+    checks, so an unscoped read here is not a disclosure of project metadata - it is a way
+    in as somebody else's interviewee. Asserting the literal token the fixture seeded is
+    what makes the severity argument in this module's docstring falsifiable: if the
+    endpoint ever stops returning tokens, this fails and the argument gets rewritten rather
+    than quietly rotting into a claim nothing checks.
+    """
+    body = (await doors["member"].get(SESSIONS.format(slug=SLUG_A))).json()
+    tokens = [s["session_token"] for s in body["sessions"]]
+    assert tokens == ["tok-alpha-secret"]
+
+
+@pytest.mark.asyncio
+async def test_the_other_engagements_session_tokens_do_not_leak(doors):
+    """The refusal, spelled out against the thing being protected. An administrator of the
+    other engagement is refused project A's session list, tokens and all."""
+    async with _client_for("door-admin-b", "org_admin", org_id=doors["org_b"]) as admin_b:
+        resp = await admin_b.get(SESSIONS.format(slug=SLUG_A))
+    assert _refusal(resp) == (403, ACCESS_DENIED)
+    assert "tok-alpha-secret" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_probing_an_unknown_slug_creates_no_database(doors, tmp_path):
+    """`get_connection(slug)` creates a project database on first touch - mkdir, connect,
+    init_db, the full migration block. The sessions handler called it before any access
+    check, so a caller walking slugs materialised a file per guess. The gate now runs
+    first, and the refusal must arrive without the side effect."""
+    from api.database import get_db_path
+
+    unknown = "never-created-engagement"
+    assert not get_db_path(unknown).exists(), "fixture setup must not create it either"
+
+    assert _refusal(
+        await doors["member"].get(SESSIONS.format(slug=unknown))
+    ) == (403, ACCESS_DENIED)
+    assert not get_db_path(unknown).exists(), (
+        "a refused read must not materialise a project database"
+    )

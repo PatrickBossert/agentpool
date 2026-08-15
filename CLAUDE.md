@@ -284,6 +284,29 @@ a promise is a content judgement rather than configuration.
 a real non-member, and a real administrator of a *different* engagement - the last being the
 case an "anonymous is refused" test would have passed before the fix.
 
+**Enumerate by behaviour, not by name.** The alias hid two files from a `require_any_auth`
+grep; `pam_report.py` then hid from the *alias* sweep by not aliasing, and it had the same
+hole. Two accidental discoveries meant the enumeration was wrong twice, so it was done
+properly: 96 handlers are mounted under a path containing `{slug}`, and the check is whether
+each one calls `check_project_access`. Reproduce it with an AST walk over `api/routers/*.py`
+that joins each `APIRouter(prefix=...)` to its `@router.<method>` paths - not with a grep for
+a dependency name, which is what missed it both times. **Ninety of the ninety-six call it.**
+The six that do not:
+
+| Door | Why not |
+|------|---------|
+| `GET /projects/{slug}/branding/image` | Deliberate - no auth at all. The interview page renders it for a participant who has no login. |
+| `DELETE /auth/projects/{slug}` | Registry administration, `require_sysadmin`. Global by nature; there is no membership to check. |
+| `POST` and `DELETE /auth/users/{user_id}/projects/{slug}` | Membership administration, `require_org_admin_or_above`. **Open:** an org_admin of one organisation can grant or revoke a membership on another organisation's slug. Same shape as the holes above, on the admin surface. |
+| `WEBSOCKET /ws/{slug}` | **Open, and unauthenticated entirely** - no token, no dependency. Streams agent log lines for any slug to anyone who can reach the port. `useWebSocket.ts` connects with no credential, so closing it needs a token-passing scheme (subprotocol or query parameter) before a gate can exist at all. |
+
+`GET /projects/{slug}/pam-report` and `GET /api/interviews/sessions/{slug}` were the two
+found by this sweep and are now closed. The second was the sharpest hole on the branch: it
+returns every stakeholder's `session_token`, which is the only credential the public half of
+`api/routers/interviews.py` checks, so an unscoped read of it was a way in as somebody else's
+interviewee rather than a metadata leak. It also called `get_connection(slug)` before any
+check, so probing slugs created a database file per guess.
+
 Clearing a stakeholder's last non-participant flag, or deleting the row, removes the
 `project_memberships` row - `_revoke_membership_if_no_longer_privileged` in
 `stakeholders.py`, the mirror of `_issue_invite_if_newly_privileged` beside it. Without that
