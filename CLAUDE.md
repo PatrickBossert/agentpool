@@ -280,9 +280,19 @@ in sp38: the imports use the real names, `nonworking.py` binds its payload rathe
 twelve doors call `check_project_access`, the writes take `require_org_admin_or_above`, and
 `POST /{milestone_id}/rebaseline` keeps `caller_may_commit` on top of the floor because moving
 a promise is a content judgement rather than configuration.
-`tests/test_milestone_door_authority.py` drives every one of them over HTTP as a real member,
-a real non-member, and a real administrator of a *different* engagement - the last being the
-case an "anonymous is refused" test would have passed before the fix.
+`tests/test_milestone_door_authority.py` drives every one of them over HTTP: a real member of
+the project against every door, a real administrator of a *different* engagement against
+every door, and a real non-member against the reads and `rebaseline`. The non-member is not
+driven against the eight writes because the administration axis refuses it first, so the call
+would say nothing about the floor. The middle caller is the one that matters - it is the case
+an "anonymous is refused" test would have passed before the fix.
+
+`GET /projects/{slug}/milestones` used to seed the default milestones when the table came
+back empty, which put the operation `POST /milestones/seed` is administration-gated for
+behind a door any member can open. The repair was to take the write out of the read, not to
+widen the gate: `create_project` seeds once, where an administrator is present by definition.
+**A read door does not write on this codebase** - if a lazy write looks necessary, the
+question is which authenticated write path should have done it earlier.
 
 **Enumerate by behaviour, not by name.** The alias hid two files from a `require_any_auth`
 grep; `pam_report.py` then hid from the *alias* sweep by not aliasing, and it had the same
@@ -290,8 +300,8 @@ hole. Two accidental discoveries meant the enumeration was wrong twice, so it wa
 properly: 96 handlers are mounted under a path containing `{slug}`, and the check is whether
 each one calls `check_project_access`. Reproduce it with an AST walk over `api/routers/*.py`
 that joins each `APIRouter(prefix=...)` to its `@router.<method>` paths - not with a grep for
-a dependency name, which is what missed it both times. **Ninety-two of the ninety-six call
-it.** The four that do not:
+a dependency name, which is what missed it both times. **Ninety-three of the ninety-six call
+it.** The three that do not:
 
 | Door | Why not |
 |------|---------|

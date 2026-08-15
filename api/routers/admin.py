@@ -1,9 +1,7 @@
 # api/routers/admin.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from api.auth import (
-    check_project_access, require_sysadmin, require_org_admin_or_above, get_token_payload,
-)
+from api.auth import check_project_access, require_sysadmin, require_org_admin_or_above
 from api.services.admin_service import (
     svc_list_orgs, svc_create_org, svc_get_org, svc_update_org, svc_delete_org,
     svc_list_org_members, svc_add_org_member, svc_update_org_member_role, svc_remove_org_member,

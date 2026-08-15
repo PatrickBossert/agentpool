@@ -18,11 +18,14 @@ dependency on its login role alone.
 The callers are chosen so that each refusal is attributable to one gate:
 
   outsider  - a real login with no membership anywhere. Refused by the membership floor.
+              Driven against the reads and `rebaseline` only: on the eight writes the
+              administration axis refuses it first, so the call would say nothing about the
+              floor, and `admin_a` is the caller that isolates it there.
   member    - a real login, membership on A, a stakeholder row flagged is_participant only.
               Clears the floor; refused on writes by the administration axis.
   approver  - the same wiring with is_reviewer and is_approver, for the content gate.
   admin_a   - org_admin of the organisation owning A. Clears the administration axis
-              everywhere, and the floor only on A.
+              everywhere, and the floor only on A. Driven against every door.
 
 Refusals are asserted on their `detail` as well as their status, because a caller refused by
 two gates at once tells you nothing about either. "Access denied to this project" is
@@ -656,3 +659,112 @@ async def test_an_administrator_cannot_revoke_another_organisations_membership(d
     assert await _membership_exists(target, SLUG_B), (
         "the membership was deleted anyway - the refusal is decoration"
     )
+
+
+@pytest.mark.asyncio
+async def test_granting_a_membership_needs_administration_not_merely_membership(doors):
+    """The witness for the relocated administration gate.
+
+    `require_org_admin_or_above` moved from the decorator's `dependencies=[...]` into these
+    handlers' signatures so the body could reach the payload. Nothing tested it there, and
+    a review downgraded both to `require_any_auth` with the whole suite still green - at
+    which point a plain reviewer who belongs to a project could grant any user a membership
+    on it, because `check_project_access` would admit them and nothing else would ask.
+
+    `member` is that caller exactly: a real membership on project A, no administration role
+    anywhere. The refusal must come from the administration axis, so the detail is asserted
+    rather than the status - a 403 alone cannot tell this apart from the floor refusing.
+    """
+    target = await _user_id("door-outsider")
+
+    resp = await doors["member"].post(GRANT.format(user_id=target, slug=SLUG_A))
+
+    assert _refusal(resp) == (403, ADMIN_REQUIRED)
+    assert not await _membership_exists(target, SLUG_A)
+
+
+@pytest.mark.asyncio
+async def test_revoking_a_membership_needs_administration_not_merely_membership(doors):
+    """The same witness on the delete half. The two doors were downgraded together and
+    would have to be tested together to notice."""
+    target = await _user_id("door-outsider")
+    async with get_system_connection() as sys_conn:
+        await sys_conn.execute(
+            "INSERT INTO project_memberships (user_id, project_slug) VALUES (?,?)",
+            (target, SLUG_A),
+        )
+        await sys_conn.commit()
+
+    resp = await doors["member"].delete(GRANT.format(user_id=target, slug=SLUG_A))
+
+    assert _refusal(resp) == (403, ADMIN_REQUIRED)
+    assert await _membership_exists(target, SLUG_A), "the membership was deleted anyway"
+
+
+# ── The read door does not write ──────────────────────────────────────────────
+#
+# GET /projects/{slug}/milestones used to seed the defaults whenever the table came back
+# empty, which put the operation POST /milestones/seed is administration-gated for behind a
+# door any member can open: `test_membership_alone_is_read_access` above asserts a bare
+# is_participant gets 200 from it, and on a fresh project that *was* the seeding path.
+# Widening the gate would have been the wrong repair - a read that mutates is the defect,
+# and the authorisation gap only its symptom - so the write moved to project creation.
+
+@pytest.mark.asyncio
+async def test_creating_a_project_seeds_its_default_milestones(doors):
+    """Where the seed lives now. The fixture creates both projects through POST /projects
+    with an administrator's token, so this asserts the replacement actually replaces."""
+    from api.database import _DEFAULT_MILESTONES
+
+    rows = (await doors["member"].get(f"/projects/{SLUG_A}/milestones")).json()
+    keys = {m["milestone_key"] for m in rows}
+    # Compared against the production constant, not against a list restated here: the
+    # property is "creation runs the seed", and a literal copied into the test would only
+    # prove the copy matches itself while quietly rotting when a default is added.
+    assert keys >= {key for key, *_ in _DEFAULT_MILESTONES}, (
+        f"defaults absent after creation: {sorted(keys)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reading_milestones_writes_nothing_when_the_table_is_empty(doors):
+    """The empty table is the whole test. With the lazy seed present this read inserts the
+    default set and answers a populated list; the row count before and after is what tells
+    the two apart, and a member - who may not seed - is the caller that matters."""
+    async with get_connection(SLUG_A) as conn:
+        await conn.execute("DELETE FROM project_milestones WHERE slug=?", (SLUG_A,))
+        await conn.commit()
+
+    resp = await doors["member"].get(f"/projects/{SLUG_A}/milestones")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+    async with get_connection(SLUG_A) as conn:
+        async with conn.execute(
+            "SELECT COUNT(*) AS n FROM project_milestones WHERE slug=?", (SLUG_A,)
+        ) as cur:
+            assert (await cur.fetchone())["n"] == 0, (
+                "a read door seeded the table - the operation POST /milestones/seed is "
+                "administration-gated for is reachable through the read gate"
+            )
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_can_still_seed_an_empty_project(doors):
+    """The explicit door is the route back for a project whose table is empty - and it is
+    still administration-gated, which is the point of moving the write off the read."""
+    from api.database import _DEFAULT_MILESTONES
+
+    async with get_connection(SLUG_A) as conn:
+        await conn.execute("DELETE FROM project_milestones WHERE slug=?", (SLUG_A,))
+        await conn.commit()
+
+    assert _refusal(
+        await doors["member"].post(f"/projects/{SLUG_A}/milestones/seed")
+    ) == (403, ADMIN_REQUIRED)
+
+    seeded = await doors["admin_a"].post(f"/projects/{SLUG_A}/milestones/seed")
+    assert seeded.status_code == 200, seeded.text
+    assert {m["milestone_key"] for m in seeded.json()} >= {
+        key for key, *_ in _DEFAULT_MILESTONES
+    }

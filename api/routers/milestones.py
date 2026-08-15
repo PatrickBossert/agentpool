@@ -30,15 +30,19 @@ def _404(msg: str):
 
 @router.get("", response_model=list[Milestone])
 async def get_milestones(slug: str, payload: dict = Depends(require_any_auth)):
+    """This project's milestones. A read, and only a read.
+
+    It used to seed the defaults when the table came back empty, which put the exact
+    operation `POST /milestones/seed` is administration-gated for behind a door any member
+    can open - a bare `is_participant` reading a fresh project performed the seed. Widening
+    the gate would have been the wrong repair: the defect is that a read mutates, and the
+    authorisation gap was only its symptom. Seeding now happens once, at project creation
+    (`api/services/project_service.create_project`), where an administrator is present by
+    definition, so the lazy seed is unnecessary rather than merely refused.
+    """
     await check_project_access(slug, payload)
     async with get_connection(slug) as conn:
-        rows = await list_milestones(conn, slug)
-    # Auto-seed defaults on first visit
-    if not rows:
-        async with get_connection(slug) as conn:
-            await seed_default_milestones(conn, slug)
-            rows = await list_milestones(conn, slug)
-    return rows
+        return await list_milestones(conn, slug)
 
 
 @router.post("/seed", response_model=list[Milestone])

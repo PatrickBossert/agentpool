@@ -9,6 +9,7 @@ from api.database import (
     get_connection,
     get_db_path,
     insert_project,
+    seed_default_milestones,
     fetch_project,
     fetch_crew_runs,
     fetch_latest_orchestration_run,
@@ -61,6 +62,16 @@ async def create_project(req: ProjectCreate) -> dict:
             sector=req.sector,
             config_json=json.dumps(config),
         )
+        # The default milestone set, written once here rather than lazily by the first
+        # GET /projects/{slug}/milestones. That read did the seeding until sp38, which made
+        # it a write behind a read gate: the operation POST /milestones/seed is
+        # administration-gated for was reachable by any member simply by opening a fresh
+        # project's dashboard. Creation is where an administrator is present by definition.
+        #
+        # Idempotent - it skips milestone_key values that already exist - so the
+        # re-POST that create_project_endpoint answers 200 to on an existing slug is also
+        # the repair path for a project predating this change whose table is still empty.
+        await seed_default_milestones(conn, slug)
         result = await fetch_project(conn, slug=slug)
 
     await _register_daily_report_job(slug)
