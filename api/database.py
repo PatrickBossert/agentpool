@@ -2771,6 +2771,18 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             id           INTEGER PRIMARY KEY CHECK (id = 1),
             last_tick_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash     TEXT    NOT NULL UNIQUE,
+            email          TEXT    NOT NULL,
+            project_slug   TEXT,
+            stakeholder_id INTEGER,
+            purpose        TEXT    NOT NULL,
+            expires_at     DATETIME NOT NULL,
+            used_at        DATETIME,
+            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     await conn.commit()
 
