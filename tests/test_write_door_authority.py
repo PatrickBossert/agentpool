@@ -17,6 +17,7 @@ door consults it - the failure mode CLAUDE.md names, a property asserted one lay
 from where it holds.
 """
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -233,9 +234,20 @@ async def test_adding_a_discovery_link_needs_approval(doors):
 async def test_attaching_a_document_through_chat_needs_approval(doors):
     """POST /{slug}/documents/upload has always been require_org_admin_or_above. This
     door writes the same documents row, the same discovery_document_ids entry, and the
-    same Chroma ingest - it had become the weaker way through."""
+    same Chroma ingest - it had become the weaker way through.
+
+    The approver's 201 is half the test, not decoration. Without it this asserted only a
+    refusal, which an unconditional refusal wired onto this one door satisfies perfectly -
+    and tests/test_chat_upload.py, the only other module driving this endpoint, patches
+    caller_may_approve to True for every one of its cases, so it would not have noticed
+    either. ingest_document is patched because Chroma is not running here; the gate under
+    test sits well before it.
+    """
     path = f"/projects/{SLUG}/agent-chat/upload"
     files = {"file": ("brief.txt", b"a paragraph", "text/plain")}
     data = {"agent_name": "value_chain_mapper"}
-    resp = await doors["member"].post(path, files=files, data=data)
-    assert resp.status_code == 403
+    with patch("api.routers.agent_chat.ingest_document", new_callable=AsyncMock):
+        refused = await doors["member"].post(path, files=files, data=data)
+        allowed = await doors["approver"].post(path, files=files, data=data)
+    assert refused.status_code == 403
+    assert allowed.status_code == 201

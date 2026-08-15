@@ -93,9 +93,11 @@ async def caller_roles(slug: str, payload: dict) -> set[str]:
 # translate the refusal into a 403; they do not decide it.
 #
 # `commit_service.caller_may_commit` and `caller_may_submit` are the same two rules under
-# older names, reached through the same walk. They are left as they are - the branch's
-# verified Critical chain runs through them - so treat this comment as the place the rule
-# is stated and those two as call sites of it.
+# older names, and they now delegate here rather than restating the role sets - committing
+# is approving, submitting is contributing. They were left restating them once, on the
+# grounds that the branch's verified chain ran through them; it runs through `caller_roles`'
+# walk, not through those two role sets, so the copies were only copies. The rule is stated
+# here and nowhere else.
 CONTRIBUTOR_ROLES = frozenset({"reviewer", "approver"})
 APPROVER_ROLES = frozenset({"approver"})
 

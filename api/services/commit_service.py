@@ -20,7 +20,7 @@ from api.database import (
     latest_commit_at,
     link_commit_outputs,
 )
-from api.services.authority_service import caller_roles
+from api.services.authority_service import caller_may_approve, caller_may_contribute
 from api.services.run_service import _CREW_AGENT_NAMES
 
 log = logging.getLogger(__name__)
@@ -43,20 +43,22 @@ class CrewRunInProgress(Exception):
 async def caller_may_commit(slug: str, payload: dict) -> bool:
     """Whether this caller may commit in this project.
 
-    Only a caller holding the approver role - read from caller_roles(slug, payload),
-    the walk from JWT to user to membership to stakeholder - may commit.
+    Committing changes what the project currently says, so it is the approve gate under an
+    older name. Delegating rather than re-testing "approver" in caller_roles(...) is the
+    point: this was the fourth copy of the same two-line rule, and CLAUDE.md's own worked
+    example of what goes wrong is two copies of a WHERE clause that had already diverged
+    without anybody noticing. They had not diverged; now they cannot.
     """
-    roles = await caller_roles(slug, payload)
-    return "approver" in roles
+    return await caller_may_approve(slug, payload)
 
 
 async def caller_may_submit(slug: str, payload: dict) -> bool:
     """Whether this caller may mark a crew ready for approval.
 
-    Wider than committing: a contributor who reviews but does not govern may submit.
+    Wider than committing: a contributor who reviews but does not govern may submit, which
+    is exactly the contribute gate. See caller_may_commit above for why this delegates.
     """
-    roles = await caller_roles(slug, payload)
-    return bool(roles & {"reviewer", "approver"})
+    return await caller_may_contribute(slug, payload)
 
 
 async def commit_crew(
