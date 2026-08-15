@@ -1,0 +1,770 @@
+"""The milestone, calendar, branding, PAM-report, and interview-session doors, over HTTP.
+
+`milestones.py` and `nonworking.py` used to import `require_any_auth` under the alias
+`get_current_user`, so every handler read `Depends(get_current_user)` and looked exactly like
+a properly gated one. Neither called `check_project_access`, and neither applied a second
+gate - which made every door in them a project-scoped read or write that *any* valid token
+could make against *any* slug. `POST /{slug}/branding/image` was the same defect under
+`get_token_payload`.
+
+The cross-project case is the whole point, and it is what an "anonymous is refused" test would
+have missed entirely: before this branch a legitimate, fully-privileged administrator of
+engagement A could rewrite engagement B's milestones, because nothing on the door ever asked
+which engagement the caller belonged to. `admin_a` below is exactly that caller - a real
+org_admin login whose organisation owns project A and not project B - and every refusal it
+receives on B is `check_project_access` and nothing else, since it clears the administration
+dependency on its login role alone.
+
+The callers are chosen so that each refusal is attributable to one gate:
+
+  outsider  - a real login with no membership anywhere. Refused by the membership floor.
+              Driven against the reads and `rebaseline` only: on the eight writes the
+              administration axis refuses it first, so the call would say nothing about the
+              floor, and `admin_a` is the caller that isolates it there.
+  member    - a real login, membership on A, a stakeholder row flagged is_participant only.
+              Clears the floor; refused on writes by the administration axis.
+  approver  - the same wiring with is_reviewer and is_approver, for the content gate.
+  admin_a   - org_admin of the organisation owning A. Clears the administration axis
+              everywhere, and the floor only on A. Driven against every door.
+
+Refusals are asserted on their `detail` as well as their status, because a caller refused by
+two gates at once tells you nothing about either. "Access denied to this project" is
+`check_project_access`; "Org admin or above required" is `require_org_admin_or_above`; "Only
+an approver may re-baseline a milestone" is the content gate.
+
+Two further reads were found by sweeping every handler mounted under a `/projects/{slug}`
+prefix - by behaviour, not by name, because the alias hid two files from a `require_any_auth`
+grep and `pam_report.py` then hid from the alias sweep by not aliasing. Both are covered at
+the foot of this module:
+
+  GET /projects/{slug}/pam-report        - run status, milestone variance, output summaries
+  GET /api/interviews/sessions/{slug}    - every stakeholder's `session_token`
+
+The second is the worse of the two by some distance. A session token is the only credential
+the rest of the interview API checks, so an unscoped read of that list is not merely a
+disclosure - it is a way in through the public half of the interview router as somebody
+else's interviewee.
+
+The sweep also found the one door that matters more than any of them, covered last here:
+`POST` and `DELETE /auth/users/{user_id}/projects/{slug}` write the `project_memberships`
+table that every `check_project_access` reads. Unscoped, an org_admin could grant themselves
+a row on another organisation's slug and walk through every gate on this branch as a
+legitimate member. Everything else here bypassed the floor; that one manufactured it, and
+its tests assert on the row rather than the status code for exactly that reason.
+"""
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+from api.auth import create_access_token
+from api.config import get_settings
+from api.database import (
+    fetch_project,
+    fetch_user,
+    get_connection,
+    get_system_connection,
+    insert_organisation,
+    insert_project_registry,
+    insert_stakeholder,
+    insert_user,
+    link_membership,
+)
+
+SLUG_A = "gate-doors-alpha"
+SLUG_B = "gate-doors-beta"
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+ACCESS_DENIED = "Access denied to this project"
+ADMIN_REQUIRED = "Org admin or above required"
+APPROVER_REQUIRED = "Only an approver may re-baseline a milestone"
+
+
+def _project_body(slug: str) -> dict:
+    return {
+        "client_slug": slug,
+        "llm_mode": "standard",
+        "sector": "transport",
+        "stakeholder_groups": [],
+        "value_stream_labels": [],
+        "crews_enabled": ["requirements"],
+        "review_gates": True,
+        "slack_channel": "",
+    }
+
+
+def _client_for(username: str, role: str, org_id: int | None = None) -> AsyncClient:
+    from api.main import app
+
+    token = create_access_token(username, role, "test-secret", org_id=org_id)
+    return AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+async def _seed_member(slug: str, *, username: str, **flags) -> None:
+    """A login wired the whole way - users row, membership, stakeholder on this project."""
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        stakeholder_id = await insert_stakeholder(
+            conn, project_id=project["id"], name=username,
+            email=f"{username}@example.com", **flags,
+        )
+    async with get_system_connection() as sys_conn:
+        await insert_user(
+            sys_conn, username=username, email=f"{username}@example.com",
+            role="reviewer", hashed_pw="x",
+        )
+        user = await fetch_user(sys_conn, username=username)
+        await link_membership(
+            sys_conn, user_id=user["id"], project_slug=slug, stakeholder_id=stakeholder_id
+        )
+
+
+@pytest_asyncio.fixture
+async def doors(tmp_path, monkeypatch, client):
+    """Two projects owned by two different organisations, one milestone each, four callers.
+
+    DATABASE_DIR and PROJECTS_DIR are redirected at this test's own tmp_path: the system
+    database holding `users`, `project_memberships` and `project_registry` otherwise lives
+    at the shared, persistent /tmp/agentpool_test, and these fixtures insert users by a
+    fixed username - which passes once and fails on every run afterwards.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+
+    milestone_ids: dict[str, int] = {}
+    for slug in (SLUG_A, SLUG_B):
+        r = await client.post("/projects", json=_project_body(slug))
+        assert r.status_code in (200, 201), r.text
+        r = await client.post(
+            f"/projects/{slug}/milestones",
+            json={"title": "Kickoff", "due_date": "2026-08-10"},
+        )
+        assert r.status_code in (200, 201), r.text
+        milestone_ids[slug] = r.json()["id"]
+        # Activation is itself approver-gated and none of these tests are about that gate,
+        # so the baseline a re-baseline needs is set directly. Without one, rebaseline_
+        # milestone answers 404 and the approver's success below could not be asserted.
+        async with get_connection(slug) as conn:
+            await conn.execute(
+                "UPDATE project_milestones SET baseline_date='2026-08-10' WHERE id=?",
+                (milestone_ids[slug],),
+            )
+            await conn.commit()
+
+    async with get_system_connection() as sys_conn:
+        org_a = await insert_organisation(sys_conn, slug="org-alpha", name="Alpha")
+        org_b = await insert_organisation(sys_conn, slug="org-beta", name="Beta")
+        await insert_project_registry(
+            sys_conn, slug=SLUG_A, org_id=org_a, display_name=SLUG_A
+        )
+        await insert_project_registry(
+            sys_conn, slug=SLUG_B, org_id=org_b, display_name=SLUG_B
+        )
+        await insert_user(
+            sys_conn, username="door-outsider", email="outsider@example.com",
+            role="reviewer", hashed_pw="x",
+        )
+        await sys_conn.commit()
+
+    await _seed_member(SLUG_A, username="door-member", is_participant=True)
+    await _seed_member(SLUG_A, username="door-approver", is_reviewer=True, is_approver=True)
+
+    # A real orchestration run and a real interview session on project A, so
+    # GET /api/interviews/sessions/{slug} has an actual session_token to hand out. Without
+    # one the endpoint answers an empty list to everybody, and "a member may read it" could
+    # not tell a working read from a broken one. Written with raw SQL rather than
+    # api.database.insert_interview_session, which CLAUDE.md records as having no
+    # production caller and being driven by tests alone - leaning on it here would add
+    # another test to the pile keeping a dead helper alive.
+    async with get_connection(SLUG_A) as conn:
+        project = await fetch_project(conn, slug=SLUG_A)
+        cur = await conn.execute(
+            "INSERT INTO orchestration_runs (project_id, status) VALUES (?, 'running')",
+            (project["id"],),
+        )
+        run_id = cur.lastrowid
+        cur = await conn.execute(
+            "SELECT id FROM stakeholders WHERE project_id=? ORDER BY id LIMIT 1",
+            (project["id"],),
+        )
+        stakeholder_id = (await cur.fetchone())["id"]
+        await conn.execute(
+            "INSERT INTO interview_sessions"
+            " (project_id, orchestration_run_id, stakeholder_id, node_label, session_token)"
+            " VALUES (?,?,?,?,?)",
+            (project["id"], run_id, stakeholder_id, "1.2 Portfolio", "tok-alpha-secret"),
+        )
+        await conn.commit()
+
+    outsider = _client_for("door-outsider", "reviewer")
+    member = _client_for("door-member", "reviewer")
+    approver = _client_for("door-approver", "reviewer")
+    admin_a = _client_for("door-admin-a", "org_admin", org_id=org_a)
+
+    async with outsider, member, approver, admin_a:
+        yield {
+            "outsider": outsider,
+            "member": member,
+            "approver": approver,
+            "admin_a": admin_a,
+            "milestone_a": milestone_ids[SLUG_A],
+            "milestone_b": milestone_ids[SLUG_B],
+            "org_b": org_b,
+        }
+
+    get_settings.cache_clear()
+
+
+def _refusal(resp) -> tuple[int, str]:
+    """Status and refusal reason. A door that let the caller through answers its own
+    payload, which has no `detail` - reported as the body itself rather than raising, so a
+    gate that stops refusing fails these tests on the assertion instead of on a TypeError."""
+    body = resp.json()
+    if isinstance(body, dict) and "detail" in body:
+        return resp.status_code, body["detail"]
+    return resp.status_code, f"<allowed: {body!r}>"
+
+
+# ── Controls ──────────────────────────────────────────────────────────────────
+#
+# Every refusal below is only worth reading if these hold. Without them a gate that refused
+# unconditionally, or a caller mis-wired so it was never inside the project at all, would
+# satisfy the whole module.
+
+@pytest.mark.asyncio
+async def test_the_member_really_is_inside_project_a(doors):
+    r = await doors["member"].get(f"/projects/{SLUG_A}/milestones")
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_the_administrator_really_can_write_to_project_a(doors):
+    r = await doors["admin_a"].post(
+        f"/projects/{SLUG_A}/milestones", json={"title": "Phase 2", "due_date": "2026-09-01"}
+    )
+    assert r.status_code in (200, 201), r.text
+
+
+# ── The membership floor, on reads ────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", [
+    f"/projects/{SLUG_A}/milestones",
+    f"/projects/{SLUG_A}/nonworking",
+])
+async def test_a_caller_with_no_membership_cannot_read(doors, path):
+    assert _refusal(await doors["outsider"].get(path)) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+async def test_a_caller_with_no_membership_cannot_read_baselines(doors):
+    path = f"/projects/{SLUG_A}/milestones/{doors['milestone_a']}/baselines"
+    assert _refusal(await doors["outsider"].get(path)) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", [
+    f"/projects/{SLUG_A}/milestones",
+    f"/projects/{SLUG_A}/nonworking",
+])
+async def test_membership_alone_is_read_access(doors, path):
+    """The other half of the rule, and the half a refusal-only test cannot express: a
+    participant holds no administration role and no content role whatever, and still reads
+    the engagement they belong to."""
+    assert (await doors["member"].get(path)).status_code == 200
+
+
+# ── The administration axis, on writes ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_a_member_without_administration_cannot_write_milestones(doors):
+    m = doors["milestone_a"]
+    calls = [
+        doors["member"].post(f"/projects/{SLUG_A}/milestones/seed"),
+        doors["member"].post(f"/projects/{SLUG_A}/milestones", json={"title": "Sneak"}),
+        doors["member"].patch(f"/projects/{SLUG_A}/milestones/{m}", json={"title": "Moved"}),
+        doors["member"].delete(f"/projects/{SLUG_A}/milestones/{m}"),
+    ]
+    for call in calls:
+        assert _refusal(await call) == (403, ADMIN_REQUIRED)
+
+
+@pytest.mark.asyncio
+async def test_a_member_without_administration_cannot_write_nonworking_ranges(doors):
+    body = {"label": "Shutdown", "start_date": "2026-12-24", "end_date": "2027-01-02"}
+    calls = [
+        doors["member"].post(f"/projects/{SLUG_A}/nonworking", json=body),
+        doors["member"].patch(f"/projects/{SLUG_A}/nonworking/1", json=body),
+        doors["member"].delete(f"/projects/{SLUG_A}/nonworking/1"),
+    ]
+    for call in calls:
+        assert _refusal(await call) == (403, ADMIN_REQUIRED)
+
+
+@pytest.mark.asyncio
+async def test_a_member_without_administration_cannot_upload_branding(doors):
+    r = await doors["member"].post(
+        f"/projects/{SLUG_A}/branding/image",
+        files={"file": ("header.png", PNG, "image/png")},
+    )
+    assert _refusal(r) == (403, ADMIN_REQUIRED)
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_of_this_project_may_write_all_of_it(doors):
+    """The success side. Without it the module would be satisfied by gates that refuse
+    everyone, and the doors would be closed rather than gated."""
+    admin = doors["admin_a"]
+    assert (await admin.post(f"/projects/{SLUG_A}/milestones/seed")).status_code == 200
+
+    created = await admin.post(
+        f"/projects/{SLUG_A}/milestones", json={"title": "Handover", "due_date": "2026-10-01"}
+    )
+    assert created.status_code in (200, 201), created.text
+    new_id = created.json()["id"]
+    assert (await admin.patch(
+        f"/projects/{SLUG_A}/milestones/{new_id}", json={"title": "Handover (revised)"}
+    )).status_code == 200
+    assert (await admin.delete(f"/projects/{SLUG_A}/milestones/{new_id}")).status_code == 204
+
+    body = {"label": "Shutdown", "start_date": "2026-12-24", "end_date": "2027-01-02"}
+    made = await admin.post(f"/projects/{SLUG_A}/nonworking", json=body)
+    assert made.status_code == 201, made.text
+    range_id = made.json()["id"]
+    assert (await admin.patch(
+        f"/projects/{SLUG_A}/nonworking/{range_id}", json={**body, "label": "Works shutdown"}
+    )).status_code == 200
+    assert (await admin.delete(f"/projects/{SLUG_A}/nonworking/{range_id}")).status_code == 204
+
+    uploaded = await admin.post(
+        f"/projects/{SLUG_A}/branding/image",
+        files={"file": ("header.png", PNG, "image/png")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+
+# ── The cross-project hole itself ─────────────────────────────────────────────
+#
+# admin_a clears `require_org_admin_or_above` on every one of these calls - the dependency
+# reads the JWT role and knows nothing of slugs. So `check_project_access` is the only thing
+# standing between this caller and another organisation's engagement, and removing that one
+# line turns every assertion here into a success.
+
+@pytest.mark.asyncio
+async def test_an_administrator_of_another_engagement_cannot_read_this_one(doors):
+    admin = doors["admin_a"]
+    m = doors["milestone_b"]
+    assert _refusal(await admin.get(f"/projects/{SLUG_B}/milestones")) == (403, ACCESS_DENIED)
+    assert _refusal(await admin.get(f"/projects/{SLUG_B}/nonworking")) == (403, ACCESS_DENIED)
+    assert _refusal(
+        await admin.get(f"/projects/{SLUG_B}/milestones/{m}/baselines")
+    ) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_of_another_engagement_cannot_rewrite_these_milestones(doors):
+    admin = doors["admin_a"]
+    m = doors["milestone_b"]
+    calls = [
+        admin.post(f"/projects/{SLUG_B}/milestones/seed"),
+        admin.post(f"/projects/{SLUG_B}/milestones", json={"title": "Not yours"}),
+        admin.patch(f"/projects/{SLUG_B}/milestones/{m}", json={"title": "Rewritten"}),
+        admin.delete(f"/projects/{SLUG_B}/milestones/{m}"),
+        admin.post(
+            f"/projects/{SLUG_B}/milestones/{m}/rebaseline",
+            json={"baseline_date": "2026-11-01", "reason": "not their call"},
+        ),
+    ]
+    for call in calls:
+        assert _refusal(await call) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_of_another_engagement_cannot_change_its_calendar(doors):
+    admin = doors["admin_a"]
+    body = {"label": "Shutdown", "start_date": "2026-12-24", "end_date": "2027-01-02"}
+    calls = [
+        admin.post(f"/projects/{SLUG_B}/nonworking", json=body),
+        admin.patch(f"/projects/{SLUG_B}/nonworking/1", json=body),
+        admin.delete(f"/projects/{SLUG_B}/nonworking/1"),
+    ]
+    for call in calls:
+        assert _refusal(await call) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_of_another_engagement_cannot_rebrand_it(doors):
+    r = await doors["admin_a"].post(
+        f"/projects/{SLUG_B}/branding/image",
+        files={"file": ("header.png", PNG, "image/png")},
+    )
+    assert _refusal(r) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+async def test_the_milestones_of_the_other_engagement_are_untouched(doors):
+    """A 403 says the request was refused; it does not say nothing was written.
+
+    The calls are made here rather than relied on from the test above: the fixture is
+    function-scoped, so a test that only read project B's row back would be asserting
+    against a database nothing had ever been asked to change.
+    """
+    admin = doors["admin_a"]
+    m = doors["milestone_b"]
+    await admin.patch(f"/projects/{SLUG_B}/milestones/{m}", json={"title": "Rewritten"})
+    await admin.post(
+        f"/projects/{SLUG_B}/milestones/{m}/rebaseline",
+        json={"baseline_date": "2026-11-01", "reason": "not their call"},
+    )
+    await admin.delete(f"/projects/{SLUG_B}/milestones/{m}")
+
+    async with get_connection(SLUG_B) as conn:
+        async with conn.execute(
+            "SELECT title, baseline_date FROM project_milestones WHERE id=?",
+            (doors["milestone_b"],),
+        ) as cur:
+            row = await cur.fetchone()
+    assert row is not None, "project B's milestone was deleted by a caller from project A"
+    assert row["title"] == "Kickoff"
+    assert row["baseline_date"] == "2026-08-10"
+
+
+# ── Re-baselining keeps the content gate, and gains the floor ─────────────────
+
+@pytest.mark.asyncio
+async def test_rebaselining_refuses_a_non_member_on_the_membership_floor(doors):
+    """Both gates would refuse this caller, so the status code alone proves nothing about
+    which. The detail does: `check_project_access` runs first, and with that line removed
+    this answers the content gate's message instead."""
+    r = await doors["outsider"].post(
+        f"/projects/{SLUG_A}/milestones/{doors['milestone_a']}/rebaseline",
+        json={"baseline_date": "2026-08-24", "reason": "CR-014"},
+    )
+    assert _refusal(r) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+async def test_rebaselining_still_refuses_a_member_without_the_content_role(doors):
+    """The floor must not have quietly replaced the gate it was added beside. This caller
+    passes `check_project_access` and is refused by `caller_may_commit`."""
+    r = await doors["member"].post(
+        f"/projects/{SLUG_A}/milestones/{doors['milestone_a']}/rebaseline",
+        json={"baseline_date": "2026-08-24", "reason": "CR-014"},
+    )
+    assert _refusal(r) == (403, APPROVER_REQUIRED)
+
+
+@pytest.mark.asyncio
+async def test_an_approver_on_this_project_may_still_rebaseline(doors):
+    r = await doors["approver"].post(
+        f"/projects/{SLUG_A}/milestones/{doors['milestone_a']}/rebaseline",
+        json={"baseline_date": "2026-08-24", "reason": "CR-014"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["baseline_date"] == "2026-08-24"
+
+
+@pytest.mark.asyncio
+async def test_rebaselining_is_not_on_the_administration_axis(doors):
+    """The one door in this router that did not move. An org_admin who belongs to the
+    engagement still has no content authority on it - if re-baselining had been swept onto
+    the administration axis with its neighbours, this would succeed."""
+    r = await doors["admin_a"].post(
+        f"/projects/{SLUG_A}/milestones/{doors['milestone_a']}/rebaseline",
+        json={"baseline_date": "2026-09-24", "reason": "CR-020"},
+    )
+    assert _refusal(r) == (403, APPROVER_REQUIRED)
+
+
+# ── The two reads the behavioural sweep found ─────────────────────────────────
+#
+# Neither router aliased anything, which is why neither turned up in the sweep that found
+# `milestones.py` and `nonworking.py`. Both are pure `check_project_access` omissions of the
+# same shape: a `/projects/{slug}`-scoped read behind `require_any_auth`, which asks whether
+# the caller has a login and never which engagement the login is on.
+#
+# `admin_a` carries the weight here for the same reason as above - it is a real, legitimate,
+# fully-privileged administrator, refused only because the engagement is not its own.
+
+PAM_REPORT = "/projects/{slug}/pam-report"
+SESSIONS = "/api/interviews/sessions/{slug}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template", [PAM_REPORT, SESSIONS])
+async def test_a_caller_with_no_membership_cannot_read_it(doors, template):
+    path = template.format(slug=SLUG_A)
+    assert _refusal(await doors["outsider"].get(path)) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template", [PAM_REPORT, SESSIONS])
+async def test_an_administrator_of_another_engagement_cannot_read_it(doors, template):
+    """The cross-project case. `admin_a` clears every login-role check these doors have;
+    remove `check_project_access` and both of these become successes."""
+    path = template.format(slug=SLUG_B)
+    assert _refusal(await doors["admin_a"].get(path)) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template", [PAM_REPORT, SESSIONS])
+async def test_a_member_may_still_read_it(doors, template):
+    """The success side, and not decoration: without it the module is satisfied by a gate
+    that refuses everyone, which closes the door rather than gating it. `member` holds a
+    participant stakeholder and no other role at all - membership is read access."""
+    path = template.format(slug=SLUG_A)
+    resp = await doors["member"].get(path)
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_reading_interview_sessions_really_does_hand_out_a_session_token(doors):
+    """Why the sessions door is the sharper of the two, checked rather than merely claimed.
+
+    A session token is the only credential the public half of `api/routers/interviews.py`
+    checks, so an unscoped read here is not a disclosure of project metadata - it is a way
+    in as somebody else's interviewee. Asserting the literal token the fixture seeded is
+    what makes the severity argument in this module's docstring falsifiable: if the
+    endpoint ever stops returning tokens, this fails and the argument gets rewritten rather
+    than quietly rotting into a claim nothing checks.
+    """
+    body = (await doors["member"].get(SESSIONS.format(slug=SLUG_A))).json()
+    tokens = [s["session_token"] for s in body["sessions"]]
+    assert tokens == ["tok-alpha-secret"]
+
+
+@pytest.mark.asyncio
+async def test_the_other_engagements_session_tokens_do_not_leak(doors):
+    """The refusal, spelled out against the thing being protected. An administrator of the
+    other engagement is refused project A's session list, tokens and all."""
+    async with _client_for("door-admin-b", "org_admin", org_id=doors["org_b"]) as admin_b:
+        resp = await admin_b.get(SESSIONS.format(slug=SLUG_A))
+    assert _refusal(resp) == (403, ACCESS_DENIED)
+    assert "tok-alpha-secret" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_probing_an_unknown_slug_creates_no_database(doors, tmp_path):
+    """`get_connection(slug)` creates a project database on first touch - mkdir, connect,
+    init_db, the full migration block. The sessions handler called it before any access
+    check, so a caller walking slugs materialised a file per guess. The gate now runs
+    first, and the refusal must arrive without the side effect."""
+    from api.database import get_db_path
+
+    unknown = "never-created-engagement"
+    assert not get_db_path(unknown).exists(), "fixture setup must not create it either"
+
+    assert _refusal(
+        await doors["member"].get(SESSIONS.format(slug=unknown))
+    ) == (403, ACCESS_DENIED)
+    assert not get_db_path(unknown).exists(), (
+        "a refused read must not materialise a project database"
+    )
+
+
+# ── The door that manufactures the floor ──────────────────────────────────────
+#
+# `POST` and `DELETE /auth/users/{user_id}/projects/{slug}` write and delete
+# `project_memberships` rows - the table every `check_project_access` on this codebase
+# reads. Both were `require_org_admin_or_above` with no slug scoping, so an org_admin of one
+# organisation could grant themselves a membership on another organisation's slug and then
+# walk through every gate in the API as a legitimate member. The other holes closed on this
+# branch bypassed the floor; this one manufactured it, which is why it is worth more than
+# the rest put together.
+#
+# The status code is the weaker half of each assertion here. The row is the thing that must
+# not come into being, so the row is what is asserted.
+
+GRANT = "/auth/users/{user_id}/projects/{slug}"
+
+
+async def _user_id(username: str) -> int:
+    async with get_system_connection() as sys_conn:
+        user = await fetch_user(sys_conn, username=username)
+    return user["id"]
+
+
+async def _membership_exists(user_id: int, slug: str) -> bool:
+    async with get_system_connection() as sys_conn:
+        cur = await sys_conn.execute(
+            "SELECT 1 FROM project_memberships WHERE user_id=? AND project_slug=?",
+            (user_id, slug),
+        )
+        return await cur.fetchone() is not None
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_cannot_grant_access_to_another_organisations_project(doors):
+    target = await _user_id("door-outsider")
+    assert not await _membership_exists(target, SLUG_B), "precondition"
+
+    resp = await doors["admin_a"].post(GRANT.format(user_id=target, slug=SLUG_B))
+
+    assert _refusal(resp) == (403, ACCESS_DENIED)
+    assert not await _membership_exists(target, SLUG_B), (
+        "the membership row came into being anyway - the refusal is decoration"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_grant_confers_no_access_afterwards(doors):
+    """The consequence, stated where it lands rather than one layer away. A row in
+    `project_memberships` is the whole of what `check_project_access` asks for, so if the
+    grant had gone through, this caller would read project B's engagement immediately."""
+    target = await _user_id("door-outsider")
+    await doors["admin_a"].post(GRANT.format(user_id=target, slug=SLUG_B))
+
+    assert _refusal(
+        await doors["outsider"].get(f"/projects/{SLUG_B}/milestones")
+    ) == (403, ACCESS_DENIED)
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_may_still_grant_access_to_their_own_project(doors):
+    """The success side. Without it a gate refusing every grant would satisfy the two tests
+    above, and the operator flow in `UserForm.tsx` would be dead rather than scoped."""
+    target = await _user_id("door-outsider")
+
+    resp = await doors["admin_a"].post(GRANT.format(user_id=target, slug=SLUG_A))
+
+    assert resp.status_code == 201, resp.text
+    assert await _membership_exists(target, SLUG_A)
+    # And it is a real membership, not merely a row: the granted caller now reads project A.
+    assert (await doors["outsider"].get(f"/projects/{SLUG_A}/milestones")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_cannot_revoke_another_organisations_membership(doors):
+    """Revocation needs the same scoping for the opposite reason: an org_admin who could
+    delete rows on any slug could cut a rival engagement's reviewers out of their own
+    project. The pre-existing row is seeded first, so "the row is still there" is a real
+    assertion rather than a vacuous one about a row that never existed."""
+    target = await _user_id("door-outsider")
+    async with get_system_connection() as sys_conn:
+        await sys_conn.execute(
+            "INSERT INTO project_memberships (user_id, project_slug) VALUES (?,?)",
+            (target, SLUG_B),
+        )
+        await sys_conn.commit()
+    assert await _membership_exists(target, SLUG_B), "precondition"
+
+    resp = await doors["admin_a"].delete(GRANT.format(user_id=target, slug=SLUG_B))
+
+    assert _refusal(resp) == (403, ACCESS_DENIED)
+    assert await _membership_exists(target, SLUG_B), (
+        "the membership was deleted anyway - the refusal is decoration"
+    )
+
+
+@pytest.mark.asyncio
+async def test_granting_a_membership_needs_administration_not_merely_membership(doors):
+    """The witness for the relocated administration gate.
+
+    `require_org_admin_or_above` moved from the decorator's `dependencies=[...]` into these
+    handlers' signatures so the body could reach the payload. Nothing tested it there, and
+    a review downgraded both to `require_any_auth` with the whole suite still green - at
+    which point a plain reviewer who belongs to a project could grant any user a membership
+    on it, because `check_project_access` would admit them and nothing else would ask.
+
+    `member` is that caller exactly: a real membership on project A, no administration role
+    anywhere. The refusal must come from the administration axis, so the detail is asserted
+    rather than the status - a 403 alone cannot tell this apart from the floor refusing.
+    """
+    target = await _user_id("door-outsider")
+
+    resp = await doors["member"].post(GRANT.format(user_id=target, slug=SLUG_A))
+
+    assert _refusal(resp) == (403, ADMIN_REQUIRED)
+    assert not await _membership_exists(target, SLUG_A)
+
+
+@pytest.mark.asyncio
+async def test_revoking_a_membership_needs_administration_not_merely_membership(doors):
+    """The same witness on the delete half. The two doors were downgraded together and
+    would have to be tested together to notice."""
+    target = await _user_id("door-outsider")
+    async with get_system_connection() as sys_conn:
+        await sys_conn.execute(
+            "INSERT INTO project_memberships (user_id, project_slug) VALUES (?,?)",
+            (target, SLUG_A),
+        )
+        await sys_conn.commit()
+
+    resp = await doors["member"].delete(GRANT.format(user_id=target, slug=SLUG_A))
+
+    assert _refusal(resp) == (403, ADMIN_REQUIRED)
+    assert await _membership_exists(target, SLUG_A), "the membership was deleted anyway"
+
+
+# ── The read door does not write ──────────────────────────────────────────────
+#
+# GET /projects/{slug}/milestones used to seed the defaults whenever the table came back
+# empty, which put the operation POST /milestones/seed is administration-gated for behind a
+# door any member can open: `test_membership_alone_is_read_access` above asserts a bare
+# is_participant gets 200 from it, and on a fresh project that *was* the seeding path.
+# Widening the gate would have been the wrong repair - a read that mutates is the defect,
+# and the authorisation gap only its symptom - so the write moved to project creation.
+
+@pytest.mark.asyncio
+async def test_creating_a_project_seeds_its_default_milestones(doors):
+    """Where the seed lives now. The fixture creates both projects through POST /projects
+    with an administrator's token, so this asserts the replacement actually replaces."""
+    from api.database import _DEFAULT_MILESTONES
+
+    rows = (await doors["member"].get(f"/projects/{SLUG_A}/milestones")).json()
+    keys = {m["milestone_key"] for m in rows}
+    # Compared against the production constant, not against a list restated here: the
+    # property is "creation runs the seed", and a literal copied into the test would only
+    # prove the copy matches itself while quietly rotting when a default is added.
+    assert keys >= {key for key, *_ in _DEFAULT_MILESTONES}, (
+        f"defaults absent after creation: {sorted(keys)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reading_milestones_writes_nothing_when_the_table_is_empty(doors):
+    """The empty table is the whole test. With the lazy seed present this read inserts the
+    default set and answers a populated list; the row count before and after is what tells
+    the two apart, and a member - who may not seed - is the caller that matters."""
+    async with get_connection(SLUG_A) as conn:
+        await conn.execute("DELETE FROM project_milestones WHERE slug=?", (SLUG_A,))
+        await conn.commit()
+
+    resp = await doors["member"].get(f"/projects/{SLUG_A}/milestones")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+    async with get_connection(SLUG_A) as conn:
+        async with conn.execute(
+            "SELECT COUNT(*) AS n FROM project_milestones WHERE slug=?", (SLUG_A,)
+        ) as cur:
+            assert (await cur.fetchone())["n"] == 0, (
+                "a read door seeded the table - the operation POST /milestones/seed is "
+                "administration-gated for is reachable through the read gate"
+            )
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_can_still_seed_an_empty_project(doors):
+    """The explicit door is the route back for a project whose table is empty - and it is
+    still administration-gated, which is the point of moving the write off the read."""
+    from api.database import _DEFAULT_MILESTONES
+
+    async with get_connection(SLUG_A) as conn:
+        await conn.execute("DELETE FROM project_milestones WHERE slug=?", (SLUG_A,))
+        await conn.commit()
+
+    assert _refusal(
+        await doors["member"].post(f"/projects/{SLUG_A}/milestones/seed")
+    ) == (403, ADMIN_REQUIRED)
+
+    seeded = await doors["admin_a"].post(f"/projects/{SLUG_A}/milestones/seed")
+    assert seeded.status_code == 200, seeded.text
+    assert {m["milestone_key"] for m in seeded.json()} >= {
+        key for key, *_ in _DEFAULT_MILESTONES
+    }

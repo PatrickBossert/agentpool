@@ -161,7 +161,10 @@ no error, no warning, just rows that stay unmigrated forever on every existing d
 
 - Router files: `api/routers/<resource>.py`
 - Service functions: `api/services/<feature>_service.py`
-- Auth: JWT bearer token, `Depends(get_current_user)` on protected routes
+- Auth: JWT bearer token. The dependency is `Depends(require_any_auth)`,
+  `Depends(require_org_admin_or_above)`, or `Depends(require_sysadmin)`, always under its own
+  name - `get_current_user` is not a symbol this codebase has, and importing one of these
+  under that alias is how the milestone hole stayed invisible (see below)
 - 404 helper: `_404(msg)` raises `HTTPException(404)`
 - No ORM — all SQL is raw strings in `api/database.py`
 
@@ -224,11 +227,21 @@ the door writes, not on how consequential it feels:
 
 *Administration* is running the engagement: stakeholders and their roles, campaigns and
 reminder emails, the document library, starting a run or an orchestration, PAM assignment,
-and `PATCH /{slug}/settings`. Twenty-five project-scoped doors across `campaigns.py` (10),
-`stakeholders.py` (7), `documents.py` (3), `assignment.py` (2), `orchestrate.py`, `run.py`
-and `projects.py` take `require_org_admin_or_above` and **no** content gate, as does project
-creation itself. That is deliberate: a consultant configures the engagement, and a
-client-side approver does not, however senior they are on the project.
+and `PATCH /{slug}/settings`, the milestone schedule, the non-working calendar, and the
+branding header. Thirty-three project-scoped doors across `campaigns.py` (10),
+`stakeholders.py` (7), `milestones.py` (4), `documents.py` (3), `nonworking.py` (3),
+`assignment.py` (2), `orchestrate.py`, `run.py` and `projects.py` (2 -
+`PATCH /{slug}/settings` and `POST /{slug}/branding/image`) take
+`require_org_admin_or_above` and **no** content gate, as does project creation itself. That
+is deliberate: a consultant configures the engagement, and a client-side approver does not,
+however senior they are on the project.
+
+Milestones and non-working days *ought* to answer to `project_admin` and `governor` - the
+design names them for exactly this - but both roles are currently inert and ungrantable:
+`_reject_undeclared_role_flags` in `stakeholders.py` refuses any truthy grant and no API
+path sets them, so gating on `project_admin` would make a milestone unreachable by
+everybody including the operator. `require_org_admin_or_above` is the reachable equivalent
+of the same intent, and is what to revisit first when those two roles become grantable.
 
 *Content* is acting on what the crews produced: reviews, change requests, warning
 dispositions, commits, submissions, activation, the canonical value chain, reverts,
@@ -247,7 +260,7 @@ router. Does it record an opinion about, or change, what the project currently *
 Content - `caller_may_contribute` for the former, `caller_may_approve` for the latter. Never
 `check_project_access` alone, which is read access. A pure read needs neither.
 
-Four sets of writes have neither gate. The first three are deliberate:
+Three sets of writes have neither gate, and all three are deliberate:
 
 - `POST /{slug}/agent-chat` and `DELETE /{slug}/agent-chat/history` write only rows keyed to
   the caller's own `username` - a personal scratchpad attached to read access, not authority.
@@ -255,11 +268,69 @@ Four sets of writes have neither gate. The first three are deliberate:
   participant has no login for the walk to start from.
 - `/auth/*`, `/admin/skills/*`, templates and skill notes carry no slug, so there is nothing
   to walk. They take login-role dependencies instead.
-- **Not deliberate:** `milestones.py` and `nonworking.py` alias `require_any_auth` to the name
-  `get_current_user` and call neither `check_project_access` nor a content gate, so every door
-  there except `POST /{milestone_id}/rebaseline` (which asks `caller_may_commit`) is a
-  project-scoped write behind bare authentication. `POST /{slug}/branding/image` is the same
-  under `get_token_payload`. Pre-existing, untouched, and not the pattern to copy.
+
+**Never alias an auth dependency on import.** `milestones.py` and `nonworking.py` used to do
+`from api.auth import require_any_auth as get_current_user`, and it hid a cross-project hole
+for as long as the files existed: every handler read `Depends(get_current_user)`, which is
+the name this project's conventions use for a *gated* door, so every reader's eye confirmed a
+guard that was not there - and a grep for `require_any_auth` did not find either file. Neither
+called `check_project_access`, so any valid token could read and rewrite any slug's milestones
+and calendar, and `POST /{slug}/branding/image` was the same under `get_token_payload`. Closed
+in sp38: the imports use the real names, `nonworking.py` binds its payload rather than `_`, all
+twelve doors call `check_project_access`, the writes take `require_org_admin_or_above`, and
+`POST /{milestone_id}/rebaseline` keeps `caller_may_commit` on top of the floor because moving
+a promise is a content judgement rather than configuration.
+`tests/test_milestone_door_authority.py` drives every one of them over HTTP: a real member of
+the project against every door, a real administrator of a *different* engagement against
+every door, and a real non-member against the reads and `rebaseline`. The non-member is not
+driven against the eight writes because the administration axis refuses it first, so the call
+would say nothing about the floor. The middle caller is the one that matters - it is the case
+an "anonymous is refused" test would have passed before the fix.
+
+`GET /projects/{slug}/milestones` used to seed the default milestones when the table came
+back empty, which put the operation `POST /milestones/seed` is administration-gated for
+behind a door any member can open. The repair was to take the write out of the read, not to
+widen the gate: `create_project` seeds once, where an administrator is present by definition.
+**A read door does not write on this codebase** - if a lazy write looks necessary, the
+question is which authenticated write path should have done it earlier.
+
+**Enumerate by behaviour, not by name.** The alias hid two files from a `require_any_auth`
+grep; `pam_report.py` then hid from the *alias* sweep by not aliasing, and it had the same
+hole. Two accidental discoveries meant the enumeration was wrong twice, so it was done
+properly: 96 handlers are mounted under a path containing `{slug}`, and the check is whether
+each one calls `check_project_access`. Reproduce it with an AST walk over `api/routers/*.py`
+that joins each `APIRouter(prefix=...)` to its `@router.<method>` paths - not with a grep for
+a dependency name, which is what missed it both times. **Ninety-three of the ninety-six call
+it.** The three that do not:
+
+| Door | Why not |
+|------|---------|
+| `GET /projects/{slug}/branding/image` | Deliberate - no auth at all. The interview page renders it for a participant who has no login. If that image ever becomes client-confidential the fix is session-token scoping, not `check_project_access`. |
+| `DELETE /auth/projects/{slug}` | Registry administration, `require_sysadmin`. Global by nature, and a sysadmin passes the floor unconditionally, so the call would be a no-op. |
+| `WEBSOCKET /ws/{slug}` | **Open, and unauthenticated entirely** - no token, no dependency. Streams agent log lines for any slug to anyone who can reach the port. `useWebSocket.ts` connects with no credential, so closing it needs a token-passing scheme (subprotocol or query parameter) before a gate can exist at all. The largest remaining exposure on this surface. |
+
+**The sweep counts routes whose *path* holds `{slug}` and nothing else.** A project-scoped
+door taking its slug from the request *body* does not appear in it - `POST
+/api/interviews/test/elaboration-press` is that shape, and does call `check_project_access`,
+but the technique cannot see it. Ninety-six is not a completeness guarantee.
+
+`POST` and `DELETE /auth/users/{user_id}/projects/{slug}` were the sweep's most important
+find and are closed. They write the `project_memberships` table that every
+`check_project_access` reads, and they never asked whose engagement the slug was, so an
+org_admin could grant themselves a row on another organisation's project and then pass every
+gate in the API as a legitimate member. **A gate that reads a table is worth nothing if a
+caller can write themselves into it** - the other holes bypassed the floor, this one
+manufactured it. Scoping rather than new policy: `svc_create_user` already forces `org_id`
+to the caller's own, and the floor's own org_admin branch already compares
+`project_registry.org_id` to the JWT's. `sysadmin` keeps its early return, so administering
+across organisations stays a sysadmin capability.
+
+`GET /projects/{slug}/pam-report` and `GET /api/interviews/sessions/{slug}` were the two
+found by this sweep and are now closed. The second was the sharpest hole on the branch: it
+returns every stakeholder's `session_token`, which is the only credential the public half of
+`api/routers/interviews.py` checks, so an unscoped read of it was a way in as somebody else's
+interviewee rather than a metadata leak. It also called `get_connection(slug)` before any
+check, so probing slugs created a database file per guess.
 
 Clearing a stakeholder's last non-participant flag, or deleting the row, removes the
 `project_memberships` row - `_revoke_membership_if_no_longer_privileged` in

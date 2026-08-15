@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from api.auth import get_token_payload, require_any_auth, require_org_admin_or_above, check_project_access
+from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.config import get_settings
 from api.database import (
     get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config,
@@ -195,9 +195,16 @@ _MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2 MB
 async def upload_branding_image(
     slug: str,
     file: UploadFile = File(...),
-    _user: dict = Depends(get_token_payload),
+    payload: dict = Depends(require_org_admin_or_above),
 ):
-    """Upload a header image for the project branding."""
+    """Upload a header image for the project branding.
+
+    Branding is how the engagement presents itself to its interviewees - configuration,
+    like `PATCH /{slug}/settings` beside it - so it sits on the administration axis. The
+    membership floor comes first, and before the existence check too: a caller from
+    outside the engagement must not be able to use this door to learn which slugs exist.
+    """
+    await check_project_access(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
