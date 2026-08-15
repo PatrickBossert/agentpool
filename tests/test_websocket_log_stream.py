@@ -32,6 +32,7 @@ parsed back out, and the accept has to echo a protocol name the client offered o
 drops the connection.
 """
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -200,6 +201,19 @@ def _receive_text(session, timeout: float = 5.0) -> str:
     return received[0]
 
 
+def _detached_within(slug: str, seconds: float) -> bool:
+    """Whether the slug leaves `_viewers` inside the deadline.
+
+    Detaching happens on the app's event loop, so the assertion has to be given a moment to
+    become true rather than read once - polled, not slept through, so a passing case costs
+    milliseconds and a failing one costs the deadline.
+    """
+    deadline = time.monotonic() + seconds
+    while slug in ws_module._viewers and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return slug not in ws_module._viewers
+
+
 def _refusal(stream: _Stream, slug: str, token: str | None) -> tuple[int, str]:
     """The close code and reason of a handshake that was refused.
 
@@ -349,9 +363,10 @@ def test_a_run_nobody_is_watching_buffers_nothing(stream):
 def test_a_viewer_that_has_gone_leaves_nothing_behind(stream):
     """The same property one step on: the run *was* watched, and the tab was closed.
 
-    Detaching on disconnect is the only reason `_viewers` stays empty in the ordinary case, and
-    an ASGI app only learns of a disconnect by receiving it - a handler that sat in its send
-    loop instead would keep this viewer, and its buffer, for the life of the process.
+    `_attach`'s `finally` is what this holds: however the handler ends - the disconnect read,
+    a send failing on a departed connection, or the task being cancelled - the queue is
+    discarded and the slug leaves `_viewers` with it. Remove that detach and the run below
+    goes on buffering five hundred lines into a queue nobody will ever read.
     """
     with stream.watch(SLUG_A, stream.member) as viewer:
         stream.emit(SLUG_A, "alex: started")
@@ -361,12 +376,55 @@ def test_a_viewer_that_has_gone_leaves_nothing_behind(stream):
     for i in range(500):
         stream.emit(SLUG_A, f"alex: step {i}")
 
-    deadline = threading.Event()
-    for _ in range(100):
-        if not ws_module._viewers:
-            break
-        deadline.wait(0.05)
-    assert ws_module._viewers == {}, "a departed viewer is still attached and still buffering"
+    assert _detached_within(SLUG_A, 5.0), (
+        "a departed viewer is still attached and still buffering"
+    )
+
+
+def test_a_closed_tab_detaches_at_once_rather_than_at_the_next_keepalive(stream):
+    """`_wait_for_disconnect`, isolated - and isolating it takes some care.
+
+    `_forward_lines` is the *other* way this handler notices a departure: under uvicorn a send
+    on a connection whose client has gone raises, so the next keepalive would end the stream
+    on its own within PING_INTERVAL_SECONDS. Any test that pushes a line, or waits a ping
+    interval, or simply leaves the `with` block - which cancels the app task outright - is
+    therefore satisfied by a handler carrying no watcher at all. The test above is one of
+    those, and for a while this module claimed it covered the watcher when it covered the
+    detach.
+
+    So: nothing pushed, nothing waited out, and the session deliberately not exited.
+    `viewer.close()` puts a `websocket.disconnect` on the handler's receive queue and returns.
+    Inside the next few seconds the only thing that can detach this viewer is a handler that
+    is reading for it.
+    """
+    with stream.watch(SLUG_A, stream.member) as viewer:
+        assert SLUG_A in ws_module._viewers, "precondition: the viewer really was attached"
+
+        viewer.close(1000)
+
+        assert _detached_within(SLUG_A, 3.0), (
+            "the closed tab is still attached - the handler is not reading for the "
+            "disconnect, and will not notice until a keepalive fails up to "
+            f"{ws_module.PING_INTERVAL_SECONDS}s from now"
+        )
+
+
+def test_the_server_sends_a_keepalive_while_a_run_is_quiet(stream, monkeypatch):
+    """The keepalive, which is load-bearing twice over and was asserted nowhere.
+
+    ui/src/__tests__/useWebSocket.test.tsx proves the hook *discards* a line reading `ping`;
+    nothing proved anything ever sends one, so a stream that had quietly stopped sending them
+    would have satisfied both suites. It is the backstop that ends the stream for a viewer
+    whose disconnect never arrives, and it is what stops a proxy timing an idle socket out
+    during the long quiet stretch while an agent thinks.
+
+    The interval is patched down rather than waited out: `_forward_lines` reads
+    PING_INTERVAL_SECONDS on every pass, so the value at connect time is the one that binds.
+    """
+    monkeypatch.setattr(ws_module, "PING_INTERVAL_SECONDS", 0.05)
+
+    with stream.watch(SLUG_A, stream.member) as viewer:
+        assert _receive_text(viewer) == "ping"
 
 
 @pytest.mark.asyncio

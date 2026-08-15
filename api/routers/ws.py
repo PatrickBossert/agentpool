@@ -35,7 +35,7 @@ import asyncio
 import contextlib
 from collections.abc import Iterator
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket
 
 from api.auth import check_project_access, decode_token
 from api.config import get_settings
@@ -117,18 +117,25 @@ async def _forward_lines(websocket: WebSocket, queue: asyncio.Queue[str]) -> Non
 
 
 async def _wait_for_disconnect(websocket: WebSocket) -> None:
-    """Read until the browser goes away.
+    """Read until the browser goes away, so a closed tab detaches at once.
 
-    A viewer never sends anything, so this exists only to notice the departure. An ASGI app
-    learns of a disconnect by receiving it and by no other means - without this the handler
-    would sit in its send loop after the tab closed, holding its queue attached and its slug
-    in `_viewers`, which is the leak this module is meant to have stopped.
+    A viewer never sends anything; this exists only to notice the departure. It bounds the
+    latency of that departure rather than being the only thing that could ever notice it -
+    under uvicorn, `send_text` on a connection whose client has gone raises
+    `ClientDisconnected`, so `_forward_lines` would fail at its next keepalive and the viewer
+    would detach anyway, within `PING_INTERVAL_SECONDS`. The keepalive is the backstop; this
+    is what turns "up to thirty seconds" into "immediately", and on a dashboard where tabs
+    are opened and closed all day that is the difference between a handler, its two tasks and
+    its queue lingering per closed tab and not.
+
+    Nothing is caught here because nothing is raised: `receive()` returns the disconnect as an
+    ordinary message, and only the typed helpers (`receive_text` and friends) turn it into a
+    `WebSocketDisconnect`.
     """
-    with contextlib.suppress(WebSocketDisconnect):
-        while True:
-            message = await websocket.receive()
-            if message["type"] == "websocket.disconnect":
-                return
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
 
 
 @router.websocket("/ws/{slug}")
