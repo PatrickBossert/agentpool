@@ -2998,11 +2998,19 @@ async def insert_user(
     hashed_pw: str,
     project_slug: str | None = None,
 ) -> bool:
-    """Returns True if inserted, False if username already exists."""
+    """Returns True if inserted, False if username already exists.
+
+    is_sys_admin is derived from the role rather than passed in, because it is not
+    independent of it and nothing was setting it: every account created through
+    POST /admin/users got role='sysadmin' with is_sys_admin=0, and behaved differently
+    under caller_roles - which reads only the column - from one set up by hand. Two
+    sysadmins, same role string, different authority, nothing on either row to say why.
+    """
     try:
         await conn.execute(
-            "INSERT INTO users (username, email, role, hashed_pw, project_slug) VALUES (?,?,?,?,?)",
-            (username, email, role, hashed_pw, project_slug),
+            "INSERT INTO users (username, email, role, hashed_pw, project_slug, is_sys_admin)"
+            " VALUES (?,?,?,?,?,?)",
+            (username, email, role, hashed_pw, project_slug, 1 if role == "sysadmin" else 0),
         )
         await conn.commit()
         return True
@@ -3440,6 +3448,33 @@ async def delete_project_membership(
     await conn.commit()
 
 
+async def delete_project_membership_by_stakeholder(
+    conn: aiosqlite.Connection, *, project_slug: str, stakeholder_id: int
+) -> int:
+    """Unlink whatever login this project's stakeholder row is reached through.
+
+    The exact inverse of link_membership, and keyed the same way. Deliberately not
+    expressed as "look the email up in users, then delete_project_membership": the
+    stakeholder's email may have been edited since the invite was accepted, in which case
+    it no longer matches the users row that membership actually points at, and the
+    revocation would find nothing and report success. stakeholder_id is the link
+    caller_roles walks, so it is the link revocation has to cut.
+
+    A membership granted by an administrator through /admin (insert_project_membership)
+    carries a NULL stakeholder_id and is untouched by this - it was never a consequence
+    of a stakeholder's role flags, so clearing those flags must not withdraw it.
+
+    Returns the number of memberships removed, so a caller can tell "revoked" from
+    "there was nothing to revoke".
+    """
+    cur = await conn.execute(
+        "DELETE FROM project_memberships WHERE project_slug=? AND stakeholder_id=?",
+        (project_slug, stakeholder_id),
+    )
+    await conn.commit()
+    return cur.rowcount or 0
+
+
 async def fetch_user_project_memberships(
     conn: aiosqlite.Connection, *, user_id: int
 ) -> list[dict]:
@@ -3491,15 +3526,20 @@ async def update_user(
     role: str,
     hashed_pw: str | None = None,
 ) -> None:
+    """is_sys_admin moves with the role for the same reason insert_user derives it: it is
+    a projection of the role, not a second fact about the account. Setting it only at
+    creation would fix the divergence for new accounts and leave it wide open on the one
+    edit that can introduce it - promoting somebody to sysadmin through PUT /admin/users."""
+    is_sys_admin = 1 if role == "sysadmin" else 0
     if hashed_pw:
         await conn.execute(
-            "UPDATE users SET email=?, role=?, hashed_pw=? WHERE id=?",
-            (email, role, hashed_pw, user_id),
+            "UPDATE users SET email=?, role=?, hashed_pw=?, is_sys_admin=? WHERE id=?",
+            (email, role, hashed_pw, is_sys_admin, user_id),
         )
     else:
         await conn.execute(
-            "UPDATE users SET email=?, role=? WHERE id=?",
-            (email, role, user_id),
+            "UPDATE users SET email=?, role=?, is_sys_admin=? WHERE id=?",
+            (email, role, is_sys_admin, user_id),
         )
     await conn.commit()
 

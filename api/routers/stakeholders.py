@@ -23,6 +23,7 @@ from api.services.invite_service import issue_invite, reissue_invite
 from api.database import (
     get_connection,
     get_system_connection,
+    delete_project_membership_by_stakeholder,
     fetch_project,
     fetch_stakeholder,
     fetch_user,
@@ -325,6 +326,44 @@ async def _issue_invite_if_newly_privileged(slug: str, before: dict | None, afte
     await issue_invite(email=after["email"], project_slug=slug, stakeholder_id=after["id"])
 
 
+async def _revoke_membership(slug: str, stakeholder_id: int) -> None:
+    """Cut this stakeholder row's link to whatever login reaches the project through it.
+
+    The users row is left alone on purpose. It is a global login that may hold
+    memberships on other engagements, and deleting it would revoke those too - the
+    membership is what is project-scoped, so the membership is what is withdrawn.
+    """
+    async with get_system_connection() as conn:
+        await delete_project_membership_by_stakeholder(
+            conn, project_slug=slug, stakeholder_id=stakeholder_id
+        )
+
+
+async def _revoke_membership_if_no_longer_privileged(
+    slug: str, before: dict | None, after: dict
+) -> None:
+    """The mirror of _issue_invite_if_newly_privileged: clearing the last non-participant
+    flag takes the access away that setting the first one granted.
+
+    Without this, "clearing every non-participant flag revokes access" was true of
+    caller_roles - which correctly returns nothing once the flags are gone - and false of
+    the system. check_project_access asks project_memberships, not stakeholders, and it
+    has no role test at all, so a revoked person kept full read of the engagement and
+    every write door behind membership alone. The design says the flags are the
+    revocation; this is what makes the sentence true.
+
+    Fires on the transition only, exactly as the invite side does: was privileged before,
+    is not now. A row that was already participant-only is left alone - it never had a
+    membership from this route to withdraw - and a partial revocation that still leaves
+    some other role standing is not a revocation.
+    """
+    if not _holds_other_role(before or {}):
+        return
+    if _holds_other_role(after):
+        return
+    await _revoke_membership(slug, after["id"])
+
+
 @router.get("/{slug}/stakeholders")
 async def list_stakeholders_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
     await check_project_access(slug, payload)
@@ -375,6 +414,7 @@ async def update_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stak
     if result is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
     await _issue_invite_if_newly_privileged(slug, before, result)
+    await _revoke_membership_if_no_longer_privileged(slug, before, result)
     return result
 
 
@@ -402,6 +442,7 @@ async def patch_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stake
     if result is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
     await _issue_invite_if_newly_privileged(slug, before, result)
+    await _revoke_membership_if_no_longer_privileged(slug, before, result)
     return result
 
 
@@ -452,12 +493,21 @@ async def resend_invite_endpoint(slug: str, stakeholder_id: int, payload: dict =
 
 @router.delete("/{slug}/stakeholders/{stakeholder_id}", status_code=204)
 async def delete_stakeholder_endpoint(slug: str, stakeholder_id: int, payload: dict = Depends(require_org_admin_or_above)):
+    """Remove the person record - and with it, any login that reached this project
+    through it.
+
+    Deleting the row on its own left the membership behind pointing at a stakeholder_id
+    that no longer exists: caller_roles then found no stakeholder and returned nothing,
+    while check_project_access still passed on the membership. A dangling id with a live
+    login attached, holding read of the whole engagement.
+    """
     await check_project_access(slug, payload)
     result = await delete_stakeholder_svc(slug, stakeholder_id)
     if result is None:
         _404(slug)
     if result is False:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
+    await _revoke_membership(slug, stakeholder_id)
 
 
 @router.get("/{slug}/stakeholder-assignments")

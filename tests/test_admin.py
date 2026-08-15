@@ -189,3 +189,84 @@ async def test_register_project():
 
         resp = await client.get("/auth/projects", headers=auth(sysadmin_token()))
         assert any(r["slug"] == "proj-a" for r in resp.json())
+
+
+@pytest.mark.asyncio
+async def test_a_created_sysadmin_carries_the_flag_caller_roles_reads():
+    """is_sys_admin had no writer. Every account made through this endpoint got
+    role='sysadmin' and is_sys_admin=0, and authority_service.caller_roles reads only the
+    column - so a sysadmin created here silently held no project_admin anywhere, while
+    one whose row had been flagged by hand did. Two accounts, the same role string,
+    different authority, and nothing on either row to say which was which.
+
+    Asserted through caller_roles rather than by reading the column, because the column is
+    only interesting for what the walk makes of it - a test on the column alone would pass
+    against an implementation that stored it under a name nothing reads.
+    """
+    from api.services.authority_service import caller_roles
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/auth/users",
+            json={
+                "username": "newsys", "email": "newsys@test.com",
+                "password": "secret123", "role": "sysadmin",
+            },
+            headers=auth(sysadmin_token()),
+        )
+        assert resp.status_code == 201
+
+    roles = await caller_roles("any-project", {"sub": "newsys", "role": "sysadmin"})
+    assert "sys_admin" in roles
+    assert "project_admin" in roles
+
+
+@pytest.mark.asyncio
+async def test_a_created_reviewer_does_not_carry_it():
+    """The other side of "derived from the role" - without this, setting the column to 1
+    unconditionally would pass the test above and hand every invited reviewer
+    project_admin on every project in the system."""
+    from api.services.authority_service import caller_roles
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/auth/users",
+            json={
+                "username": "newrev", "email": "newrev@test.com",
+                "password": "secret123", "role": "reviewer",
+            },
+            headers=auth(sysadmin_token()),
+        )
+        assert resp.status_code == 201
+
+    assert await caller_roles("any-project", {"sub": "newrev", "role": "reviewer"}) == set()
+
+
+@pytest.mark.asyncio
+async def test_promoting_an_account_to_sysadmin_moves_the_flag_with_it():
+    """The one edit that can introduce the divergence after creation. Setting the column
+    only on insert would leave PATCH /auth/users/{id} minting the same mismatched pair the
+    creation path used to."""
+    from api.services.authority_service import caller_roles
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/auth/users",
+            json={
+                "username": "promoted", "email": "promoted@test.com",
+                "password": "secret123", "role": "reviewer",
+            },
+            headers=auth(sysadmin_token()),
+        )
+        user_id = created.json()["id"]
+
+        resp = await client.patch(
+            f"/auth/users/{user_id}",
+            json={"email": "promoted@test.com", "role": "sysadmin"},
+            headers=auth(sysadmin_token()),
+        )
+        assert resp.status_code == 200
+
+    assert "sys_admin" in await caller_roles(
+        "any-project", {"sub": "promoted", "role": "sysadmin"}
+    )

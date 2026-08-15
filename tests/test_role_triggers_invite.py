@@ -160,11 +160,28 @@ async def test_a_person_already_linked_to_this_project_is_not_invited_again(clie
 
 
 @pytest.mark.asyncio
-async def test_clearing_and_resetting_a_role_after_accepting_does_not_mint_a_second_invite(client, seeded_project_slug):
-    """Driven end to end: without the login conjunct, clearing a role back to
-    participant-only and then re-setting it reads as "newly set" a second time, and mints a
-    second, unused, seven-day-live invite onto a login that can already authenticate - the
-    exact shape a stray password-reset credential comes from."""
+async def test_clearing_and_resetting_a_role_after_accepting_reinvites_because_clearing_revoked(client, seeded_project_slug):
+    """This test used to assert the opposite, and was right to at the time.
+
+    The login conjunct (_has_linked_login) exists so that clearing a role and re-setting it
+    does not mint a second, unused invite onto a login that can already authenticate. That
+    held while clearing a role did nothing to the membership - the person could still get
+    in, so there was nothing to restore and a fresh token would have been pure surface.
+
+    Clearing the last non-participant flag now revokes the membership
+    (_revoke_membership_if_no_longer_privileged), which is what makes the design's
+    "clearing every non-participant flag revokes access" true. So by the time the role is
+    re-set, this person genuinely cannot reach the project any more, _has_linked_login
+    correctly answers False, and the invite is not a duplicate - it is the route back. Both
+    ends of the sequence are asserted below rather than only the second, so the test says
+    what the pairing is for.
+
+    The hazard the conjunct was written against is closed at its own layer and is not
+    reopened by this: accept_token only touches an existing account's password for a token
+    whose stored purpose is "reset", and /auth/accept refuses to mint a session for an
+    email that already has a login. Redeeming this second invite grants the membership back
+    and sends them to sign in with the password they already have.
+    """
     slug = seeded_project_slug
     email = "reset@example.com"
     await _purge_system_login(email)  # defensive: a prior failed run may have left this live
@@ -184,16 +201,27 @@ async def test_clearing_and_resetting_a_role_after_accepting_does_not_mint_a_sec
             uid = (await cur.fetchone())[0]
             await link_membership(conn, user_id=uid, project_slug=slug, stakeholder_id=sid)
 
+        from api.database import has_project_membership
+
         with patch("api.routers.stakeholders.issue_invite", new=AsyncMock()) as second_invite:
             cleared = await client.patch(f"/projects/{slug}/stakeholders/{sid}",
                                          json={"is_reviewer": False})
             assert cleared.status_code == 200, cleared.text
             assert cleared.json()["is_reviewer"] is False
+            # The revocation, asserted where it happens: nothing yet re-grants anything, so
+            # a second invite arriving after this line is a restoration and not a duplicate.
+            async with get_system_connection() as conn:
+                assert not await has_project_membership(
+                    conn, user_id=uid, project_slug=slug
+                ), "clearing the last non-participant flag must withdraw the membership"
+            second_invite.assert_not_awaited()
+
             reset = await client.patch(f"/projects/{slug}/stakeholders/{sid}",
                                        json={"is_reviewer": True})
             assert reset.status_code == 200, reset.text
             assert reset.json()["is_reviewer"] is True
-        second_invite.assert_not_awaited()
+        assert second_invite.await_count == 1
+        assert second_invite.await_args.kwargs["email"] == email
     finally:
         await _purge_system_login(email)
 
