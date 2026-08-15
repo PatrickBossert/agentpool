@@ -6,6 +6,10 @@ is set on a stakeholder who holds no other role yet AND that person has no login
 linked to this project, an invite goes out (see _issue_invite_if_newly_privileged below). A
 role that cannot be delivered - set with no email, or an email that cannot be one - is
 refused with 422 rather than stored quietly; see _validate_deliverable_role.
+
+Changing a row's email is a change of person, not a change of detail. It ends the previous
+holder's access and begins the new one's, in that order - see _revoke_membership_if_
+reassigned and the _is_reassignment conjunct in _issue_invite_if_newly_privileged.
 """
 import re
 
@@ -188,6 +192,40 @@ def _reject_undeclared_role_flags(body: BaseModel) -> None:
         )
 
 
+def _normalised_email(flags: dict) -> str:
+    """The comparison form of this flag dict's address - stripped and lowercased.
+
+    Not a third convention: `_stakeholder_matches_invite` in `invite_service.py` already
+    compares a stakeholder's email against a token's with `.strip().lower()`, and this
+    matches it so that "is this the same person" is answered the same way on both sides of
+    the invite loop. It matters that it is exactly that and no looser: `users.username` is
+    `TEXT UNIQUE` with SQLite's binary collation, so `fetch_user` distinguishes casings the
+    rest of the code does not - which is why a casing edit must NOT read as a new person
+    here, or it would revoke a live membership and invite an address that already has one.
+    """
+    return (flags.get("email") or "").strip().lower()
+
+
+def _is_reassignment(before: dict | None, after: dict) -> bool:
+    """Whether this write re-pointed the row at a *different* person.
+
+    Ordinary and routine: "Dougie has left, Sam has the seat now" is an email edit on the
+    existing row, keeping the flags, the node assignments and the interview history. What
+    it is not is a change of role, so neither `_issue_invite_if_newly_privileged` nor
+    `_revoke_membership_if_no_longer_privileged` sees anything happen - both key on the
+    role transition. Left at that, the departed holder's login keeps the membership (which
+    points at the row by `stakeholder_id`, so an email edit cannot dislodge it) and with it
+    full read of the engagement plus every gate that reads `caller_roles`, indefinitely and
+    silently, while the arriving holder is never invited.
+
+    A create is not a reassignment - there was no previous holder to displace - and neither
+    is a casing or whitespace edit, per `_normalised_email`.
+    """
+    if not before:
+        return False
+    return _normalised_email(before) != _normalised_email(after)
+
+
 def _has_valid_email(flags: dict) -> bool:
     """Whether this flag dict's email is present and looks like an address - deliverability
     in isolation, independent of whether a role is held. _is_undeliverable below is this
@@ -307,6 +345,15 @@ async def _issue_invite_if_newly_privileged(slug: str, before: dict | None, afte
     already true, is_approver newly added) does not re-trigger this, because "before already
     both" is already satisfied - nothing there needed completing.
 
+    A reassignment is the exception to that early return, and the reason for the
+    `_is_reassignment` conjunct: when the address changes, "before was already both" was
+    true of *somebody else*, so nothing has been set up for the person the row now names.
+    They are a fresh grant and are invited as one - the mirror of
+    `_revoke_membership_if_reassigned`, which withdraws the departed holder's membership on
+    the same transition. Both halves of the handover, or neither: inviting without revoking
+    leaves two people with access, and revoking without inviting hands the seat to somebody
+    who cannot reach it.
+
     The login conjunct (_has_linked_login) still guards the case neither branch above can
     see: a role cleared back to participant-only and then re-set on someone who *has* since
     accepted. That write reads as "before was not already both" again (after clearing, before
@@ -319,7 +366,11 @@ async def _issue_invite_if_newly_privileged(slug: str, before: dict | None, afte
     if not (_holds_other_role(after) and _has_valid_email(after)):
         return
     before = before or {}
-    if _holds_other_role(before) and _has_valid_email(before):
+    if (
+        _holds_other_role(before)
+        and _has_valid_email(before)
+        and not _is_reassignment(before, after)
+    ):
         return
     if await _has_linked_login(slug, after["email"]):
         return
@@ -337,6 +388,32 @@ async def _revoke_membership(slug: str, stakeholder_id: int) -> None:
         await delete_project_membership_by_stakeholder(
             conn, project_slug=slug, stakeholder_id=stakeholder_id
         )
+
+
+async def _revoke_membership_if_reassigned(
+    slug: str, before: dict | None, after: dict
+) -> None:
+    """A seat handover withdraws the departed holder's access.
+
+    `_revoke_membership_if_no_longer_privileged` below fires on a *role* transition, and an
+    administrator re-pointing a row at a different person changes only the email - the flags
+    stay exactly as they were, so nothing there fires. The membership points at the row by
+    `stakeholder_id` (deliberately, so an edited email cannot orphan it), which means the
+    departed holder's login keeps reaching the engagement through a row that no longer
+    describes them: full read plus every gate `caller_roles` answers, with nothing in the
+    system left saying they were ever there.
+
+    Keyed on `stakeholder_id` for the same reason the flag-clearing revocation is: this is
+    the link `caller_roles` walks, so it is the link revocation has to cut. The `users` row
+    is untouched - it is a global login that may hold memberships on other engagements.
+
+    Any live invite the departed holder still held is already dead without being deleted:
+    `_stakeholder_matches_invite` re-reads the stakeholder row's own email when the token is
+    redeemed and refuses a token whose address no longer matches it.
+    """
+    if not _is_reassignment(before, after):
+        return
+    await _revoke_membership(slug, after["id"])
 
 
 async def _revoke_membership_if_no_longer_privileged(
@@ -413,6 +490,9 @@ async def update_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stak
     result = await update_stakeholder_svc(slug, stakeholder_id, data)
     if result is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
+    # Revocation before invitation: the departed holder's link is cut first, so the invite
+    # decision below reads a system in which only the arriving holder's own logins count.
+    await _revoke_membership_if_reassigned(slug, before, result)
     await _issue_invite_if_newly_privileged(slug, before, result)
     await _revoke_membership_if_no_longer_privileged(slug, before, result)
     return result
@@ -441,6 +521,7 @@ async def patch_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stake
     result = await update_stakeholder_svc(slug, stakeholder_id, patch_fields)
     if result is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
+    await _revoke_membership_if_reassigned(slug, before, result)
     await _issue_invite_if_newly_privileged(slug, before, result)
     await _revoke_membership_if_no_longer_privileged(slug, before, result)
     return result
