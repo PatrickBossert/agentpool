@@ -13,8 +13,9 @@ from api.database import (
     insert_project_membership, delete_project_membership,
     fetch_user_project_memberships,
     insert_user, fetch_all_users, fetch_users_by_org,
-    fetch_user_by_id, update_user, delete_user, fetch_user,
+    fetch_user_by_id, update_user, delete_user, fetch_user, fetch_user_org,
 )
+from api.services.invite_service import deliver_reset
 
 
 class OrganisationInUse(Exception):
@@ -259,6 +260,69 @@ async def svc_update_user(
         await update_user(conn, user_id=user_id, email=email, role=role, hashed_pw=hashed)
         updated = await fetch_user_by_id(conn, user_id=user_id)
         return {k: v for k, v in updated.items() if k != "hashed_pw"}
+
+
+class ResetLinkRefused(Exception):
+    """An org_admin asked for a reset link on an account outside their authority.
+
+    Raised rather than returned for the same reason ForbiddenRoleChange is: None already
+    means "no such user" here, and answering a refusal with 404 would tell the operator the
+    opposite of what happened - and, worse on this door, would make "that account is not
+    yours to reset" indistinguishable from "there is no such account", which is a
+    cross-organisation existence oracle for any org_admin willing to enumerate ids.
+    """
+
+
+async def svc_issue_reset_link(user_id: int, calling_payload: dict) -> dict | None:
+    """Mint a password-reset link for a named account and hand the raw token back.
+
+    Returns None when there is no such user; raises ResetLinkRefused when the caller may not
+    reset this one.
+
+    Returning the token is the same decision `POST /{slug}/stakeholders/{id}/resend-invite`
+    already made, for the same reason: there is no wired outbound-email path (FROM_EMAIL
+    names a domain that is not verified in Resend), so the administrator who asked for the
+    link is the one who delivers it. That is acceptable here because the caller is already
+    org_admin or above - a tier that can set this account's password outright through
+    `PATCH /auth/users/{id}` - so the link grants them nothing they could not already do,
+    and it is strictly the *better* of the two, since the account owner chooses the new
+    password rather than being handed one the administrator knows.
+
+    Two guards, neither of which the tier check can express:
+
+      sysadmin target - an org_admin may not mint a reset for a sysadmin. svc_create_user
+        and svc_update_user already refuse to *grant* sysadmin for exactly this reason; a
+        reset link on a sysadmin account is the same escalation reached from the other end.
+      other org       - an org_admin may only reset accounts in their own organisation.
+        svc_list_users already scopes what they can see to their own org, so without this
+        the id in the URL is a way round a filter the UI applies everywhere else.
+
+    A sysadmin keeps its usual early return - administering across organisations is a
+    sysadmin capability throughout this file.
+
+    `deliver_reset` is passed `users.username`, not `users.email`: it looks its account up
+    as a username (see invite_service.issue_reset), and while every invite-created login has
+    the two equal, an administrator-created one need not - passing the email there would
+    mint a token no redemption could resolve, and `issue_reset` would roll it back and
+    answer None, so the operator would see "no such account" for an account plainly in front
+    of them.
+    """
+    async with get_system_connection() as conn:
+        user = await fetch_user_by_id(conn, user_id=user_id)
+        if not user:
+            return None
+        if calling_payload.get("role") == "org_admin":
+            if user["role"] == "sysadmin":
+                raise ResetLinkRefused("org_admin cannot reset a sysadmin account")
+            org_row = await fetch_user_org(conn, user_id=user_id)
+            caller_org = calling_payload.get("org_id")
+            if caller_org is None or org_row is None or org_row["org_id"] != caller_org:
+                raise ResetLinkRefused("that account is not in your organisation")
+
+    raw = await deliver_reset(email=user["username"])
+    if raw is None:
+        return None
+    return {"reset_token": raw, "username": user["username"], "email": user["email"]}
 
 
 async def svc_delete_user(user_id: int) -> bool:

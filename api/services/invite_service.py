@@ -334,6 +334,38 @@ async def issue_reset(email: str) -> str | None:
     return raw
 
 
+async def deliver_reset(email: str) -> str | None:
+    """Mint a reset token and deliver it. The one place delivery is decided.
+
+    Both reset doors call this and nothing calls `issue_reset` directly any more: the
+    self-service door (`POST /auth/reset-request`, which discards the return value and
+    answers 204 either way) and the administrator door (`POST /auth/users/{id}/reset-link`,
+    which hands the raw token back to be sent by hand). Delivery today *is* the
+    administrator - `FROM_EMAIL` names a domain that is not verified in Resend, so outbound
+    mail 403s - which is the same shape the invite loop already runs on.
+
+    **Wiring Resend is a change to this function and nothing else.** Send the link here,
+    between the mint and the return, mirroring `admin_service._send_welcome_email`
+    (httpx against the Resend HTTP API, silently skipped when no key is configured). Both
+    doors then start emailing at once, and the administrator door keeps returning the token
+    so an operator can still deliver by hand when a message does not arrive.
+
+    Two things to keep when that happens. The self-service door must stay 204-always and
+    must not begin to differ by outcome - so a send failure must not become an error there.
+    And an unknown address must still cost roughly what a known one costs; a send is far
+    more expensive than the DB work `issue_reset` deliberately keeps flat, so it belongs off
+    the request path (a queue or a background task) rather than awaited inline, or the
+    timing tell `issue_reset` closed reopens through the mail call.
+
+    `email` is looked up as a *username* (see `issue_reset`), which for every invite-created
+    login is the address itself; the administrator door passes `users.username` for exactly
+    that reason.
+    """
+    raw = await issue_reset(email=email)
+    # Delivery goes here - see the docstring. Until it exists, the caller delivers.
+    return raw
+
+
 async def org_id_for_session(user: dict) -> int | None:
     """org_id to embed in a session token, matching /auth/login's issuance exactly.
 

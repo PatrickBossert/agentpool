@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from api.auth import create_access_token
 from api.config import get_settings
-from api.services.invite_service import accept_token, issue_reset, org_id_for_session
+from api.services.invite_service import accept_token, deliver_reset, org_id_for_session
 
 router = APIRouter(prefix="/auth", tags=["invites"])
 
@@ -66,14 +66,22 @@ def _already_registered_response() -> dict:
     It has to say what was discarded, not only what was granted: whoever redeemed this
     token typed a password twice on the way here, and the previous wording ("sign in with
     your existing password") read to at least one person as the password they had just
-    chosen. They then found only the old one worked and had no idea why."""
+    chosen. They then found only the old one worked and had no idea why.
+
+    It now names a way out too. The sentence confidently points somebody at a password they
+    may not remember, and the people who reach this outcome are precisely the ones invited
+    to a second engagement months after the first - the population least likely to remember
+    it. Until this task there was nowhere to send them; there is now, so the wording says
+    so. Described rather than rendered as a link, because AcceptInvite.tsx renders this
+    string as plain text - the page puts the actual link beside it."""
     return {
         "access_token": None,
         "token_type": "bearer",
         "already_registered": True,
         "detail": "An account already exists for this email address, so this invite "
                   "granted your access only. The password you just entered was not set - "
-                  "your existing password still works, and it is the one to sign in with.",
+                  "your existing password still works, and it is the one to sign in with. "
+                  "If you have forgotten it, ask for a reset link from the sign-in page.",
     }
 
 
@@ -91,7 +99,15 @@ async def accept(req: AcceptRequest):
 @router.post("/reset-request", status_code=204)
 async def reset_request(req: ResetRequestBody):
     # Awaited but its result is deliberately not inspected - a 204 either way is the point.
-    await issue_reset(email=req.email)
+    # Nothing here may ever branch on the outcome, in the response body, the status, or a
+    # header: this door is unauthenticated, so any difference between a known and an unknown
+    # address is an account-existence oracle for anybody who can type an address. The page
+    # that posts here says "if that address has an account, a link is on its way" for the
+    # same reason - see ui/src/pages/ForgottenPassword.tsx.
+    #
+    # deliver_reset rather than issue_reset: delivery is decided in one place (see its
+    # docstring), which is where Resend gets wired when the sender domain is verified.
+    await deliver_reset(email=req.email)
 
 
 @router.post("/reset")

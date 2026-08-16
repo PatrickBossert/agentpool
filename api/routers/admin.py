@@ -8,7 +8,8 @@ from api.services.admin_service import (
     svc_list_registry, svc_register_project, svc_unregister_project,
     svc_list_users, svc_create_user, svc_update_user, svc_delete_user,
     svc_list_user_projects, svc_grant_project_access, svc_revoke_project_access,
-    ForbiddenRoleChange, OrganisationInUse,
+    svc_issue_reset_link,
+    ForbiddenRoleChange, OrganisationInUse, ResetLinkRefused,
 )
 
 router = APIRouter(prefix="/auth", tags=["admin"])
@@ -179,6 +180,38 @@ async def update_user_endpoint(
     if not user:
         _404(f"User {user_id} not found")
     return user
+
+
+@router.post("/users/{user_id}/reset-link")
+async def issue_reset_link_endpoint(
+    user_id: int, payload: dict = Depends(require_org_admin_or_above)
+):
+    """Mint a password-reset link for an account and return the raw token to send by hand.
+
+    The counterpart to `POST /auth/reset-request`, which is the self-service door and stays
+    exactly as it is: 204 always, token discarded, live the moment outbound mail works. This
+    is the door that works today, and it mirrors
+    `POST /{slug}/stakeholders/{id}/resend-invite` - an administrator issues the link, PAM or
+    a person carries it. See svc_issue_reset_link for why returning the token is acceptable
+    here and for the two guards a tier check cannot express.
+
+    Gated on the platform tier rather than on `caller_roles`, and deliberately not widened to
+    project_admin: resetting a login is account administration, not project content, and the
+    reset it mints is global - the account it recovers may hold memberships on engagements
+    the caller has nothing to do with. There is no slug in this URL for that reason, so there
+    is no `check_project_access` call to make either.
+
+    409 for a refusal, matching the other refusals on this router (ForbiddenRoleChange), and
+    kept distinct from the 404 so an org_admin cannot read "not yours" as "does not exist"
+    and enumerate other organisations' accounts by id.
+    """
+    try:
+        result = await svc_issue_reset_link(user_id, calling_payload=payload)
+    except ResetLinkRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if result is None:
+        _404(f"User {user_id} not found")
+    return result
 
 
 @router.delete("/users/{user_id}", status_code=204, dependencies=[Depends(require_org_admin_or_above)])
