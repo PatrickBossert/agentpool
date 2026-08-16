@@ -10,12 +10,27 @@ refused with 422 rather than stored quietly; see _validate_deliverable_role.
 Changing a row's email is a change of person, not a change of detail. It ends the previous
 holder's access and begins the new one's, in that order - see _revoke_membership_if_
 reassigned and the _is_reassignment conjunct in _issue_invite_if_newly_privileged.
+
+Three authority levels sit on this router, and they are not the same question.
+
+- Reaching a write door at all is `require_project_administration` - platform tier, or
+  `project_admin` on this slug.
+- Granting `is_project_admin` or `is_governor` through one is the narrower
+  `_assert_may_grant_role_flags` - `project_admin` and nothing else, so an org_admin who may
+  configure the whole engagement still cannot mint one.
+- `POST .../resend-invite` is `require_org_admin_or_above` and is the exception: its response
+  body is a redeemable credential, not configuration. See its docstring for the two chains
+  that keeps closed.
 """
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
+from api.services.authority_service import (
+    caller_may_grant_project_roles,
+    require_project_administration,
+)
 from api.services.stakeholder_service import (
     list_stakeholders,
     create_stakeholder,
@@ -42,8 +57,9 @@ class StakeholderIn(BaseModel):
     # "allow" rather than "forbid": the frontend's FormData already sends interview_status,
     # interview_invited_at and interview_completed_at, which neither this model nor
     # StakeholderPatch declares. Forbidding all extras would 422 every real save from the
-    # UI. _reject_undeclared_role_flags below checks only the two names that matter -
-    # is_project_admin and is_governor - which pydantic would otherwise drop silently.
+    # UI. _assert_may_grant_role_flags below checks only the two names that matter -
+    # is_project_admin and is_governor - which pydantic would otherwise drop silently,
+    # and _declared_fields_only is what carries them through to the write.
     model_config = {"extra": "allow"}
 
     name: str
@@ -122,8 +138,9 @@ def _404(slug: str):
 _ROLE_FLAGS = ("is_reviewer", "is_approver", "is_project_admin", "is_governor")
 
 # Real columns (api/database.py), but neither StakeholderIn nor StakeholderPatch declares
-# them yet - see the models' docstrings for why "extra: allow" plus this explicit check,
-# rather than "extra: forbid" outright.
+# them - see _declared_fields_only for why they stay undeclared, and the models'
+# docstrings for why "extra: allow" plus these explicit checks rather than
+# "extra: forbid" outright.
 _UNDECLARED_ROLE_FLAGS = ("is_project_admin", "is_governor")
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -134,9 +151,44 @@ def _holds_other_role(flags: dict) -> bool:
     return any(flags.get(f) for f in _ROLE_FLAGS)
 
 
+def _parse_role_flags(body: BaseModel) -> dict[str, bool]:
+    """The supplied is_project_admin / is_governor values, as real booleans, or 422.
+
+    Strict on purpose, and the strictness is the point. These two arrive through
+    `extra="allow"` rather than as declared pydantic fields, so nothing has coerced or
+    validated them by the time they reach here - `{"is_project_admin": "false"}` is a
+    non-empty string, which is *truthy*. Under a plain `bool()` that read as a grant, and for
+    a caller entitled to grant it was then written as True: the API would have set the flag
+    in response to a body that says, in the only sense a human reads it, not to. A silent
+    wrong write, which is the class of defect the rest of this module exists to prevent.
+
+    Accepted: `True`/`False`, and `1`/`0` (JSON has no distinct integer-boolean, and
+    `{"is_governor": 0}` is a revocation this API has honoured since sp37's round 3).
+    Everything else - strings either way, null, lists - is refused with a 422 that says what
+    was sent. A declared `bool` field would give this for free, and cannot be used here: see
+    `_declared_fields_only` on what a False default does to a full-replace PUT.
+    """
+    extra = body.model_extra or {}
+    parsed: dict[str, bool] = {}
+    for flag in _UNDECLARED_ROLE_FLAGS:
+        if flag not in extra:
+            continue
+        raw = extra[flag]
+        if raw is True or raw is False:
+            parsed[flag] = raw
+        elif isinstance(raw, int) and raw in (0, 1):
+            parsed[flag] = bool(raw)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{flag} must be true or false, not {raw!r}",
+            )
+    return parsed
+
+
 def _declared_fields_only(body: BaseModel, **dump_kwargs) -> dict:
-    """model_dump(), stripped of whatever extra="allow" let through - except an explicit
-    falsy value for is_project_admin/is_governor, which must still reach the write as False.
+    """model_dump(), stripped of whatever extra="allow" let through - except
+    is_project_admin/is_governor, which reach the write as the booleans they were sent as.
 
     The frontend's FormData sends interview_status, interview_invited_at and
     interview_completed_at, which neither model declares - with extra="allow", those would
@@ -145,51 +197,62 @@ def _declared_fields_only(body: BaseModel, **dump_kwargs) -> dict:
     update_stakeholder raises ValueError via _STAKEHOLDER_UPDATABLE_FIELDS - so every real
     save from the UI would 500 the moment "allow" was chosen over "ignore" without this.
 
-    is_project_admin/is_governor get special treatment: _reject_undeclared_role_flags already
-    guarantees a truthy attempt at either never reaches this function, so anything supplied
-    and left here is falsy - revoking a role that was seeded outside the API (e.g. directly
-    in the database, or before this task existed) is the natural repair for a row Important-1's
-    guard would otherwise refuse to touch, and dropping it here would refuse that repair
-    silently while returning 200 - the exact regression review round 2 found.
+    is_project_admin/is_governor get special treatment: they are real columns that neither
+    model declares, so without this they are dropped on the floor. Until sp44 only their
+    *falsy* values were let through, because the guard beside it refused every
+    truthy one before this function ever ran and a grant could not exist. It can now, and a
+    grant that authorised then silently dropped would be the original defect wearing an
+    authority check - a 200 with the flag still false. Both directions pass through, and
+    `_assert_may_grant_role_flags` is what decides whether the truthy direction was allowed.
 
-    Matched with "falsy", not "is False": {"is_governor": 0} is falsy but not the Python
-    singleton False, and _reject_undeclared_role_flags's own truthy check already lets it
-    through as "not an attempt to grant" - review round 3 found that an `is False` match here
-    then silently dropped it a second time rather than treating it as the revocation it
-    plainly is. Anything actually truthy (true, "false" as a non-empty string, 1) is refused
-    loudly by _reject_undeclared_role_flags before this function ever runs.
+    Values come from `_parse_role_flags`, which refuses anything that is not recognisably a
+    boolean rather than coercing it. Revocation is the direction that stays open without an
+    authority check; {"is_governor": 0} is a revocation, and review round 3 found that an
+    `is False` match here silently dropped it rather than honouring it.
+
+    Declaring the two on StakeholderIn/StakeholderPatch would be tidier and is deliberately
+    not done: StakeholderIn drives a full-replace PUT, so a declared field with a False
+    default would silently clear both flags on every unrelated PUT that omits them.
     """
-    extras = dict(body.model_extra or {})
-    revocations = {}
-    for f in _UNDECLARED_ROLE_FLAGS:
-        if f in extras and not extras[f]:
-            revocations[f] = False
-            extras.pop(f)
+    role_flags = _parse_role_flags(body)
+    extras = {k: v for k, v in (body.model_extra or {}).items() if k not in role_flags}
     dumped = body.model_dump(exclude=set(extras), **dump_kwargs)
-    dumped.update(revocations)
+    dumped.update(role_flags)
     return dumped
 
 
-def _reject_undeclared_role_flags(body: BaseModel) -> None:
-    """is_project_admin and is_governor used to be silently dropped - a POST of
-    {"is_governor": true} returned 201 with is_governor still false, and nothing told the
-    caller their request was ignored. Granting either still needs an authority check this
-    task does not build (only a project_admin ought to be able to create another one), so any
-    truthy attempt is refused loudly instead of accepted and quietly ignored.
+async def _assert_may_grant_role_flags(slug: str, body: BaseModel, payload: dict) -> None:
+    """Granting is_project_admin or is_governor takes project_admin on this project.
 
-    Clearing either is deliberately the opposite: permitted, API-writable (see
-    _declared_fields_only), and irreversible through this API once done - revocation is the
-    safe direction, and it is the repair review round 2 required so an already-undeliverable
-    row (a role, no email) is not locked out of ever losing the role that makes it so. That
-    asymmetry is intentional, not an oversight the grant-side refusal happens to share.
+    The authority check the previous refusal was waiting for. It used to 422 every truthy
+    attempt outright - "cannot be set through this endpoint yet" - which made both roles
+    storable, migratable, walkable, reportable and impossible to give to anybody. Bootstrap
+    needs no special case: `is_sys_admin` implies `project_admin` on every project (see
+    `caller_roles`), so a sysadmin appoints the first one and that one appoints the rest.
+
+    Deliberately narrower than the administration gate on the door itself: an org_admin who
+    may configure everything else about this engagement still may not mint a project_admin
+    on it. See `caller_may_grant_project_roles`.
+
+    Clearing either flag is deliberately the opposite: permitted without the check,
+    API-writable (see _declared_fields_only), and irreversible through this API once done -
+    revocation is the safe direction, and it is the repair sp37's review round 2 required so
+    an already-undeliverable row (a role, no email) is not locked out of ever losing the role
+    that makes it so. That asymmetry is intentional, not an oversight the grant-side refusal
+    happens to share.
     """
-    extra = body.model_extra or {}
-    attempted = [f for f in _UNDECLARED_ROLE_FLAGS if extra.get(f)]
-    if attempted:
-        raise HTTPException(
-            status_code=422,
-            detail=f"{', '.join(attempted)} cannot be set through this endpoint yet",
-        )
+    # _parse_role_flags, not `extra.get(f)`: the two must agree on what counts as a grant, or
+    # a value one reads as True and the other as False is refused by neither and written by
+    # both. It also 422s a non-boolean here, before any authority question is asked.
+    attempted = [f for f, value in _parse_role_flags(body).items() if value]
+    if not attempted:
+        return
+    if await caller_may_grant_project_roles(slug, payload):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=f"{', '.join(attempted)} may only be granted by a project_admin on this project",
+    )
 
 
 def _normalised_email(flags: dict) -> str:
@@ -452,8 +515,9 @@ async def list_stakeholders_endpoint(slug: str, payload: dict = Depends(require_
 
 # IMPORTANT: /import must be registered BEFORE /{stakeholder_id} routes
 @router.post("/{slug}/stakeholders/import")
-async def import_stakeholders_endpoint(slug: str, file: UploadFile = File(...), payload: dict = Depends(require_org_admin_or_above)):
+async def import_stakeholders_endpoint(slug: str, file: UploadFile = File(...), payload: dict = Depends(require_any_auth)):
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     content = (await file.read()).decode("utf-8", errors="replace")
     result = await import_csv(slug, content)
     if result is None:
@@ -462,9 +526,10 @@ async def import_stakeholders_endpoint(slug: str, file: UploadFile = File(...), 
 
 
 @router.post("/{slug}/stakeholders", status_code=201)
-async def create_stakeholder_endpoint(slug: str, body: StakeholderIn, payload: dict = Depends(require_org_admin_or_above)):
+async def create_stakeholder_endpoint(slug: str, body: StakeholderIn, payload: dict = Depends(require_any_auth)):
     await check_project_access(slug, payload)
-    _reject_undeclared_role_flags(body)
+    await require_project_administration(slug, payload)
+    await _assert_may_grant_role_flags(slug, body, payload)
     data = _declared_fields_only(body)
     _validate_deliverable_role(None, data)
     result = await create_stakeholder(slug, data)
@@ -475,16 +540,18 @@ async def create_stakeholder_endpoint(slug: str, body: StakeholderIn, payload: d
 
 
 @router.put("/{slug}/stakeholders/{stakeholder_id}")
-async def update_stakeholder_endpoint(slug: str, stakeholder_id: int, body: StakeholderIn, payload: dict = Depends(require_org_admin_or_above)):
+async def update_stakeholder_endpoint(slug: str, stakeholder_id: int, body: StakeholderIn, payload: dict = Depends(require_any_auth)):
     await check_project_access(slug, payload)
-    _reject_undeclared_role_flags(body)
+    await require_project_administration(slug, payload)
+    await _assert_may_grant_role_flags(slug, body, payload)
     before = await _fetch_stakeholder_row(slug, stakeholder_id)
     data = _declared_fields_only(body)
     # PUT is a full replace of every field StakeholderIn declares, but is_project_admin and
-    # is_governor are not among them - carrying `before`'s values forward for those two (and
-    # validating the merge, not the bare body) is what stops an unrelated PUT from either
-    # silently clearing them or walking around the 422 that create/PATCH already enforce for
-    # the exact same effective state.
+    # is_governor are not among them - a PUT that omits them leaves both columns alone, and
+    # carrying `before`'s values into the merge (validating that, not the bare body) is what
+    # stops an unrelated PUT from walking around the 422 that create/PATCH already enforce
+    # for the exact same effective state. A PUT that *sends* either flag overrides it, having
+    # passed _assert_may_grant_role_flags above.
     effective = {**before, **data} if before else data
     _validate_deliverable_role(before, effective)
     result = await update_stakeholder_svc(slug, stakeholder_id, data)
@@ -499,13 +566,14 @@ async def update_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stak
 
 
 @router.patch("/{slug}/stakeholders/{stakeholder_id}")
-async def patch_stakeholder_endpoint(slug: str, stakeholder_id: int, body: StakeholderPatch, payload: dict = Depends(require_org_admin_or_above)):
+async def patch_stakeholder_endpoint(slug: str, stakeholder_id: int, body: StakeholderPatch, payload: dict = Depends(require_any_auth)):
     """Partial update - only the fields the caller actually sent are changed. This is what
     lets a second role be granted (e.g. adding is_approver to an existing reviewer) without
     resending the whole record, and it is the write _issue_invite_if_newly_privileged must
     treat as a no-op rather than a second invite."""
     await check_project_access(slug, payload)
-    _reject_undeclared_role_flags(body)
+    await require_project_administration(slug, payload)
+    await _assert_may_grant_role_flags(slug, body, payload)
     before = await _fetch_stakeholder_row(slug, stakeholder_id)
     if before is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
@@ -528,23 +596,47 @@ async def patch_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stake
 
 
 @router.post("/{slug}/stakeholders/{stakeholder_id}/resend-invite")
-async def resend_invite_endpoint(slug: str, stakeholder_id: int, payload: dict = Depends(require_org_admin_or_above)):
+async def resend_invite_endpoint(
+    slug: str, stakeholder_id: int, payload: dict = Depends(require_org_admin_or_above)
+):
     """The counterpart nothing provided before this task: an operator's way to re-send a
     lost or expired invite, since _issue_invite_if_newly_privileged only ever fires once per
     grant.
 
-    Reuses reissue_invite - the function this branch already carries for exactly this,
-    flagged in Task 6 as having no caller yet - passing project_slug explicitly so the
-    "nothing to refresh" vs. "ambiguous, which project" conflation documented on
-    reissue_invite itself cannot arise from this call site: the slug is already known from
-    the URL, not guessed from a bare email.
+    **PLATFORM TIER, alone among this router's doors, and it must stay that way.** sp44 moved
+    the other six onto `require_project_administration` and briefly moved this one too. It is
+    not project configuration; it is a credential factory. The response body *is* a
+    redeemable token, and `POST /auth/accept` is unauthenticated, so whoever can call this can
+    mint a login. Two chains a `project_admin` could otherwise have run, both driven in
+    `tests/test_grantable_roles.py`:
+
+    A. Create a stakeholder `{email: ghost@evil.test, is_reviewer: true}` - which they may,
+       and should be able to - then resend, redeem the returned token at `/auth/accept` with
+       a password of their choosing, and hold a live session for an account they own.
+    B. The same, naming a *real* person who has no login yet. A consultant later invites that
+       person onto a **different** engagement. The victim redeems it; `accept_token` correctly
+       refuses to touch the password and correctly mints no session - **and still writes the
+       `project_memberships` row**, because for a known email an invite is a membership grant.
+       The attacker, who holds that account's password, now reads the second engagement.
+
+    Chain B is the one that matters: it crosses a project boundary using only doors that are
+    individually behaving correctly, which is the shape sp42 closed one layer up. Suppressing
+    the token in the response is *not* the fix - retrieving the token is the door's entire
+    purpose, and a door that mints an invite for an arbitrary address is the hazard whether or
+    not this particular handler hands it back. A project_admin may still create a stakeholder
+    with a role; the invite is issued by `_issue_invite_if_newly_privileged` as always, and
+    they simply cannot retrieve it.
+
+    Reuses reissue_invite - passing project_slug explicitly so the "nothing to refresh" vs.
+    "ambiguous, which project" conflation documented on reissue_invite itself cannot arise
+    from this call site: the slug is already known from the URL, not guessed from a bare
+    email.
 
     Returns the raw token in the response rather than emailing it: this branch has no wired
     outbound-email path for invites (Resend is used elsewhere for interview links, not this),
     and building one is a larger change than a resend button warrants. Note too that there is
     no page anywhere in ui/src that redeems a token - /auth/accept exists on the API only, so
-    "deliver it by hand" currently describes a link with nowhere to send someone. Building
-    that redemption page is Task 8's job, not this one's.
+    "deliver it by hand" currently describes a link with nowhere to send someone.
 
     _has_linked_login guards this the same way it guards _issue_invite_if_newly_privileged,
     and for the same reason: reissuing mints a fresh token regardless of whether the old one
@@ -573,7 +665,7 @@ async def resend_invite_endpoint(slug: str, stakeholder_id: int, payload: dict =
 
 
 @router.delete("/{slug}/stakeholders/{stakeholder_id}", status_code=204)
-async def delete_stakeholder_endpoint(slug: str, stakeholder_id: int, payload: dict = Depends(require_org_admin_or_above)):
+async def delete_stakeholder_endpoint(slug: str, stakeholder_id: int, payload: dict = Depends(require_any_auth)):
     """Remove the person record - and with it, any login that reached this project
     through it.
 
@@ -583,6 +675,7 @@ async def delete_stakeholder_endpoint(slug: str, stakeholder_id: int, payload: d
     login attached, holding read of the whole engagement.
     """
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     result = await delete_stakeholder_svc(slug, stakeholder_id)
     if result is None:
         _404(slug)
@@ -606,10 +699,11 @@ async def get_stakeholder_assignments_endpoint(slug: str, payload: dict = Depend
 async def put_stakeholder_assignments_endpoint(
     slug: str,
     body: NodeAssignmentsIn,
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     """Replace all stakeholder-node assignments for a project."""
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:

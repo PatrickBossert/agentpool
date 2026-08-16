@@ -6,12 +6,12 @@
 // read the script - the review is the artefact of having opened this panel, not an
 // afterthought bolted onto a list row.
 import { useState } from 'react'
-import axios from 'axios'
 import { Check, ListChecks, RotateCcw, Save } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
 import InterviewTemplateEditor from '../InterviewTemplateEditor'
 import { ScriptCard, type ReviewableScript } from './MayaOutputExtra'
 import type { ScriptLedgerRow } from '../../types'
+import { describeError } from '../../utils/describeError'
 
 // The server's own explanation - a stale-save 409 names who changed it and which version -
 // beats a fixed string. Mirrors describeError in InterviewTemplateEditor.tsx and
@@ -19,13 +19,6 @@ import type { ScriptLedgerRow } from '../../types'
 // the real request path already carries isAxiosError:true, and axios.isAxiosError gets the
 // AxiosError narrowing for free rather than trusting any object that merely has a
 // `.response` property.
-function describeError(err: unknown, fallback: string): string {
-  if (axios.isAxiosError(err)) {
-    const detail = err.response?.data?.detail
-    if (typeof detail === 'string' && detail) return detail
-  }
-  return fallback
-}
 
 const BTN = 'text-xs px-3 py-1.5 rounded transition-colors whitespace-nowrap'
 

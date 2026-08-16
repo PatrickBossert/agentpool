@@ -228,17 +228,28 @@ export const skillNotesApi = {
       .then(r => r.data as Array<{ id: number; agent_name: string; note: string; raw_input: string; created_at: string }>),
 }
 
+// What a stakeholder write may carry: the whole record bar its identity, with the two
+// grantable role flags optional rather than required.
+type StakeholderBody =
+  Omit<Stakeholder, 'id' | 'created_at' | 'is_project_admin' | 'is_governor'>
+  & Partial<Pick<Stakeholder, 'is_project_admin' | 'is_governor'>>
+
 export const stakeholdersApi = {
   list: (slug: string): Promise<Stakeholder[]> =>
     apiClient.get<Stakeholder[]>(`/projects/${slug}/stakeholders`).then((r) => r.data),
 
-  create: (slug: string, data: Omit<Stakeholder, 'id' | 'created_at'>): Promise<Stakeholder> =>
+  // StakeholderBody, not the full record: is_project_admin and is_governor are omitted
+  // entirely by a caller who may not grant them (see StakeholderForm.handleSave), and the
+  // server treats a key it was not sent as "leave that column alone" - neither flag is
+  // declared on StakeholderIn/StakeholderPatch, so a write that does not mention them does
+  // not touch them. Typing these as the whole record forced the form to send both.
+  create: (slug: string, data: StakeholderBody): Promise<Stakeholder> =>
     apiClient.post<Stakeholder>(`/projects/${slug}/stakeholders`, data).then((r) => r.data),
 
   update: (
     slug: string,
     id: number,
-    data: Omit<Stakeholder, 'id' | 'created_at'>,
+    data: StakeholderBody,
   ): Promise<Stakeholder> =>
     apiClient.put<Stakeholder>(`/projects/${slug}/stakeholders/${id}`, data).then((r) => r.data),
 

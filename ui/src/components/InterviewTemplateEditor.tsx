@@ -1,25 +1,16 @@
 // ui/src/components/InterviewTemplateEditor.tsx
 import { useState, useEffect, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
 import { X } from 'lucide-react'
 import { apiClient } from '../api/client'
+// A refused write's detail names exactly which field is wrong (e.g. "script SC-001 has a
+// section with no section_id"), and a legacy script with no node_id is refused identically
+// to a bad new section - only the real detail tells the two apart.
+import { describeError } from '../utils/describeError'
 
 const INPUT = 'w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand placeholder:text-gray-400'
 const BTN_SM = 'text-xs px-3 py-1.5 rounded transition-colors'
 
-// The server's own explanation - a refused write's detail names exactly which field is
-// wrong (e.g. "script SC-001 has a section with no section_id") - beats a fixed string in
-// every case, including the one a fixed string cannot describe at all: a legacy script with
-// no node_id is refused identically to a bad new section, and only the real detail tells the
-// two apart.
-function describeError(err: unknown, fallback: string): string {
-  if (axios.isAxiosError(err)) {
-    const detail = err.response?.data?.detail
-    if (typeof detail === 'string' && detail) return detail
-  }
-  return fallback
-}
 
 interface Question {
   id: string

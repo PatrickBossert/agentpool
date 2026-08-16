@@ -29,8 +29,12 @@ The callers are chosen so that each refusal is attributable to one gate:
 
 Refusals are asserted on their `detail` as well as their status, because a caller refused by
 two gates at once tells you nothing about either. "Access denied to this project" is
-`check_project_access`; "Org admin or above required" is `require_org_admin_or_above`; "Only
-an approver may re-baseline a milestone" is the content gate.
+`check_project_access`; "Project administration required …" is
+`require_project_administration`, the widened gate these doors took in sp44; "Org admin or
+above required" is `require_org_admin_or_above`, which the membership-grant doors at the foot
+of this module deliberately kept; "Only an approver may re-baseline a milestone" is the
+content gate. The two administration sentences differing is what makes "these doors widened
+and those did not" an assertion rather than an intention.
 
 Two further reads were found by sweeping every handler mounted under a `/projects/{slug}`
 prefix - by behaviour, not by name, because the alias hid two files from a `require_any_auth`
@@ -76,7 +80,14 @@ SLUG_B = "gate-doors-beta"
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
 
 ACCESS_DENIED = "Access denied to this project"
-ADMIN_REQUIRED = "Org admin or above required"
+# The administration axis moved off the JWT-only dependency in sp44: these doors now accept
+# the platform tier *or* `project_admin` on this slug, so the sentence they refuse with is
+# `require_project_administration`'s rather than `require_org_admin_or_above`'s. The callers
+# refused below are unchanged - `member` holds neither.
+ADMIN_REQUIRED = (
+    "Project administration required - org admin or above, or project_admin on this project"
+)
+PLATFORM_TIER_REQUIRED = "Org admin or above required"
 APPROVER_REQUIRED = "Only an approver may re-baseline a milestone"
 
 
@@ -679,7 +690,12 @@ async def test_granting_a_membership_needs_administration_not_merely_membership(
 
     resp = await doors["member"].post(GRANT.format(user_id=target, slug=SLUG_A))
 
-    assert _refusal(resp) == (403, ADMIN_REQUIRED)
+    # PLATFORM_TIER_REQUIRED, not ADMIN_REQUIRED: this door deliberately did *not* move to
+    # the widened project-administration gate in sp44. It writes the `project_memberships`
+    # row every `check_project_access` reads, so a per-project role that could open it would
+    # be a caller manufacturing the fact a guard reads. The distinct sentence is what makes
+    # "not widened" assertable rather than merely intended.
+    assert _refusal(resp) == (403, PLATFORM_TIER_REQUIRED)
     assert not await _membership_exists(target, SLUG_A)
 
 
@@ -697,7 +713,7 @@ async def test_revoking_a_membership_needs_administration_not_merely_membership(
 
     resp = await doors["member"].delete(GRANT.format(user_id=target, slug=SLUG_A))
 
-    assert _refusal(resp) == (403, ADMIN_REQUIRED)
+    assert _refusal(resp) == (403, PLATFORM_TIER_REQUIRED)
     assert await _membership_exists(target, SLUG_A), "the membership was deleted anyway"
 
 

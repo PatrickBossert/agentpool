@@ -22,6 +22,13 @@ vi.mock('../api/endpoints', () => ({
   projectsApi: {
     getSettings: vi.fn().mockResolvedValue({ stakeholder_groups: ['Operations'] }),
     getValueChainRegistry: vi.fn().mockResolvedValue({ activities: [] }),
+    // The form asks this before deciding whether to offer the project_admin and
+    // governor checkboxes. Stubbed so the query resolves rather than throwing on an
+    // unmocked call - these tests are not about that gate, but an unmocked module
+    // export is a rejected promise the component would otherwise be rendering under.
+    getMyPermissions: vi.fn().mockResolvedValue(
+      { can_review: false, can_approve: false, can_grant_roles: false },
+    ),
   },
   stakeholdersApi: { list: vi.fn().mockResolvedValue([]), create: vi.fn() },
 }))

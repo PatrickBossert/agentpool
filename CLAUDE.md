@@ -221,9 +221,29 @@ in `api/services/commit_service.py` - behind an
 `is_sys_admin` is global and implies `project_admin` on every project, so a newly created
 project - which has no stakeholders, and therefore nobody the walk could ever reach - can be
 bootstrapped. It implies nothing about content. Administration and content are different axes.
-No gate reads `project_admin` or `governor`. Both are carried and reported, never enforced -
-stakeholder administration is still gated on the login role via `require_org_admin_or_above`.
-Every gate tests one of exactly two conditions, and the pair is stated once in
+**Both roles were ungrantable until sp44, and that had shaped three decisions before it was
+fixed.** `_reject_undeclared_role_flags` 422'd every truthy attempt to set
+`is_project_admin` or `is_governor`, so both were stored, migrated, walked, returned and
+documented - and could be given to nobody. `_assert_may_grant_role_flags` replaces it with
+the authority check it was waiting for: **`project_admin` on this project, and nothing
+else**, read by `caller_may_grant_project_roles`. An org_admin who configures the whole
+engagement still cannot mint one; `is_sys_admin` implies `project_admin` on every project,
+and that implication is the recursion's only base case.
+
+The sysadmin arm of `caller_may_grant_project_roles` reads the token rather than the walk,
+and has to: `POST /auth/login` matches `ADMIN_USERNAME` from the environment *before* it
+looks at `users`, so the built-in administrator - the one every deployment bootstraps with -
+**has no `users` row at all**, and `caller_roles` answers `set()` for it. `caller_roles`
+itself stays a pure database read, so a stale or forged `role="sysadmin"` claim still buys
+nothing from the walk (`tests/test_admin.py::test_org_admin_cannot_promote_anyone_to_sysadmin`).
+A fixture that seeds a users row with `is_sys_admin=1` proves the database implication and
+cannot see this.
+
+**Clearing either flag stays permitted without the check.** Revocation is the safe
+direction, and it is the repair sp37's review round 2 required so a row holding a role with
+no deliverable address is not locked out of losing it. The asymmetry is deliberate.
+
+Every content gate tests one of exactly two conditions, and the pair is stated once in
 `authority_service.py`:
 
 | Gate | Roles | Where |
@@ -251,30 +271,116 @@ the door writes, not on how consequential it feels:
 
 | Axis | Asked by | Decided | Scope |
 |------|----------|---------|-------|
-| **Administration** | `Depends(require_org_admin_or_above)` (or `require_sysadmin`) | before the handler runs, from the JWT's `role` | the login, globally |
+| **Administration, per project** | `require_project_administration(slug, payload)` in the handler body, after `check_project_access` | platform tier from the JWT, **or** `project_admin` from the walk | this engagement |
+| **Administration, platform only** | `Depends(require_org_admin_or_above)` (or `require_sysadmin`) | before the handler runs, from the JWT's `role` | the login, globally |
 | **Content** | `caller_may_contribute` / `caller_may_approve` in the handler body, after `check_project_access` | from the walk | this person, this project |
+
+The administration axis has two rows because sp44 split it. Fifteen project-*configuration*
+doors moved to `require_project_administration`, which is the disjunction "platform tier or
+`project_admin` on this slug" stated once in `authority_service.py` rather than copied
+fifteen times. The rest of the administration axis did not move, and the difference is not
+cosmetic. Two rules decide which side a door belongs on, and both are about what the door
+*produces*, not how consequential it feels:
+
+**1. A door that lets a caller widen who counts as a member stays platform-tier.** A gate is
+worth nothing if a caller can write themselves - or an accomplice - into the table it reads,
+which is the escalation sp38 and sp42 each closed. So `POST`/`DELETE
+/auth/users/{user_id}/projects/{slug}` (they write `project_memberships` outright), the whole
+account-administration family, and `/auth/orgs/{org_id}/members` keep
+`require_org_admin_or_above`.
+
+**Precisely, because the absolute version of that sentence is false on this codebase:** the
+widened stakeholder doors *do* write `project_memberships` - `_revoke_membership` fires on
+delete, on reassignment, and when the last non-participant flag is cleared. What makes that
+acceptable is not that they avoid the table but that they only ever **remove** rows, and only
+on the caller's own slug: a `project_admin` can cut somebody out of the engagement they
+already administer, which is within their remit, and cannot add anybody to anything. The
+membership-grant doors are excluded because they *create* rows, and creation is what turns a
+gate into a formality. If a stakeholder door ever gains an insert into `project_memberships`,
+it belongs back on the platform tier.
+
+**2. A door whose response body is a credential stays platform-tier.** `POST
+.../resend-invite` returns a redeemable invite token and `POST /auth/accept` is
+unauthenticated, so whoever can call it can mint a login - including one for a *real* address
+that has no account yet, which a later legitimate invite onto another engagement then hands a
+membership. That chain crosses a project boundary using only correctly-behaving doors, so the
+door itself is the control. It is the one write in `stakeholders.py` that is not
+`require_project_administration`.
+
+The refusal sentences differ deliberately, so "this door widened and that one did not" is
+assertable rather than merely intended.
 
 *Administration* is running the engagement: stakeholders and their roles, campaigns and
 reminder emails, the document library, starting a run or an orchestration, PAM assignment,
 and `PATCH /{slug}/settings`, the milestone schedule, the non-working calendar, and the
-branding header. Thirty-three project-scoped doors across `campaigns.py` (10),
-`stakeholders.py` (7), `milestones.py` (4), `documents.py` (3), `nonworking.py` (3),
-`assignment.py` (2), `orchestrate.py`, `run.py` and `projects.py` (2 -
-`PATCH /{slug}/settings` and `POST /{slug}/branding/image`) take
-`require_org_admin_or_above` and **no** content gate, as does project creation itself. That
-is deliberate: a consultant configures the engagement, and a client-side approver does not,
-however senior they are on the project.
+branding header. Thirty-three project-scoped doors, none of which takes a content gate, as
+project creation does not either. That is deliberate: a consultant configures the
+engagement, and a client-side approver does not, however senior they are on the project.
+They now split across the two administration rows:
 
-Milestones and non-working days *ought* to answer to `project_admin` and `governor` - the
-design names them for exactly this - but both roles are currently inert and ungrantable:
-`_reject_undeclared_role_flags` in `stakeholders.py` refuses any truthy grant and no API
-path sets them, so gating on `project_admin` would make a milestone unreachable by
-everybody including the operator. `require_org_admin_or_above` is the reachable equivalent
-of the same intent, and is what to revisit first when those two roles become grantable.
+| Gate | Doors |
+|------|-------|
+| `require_project_administration` (15) | `stakeholders.py` (6 - not `resend-invite`), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`) |
+| `Depends(require_org_admin_or_above)` (18) | `campaigns.py` (10), `documents.py` (3), `assignment.py` (2), `orchestrate.py`, `run.py`, and `stakeholders.py`'s `resend-invite` |
+
+15 + 18 = the thirty-three. `POST /projects` sits outside the count and keeps the platform
+tier of necessity: there is no slug yet to scope a per-project role by.
+
+**`PATCH /{slug}/settings` is on the widened list but is not uniformly widened.** Its body
+carries `llm_mode`, `dev_mode` and the six per-agent model ids alongside the sector and the
+stakeholder groups, and those eight decide *where this engagement's data is sent* rather than
+how it is configured. `_PLATFORM_TIER_SETTINGS` in `projects.py` holds them, and a
+`project_admin` who changes any of them is refused with a 403 naming the fields. Flipping a
+sensitive project to `standard` would send every crew agent including PAM, the elaboration
+press and Agent Chat to hosted Anthropic and stop keeping documents off Chroma Cloud - the
+guarantee this file states as absolute - and repointing `local_deep_url` reaches the same
+place more quietly.
+
+Three details of that guard are load-bearing and each has its own test. It compares the
+*transition*, not the field's presence, because the Settings tab round-trips the whole body
+and refusing the key would refuse every save a project_admin makes. It reads `llm_mode` from
+`projects.llm_mode` rather than the `config_json` copy, because a guard compared against a
+copy is bypassed the moment the copy drifts. And it normalises both sides through
+`ProjectSettings` rather than skipping fields absent from the stored config: `create_project`
+writes only `ProjectCreate`'s nine fields, so on every project before its first full settings
+save, seven of the eight protected fields are simply not in `config_json` and a
+`field in current` test would have protected the mode alone.
+
+The second group is not a judgement that those seventeen should stay - sp44 widened exactly
+what its brief named, which is the set the design calls "configures the project and its
+people". Whether a project_admin should start a crew run or import a campaign is a live
+question, not a settled one. What is settled is the exclusion above: the membership,
+account, and organisation-membership writes stay on the platform tier whatever else moves.
+
+`POST /{milestone_id}/rebaseline` is the one door in `milestones.py` that took neither -
+moving a promise is a content judgement, so it keeps `caller_may_commit` on top of the
+membership floor.
 
 *Content* is acting on what the crews produced: reviews, change requests, warning
 dispositions, commits, submissions, activation, the canonical value chain, reverts,
 milestone re-baselining, script reviews and script edits. Sixteen doors ask the walk.
+
+**Administration mints content, within one project.** Setting `is_approver` is stakeholder
+administration, and stakeholder administration is one of the sixteen widened doors - so a
+`project_admin` can PATCH their own stakeholder row and hold approver authority a moment
+later. This is not new in kind (an org_admin could always set `is_approver` on a row linked
+to their own login) but it is new in *who*: sp44 moves it from the consultant to the client's
+own project administrator. It is bounded by the project - the promotion is a write to a row
+on that slug, and `caller_roles` keys its lookup on the membership for that slug - and it is
+recorded as an asserted property in
+`tests/test_grantable_roles.py::test_a_project_admin_can_promote_themselves_to_approver_on_their_own_project`
+rather than left to be rediscovered. **If content authority is ever meant to be
+un-self-grantable, the fix is on the stakeholder write, not on the role.**
+
+**`governor` gates nothing.** It is grantable, and the only thing holding it does is put the
+person on the recipient list for PAM's daily report (`REVIEW_FLAGS` in
+`api/services/pam_report_job.py`). The design also says governors "complete" milestones;
+there is no distinct milestone-completion action in the code - `rebaseline` is the nearest
+and is content-gated on `approver` - so sp44 deliberately invented none and left that to
+sub-project C, where the milestone schedule is being designed. A governor configures
+nothing, approves nothing, and grants nothing:
+`tests/test_grantable_roles.py::test_the_governor_role_gates_nothing_else` says so, so this
+paragraph fails rather than rots when it stops being true.
 
 The two axes cross in exactly one place, on purpose. `POST /{slug}/agent-chat/upload` is
 approver-gated while `POST /{slug}/documents/upload` is administration - the same `documents`
@@ -306,7 +412,8 @@ guard that was not there - and a grep for `require_any_auth` did not find either
 called `check_project_access`, so any valid token could read and rewrite any slug's milestones
 and calendar, and `POST /{slug}/branding/image` was the same under `get_token_payload`. Closed
 in sp38: the imports use the real names, `nonworking.py` binds its payload rather than `_`, all
-twelve doors call `check_project_access`, the writes take `require_org_admin_or_above`, and
+twelve doors call `check_project_access`, the writes take the administration gate (sp38's
+`require_org_admin_or_above`, widened to `require_project_administration` in sp44), and
 `POST /{milestone_id}/rebaseline` keeps `caller_may_commit` on top of the floor because moving
 a promise is a content judgement rather than configuration.
 `tests/test_milestone_door_authority.py` drives every one of them over HTTP: a real member of
@@ -515,6 +622,23 @@ than smuggled into a proxy fix. Until then, the split is real: `/api/templates` 
   - Text: `text-primary`, `text-secondary`, `text-muted`
 
 Do NOT use `sky-*` or `blue-*` classes — these were replaced with `brand` tokens.
+
+`StakeholderForm.tsx` offers five role checkboxes, and the last two - Project Administrator
+and Governor - render only when `GET /my-permissions` answers `can_grant_roles`, because the
+server refuses both to anyone without `project_admin` on that slug and a checkbox that always
+403s is worse than no checkbox. The half that matters more is what is *sent*: a caller who
+may not grant them omits both keys entirely rather than sending `false`. The form posts its
+whole state, so without that an org_admin editing a job title on somebody who already holds
+`project_admin` would resend `is_project_admin: true` and be refused for a grant nobody asked
+to make - and sending `false` instead would silently revoke it. Neither flag is declared on
+`StakeholderIn`/`StakeholderPatch`, so a write that does not mention them does not touch them.
+
+`describeError` lives in `ui/src/utils/describeError.ts` and is imported, not copied. Four
+identical copies had grown before sp44 moved it - `StakeholderForm`, `ScriptReviewPanel`,
+`MayaOutputExtra` and `InterviewTemplateEditor`. It exists because several of this API's
+refusals say something a fixed string cannot - "email is required to invite a stakeholder
+holding a role beyond participant" is the only thing in the product that tells an
+administrator they have just created a role nobody can be invited to.
 
 Reviewing an interview script happens in the document, not the list. `ScriptReviewRow` is the
 approver's view - node id, title, status, review count, and a gated Approve - and

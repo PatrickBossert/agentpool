@@ -10,7 +10,8 @@
 # handler held the caller.
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
+from api.auth import require_any_auth, check_project_access
+from api.services.authority_service import require_project_administration
 from api.database import (
     get_connection,
     list_nonworking_ranges,
@@ -38,9 +39,10 @@ async def list_ranges(slug: str, payload: dict = Depends(require_any_auth)):
 @router.post("", status_code=201)
 async def create_range(
     slug: str, body: NonWorkingRangeBody,
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     async with get_connection(slug) as conn:
         new_id = await insert_nonworking_range(
             conn, slug=slug, label=body.label,
@@ -53,9 +55,10 @@ async def create_range(
 @router.patch("/{range_id}")
 async def update_range(
     slug: str, range_id: int, body: NonWorkingRangeBody,
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     async with get_connection(slug) as conn:
         ok = await update_nonworking_range(
             conn, slug=slug, range_id=range_id,
@@ -69,9 +72,10 @@ async def update_range(
 @router.delete("/{range_id}", status_code=204)
 async def delete_range(
     slug: str, range_id: int,
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     async with get_connection(slug) as conn:
         ok = await delete_nonworking_range(conn, slug=slug, range_id=range_id)
     if not ok:

@@ -13,7 +13,7 @@ from api.database import (
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
 # The one authority for "may this caller act on this project's scripts", shared with
 # api/routers/script_reviews.py and api/routers/permissions.py rather than restated.
-from api.services.authority_service import caller_roles
+from api.services.authority_service import caller_roles, require_project_administration
 from api.services.project_service import (
     create_project,
     get_project_status,
@@ -139,9 +139,95 @@ async def get_settings_endpoint(slug: str, payload: dict = Depends(require_any_a
     return result
 
 
+# Fields on ProjectSettings that a `project_admin` may not change, however freely they may
+# change the rest of the engagement's configuration. Not a tidiness list - each one hands a
+# client-side actor something the platform tier is meant to hold:
+#
+#   llm_mode      - the secure-mode guarantee itself. CLAUDE.md states it as absolute: every
+#                   crew agent including PAM routes locally on a sensitive project, a missing
+#                   local model raises LocalModelUnavailable rather than falling back, and
+#                   documents stay off Chroma Cloud. Flipping a sensitive project to
+#                   "standard" sends the next run's prompts, the elaboration press and Agent
+#                   Chat to hosted Anthropic, and the guarantee was never a guarantee.
+#   *_model, *_url - the same reach by a quieter route: point a tier at a different model or
+#                   a different base URL and the traffic goes wherever that names.
+#   dev_mode      - holds all outbound project email to one address. Clearing it is what
+#                   makes the scheduler email real stakeholders, which is not a decision the
+#                   person being emailed about should be able to take unilaterally.
+_PLATFORM_TIER_SETTINGS = (
+    "llm_mode",
+    "dev_mode",
+    "anthropic_fast_model",
+    "anthropic_deep_model",
+    "local_fast_model",
+    "local_fast_url",
+    "local_deep_model",
+    "local_deep_url",
+)
+
+
+async def _refuse_platform_tier_setting_changes(slug: str, incoming: ProjectSettings) -> None:
+    """Refuse a write that *changes* any platform-tier field. Presence is fine; change is not.
+
+    Compared against the stored value rather than rejected on presence, because
+    `ProjectSettings` is a whole-body model and the Settings tab round-trips it: every save
+    from the UI carries `llm_mode` whether or not the user touched it, so refusing the key
+    outright would refuse every save a project_admin makes. Refusing the *transition* is the
+    same shape `_validate_deliverable_role` uses in stakeholders.py - it asks what the write
+    would change, not what it happens to mention.
+
+    Both sides go through `ProjectSettings` before being compared, so a field absent from a
+    project's stored `config_json` is compared as the model default rather than skipped. A
+    `field in current` guard here would have been **fail-open**: the one project whose config
+    predates a field is the one where changing it goes unrefused.
+
+    `llm_mode` is then overridden from `projects.llm_mode`, because that column is the sole
+    authority for it - `update_project_settings` says so, and deliberately keeps it out of
+    config.yaml for the same reason. `config_json` carries a copy for the Settings tab to
+    round-trip, and comparing a guard against a copy is how the copy's drift becomes a
+    bypass.
+
+    Loud, not silent. Dropping the field and returning 200 would leave the caller believing
+    the project is in a mode it is not, which on `llm_mode` is the worst possible failure of
+    this particular setting - and silently discarding a submitted value is the defect
+    `_declared_fields_only` exists to prevent one router over.
+    """
+    stored = await get_project_settings(slug)
+    if stored is None:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    current = ProjectSettings(**stored).model_dump()
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    current["llm_mode"] = project["llm_mode"]
+
+    submitted = incoming.model_dump()
+    changed = [f for f in _PLATFORM_TIER_SETTINGS if submitted.get(f) != current.get(f)]
+    if changed:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{', '.join(changed)} may only be changed by an org admin or above - "
+                "a project_admin configures the engagement, not how it is run"
+            ),
+        )
+
+
 @router.patch("/{slug}/settings", response_model=ProjectSettings)
-async def patch_settings_endpoint(slug: str, req: ProjectSettings, payload: dict = Depends(require_org_admin_or_above)):
+async def patch_settings_endpoint(slug: str, req: ProjectSettings, payload: dict = Depends(require_any_auth)):
+    """Project configuration. Administration axis, with one field group carved out.
+
+    The door is `require_project_administration`, so a `project_admin` reaches it. The body
+    is not uniformly project configuration though: it also carries `llm_mode`, `dev_mode` and
+    the per-agent model ids, which decide where this engagement's data is sent. Those stay on
+    the platform tier - see `_PLATFORM_TIER_SETTINGS`.
+    """
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
+    if payload.get("role") not in ("sysadmin", "org_admin"):
+        await _refuse_platform_tier_setting_changes(slug, req)
     result = await update_project_settings(slug, req)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -234,7 +320,7 @@ _MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2 MB
 async def upload_branding_image(
     slug: str,
     file: UploadFile = File(...),
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     """Upload a header image for the project branding.
 
@@ -244,6 +330,7 @@ async def upload_branding_image(
     outside the engagement must not be able to use this door to learn which slugs exist.
     """
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 

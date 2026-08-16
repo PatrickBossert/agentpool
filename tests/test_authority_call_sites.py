@@ -52,4 +52,6 @@ async def test_permissions_reports_the_same_roles_the_gates_read(client, seeded_
     with patch("api.routers.permissions.caller_roles",
                new=AsyncMock(return_value={"reviewer"})):
         r = await client.get(f"/projects/{slug}/my-permissions")
-    assert r.json() == {"can_review": True, "can_approve": False}
+    # can_grant_roles asks caller_may_grant_project_roles rather than this patched set, and
+    # the client fixture's token is the platform administrator - see test_my_permissions.py.
+    assert r.json() == {"can_review": True, "can_approve": False, "can_grant_roles": True}

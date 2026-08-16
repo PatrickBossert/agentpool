@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import check_project_access, require_any_auth
 from api.database import fetch_project, get_connection
-from api.services.authority_service import caller_roles
+from api.services.authority_service import caller_may_grant_project_roles, caller_roles
 
 router = APIRouter(prefix="/projects", tags=["permissions"])
 
@@ -25,4 +25,9 @@ async def get_my_permissions(slug: str, payload: dict = Depends(require_any_auth
     return {
         "can_review": bool(roles & {"reviewer", "approver"}),
         "can_approve": "approver" in roles,
+        # What StakeholderForm.tsx asks before rendering the project_admin and governor
+        # checkboxes. A checkbox that always refuses is worse than no checkbox, and this is
+        # the same rule `_assert_may_grant_role_flags` enforces rather than a second copy of
+        # it - the copy the UI trusted would be the one that drifted.
+        "can_grant_roles": await caller_may_grant_project_roles(slug, payload),
     }

@@ -271,10 +271,9 @@ async def test_put_refuses_a_role_reaching_no_email_through_the_effective_state(
     than against before-state merged with the body, could reach the exact undeliverable shape
     the 422 exists to prevent while never mentioning the role that makes it undeliverable.
 
-    is_governor cannot be set through the API (see
-    test_project_admin_and_governor_are_refused_not_silently_ignored), so this seeds it
-    directly via insert_stakeholder, matching tests/test_invite_loop.py's own convention for
-    states the router cannot produce.
+    Seeded directly via insert_stakeholder rather than through the API - the point of the
+    test is the PUT that follows, and seeding the precondition through a second gated write
+    would make a failure ambiguous between the two.
     """
     from api.database import fetch_project, insert_stakeholder
 
@@ -352,9 +351,12 @@ async def test_an_already_undeliverable_row_can_still_be_edited(client, seeded_p
 async def test_revoking_governor_actually_clears_the_flag(client, seeded_project_slug):
     """Before this fix, an explicit False for is_governor was silently dropped by
     _declared_fields_only before the merge - the write returned 200 but the flag stayed set,
-    and nothing told the caller (recorded as Minor 2 in round 1's review). Setting True is
-    still refused (see test_project_admin_and_governor_are_refused_not_silently_ignored);
-    only an explicit False may reach the write."""
+    and nothing told the caller (recorded as Minor 2 in sp37 round 1's review).
+
+    Revocation still needs no authority check, which is the half of the rule sp44 left
+    alone: setting the flag takes project_admin on the project
+    (test_project_admin_and_governor_are_never_silently_ignored, and the refusals in
+    tests/test_grantable_roles.py), and clearing it takes nothing."""
     slug = seeded_project_slug
     from api.database import fetch_project, insert_stakeholder
 
@@ -422,17 +424,25 @@ async def test_patch_with_an_explicit_null_does_not_500_or_clear_the_column(clie
 
 
 @pytest.mark.asyncio
-async def test_project_admin_and_governor_are_refused_not_silently_ignored(client, seeded_project_slug):
-    """Before this fix, POST {"is_governor": true} returned 201 with is_governor still
-    false - pydantic dropped the undeclared field and nothing told the caller. Neither model
-    supports granting these two yet (that needs an authority check this task does not build),
-    so the attempt is refused loudly instead of accepted and quietly ignored."""
+async def test_project_admin_and_governor_are_never_silently_ignored(client, seeded_project_slug):
+    """Before sp37, POST {"is_governor": true} returned 201 with is_governor still false -
+    pydantic dropped the undeclared field and nothing told the caller. sp37 refused every
+    truthy attempt; sp44 built the authority check that refusal was waiting for, so an
+    authorised caller now gets the grant rather than a 422.
+
+    What must not come back is the original defect: a 201 whose body says the flag is still
+    false. The flag is read off the *response*, not off the status code, for that reason.
+    The refusal half of the same rule is driven over HTTP against every unauthorised shape
+    in tests/test_grantable_roles.py.
+    """
     slug = seeded_project_slug
     r = await client.post(f"/projects/{slug}/stakeholders",
                           json={"name": "Would-be Governor", "email": "wbg@example.com",
                                 "is_governor": True})
-    assert r.status_code == 422, r.text
-    assert "is_governor" in r.text
+    assert r.status_code == 201, r.text
+    assert r.json()["is_governor"] is True, (
+        "the grant was accepted and dropped - the defect sp37's 422 was built to expose"
+    )
 
 
 @pytest.mark.asyncio
