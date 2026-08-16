@@ -65,7 +65,15 @@ async def test_it_reports_what_the_shared_authority_check_says(client, seeded_pr
 
 
 @pytest.mark.asyncio
-async def test_a_caller_with_no_roles_is_told_so(client, seeded_project_slug):
+async def test_a_caller_with_no_content_roles_is_told_so(client, seeded_project_slug):
+    """The walk answering an empty set means no content authority - and says nothing about
+    can_grant_roles, which asks `caller_may_grant_project_roles` rather than this patched
+    set. The client fixture is the platform administrator, so True is the honest answer for
+    it; the name says "no *content* roles" because that is all this patch controls.
+
+    tests/test_grantable_roles.py::test_my_permissions_reports_the_grant_right_the_door_enforces
+    drives can_grant_roles against real per-project roles, unpatched.
+    """
     slug = seeded_project_slug
     with patch("api.routers.permissions.caller_roles",
                new=AsyncMock(return_value=set())):

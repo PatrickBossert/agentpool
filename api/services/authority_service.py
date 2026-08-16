@@ -181,7 +181,7 @@ async def caller_may_grant_project_roles(slug: str, payload: dict) -> bool:
     The sysadmin arm is that same base case, not a second one. `is_sys_admin` implies
     `project_admin` in `caller_roles`, which is what lets a fresh project - no stakeholders,
     so nobody the walk can reach - be bootstrapped at all. But the *built-in* administrator
-    has no `users` row for the walk to read it off: `POST /auth/token` matches
+    has no `users` row for the walk to read it off: `POST /auth/login` matches
     ADMIN_USERNAME from the environment before it ever looks at the table, and mints a
     role="sysadmin" token for a login the system database has never heard of. Reading the
     implication only off `users.is_sys_admin` therefore refuses the one caller it exists to

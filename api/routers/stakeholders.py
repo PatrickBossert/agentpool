@@ -11,17 +11,22 @@ Changing a row's email is a change of person, not a change of detail. It ends th
 holder's access and begins the new one's, in that order - see _revoke_membership_if_
 reassigned and the _is_reassignment conjunct in _issue_invite_if_newly_privileged.
 
-Two authority checks sit on every write here, and they are not the same question. Reaching
-the door at all is `require_project_administration` - platform tier, or `project_admin` on
-this slug. Granting `is_project_admin` or `is_governor` through it is the narrower
-`_assert_may_grant_role_flags` - `project_admin` and nothing else, so an org_admin who may
-configure the whole engagement still cannot mint one.
+Three authority levels sit on this router, and they are not the same question.
+
+- Reaching a write door at all is `require_project_administration` - platform tier, or
+  `project_admin` on this slug.
+- Granting `is_project_admin` or `is_governor` through one is the narrower
+  `_assert_may_grant_role_flags` - `project_admin` and nothing else, so an org_admin who may
+  configure the whole engagement still cannot mint one.
+- `POST .../resend-invite` is `require_org_admin_or_above` and is the exception: its response
+  body is a redeemable credential, not configuration. See its docstring for the two chains
+  that keeps closed.
 """
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
-from api.auth import require_any_auth, check_project_access
+from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.services.authority_service import (
     caller_may_grant_project_roles,
     require_project_administration,
@@ -146,6 +151,41 @@ def _holds_other_role(flags: dict) -> bool:
     return any(flags.get(f) for f in _ROLE_FLAGS)
 
 
+def _parse_role_flags(body: BaseModel) -> dict[str, bool]:
+    """The supplied is_project_admin / is_governor values, as real booleans, or 422.
+
+    Strict on purpose, and the strictness is the point. These two arrive through
+    `extra="allow"` rather than as declared pydantic fields, so nothing has coerced or
+    validated them by the time they reach here - `{"is_project_admin": "false"}` is a
+    non-empty string, which is *truthy*. Under a plain `bool()` that read as a grant, and for
+    a caller entitled to grant it was then written as True: the API would have set the flag
+    in response to a body that says, in the only sense a human reads it, not to. A silent
+    wrong write, which is the class of defect the rest of this module exists to prevent.
+
+    Accepted: `True`/`False`, and `1`/`0` (JSON has no distinct integer-boolean, and
+    `{"is_governor": 0}` is a revocation this API has honoured since sp37's round 3).
+    Everything else - strings either way, null, lists - is refused with a 422 that says what
+    was sent. A declared `bool` field would give this for free, and cannot be used here: see
+    `_declared_fields_only` on what a False default does to a full-replace PUT.
+    """
+    extra = body.model_extra or {}
+    parsed: dict[str, bool] = {}
+    for flag in _UNDECLARED_ROLE_FLAGS:
+        if flag not in extra:
+            continue
+        raw = extra[flag]
+        if raw is True or raw is False:
+            parsed[flag] = raw
+        elif isinstance(raw, int) and raw in (0, 1):
+            parsed[flag] = bool(raw)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{flag} must be true or false, not {raw!r}",
+            )
+    return parsed
+
+
 def _declared_fields_only(body: BaseModel, **dump_kwargs) -> dict:
     """model_dump(), stripped of whatever extra="allow" let through - except
     is_project_admin/is_governor, which reach the write as the booleans they were sent as.
@@ -165,20 +205,17 @@ def _declared_fields_only(body: BaseModel, **dump_kwargs) -> dict:
     authority check - a 200 with the flag still false. Both directions pass through, and
     `_assert_may_grant_role_flags` is what decides whether the truthy direction was allowed.
 
-    Coerced with `bool()`, matching that guard's own truthiness reading: {"is_governor": 0}
-    is falsy but not the Python singleton False, and review round 3 found that an `is False`
-    match here silently dropped it a second time rather than treating it as the revocation it
-    plainly is. Revocation is the direction that stays open without an authority check.
+    Values come from `_parse_role_flags`, which refuses anything that is not recognisably a
+    boolean rather than coercing it. Revocation is the direction that stays open without an
+    authority check; {"is_governor": 0} is a revocation, and review round 3 found that an
+    `is False` match here silently dropped it rather than honouring it.
 
     Declaring the two on StakeholderIn/StakeholderPatch would be tidier and is deliberately
     not done: StakeholderIn drives a full-replace PUT, so a declared field with a False
     default would silently clear both flags on every unrelated PUT that omits them.
     """
-    extras = dict(body.model_extra or {})
-    role_flags = {}
-    for f in _UNDECLARED_ROLE_FLAGS:
-        if f in extras:
-            role_flags[f] = bool(extras.pop(f))
+    role_flags = _parse_role_flags(body)
+    extras = {k: v for k, v in (body.model_extra or {}).items() if k not in role_flags}
     dumped = body.model_dump(exclude=set(extras), **dump_kwargs)
     dumped.update(role_flags)
     return dumped
@@ -204,8 +241,10 @@ async def _assert_may_grant_role_flags(slug: str, body: BaseModel, payload: dict
     that makes it so. That asymmetry is intentional, not an oversight the grant-side refusal
     happens to share.
     """
-    extra = body.model_extra or {}
-    attempted = [f for f in _UNDECLARED_ROLE_FLAGS if extra.get(f)]
+    # _parse_role_flags, not `extra.get(f)`: the two must agree on what counts as a grant, or
+    # a value one reads as True and the other as False is refused by neither and written by
+    # both. It also 422s a non-boolean here, before any authority question is asked.
+    attempted = [f for f, value in _parse_role_flags(body).items() if value]
     if not attempted:
         return
     if await caller_may_grant_project_roles(slug, payload):
@@ -557,23 +596,47 @@ async def patch_stakeholder_endpoint(slug: str, stakeholder_id: int, body: Stake
 
 
 @router.post("/{slug}/stakeholders/{stakeholder_id}/resend-invite")
-async def resend_invite_endpoint(slug: str, stakeholder_id: int, payload: dict = Depends(require_any_auth)):
+async def resend_invite_endpoint(
+    slug: str, stakeholder_id: int, payload: dict = Depends(require_org_admin_or_above)
+):
     """The counterpart nothing provided before this task: an operator's way to re-send a
     lost or expired invite, since _issue_invite_if_newly_privileged only ever fires once per
     grant.
 
-    Reuses reissue_invite - the function this branch already carries for exactly this,
-    flagged in Task 6 as having no caller yet - passing project_slug explicitly so the
-    "nothing to refresh" vs. "ambiguous, which project" conflation documented on
-    reissue_invite itself cannot arise from this call site: the slug is already known from
-    the URL, not guessed from a bare email.
+    **PLATFORM TIER, alone among this router's doors, and it must stay that way.** sp44 moved
+    the other six onto `require_project_administration` and briefly moved this one too. It is
+    not project configuration; it is a credential factory. The response body *is* a
+    redeemable token, and `POST /auth/accept` is unauthenticated, so whoever can call this can
+    mint a login. Two chains a `project_admin` could otherwise have run, both driven in
+    `tests/test_grantable_roles.py`:
+
+    A. Create a stakeholder `{email: ghost@evil.test, is_reviewer: true}` - which they may,
+       and should be able to - then resend, redeem the returned token at `/auth/accept` with
+       a password of their choosing, and hold a live session for an account they own.
+    B. The same, naming a *real* person who has no login yet. A consultant later invites that
+       person onto a **different** engagement. The victim redeems it; `accept_token` correctly
+       refuses to touch the password and correctly mints no session - **and still writes the
+       `project_memberships` row**, because for a known email an invite is a membership grant.
+       The attacker, who holds that account's password, now reads the second engagement.
+
+    Chain B is the one that matters: it crosses a project boundary using only doors that are
+    individually behaving correctly, which is the shape sp42 closed one layer up. Suppressing
+    the token in the response is *not* the fix - retrieving the token is the door's entire
+    purpose, and a door that mints an invite for an arbitrary address is the hazard whether or
+    not this particular handler hands it back. A project_admin may still create a stakeholder
+    with a role; the invite is issued by `_issue_invite_if_newly_privileged` as always, and
+    they simply cannot retrieve it.
+
+    Reuses reissue_invite - passing project_slug explicitly so the "nothing to refresh" vs.
+    "ambiguous, which project" conflation documented on reissue_invite itself cannot arise
+    from this call site: the slug is already known from the URL, not guessed from a bare
+    email.
 
     Returns the raw token in the response rather than emailing it: this branch has no wired
     outbound-email path for invites (Resend is used elsewhere for interview links, not this),
     and building one is a larger change than a resend button warrants. Note too that there is
     no page anywhere in ui/src that redeems a token - /auth/accept exists on the API only, so
-    "deliver it by hand" currently describes a link with nowhere to send someone. Building
-    that redemption page is Task 8's job, not this one's.
+    "deliver it by hand" currently describes a link with nowhere to send someone.
 
     _has_linked_login guards this the same way it guards _issue_invite_if_newly_privileged,
     and for the same reason: reissuing mints a fresh token regardless of whether the old one
@@ -584,7 +647,6 @@ async def resend_invite_endpoint(slug: str, stakeholder_id: int, payload: dict =
     checkbox toggle, not because the consequence differs.
     """
     await check_project_access(slug, payload)
-    await require_project_administration(slug, payload)
     row = await _fetch_stakeholder_row(slug, stakeholder_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")

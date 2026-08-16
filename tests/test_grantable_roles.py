@@ -119,6 +119,28 @@ async def _stakeholder(slug: str, stakeholder_id: int) -> dict:
         )
 
 
+def _anon() -> AsyncClient:
+    """A client with no Authorization header at all - `/auth/accept` takes none, which is
+    exactly what makes an invite token a credential rather than a convenience."""
+    from api.main import app
+
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+async def _live_invite_token(email: str) -> str | None:
+    """The raw token of the live invite issued to this address, read from the database.
+
+    The tests below need to redeem a real invite without going through the resend door - that
+    door is the thing under test. `auth_tokens` stores a hash, not the raw token, so the raw
+    value is not recoverable from it; `issue_invite` is patched to capture it instead, in the
+    one place where capturing it is not itself the attack.
+    """
+    return _ISSUED_TOKENS.get(email.strip().lower())
+
+
+_ISSUED_TOKENS: dict[str, str] = {}
+
+
 @pytest_asyncio.fixture
 async def roles(tmp_path, monkeypatch, client):
     """Two projects, six callers, and a plain stakeholder row to grant roles onto.
@@ -130,6 +152,24 @@ async def roles(tmp_path, monkeypatch, client):
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
     get_settings.cache_clear()
+
+    # The real issue_invite, wrapped so the raw token it returns is recoverable. Not a mock:
+    # the invite is genuinely issued and genuinely redeemable, which is what the chains below
+    # need. `auth_tokens` stores only a hash, so without this there is no way to redeem an
+    # invite except through the resend door - and that door is the thing under test.
+    import api.routers.stakeholders as stakeholders_router
+    from api.services.invite_service import issue_invite as _real_issue_invite
+
+    _ISSUED_TOKENS.clear()
+
+    async def _capturing_issue_invite(*, email: str, project_slug: str, stakeholder_id: int):
+        raw = await _real_issue_invite(
+            email=email, project_slug=project_slug, stakeholder_id=stakeholder_id
+        )
+        _ISSUED_TOKENS[email.strip().lower()] = raw
+        return raw
+
+    monkeypatch.setattr(stakeholders_router, "issue_invite", _capturing_issue_invite)
 
     for slug in (SLUG, OTHER_SLUG):
         r = await client.post("/projects", json=_project_body(slug))
@@ -186,8 +226,18 @@ async def roles(tmp_path, monkeypatch, client):
 def _refusal(resp) -> tuple[int, str]:
     """Status and refusal reason. A door that let the caller through answers its own payload,
     which has no `detail` - reported as the body rather than raised, so a gate that stops
-    refusing fails on the assertion instead of on a TypeError."""
-    body = resp.json()
+    refusing fails on the assertion instead of on an exception.
+
+    The bodyless case is not hypothetical tidiness: `DELETE /stakeholders/{id}` answers 204
+    with an empty body, so a `resp.json()` here raised JSONDecodeError the moment its gate was
+    removed. The test still failed, but on a decoder error rather than on the sentence saying
+    a member had just deleted a colleague - which is the difference between a power-check that
+    reads as a witness and one that reads as a broken test.
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return resp.status_code, f"<allowed: {resp.status_code}, empty body>"
     if isinstance(body, dict) and "detail" in body:
         return resp.status_code, body["detail"]
     return resp.status_code, f"<allowed: {body!r}>"
@@ -231,7 +281,7 @@ async def test_the_platform_administrator_grants_on_a_project_it_has_no_row_on(r
     A fresh project has no stakeholders, so nobody the walk can reach holds project_admin;
     the operator has to be able to appoint the first one or the recursion never starts. The
     `client` fixture is the built-in ADMIN_USERNAME administrator, which has **no users row
-    at all** - `POST /auth/token` matches the environment before it looks at the table. A
+    at all** - `POST /auth/login` matches the environment before it looks at the table. A
     test that seeded a users row with is_sys_admin=1 would prove the database implication
     and miss that production cannot bootstrap.
     """
@@ -488,6 +538,157 @@ async def test_the_widened_doors_still_refuse_everyone_else(roles, caller):
         assert _refusal(await call) == (403, ADMIN_REQUIRED)
 
 
+# ── One test per widened door, each witnessing its own gate ───────────────────
+#
+# The test above drives four doors in one function, which is exactly how five of the seven
+# gates on `stakeholders.py` went unwitnessed: reverting them *together* left `create` and
+# `patch` to do the refusing, and the suite stayed green with `import`, `PUT`, `DELETE` and
+# `PUT /stakeholder-assignments` wide open. Reverted one at a time, four of them produced
+# **zero** failures across all 1652 tests.
+#
+# That is the sp42 lesson in its exact shape - a neighbour doing the refusing - so each door
+# below gets its own test, driven by `plain`: a real member holding `is_participant` and
+# nothing else, which is what an interviewee who accepted an invite looks like. Each asserts
+# the *effect* as well as the refusal, because with the gate gone `check_project_access` is
+# the only authority left and every one of these is a write.
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_import_a_stakeholder_csv(roles):
+    """`POST /{slug}/stakeholders/import`. With its gate gone, any member could bulk-insert
+    arbitrary people into the engagement."""
+    csv_body = "name,email\nUninvited Guest,guest@evil.test\n"
+
+    r = await roles["plain"].post(
+        f"/projects/{SLUG}/stakeholders/import",
+        files={"file": ("people.csv", csv_body.encode(), "text/csv")},
+    )
+
+    assert _refusal(r) == (403, ADMIN_REQUIRED)
+    async with get_connection(SLUG) as conn:
+        cur = await conn.execute(
+            "SELECT 1 FROM stakeholders WHERE email=?", ("guest@evil.test",)
+        )
+        assert await cur.fetchone() is None, "the import ran anyway - the refusal is decoration"
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_full_replace_a_stakeholder(roles):
+    """`PUT /{slug}/stakeholders/{id}`. A full replace is also the reassignment door: changing
+    the email is a change of person, which revokes the previous holder's membership and
+    invites the new address. With its gate gone a member could point somebody else's row at
+    an address they control."""
+    target = roles["target"]
+    before = await _stakeholder(SLUG, target)
+
+    r = await roles["plain"].put(
+        f"/projects/{SLUG}/stakeholders/{target}",
+        json={"name": "Seized", "email": "seized@evil.test", "is_reviewer": True},
+    )
+
+    assert _refusal(r) == (403, ADMIN_REQUIRED)
+    after = await _stakeholder(SLUG, target)
+    assert after["email"] == before["email"], "the row was re-pointed at another person"
+    assert after["name"] == before["name"]
+    assert after["is_reviewer"] == before["is_reviewer"]
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_delete_a_stakeholder(roles):
+    """`DELETE /{slug}/stakeholders/{id}`. The sharpest of the four, because the handler also
+    calls `_revoke_membership` - so with its gate gone a member could cut any colleague's
+    login out of the engagement, `project_memberships` row and all. The membership is what is
+    asserted, not only the stakeholder row."""
+    async with get_system_connection() as sys_conn:
+        victim = await fetch_user(sys_conn, username="gr-reviewer")
+
+    async def _has_membership() -> bool:
+        async with get_system_connection() as sys_conn:
+            cur = await sys_conn.execute(
+                "SELECT 1 FROM project_memberships WHERE user_id=? AND project_slug=?",
+                (victim["id"], SLUG),
+            )
+            return await cur.fetchone() is not None
+
+    assert await _has_membership(), "precondition: the victim is really in the project"
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        cur = await conn.execute(
+            "SELECT id FROM stakeholders WHERE project_id=? AND name='gr-reviewer'",
+            (project["id"],),
+        )
+        victim_row = (await cur.fetchone())["id"]
+
+    r = await roles["plain"].delete(f"/projects/{SLUG}/stakeholders/{victim_row}")
+
+    assert _refusal(r) == (403, ADMIN_REQUIRED)
+    assert await _stakeholder(SLUG, victim_row) is not None, "the row was deleted anyway"
+    assert await _has_membership(), (
+        "the membership was revoked anyway - a member cut another member out of the project"
+    )
+    # And the victim can still reach the engagement, which is the thing the row protects.
+    async with _client_for("gr-reviewer", "reviewer") as victim_client:
+        assert (await victim_client.get(f"/projects/{SLUG}/milestones")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_rewrite_the_node_assignments(roles):
+    """`PUT /{slug}/stakeholder-assignments`. A full replace of who is assigned to which value
+    chain node - which is what the Interview Coordinator plans sessions from, so rewriting it
+    redirects the interview programme."""
+    from api.database import (
+        get_stakeholder_node_assignments,
+        upsert_stakeholder_node_assignments,
+    )
+
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        await upsert_stakeholder_node_assignments(
+            conn, project["id"], [{"stakeholder_id": roles["target"], "node_key": "1.2"}]
+        )
+        before = await get_stakeholder_node_assignments(conn, project["id"])
+    assert before, "precondition: there is an assignment to overwrite"
+
+    r = await roles["plain"].put(
+        f"/projects/{SLUG}/stakeholder-assignments", json={"assignments": []}
+    )
+
+    assert _refusal(r) == (403, ADMIN_REQUIRED)
+    async with get_connection(SLUG) as conn:
+        after = await get_stakeholder_node_assignments(conn, project["id"])
+    assert after == before, "the assignments were replaced anyway"
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_create_a_stakeholder(roles):
+    """`POST /{slug}/stakeholders`, with its own effect assertion rather than only the shared
+    parametrised refusal above."""
+    r = await roles["plain"].post(
+        f"/projects/{SLUG}/stakeholders",
+        json={"name": "Uninvited", "email": "uninvited@evil.test"},
+    )
+    assert _refusal(r) == (403, ADMIN_REQUIRED)
+    async with get_connection(SLUG) as conn:
+        cur = await conn.execute(
+            "SELECT 1 FROM stakeholders WHERE email=?", ("uninvited@evil.test",)
+        )
+        assert await cur.fetchone() is None
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_patch_a_stakeholder(roles):
+    """`PATCH /{slug}/stakeholders/{id}`. The partial-update door, and the one a member would
+    reach for to give themselves a role."""
+    target = roles["target"]
+
+    r = await roles["plain"].patch(
+        f"/projects/{SLUG}/stakeholders/{target}", json={"is_approver": True}
+    )
+
+    assert _refusal(r) == (403, ADMIN_REQUIRED)
+    assert (await _stakeholder(SLUG, target))["is_approver"] is False
+
+
 # ── Part 3: can a project_admin escalate? ─────────────────────────────────────
 #
 # They can appoint other project_admins on their own project, so the question is what that
@@ -564,6 +765,153 @@ async def test_a_project_admin_cannot_manufacture_the_membership_that_would_wide
     ) == (403, ACCESS_DENIED)
 
 
+# ── The resend-invite door, and the two chains it would have opened ───────────
+#
+# `POST .../resend-invite` returns a raw, redeemable invite token, and `POST /auth/accept`
+# takes no authentication. sp44 briefly widened this door with the rest of the router; it is
+# back on the platform tier, because it is a credential factory rather than configuration.
+#
+# Both chains below are driven end to end. Each first shows the mechanism working for a
+# caller who is *meant* to have it, so the refusal that follows is a refusal of something
+# real - a test that only asserted a 403 could not tell a closed hole from a broken feature.
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_is_platform_tier_not_project_administration(roles):
+    """The gate itself. `padmin` administers everything else on this project and is refused
+    here, with the *platform tier's* sentence - which is what says this door did not widen
+    rather than that some other guard happened to refuse."""
+    created = await roles["padmin"].post(
+        f"/projects/{SLUG}/stakeholders",
+        json={"name": "Ghost", "email": "ghost@evil.test", "is_reviewer": True},
+    )
+    assert created.status_code == 201, created.text
+    sid = created.json()["id"]
+
+    for caller in ("padmin", "approver", "reviewer", "plain"):
+        assert _refusal(
+            await roles[caller].post(f"/projects/{SLUG}/stakeholders/{sid}/resend-invite")
+        ) == (403, PLATFORM_TIER_REQUIRED)
+
+    # The control: it is a working door, not a dead one.
+    allowed = await roles["org_admin_a"].post(
+        f"/projects/{SLUG}/stakeholders/{sid}/resend-invite"
+    )
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["invite_token"], "the door returns a token to whoever may open it"
+
+
+@pytest.mark.asyncio
+async def test_chain_a_a_project_admin_cannot_mint_a_login_it_controls(roles):
+    """Chain A: create a stakeholder for an address you own, resend, redeem, hold a session.
+
+    Every step but the resend is legitimately available to a project_admin, and should be -
+    they administer this project's people. The resend is the only step that hands them a
+    credential, so it is the only step that has to refuse. Asserted on the `users` row, not
+    on the status code: the question is whether an account they control comes into being.
+    """
+    created = await roles["padmin"].post(
+        f"/projects/{SLUG}/stakeholders",
+        json={"name": "Ghost", "email": "ghost@evil.test", "is_reviewer": True},
+    )
+    assert created.status_code == 201, created.text
+    sid = created.json()["id"]
+
+    resend = await roles["padmin"].post(f"/projects/{SLUG}/stakeholders/{sid}/resend-invite")
+
+    assert _refusal(resend) == (403, PLATFORM_TIER_REQUIRED)
+    assert "invite_token" not in resend.text, "the token leaked in the refusal body"
+
+    # The invite really was issued by the create above - so the only thing standing between
+    # this caller and a login is their inability to retrieve it.
+    assert _live_invite_token("ghost@evil.test") is not None, (
+        "no invite exists, so this test would pass even with the resend door wide open"
+    )
+    async with get_system_connection() as sys_conn:
+        assert await fetch_user(sys_conn, username="ghost@evil.test") is None, (
+            "an account the project_admin controls came into being"
+        )
+
+
+@pytest.mark.asyncio
+async def test_chain_b_the_pre_registration_chain_across_a_project_boundary(roles):
+    """Chain B, the one that crosses the boundary using only correctly-behaving doors.
+
+    The attacker pre-registers an account for a *real* person who has no login yet, choosing
+    the password. Later, a consultant invites that person onto a **different** engagement.
+    The victim redeems it. `accept_token` behaves correctly throughout - it refuses to touch
+    the existing password, and it mints no session - **and still writes the
+    `project_memberships` row**, because for a known email an invite is a membership grant
+    rather than an authentication event. The attacker, holding that password, now reads the
+    second engagement.
+
+    This is driven in full, in two halves. First the mechanism, with the platform-tier caller
+    who may legitimately resend - proving the chain is real and that the severity claim in
+    `resend_invite_endpoint`'s docstring is falsifiable rather than decorative. Then the same
+    chain attempted by the project_admin, which stops at the resend.
+    """
+    from api.services.invite_service import issue_invite
+
+    # ── Half one: the chain, run by a caller who can retrieve a token ─────────
+    created = await roles["org_admin_a"].post(
+        f"/projects/{SLUG}/stakeholders",
+        json={"name": "Victim", "email": "victim@corp.test", "is_reviewer": True},
+    )
+    assert created.status_code == 201, created.text
+    sid = created.json()["id"]
+
+    resend = await roles["org_admin_a"].post(
+        f"/projects/{SLUG}/stakeholders/{sid}/resend-invite"
+    )
+    assert resend.status_code == 200, resend.text
+    async with _anon() as anon:
+        taken = await anon.post(
+            "/auth/accept",
+            json={"token": resend.json()["invite_token"], "password": "attacker-chosen"},
+        )
+    assert taken.status_code == 200, taken.text
+
+    # A second engagement invites the same real person. This is the consultant acting
+    # correctly, on a project the attacker has nothing to do with.
+    async with get_connection(OTHER_SLUG) as conn:
+        other = await fetch_project(conn, slug=OTHER_SLUG)
+        victim_row = await insert_stakeholder(
+            conn, project_id=other["id"], name="Victim",
+            email="victim@corp.test", is_reviewer=True,
+        )
+    second = await issue_invite(
+        email="victim@corp.test", project_slug=OTHER_SLUG, stakeholder_id=victim_row
+    )
+    async with _anon() as anon:
+        redeemed = await anon.post(
+            "/auth/accept", json={"token": second, "password": "the-real-persons-password"}
+        )
+    assert redeemed.status_code == 200, redeemed.text
+
+    async with _client_for("victim@corp.test", "reviewer") as seized:
+        reach = await seized.get(f"/projects/{OTHER_SLUG}/milestones")
+    assert reach.status_code == 200, (
+        "the chain does not actually reach the second engagement - if this is now a 403 the "
+        "membership behaviour has changed and resend-invite's docstring needs rewriting"
+    )
+
+    # ── Half two: the same chain, attempted by the project_admin ──────────────
+    fresh = await roles["padmin"].post(
+        f"/projects/{SLUG}/stakeholders",
+        json={"name": "Victim Two", "email": "victim2@corp.test", "is_reviewer": True},
+    )
+    assert fresh.status_code == 201, fresh.text
+
+    blocked = await roles["padmin"].post(
+        f"/projects/{SLUG}/stakeholders/{fresh.json()['id']}/resend-invite"
+    )
+    assert _refusal(blocked) == (403, PLATFORM_TIER_REQUIRED)
+    async with get_system_connection() as sys_conn:
+        assert await fetch_user(sys_conn, username="victim2@corp.test") is None, (
+            "the project_admin pre-registered an account for somebody else - chain B is open"
+        )
+
+
 @pytest.mark.asyncio
 async def test_a_project_admin_cannot_touch_an_account(roles):
     """The account boundary. The platform tier lives in `users.role`, and every door that
@@ -598,34 +946,57 @@ async def test_a_project_admin_cannot_touch_an_account(roles):
 
 @pytest.mark.asyncio
 async def test_the_logins_a_project_admin_can_cause_are_confined_to_this_project(roles):
-    """The account boundary's other side, and the one that is genuinely new in sp44.
+    """The account boundary's other side, driven as the whole chain rather than as a kwarg.
 
     Stakeholder administration issues an invite the moment a role beyond participant is set
-    on somebody with an address, and accepting one creates a `users` row. That door was
+    on somebody with an address, and redeeming one creates a `users` row. That door was
     consultant-only before this branch, so a client-side project_admin causing a login to
-    exist is a new capability and worth pinning rather than assuming.
+    exist is a new capability worth pinning.
 
-    What confines it: `accept_token` hard-codes `role="reviewer"` - load-bearing, per its own
+    The first version of this test mocked `issue_invite` away and asserted the `project_slug`
+    kwarg it was called with. That stops one call short of the thing that matters: it proves
+    the router asked for an invite naming this project, and says nothing about what the
+    resulting account can reach - which is the whole question. So nothing is mocked here. The
+    invite is really issued, really redeemed at the unauthenticated `/auth/accept`, and the
+    account it creates is then driven against both engagements.
+
+    What confines it: `accept_token` hard-codes `role="reviewer"` - load-bearing per its own
     comment, because `check_project_access` only attempts the membership lookup for that
-    value - and the membership it creates names this project alone. So the account a
-    project_admin can cause reaches exactly the engagement they already administer.
+    value - and the membership it writes names this project alone.
     """
-    from unittest.mock import AsyncMock, patch
-
-    with patch("api.routers.stakeholders.issue_invite", new=AsyncMock()) as invite:
-        created = await roles["padmin"].post(
-            f"/projects/{SLUG}/stakeholders",
-            json={"name": "Invitee", "email": "invitee@example.com", "is_reviewer": True},
-        )
+    created = await roles["padmin"].post(
+        f"/projects/{SLUG}/stakeholders",
+        json={"name": "Invitee", "email": "invitee@example.com", "is_reviewer": True},
+    )
     assert created.status_code == 201, created.text
-    invite.assert_awaited_once()
-    assert invite.await_args.kwargs["project_slug"] == SLUG, (
-        "the invite a project_admin caused named an engagement other than their own"
+
+    raw = await _live_invite_token("invitee@example.com")
+    assert raw is not None, "no invite was issued - the chain below would prove nothing"
+
+    async with _anon() as anon:
+        accepted = await anon.post(
+            "/auth/accept", json={"token": raw, "password": "chosen-by-the-invitee"}
+        )
+    assert accepted.status_code == 200, accepted.text
+
+    async with get_system_connection() as sys_conn:
+        account = await fetch_user(sys_conn, username="invitee@example.com")
+    assert account is not None
+    assert account["role"] == "reviewer", (
+        "a project_admin caused an account carrying a platform tier"
     )
 
-    # Nothing in that request could have carried a platform role: the invite path chooses it,
-    # and the stakeholder models have no field for it.
-    assert "role" not in invite.await_args.kwargs
+    # What it reaches: this engagement, and only this engagement.
+    async with _client_for("invitee@example.com", "reviewer") as invitee:
+        assert (await invitee.get(f"/projects/{SLUG}/milestones")).status_code == 200
+        assert _refusal(
+            await invitee.get(f"/projects/{OTHER_SLUG}/milestones")
+        ) == (403, ACCESS_DENIED)
+        # And no authority on it beyond membership: the role a redeemed invite mints is
+        # read access, not the reviewer *stakeholder* flag the content gates ask about.
+        assert (await invitee.get(f"/projects/{SLUG}/my-permissions")).json() == {
+            "can_review": True, "can_approve": False, "can_grant_roles": False,
+        }
 
 
 @pytest.mark.asyncio
@@ -704,6 +1075,235 @@ async def test_a_project_admin_of_another_project_grants_nothing_here(roles):
     assert _refusal(r) == (403, ACCESS_DENIED)
     row = await _stakeholder(SLUG, roles["target"])
     assert row["is_project_admin"] is False
+
+
+# ── PATCH /settings is not uniformly project configuration ────────────────────
+#
+# The body carries `llm_mode`, `dev_mode` and the per-agent model ids alongside the sector
+# and the stakeholder groups. CLAUDE.md states the secure-mode guarantee as absolute - every
+# crew agent including PAM routes locally on a sensitive project, a missing local model
+# raises LocalModelUnavailable rather than falling back, documents stay off Chroma Cloud -
+# and widening this door handed the switch to the client's own administrator.
+#
+# The stored mode is read from `projects.llm_mode` afterwards in every test here, never from
+# the response. A 403 says the request was refused; it does not say nothing was written.
+
+
+async def _stored_llm_mode(slug: str) -> str:
+    async with get_connection(slug) as conn:
+        return (await fetch_project(conn, slug=slug))["llm_mode"]
+
+
+@pytest_asyncio.fixture
+async def sensitive_project(roles, client):
+    """Turn the test project sensitive, using the platform tier that is allowed to."""
+    settings = (await client.get(f"/projects/{SLUG}/settings")).json()
+    r = await client.patch(
+        f"/projects/{SLUG}/settings", json={**settings, "llm_mode": "sensitive"}
+    )
+    assert r.status_code == 200, r.text
+    assert await _stored_llm_mode(SLUG) == "sensitive", "precondition"
+    return settings
+
+
+@pytest.mark.asyncio
+async def test_a_project_admin_cannot_switch_a_sensitive_project_to_hosted(
+    roles, sensitive_project
+):
+    """The finding, stated where it lands. Asserted on the stored column, not the status."""
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings", json={**sensitive_project, "llm_mode": "standard"}
+    )
+
+    status, detail = _refusal(r)
+    assert status == 403, r.text
+    assert "llm_mode" in detail, detail
+    assert await _stored_llm_mode(SLUG) == "sensitive", (
+        "the project was downgraded to hosted anyway - the refusal is decoration"
+    )
+
+
+@pytest.mark.asyncio
+async def test_omitting_llm_mode_does_not_silently_downgrade_a_sensitive_project(
+    roles, sensitive_project
+):
+    """The defaults trap, which is the quieter half of the same hole. `ProjectSettings`
+    defaults `llm_mode` to "standard", so a body that simply leaves the key out asks for a
+    downgrade without ever naming one. Refused as the change it is."""
+    body = {k: v for k, v in sensitive_project.items() if k != "llm_mode"}
+
+    r = await roles["padmin"].patch(f"/projects/{SLUG}/settings", json=body)
+
+    assert _refusal(r)[0] == 403, r.text
+    assert await _stored_llm_mode(SLUG) == "sensitive"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [
+    ("dev_mode", False),
+    ("anthropic_deep_model", "anthropic/claude-opus-4-6-attacker"),
+    ("local_deep_url", "http://attacker.test/v1"),
+    ("local_fast_model", "exfiltrator:latest"),
+])
+async def test_a_project_admin_cannot_change_where_this_engagement_sends_its_data(
+    roles, field, value
+):
+    """`llm_mode` is the loudest of these, not the only one. Pointing a tier at another model
+    or another base URL reaches the same place quietly, and `dev_mode` is what holds outbound
+    project email to a single address."""
+    settings = (await roles["padmin"].get(f"/projects/{SLUG}/settings")).json()
+
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings", json={**settings, field: value}
+    )
+
+    status, detail = _refusal(r)
+    assert status == 403, r.text
+    assert field in detail, detail
+    after = (await roles["padmin"].get(f"/projects/{SLUG}/settings")).json()
+    assert after[field] == settings[field], "the value was written anyway"
+
+
+@pytest.mark.asyncio
+async def test_the_guard_reads_the_authoritative_mode_not_the_config_json_copy(roles):
+    """`projects.llm_mode` is the sole authority for the mode; `config_json` carries a copy
+    for the Settings tab to round-trip. Comparing a guard against a copy is how the copy's
+    drift becomes a bypass, and the two really can drift - `update_project_settings`
+    deliberately keeps `llm_mode` out of config.yaml for exactly this reason, and any write
+    that touched one and not the other would separate them.
+
+    Constructed here rather than hoped for: the column says sensitive, the copy still says
+    standard. A caller submitting the *stale copy's* value is asking for a downgrade, and a
+    guard reading the copy would see no change at all and wave it through - writing
+    `llm_mode="standard"` to the column on its way past.
+    """
+    settings = (await roles["padmin"].get(f"/projects/{SLUG}/settings")).json()
+    assert settings["llm_mode"] == "standard", "precondition: the copy says standard"
+    async with get_connection(SLUG) as conn:
+        await conn.execute(
+            "UPDATE projects SET llm_mode='sensitive' WHERE slug=?", (SLUG,)
+        )
+        await conn.commit()
+    assert await _stored_llm_mode(SLUG) == "sensitive"
+
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings", json={**settings, "llm_mode": "standard"}
+    )
+
+    assert _refusal(r)[0] == 403, r.text
+    assert await _stored_llm_mode(SLUG) == "sensitive", (
+        "a sensitive project was downgraded because the guard trusted a stale copy"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_field_missing_from_a_projects_stored_config_is_still_protected(roles):
+    """The fail-open shape, which is the one worth testing because it looks harmless - and
+    which turns out to describe **every freshly created project**, not some legacy edge case.
+
+    A `field in current` guard skips any protected field the project's stored `config_json`
+    does not carry. `create_project` writes `ProjectCreate.model_dump()`, and `ProjectCreate`
+    declares nine fields: of the eight in `_PLATFORM_TIER_SETTINGS`, only `llm_mode` is among
+    them. So on a project nobody has done a full settings save on yet - which is every project
+    up to its first save - such a guard would have protected the mode and nothing else, and a
+    project_admin could have repointed both model tiers and cleared `dev_mode` freely.
+
+    `ProjectSettings` defaults are applied to both sides instead, which is also what the
+    caller sees: `GET /settings` returns through the same model, so the value being compared
+    against is the value that was served.
+
+    The absence is asserted rather than manufactured, so this test fails loudly if
+    `create_project` ever starts writing the full settings model - at which point this is
+    still true, but for a weaker reason, and the docstring above needs revisiting.
+    """
+    import json
+
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        config = json.loads(project["config_json"] or "{}")
+    assert "dev_mode" not in config, (
+        "a fresh project's config_json now carries dev_mode - see this test's docstring"
+    )
+
+    settings = (await roles["padmin"].get(f"/projects/{SLUG}/settings")).json()
+    assert settings["dev_mode"] is True, "the model default is what the caller sees"
+
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings", json={**settings, "dev_mode": False}
+    )
+
+    status, detail = _refusal(r)
+    assert status == 403, r.text
+    assert "dev_mode" in detail, detail
+    after = (await roles["padmin"].get(f"/projects/{SLUG}/settings")).json()
+    assert after["dev_mode"] is True, (
+        "dev_mode was cleared because it was absent from this project's stored config"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_project_admin_may_still_configure_everything_else(roles, sensitive_project):
+    """The success side, and it carries the whole point of comparing the *transition* rather
+    than refusing the field's presence: the Settings tab round-trips the entire body, so every
+    real save a project_admin makes carries `llm_mode` at its current value. If this refused,
+    the door would be closed to them rather than narrowed."""
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings",
+        json={**sensitive_project, "llm_mode": "sensitive", "sector": "utilities"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sector"] == "utilities"
+    assert await _stored_llm_mode(SLUG) == "sensitive", "an allowed save moved the mode"
+
+
+@pytest.mark.asyncio
+async def test_the_platform_tier_may_still_change_the_mode(roles, sensitive_project, client):
+    """Without this the two tests above are satisfied by a guard that refuses everybody, and
+    `llm_mode` would be unchangeable rather than protected."""
+    r = await client.patch(
+        f"/projects/{SLUG}/settings", json={**sensitive_project, "llm_mode": "standard"}
+    )
+
+    assert r.status_code == 200, r.text
+    assert await _stored_llm_mode(SLUG) == "standard"
+
+
+# ── The role flags are booleans, and anything else is refused ─────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["false", "true", "no", "", None, []])
+async def test_a_non_boolean_role_flag_is_refused_rather_than_coerced(roles, bad):
+    """`{"is_project_admin": "false"}` is a non-empty string, so a plain `bool()` read it as
+    True - and for a caller entitled to grant, *wrote* True. The API would have set the flag
+    in response to a body that says, in the only sense a human reads it, not to.
+
+    Driven as the authorised caller deliberately: an unauthorised one is refused by the
+    authority check whatever the value is, so it could not tell coercion from refusal.
+    """
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/stakeholders/{roles['target']}", json={"is_project_admin": bad}
+    )
+
+    assert r.status_code == 422, r.text
+    assert "is_project_admin" in r.text
+    assert (await _stakeholder(SLUG, roles["target"]))["is_project_admin"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value,expected", [(True, True), (1, True), (False, False), (0, False)])
+async def test_the_boolean_shapes_json_really_produces_are_honoured(roles, value, expected):
+    """The other side of the strictness: JSON has no distinct integer-boolean, and
+    `{"is_governor": 0}` has been a revocation since sp37's round 3. Refusing those would be
+    a regression dressed up as rigour."""
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/stakeholders/{roles['target']}", json={"is_governor": value}
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["is_governor"] is expected
+    assert (await _stakeholder(SLUG, roles["target"]))["is_governor"] is expected
 
 
 # ── The governor role, honestly scoped ────────────────────────────────────────

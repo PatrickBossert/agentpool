@@ -351,9 +351,12 @@ async def test_an_already_undeliverable_row_can_still_be_edited(client, seeded_p
 async def test_revoking_governor_actually_clears_the_flag(client, seeded_project_slug):
     """Before this fix, an explicit False for is_governor was silently dropped by
     _declared_fields_only before the merge - the write returned 200 but the flag stayed set,
-    and nothing told the caller (recorded as Minor 2 in round 1's review). Setting True is
-    still refused (see test_project_admin_and_governor_are_refused_not_silently_ignored);
-    only an explicit False may reach the write."""
+    and nothing told the caller (recorded as Minor 2 in sp37 round 1's review).
+
+    Revocation still needs no authority check, which is the half of the rule sp44 left
+    alone: setting the flag takes project_admin on the project
+    (test_project_admin_and_governor_are_never_silently_ignored, and the refusals in
+    tests/test_grantable_roles.py), and clearing it takes nothing."""
     slug = seeded_project_slug
     from api.database import fetch_project, insert_stakeholder
 
