@@ -231,7 +231,7 @@ engagement still cannot mint one; `is_sys_admin` implies `project_admin` on ever
 and that implication is the recursion's only base case.
 
 The sysadmin arm of `caller_may_grant_project_roles` reads the token rather than the walk,
-and has to: `POST /auth/token` matches `ADMIN_USERNAME` from the environment *before* it
+and has to: `POST /auth/login` matches `ADMIN_USERNAME` from the environment *before* it
 looks at `users`, so the built-in administrator - the one every deployment bootstraps with -
 **has no `users` row at all**, and `caller_roles` answers `set()` for it. `caller_roles`
 itself stays a pure database read, so a stale or forged `role="sysadmin"` claim still buys
@@ -275,16 +275,39 @@ the door writes, not on how consequential it feels:
 | **Administration, platform only** | `Depends(require_org_admin_or_above)` (or `require_sysadmin`) | before the handler runs, from the JWT's `role` | the login, globally |
 | **Content** | `caller_may_contribute` / `caller_may_approve` in the handler body, after `check_project_access` | from the walk | this person, this project |
 
-The administration axis has two rows because sp44 split it. Sixteen project-*configuration*
+The administration axis has two rows because sp44 split it. Fifteen project-*configuration*
 doors moved to `require_project_administration`, which is the disjunction "platform tier or
 `project_admin` on this slug" stated once in `authority_service.py` rather than copied
-sixteen times. The rest of the administration axis did not move, and the difference is not
-cosmetic - **the doors that write the rows a guard later reads stay platform-tier-only**. A
-gate that reads a table is worth nothing if a caller can write themselves into it, which is
-the escalation sp38 and sp42 each closed. So: `POST`/`DELETE /auth/users/{user_id}/projects/{slug}`
-(they write `project_memberships`), everything in the account-administration family, and
-`/auth/orgs/{org_id}/members` keep `require_org_admin_or_above`. Their refusal sentence
-differs from the widened one deliberately, so "this door widened and that one did not" is
+fifteen times. The rest of the administration axis did not move, and the difference is not
+cosmetic. Two rules decide which side a door belongs on, and both are about what the door
+*produces*, not how consequential it feels:
+
+**1. A door that lets a caller widen who counts as a member stays platform-tier.** A gate is
+worth nothing if a caller can write themselves - or an accomplice - into the table it reads,
+which is the escalation sp38 and sp42 each closed. So `POST`/`DELETE
+/auth/users/{user_id}/projects/{slug}` (they write `project_memberships` outright), the whole
+account-administration family, and `/auth/orgs/{org_id}/members` keep
+`require_org_admin_or_above`.
+
+**Precisely, because the absolute version of that sentence is false on this codebase:** the
+widened stakeholder doors *do* write `project_memberships` - `_revoke_membership` fires on
+delete, on reassignment, and when the last non-participant flag is cleared. What makes that
+acceptable is not that they avoid the table but that they only ever **remove** rows, and only
+on the caller's own slug: a `project_admin` can cut somebody out of the engagement they
+already administer, which is within their remit, and cannot add anybody to anything. The
+membership-grant doors are excluded because they *create* rows, and creation is what turns a
+gate into a formality. If a stakeholder door ever gains an insert into `project_memberships`,
+it belongs back on the platform tier.
+
+**2. A door whose response body is a credential stays platform-tier.** `POST
+.../resend-invite` returns a redeemable invite token and `POST /auth/accept` is
+unauthenticated, so whoever can call it can mint a login - including one for a *real* address
+that has no account yet, which a later legitimate invite onto another engagement then hands a
+membership. That chain crosses a project boundary using only correctly-behaving doors, so the
+door itself is the control. It is the one write in `stakeholders.py` that is not
+`require_project_administration`.
+
+The refusal sentences differ deliberately, so "this door widened and that one did not" is
 assertable rather than merely intended.
 
 *Administration* is running the engagement: stakeholders and their roles, campaigns and
@@ -297,11 +320,31 @@ They now split across the two administration rows:
 
 | Gate | Doors |
 |------|-------|
-| `require_project_administration` (16) | `stakeholders.py` (7), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`) |
-| `Depends(require_org_admin_or_above)` (17) | `campaigns.py` (10), `documents.py` (3), `assignment.py` (2), `orchestrate.py`, `run.py` |
+| `require_project_administration` (15) | `stakeholders.py` (6 - not `resend-invite`), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`) |
+| `Depends(require_org_admin_or_above)` (18) | `campaigns.py` (10), `documents.py` (3), `assignment.py` (2), `orchestrate.py`, `run.py`, and `stakeholders.py`'s `resend-invite` |
 
-16 + 17 = the thirty-three. `POST /projects` sits outside the count and keeps the platform
+15 + 18 = the thirty-three. `POST /projects` sits outside the count and keeps the platform
 tier of necessity: there is no slug yet to scope a per-project role by.
+
+**`PATCH /{slug}/settings` is on the widened list but is not uniformly widened.** Its body
+carries `llm_mode`, `dev_mode` and the six per-agent model ids alongside the sector and the
+stakeholder groups, and those eight decide *where this engagement's data is sent* rather than
+how it is configured. `_PLATFORM_TIER_SETTINGS` in `projects.py` holds them, and a
+`project_admin` who changes any of them is refused with a 403 naming the fields. Flipping a
+sensitive project to `standard` would send every crew agent including PAM, the elaboration
+press and Agent Chat to hosted Anthropic and stop keeping documents off Chroma Cloud - the
+guarantee this file states as absolute - and repointing `local_deep_url` reaches the same
+place more quietly.
+
+Three details of that guard are load-bearing and each has its own test. It compares the
+*transition*, not the field's presence, because the Settings tab round-trips the whole body
+and refusing the key would refuse every save a project_admin makes. It reads `llm_mode` from
+`projects.llm_mode` rather than the `config_json` copy, because a guard compared against a
+copy is bypassed the moment the copy drifts. And it normalises both sides through
+`ProjectSettings` rather than skipping fields absent from the stored config: `create_project`
+writes only `ProjectCreate`'s nine fields, so on every project before its first full settings
+save, seven of the eight protected fields are simply not in `config_json` and a
+`field in current` test would have protected the mode alone.
 
 The second group is not a judgement that those seventeen should stay - sp44 widened exactly
 what its brief named, which is the set the design calls "configures the project and its
@@ -590,8 +633,9 @@ whole state, so without that an org_admin editing a job title on somebody who al
 to make - and sending `false` instead would silently revoke it. Neither flag is declared on
 `StakeholderIn`/`StakeholderPatch`, so a write that does not mention them does not touch them.
 
-`describeError` lives in `ui/src/utils/describeError.ts` and is imported, not copied. Three
-identical copies had grown before sp44 moved it. It exists because several of this API's
+`describeError` lives in `ui/src/utils/describeError.ts` and is imported, not copied. Four
+identical copies had grown before sp44 moved it - `StakeholderForm`, `ScriptReviewPanel`,
+`MayaOutputExtra` and `InterviewTemplateEditor`. It exists because several of this API's
 refusals say something a fixed string cannot - "email is required to invite a stakeholder
 holding a role beyond participant" is the only thing in the product that tells an
 administrator they have just created a role nobody can be invited to.
