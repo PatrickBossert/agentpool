@@ -3402,8 +3402,28 @@ async def delete_org_membership(
     await conn.commit()
 
 
+async def fetch_user_org_ids(conn: aiosqlite.Connection, *, user_id: int) -> list[int]:
+    """Every organisation this login belongs to.
+
+    `fetch_user_org` below answers with the *first* row, on the stated convention that a user
+    belongs to one organisation - which is true by convention and not by constraint: nothing
+    stops a second `org_memberships` row, and `POST /auth/orgs/{org_id}/members` is a door
+    that adds one. That makes "the first row" an arbitrary choice among several, which is
+    fine for embedding an org_id in a session and not fine for an authority decision: an
+    account with two memberships would be administrable by whichever organisation's row
+    happened to sort first. `_assert_may_administer` asks this instead, and requires the
+    caller's organisation to be the *only* one.
+    """
+    async with conn.execute(
+        "SELECT org_id FROM org_memberships WHERE user_id=? ORDER BY org_id", (user_id,)
+    ) as cur:
+        return [row["org_id"] async for row in cur]
+
+
 async def fetch_user_org(conn: aiosqlite.Connection, *, user_id: int) -> dict | None:
-    """Return the first org_membership row for this user (users belong to one org)."""
+    """Return the first org_membership row for this user (users belong to one org).
+
+    For session issuance, not for authority - see fetch_user_org_ids above."""
     async with conn.execute(
         "SELECT * FROM org_memberships WHERE user_id=? LIMIT 1", (user_id,)
     ) as cur:

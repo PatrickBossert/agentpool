@@ -109,6 +109,20 @@ export default function AcceptInvite() {
                 gesture rather than a safeguard. */}
             <div className="bg-surface-raised border border-brand rounded-lg p-4 mb-6">
               <p className="text-sm text-primary">{alreadyRegisteredMessage}</p>
+              {/* The server's sentence names the reset route in words (it is rendered as
+                  text, so it cannot carry a link of its own); this is the link it names.
+                  Beside the message rather than below the button, because the people who
+                  reach this panel - invited to a second engagement months after the first -
+                  are exactly the ones least likely to remember the password they have just
+                  been told to use. */}
+              <p className="text-sm text-secondary mt-3">
+                <Link
+                  to="/forgotten-password"
+                  className="text-brand hover:text-brand-dark transition-colors"
+                >
+                  Forgotten your password?
+                </Link>
+              </p>
             </div>
             <button
               type="button"

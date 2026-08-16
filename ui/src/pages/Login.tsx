@@ -1,6 +1,6 @@
 // ui/src/pages/Login.tsx
 import { useState, FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/endpoints'
 import { useAuth, RETURN_TO_KEY, parseToken } from '../context/AuthContext'
 import type { UserPayload } from '../types'
@@ -89,6 +89,18 @@ export default function Login() {
             {loading ? 'Signing in\u2026' : 'Sign in'}
           </button>
         </form>
+        {/* Outside the <form> so it cannot submit it. This page had no secondary action at
+            all until now, which made the accept page's "your existing password still works"
+            a dead end for the people most likely to read it - somebody invited to a second
+            engagement months after the first. */}
+        <p className="text-sm text-secondary text-center mt-4">
+          <Link
+            to="/forgotten-password"
+            className="text-brand hover:text-brand-dark transition-colors"
+          >
+            Forgotten your password?
+          </Link>
+        </p>
       </div>
     </div>
   )

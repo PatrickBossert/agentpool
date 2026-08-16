@@ -97,6 +97,35 @@ def require_any_auth(payload: dict = Depends(get_token_payload)) -> dict:
 
 # ── Project-level access check ────────────────────────────────────────────────
 
+def check_org_access(org_id: int, payload: dict) -> None:
+    """Raises 403 if the caller may not administer this organisation.
+
+    The counterpart to check_project_access for doors whose path names an *organisation*
+    rather than a slug. Synchronous, because the answer is entirely in the JWT: an org_admin's
+    org_id is embedded at login (see org_id_for_session), so there is nothing to look up.
+
+    Why it exists, and why it is not merely tidiness. `_assert_may_administer` in
+    admin_service decides whether an account belongs to the caller's organisation by reading
+    `org_memberships` - and `POST` and `DELETE /auth/orgs/{org_id}/members` are the doors that
+    *write that table*. Both took org_id from the path and compared it to nothing, so an
+    org_admin refused on another organisation's account could delete its membership, add it to
+    their own organisation, and come back: the guard asks "is this account in my organisation?"
+    and the caller could simply make the answer yes. Three requests at the same tier, ending in
+    a password of their choosing on somebody else's account.
+
+    A gate that reads a table is worth nothing if a caller can write themselves into it - the
+    same sentence CLAUDE.md already carries about `project_memberships`, on the table one layer
+    up. sysadmin returns early, so administering across organisations stays a sysadmin
+    capability.
+    """
+    role = payload.get("role")
+    if role == "sysadmin":
+        return
+    if role == "org_admin" and payload.get("org_id") == org_id:
+        return
+    raise HTTPException(status_code=403, detail="Access denied to this organisation")
+
+
 async def check_project_access(slug: str, payload: dict) -> None:
     """Raises 403 if the calling user has no access to this project slug.
 

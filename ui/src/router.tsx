@@ -5,6 +5,8 @@ import { useAuth, ProtectedRoute } from './context/AuthContext'
 import AppLayout from './components/AppLayout'
 import Login from './pages/Login'
 import AcceptInvite from './pages/AcceptInvite'
+import ForgottenPassword from './pages/ForgottenPassword'
+import ResetPassword from './pages/ResetPassword'
 import Dashboard from './pages/Dashboard'
 import Documents from './pages/Documents'
 import Roadmap from './pages/Roadmap'
@@ -66,6 +68,17 @@ export const routes = [
     // they came here to do. Deliberately outside the guard, like /login itself.
     path: '/accept-invite/:token',
     element: <AcceptInvite />,
+  },
+  {
+    // Both reset routes sit outside the guard for the same reason /accept-invite does:
+    // somebody who has forgotten their password has no session and cannot get one until
+    // this is done.
+    path: '/forgotten-password',
+    element: <ForgottenPassword />,
+  },
+  {
+    path: '/reset-password/:token',
+    element: <ResetPassword />,
   },
   {
     path: '/interview/:sessionToken',

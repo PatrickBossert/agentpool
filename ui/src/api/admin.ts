@@ -6,6 +6,7 @@ import type {
   AdminUser,
   ProjectRegistryEntry,
   ProjectMembership,
+  ResetLinkResponse,
 } from '../types'
 
 export const adminApi = {
@@ -70,6 +71,9 @@ export const adminApi = {
 
   deleteUser: (userId: number): Promise<void> =>
     apiClient.delete(`/auth/users/${userId}`).then(() => undefined),
+
+  issueResetLink: (userId: number): Promise<ResetLinkResponse> =>
+    apiClient.post<ResetLinkResponse>(`/auth/users/${userId}/reset-link`).then((r) => r.data),
 
   // Project memberships
   listUserProjects: (userId: number): Promise<ProjectMembership[]> =>

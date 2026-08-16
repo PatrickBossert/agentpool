@@ -164,6 +164,18 @@ export interface AcceptResponse {
   detail?: string
 }
 
+// POST /auth/users/{id}/reset-link's response - the administrator door onto the same reset
+// machinery /auth/reset-request drives. It returns the raw token because there is no wired
+// outbound-email path yet, so the administrator delivers the link by hand (the same
+// arrangement the invite loop runs on). username is what the token was minted against and
+// email is where to send it - they are the same for every invite-created login, but need
+// not be for one an administrator created.
+export interface ResetLinkResponse {
+  reset_token: string
+  username: string
+  email: string
+}
+
 export interface UserPayload {
   sub: string
   role: 'sysadmin' | 'org_admin' | 'reviewer'

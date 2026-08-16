@@ -399,6 +399,49 @@ a refused promotion with 404. Without it an `org_admin` could create a reviewer 
 it - or promote themselves - and `caller_roles` would read the result back as `project_admin`
 on every project in the system.
 
+**The role being granted and the account being acted on are two different questions**, and
+only the first was ever asked. `svc_update_user`'s guard above tests the role in the request;
+`_assert_may_administer` in `admin_service.py` tests the target, and is the only place that
+question is answered - `svc_update_user`, `svc_delete_user`, and `svc_issue_reset_link` all
+call it, and a fourth account door must too rather than carry a copy. Two refusals: an
+`org_admin` may not act on a `sysadmin`'s account whatever role the request carries, nor on an
+account outside their own organisation. Both answer 409 with the *same* sentence, deliberately
+- told apart they say which accounts hold the platform role and which belong to another
+organisation, by enumerating ids. `sysadmin` returns early, so administering across
+organisations stays a sysadmin capability. Until sp42 this was live: `PATCH /auth/users/{id}`
+with `role="org_admin"` and a password of the caller's choosing demoted the platform
+administrator and took their login in one request, because the role being granted was not
+`sysadmin` and nothing looked at whose account it was. `DELETE /auth/users/{id}` asked nothing
+at all - its dependency sat in the decorator, so the handler had no payload to ask with.
+`tests/test_account_administration_authority.py` asserts all three doors refuse in one voice,
+and proves each refusal by signing in with the target's old password afterwards.
+
+**The organisation half of that guard reads a table, so every door that writes it is scoped
+too.** `org_memberships` is what decides "is this account in my organisation?", and `POST`,
+`PATCH`, and `DELETE /auth/orgs/{org_id}/members` write it - all three now call
+`check_org_access` (`api/auth.py`), the organisation-level sibling of `check_project_access`.
+Unscoped they were a three-request bypass at the same tier: refused on another organisation's
+account, remove its membership, add it to your own, come back. Two further rules make the
+premise trustworthy rather than merely harder to rewrite. `_assert_may_administer` requires
+the caller's organisation to be the target's **only** one (`fetch_user_org_ids`, not
+`fetch_user_org` - the first row of several is an arbitrary choice, and reading it let an
+org_admin *claim* an account in one request rather than three). And `svc_add_org_member`
+refuses an org_admin who adds an account another organisation already holds - claiming is the
+half that scoping the path cannot see. A sysadmin may still move accounts between
+organisations, and an account genuinely in two is administrable by neither org_admin.
+
+A consequence worth knowing: an account with **no** `org_memberships` row is unreachable by
+any org_admin - `fetch_user_org_ids` returns `[]`, which is never `[caller_org]`. That is
+consistent rather than awkward, since `fetch_users_by_org` joins the same table and such an
+account never appears in an org_admin's list either. A sysadmin administers it, or an
+org_admin adds it to their organisation first.
+
+**A password reset does not invalidate live sessions.** JWTs here are stateless, so a token
+minted before the reset stays valid until `ACCESS_TOKEN_EXPIRE_HOURS` (or the absolute
+session ceiling) runs out - somebody resetting because they think they are compromised does
+not cut the other session off. Bounded rather than open-ended, and closing it needs a
+`password_changed_at` claim check or a revocation list, not a change to the reset doors.
+
 `caller_roles` must never create a database. It returns the roles gathered so far rather than
 calling `get_connection(slug)` on a slug whose file does not exist, because every gated
 endpoint calls it and a caller probing slugs would otherwise materialise one file per guess.
@@ -410,6 +453,25 @@ participant never gets one, because they are reached by interview URL and token.
 invite per person **per project** - not per person, since a second engagement must not
 overwrite the first one's `project_slug` and `stakeholder_id` - re-issuable when the email is
 lost, and the same `auth_tokens` table serves password resets.
+
+**Two reset doors, one delivery seam.** `POST /auth/reset-request` is self-service and answers
+**204 always**, token discarded: it must never reveal whether an address has an account, so
+nothing in it - status, body, or header - may branch on the outcome, and the page posting to
+it says "if that address has an account, a link is on its way". `POST
+/auth/users/{id}/reset-link` is the administrator door, gated on the platform tier, and
+returns the raw token to deliver by hand - the arrangement the invite loop already runs on,
+because `FROM_EMAIL` names a domain Resend has not verified. Both call `deliver_reset`
+(`invite_service.py`), which is **the one place to wire Resend**; its docstring carries the
+two constraints that survive the wiring (the 204 must stay outcome-blind, and the send must go
+off the request path or it reopens the timing tell `issue_reset` closed).
+
+The self-service door has a blind spot worth knowing before trusting it: `issue_reset`
+resolves its account by `users.username`, so a login whose username is not its email address -
+routine for an administrator-created account - cannot be reached by typing that email, and the
+204 makes the miss look exactly like success. **A 204 from `/auth/reset-request` is not
+evidence a link was sent.** The administrator door covers those accounts (it passes
+`users.username` deliberately); fixing the self-service one means resolving by username *or*
+email without reintroducing a timing difference between a known and an unknown address.
 
 ---
 

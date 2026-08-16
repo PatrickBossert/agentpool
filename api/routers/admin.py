@@ -1,14 +1,17 @@
 # api/routers/admin.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from api.auth import check_project_access, require_sysadmin, require_org_admin_or_above
+from api.auth import (
+    check_org_access, check_project_access, require_sysadmin, require_org_admin_or_above,
+)
 from api.services.admin_service import (
     svc_list_orgs, svc_create_org, svc_get_org, svc_update_org, svc_delete_org,
     svc_list_org_members, svc_add_org_member, svc_update_org_member_role, svc_remove_org_member,
     svc_list_registry, svc_register_project, svc_unregister_project,
     svc_list_users, svc_create_user, svc_update_user, svc_delete_user,
     svc_list_user_projects, svc_grant_project_access, svc_revoke_project_access,
-    ForbiddenRoleChange, OrganisationInUse,
+    svc_issue_reset_link,
+    ForbiddenRoleChange, OrganisationInUse, AccountOutOfScope,
 )
 
 router = APIRouter(prefix="/auth", tags=["admin"])
@@ -86,22 +89,49 @@ async def list_org_members(org_id: int):
     return await svc_list_org_members(org_id)
 
 
-@router.post("/orgs/{org_id}/members", status_code=201, dependencies=[Depends(require_org_admin_or_above)])
-async def add_org_member(org_id: int, req: MemberAdd):
-    ok = await svc_add_org_member(org_id, req.user_id, req.role)
+# The three writes to `org_memberships`, all scoped to the caller's own organisation.
+#
+# They take their dependency in the signature rather than the decorator, like
+# grant_project_access below and for the same reason: check_org_access needs the payload in
+# the handler body.
+#
+# Why it matters more than "an org_admin should stay in their lane". `org_memberships` is the
+# table `_assert_may_administer` reads to decide whether an account belongs to the caller's
+# organisation, so these doors decide the answer to the question that guards
+# `PATCH /auth/users/{id}`. Unscoped, an org_admin refused on another organisation's account
+# could remove its membership, add it to their own organisation, and return to the account
+# door with the guard now agreeing - three requests at the same tier, ending in a password of
+# their choosing on somebody else's login. The refusal was real; the premise underneath it was
+# writable.
+
+@router.post("/orgs/{org_id}/members", status_code=201)
+async def add_org_member(org_id: int, req: MemberAdd, payload: dict = Depends(require_org_admin_or_above)):
+    check_org_access(org_id, payload)
+    try:
+        ok = await svc_add_org_member(org_id, req.user_id, req.role, calling_payload=payload)
+    except AccountOutOfScope as exc:
+        # 409 rather than 403: the tier and the organisation in the path were both fine, and
+        # what is refused is claiming an account another organisation already holds.
+        raise HTTPException(status_code=409, detail=str(exc))
     if not ok:
         raise HTTPException(status_code=409, detail="User already a member of this org")
     return {"ok": True}
 
 
-@router.patch("/orgs/{org_id}/members/{user_id}", dependencies=[Depends(require_org_admin_or_above)])
-async def update_org_member(org_id: int, user_id: int, req: MemberRoleUpdate):
+@router.patch("/orgs/{org_id}/members/{user_id}")
+async def update_org_member(org_id: int, user_id: int, req: MemberRoleUpdate, payload: dict = Depends(require_org_admin_or_above)):
+    """Scoped alongside its two neighbours. It cannot move an account between organisations,
+    so it is not part of the chain above - but it writes the same table on an organisation the
+    caller may not own, and leaving one door on that table unscoped is how the next chain
+    starts."""
+    check_org_access(org_id, payload)
     await svc_update_org_member_role(org_id, user_id, req.role)
     return {"ok": True}
 
 
-@router.delete("/orgs/{org_id}/members/{user_id}", status_code=204, dependencies=[Depends(require_org_admin_or_above)])
-async def remove_org_member(org_id: int, user_id: int):
+@router.delete("/orgs/{org_id}/members/{user_id}", status_code=204)
+async def remove_org_member(org_id: int, user_id: int, payload: dict = Depends(require_org_admin_or_above)):
+    check_org_access(org_id, payload)
     await svc_remove_org_member(org_id, user_id)
 
 
@@ -176,14 +206,56 @@ async def update_user_endpoint(
         )
     except ForbiddenRoleChange:
         raise HTTPException(status_code=409, detail="Forbidden role")
+    except AccountOutOfScope as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     if not user:
         _404(f"User {user_id} not found")
     return user
 
 
-@router.delete("/users/{user_id}", status_code=204, dependencies=[Depends(require_org_admin_or_above)])
-async def delete_user_endpoint(user_id: int):
-    if not await svc_delete_user(user_id):
+@router.post("/users/{user_id}/reset-link")
+async def issue_reset_link_endpoint(
+    user_id: int, payload: dict = Depends(require_org_admin_or_above)
+):
+    """Mint a password-reset link for an account and return the raw token to send by hand.
+
+    The counterpart to `POST /auth/reset-request`, which is the self-service door and stays
+    exactly as it is: 204 always, token discarded, live the moment outbound mail works. This
+    is the door that works today, and it mirrors
+    `POST /{slug}/stakeholders/{id}/resend-invite` - an administrator issues the link, PAM or
+    a person carries it. See svc_issue_reset_link for why returning the token is acceptable
+    here and for the two guards a tier check cannot express.
+
+    Gated on the platform tier rather than on `caller_roles`, and deliberately not widened to
+    project_admin: resetting a login is account administration, not project content, and the
+    reset it mints is global - the account it recovers may hold memberships on engagements
+    the caller has nothing to do with. There is no slug in this URL for that reason, so there
+    is no `check_project_access` call to make either.
+
+    409 for a refusal, matching the other refusals on this router (ForbiddenRoleChange), and
+    kept distinct from the 404 so an org_admin cannot read "not yours" as "does not exist"
+    and enumerate other organisations' accounts by id.
+    """
+    try:
+        result = await svc_issue_reset_link(user_id, calling_payload=payload)
+    except AccountOutOfScope as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if result is None:
+        _404(f"User {user_id} not found")
+    return result
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user_endpoint(user_id: int, payload: dict = Depends(require_org_admin_or_above)):
+    """The dependency moved out of the decorator and into the signature so the handler can
+    see who is calling. Deleting an account is administering it, and until this change
+    nothing on this path asked whose account it was - there was no payload here to ask with.
+    """
+    try:
+        deleted = await svc_delete_user(user_id, calling_payload=payload)
+    except AccountOutOfScope as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not deleted:
         _404(f"User {user_id} not found")
 
 
