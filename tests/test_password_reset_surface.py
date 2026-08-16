@@ -42,6 +42,11 @@ async def _make_login(username: str, password: str, role: str = "reviewer",
     return user["id"]
 
 
+async def _still_signs_in(ac, username: str, password: str) -> bool:
+    resp = await ac.post("/auth/login", data={"username": username, "password": password})
+    return resp.status_code == 200
+
+
 @pytest_asyncio.fixture
 async def isolated_db(tmp_path, monkeypatch):
     """Its own DATABASE_DIR, per CLAUDE.md's persistent-database trap.
@@ -96,6 +101,51 @@ async def test_a_reset_makes_the_new_password_work_and_the_old_one_stop(isolated
             data={"username": "rae@example.com", "password": "the-old-password"},
         )
         assert after_old.status_code == 401, "the old password must stop working"
+
+
+@pytest.mark.asyncio
+async def test_an_invite_token_cannot_be_redeemed_as_a_reset(isolated_db, tmp_path):
+    """`purpose="reset"` on `/auth/reset`'s accept_token call, which nothing witnessed.
+
+    Removing that one argument leaves the whole suite green, and the consequence is the
+    takeover sp37 closed, reached through a different door: an invite for an email that
+    already has a login grants a membership and refuses a session at `/auth/accept`
+    (deliberately - the redeemer is not the account owner), but `/auth/reset` *always* mints
+    one. Unpinned, the same token POSTed here returns a live JWT whose `sub` is the victim,
+    while the victim's password still works and nothing looks wrong to them.
+
+    tests/test_invite_loop.py:132 asserts the filter on `accept_token`, the helper. The
+    endpoint is what supplies the argument, and it is the endpoint that mints the session -
+    so this is asserted here, over HTTP, and the password is checked afterwards because a
+    refusal that still redeemed would satisfy a status assertion.
+    """
+    from api.database import get_connection, insert_project, insert_stakeholder
+    from api.services.invite_service import issue_invite
+
+    slug = "invite-vs-reset"
+    async with get_connection(slug) as conn:
+        await insert_project(conn, slug=slug, llm_mode="standard", sector="", config_json="{}")
+        project = await fetch_project(conn, slug=slug)
+        stakeholder_id = await insert_stakeholder(
+            conn, project_id=project["id"], name="Rae", email="rae@example.com",
+            is_reviewer=True,
+        )
+
+    await _make_login("rae@example.com", "the-victims-own-password")
+    raw = await issue_invite(
+        email="rae@example.com", project_slug=slug, stakeholder_id=stakeholder_id
+    )
+
+    async with await _client() as ac:
+        refused = await ac.post("/auth/reset", json={"token": raw, "password": "seized"})
+        assert refused.status_code == 400, (
+            "an invite token must not be redeemable at the reset door - it mints a session, "
+            f"and this one would be the victim's: {refused.text}"
+        )
+        assert not refused.json().get("access_token")
+
+        assert await _still_signs_in(ac, "rae@example.com", "the-victims-own-password")
+        assert not await _still_signs_in(ac, "rae@example.com", "seized")
 
 
 @pytest.mark.asyncio

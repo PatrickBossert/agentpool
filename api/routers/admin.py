@@ -1,7 +1,9 @@
 # api/routers/admin.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from api.auth import check_project_access, require_sysadmin, require_org_admin_or_above
+from api.auth import (
+    check_org_access, check_project_access, require_sysadmin, require_org_admin_or_above,
+)
 from api.services.admin_service import (
     svc_list_orgs, svc_create_org, svc_get_org, svc_update_org, svc_delete_org,
     svc_list_org_members, svc_add_org_member, svc_update_org_member_role, svc_remove_org_member,
@@ -87,22 +89,49 @@ async def list_org_members(org_id: int):
     return await svc_list_org_members(org_id)
 
 
-@router.post("/orgs/{org_id}/members", status_code=201, dependencies=[Depends(require_org_admin_or_above)])
-async def add_org_member(org_id: int, req: MemberAdd):
-    ok = await svc_add_org_member(org_id, req.user_id, req.role)
+# The three writes to `org_memberships`, all scoped to the caller's own organisation.
+#
+# They take their dependency in the signature rather than the decorator, like
+# grant_project_access below and for the same reason: check_org_access needs the payload in
+# the handler body.
+#
+# Why it matters more than "an org_admin should stay in their lane". `org_memberships` is the
+# table `_assert_may_administer` reads to decide whether an account belongs to the caller's
+# organisation, so these doors decide the answer to the question that guards
+# `PATCH /auth/users/{id}`. Unscoped, an org_admin refused on another organisation's account
+# could remove its membership, add it to their own organisation, and return to the account
+# door with the guard now agreeing - three requests at the same tier, ending in a password of
+# their choosing on somebody else's login. The refusal was real; the premise underneath it was
+# writable.
+
+@router.post("/orgs/{org_id}/members", status_code=201)
+async def add_org_member(org_id: int, req: MemberAdd, payload: dict = Depends(require_org_admin_or_above)):
+    check_org_access(org_id, payload)
+    try:
+        ok = await svc_add_org_member(org_id, req.user_id, req.role, calling_payload=payload)
+    except AccountOutOfScope as exc:
+        # 409 rather than 403: the tier and the organisation in the path were both fine, and
+        # what is refused is claiming an account another organisation already holds.
+        raise HTTPException(status_code=409, detail=str(exc))
     if not ok:
         raise HTTPException(status_code=409, detail="User already a member of this org")
     return {"ok": True}
 
 
-@router.patch("/orgs/{org_id}/members/{user_id}", dependencies=[Depends(require_org_admin_or_above)])
-async def update_org_member(org_id: int, user_id: int, req: MemberRoleUpdate):
+@router.patch("/orgs/{org_id}/members/{user_id}")
+async def update_org_member(org_id: int, user_id: int, req: MemberRoleUpdate, payload: dict = Depends(require_org_admin_or_above)):
+    """Scoped alongside its two neighbours. It cannot move an account between organisations,
+    so it is not part of the chain above - but it writes the same table on an organisation the
+    caller may not own, and leaving one door on that table unscoped is how the next chain
+    starts."""
+    check_org_access(org_id, payload)
     await svc_update_org_member_role(org_id, user_id, req.role)
     return {"ok": True}
 
 
-@router.delete("/orgs/{org_id}/members/{user_id}", status_code=204, dependencies=[Depends(require_org_admin_or_above)])
-async def remove_org_member(org_id: int, user_id: int):
+@router.delete("/orgs/{org_id}/members/{user_id}", status_code=204)
+async def remove_org_member(org_id: int, user_id: int, payload: dict = Depends(require_org_admin_or_above)):
+    check_org_access(org_id, payload)
     await svc_remove_org_member(org_id, user_id)
 
 

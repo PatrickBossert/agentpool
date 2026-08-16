@@ -416,6 +416,26 @@ at all - its dependency sat in the decorator, so the handler had no payload to a
 `tests/test_account_administration_authority.py` asserts all three doors refuse in one voice,
 and proves each refusal by signing in with the target's old password afterwards.
 
+**The organisation half of that guard reads a table, so every door that writes it is scoped
+too.** `org_memberships` is what decides "is this account in my organisation?", and `POST`,
+`PATCH`, and `DELETE /auth/orgs/{org_id}/members` write it - all three now call
+`check_org_access` (`api/auth.py`), the organisation-level sibling of `check_project_access`.
+Unscoped they were a three-request bypass at the same tier: refused on another organisation's
+account, remove its membership, add it to your own, come back. Two further rules make the
+premise trustworthy rather than merely harder to rewrite. `_assert_may_administer` requires
+the caller's organisation to be the target's **only** one (`fetch_user_org_ids`, not
+`fetch_user_org` - the first row of several is an arbitrary choice, and reading it let an
+org_admin *claim* an account in one request rather than three). And `svc_add_org_member`
+refuses an org_admin who adds an account another organisation already holds - claiming is the
+half that scoping the path cannot see. A sysadmin may still move accounts between
+organisations, and an account genuinely in two is administrable by neither org_admin.
+
+A consequence worth knowing: an account with **no** `org_memberships` row is unreachable by
+any org_admin - `fetch_user_org_ids` returns `[]`, which is never `[caller_org]`. That is
+consistent rather than awkward, since `fetch_users_by_org` joins the same table and such an
+account never appears in an org_admin's list either. A sysadmin administers it, or an
+org_admin adds it to their organisation first.
+
 **A password reset does not invalidate live sessions.** JWTs here are stateless, so a token
 minted before the reset stays valid until `ACCESS_TOKEN_EXPIRE_HOURS` (or the absolute
 session ceiling) runs out - somebody resetting because they think they are compromised does

@@ -14,6 +14,7 @@ from api.database import (
     fetch_user_project_memberships,
     insert_user, fetch_all_users, fetch_users_by_org,
     fetch_user_by_id, update_user, delete_user, fetch_user, fetch_user_org,
+    fetch_user_org_ids,
 )
 from api.services.invite_service import deliver_reset
 
@@ -146,8 +147,28 @@ async def svc_list_org_members(org_id: int) -> list[dict]:
         return await fetch_org_members(conn, org_id=org_id)
 
 
-async def svc_add_org_member(org_id: int, user_id: int, role: str) -> bool:
+async def svc_add_org_member(
+    org_id: int, user_id: int, role: str, calling_payload: dict
+) -> bool:
+    """Add a login to an organisation. False if it is already a member; raises
+    AccountOutOfScope if the caller may not claim this account.
+
+    The router has already confirmed `org_id` is the caller's own organisation
+    (`check_org_access`). This is the other half: an org_admin may add an account that no
+    organisation holds, and may not add one another organisation already does. Without it,
+    scoping the door by its path achieved nothing - the caller would simply add somebody
+    else's account to their own organisation, and `_assert_may_administer` would then find a
+    membership of theirs on it. Claiming, rather than moving: removing the account's real
+    membership is a second door, and it is scoped to that organisation.
+
+    A sysadmin is exempt, as everywhere else here - moving an account between organisations is
+    a legitimate act, and theirs to perform.
+    """
     async with get_system_connection() as conn:
+        if calling_payload.get("role") != "sysadmin":
+            held = await fetch_user_org_ids(conn, user_id=user_id)
+            if any(held_org != org_id for held_org in held):
+                raise AccountOutOfScope(_OUT_OF_SCOPE)
         return await insert_org_membership(conn, user_id=user_id, org_id=org_id, role=role)
 
 
@@ -309,10 +330,19 @@ async def _assert_may_administer(conn, *, calling_payload: dict, target: dict) -
         administrator and took their login in a single request, without the guard firing.
         `svc_delete_user` asked nothing at all.
 
-      other organisation - an org_admin may only act on accounts in their own organisation.
-        `svc_create_user` forces `org_id` to the caller's own and `svc_list_users` scopes
-        what they can see; `svc_update_user` and `svc_delete_user` had no equivalent, so the
-        id in the URL walked round a filter applied everywhere else.
+      other organisation - an org_admin may only act on accounts whose *only* organisation is
+        their own. `svc_create_user` forces `org_id` to the caller's own and `svc_list_users`
+        scopes what they can see; `svc_update_user` and `svc_delete_user` had no equivalent,
+        so the id in the URL walked round a filter applied everywhere else.
+
+    "Only" is load-bearing and was not the first version of this. Reading `fetch_user_org`
+    (the first membership row) let an org_admin claim an account by *adding* it to their own
+    organisation - the row they added might sort first, and the account's real organisation
+    would never be consulted. That is one request, not the three-request chain that made the
+    hazard visible. The premise is only trustworthy if it is unanimous: every membership this
+    account holds is in the caller's organisation, or the account is not theirs to administer.
+    Its other half lives on the write door - `svc_add_org_member` refuses an org_admin who
+    tries to add an account another organisation already holds.
 
     A sysadmin returns early - administering across organisations is a sysadmin capability
     throughout this file, and a guard that refused everybody would close the finding by
@@ -326,8 +356,8 @@ async def _assert_may_administer(conn, *, calling_payload: dict, target: dict) -
     if target["role"] == "sysadmin":
         raise AccountOutOfScope(_OUT_OF_SCOPE)
     caller_org = calling_payload.get("org_id")
-    org_row = await fetch_user_org(conn, user_id=target["id"])
-    if caller_org is None or org_row is None or org_row["org_id"] != caller_org:
+    org_ids = await fetch_user_org_ids(conn, user_id=target["id"])
+    if caller_org is None or org_ids != [caller_org]:
         raise AccountOutOfScope(_OUT_OF_SCOPE)
 
 

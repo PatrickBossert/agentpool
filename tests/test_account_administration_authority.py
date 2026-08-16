@@ -85,6 +85,7 @@ async def two_organisations(tmp_path, monkeypatch):
     yield {
         **ids,
         "acme": acme,
+        "other": other,
         "org_admin": create_access_token("boss@acme.test", "org_admin", _JWT_SECRET,
                                           org_id=acme),
         "sysadmin": create_access_token("root@platform.test", "sysadmin", _JWT_SECRET),
@@ -180,8 +181,12 @@ async def test_all_three_account_doors_answer_identically(two_organisations, tar
     A guard copied per door is a guard that will be right on some doors and wrong on others -
     this project already carries two copies of a WHERE clause that have diverged. All three
     doors call `_assert_may_administer`, so all three must refuse the same target with the
-    same status and the same sentence. A fourth door added later with its own copy fails
-    here.
+    same status and the same sentence, and any one of them dropping that call fails here.
+
+    It does **not** catch a *fourth* door, and an earlier version of this docstring claimed it
+    did. The three requests below are written out by hand, so a door added later is invisible
+    to this test until somebody adds it here too. Nothing enforces that mechanically - the
+    honest statement of the guarantee is "these three agree", not "every door must".
 
     The wording is compared as well as the status, because the two refusals must not be told
     apart either: "that is a sysadmin" and "that account belongs to another organisation" are
@@ -271,6 +276,212 @@ async def test_a_sysadmin_still_administers_across_organisations(two_organisatio
         )
         assert removed.status_code == 204
         assert not await _still_signs_in(ac, "outsider@other.test", "set-by-the-platform-admin")
+
+
+# ── The premise the guard rests on ───────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_organisation_answer_cannot_be_rewritten_on_the_way_past(two_organisations):
+    """The whole chain, because the defect is not visible in any single request.
+
+    `_assert_may_administer` decides "is this account in my organisation?" by reading
+    `org_memberships` - and `POST`/`DELETE /auth/orgs/{org_id}/members` are the doors that
+    write it. Both took `org_id` from the path and compared it to nothing, so an org_admin
+    refused at step 0 could make the answer yes and come back. Every request in this chain is
+    at the caller's own tier; not one of them is an escalation on its own.
+
+    Driven end to end and asserted on the *outcome*, not on the membership doors' status
+    codes: a test that checked step 1 returned 403 would still pass if step 2 let the account
+    in by another route, and the property that matters is that the takeover does not happen.
+    """
+    outsider = two_organisations["outsider"]
+    headers = _auth(two_organisations["org_admin"])
+
+    async with await _client() as ac:
+        step0 = await ac.patch(
+            f"/auth/users/{outsider}",
+            json={"email": "outsider@other.test", "role": "reviewer", "password": "seized"},
+            headers=headers,
+        )
+        assert step0.status_code == 409, "the account door must refuse before the chain starts"
+
+        # Steps 1 and 2: rewrite the premise. They are refused for different reasons, and
+        # both refusals are needed - scoping step 1 alone leaves step 2 able to *claim* the
+        # account without moving it, since a membership in the caller's organisation is all
+        # the guard was looking for.
+        step1 = await ac.delete(
+            f"/auth/orgs/{two_organisations['other']}/members/{outsider}", headers=headers
+        )
+        assert step1.status_code == 403, "removing another organisation's membership"
+
+        step2 = await ac.post(
+            f"/auth/orgs/{two_organisations['acme']}/members",
+            json={"user_id": outsider, "role": "member"},
+            headers=headers,
+        )
+        assert step2.status_code == 409, "claiming an account another organisation holds"
+
+        # Step 3: back to the account door, which must still refuse.
+        step3 = await ac.patch(
+            f"/auth/users/{outsider}",
+            json={"email": "outsider@other.test", "role": "reviewer", "password": "seized"},
+            headers=headers,
+        )
+        assert step3.status_code == 409
+
+        # Step 4: the only assertion that cannot be satisfied by a chain that half-worked.
+        assert await _still_signs_in(ac, "outsider@other.test", "outsiders-own-password")
+        assert not await _still_signs_in(ac, "outsider@other.test", "seized")
+
+
+@pytest.mark.asyncio
+async def test_a_shared_account_is_administrable_by_neither_organisation(two_organisations):
+    """An account in two organisations belongs to neither org_admin.
+
+    Only a sysadmin can produce this state now, and it is a legitimate one to produce - but
+    the guard used to read the *first* membership row, so whichever organisation's row sorted
+    first would have got a free hand over an account the other one also holds. The rule is
+    unanimity: every membership in the caller's organisation, or the account is not theirs.
+    Set up through the sysadmin's own door rather than by writing the table directly, so the
+    state under test is one the API can really reach.
+    """
+    outsider = two_organisations["outsider"]
+    async with await _client() as ac:
+        shared = await ac.post(
+            f"/auth/orgs/{two_organisations['acme']}/members",
+            json={"user_id": outsider, "role": "member"},
+            headers=_auth(two_organisations["sysadmin"]),
+        )
+        assert shared.status_code == 201
+
+        # Acme now holds a membership on this account, and it is still not Acme's to touch.
+        refused = await ac.patch(
+            f"/auth/users/{outsider}",
+            json={"email": "outsider@other.test", "role": "reviewer", "password": "seized"},
+            headers=_auth(two_organisations["org_admin"]),
+        )
+        assert refused.status_code == 409
+        assert await _still_signs_in(ac, "outsider@other.test", "outsiders-own-password")
+        assert not await _still_signs_in(ac, "outsider@other.test", "seized")
+
+
+@pytest.mark.asyncio
+async def test_the_membership_doors_still_work_inside_the_callers_own_organisation(
+    two_organisations,
+):
+    """The scope is a scope. An org_admin runs their own organisation's membership - adding a
+    colleague, changing their role, removing them - and a guard that refused all three would
+    close the chain by breaking the feature."""
+    headers = _auth(two_organisations["org_admin"])
+    acme = two_organisations["acme"]
+    # Somebody with no organisation yet, so the add is a real add.
+    newcomer = await _make_login("newcomer@acme.test", "newcomers-pw", "reviewer", None)
+
+    async with await _client() as ac:
+        added = await ac.post(
+            f"/auth/orgs/{acme}/members",
+            json={"user_id": newcomer, "role": "member"},
+            headers=headers,
+        )
+        assert added.status_code == 201
+
+        # And the membership really landed: the account door now agrees they are ours.
+        reachable = await ac.post(f"/auth/users/{newcomer}/reset-link", headers=headers)
+        assert reachable.status_code == 200
+
+        changed = await ac.patch(
+            f"/auth/orgs/{acme}/members/{newcomer}", json={"role": "member"}, headers=headers
+        )
+        assert changed.status_code == 200
+
+        removed = await ac.delete(f"/auth/orgs/{acme}/members/{newcomer}", headers=headers)
+        assert removed.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_a_sysadmin_still_moves_accounts_between_organisations(two_organisations):
+    """Membership administration across organisations stays a sysadmin capability."""
+    headers = _auth(two_organisations["sysadmin"])
+    outsider = two_organisations["outsider"]
+
+    async with await _client() as ac:
+        removed = await ac.delete(
+            f"/auth/orgs/{two_organisations['other']}/members/{outsider}", headers=headers
+        )
+        assert removed.status_code == 204
+        added = await ac.post(
+            f"/auth/orgs/{two_organisations['acme']}/members",
+            json={"user_id": outsider, "role": "member"},
+            headers=headers,
+        )
+        assert added.status_code == 201
+
+
+# ── The tier below the doors ─────────────────────────────────────────────────
+
+@pytest_asyncio.fixture
+async def below_the_tier(two_organisations):
+    """A plain reviewer login, and a reviewer who is an approver on a project.
+
+    The approver is the case worth naming: they hold a project role that lets them approve an
+    engagement's outputs, and `caller_roles` would say so - but administering a login is not
+    project content, so the project role must buy nothing on these doors.
+    """
+    from api.database import (
+        get_connection, insert_project, fetch_project, insert_stakeholder, link_membership,
+    )
+    slug = "authority-project"
+    async with get_connection(slug) as conn:
+        await insert_project(conn, slug=slug, llm_mode="standard", sector="", config_json="{}")
+        project = await fetch_project(conn, slug=slug)
+        sid = await insert_stakeholder(
+            conn, project_id=project["id"], name="Ada", email="ada@acme.test",
+            is_reviewer=True, is_approver=True,
+        )
+    approver_id = await _make_login("ada@acme.test", "adas-pw", "reviewer", None)
+    await _make_login("plain@acme.test", "plains-pw", "reviewer", None)
+    async with get_system_connection() as conn:
+        await link_membership(
+            conn, user_id=approver_id, project_slug=slug, stakeholder_id=sid
+        )
+    return {
+        "reviewer": create_access_token("plain@acme.test", "reviewer", _JWT_SECRET),
+        "approver": create_access_token("ada@acme.test", "reviewer", _JWT_SECRET),
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("who", ["reviewer", "approver"])
+async def test_editing_an_account_refuses_below_the_platform_tier(
+    two_organisations, below_the_tier, who
+):
+    """`update_user_endpoint`'s signature was edited on this branch and nothing witnessed its
+    gate: downgrading it to require_any_auth left the whole suite green, with a plain reviewer
+    able to set any account's password."""
+    target = two_organisations["colleague"]
+    async with await _client() as ac:
+        resp = await ac.patch(
+            f"/auth/users/{target}",
+            json={"email": "colleague@acme.test", "role": "reviewer", "password": "seized"},
+            headers=_auth(below_the_tier[who]),
+        )
+        assert resp.status_code == 403, f"{who} must not be able to edit an account"
+        assert await _still_signs_in(ac, "colleague@acme.test", "colleagues-own-password")
+        assert not await _still_signs_in(ac, "colleague@acme.test", "seized")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("who", ["reviewer", "approver"])
+async def test_deleting_an_account_refuses_below_the_platform_tier(
+    two_organisations, below_the_tier, who
+):
+    """The dependency moved from the decorator into the signature on this branch, which is
+    exactly the edit that can drop a gate without anything noticing."""
+    target = two_organisations["colleague"]
+    async with await _client() as ac:
+        resp = await ac.delete(f"/auth/users/{target}", headers=_auth(below_the_tier[who]))
+        assert resp.status_code == 403, f"{who} must not be able to delete an account"
+        assert await _still_signs_in(ac, "colleague@acme.test", "colleagues-own-password")
 
 
 @pytest.mark.asyncio
