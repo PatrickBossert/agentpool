@@ -59,13 +59,21 @@ def _already_registered_response() -> dict:
     """The membership was granted, but no session - see the module docstring's CRITICAL
     note. `access_token: None` rather than omitting the key, so a client that only checks
     truthiness (as AcceptInvite.tsx does) and one that only checks for the key's presence
-    both land on the same "no session" answer."""
+    both land on the same "no session" answer.
+
+    `detail` is the single place this outcome is worded. AcceptInvite.tsx renders it
+    verbatim, so the sentence a person reads cannot drift from the one the API promises.
+    It has to say what was discarded, not only what was granted: whoever redeemed this
+    token typed a password twice on the way here, and the previous wording ("sign in with
+    your existing password") read to at least one person as the password they had just
+    chosen. They then found only the old one worked and had no idea why."""
     return {
         "access_token": None,
         "token_type": "bearer",
         "already_registered": True,
-        "detail": "An account already exists for this email address - "
-                   "your access has been granted. Sign in with your existing password.",
+        "detail": "An account already exists for this email address, so this invite "
+                  "granted your access only. The password you just entered was not set - "
+                  "your existing password still works, and it is the one to sign in with.",
     }
 
 

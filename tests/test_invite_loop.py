@@ -441,6 +441,17 @@ async def test_accepting_an_invite_for_an_already_registered_email_mints_no_sess
             f"session - got a response carrying one: {body!r}"
         )
 
+        # The other half of the contract, added in sp41: the refusal has to be explainable.
+        # AcceptInvite.tsx renders `detail` verbatim - it is the only place this outcome is
+        # worded - so a response that omitted it would drop the browser onto a page-local
+        # fallback, and one that carried an empty string would be falsy there and put the
+        # password form back on screen after a membership that really was granted. No
+        # assertion on the wording itself: that is the page's to render, not to restate.
+        assert body.get("already_registered") is True
+        assert isinstance(body.get("detail"), str) and body["detail"].strip(), (
+            f"the no-session response must explain itself - got: {body!r}"
+        )
+
         # The password must still be exactly what it was - not the attacker's redemption
         # password, and this is the second, independent proof (alongside the direct-call
         # test above) that it was never touched.

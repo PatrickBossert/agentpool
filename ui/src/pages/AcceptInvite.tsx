@@ -5,8 +5,16 @@
 // outside the authenticated guard (see router.tsx) - somebody arriving here has no session yet,
 // so a route behind ProtectedRoute would bounce them straight to a login they cannot complete,
 // because setting the password is what they came here to do.
+//
+// Redemption has two outcomes and the form cannot tell which one it is heading for. If the
+// email already has a login, the server grants the membership and refuses the session, and the
+// password typed here is discarded - deliberately, since otherwise anybody able to add your
+// address as a stakeholder could overwrite your password. The page's job is to say so before
+// submission and unmissably after it; it must never ask which case this is in advance, because
+// an answer to that question is an account-existence oracle for any administrator with a
+// project. Both of those constraints are load-bearing - see the comments where each lands.
 import { useState, FormEvent } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { CheckCircle, KeyRound } from 'lucide-react'
 import { authApi } from '../api/endpoints'
 import { useAuth, parseToken } from '../context/AuthContext'
@@ -53,10 +61,16 @@ export default function AcceptInvite() {
         // invite for a known email is a membership grant, not an authentication event.
         // Sending them to /login (rather than signing them in) is the point, not a
         // fallback: only the account's own password may authenticate as that account.
+        //
+        // The wording is the server's, rendered verbatim, so there is exactly one place
+        // this outcome is worded (_already_registered_response in api/routers/invites.py).
+        // The literal below is only for a response that carried no detail at all; keep it
+        // saying the same thing, and change the server's copy rather than this.
         setAlreadyRegisteredMessage(
           resp.detail ??
-            'An account already exists for this email address - your access has been ' +
-            'granted. Sign in with your existing password.',
+            'An account already exists for this email address, so this invite granted ' +
+            'your access only. The password you just entered was not set - your existing ' +
+            'password still works, and it is the one to sign in with.',
         )
         return
       }
@@ -84,9 +98,18 @@ export default function AcceptInvite() {
               <CheckCircle size={18} className="text-brand" />
               <h1 className="text-lg font-semibold">Access granted</h1>
             </div>
-            <p className="text-sm text-secondary text-center mb-6">
-              {alreadyRegisteredMessage}
-            </p>
+            {/* Deliberately a callout rather than the muted single line this used to be.
+                Somebody who has just chosen a password twice arrives at this panel reading
+                "Access granted" and nothing else; the part that matters - that the password
+                was discarded - has to be the part that is hard to skip past. The password
+                fields are unmounted rather than disabled or cleared: nothing renders the
+                form again from here (alreadyRegisteredMessage is only reset inside
+                handleSubmit, which only the form can call), so an unmounted field cannot be
+                edited or resubmitted, and blanking state nothing can reach would be a
+                gesture rather than a safeguard. */}
+            <div className="bg-surface-raised border border-brand rounded-lg p-4 mb-6">
+              <p className="text-sm text-primary">{alreadyRegisteredMessage}</p>
+            </div>
             <button
               type="button"
               onClick={() => navigate('/login')}
@@ -101,8 +124,19 @@ export default function AcceptInvite() {
               <KeyRound size={18} className="text-brand" />
               <h1 className="text-lg font-semibold">Set your password</h1>
             </div>
-            <p className="text-sm text-secondary text-center mb-6">
+            <p className="text-sm text-secondary text-center mb-4">
               Choose a password to finish setting up your account.
+            </p>
+            {/* Stated up front because the page cannot find out which case this is until
+                after the token is redeemed, and must not try: an administrator can mint an
+                invite for any address on their own project, so anything that answered
+                "does this email have an account?" before submission would be an
+                account-existence oracle. The sentence is therefore generic - true for
+                every visitor, and revealing nothing about this particular address. */}
+            <p className="text-sm text-muted text-center mb-6">
+              If an account already exists for this email address, this invite grants your
+              access only - the password you choose here will not be used, and your current
+              password stays as it is.
             </p>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -146,6 +180,15 @@ export default function AcceptInvite() {
                 {loading ? 'Setting password…' : 'Set password and sign in'}
               </button>
             </form>
+            {/* The door out for somebody who knows they already have an account. Without it
+                the only way off this page is to invent a password, submit it, and be told
+                it was discarded. Secondary to the main action, and outside the <form> so it
+                cannot submit it. */}
+            <p className="text-sm text-secondary text-center mt-4">
+              <Link to="/login" className="text-brand hover:text-brand-dark transition-colors">
+                Sign in instead
+              </Link>
+            </p>
           </>
         )}
       </div>

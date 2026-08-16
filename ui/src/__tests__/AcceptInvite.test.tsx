@@ -15,6 +15,13 @@
 //
 // Both properties are asserted here, and the storage one is what makes the test
 // power-checkable: a token stored is a token the request interceptor will send.
+//
+// sp41 added the honesty half. The refusal was correct and silent: the page took a password,
+// discarded it, and said "sign in with your existing password" - which a person who had just
+// chosen one twice read as the one they had just chosen. The tests for that are still
+// behavioural rather than copy checks. The wording lives in exactly one place, the server's
+// `detail`, so the test that matters asserts the page renders what the server sent (a string
+// that appears nowhere in the page's source), not that some sentence exists.
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
@@ -122,6 +129,49 @@ describe('accepting an invite for a brand new account', () => {
 
     expect(await screen.findByText('dashboard-home')).toBeInTheDocument()
     expect(localStorage.getItem('ap_token')).toBe(REAL_JWT)
+  })
+})
+
+describe('the way out for somebody who knows they already have an account', () => {
+  it('reaches /login without redeeming the invite or inventing a password', async () => {
+    const { authApi } = await import('../api/endpoints')
+
+    renderPage()
+    // No password typed at all - the point of the link is that this person should not have
+    // to make one up to get off this page.
+    await userEvent.click(screen.getByRole('link', { name: /sign in instead/i }))
+
+    expect(await screen.findByText('login-page')).toBeInTheDocument()
+    // Outside the <form>, so clicking it must not submit: a submission here would redeem
+    // the single-use token against a password nobody chose.
+    expect(vi.mocked(authApi.accept)).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+describe('a response that carries no detail', () => {
+  it('still lands on the granted state rather than falling through to a session', async () => {
+    const { authApi } = await import('../api/endpoints')
+    // The fallback branch: `resp.detail ?? <literal>`. Two ways this can go wrong and both
+    // are behavioural, not cosmetic. A page that keyed the granted state off `detail` being
+    // present rather than off the absent access_token would treat this as a successful
+    // sign-in. And an empty fallback is falsy, so the panel's own condition would fail and
+    // put the password form back on screen after a membership that really was granted.
+    // Asserting the panel renders at all catches both; no assertion is made on its wording,
+    // which belongs to the server (see the verbatim test above).
+    vi.mocked(authApi.accept).mockResolvedValue({
+      access_token: null,
+      token_type: 'bearer',
+      already_registered: true,
+    })
+
+    renderPage()
+    await submitPassword()
+
+    await waitFor(() => expect(screen.getByText(/access granted/i)).toBeInTheDocument())
+    expect(localStorage.getItem('ap_token')).toBeNull()
+    expect(screen.queryByText('dashboard-home')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
   })
 })
 
