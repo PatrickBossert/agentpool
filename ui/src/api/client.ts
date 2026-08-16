@@ -2,7 +2,19 @@
 import axios, { AxiosResponse } from 'axios'
 import { RETURN_TO_KEY } from '../context/AuthContext'
 
-export const API_BASE = 'http://localhost:8000'
+// Empty on purpose: every request is origin-relative, so it goes to whatever served the page -
+// Vite in development, Caddy in production. This used to be the literal http://localhost:8000,
+// which sent every call to the *viewer's own machine* and bypassed both proxies entirely, so no
+// deployed build has ever reached the API.
+//
+// Same reasoning as useWebSocket.ts, which sp40 converted off ws://localhost:8000 for exactly
+// this reason. It has to derive an absolute URL from window.location because `new WebSocket`
+// refuses a relative one; HTTP has no such constraint, so the honest expression of "wherever
+// this page came from" is simply no base at all.
+//
+// The other half of the fix is that both proxies must forward every prefix the API mounts -
+// tests/test_proxy_prefix_coverage.py enumerates app.routes and fails when one is missing.
+export const API_BASE = ''
 
 export const apiClient = axios.create({ baseURL: API_BASE })
 

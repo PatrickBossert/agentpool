@@ -515,7 +515,7 @@ export default function Architecture() {
 
       {/* ── API Endpoints ── */}
       <Section id="api" title="API Endpoints">
-        <p className="text-xs text-slate-500 mb-3">Base URL: <code className="text-slate-300">https://taskreimagination.ai/api</code> (locally: <code className="text-slate-300">http://localhost:8000</code>). JWT Bearer required except /auth/login and public interview routes.</p>
+        <p className="text-xs text-slate-500 mb-3">Paths are origin-relative - the dashboard sends them to whatever origin served the page, and the reverse proxy forwards each top-level prefix to the API. Most routers mount at the root (<code className="text-slate-300">/projects</code>, <code className="text-slate-300">/auth</code>, <code className="text-slate-300">/admin</code>, <code className="text-slate-300">/system</code>, <code className="text-slate-300">/agent-skill-notes</code>); only templates and interviews carry an <code className="text-slate-300">/api</code> prefix. JWT Bearer required except /auth/login and public interview routes.</p>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-slate-800/60">

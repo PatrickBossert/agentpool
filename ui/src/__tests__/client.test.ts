@@ -9,6 +9,68 @@
 import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import { apiClient, storeRefreshedToken } from '../api/client'
 
+// sp43: the base was the literal 'http://localhost:8000', so every call went to the viewer's
+// own machine and bypassed Vite's proxy in development and Caddy in production. Nothing could
+// see it: a unit suite has no proxy, and `vite dev` on the developer's own laptop is a machine
+// where localhost:8000 happens to be the API.
+//
+// Asserted on the URL the transport is given, not on the exported API_BASE constant. Reading
+// the constant back would only prove the constant: a base that never reached axios.create, or
+// an interceptor putting a host back, would both sail through it. The adapter here stands in
+// for the network and is handed the fully merged config the real interceptors produced;
+// getUri is the same composition of baseURL and url that axios's own xhr and fetch adapters
+// perform to decide where to send the request.
+//
+// A relative URL resolves against the page origin - that is the property, so the assertion
+// resolves it the way a browser would and checks the origin it lands on. With the old base
+// the transport was handed 'http://localhost:8000/auth/login', a different origin, and no
+// amount of proxy configuration could have helped.
+describe('every request goes to whatever origin served the page', () => {
+  const realAdapter = apiClient.defaults.adapter
+
+  afterEach(() => {
+    apiClient.defaults.adapter = realAdapter
+  })
+
+  function captureSentUrls(): string[] {
+    const sent: string[] = []
+    apiClient.defaults.adapter = (config: AxiosRequestConfig) => {
+      sent.push(apiClient.getUri(config))
+      return Promise.resolve({
+        data: {}, status: 200, statusText: 'OK', headers: {}, config,
+      } as AxiosResponse)
+    }
+    return sent
+  }
+
+  it.each([
+    ['/auth/login'],
+    ['/projects'],
+    ['/projects/acme/script-ledger'],
+    ['/system/heartbeat'],
+  ])('sends %s to the page origin, not to a hardcoded host', async (path) => {
+    const sent = captureSentUrls()
+
+    await apiClient.get(path)
+
+    expect(sent).toHaveLength(1)
+    const resolved = new URL(sent[0], window.location.href)
+    expect(resolved.origin).toBe(window.location.origin)
+    expect(resolved.pathname).toBe(path)
+  })
+
+  it('keeps query parameters on the same-origin URL', async () => {
+    const sent = captureSentUrls()
+
+    await apiClient.get('/projects/acme/outputs', { params: { output_type: 'value_chain' } })
+
+    const resolved = new URL(sent[0], window.location.href)
+    expect(resolved.origin).toBe(window.location.origin)
+    expect(resolved.pathname).toBe('/projects/acme/outputs')
+    expect(resolved.searchParams.get('output_type')).toBe('value_chain')
+  })
+})
+
 function fakeResponse(headers: Record<string, string>): AxiosResponse {
   return {
     data: {},
