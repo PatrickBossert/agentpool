@@ -13,7 +13,7 @@ from api.database import (
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
 # The one authority for "may this caller act on this project's scripts", shared with
 # api/routers/script_reviews.py and api/routers/permissions.py rather than restated.
-from api.services.authority_service import caller_roles
+from api.services.authority_service import caller_roles, require_project_administration
 from api.services.project_service import (
     create_project,
     get_project_status,
@@ -140,8 +140,9 @@ async def get_settings_endpoint(slug: str, payload: dict = Depends(require_any_a
 
 
 @router.patch("/{slug}/settings", response_model=ProjectSettings)
-async def patch_settings_endpoint(slug: str, req: ProjectSettings, payload: dict = Depends(require_org_admin_or_above)):
+async def patch_settings_endpoint(slug: str, req: ProjectSettings, payload: dict = Depends(require_any_auth)):
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     result = await update_project_settings(slug, req)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -234,7 +235,7 @@ _MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2 MB
 async def upload_branding_image(
     slug: str,
     file: UploadFile = File(...),
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     """Upload a header image for the project branding.
 
@@ -244,6 +245,7 @@ async def upload_branding_image(
     outside the engagement must not be able to use this door to learn which slugs exist.
     """
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 

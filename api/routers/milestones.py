@@ -12,13 +12,14 @@
 # decided, so an org_admin of one engagement could rewrite another engagement's milestones
 # and any valid token at all could read and write them.
 from fastapi import APIRouter, Depends, HTTPException
-from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
+from api.auth import require_any_auth, check_project_access
 from api.database import (
     get_connection, list_milestones, insert_milestone, update_milestone,
     delete_milestone, seed_default_milestones, rebaseline_milestone,
     fetch_milestone_baselines,
 )
 from api.models import Milestone, MilestoneCreate, MilestoneUpdate, MilestoneRebaseline
+from api.services.authority_service import require_project_administration
 from api.services.commit_service import caller_may_commit
 
 router = APIRouter(prefix="/projects/{slug}/milestones", tags=["milestones"])
@@ -46,9 +47,10 @@ async def get_milestones(slug: str, payload: dict = Depends(require_any_auth)):
 
 
 @router.post("/seed", response_model=list[Milestone])
-async def seed_milestones(slug: str, payload: dict = Depends(require_org_admin_or_above)):
+async def seed_milestones(slug: str, payload: dict = Depends(require_any_auth)):
     """Insert any missing default milestones, then return the full list."""
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     async with get_connection(slug) as conn:
         await seed_default_milestones(conn, slug)
         return await list_milestones(conn, slug)
@@ -57,9 +59,10 @@ async def seed_milestones(slug: str, payload: dict = Depends(require_org_admin_o
 @router.post("", response_model=Milestone)
 async def create_milestone(
     slug: str, body: MilestoneCreate,
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     import uuid
     key = body.milestone_key or f"custom_{uuid.uuid4().hex[:8]}"
     async with get_connection(slug) as conn:
@@ -76,9 +79,10 @@ async def create_milestone(
 @router.patch("/{milestone_id}", response_model=Milestone)
 async def patch_milestone(
     slug: str, milestone_id: int, body: MilestoneUpdate,
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     async with get_connection(slug) as conn:
         ok = await update_milestone(
             conn, milestone_id=milestone_id, slug=slug,
@@ -100,9 +104,10 @@ async def patch_milestone(
 @router.delete("/{milestone_id}", status_code=204)
 async def remove_milestone(
     slug: str, milestone_id: int,
-    payload: dict = Depends(require_org_admin_or_above),
+    payload: dict = Depends(require_any_auth),
 ):
     await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
     async with get_connection(slug) as conn:
         deleted = await delete_milestone(conn, milestone_id=milestone_id, slug=slug)
     if not deleted:

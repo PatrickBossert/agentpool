@@ -28,8 +28,15 @@ JOB_NAME = "pam_daily_report"
 OUTPUT_TYPE = "pam_report"
 DEV_MODE_ADDRESS = "Patrick@FutureEdge.consulting"
 # The multi-valued engagement-role columns, not project_role: one person can be
-# both a reviewer and an approver, which a single-select role cannot express.
-REVIEW_FLAGS = ("is_reviewer", "is_approver")
+# a reviewer, an approver and a governor at once, which a single-select role cannot
+# express.
+#
+# `is_governor` joined the tuple in sp44. The design has always said governors receive
+# PAM's reports, and this is the one place that sentence is expressible - but until the
+# flag was grantable it selected nobody, so adding it would have been decoration. It is
+# also the *only* thing the governor role does: nothing gates on it, and milestone
+# completion (the design's other half) has no distinct action in the code to gate.
+REVIEW_FLAGS = ("is_reviewer", "is_approver", "is_governor")
 
 
 def resolve_recipients(
@@ -178,7 +185,10 @@ async def run_pam_daily_report(slug: str) -> None:
 
     actual, intended = resolve_recipients(stakeholders, dev_mode)
     if not actual:
-        logger.info("pam report job: %s has no reviewer or approver stakeholders - stored, not sent", slug)
+        logger.info(
+            "pam report job: %s has no reviewer, approver or governor stakeholders "
+            "- stored, not sent", slug,
+        )
         return
 
     subject = f"{slug} status report - {datetime.now().strftime('%d %b %Y')}"
