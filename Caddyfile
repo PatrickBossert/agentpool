@@ -1,13 +1,47 @@
 :80 {
-	# API — FastAPI handles JWT auth
-	handle /api/* {
+	# API - FastAPI handles JWT auth.
+	#
+	# Every top-level prefix the API mounts has to appear here. A prefix with no handle block
+	# does not 404: it falls through to the static file server at the bottom, which answers the
+	# landing page with a 200 where login or projects should be. That is how /projects and
+	# /auth were unreachable behind Caddy while only /api/* - two routers out of twenty-two -
+	# worked. tests/test_proxy_prefix_coverage.py enumerates app.routes and fails when this
+	# list stops covering them.
+	#
+	# The matchers are written /prefix* and not /prefix/* deliberately. `GET /projects`,
+	# `POST /projects`, and `GET /agent-skill-notes` are real routes with no sub-path, and a
+	# /prefix/* matcher does not match a bare /prefix.
+	handle /projects* {
+		reverse_proxy localhost:8000
+	}
+
+	handle /auth* {
+		reverse_proxy localhost:8000
+	}
+
+	handle /admin* {
+		reverse_proxy localhost:8000
+	}
+
+	handle /system* {
+		reverse_proxy localhost:8000
+	}
+
+	handle /agent-skill-notes* {
+		reverse_proxy localhost:8000
+	}
+
+	# The two routers that carry an /api prefix of their own - templates and interviews. The
+	# rest do not, which is why no single rewrite rule can serve both conventions; see
+	# CLAUDE.md on mounting everything under /api as the intended end state.
+	handle /api* {
 		reverse_proxy localhost:8000
 	}
 
 	# Agent log stream - the dashboard opens this against the page origin, so it has to be
 	# forwarded here as well as /api. Caddy upgrades a WebSocket handshake through
 	# reverse_proxy without further configuration.
-	handle /ws/* {
+	handle /ws* {
 		reverse_proxy localhost:8000
 	}
 
@@ -16,7 +50,11 @@
 		reverse_proxy localhost:3000
 	}
 
-	# Homepage — static landing page
+	# Homepage - static landing page.
+	#
+	# FastAPI's own /docs, /redoc, and /openapi.json are deliberately absent from the blocks
+	# above and land here instead: they are framework-supplied, the dashboard never calls them,
+	# and there is no reason to publish an interactive API console on the public origin.
 	handle {
 		root * landing
 		file_server

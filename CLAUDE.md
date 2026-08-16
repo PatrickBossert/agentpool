@@ -473,6 +473,34 @@ evidence a link was sent.** The administrator door covers those accounts (it pas
 `users.username` deliberately); fixing the self-service one means resolving by username *or*
 email without reintroducing a timing difference between a known and an unknown address.
 
+### Reaching the API: nothing may name a host, and both proxies must cover every prefix
+
+The dashboard sends **origin-relative** URLs. `API_BASE` in `ui/src/api/client.ts` is `''` on
+purpose, so a call goes to whatever origin served the page - Vite in development, Caddy in
+production. It was the literal `http://localhost:8000` until sp43, which sent every call to the
+*viewer's* machine and bypassed both proxies. `useWebSocket.ts` is the same rule, expressed as
+`window.location` because `new WebSocket` refuses a relative URL.
+
+The other half is that both proxies must forward **every** top-level prefix the API mounts:
+`/projects`, `/auth`, `/admin`, `/system`, `/agent-skill-notes`, `/api`, and `/ws`. A prefix
+missing from the `Caddyfile` does not 404 - it falls through to the static file server and
+answers the landing page with a **200**, and a prefix missing from `vite.config.ts` is answered
+by the SPA fallback. Both failures look like a frontend bug. `tests/test_proxy_prefix_coverage.py`
+enumerates `app.routes` and fails when either config stops covering them, matching **whole paths**
+rather than prefixes - `handle /projects/*` does not match the bare `POST /projects`, which is
+why the matchers are written `/projects*`.
+
+FastAPI's `/docs`, `/redoc`, and `/openapi.json` are named in that test's `FRAMEWORK_PATHS` and
+deliberately left unproxied. The exemption cannot be abused: the test asserts every exempted
+path is a framework-supplied Starlette `Route`, so an application endpoint cannot be excused
+into it.
+
+**Intended end state: mount every router under `/api` and delete the two conventions.** One
+rule forever, and no per-prefix list to keep in step. It was not done in sp43 because it touches
+every router and every URL in a 1600-test suite, and that belongs in a change of its own rather
+than smuggled into a proxy fix. Until then, the split is real: `/api/templates` and
+`/api/interviews` carry the prefix and nothing else does, so no single rewrite rule serves both.
+
 ---
 
 ## Frontend conventions
