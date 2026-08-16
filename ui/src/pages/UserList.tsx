@@ -50,10 +50,12 @@ export default function UserList() {
       setCopied(false)
     },
     onSuccess: (data) => setIssued(data),
+    // Neutral on purpose, and matching the server's single sentence: the two refusals it can
+    // raise - a sysadmin target, an account in another organisation - must not be told apart,
+    // or an org_admin can read off which accounts hold the platform role and which belong to
+    // somebody else's engagement.
     onError: () =>
-      setResetError(
-        'That reset link could not be issued - the account may sit outside your organisation.',
-      ),
+      setResetError('That reset link could not be issued - that account is not yours to administer.'),
   })
 
   const roleBadge = (role: string) => {
