@@ -9,7 +9,7 @@ from api.services.admin_service import (
     svc_list_users, svc_create_user, svc_update_user, svc_delete_user,
     svc_list_user_projects, svc_grant_project_access, svc_revoke_project_access,
     svc_issue_reset_link,
-    ForbiddenRoleChange, OrganisationInUse, ResetLinkRefused,
+    ForbiddenRoleChange, OrganisationInUse, AccountOutOfScope,
 )
 
 router = APIRouter(prefix="/auth", tags=["admin"])
@@ -177,6 +177,8 @@ async def update_user_endpoint(
         )
     except ForbiddenRoleChange:
         raise HTTPException(status_code=409, detail="Forbidden role")
+    except AccountOutOfScope as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     if not user:
         _404(f"User {user_id} not found")
     return user
@@ -207,16 +209,24 @@ async def issue_reset_link_endpoint(
     """
     try:
         result = await svc_issue_reset_link(user_id, calling_payload=payload)
-    except ResetLinkRefused as exc:
+    except AccountOutOfScope as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     if result is None:
         _404(f"User {user_id} not found")
     return result
 
 
-@router.delete("/users/{user_id}", status_code=204, dependencies=[Depends(require_org_admin_or_above)])
-async def delete_user_endpoint(user_id: int):
-    if not await svc_delete_user(user_id):
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user_endpoint(user_id: int, payload: dict = Depends(require_org_admin_or_above)):
+    """The dependency moved out of the decorator and into the signature so the handler can
+    see who is calling. Deleting an account is administering it, and until this change
+    nothing on this path asked whose account it was - there was no payload here to ask with.
+    """
+    try:
+        deleted = await svc_delete_user(user_id, calling_payload=payload)
+    except AccountOutOfScope as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not deleted:
         _404(f"User {user_id} not found")
 
 

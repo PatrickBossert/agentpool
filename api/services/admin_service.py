@@ -238,7 +238,16 @@ async def svc_update_user(
     user_id: int, email: str, role: str, password: str | None, calling_payload: dict
 ) -> dict | None:
     """Edit a login. Returns the user dict (without hashed_pw), or None if there is no such
-    user; raises ForbiddenRoleChange if the caller may not grant the role asked for.
+    user; raises ForbiddenRoleChange if the caller may not grant the role asked for, and
+    AccountOutOfScope if they may not act on this account at all.
+
+    The two are different questions and only the first was ever asked here. The guard below
+    tests the role being *granted*; `_assert_may_administer` tests the account being
+    *edited*. Without the second, an org_admin could PATCH an existing sysadmin with
+    `role="org_admin"` and a password of their own choosing - the platform administrator
+    demoted and their login taken in one request, with the role guard never firing because
+    the role being granted was not sysadmin. `password` is what makes it a takeover rather
+    than vandalism, and this endpoint has always accepted one.
 
     The same guard svc_create_user carries, on the door that had none. PATCH
     /auth/users/{id} is require_org_admin_or_above, so without it an org_admin who could not
@@ -256,27 +265,76 @@ async def svc_update_user(
         user = await fetch_user_by_id(conn, user_id=user_id)
         if not user:
             return None
+        await _assert_may_administer(conn, calling_payload=calling_payload, target=user)
         hashed = hash_password(password) if password else None
         await update_user(conn, user_id=user_id, email=email, role=role, hashed_pw=hashed)
         updated = await fetch_user_by_id(conn, user_id=user_id)
         return {k: v for k, v in updated.items() if k != "hashed_pw"}
 
 
-class ResetLinkRefused(Exception):
-    """An org_admin asked for a reset link on an account outside their authority.
+class AccountOutOfScope(Exception):
+    """This caller may not act on this account, whatever they were asking to do to it.
 
     Raised rather than returned for the same reason ForbiddenRoleChange is: None already
-    means "no such user" here, and answering a refusal with 404 would tell the operator the
-    opposite of what happened - and, worse on this door, would make "that account is not
-    yours to reset" indistinguishable from "there is no such account", which is a
-    cross-organisation existence oracle for any org_admin willing to enumerate ids.
+    means "no such user" on these paths, and answering a refusal with 404 would tell the
+    operator the opposite of what happened.
     """
+
+
+# One sentence for both conditions below, deliberately. Told apart, the refusals are an
+# oracle: "that is a sysadmin" and "that account belongs to another organisation" are two
+# facts about an account an org_admin is not entitled to read, and enumerating ids would
+# hand them both.
+_OUT_OF_SCOPE = "that account is not yours to administer"
+
+
+async def _assert_may_administer(conn, *, calling_payload: dict, target: dict) -> None:
+    """May this caller act on this target account? The one place the question is answered.
+
+    Every door that administers an account asks this and none of them re-states it -
+    `svc_issue_reset_link`, `svc_update_user`, and `svc_delete_user` all call this. That is
+    not tidiness: this project has already watched two copies of a condition diverge
+    (`register_scripts_sync` against `scripts_awaiting_regeneration`, still divergent), and a
+    condition that is copied per door is a condition that will be right on some doors and
+    wrong on others. It was already wrong on two of the three - see below.
+
+    Two refusals, and neither is expressible as a role tier, which is why
+    `require_org_admin_or_above` on the routers cannot stand in for them:
+
+      sysadmin target - an org_admin may not act on a sysadmin's account at all.
+        `svc_create_user` and `svc_update_user` both refused to *grant* sysadmin already,
+        which reads like the same rule and is not: the older guard tested the role being
+        granted, never the account being edited, so `PATCH /auth/users/{id}` with
+        `role="org_admin"` and a password of the caller's choosing demoted the platform
+        administrator and took their login in a single request, without the guard firing.
+        `svc_delete_user` asked nothing at all.
+
+      other organisation - an org_admin may only act on accounts in their own organisation.
+        `svc_create_user` forces `org_id` to the caller's own and `svc_list_users` scopes
+        what they can see; `svc_update_user` and `svc_delete_user` had no equivalent, so the
+        id in the URL walked round a filter applied everywhere else.
+
+    A sysadmin returns early - administering across organisations is a sysadmin capability
+    throughout this file, and a guard that refused everybody would close the finding by
+    breaking the only legitimate route to it.
+
+    An org_admin with no `org_id` in their session is refused rather than waved through: a
+    missing claim is not a licence, and `/auth/login` embeds one for every real org_admin.
+    """
+    if calling_payload.get("role") != "org_admin":
+        return
+    if target["role"] == "sysadmin":
+        raise AccountOutOfScope(_OUT_OF_SCOPE)
+    caller_org = calling_payload.get("org_id")
+    org_row = await fetch_user_org(conn, user_id=target["id"])
+    if caller_org is None or org_row is None or org_row["org_id"] != caller_org:
+        raise AccountOutOfScope(_OUT_OF_SCOPE)
 
 
 async def svc_issue_reset_link(user_id: int, calling_payload: dict) -> dict | None:
     """Mint a password-reset link for a named account and hand the raw token back.
 
-    Returns None when there is no such user; raises ResetLinkRefused when the caller may not
+    Returns None when there is no such user; raises AccountOutOfScope when the caller may not
     reset this one.
 
     Returning the token is the same decision `POST /{slug}/stakeholders/{id}/resend-invite`
@@ -288,17 +346,8 @@ async def svc_issue_reset_link(user_id: int, calling_payload: dict) -> dict | No
     and it is strictly the *better* of the two, since the account owner chooses the new
     password rather than being handed one the administrator knows.
 
-    Two guards, neither of which the tier check can express:
-
-      sysadmin target - an org_admin may not mint a reset for a sysadmin. svc_create_user
-        and svc_update_user already refuse to *grant* sysadmin for exactly this reason; a
-        reset link on a sysadmin account is the same escalation reached from the other end.
-      other org       - an org_admin may only reset accounts in their own organisation.
-        svc_list_users already scopes what they can see to their own org, so without this
-        the id in the URL is a way round a filter the UI applies everywhere else.
-
-    A sysadmin keeps its usual early return - administering across organisations is a
-    sysadmin capability throughout this file.
+    Who may do it is `_assert_may_administer`'s question, not this function's - the same
+    question `svc_update_user` and `svc_delete_user` ask, answered once.
 
     `deliver_reset` is passed `users.username`, not `users.email`: it looks its account up
     as a username (see invite_service.issue_reset), and while every invite-created login has
@@ -311,13 +360,7 @@ async def svc_issue_reset_link(user_id: int, calling_payload: dict) -> dict | No
         user = await fetch_user_by_id(conn, user_id=user_id)
         if not user:
             return None
-        if calling_payload.get("role") == "org_admin":
-            if user["role"] == "sysadmin":
-                raise ResetLinkRefused("org_admin cannot reset a sysadmin account")
-            org_row = await fetch_user_org(conn, user_id=user_id)
-            caller_org = calling_payload.get("org_id")
-            if caller_org is None or org_row is None or org_row["org_id"] != caller_org:
-                raise ResetLinkRefused("that account is not in your organisation")
+        await _assert_may_administer(conn, calling_payload=calling_payload, target=user)
 
     raw = await deliver_reset(email=user["username"])
     if raw is None:
@@ -325,11 +368,21 @@ async def svc_issue_reset_link(user_id: int, calling_payload: dict) -> dict | No
     return {"reset_token": raw, "username": user["username"], "email": user["email"]}
 
 
-async def svc_delete_user(user_id: int) -> bool:
+async def svc_delete_user(user_id: int, calling_payload: dict) -> bool:
+    """Delete a login. False if there is no such user; raises AccountOutOfScope if the caller
+    may not act on it.
+
+    `calling_payload` is new, and its absence was the whole defect: this door asked nothing
+    about the target at all, so an org_admin could delete a sysadmin, or anybody in any other
+    organisation, by id - the same gap `svc_update_user` had, reached with one fewer field to
+    fill in. The router took its dependency in the decorator, which is exactly how a door
+    ends up unable to ask the question: there was no payload in the handler to pass on.
+    """
     async with get_system_connection() as conn:
         user = await fetch_user_by_id(conn, user_id=user_id)
         if not user:
             return False
+        await _assert_may_administer(conn, calling_payload=calling_payload, target=user)
         await delete_user(conn, user_id=user_id)
         return True
 
