@@ -2,24 +2,17 @@
 // Maya's Output tab extra: generated interview scripts organised by level
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { projectsApi } from '../../api/endpoints'
 import { ScriptReviewRow } from './ScriptReviewRow'
 import { ScriptReviewPanel } from './ScriptReviewPanel'
 import type { InterviewQuestion, InterviewScript, InterviewSection } from '../../types'
+import { describeError } from '../../utils/describeError'
 
 // The server's own explanation - 403 (not a reviewer/approver), 409 (already approved), 422
 // (a send-back with no valid target) - beats a fixed string, because a fixed string cannot
 // tell the person which of those three happened. Mirrors describeError in
 // InterviewTemplateEditor.tsx, which closed the same gap for the script editor's save path.
-function describeError(err: unknown, fallback: string): string {
-  if (axios.isAxiosError(err)) {
-    const detail = err.response?.data?.detail
-    if (typeof detail === 'string' && detail) return detail
-  }
-  return fallback
-}
 
 const LEVEL_BADGE: Record<string, string> = {
   L0: 'bg-purple-100 text-purple-700',

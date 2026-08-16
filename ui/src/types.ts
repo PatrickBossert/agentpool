@@ -267,10 +267,15 @@ export interface Stakeholder {
   level: '' | 'L0' | 'L1' | 'L2' | 'L3' | 'C' | 'A' | 'F' | 'S'
   entity: string
   comms_channel: 'email' | 'slack' | 'sms'
-  // Role flags (a stakeholder can hold all three simultaneously)
+  // Role flags - a stakeholder may hold any combination of them. The last two are the
+  // administration and governance halves: project_admin configures this engagement and
+  // its people, governor receives PAM's reports. Both are grantable only by a
+  // project_admin (GET /my-permissions' can_grant_roles).
   is_participant: boolean
   is_reviewer: boolean
   is_approver: boolean
+  is_project_admin: boolean
+  is_governor: boolean
   interview_status: string | null
   interview_invited_at: string | null
   interview_completed_at: string | null
@@ -774,4 +779,8 @@ export interface ValidationWarning {
 export interface MyPermissions {
   can_review: boolean
   can_approve: boolean
+  // Whether this caller may grant is_project_admin / is_governor on this project.
+  // Narrower than administering it: an org_admin configures everything and still
+  // cannot mint a project_admin.
+  can_grant_roles: boolean
 }

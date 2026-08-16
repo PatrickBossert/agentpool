@@ -2,24 +2,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import axios from 'axios'
 import { stakeholdersApi, projectsApi, valueChainApi } from '../api/endpoints'
 import { COUNTRY_DATA, COUNTRY_OPTIONS } from '../utils/countryData'
 import type { Stakeholder } from '../types'
-
-// The server's own explanation beats a fixed string here more than anywhere else on this
-// form: _validate_deliverable_role's 422 - "email is required to invite a stakeholder
-// holding a role beyond participant" - is the only thing in the product that tells an
-// administrator they have just created a role nobody can be invited to. Swallowed into
-// "Save failed. Please try again.", it read as a transient fault, and retrying reproduced
-// it exactly. Mirrors describeError in ScriptReviewPanel.tsx and MayaOutputExtra.tsx.
-function describeError(err: unknown, fallback: string): string {
-  if (axios.isAxiosError(err)) {
-    const detail = err.response?.data?.detail
-    if (typeof detail === 'string' && detail) return detail
-  }
-  return fallback
-}
+import { describeError } from '../utils/describeError'
 
 type FormData = Omit<Stakeholder, 'id' | 'created_at'>
 
@@ -47,6 +33,8 @@ const EMPTY: FormData = {
   is_participant: false,
   is_reviewer: false,
   is_approver: false,
+  is_project_admin: false,
+  is_governor: false,
   interview_status: null,
   interview_invited_at: null,
   interview_completed_at: null,
@@ -85,6 +73,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </div>
   )
+}
+
+// See handleSave: a caller who may not grant these two must not send them at all.
+function stripGrantableRoles(form: FormData): Omit<FormData, 'is_project_admin' | 'is_governor'> {
+  const { is_project_admin: _pa, is_governor: _gov, ...rest } = form
+  return rest
 }
 
 const INPUT = 'w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand'
@@ -194,6 +188,19 @@ export default function StakeholderForm() {
     enabled: !!slug && isEdit,
   })
 
+  // Whether to offer the project_admin and governor checkboxes at all. The server refuses
+  // both to anyone without project_admin on this slug, so rendering them unconditionally
+  // would put two controls on the form that 403 every time an org_admin touches them - and
+  // a checkbox that always refuses is worse than no checkbox. Asked rather than inferred
+  // from the login role, because the rule is per project and the answer is not in the JWT.
+  const { data: permissions } = useQuery({
+    queryKey: ['my-permissions', slug],
+    queryFn: () => projectsApi.getMyPermissions(slug!),
+    enabled: !!slug,
+    retry: false,
+  })
+  const canGrantRoles = permissions?.can_grant_roles ?? false
+
   useEffect(() => {
     if (isEdit && existing && id) {
       const found = existing.find((s) => s.id === Number(id))
@@ -240,10 +247,17 @@ export default function StakeholderForm() {
     setSaving(true)
     setError(null)
     try {
+      // The two grantable flags are sent only by a caller who may grant them. Sent by
+      // anyone else they are refused with a 403 - and a save that merely carries an
+      // already-true is_project_admin forward, on an unrelated job-title edit, would be
+      // refused for a grant nobody asked to make. Omitting them leaves both columns
+      // exactly as they are: neither model declares them, so a write that does not
+      // mention them does not touch them.
+      const payload = canGrantRoles ? form : stripGrantableRoles(form)
       if (isEdit && id) {
-        await stakeholdersApi.update(slug!, Number(id), form)
+        await stakeholdersApi.update(slug!, Number(id), payload)
       } else {
-        await stakeholdersApi.create(slug!, form)
+        await stakeholdersApi.create(slug!, payload)
       }
       navigate(`/${slug}/stakeholders`)
     } catch (err) {
@@ -334,7 +348,7 @@ export default function StakeholderForm() {
         {/* Engagement Roles */}
         <SectionHeading>Engagement Roles</SectionHeading>
         <p className="text-xs text-gray-400 -mt-2">
-          A stakeholder may hold all three roles simultaneously. The PMO uses these to route review requests and approval gates.
+          A stakeholder may hold any combination of these roles. The PMO uses them to route review requests, approval gates, and status reports.
         </p>
         <div className="grid grid-cols-1 gap-2 mt-2">
           <RoleCheckbox
@@ -355,6 +369,22 @@ export default function StakeholderForm() {
             checked={form.is_approver}
             onChange={(v) => set('is_approver', v)}
           />
+          {canGrantRoles && (
+            <>
+              <RoleCheckbox
+                label="Project Administrator"
+                hint="Configures this engagement - its people, milestones, calendar, and settings - and may appoint other project administrators"
+                checked={form.is_project_admin}
+                onChange={(v) => set('is_project_admin', v)}
+              />
+              <RoleCheckbox
+                label="Governor"
+                hint="Receives the PMO's status reports for this engagement"
+                checked={form.is_governor}
+                onChange={(v) => set('is_governor', v)}
+              />
+            </>
+          )}
         </div>
 
         {/* Contact */}

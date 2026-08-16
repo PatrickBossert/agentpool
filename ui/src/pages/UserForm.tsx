@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../api/admin'
 import { useAuth } from '../context/AuthContext'
 import type { Organisation, AdminUser, ProjectMembership } from '../types'
+import { describeError } from '../utils/describeError'
 
 export default function UserForm() {
   const { userId: userIdStr } = useParams<{ userId?: string }>()
@@ -22,6 +23,10 @@ export default function UserForm() {
   const [role, setRole] = useState('reviewer')
   const [orgId, setOrgId] = useState<number | ''>('')
   const [error, setError] = useState('')
+  // Separate from `error`, which renders inside the form above. A refused grant has to
+  // appear beside the button that was pressed - the Project Access block sits below the
+  // submit button, so a message rendered up there is off screen at the moment it matters.
+  const [accessError, setAccessError] = useState('')
 
   const { data: orgs = [] } = useQuery<Organisation[]>({
     queryKey: ['admin', 'orgs'],
@@ -81,14 +86,27 @@ export default function UserForm() {
     onError: () => setError('Failed to update user.'),
   })
 
+  // Both carry onError. Without it a refused grant was silent: sp38 scoped these two doors
+  // to the caller's own organisation, so "grant access to a slug that is not yours" now 403s
+  // - and the list simply did not change, which reads as a UI that ignored the click. The
+  // server's own sentence is shown, matching describeError elsewhere, because "Access denied
+  // to this project" says something a fixed string cannot.
   const grantMut = useMutation({
     mutationFn: (slug: string) => adminApi.grantProjectAccess(userId!, slug),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'user', userId, 'projects'] }),
+    onSuccess: () => {
+      setAccessError('')
+      qc.invalidateQueries({ queryKey: ['admin', 'user', userId, 'projects'] })
+    },
+    onError: (err) => setAccessError(describeError(err, 'Failed to grant project access.')),
   })
 
   const revokeMut = useMutation({
     mutationFn: (slug: string) => adminApi.revokeProjectAccess(userId!, slug),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'user', userId, 'projects'] }),
+    onSuccess: () => {
+      setAccessError('')
+      qc.invalidateQueries({ queryKey: ['admin', 'user', userId, 'projects'] })
+    },
+    onError: (err) => setAccessError(describeError(err, 'Failed to revoke project access.')),
   })
 
   const [grantSlug, setGrantSlug] = useState('')
@@ -202,6 +220,7 @@ export default function UserForm() {
               Grant
             </button>
           </div>
+          {accessError && <p className="text-sm text-red-400 mb-3">{accessError}</p>}
           {userProjects.length === 0 ? (
             <p className="text-xs text-gray-600">No project access granted.</p>
           ) : (
