@@ -39,6 +39,25 @@ export const authApi = {
   // grants the membership, not a session - see AcceptResponse and api/routers/invites.py.
   accept: (token: string, password: string): Promise<AcceptResponse> =>
     apiClient.post<AcceptResponse>('/auth/accept', { token, password }).then((r) => r.data),
+
+  // Unauthenticated by design, like accept: somebody who has forgotten their password
+  // cannot sign in to ask for a new one.
+  //
+  // Resolves to nothing, and that is the contract rather than an omission. The server
+  // answers 204 with an empty body whether or not the address has an account, so there is
+  // no outcome to return - and a caller that had one would sooner or later branch on it,
+  // which is precisely the account-existence oracle the 204 exists to prevent. Callers say
+  // "if that address has an account, a link is on its way" and nothing more.
+  requestReset: (email: string): Promise<void> =>
+    apiClient.post('/auth/reset-request', { email }).then(() => undefined),
+
+  // The redemption half. Unlike accept, this always mints a session when it succeeds: a
+  // reset token can only have been asked for by the account owner, to their own address, so
+  // redeeming one is an authentication event rather than a grant - see api/routers/
+  // invites.py. A rejection (an expired, spent, or invented token) is a 400, which axios
+  // raises, so callers handle it in catch.
+  resetPassword: (token: string, password: string): Promise<TokenResponse> =>
+    apiClient.post<TokenResponse>('/auth/reset', { token, password }).then((r) => r.data),
 }
 
 export const projectsApi = {

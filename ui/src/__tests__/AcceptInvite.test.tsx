@@ -52,6 +52,7 @@ function renderPage() {
         <Routes>
           <Route path="/accept/:token" element={<AcceptInvite />} />
           <Route path="/login" element={<div>login-page</div>} />
+          <Route path="/forgotten-password" element={<div>forgotten-page</div>} />
           <Route path="/" element={<div>dashboard-home</div>} />
         </Routes>
       </MemoryRouter>
@@ -113,6 +114,30 @@ describe('accepting an invite for an email that already has a login', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /go to sign in/i }))
     expect(await screen.findByText('login-page')).toBeInTheDocument()
+  })
+
+  it('offers the reset route, because it has just named a password they may not remember', async () => {
+    // sp42. The server's sentence tells this person their existing password is the one to
+    // sign in with, and the people who reach this panel are the ones invited to a second
+    // engagement months after the first - the population least likely to remember it. Until
+    // this branch there was nowhere to send them, so the honest wording was a dead end.
+    // Followed rather than merely found: a link is only worth anything if it goes somewhere.
+    const { authApi } = await import('../api/endpoints')
+    vi.mocked(authApi.accept).mockResolvedValue({
+      access_token: null,
+      token_type: 'bearer',
+      already_registered: true,
+      detail: 'An account already exists for this email address.',
+    })
+
+    renderPage()
+    await submitPassword()
+    await screen.findByText(/access granted/i)
+
+    await userEvent.click(screen.getByRole('link', { name: /forgotten your password\?/i }))
+    expect(await screen.findByText('forgotten-page')).toBeInTheDocument()
+    // Still no session: asking for a reset is not a redemption.
+    expect(localStorage.getItem('ap_token')).toBeNull()
   })
 })
 
