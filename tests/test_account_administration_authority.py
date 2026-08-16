@@ -71,7 +71,12 @@ async def two_organisations(tmp_path, monkeypatch):
 
     ids = {
         "caller": await _make_login("boss@acme.test", "boss-pw", "org_admin", acme),
-        "root": await _make_login("root@platform.test", "roots-own-password", "sysadmin", None),
+        # A member of Acme, and load-bearing that they are: with no organisation the
+        # *other-organisation* condition would refuse this account too, and every assertion
+        # below about a sysadmin target would pass with the sysadmin condition deleted. It
+        # did - a power check caught it. A platform administrator sitting inside a client
+        # organisation is also the realistic arrangement.
+        "root": await _make_login("root@platform.test", "roots-own-password", "sysadmin", acme),
         "colleague": await _make_login("colleague@acme.test", "colleagues-own-password",
                                        "reviewer", acme),
         "outsider": await _make_login("outsider@other.test", "outsiders-own-password",
