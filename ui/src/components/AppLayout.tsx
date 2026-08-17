@@ -16,6 +16,9 @@ export default function AppLayout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [showModal, setShowModal] = useState(false)
+  // The same two roles router.tsx admits to /data-architecture. Stated once here rather than
+  // near the link, so that a reader comparing the two sees one condition.
+  const isAdministrator = user?.role === 'sysadmin' || user?.role === 'org_admin'
 
   useEffect(() => {
     if (slug && user?.sub) {
@@ -127,14 +130,27 @@ export default function AppLayout() {
           >
             Pitch Deck
           </Link>
-          <a
-            href="/dashboard/data-architecture"
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-gray-400 hover:text-gray-600"
-          >
-            Data &amp; Privacy ↗
-          </a>
+          {/* Carries the open engagement when there is one, because the page's answer depends
+            * on the project - its processing mode is what decides where inference and the
+            * document store actually are. Without a slug it lands on the chooser instead.
+            *
+            * Shown to administrators only, matching the route: the link used to be offered to
+            * every signed-in user and now redirects a reviewer straight back to the dashboard,
+            * which reads as a broken link rather than as a refusal. */}
+          {isAdministrator && (
+            <a
+              href={
+                slug
+                  ? `/dashboard/data-architecture/${slug}`
+                  : '/dashboard/data-architecture'
+              }
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              Data &amp; Privacy ↗
+            </a>
+          )}
           <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600">
             Sign out
           </button>

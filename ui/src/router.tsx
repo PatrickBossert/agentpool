@@ -85,8 +85,36 @@ export const routes = [
     element: <VoiceInterview />,
   },
   {
+    // Administrator-only, and it was not always. This route sat outside every guard - public
+    // by omission rather than by design: nothing public has ever linked to it, its one link
+    // lives in the header inside ProtectedRoute, and /architecture beside it was already
+    // guarded. The page now names an engagement, resolves that engagement's processing mode,
+    // and enumerates what its agents reach and read, so leaving it open was handing an
+    // unauthenticated reader the shape of the client's data flows.
+    //
+    // AdminRoute rather than ProtectedRoute: the audience is whoever answers for the
+    // deployment. It redirects to /login without a session and to / with a session that is
+    // not an administrator's, and the endpoint behind the page refuses the same callers -
+    // guarding the route alone would only have moved the omission.
+    //
+    // Two entries for one component. The bare path is the header link's destination and
+    // whatever bookmarks exist, and it offers the engagements; the slug is the report. A
+    // single optional-segment path would collapse them, but it would also make "no project
+    // chosen" and "this project" the same route, which is the distinction the page turns on.
     path: '/data-architecture',
-    element: <DataArchitecture />,
+    element: (
+      <AdminRoute allow={['sysadmin', 'org_admin']}>
+        <DataArchitecture />
+      </AdminRoute>
+    ),
+  },
+  {
+    path: '/data-architecture/:slug',
+    element: (
+      <AdminRoute allow={['sysadmin', 'org_admin']}>
+        <DataArchitecture />
+      </AdminRoute>
+    ),
   },
   {
     path: '/architecture',

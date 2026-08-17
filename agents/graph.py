@@ -9,12 +9,15 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | What an agent is called, and its face | `AGENT_IDENTITY` - `agents/identity.py` |
 | Which tools an agent holds | `tool_map` - `agents/tools/registry.py` |
 | Which output types an agent writes | `OUTPUT_OWNERS` inverted - `agents/tools/ownership.py` |
+| What each agent draws on | `AGENT_READS` - `agents/reads.py` |
 | Which agents a crew dispatches | `_CREW_AGENT_NAMES` - `api/services/run_service.py` |
 | What a crew is called | `CREW_LABEL` - `agents/identity.py` |
 | What a crew waits on | `CREW_DEPENDENCIES` - `api/services/crew_graph.py` |
+| What a crew is for, and what can start it | `CREW_CHARTER` - `agents/charter.py` |
+| What each tool reaches | `TOOL_EGRESS` - `agents/egress.py` |
 
 A literal list of agent names or crew names in this file would make it one more restatement of
-what those six already say, which is the thing it exists to end - the slice that built this
+what that table already says, which is the thing it exists to end - the slice that built this
 module deleted ten crew-to-agent maps, five disagreeing crew-label maps, two of the six persona
 lists, two of the three `OUTPUT_TYPE_LABELS`, and `crews_enabled`, a settings toggle naming five
 of the nine crews that no dispatch path had ever read. The disagreements were live:
@@ -34,14 +37,20 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from agents.charter import CREW_CHARTER as _CREW_CHARTER
+from agents.charter import Trigger
+from agents.egress import TOOL_EGRESS as _TOOL_EGRESS
+from agents.egress import Destination, agent_destinations
 from agents.identity import AGENT_IDENTITY as _AGENT_IDENTITY
+from agents.reads import AGENT_READS as _AGENT_READS
+from agents.reads import Medium, Read
 from agents.identity import CREW_LABEL as _CREW_LABEL
 from agents.model_registry import AGENT_TIER as _AGENT_TIER
 from agents.tools.ownership import OUTPUT_OWNERS as _OUTPUT_OWNERS
 from api.services.crew_graph import CREW_DEPENDENCIES as _CREW_DEPENDENCIES
 from api.services.run_service import _CREW_AGENT_NAMES
 
-# The six sources are bound to module-level names above so that this module is the single place
+# Every source in the table above is bound to a module-level name so that this is the single place
 # any of them is looked up. It also means a test can substitute one here - which is where the
 # name is looked up - rather than at its definition, the mistake four crew tests made and
 # CLAUDE.md records.
@@ -65,6 +74,13 @@ class AgentNode:
     `agent_id` is the permanent half and the only thing anything may key on or store -
     `agent_outputs.agent_name` holds it on every row. `display_name` and `image` are the mutable
     half, resolved through `AGENT_IDENTITY`, and neither is derivable from the id.
+
+    `egress` is everywhere this agent's work can reach in the mode the graph was built for -
+    its tools' destinations resolved through `agents/egress.py`, plus the model it runs on,
+    which is the largest thing that leaves the building and is held by no tool. It is a
+    property of the graph rather than of the agent because the same agent reaches Chroma Cloud
+    on one project and a local Chroma on the next; `resolve_egress` is the thing to ask about a
+    single tool, since a union cannot say which tool put a member in it.
     """
 
     agent_id: str
@@ -73,21 +89,50 @@ class AgentNode:
     writes: tuple[str, ...]
     display_name: str
     image: str | None
+    egress: tuple[Destination, ...]
+    sources: tuple[Read, ...]
+
+    @property
+    def reads(self) -> tuple[str, ...]:
+        """The output types this agent reads: the artefact projection of `sources`.
+
+        A property rather than a second field, so there is exactly one declaration and the two
+        cannot drift. It is deliberately narrower than `sources` - `writes` is the inversion of
+        `OUTPUT_OWNERS`, which knows only artefacts, so `reads` is the half of an agent's inputs
+        that can be held against it. A Chroma collection or a database table has no owner in that
+        map and would fail a guard that means nothing about it.
+        """
+        return tuple(
+            source.source for source in self.sources if source.medium is Medium.ARTEFACT_JSON
+        )
 
 
 @dataclass(frozen=True)
 class CrewNode:
-    """One crew: who runs in it, what it is called, and what must be committed before it runs.
+    """One crew: who runs in it, what it is for, what can start it, and what it waits on.
 
     `crew_id` is the permanent half - `crew_runs.crew_name` stores it and PAM dispatches by it.
     `display_name` is the mutable half, resolved through `CREW_LABEL`, and is not derivable
     from the id: `discovery_mapping` reads as "Value Chain Mapping".
+
+    `triggers` is what **can** start this crew, not what will. `depends_on` beside it is the
+    condition on one of them - `Trigger.APPROVAL_CASCADE` reaches a crew only once every crew it
+    depends on has been committed - so the two fields are read together and neither restates the
+    other.
+
+    `defect` is set only when every one of this crew's triggers currently fails, in which case
+    the triggers above it are nominal: the paths exist and taking any of them raises. One crew
+    has one.
     """
 
     crew_id: str
     agent_ids: tuple[str, ...]
     depends_on: tuple[str, ...]
     display_name: str
+    purpose: str
+    triggers: tuple[Trigger, ...]
+    note: str
+    defect: str | None
 
 
 @dataclass(frozen=True)
@@ -175,7 +220,7 @@ def _tool_class_name(entry: ast.expr, agent_id: str) -> str:
     )
 
 
-def _build_agents() -> dict[str, AgentNode]:
+def _build_agents(llm_mode: str) -> dict[str, AgentNode]:
     """Every agent `AGENT_TIER` declares, with its tools, the outputs it owns, and its identity.
 
     `AGENT_TIER` is the roll: `test_every_dispatched_agent_has_a_tier` already holds it equal to
@@ -213,6 +258,29 @@ def _build_agents() -> dict[str, AgentNode]:
             f"an agent. An output whose owner cannot run is an output nothing can write."
         )
 
+    unread = sorted(set(_AGENT_TIER) - set(_AGENT_READS))
+    reads_for_nobody = sorted(set(_AGENT_READS) - set(_AGENT_TIER))
+    if unread or reads_for_nobody:
+        raise GraphInconsistent(
+            f"AGENT_TIER and AGENT_READS disagree about which agents exist - "
+            f"no reads declared: {unread}; reads but no agent: {reads_for_nobody}. "
+            f"An empty tuple is the answer for an agent that reads nothing, and two agents "
+            f"have one. Defaulting a missing entry to empty would make an agent nobody has "
+            f"read yet look identical to one that genuinely draws on nothing, on a page whose "
+            f"whole job is to say where the client's material goes."
+        )
+
+    undeclared = sorted(
+        {tool for held in tools.values() for tool in held} - set(_TOOL_EGRESS)
+    )
+    if undeclared:
+        raise GraphInconsistent(
+            f"These tools do not declare what they reach: {undeclared}. Add an entry to "
+            f"TOOL_EGRESS in agents/egress.py. Assembling the graph without one would leave "
+            f"the tool out of every egress set silently, and the page that answers 'what "
+            f"leaves the building?' would under-report by exactly the tool nobody had read."
+        )
+
     writes: dict[str, list[str]] = {agent_id: [] for agent_id in _AGENT_TIER}
     for output_type, owner in _OUTPUT_OWNERS.items():
         writes[owner].append(output_type)
@@ -225,6 +293,8 @@ def _build_agents() -> dict[str, AgentNode]:
             writes=tuple(writes[agent_id]),
             display_name=_AGENT_IDENTITY[agent_id].display_name,
             image=_AGENT_IDENTITY[agent_id].image,
+            egress=agent_destinations(tools[agent_id], llm_mode),
+            sources=tuple(_AGENT_READS[agent_id]),
         )
         for agent_id, tier in _AGENT_TIER.items()
     }
@@ -269,12 +339,27 @@ def _build_crews(agents: dict[str, AgentNode]) -> dict[str, CrewNode]:
             f"Mapping, and a label for a crew nothing dispatches is a row that never fills."
         )
 
+    uncharted = sorted(set(_CREW_AGENT_NAMES) - set(_CREW_CHARTER))
+    charter_for_nobody = sorted(set(_CREW_CHARTER) - set(_CREW_AGENT_NAMES))
+    if uncharted or charter_for_nobody:
+        raise GraphInconsistent(
+            f"_CREW_AGENT_NAMES and CREW_CHARTER disagree about which crews exist - "
+            f"no purpose or triggers declared: {uncharted}; charter but no crew: "
+            f"{charter_for_nobody}. There is no default for either: an empty purpose is a blank "
+            f"row on the page a client is shown, and an empty trigger set says a crew cannot be "
+            f"started, which of a crew nobody has read yet is a guess rather than an answer."
+        )
+
     return {
         crew_id: CrewNode(
             crew_id=crew_id,
             agent_ids=tuple(_CREW_AGENT_NAMES[crew_id]),
             depends_on=tuple(_CREW_DEPENDENCIES[crew_id]),
             display_name=_CREW_LABEL[crew_id],
+            purpose=_CREW_CHARTER[crew_id].purpose,
+            triggers=tuple(_CREW_CHARTER[crew_id].triggers),
+            note=_CREW_CHARTER[crew_id].note,
+            defect=_CREW_CHARTER[crew_id].defect,
         )
         for crew_id in _runnable_order()
     }
@@ -312,13 +397,24 @@ def _runnable_order() -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def build_graph() -> Graph:
+def build_graph(llm_mode: str = "standard") -> Graph:
     """Assemble the graph, raising `GraphInconsistent` on any edge that does not resolve.
 
     Fresh containers each call, so a caller that mutates what it is given cannot corrupt the
     next reader. Assembly is cheap - the only file read is cached.
+
+    `llm_mode` decides only where each agent's egress resolves to; everything else in the graph
+    is the same in either mode. It is a plain argument rather than a slug, because this is a
+    reading of a declaration and not a route: `project_llm_mode(slug)` is what anything actually
+    dispatching work must consult, and CLAUDE.md is emphatic that no caller may hand a mode to
+    that path.
+
+    It defaults to `"standard"` deliberately, and the direction matters. Standard resolves the
+    two mode-dependent reaches to their hosted destinations, so a caller that forgets the
+    argument over-reports what leaves the building and never under-reports it - the safe way
+    round for a page an auditor reads. Enforcement should still pass the project's real mode.
     """
-    agents = _build_agents()
+    agents = _build_agents(llm_mode)
     return Graph(agents=agents, crews=_build_crews(agents))
 
 

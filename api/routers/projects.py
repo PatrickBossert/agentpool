@@ -14,6 +14,7 @@ from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResp
 # The one authority for "may this caller act on this project's scripts", shared with
 # api/routers/script_reviews.py and api/routers/permissions.py rather than restated.
 from api.services.authority_service import caller_roles, require_project_administration
+from api.services.data_architecture_service import data_architecture
 from api.services.project_service import (
     create_project,
     get_project_status,
@@ -128,6 +129,26 @@ async def get_roadmap(slug: str, payload: dict = Depends(require_any_auth)):
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
         return await fetch_outputs_by_type(conn, project_id=project["id"], output_type="roadmap")
+
+
+@router.get("/{slug}/data-architecture")
+async def get_data_architecture(slug: str, payload: dict = Depends(require_org_admin_or_above)):
+    """What this project's agents reach, read, and run - resolved for its own `llm_mode`.
+
+    `require_org_admin_or_above` rather than `require_any_auth`, matching the route the
+    dashboard now mounts the page behind. `/data-architecture` sat outside `ProtectedRoute`
+    and was public by omission - nothing public ever linked to it, and its one link has always
+    sat inside the guard - so closing the page without closing its door would have moved the
+    omission rather than ended it.
+
+    404 rather than an answer for a project that does not exist: `project_llm_mode` reports
+    "standard" for a database it cannot find, and answering that for an unknown slug would
+    describe a hosted engagement that nobody has created.
+    """
+    await check_project_access(slug, payload)
+    if not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    return data_architecture(slug)
 
 
 @router.get("/{slug}/settings", response_model=ProjectSettings)

@@ -177,6 +177,223 @@ def test_building_the_graph_twice_gives_independent_dictionaries():
     assert set(build_graph().agents) == set(second.agents)
 
 
+# --- What an agent reads ----------------------------------------------------------------------
+#
+# `writes` costs nothing - it is `OUTPUT_OWNERS` inverted. `reads` is the half no registry held,
+# so it is declared, and a declaration is only worth having if something can refuse it. The
+# guards below therefore never compare `AGENT_READS` with a list written beside them: they hold
+# it against `OUTPUT_OWNERS`, against the tools `get_tools_for_agent` actually hands the agent,
+# and - for the three reads that do not work - against what `SQLiteStateTool` really returns.
+
+
+def test_every_artefact_read_is_written_by_someone():
+    graph = build_graph()
+    written = {w for node in graph.agents.values() for w in node.writes}
+    for node in graph.agents.values():
+        unwritable = set(node.reads) - written
+        assert not unwritable, f"{node.agent_id} reads what nobody writes: {sorted(unwritable)}"
+
+
+def test_an_agent_with_no_reads_declared_raises_rather_than_reading_nothing():
+    """An empty tuple is a real answer here - PAM and the Enterprise Architect read no artefact
+    at all - so a missing entry cannot be defaulted to empty without making the two cases
+    identical on a page whose job is to say where the client's material goes."""
+    from agents import graph as graph_module
+
+    thinned = {
+        agent_id: reads
+        for agent_id, reads in graph_module._AGENT_READS.items()
+        if agent_id != "synthesis_analyst"
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(graph_module, "_AGENT_READS", thinned)
+        with pytest.raises(GraphInconsistent, match="synthesis_analyst"):
+            build_graph()
+
+
+def test_reads_declared_for_an_agent_that_does_not_exist_raises():
+    from agents import graph as graph_module
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            graph_module, "_AGENT_READS", {**graph_module._AGENT_READS, "archivist": ()}
+        )
+        with pytest.raises(GraphInconsistent, match="archivist"):
+            build_graph()
+
+
+def test_a_read_arrives_by_a_tool_the_agent_actually_holds():
+    """The route is the half that breaks, so it is the half that is checked against the registry.
+
+    `interview_sessions` is a real read for the Stakeholder Interviewer and an unresolvable one
+    for the Stakeholder Manager, and the only difference between them is which tool carries it.
+    A `via` naming a tool the agent does not hold is that same mistake written down as fact.
+    """
+    from agents.egress import tool_classes_on_disk
+    from agents.reads import VIA_DISPATCH
+
+    on_disk = tool_classes_on_disk()
+    for node in build_graph().agents.values():
+        for source in node.sources:
+            if source.via == VIA_DISPATCH:
+                continue
+            assert source.via in on_disk, (
+                f"{node.agent_id} reads {source.source} via {source.via}, which is not a tool "
+                f"class under agents/tools/"
+            )
+            assert source.via in node.tools, (
+                f"{node.agent_id} reads {source.source} via {source.via}, which the registry "
+                f"does not hand it - it holds {sorted(node.tools)}"
+            )
+
+
+def test_reads_is_the_artefact_half_of_what_an_agent_draws_on():
+    """`reads` is narrower than `sources` on purpose, and the difference must be real.
+
+    `writes` inverts `OUTPUT_OWNERS`, which knows only artefacts, so a Chroma collection or a
+    database table in `reads` would fail the guard above while being perfectly correct. This
+    checks the projection drops exactly the non-artefact sources and nothing else - a `reads`
+    that returned everything would make the guard unsatisfiable, and one that returned nothing
+    would make it vacuous.
+    """
+    from agents.reads import Medium
+
+    graph = build_graph()
+    dropped = 0
+    for node in graph.agents.values():
+        artefacts = [s for s in node.sources if s.medium is Medium.ARTEFACT_JSON]
+        assert node.reads == tuple(s.source for s in artefacts)
+        dropped += len(node.sources) - len(artefacts)
+    assert dropped, (
+        "no source is held in anything but an artefact, so this projection has stopped "
+        "distinguishing anything"
+    )
+
+
+def test_the_node_carries_the_reads_the_declaration_gives_it():
+    """On the node, not on the map. Comparing `AGENT_READS` with itself would pass with
+    `AgentNode` never having been wired to it - the mistake `test_a_node_carries_the_identity`
+    exists to avoid one field along."""
+    from agents.reads import AGENT_READS
+    for node in build_graph().agents.values():
+        assert node.sources == tuple(AGENT_READS[node.agent_id])
+
+
+def test_an_unresolvable_read_is_not_also_declared_as_one_that_works():
+    """The two lists describe the same instruction, so an entry may not sit in both. A source
+    recorded as unreadable while also being declared as read would let the finding be quietly
+    cancelled by the declaration next to it."""
+    from agents.reads import AGENT_READS, UNRESOLVABLE_READS
+
+    for entry in UNRESOLVABLE_READS:
+        declared = {source.source for source in AGENT_READS[entry.agent_id]}
+        assert entry.source not in declared, (
+            f"{entry.agent_id} both declares {entry.source} as a read and records it as "
+            f"unresolvable"
+        )
+
+
+def test_what_the_dispatch_path_reads_names_tables_that_exist(tmp_path, monkeypatch):
+    """`CREW_DISPATCH_READS` is the one declaration here with no consumer yet - Task 4 renders
+    it - so it is the one most easily wrong and least easily noticed. Asked of the schema rather
+    than of a list: the first draft said `skill_notes`, and the table is `agent_skill_notes`.
+    """
+    import asyncio
+
+    from api.config import get_settings
+    from api.database import get_connection, get_system_connection
+    from agents.reads import CREW_DISPATCH_READS, Medium
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    try:
+        async def _tables() -> set[str]:
+            found: set[str] = set()
+            async with get_connection("dispatch-probe") as conn:
+                async with conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ) as cur:
+                    found |= {row[0] async for row in cur}
+            async with get_system_connection() as conn:
+                async with conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ) as cur:
+                    found |= {row[0] async for row in cur}
+            return found
+
+        tables = asyncio.run(_tables())
+        for read in CREW_DISPATCH_READS:
+            assert read.medium is Medium.DATABASE_TABLE, read
+            assert read.source in tables, (
+                f"the dispatch path is declared to read {read.source}, which is neither a "
+                f"project table nor a system one"
+            )
+    finally:
+        get_settings.cache_clear()
+
+
+def test_an_unresolvable_read_really_cannot_be_served(tmp_path, monkeypatch):
+    """The exclusions are proved by driving the tool, not by reasoning about the tool.
+
+    Each entry is instructed through `SQLiteStateTool`, which resolves a key through the
+    `agent_outputs` ledger and can therefore only ever see an output type. Asserting that from
+    `OUTPUT_OWNERS` would be a statement about a map; this asks the tool, on a real project
+    database, and asserts the positive control in the same fixture so that a test where
+    everything errors cannot pass for the wrong reason.
+    """
+    import asyncio
+    import json
+
+    from api.config import get_settings
+    from api.database import get_connection, insert_project
+    from agents.reads import UNRESOLVABLE_READS
+
+    slug = "reads-probe"
+    get_settings.cache_clear()
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    try:
+        async def _make() -> None:
+            async with get_connection(slug) as conn:
+                await insert_project(
+                    conn, slug=slug, llm_mode="standard", sector="probe", config_json="{}"
+                )
+
+        asyncio.run(_make())
+
+        from agents.tools.sqlite_state import SQLiteStateTool
+
+        # The positive control, written through the same door the agents use, so this fixture
+        # is demonstrably one in which a real read succeeds.
+        writer = SQLiteStateTool(slug=slug, agent_name="value_lever_analyst", run_id=0)
+        written = writer._run(
+            operation="write", key="value_levers", agent_name="value_lever_analyst",
+            value=json.dumps([{"lever": "Probe"}]),
+        )
+        assert written.startswith("Written to"), written
+        served = writer._run(
+            operation="read", key="value_levers", agent_name="value_lever_analyst"
+        )
+        assert "Probe" in served, served
+
+        for entry in UNRESOLVABLE_READS:
+            assert entry.instructed_via == "SQLiteStateTool", (
+                f"{entry.source} is instructed via {entry.instructed_via}, which this test "
+                f"does not drive - it must be proved against the door it names"
+            )
+            reader = SQLiteStateTool(slug=slug, agent_name=entry.agent_id, run_id=0)
+            result = reader._run(
+                operation="read", key=entry.source, agent_name=entry.agent_id
+            )
+            assert result == f"Error: no state found for key '{entry.source}'", (
+                f"{entry.agent_id}'s read of {entry.source} is not unresolvable after all: "
+                f"{result}"
+            )
+    finally:
+        get_settings.cache_clear()
+
+
 # --- Identity: a permanent id, a mutable name -------------------------------------------------
 #
 # The id is the snake key every registry and every stored row already uses. The display name and
