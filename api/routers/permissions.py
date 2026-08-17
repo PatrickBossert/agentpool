@@ -8,7 +8,7 @@ copy the UI trusted would be the wrong one.
 """
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.auth import check_project_access, require_any_auth
+from api.auth import check_project_access, is_org_admin_or_above, require_any_auth
 from api.database import fetch_project, get_connection
 from api.services.authority_service import caller_may_grant_project_roles, caller_roles
 
@@ -30,4 +30,11 @@ async def get_my_permissions(slug: str, payload: dict = Depends(require_any_auth
         # the same rule `_assert_may_grant_role_flags` enforces rather than a second copy of
         # it - the copy the UI trusted would be the one that drifted.
         "can_grant_roles": await caller_may_grant_project_roles(slug, payload),
+        # What Stakeholders.tsx asks before offering the "issue an invite link" action.
+        # `POST .../resend-invite` hands back a redeemable credential, so it stayed on the
+        # platform tier when sp44 widened the rest of its router to project_admin - which
+        # makes this the one permission here that is *narrower* than administering the
+        # engagement. `is_org_admin_or_above` is the same predicate the door refuses with
+        # rather than a restatement of it.
+        "can_issue_invite_links": is_org_admin_or_above(payload),
     }

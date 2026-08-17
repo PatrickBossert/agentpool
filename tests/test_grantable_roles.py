@@ -802,6 +802,51 @@ async def test_resend_invite_is_platform_tier_not_project_administration(roles):
 
 
 @pytest.mark.asyncio
+async def test_my_permissions_reports_the_invite_link_right_the_door_enforces(roles):
+    """What the stakeholder list asks before offering "issue an invite link".
+
+    The report and the door are driven together, per caller, in one test: a button offered
+    to somebody the door 403s is worse than no button, and a report that quietly widened
+    while the door held would be invisible to a test that only asked one of them. Both read
+    `is_org_admin_or_above`, so this is one rule observed from two sides rather than a
+    second copy of it.
+
+    Note which way round it goes: `padmin` administers everything else on this engagement
+    and is refused here, while `org_admin_a` - who may not even mint a project_admin - is
+    allowed. This is the one permission on the endpoint that is narrower than administering
+    the project.
+    """
+    created = await roles["org_admin_a"].post(
+        f"/projects/{SLUG}/stakeholders",
+        json={"name": "Link Target", "email": "link-target@example.com", "is_reviewer": True},
+    )
+    assert created.status_code == 201, created.text
+    sid = created.json()["id"]
+
+    for caller, may in (
+        ("padmin", False),
+        ("approver", False),
+        ("reviewer", False),
+        ("plain", False),
+        ("org_admin_a", True),
+    ):
+        reported = (await roles[caller].get(f"/projects/{SLUG}/my-permissions")).json()
+        assert reported["can_issue_invite_links"] is may, (
+            f"/my-permissions tells {caller} the wrong thing about the resend door"
+        )
+        opened = await roles[caller].post(
+            f"/projects/{SLUG}/stakeholders/{sid}/resend-invite"
+        )
+        if may:
+            assert opened.status_code == 200, opened.text
+            assert opened.json()["invite_token"], "reported as permitted, and hands nothing back"
+        else:
+            assert _refusal(opened) == (403, PLATFORM_TIER_REQUIRED), (
+                f"{caller} is told no and let through anyway"
+            )
+
+
+@pytest.mark.asyncio
 async def test_chain_a_a_project_admin_cannot_mint_a_login_it_controls(roles):
     """Chain A: create a stakeholder for an address you own, resend, redeem, hold a session.
 
@@ -996,6 +1041,9 @@ async def test_the_logins_a_project_admin_can_cause_are_confined_to_this_project
         # read access, not the reviewer *stakeholder* flag the content gates ask about.
         assert (await invitee.get(f"/projects/{SLUG}/my-permissions")).json() == {
             "can_review": True, "can_approve": False, "can_grant_roles": False,
+            # Nor may the account a redeemed invite minted go on to mint another: the
+            # resend door is platform tier, and this login is not.
+            "can_issue_invite_links": False,
         }
 
 

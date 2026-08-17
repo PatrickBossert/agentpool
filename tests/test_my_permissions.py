@@ -53,7 +53,14 @@ async def test_it_reports_what_the_shared_authority_check_says(client, seeded_pr
     # token (see its docstring - the built-in admin has no `users` row for the walk to
     # read). The client fixture is that administrator, so True is the honest answer here.
     # tests/test_grantable_roles.py drives it against real per-project roles.
-    assert r.json() == {"can_review": True, "can_approve": False, "can_grant_roles": True}
+    # can_issue_invite_links is the platform tier read off the token, for the same reason:
+    # the resend door it reports on is `require_org_admin_or_above`, not the walk. The
+    # client fixture's token says sysadmin, so True. tests/test_grantable_roles.py drives
+    # it against the door itself.
+    assert r.json() == {
+        "can_review": True, "can_approve": False, "can_grant_roles": True,
+        "can_issue_invite_links": True,
+    }
     # The roles the response is built from are the rule; the booleans are only its shadow.
     gate.assert_awaited_once()
     assert gate.await_args.args[0] == slug
@@ -80,6 +87,7 @@ async def test_a_caller_with_no_content_roles_is_told_so(client, seeded_project_
         r = await client.get(f"/projects/{slug}/my-permissions")
     assert r.json() == {
         "can_review": False, "can_approve": False, "can_grant_roles": True,
+        "can_issue_invite_links": True,
     }
 
 

@@ -12,6 +12,7 @@ from api.database import (
     update_stakeholder,
     delete_stakeholder,
 )
+from api.services.stakeholder_access import annotate_access_state
 
 # recipient receives approved output; governing approves; actor is engaged with.
 # Review and approval routing uses is_reviewer and is_approver boolean columns, not this set.
@@ -25,14 +26,22 @@ def _split_semi(val: str) -> list[str]:
 
 
 async def list_stakeholders(slug: str) -> list[dict] | None:
-    """None = project not found."""
+    """Every stakeholder on this project, each carrying its `access_state`. None = project
+    not found.
+
+    `access_state` is added here rather than left to the client because two thirds of it -
+    a login linked to this project, an unredeemed invite - live in system.db, which no
+    endpoint exposes and the browser therefore cannot see even in principle. See
+    api/services/stakeholder_access.py for the states and how they are decided.
+    """
     if not get_db_path(slug).exists():
         return None
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
             return None
-        return await fetch_stakeholders(conn, project_id=project["id"])
+        rows = await fetch_stakeholders(conn, project_id=project["id"])
+    return await annotate_access_state(slug, rows)
 
 
 async def create_stakeholder(slug: str, data: dict) -> dict | None:

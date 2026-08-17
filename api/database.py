@@ -3592,6 +3592,53 @@ async def fetch_user_project_memberships(
         return [dict(r) async for r in cur]
 
 
+async def fetch_project_login_emails(
+    conn: aiosqlite.Connection, *, project_slug: str
+) -> set[str]:
+    """Every login username that reaches THIS project through a membership.
+
+    The set form of the question `has_project_membership` answers one user at a time, for
+    the read model that has to answer it for a whole stakeholder list at once - one join
+    rather than two queries per row.
+
+    Scoped to the slug, and that scoping is the security property rather than an
+    optimisation: "does this address have a login anywhere" would turn any project
+    administrator's stakeholder list into an account-existence oracle over arbitrary
+    addresses, which is what `/auth/reset-request`'s always-204 contract exists to prevent.
+    Per-project linkage is something the caller already knows by other means.
+
+    Usernames are returned verbatim. `users.username` is TEXT UNIQUE under SQLite's binary
+    collation, so `fetch_user` distinguishes casings - a caller comparing case-insensitively
+    here would report a login the write doors would not find.
+    """
+    async with conn.execute(
+        "SELECT u.username FROM project_memberships m"
+        " JOIN users u ON u.id = m.user_id"
+        " WHERE m.project_slug=?",
+        (project_slug,),
+    ) as cur:
+        return {row[0] async for row in cur}
+
+
+async def fetch_open_invite_emails(
+    conn: aiosqlite.Connection, *, project_slug: str
+) -> set[str]:
+    """Every address holding an unredeemed invite to this project.
+
+    Unredeemed, not unexpired: `reissue_invite` selects on `used_at IS NULL` alone and
+    refreshes the expiry as it mints the new token, so an invite that has timed out is
+    still one a resend can revive. Matching its WHERE clause is what keeps "shown as
+    invited" and "a resend would succeed" the same set - a state read that excluded expired
+    rows would hide the action from exactly the people who need it most.
+    """
+    async with conn.execute(
+        "SELECT email FROM auth_tokens"
+        " WHERE project_slug=? AND purpose='invite' AND used_at IS NULL",
+        (project_slug,),
+    ) as cur:
+        return {row[0] async for row in cur}
+
+
 async def has_project_membership(
     conn: aiosqlite.Connection, *, user_id: int, project_slug: str
 ) -> bool:

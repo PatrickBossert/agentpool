@@ -84,8 +84,21 @@ def require_sysadmin(payload: dict = Depends(get_token_payload)) -> dict:
     return payload
 
 
+def is_org_admin_or_above(payload: dict) -> bool:
+    """The platform tier, as a question rather than a refusal.
+
+    `require_org_admin_or_above` is a FastAPI dependency, so a caller that merely wants to
+    *report* whether this door would open - GET /my-permissions, which the stakeholder list
+    asks before offering the invite-link action - cannot use it without catching its own
+    403. The rule is stated here once and asserted from both sides in
+    tests/test_grantable_roles.py: an answer that drifted from the door would put a button
+    in front of somebody it refuses, which is worse than no button.
+    """
+    return (payload or {}).get("role") in ("sysadmin", "org_admin")
+
+
 def require_org_admin_or_above(payload: dict = Depends(get_token_payload)) -> dict:
-    if payload.get("role") not in ("sysadmin", "org_admin"):
+    if not is_org_admin_or_above(payload):
         raise HTTPException(status_code=403, detail="Org admin or above required")
     return payload
 
