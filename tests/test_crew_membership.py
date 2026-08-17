@@ -12,7 +12,12 @@ import pytest
 
 from api.services.run_service import _CREW_AGENT_NAMES
 
-AGENT_STATUS = Path("ui/src/components/agentStatus.ts")
+UI_SRC = Path(__file__).resolve().parent.parent / "ui" / "src"
+AGENT_STATUS = UI_SRC / "components" / "agentStatus.ts"
+
+# The single front-end module allowed to declare either kind of map, as a path relative to
+# ui/src, so the assertion below names a file rather than a variable.
+OWNER = "components/agentStatus.ts"
 
 
 def _frontend_map(name: str) -> dict[str, list[str]]:
@@ -116,3 +121,123 @@ def test_every_crew_the_board_orders_has_a_label():
     assert block, "CREW_ORDER not found - has it been renamed?"
     order = re.findall(r"'([a-z_]+)'", block.group(1))
     assert set(order) <= set(_frontend_labels())
+
+
+# ── No other front-end module may declare either map, whatever it calls them ──
+#
+# The equality checks above find their maps by name, which is right for the declaration - you
+# have to look it up somehow. It is wrong for "and nowhere else": a reviewer added a CREW_TITLE
+# carrying the exact stale wording this branch deleted ("Value Chain Mapper", "Architecture",
+# "Delivery Planning") plus a CREW_TEAMS crew-to-agents map to Team.tsx, and all 23 tests
+# passed, because neither identifier was one anybody had thought to search for.
+#
+# Five of the ten crew-to-agent maps this branch deleted lived in the front end, so this is
+# where an eleventh comes back. Detected by shape, the technique
+# tests/test_output_type_labels.py already uses on the same file tree.
+
+_OBJECT_LITERAL = re.compile(r"=\s*\{")
+_ENTRY = re.compile(r"(\w+)\s*:\s*(\[[^\]]*\]|'[^']*')")
+
+
+def _balanced(text: str, opening: int) -> str:
+    depth = 0
+    for index in range(opening, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[opening + 1:index]
+    return ""
+
+
+def _crew_keyed_literals(source: str) -> list[dict[str, str]]:
+    """Every object literal in the source that is *about* crews.
+
+    Two crew ids, and crew ids as at least half the keys. The second half of that is what
+    keeps `outputTypeLabels.ts` out: it has `requirements` and `business_plan` among thirty-one
+    output types, which are crew ids by coincidence of naming rather than a map of crews. A
+    crew map is nearly all crew ids - the ones deleted here were nine of nine and nine of ten.
+    """
+    crews = set(_CREW_AGENT_NAMES)
+    literals = []
+    for match in _OBJECT_LITERAL.finditer(source):
+        entries = dict(_ENTRY.findall(_balanced(source, source.index("{", match.start()))))
+        crew_keys = crews & set(entries)
+        if len(crew_keys) >= 2 and len(crew_keys) * 2 >= len(entries):
+            literals.append(entries)
+    return literals
+
+
+def _agent_vocabulary() -> set[str]:
+    """Every string that names an agent in the front end's own terms.
+
+    The snake ids, plus the role names `AGENT_HUMAN_NAME` is keyed by. Taken from that map
+    rather than computed as `id.replace('_', ' ').title()` - the derivation happens to produce
+    them, and writing it here would put the coupling Task 2 rejected into a detector where the
+    next reader would take it for a rule.
+    """
+    ids = {agent for agents in _CREW_AGENT_NAMES.values() for agent in agents}
+    block = re.search(r"export const AGENT_HUMAN_NAME: Record<string, string> = \{(.*?)\n\}",
+                      AGENT_STATUS.read_text(), re.S)
+    assert block, "AGENT_HUMAN_NAME not found - the vocabulary would be half empty"
+    roles = {role for role, _ in re.findall(r"'([^']+)':\s+'([^']+)'", block.group(1))}
+    assert len(roles) == 17, sorted(roles)
+    return ids | roles
+
+
+def _files_declaring(predicate) -> dict[str, int]:
+    found: dict[str, int] = {}
+    for path in sorted(UI_SRC.rglob("*.ts*")):
+        if "__tests__" in path.parts:
+            continue
+        hits = sum(1 for literal in _crew_keyed_literals(path.read_text()) if predicate(literal))
+        if hits:
+            found[str(path.relative_to(UI_SRC))] = hits
+    return found
+
+
+def _names_agents(literal: dict[str, str]) -> bool:
+    vocabulary = _agent_vocabulary()
+    return any(
+        value.startswith("[") and any(name in vocabulary for name in re.findall(r"'([^']+)'", value))
+        for value in literal.values()
+    )
+
+
+def _labels_crews(literal: dict[str, str]) -> bool:
+    """Values that read as prose rather than as keys.
+
+    An uppercase letter and no underscore. That separates 'Value Chain Mapping', 'Requirements'
+    and 'PMO' from the snake_case values of the crew-keyed maps that legitimately exist -
+    CREW_OUTPUT_TYPE's output types, ReviewDialog's warning codes - without needing to know
+    what any of them are.
+    """
+    return sum(
+        1 for value in literal.values()
+        if value.startswith("'") and any(c.isupper() for c in value) and "_" not in value
+    ) >= 2
+
+
+def test_the_shape_detector_finds_both_maps_in_the_module_that_owns_them():
+    """Guard the guard: a detector matching nothing would excuse every file below."""
+    assert _files_declaring(_names_agents).get(OWNER, 0) >= 2, "CREW_AGENT_NAMES and CREW_AGENTS"
+    assert _files_declaring(_labels_crews).get(OWNER, 0) >= 1, "CREW_LABELS"
+
+
+def test_no_other_module_declares_which_agents_a_crew_runs():
+    unexpected = {p: n for p, n in _files_declaring(_names_agents).items() if p != OWNER}
+    assert not unexpected, (
+        f"{sorted(unexpected)} name a crew's agents. Import CREW_AGENTS or CREW_AGENT_NAMES "
+        f"from components/agentStatus - a copy here is checked against the backend by nothing, "
+        f"which is how one came to file the Value Chain Mapper under `requirements`."
+    )
+
+
+def test_no_other_module_declares_what_a_crew_is_called():
+    unexpected = {p: n for p, n in _files_declaring(_labels_crews).items() if p != OWNER}
+    assert not unexpected, (
+        f"{sorted(unexpected)} label crews. Import CREW_LABELS from components/agentStatus - "
+        f"the two copies this branch deleted showed `discovery_mapping` as \"Value Chain "
+        f"Mapper\", the agent rather than the crew, and neither knew `assessment_design`."
+    )
