@@ -37,15 +37,18 @@ page for a mechanism that does not exist.
 
 ## A path can exist and be broken, and this must be able to say so
 
-Two failures are live on master, and a model that could not express either would be lying about
-what starts a crew:
+One failure is live on master, and a model that could not express it would be lying about what
+starts a crew:
 
-- **`Charter.defect`** - no path can start this crew. `requirements` has one: every trigger below
-  it is nominal, because every path funnels through the same call in `build_and_run_crew` and
-  that call raises `TypeError` before an agent is built.
 - **`DispatchPath.defect`** - this path can start nothing. `CHAINLIT_CONSOLE` has one: it is a
   second, older dispatch ladder that never learned about two crew renames or about crew factories
   ceasing to take `llm_mode`.
+
+**`Charter.defect`** says the same thing about a crew rather than a path: no path can start it,
+because every path but the console funnels through the same call in `build_and_run_crew`.
+`requirements` carried one - that call passed it three arguments its factory does not take, and
+raised `TypeError` before an agent was built - until the call site was corrected. No crew declares
+one now, and the guard below is what keeps that honest in both directions.
 
 Both are prose, and neither is trusted: the guard derives the truth from the call sites and the
 factory signatures, so a defect that is fixed and left declared fails, and a new one that is
@@ -107,6 +110,8 @@ DISPATCH_PATHS: dict[Trigger, DispatchPath] = {
             "`POST /projects/{slug}/run` with a crew name. The name is an unconstrained string - "
             "`RunRequest.crew` is `str | None` with no enumeration - so this path offers every "
             "crew in the graph, and an unknown name reaches `build_and_run_crew`'s final `else`. "
+            "A request naming neither a crew nor an agent is refused with 400 rather than "
+            "defaulting, so this path starts nothing that was not asked for. "
             "One of the two inbound HTTP doors, and the only one that starts a single crew: n8n's "
             "workflow calls `/orchestrate` instead, which is the orchestration path's door. "
             "`req.agent` on the same endpoint starts a single agent rather than a crew, which is "
@@ -186,8 +191,8 @@ class Charter:
 
     `defect` is `None` for a crew that runs. When it is set, every trigger in `triggers` is
     nominal: the path exists, and taking it fails. It is per crew rather than per trigger
-    because the only live case is a mismatch inside `build_and_run_crew`, which every path
-    except the Chainlit console goes through - a per-trigger field would invite the same
+    because the case it was written for is a mismatch inside `build_and_run_crew`, which every
+    path except the Chainlit console goes through - a per-trigger field would invite the same
     sentence to be written three times and to disagree with itself.
     """
 
@@ -269,18 +274,6 @@ CREW_CHARTER: dict[str, Charter] = {
             "exists, then analyses the whole set for completeness, consistency and conflict"
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE),
-        defect=(
-            "Every trigger above is nominal - the paths exist and each one fails. "
-            "`build_and_run_crew` passes `discovery_brief`, `discovery_links` and "
-            "`priority_doc_names` to `create_requirements_crew`, whose signature is "
-            "`(slug, run_id, sector, llm, hitl_tool)`, so a `TypeError` is raised before a "
-            "single agent is built. The arguments left with the value chain mapper when this "
-            "crew stopped being called `discovery`; the call site kept them. It hid because "
-            "`requirements` sits late in the pipeline and, until the graph began generating "
-            "`RunCrewTool`'s description, Pamela was never offered it. Fixing the crew is its "
-            "own task; `tests/test_crew_charter.py` derives this from the call site and the "
-            "factory signature and will fail if the fix lands and this sentence stays"
-        ),
     ),
     "delivery": Charter(
         purpose=(
