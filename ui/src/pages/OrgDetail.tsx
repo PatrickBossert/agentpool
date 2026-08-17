@@ -1,8 +1,11 @@
 // ui/src/pages/OrgDetail.tsx
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../api/admin'
+import SortHeader from '../components/SortHeader'
+import { sortRows, toggleSort, type SortState } from '../utils/tableSort'
+import { memberSortKey } from '../utils/userSort'
 import type { OrgMember, AdminUser, ProjectRegistryEntry } from '../types'
 
 export default function OrgDetail() {
@@ -36,7 +39,7 @@ export default function OrgDetail() {
 
   const { data: allUsers = [] } = useQuery<AdminUser[]>({
     queryKey: ['admin', 'users'],
-    queryFn: adminApi.listUsers,
+    queryFn: () => adminApi.listUsers(),
   })
 
   const addMemberMut = useMutation({
@@ -82,6 +85,10 @@ export default function OrgDetail() {
   })
 
   const nonMembers = allUsers.filter((u) => !members.some((m) => m.id === u.id))
+
+  const [sort, setSort] = useState<SortState>({ key: 'username', direction: 'asc' })
+  const onSort = (key: string) => setSort((current) => toggleSort(current, key))
+  const sortedMembers = useMemo(() => sortRows(members, sort, memberSortKey), [members, sort])
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -157,14 +164,14 @@ export default function OrgDetail() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-gray-600 border-b border-gray-200">
-                <th className="text-left px-4 py-2">Username</th>
-                <th className="text-left px-4 py-2">Email</th>
-                <th className="text-left px-4 py-2">Org Role</th>
+                <SortHeader label="Username" sortKey="username" state={sort} onSort={onSort} />
+                <SortHeader label="Email" sortKey="email" state={sort} onSort={onSort} />
+                <SortHeader label="Org Role" sortKey="org_role" state={sort} onSort={onSort} />
                 <th className="px-4 py-2" />
               </tr>
             </thead>
             <tbody>
-              {members.map((m) => (
+              {sortedMembers.map((m) => (
                 <tr key={m.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-gray-900">{m.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{m.email}</td>

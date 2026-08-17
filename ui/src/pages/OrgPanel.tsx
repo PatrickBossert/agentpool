@@ -1,8 +1,12 @@
 // ui/src/pages/OrgPanel.tsx
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { adminApi } from '../api/admin'
 import { useAuth } from '../context/AuthContext'
+import SortHeader from '../components/SortHeader'
+import { sortRows, toggleSort, type SortState } from '../utils/tableSort'
+import { memberSortKey } from '../utils/userSort'
 import type { OrgMember, ProjectRegistryEntry } from '../types'
 
 function RoleBadge({ role }: { role: string }) {
@@ -38,6 +42,10 @@ export default function OrgPanel() {
     queryFn: () => adminApi.listOrgMembers(orgId!),
     enabled: !!orgId,
   })
+
+  const [sort, setSort] = useState<SortState>({ key: 'username', direction: 'asc' })
+  const onSort = (key: string) => setSort((current) => toggleSort(current, key))
+  const sortedMembers = useMemo(() => sortRows(members, sort, memberSortKey), [members, sort])
 
   const { data: projects = [], isLoading: projectsLoading } = useQuery<ProjectRegistryEntry[]>({
     queryKey: ['admin', 'projects'],
@@ -90,14 +98,14 @@ export default function OrgPanel() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-gray-600 border-b border-gray-200">
-                <th className="text-left px-4 py-2">Username</th>
-                <th className="text-left px-4 py-2">Email</th>
-                <th className="text-left px-4 py-2">Role</th>
+                <SortHeader label="Username" sortKey="username" state={sort} onSort={onSort} />
+                <SortHeader label="Email" sortKey="email" state={sort} onSort={onSort} />
+                <SortHeader label="Role" sortKey="org_role" state={sort} onSort={onSort} />
                 <th className="px-4 py-2" />
               </tr>
             </thead>
             <tbody>
-              {members.map((m) => (
+              {sortedMembers.map((m) => (
                 <tr key={m.id} className="border-b border-gray-200 hover:bg-surface-raised">
                   <td className="px-4 py-2 font-mono text-xs text-gray-900">{m.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{m.email}</td>

@@ -631,6 +631,22 @@ export interface Organisation {
   created_at: string
 }
 
+// Who a login is *on one project* - the name and entity from the stakeholder row its
+// membership of that project points at (api/services/user_identity.py).
+//
+// Read through one project because that is what a stakeholder is: a person on an engagement.
+// The same login on two engagements has two stakeholder rows and may be recorded differently
+// on each, so there is no project-free answer, and the unscoped user list therefore carries
+// no `person` field at all rather than an arbitrary one.
+//
+// `person: null` means the account is on the project but has no person record behind it - an
+// administrator-granted membership, which carries no stakeholder_id. Rendered as absent,
+// never guessed at.
+export interface PersonDetails {
+  name: string | null
+  entity: string | null
+}
+
 export interface OrgMember {
   id: number
   username: string
@@ -646,6 +662,8 @@ export interface AdminUser {
   email: string
   role: string
   created_at: string
+  // Absent on the unscoped list; present (possibly null) once a project is selected.
+  person?: PersonDetails | null
 }
 
 export interface ProjectRegistryEntry {

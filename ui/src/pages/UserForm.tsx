@@ -36,7 +36,7 @@ export default function UserForm() {
 
   const { data: allUsers = [] } = useQuery<AdminUser[]>({
     queryKey: ['admin', 'users'],
-    queryFn: adminApi.listUsers,
+    queryFn: () => adminApi.listUsers(),
   })
 
   const { data: userProjects = [] } = useQuery<ProjectMembership[]>({

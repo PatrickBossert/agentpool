@@ -176,9 +176,23 @@ class UserUpdate(BaseModel):
     password: str | None = None
 
 
+# `project` selects the lens a name is read through - see svc_list_users. Authorised by
+# check_project_access, which is the answer to "may this caller see this project" that
+# `GET /auth/projects` (the selector's own options) is built from: the org branch of both
+# reads project_registry, so the selector cannot offer a slug this refuses. Deliberately not
+# a second rule of its own.
 @router.get("/users")
-async def list_users(payload: dict = Depends(require_org_admin_or_above)):
-    return await svc_list_users(payload)
+async def list_users(
+    project: str | None = None, payload: dict = Depends(require_org_admin_or_above)
+):
+    # An empty string is not a project. Normalised rather than authorised, because
+    # check_project_access would answer it differently by tier - a sysadmin returns early and
+    # would then be scoped to a slug nothing matches, while an org_admin would get a 403 on
+    # what is plainly the unscoped view. Absent and blank mean the same thing here.
+    project = project or None
+    if project is not None:
+        await check_project_access(project, payload)
+    return await svc_list_users(payload, project_slug=project)
 
 
 @router.post("/users", status_code=201)

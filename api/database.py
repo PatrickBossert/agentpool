@@ -2381,6 +2381,37 @@ async def fetch_stakeholders(
         return [_deserialize_stakeholder(dict(r)) async for r in cur]
 
 
+async def fetch_stakeholder_identities(
+    conn: aiosqlite.Connection, *, stakeholder_ids: list[int]
+) -> dict[int, dict]:
+    """The name and entity of the named stakeholder rows, keyed by id.
+
+    Two columns and no others, and that is the point rather than an optimisation: this is
+    read by `api/services/user_identity.py` on behalf of an administrator looking at a list
+    of *logins*, and the only fields that screen shows are name and entity. Selecting the
+    row wholesale would put job title, mobile, disposition and every role flag on a code
+    path whose caller has no business with them.
+
+    Not scoped by project_id, because the caller has already opened this project's database
+    by slug - the slug *is* the scope, and it is decided in user_identity.py against the
+    projects the caller may administer. A project_id here would be a second, weaker copy of
+    a check made where it can actually be answered.
+    """
+    out: dict[int, dict] = {}
+    ids = sorted(set(stakeholder_ids))
+    # Chunked under SQLITE_MAX_VARIABLE_NUMBER. Small in practice, free to keep correct.
+    for start in range(0, len(ids), 400):
+        chunk = ids[start:start + 400]
+        placeholders = ",".join("?" * len(chunk))
+        async with conn.execute(
+            f"SELECT id, name, entity FROM stakeholders WHERE id IN ({placeholders})",
+            chunk,
+        ) as cur:
+            async for row in cur:
+                out[row["id"]] = {"name": row["name"], "entity": row["entity"]}
+    return out
+
+
 async def fetch_stakeholder(
     conn: aiosqlite.Connection, *, stakeholder_id: int, project_id: int
 ) -> dict | None:
@@ -3588,6 +3619,28 @@ async def fetch_user_project_memberships(
     async with conn.execute(
         "SELECT * FROM project_memberships WHERE user_id=? ORDER BY project_slug",
         (user_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def fetch_project_memberships(
+    conn: aiosqlite.Connection, *, project_slug: str
+) -> list[dict]:
+    """Every login on this project, with the stakeholder row it is that person through.
+
+    `stakeholder_id` is kept even when NULL, and that is the point rather than an oversight:
+    a NULL is a membership `insert_project_membership` wrote - the /admin access grant - and
+    the account is genuinely on the project, so it belongs in a project-scoped user list. It
+    simply has no person record behind it (see `delete_project_membership_by_stakeholder`
+    for the other consequence of that distinction). Filtering NULLs here would drop the
+    account from the list rather than drop its name, which is a different and wrong answer.
+
+    One query for the whole project rather than one per user: the caller is rendering a
+    table, and a per-row read here becomes a per-row database open in `user_identity.py`.
+    """
+    async with conn.execute(
+        "SELECT user_id, stakeholder_id FROM project_memberships WHERE project_slug=?",
+        (project_slug,),
     ) as cur:
         return [dict(r) async for r in cur]
 
