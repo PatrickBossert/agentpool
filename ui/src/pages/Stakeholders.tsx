@@ -83,10 +83,15 @@ export function inviteLinkUrl(token: string): string {
   return `${window.location.origin}/dashboard/accept-invite/${token}`
 }
 
+// Nothing at all when the server sent no state, rather than a dash or an "unknown" badge.
+// The field is absent for a caller who may not be told the account-derived states (see
+// api/services/stakeholder_access.py), and a placeholder would still confirm that the row
+// has one of them - the same disclosure in a thinner costume. An unrecognised value is
+// treated the same way: a state this build does not know is not a state it should label.
 function AccessBadge({ state }: { state?: AccessState }) {
-  if (!state) return <span className="text-gray-400">-</span>
+  if (!state) return null
   const badge = ACCESS_BADGE[state]
-  if (!badge) return <span className="text-gray-400">-</span>
+  if (!badge) return null
   return (
     <span
       title={badge.title}

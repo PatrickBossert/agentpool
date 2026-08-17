@@ -126,6 +126,27 @@ describe('Stakeholders: invite state and the invite link', () => {
     expect(within(rowFor('Pat Participant')).getByText('No login needed')).toBeInTheDocument()
   })
 
+  it('shows nothing at all for a row the server sent no state for', async () => {
+    // What a caller who may not be told the account-derived states receives: the field is
+    // absent from those rows entirely. The page must not fill the gap - a dash or an
+    // "unknown" badge would still confirm the row has a state being withheld.
+    const { access_state: _dropped, ...withheld } = person(99, 'Withheld Row', 'invited')
+    vi.mocked(stakeholdersApi.list).mockResolvedValue([...ROSTER, withheld as Stakeholder])
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
+      can_review: true, can_approve: true, can_grant_roles: false,
+      can_issue_invite_links: true,
+    })
+    renderRoster()
+    await screen.findByText('Withheld Row')
+
+    const cells = within(rowFor('Withheld Row')).getAllByRole('cell')
+    // The access cell sits between Roles and Comms; it is empty rather than placeheld.
+    expect(cells[4]).toBeEmptyDOMElement()
+    expect(
+      within(rowFor('Withheld Row')).queryByRole('button', { name: 'Invite link' }),
+    ).not.toBeInTheDocument()
+  })
+
   it('offers the action only where the door has something to serve', async () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,

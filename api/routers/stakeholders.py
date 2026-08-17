@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.services.authority_service import (
+    caller_may_administer_project,
     caller_may_grant_project_roles,
     require_project_administration,
 )
@@ -482,8 +483,21 @@ async def _revoke_membership_if_no_longer_privileged(
 
 @router.get("/{slug}/stakeholders")
 async def list_stakeholders_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    """The roster. Readable by any member of the engagement - membership is read access by
+    design - but the three `access_state` values that are answered by looking an account up
+    are served only to a caller who may administer the roster.
+
+    Not `require_project_administration`: this door itself does not narrow, and turning a
+    reviewer's roster into a 403 would be a much larger change than the disclosure warrants.
+    The field is dropped from the response instead, which is why the decision is made here
+    and passed down rather than left to the client - a value the client hides is still on
+    the wire.
+    """
     await check_project_access(slug, payload)
-    result = await list_stakeholders(slug)
+    result = await list_stakeholders(
+        slug,
+        include_account_states=await caller_may_administer_project(slug, payload),
+    )
     if result is None:
         _404(slug)
     return result

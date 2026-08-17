@@ -30,6 +30,11 @@ The states, in the order they are decided:
 Participants answer interviews through a campaign link and need no login by design, which
 is why `no_login_needed` is a resting state rather than an omission.
 
+Three of the five - `has_login`, `invited`, `not_invited` - can only be answered by asking
+system.db about an account, and are served only to a caller who may administer this
+project's roster. `unreachable` and `no_login_needed` are read from the stakeholder row
+itself and go to everybody. See `annotate_access_state` and `roster_only_access_state`.
+
 Two comparisons matter and both are deliberately exact rather than case-folded: the doors
 that act on these answers (`has_linked_login` below, `issue_invite`, `reissue_invite`) find
 a login by `users.username`, which is TEXT UNIQUE under SQLite's binary collation. A read
@@ -109,16 +114,70 @@ def access_state(row: dict, *, login_emails: set[str], invited_emails: set[str])
     return NOT_INVITED
 
 
-async def annotate_access_state(slug: str, rows: list[dict]) -> list[dict]:
-    """Return `rows` with `access_state` on each. Two system-database reads for the list.
+# The three states that can only be answered by asking system.db about an account. Served
+# to a caller who may administer this project's roster, and to nobody else.
+ACCOUNT_DERIVED_STATES = frozenset({HAS_LOGIN, INVITED, NOT_INVITED})
+
+
+def roster_only_access_state(row: dict) -> str | None:
+    """The state this row is in as far as the roster alone can say, or None.
+
+    Read entirely from the role flags and the address on the stakeholder row: no account is
+    looked up, so nothing here can disclose one. `unreachable` is the state the whole
+    feature exists for - a role nobody can exercise - and it stays visible to every member
+    of the engagement for that reason.
+
+    None means "the answer is account-derived", and the caller drops the field rather than
+    substituting a placeholder. An `unknown` badge would still confirm that the row *has* an
+    account-derived state, which is the same disclosure in a thinner costume.
+
+    Note where this can differ from the full answer: a participant-only row whose address
+    happens to hold a membership reads `no_login_needed` here and `has_login` to an
+    administrator. That is the intended shape rather than a discrepancy - this function
+    reports what the engagement asks of the person, and the account fact is exactly what is
+    being withheld.
+    """
+    if not holds_role_beyond_participant(row):
+        return NO_LOGIN_NEEDED
+    if not has_deliverable_email(row):
+        return UNREACHABLE
+    return None
+
+
+async def annotate_access_state(
+    slug: str, rows: list[dict], *, include_account_states: bool
+) -> list[dict]:
+    """Return `rows` with `access_state` on each - or, for a caller who may not see the
+    account-derived states, on only those rows the roster alone can answer for.
 
     The client cannot derive any of this: `auth_tokens` and `project_memberships` live in
     system.db and no endpoint exposes either, so "invited" is not merely inconvenient to
     compute in the browser but unknowable there. Deriving "unreachable" from an empty email
     string alone *would* be possible, and would still be wrong - it would put the same
     condition in a second place, where it could disagree with the 422 the write doors raise.
+
+    `include_account_states` is decided by the endpoint from
+    `caller_may_administer_project` - the authority sp44 built for exactly this population,
+    so a project_admin and the platform tier, not a plain member. It is a keyword with no
+    default because there is no safe guess: a caller who forgot it would either leak or
+    blank the field silently, and both are the kind of quiet wrong answer this module exists
+    to prevent.
+
+    Suppression happens here rather than in the browser, and the difference is not
+    cosmetic: a field hidden by the client is still on the wire and still readable in
+    devtools, which is the same defect as a disabled button that submits anyway. The
+    unprivileged branch does not read system.db at all, so there is nothing to leak rather
+    than something withheld.
     """
     if not rows:
+        return rows
+    if not include_account_states:
+        for row in rows:
+            state = roster_only_access_state(row)
+            if state is None:
+                row.pop("access_state", None)
+            else:
+                row["access_state"] = state
         return rows
     async with get_system_connection() as conn:
         login_emails = await fetch_project_login_emails(conn, project_slug=slug)

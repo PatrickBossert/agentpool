@@ -29,6 +29,7 @@ import pytest
 import pytest_asyncio
 
 from api.config import get_settings
+from api.services.stakeholder_access import ACCOUNT_DERIVED_STATES
 from api.database import (
     fetch_project,
     get_connection,
@@ -48,6 +49,8 @@ EMAILS = (
     "legacy@example.com",
     "participant@example.com",
     "elsewhere@example.com",
+    "sas-member@example.com",
+    "sas-padmin@example.com",
 )
 
 
@@ -94,6 +97,37 @@ async def _insert_row(slug: str, **columns) -> int:
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         return await insert_stakeholder(conn, project_id=project["id"], **columns)
+
+
+def _client_for(username: str, role: str = "reviewer"):
+    """An httpx client carrying a real token for this login."""
+    from httpx import ASGITransport, AsyncClient
+
+    from api.auth import create_access_token
+    from api.main import app
+
+    token = create_access_token(username, role, "test-secret")
+    return AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+async def _seed_login(slug: str, *, email: str, name: str, **flags) -> int:
+    """A login wired the whole way, as `caller_roles` walks it: stakeholder row on this
+    project -> users row -> membership. Returns the stakeholder id."""
+    stakeholder_id = await _insert_row(slug, name=name, email=email, **flags)
+    async with get_system_connection() as conn:
+        await insert_user(
+            conn, username=email, email=email, role="reviewer", hashed_pw="x",
+        )
+        cur = await conn.execute("SELECT id FROM users WHERE username=?", (email,))
+        user_id = (await cur.fetchone())[0]
+        await link_membership(
+            conn, user_id=user_id, project_slug=slug, stakeholder_id=stakeholder_id
+        )
+    return stakeholder_id
 
 
 async def _states(client, slug: str) -> dict[str, str]:
@@ -271,6 +305,84 @@ async def test_invited_is_exactly_the_state_the_resend_door_serves(client, proje
     assert (
         await client.post(f"/projects/{project}/stakeholders/{logged_in_id}/resend-invite")
     ).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_the_account_derived_states_are_served_only_to_a_roster_administrator(
+    client, project
+):
+    """Who may be told that a person has an account.
+
+    `has_login`, `invited` and `not_invited` are answers about an account and go only to a
+    caller who may administer this project's people - sp44's
+    `caller_may_administer_project`, so a project_admin and the platform tier.
+    `unreachable` and `no_login_needed` are read from the stakeholder row's own flags and
+    address, disclose nothing about any account, and stay visible to every member: the
+    first of them is the state this whole feature exists for.
+
+    Driven over HTTP against one roster with three callers, because the property is what
+    the *endpoint sends*. Asserting on `annotate_access_state` would prove nothing about
+    the response, and a client-side filter would leave the value on the wire and readable
+    in devtools - the same defect as a disabled button that submits anyway.
+
+    A suppressed row carries no `access_state` key at all rather than a placeholder: an
+    "unknown" badge would still confirm the row has an account-derived state.
+    """
+    created = await client.post(
+        f"/projects/{project}/stakeholders",
+        json={"name": "Invited", "email": "invited@example.com", "is_reviewer": True},
+    )
+    assert created.status_code in (200, 201), created.text
+    await _seed_login(project, email="logged-in@example.com", name="Logged In", is_reviewer=True)
+    await _insert_row(project, name="Legacy", email="legacy@example.com", is_reviewer=True)
+    await _insert_row(project, name="Nowhere", email="", is_reviewer=True, is_approver=True)
+    await _insert_row(
+        project, name="Taking Part", email="participant@example.com", is_participant=True
+    )
+    # The two callers, both of them real rows on the roster they are about to read.
+    await _seed_login(
+        project, email="sas-member@example.com", name="Ordinary Member", is_participant=True
+    )
+    await _seed_login(
+        project, email="sas-padmin@example.com", name="Roster Admin", is_project_admin=True
+    )
+
+    async with _client_for("sas-member@example.com") as member:
+        r = await member.get(f"/projects/{project}/stakeholders")
+    assert r.status_code == 200, r.text
+    rows = {row["name"]: row for row in r.json()}
+
+    # What the roster itself says, and what a member keeps.
+    assert rows["Nowhere"]["access_state"] == "unreachable"
+    assert rows["Taking Part"]["access_state"] == "no_login_needed"
+    # What is withheld - absent, not blanked, not "unknown".
+    for name in ("Invited", "Logged In", "Legacy"):
+        assert "access_state" not in rows[name], (
+            f"{name}'s account-derived state reached a plain member"
+        )
+    assert not {row.get("access_state") for row in r.json()} & ACCOUNT_DERIVED_STATES, (
+        "an account-derived state appears somewhere in a plain member's response"
+    )
+    # The member's own row: participant-only, so the roster answers no_login_needed even
+    # though this caller demonstrably has a login. Intended - see roster_only_access_state.
+    assert rows["Ordinary Member"]["access_state"] == "no_login_needed"
+
+    # A project_admin administers this project's people, and is told everything.
+    async with _client_for("sas-padmin@example.com") as padmin:
+        as_padmin = await _states(padmin, project)
+    assert as_padmin["Invited"] == "invited"
+    assert as_padmin["Logged In"] == "has_login"
+    assert as_padmin["Legacy"] == "not_invited"
+    assert as_padmin["Nowhere"] == "unreachable"
+    assert as_padmin["Taking Part"] == "no_login_needed"
+    # And the same row the member saw as no_login_needed reads as the account fact it is.
+    assert as_padmin["Ordinary Member"] == "has_login"
+
+    # The platform tier, which is the other arm of the same authority.
+    as_sysadmin = await _states(client, project)
+    assert as_sysadmin == as_padmin, (
+        "the two arms of caller_may_administer_project disagree about the same roster"
+    )
 
 
 @pytest.mark.asyncio
