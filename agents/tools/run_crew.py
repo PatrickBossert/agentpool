@@ -3,12 +3,41 @@
 from crewai.tools import BaseTool
 
 
+def _crew_names() -> tuple[str, ...]:
+    """The crews PAM may dispatch, read from the graph rather than typed here a second time.
+
+    The description used to name `discovery` and `architecture`, neither of which any crew
+    provides, and omitted `assessment_design`, `stakeholder_management`, `requirements`, and
+    `capabilities`, all of which do - see `agents/graph.py` for the incident this replaces.
+
+    The import sits inside the function for tidiness, and **not** because the placement makes
+    it any later. This is called from `RunCrewTool`'s class body below, which runs while this
+    module is being imported - identical timing to a top-level import, as a reviewer confirmed
+    by rewriting the file with an eager one, in both import orders.
+
+    What actually keeps the cycle away is in `agents/graph.py`: `_tools_by_agent()` reads
+    `registry.py` by parsing its source text, never by importing it. The graph's dependency
+    chain therefore never reaches `agents.tools.registry` or this module at all, whatever
+    either does. Worth stating plainly, because the alternative belief - that moving this line
+    protects anything - would leave someone free to change `_tools_by_agent` to a real import
+    and trust a placement that does nothing.
+
+    That covers this module and `registry.py`. It is **not** a statement about `agents.tools`
+    as a whole: `agents/tools/_db.py` imports `agents.graph` at module level, and the graph
+    imports `api.services.run_service`, so `_db` and everything importing it now sit downstream
+    of `run_service`. Adding a module-level `from agents.tools…` import to `run_service` closes
+    that loop and fails app start-up in every import order - verified. The comment above
+    `run_service`'s imports says so where someone editing them will see it.
+    """
+    from agents.graph import build_graph
+    return tuple(sorted(build_graph().crews))
+
+
 class RunCrewTool(BaseTool):
     name: str = "RunCrewTool"
     description: str = (
         "Run a named crew for the current project and wait for it to complete. "
-        "crew_name must be one of: discovery_mapping, discovery, discovery_interviews, "
-        "value_design, architecture, delivery, business_plan"
+        "crew_name must be one of: " + ", ".join(_crew_names())
     )
     slug: str
     orchestration_run_id: int

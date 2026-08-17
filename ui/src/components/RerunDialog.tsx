@@ -5,41 +5,11 @@ import { X, Play, RotateCcw, AlertTriangle, MessageSquare, Check, ArrowLeft, Spa
 import { projectsApi } from '../api/endpoints'
 import { OutputPreview } from './ReviewDialog'
 import { CREW_LABELS, CREW_AGENTS } from './agentStatus'
+import { outputLabel } from './outputTypeLabels'
 import { skillsApi } from '../api/skills'
 import type { AgentOutput } from '../types'
 
 type Step = 'choice' | 'fresh-confirm' | 'revision' | 'revision-done'
-
-const OUTPUT_TYPE_LABELS: Record<string, string> = {
-  value_chain:                      'Value Chain',
-  interview_scripts:                'Interview Scripts',
-  l0_interview_summaries:           'L0 Board Summaries',
-  l1_interview_summaries:           'L1 GM Summaries',
-  l2_interview_summaries:           'L2 Process Manager Summaries',
-  audit_interview_summaries:        'Audit Summaries',
-  customer_interview_summaries:     'Customer Summaries',
-  frontline_interview_summaries:    'Frontline Summaries',
-  corp_services_interview_summaries:'Corporate Services Summaries',
-  strategic_requirements:           'Strategic Requirements',
-  captured_requirements:            'Captured Requirements',
-  requirements_analysis:            'Requirements Analysis',
-  value_levers:                     'Value Levers',
-  themes:                           'Themes',
-  value_propositions:               'Value Propositions',
-  portfolio_register:               'Portfolio Register',
-  architecture_register:            'As-Is Capabilities',
-  // Nothing writes architecture_blueprint any more; kept so historical rows still label.
-  architecture_blueprint:           'Architecture Blueprint',
-  roadmap:                          'Roadmap',
-  business_plan:                    'Business Plan',
-  stakeholder_engagement_plan:      'Stakeholder Engagement Plan',
-  interview_transcripts:            'Interview Transcripts',
-  activity_insights:                'Activity Insights',
-}
-
-function outputLabel(t: string) {
-  return OUTPUT_TYPE_LABELS[t] ?? t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
 
 export interface RerunDialogProps {
   slug: string

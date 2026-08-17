@@ -14,6 +14,12 @@ from api.config import get_settings, load_project_config
 from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_agent_outputs, fetch_stakeholder_assignments, fetch_stakeholders
 from api.routers.ws import push_log
 
+# Do not add a module-level `from agents…` import here. `agents/graph.py` imports
+# `_CREW_AGENT_NAMES` from this module and assembles at import time, and `agents/tools/_db.py`
+# imports the graph, so every tool module now sits downstream of this one. A module-level
+# import in this direction closes the loop and fails app start-up in every import order - which
+# is why every `agents` import below is inside the function that needs it.
+
 log = logging.getLogger(__name__)
 
 # Crew name → snake_case agent names stored in agent_outputs.agent_name
@@ -586,29 +592,52 @@ async def dispatch_crew(
 
 # ── Standalone agent dispatch ──────────────────────────────────────────────────
 
-# Which crew name to record in crew_runs for each agent key.
+# Which agents may be dispatched on their own, rather than as part of their crew.
 #
-# Every key here MUST have a branch in build_and_run_agent. run_crew() checks
-# membership of this dict and creates a crew_run row before dispatching, so a key
-# without a branch produces a run that fails instantly with "Unknown agent key".
+# Every name here MUST have a branch in build_and_run_agent. run_crew() checks membership of
+# AGENT_CREW_NAME below and creates a crew_run row before dispatching, so a name without a
+# branch produces a run that fails instantly with "Unknown agent key".
 # tests/test_standalone_agent_dispatch.py enforces the invariant.
 #
-# questionnaire_builder is deliberately absent: its agent was removed when
-# questionnaires moved inline into the interview. The crew-name alias in
+# This is the only fact declared here: which agents are eligible. It is a genuine decision and
+# a partial roll - six of the seventeen are absent, most obviously pam, which orchestrates
+# rather than runs. questionnaire_builder is deliberately absent too: its agent was removed
+# when questionnaires moved inline into the interview. The crew-name alias in
 # build_and_run_crew stays, for stored crew_run rows in other environments.
+_STANDALONE_AGENTS: frozenset[str] = frozenset({
+    "requirements_analyst",
+    "value_lever_analyst",
+    "synthesis_analyst",
+    "value_proposition_generator",
+    "portfolio_manager",
+    "enterprise_architect",
+    "initiative_identifier",
+    "roadmap_generator",
+    "business_plan_generator",
+    "interaction_designer",
+    "stakeholder_manager",
+})
+
+# Which crew name to record in crew_runs for each eligible agent. Inverted from the dispatch
+# map twenty lines above rather than typed a second time: an agent's crew is not a property of
+# being standalone-eligible, and the copy that used to live here was one more place for Morgan
+# to be left in a crew she had moved out of.
 AGENT_CREW_NAME: dict[str, str] = {
-    "requirements_analyst":        "requirements",
-    "value_lever_analyst":         "discovery_mapping",
-    "synthesis_analyst":           "discovery_interviews",
-    "value_proposition_generator": "value_design",
-    "portfolio_manager":           "value_design",
-    "enterprise_architect":        "capabilities",
-    "initiative_identifier":       "capabilities",
-    "roadmap_generator":           "delivery",
-    "business_plan_generator":     "business_plan",
-    "interaction_designer":        "assessment_design",
-    "stakeholder_manager":         "stakeholder_management",
+    agent_name: crew_name
+    for crew_name, agent_names in _CREW_AGENT_NAMES.items()
+    for agent_name in agent_names
+    if agent_name in _STANDALONE_AGENTS
 }
+
+# An eligible agent that no crew claims would simply vanish from the mapping above, and
+# `build_and_run_agent` would then refuse a name the settings page still offers. Raised at
+# import, where a developer meets it, rather than at dispatch, where a consultant does.
+_unclaimed = sorted(_STANDALONE_AGENTS - set(AGENT_CREW_NAME))
+if _unclaimed:
+    raise RuntimeError(
+        f"{_unclaimed} are eligible for standalone dispatch but belong to no crew in "
+        f"_CREW_AGENT_NAMES, so nothing could record a crew_run row for them."
+    )
 
 
 async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:

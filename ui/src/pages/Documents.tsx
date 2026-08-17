@@ -7,6 +7,7 @@ import { projectsApi } from '../api/endpoints'
 import type { ClientDocument, AgentOutput } from '../types'
 import { useAuth } from '../context/AuthContext'
 import { downloadOutput } from '../utils/download'
+import { outputLabel } from '../components/outputTypeLabels'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -14,35 +15,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-const OUTPUT_TYPE_LABELS: Record<string, string> = {
-  value_chain:                      'Value Chain',
-  interview_scripts:                'Interview Scripts',
-  l0_interview_summaries:           'L0 Board Summaries',
-  l1_interview_summaries:           'L1 GM Summaries',
-  l2_interview_summaries:           'L2 Process Manager Summaries',
-  audit_interview_summaries:        'Audit Summaries',
-  customer_interview_summaries:     'Customer Summaries',
-  frontline_interview_summaries:    'Frontline Summaries',
-  corp_services_interview_summaries:'Corporate Services Summaries',
-  requirements:                     'Requirements',
-  value_levers:                     'Value Levers',
-  value_propositions:               'Value Propositions',
-  portfolio_register:               'Portfolio Register',
-  architecture_blueprint:           'Architecture Blueprint',
-  roadmap:                          'Roadmap',
-  roadmap_data:                     'Roadmap Data',
-  business_plan:                    'Business Plan',
-  stakeholder_engagement_plan:      'Stakeholder Engagement Plan',
-  interview_transcripts:            'Interview Transcripts',
-  activity_insights:                'Activity Insights',
-  initiative_register:              'Initiative Register',
-}
-
 const INTERNAL_TYPES = new Set(['value_chain_tree', 'value_chain_registry', 'value_chain_summary', 'state'])
-
-function outputLabel(t: string) {
-  return OUTPUT_TYPE_LABELS[t] ?? t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
 
 export default function Documents() {
   const { slug } = useParams<{ slug: string }>()

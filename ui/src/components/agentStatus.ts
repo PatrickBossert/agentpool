@@ -43,6 +43,17 @@ export const CREW_AGENT_NAMES: Record<string, string[]> = {
 
 export type CrewName = (typeof CREW_ORDER)[number]
 
+// What each crew is called on screen. The only copy in the front end: Dashboard.tsx and
+// ReviewDialog.tsx each carried their own, and all three disagreed - `discovery_mapping` was
+// shown as "Value Chain Mapper" (the agent, not the crew) in one, `capabilities` as
+// "Architecture" in another, and `delivery` as "Delivery Planning" in both.
+//
+// CREW_LABEL in agents/identity.py is the source of record, and
+// test_the_frontend_and_the_backend_agree_about_crew_labels holds this map against it.
+//
+// PAM is the exception and is excluded from that check: it is a card on the board and an
+// orchestrator, not a crew anything dispatches - the same exclusion CREW_AGENTS already
+// carries below.
 export const CREW_LABELS: Record<string, string> = {
   PAM:                    'PMO',
   discovery_mapping:      'Value Chain Mapping',

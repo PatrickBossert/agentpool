@@ -11,7 +11,6 @@ PROJECT = {
     "stakeholder_groups": ["Operations"],
     "value_stream_labels": ["Asset Mgmt"],
     "roadmap_time_axis": "quarters",
-    "crews_enabled": ["requirements", "value_design"],
     "review_gates": True,
     "slack_channel": "#rail",
 }
@@ -60,7 +59,6 @@ async def test_patch_settings_updates_db(client):
         "stakeholder_groups": ["Finance"],
         "value_stream_labels": [],
         "roadmap_time_axis": "years",
-        "crews_enabled": ["requirements"],
         "review_gates": False,
         "slack_channel": "#energy",
     }
@@ -85,7 +83,6 @@ async def test_patch_settings_rewrites_yaml(client):
         "stakeholder_groups": [],
         "value_stream_labels": [],
         "roadmap_time_axis": "quarters",
-        "crews_enabled": ["requirements"],
         "review_gates": True,
         "slack_channel": "",
     }
@@ -106,7 +103,6 @@ async def test_patch_settings_unknown_project_404(client):
         "stakeholder_groups": [],
         "value_stream_labels": [],
         "roadmap_time_axis": "quarters",
-        "crews_enabled": ["requirements"],
         "review_gates": True,
         "slack_channel": "",
     }
@@ -123,7 +119,6 @@ async def test_patch_settings_discovery_fields(client):
         "stakeholder_groups": [],
         "value_stream_labels": [],
         "roadmap_time_axis": "quarters",
-        "crews_enabled": ["requirements"],
         "review_gates": True,
         "slack_channel": "",
         "discovery_brief": "Focus on freight operations.",
@@ -140,3 +135,62 @@ async def test_patch_settings_discovery_fields(client):
     assert get_resp.json()["discovery_brief"] == "Focus on freight operations."
     assert get_resp.json()["discovery_links"] == [{"url": "https://example.com", "label": "Example"}]
     assert get_resp.json()["discovery_document_ids"] == [1, 2]
+
+
+# ── crews_enabled is gone: all crews, no toggle ───────────────────────────────
+#
+# It was three declarations of five of the nine crews - both project models and KNOWN_CREWS in
+# Settings.tsx - stored on every project and read by no dispatch path. A checkbox that saves
+# and does nothing is worse than no checkbox: somebody eventually uses it to "disable" a crew
+# before an expensive run and believes it took effect.
+#
+# The spec says "crews_enabled goes, per the decision to park it: all crews, no toggle."
+
+
+@pytest.mark.asyncio
+async def test_creating_a_project_with_crews_enabled_does_not_store_it(client):
+    """Pydantic ignores unknown keys, so a stale client still gets a 200. What must not happen
+    is the value coming back as though it had been honoured."""
+    await client.post("/projects", json={**PROJECT, "crews_enabled": ["value_design"]})
+
+    resp = await client.get("/projects/settings-test/settings")
+    assert resp.status_code == 200
+    assert "crews_enabled" not in resp.json()
+
+    yaml_path = Path(get_settings().projects_dir) / "settings-test" / "config.yaml"
+    with yaml_path.open() as f:
+        assert "crews_enabled" not in yaml.safe_load(f)
+
+
+@pytest.mark.asyncio
+async def test_patching_settings_with_crews_enabled_does_not_store_it(client):
+    await client.post("/projects", json=PROJECT)
+    resp = await client.patch("/projects/settings-test/settings", json={
+        "llm_mode": "standard",
+        "sector": "rail",
+        "stakeholder_groups": [],
+        "value_stream_labels": [],
+        "roadmap_time_axis": "quarters",
+        "review_gates": True,
+        "slack_channel": "",
+        "crews_enabled": ["delivery"],
+    })
+    assert resp.status_code == 200
+    assert "crews_enabled" not in resp.json()
+    assert "crews_enabled" not in (await client.get("/projects/settings-test/settings")).json()
+
+
+def test_no_project_model_carries_a_partial_list_of_crews():
+    """The general form. The three deleted copies each named five of the nine crews, and a
+    settings field holding a crew list is the shape of the toggle coming back."""
+    from agents.graph import build_graph
+    from api.models import ProjectCreate, ProjectSettings
+
+    crews = set(build_graph().crews)
+    for model in (ProjectCreate, ProjectSettings):
+        for name, field in model.model_fields.items():
+            default = field.get_default(call_default_factory=True)
+            if isinstance(default, (list, tuple, set)):
+                assert not (crews & set(str(v) for v in default)), (
+                    f"{model.__name__}.{name} defaults to a list of crew names: {default}"
+                )

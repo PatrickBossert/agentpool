@@ -73,7 +73,6 @@ def _project_body(slug: str) -> dict:
         "sector": "transport",
         "stakeholder_groups": [],
         "value_stream_labels": [],
-        "crews_enabled": ["requirements"],
         "review_gates": True,
         "slack_channel": "",
     }

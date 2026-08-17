@@ -5,8 +5,7 @@ import pytest
 SLUG = "lineage-api-test"
 PROJECT = {
     "client_slug": SLUG, "llm_mode": "standard", "sector": "utilities",
-    "stakeholder_groups": [], "value_stream_labels": [], "crews_enabled": ["requirements"],
-    "review_gates": True, "slack_channel": "",
+    "stakeholder_groups": [], "value_stream_labels": [], "review_gates": True, "slack_channel": "",
 }
 
 

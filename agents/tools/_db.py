@@ -8,6 +8,7 @@ import contextlib
 import re
 import sqlite3
 from pathlib import Path
+from agents.graph import GRAPH
 from api.config import get_settings
 
 
@@ -121,19 +122,6 @@ def _record_missing_current(
 
 def _db_path(slug: str) -> str:
     return str(Path(get_settings().database_dir) / f"{slug}.db")
-
-
-_CREW_TO_AGENTS: dict[str, list[str]] = {
-    "discovery_mapping":      ["value_chain_mapper"],
-    "assessment_design":      ["interaction_designer"],
-    "discovery":              ["requirements_capture", "requirements_analyst", "value_lever_analyst"],
-    "stakeholder_management": ["stakeholder_manager"],
-    "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer", "synthesis_analyst"],
-    "value_design":           ["value_proposition_generator", "portfolio_manager"],
-    "architecture":           ["enterprise_architect", "initiative_identifier"],
-    "delivery":               ["roadmap_generator"],
-    "business_plan":          ["business_plan_generator"],
-}
 
 
 def _extract_revision_body(prompt: str) -> str:
@@ -315,7 +303,13 @@ def insert_hitl_review(slug: str, run_id: int, prompt: str) -> int:
             ).fetchone()
             if row:
                 crew_name, project_id = row[0], row[1]
-                agent_names = _CREW_TO_AGENTS.get(crew_name, [])
+                # The graph, not a map typed here. The copy this replaces still named
+                # `discovery` and `architecture` - crews nothing has dispatched for two
+                # sprints - and so knew no agent at all for `requirements` or `capabilities`.
+                # A crew it did not recognise took the empty branch, which meant a reviewer's
+                # revision note was silently dropped rather than written to any output.
+                crew = GRAPH.crews.get(crew_name)
+                agent_names = list(crew.agent_ids) if crew else []
                 if agent_names:
                     placeholders = ",".join("?" * len(agent_names))
                     conn.execute(

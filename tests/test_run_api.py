@@ -9,7 +9,6 @@ PROJECT_PAYLOAD = {
     "sector": "transport",
     "stakeholder_groups": ["Operations"],
     "value_stream_labels": ["Asset Mgmt"],
-    "crews_enabled": ["requirements"],
     "review_gates": True,
     "slack_channel": "",
 }
@@ -42,7 +41,7 @@ async def test_run_known_project_queues_run(client):
 
 @pytest.mark.asyncio
 async def test_run_value_design_crew_queues_run(client):
-    payload = {**PROJECT_PAYLOAD, "client_slug": "vd-test", "crews_enabled": ["value_design"]}
+    payload = {**PROJECT_PAYLOAD, "client_slug": "vd-test"}
     await client.post("/projects", json=payload)
     with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
         resp = await client.post("/projects/vd-test/run", json={"crew": "value_design"})
@@ -56,7 +55,7 @@ async def test_run_value_design_crew_queues_run(client):
 
 @pytest.mark.asyncio
 async def test_run_capabilities_crew_queues_run(client):
-    payload = {**PROJECT_PAYLOAD, "client_slug": "arch-test", "crews_enabled": ["capabilities"]}
+    payload = {**PROJECT_PAYLOAD, "client_slug": "arch-test"}
     await client.post("/projects", json=payload)
     with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
         resp = await client.post("/projects/arch-test/run", json={"crew": "capabilities"})
@@ -70,7 +69,7 @@ async def test_run_capabilities_crew_queues_run(client):
 
 @pytest.mark.asyncio
 async def test_run_delivery_crew_queues_run(client):
-    payload = {**PROJECT_PAYLOAD, "client_slug": "delivery-test", "crews_enabled": ["delivery"]}
+    payload = {**PROJECT_PAYLOAD, "client_slug": "delivery-test"}
     await client.post("/projects", json=payload)
     with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
         resp = await client.post("/projects/delivery-test/run", json={"crew": "delivery"})
@@ -84,7 +83,7 @@ async def test_run_delivery_crew_queues_run(client):
 
 @pytest.mark.asyncio
 async def test_run_business_plan_crew_queues_run(client):
-    payload = {**PROJECT_PAYLOAD, "client_slug": "bp-test", "crews_enabled": ["business_plan"]}
+    payload = {**PROJECT_PAYLOAD, "client_slug": "bp-test"}
     await client.post("/projects", json=payload)
     with patch("api.services.run_service.dispatch_crew", new_callable=AsyncMock):
         resp = await client.post("/projects/bp-test/run", json={"crew": "business_plan"})

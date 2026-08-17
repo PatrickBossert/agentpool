@@ -505,7 +505,7 @@ export default function Architecture() {
 
             <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-2">Per-project config - <code className="text-slate-400">projects/{'{slug}'}/config.yaml</code></h3>
             <div className="text-xs text-slate-500 space-y-0.5 font-mono">
-              {['llm_mode (standard|sensitive|fallback)', 'sector', 'stakeholder_groups []', 'value_stream_labels []', 'roadmap_time_axis', 'crews_enabled []', 'review_gates (bool)', 'slack_channel', 'discovery_brief', 'discovery_links []', 'interview_method (none|agent|manual)'].map((f) => (
+              {['llm_mode (standard|sensitive|fallback)', 'sector', 'stakeholder_groups []', 'value_stream_labels []', 'roadmap_time_axis', 'review_gates (bool)', 'slack_channel', 'discovery_brief', 'discovery_links []', 'interview_method (none|agent|manual)'].map((f) => (
                 <div key={f} className="text-slate-500">{f}</div>
               ))}
             </div>

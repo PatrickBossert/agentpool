@@ -65,3 +65,32 @@ def test_questionnaire_builder_is_not_advertised_for_standalone_dispatch():
     advertising it here would accept a request that cannot succeed.
     """
     assert "questionnaire_builder" not in AGENT_CREW_NAME
+
+
+def test_the_crew_recorded_for_an_agent_is_the_crew_it_runs_in():
+    """AGENT_CREW_NAME used to be a hand-written inversion of the dispatch map, and a copy of
+    a membership is one more place to leave an agent in a crew it has moved out of - which
+    already happened to Morgan once, in the sibling copy in api/database.py.
+
+    Asserted against the graph rather than against `_CREW_AGENT_NAMES`, so the derivation and
+    everything else that answers this question are held to one answer.
+    """
+    from agents.graph import build_graph
+
+    graph = build_graph()
+    for agent_key, crew_name in AGENT_CREW_NAME.items():
+        assert agent_key in graph.crews[crew_name].agent_ids, (
+            f"{agent_key} is recorded under {crew_name}, which does not run it"
+        )
+
+
+def test_eligibility_is_still_a_decision_and_not_everyone():
+    """The derivation must not have quietly turned the whole roll eligible. Deriving the crew
+    from membership is right; deriving *who may run alone* from it would advertise pam and the
+    five other agents that have no branch in build_and_run_agent."""
+    from agents.graph import build_graph
+
+    graph = build_graph()
+    assert set(AGENT_CREW_NAME) < set(graph.agents), "every agent is now advertised"
+    assert "pam" not in AGENT_CREW_NAME
+    assert "visual_illustrator" not in AGENT_CREW_NAME

@@ -28,7 +28,6 @@ PROJECT_PAYLOAD = {
     "stakeholder_groups": ["Operations", "Customer"],
     "value_stream_labels": ["Asset Mgmt"],
     "roadmap_time_axis": "quarters",
-    "crews_enabled": ["requirements"],
     "review_gates": True,
     "slack_channel": "#test",
 }

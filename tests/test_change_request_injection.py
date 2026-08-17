@@ -325,8 +325,7 @@ async def test_a_failed_run_leaves_the_change_request_open(crew_project):
 
 DOOR_PROJECT_TEMPLATE = {
     "llm_mode": "standard", "sector": "utilities",
-    "stakeholder_groups": [], "value_stream_labels": [], "crews_enabled": ["requirements"],
-    "review_gates": True, "slack_channel": "",
+    "stakeholder_groups": [], "value_stream_labels": [], "review_gates": True, "slack_channel": "",
 }
 
 

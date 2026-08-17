@@ -21,7 +21,7 @@ from api.database import (
     link_commit_outputs,
 )
 from api.services.authority_service import caller_may_approve, caller_may_contribute
-from api.services.run_service import _CREW_AGENT_NAMES
+from agents.graph import GRAPH
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,18 @@ class CrewRunInProgress(Exception):
     def __init__(self, crew_name: str):
         self.crew_name = crew_name
         super().__init__(f"Crew '{crew_name}' has a run in progress - cannot commit yet")
+
+
+def _agents_of(crew_name: str) -> set[str]:
+    """The agents whose current outputs a commit to this crew freezes.
+
+    Read from the graph rather than from `_CREW_AGENT_NAMES` directly. The same object,
+    today - but every consumer reaching past the graph for its own copy of the fact is how
+    there came to be nine of them, and an unknown crew name answers with no agents here, so
+    the wrong answer would be an empty commit that reports success.
+    """
+    crew = GRAPH.crews.get(crew_name)
+    return set(crew.agent_ids) if crew else set()
 
 
 async def caller_may_commit(slug: str, payload: dict) -> bool:
@@ -69,7 +81,7 @@ async def commit_crew(
     This fixes the current output versions and attributes the approval; what happens
     downstream of it is the caller's business, not this function's.
     """
-    agents = set(_CREW_AGENT_NAMES.get(crew_name, []))
+    agents = _agents_of(crew_name)
 
     async with get_connection(slug) as conn:
         if await crew_is_running(conn, crew_name=crew_name):
@@ -97,7 +109,7 @@ async def changes_for_crew(slug: str, *, crew_name: str) -> list[dict]:
     Never committed means the whole history so far, which is correct - there is no
     later point to measure from.
     """
-    agents = set(_CREW_AGENT_NAMES.get(crew_name, []))
+    agents = _agents_of(crew_name)
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         outputs = await fetch_agent_outputs(conn, project_id=project["id"])

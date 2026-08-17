@@ -10,22 +10,10 @@ import AgentDetailPanel from '../components/AgentDetailPanel'
 import ReviewDialog from '../components/ReviewDialog'
 import RerunDialog from '../components/RerunDialog'
 import { useWebSocket } from '../hooks/useWebSocket'
-import { CREW_ORDER, CREW_AGENTS, CREW_AGENT_NAMES, CREW_DOWNSTREAM } from '../components/agentStatus'
+import { CREW_ORDER, CREW_AGENTS, CREW_AGENT_NAMES, CREW_DOWNSTREAM, CREW_LABELS } from '../components/agentStatus'
 import type { CrewRun, HumanReview, AgentOutput } from '../types'
 
 // ── Review queue sidebar ───────────────────────────────────────────────────────
-
-const CREW_LABEL: Record<string, string> = {
-  discovery_mapping:      'Value Chain Mapper',
-  assessment_design:      'Assessment Design',
-  requirements:              'Discovery',
-  stakeholder_management: 'Stakeholder Management',
-  discovery_interviews:   'Interview Synthesis',
-  value_design:           'Value Design',
-  capabilities:           'Architecture',
-  delivery:               'Delivery Planning',
-  business_plan:          'Business Plan',
-}
 
 function ReviewPanel({ slug, hitlReviews, outputs }: {
   slug: string
@@ -57,7 +45,7 @@ function ReviewPanel({ slug, hitlReviews, outputs }: {
             <p className="text-xs text-gray-400 text-center py-8">No pending reviews</p>
           )}
           {hitlReviews.map(r => {
-            const label = r.crew_name ? (CREW_LABEL[r.crew_name] ?? r.crew_name) : 'Crew'
+            const label = r.crew_name ? (CREW_LABELS[r.crew_name] ?? r.crew_name) : 'Crew'
             const firstLine = r.prompt.trim().split('\n').filter(Boolean)[0] ?? ''
             const preview = firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine
             return (
