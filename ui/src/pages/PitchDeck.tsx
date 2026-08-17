@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, ArrowLeft, Download } from 'lucide-react'
 import logoUrl from '../assets/TR_Logo_strapiline.png'
 import arupLogoUrl from '../assets/arup-logo.jpg'
 import { useAuth } from '../context/AuthContext'
+import { AGENT_HUMAN_NAME } from '../components/agentStatus'
 
 // ── Slide definitions ─────────────────────────────────────────────────────────
 
@@ -1287,25 +1288,17 @@ function SlideTeam() {
     },
   ]
 
-  const agents = [
-    { name: 'Pamela Reid',     role: 'PMO / Pipeline Orchestrator' },
-    { name: 'Alex Chen',       role: 'Value Chain Mapper' },
-    { name: 'Maya Patel',      role: 'Assessment Designer' },
-    { name: 'Jordan Williams', role: 'Stakeholder Manager' },
-    { name: 'Sam Torres',      role: 'Requirements Capture' },
-    { name: 'Riley Kim',       role: 'Requirements Analyst' },
-    { name: 'Morgan Davis',    role: 'Value Lever Analyst' },
-    { name: 'Taylor Brooks',   role: 'Interview Coordinator' },
-    { name: 'Avery Singh',     role: 'Stakeholder Interviewer' },
-    { name: 'Casey Liu',       role: 'Synthesis Analyst' },
-    { name: 'Quinn Harper',    role: 'Value Proposition Generator' },
-    { name: 'Blake Anderson',  role: 'Portfolio Manager' },
-    { name: 'Drew Mitchell',   role: 'Enterprise Architect' },
-    { name: 'Sage Thompson',   role: 'Initiative Identifier' },
-    { name: 'River Martinez',  role: 'Roadmap Generator' },
-    { name: 'Luca Romano',     role: 'Visual Illustrator' },
-    { name: 'Finley Cooper',   role: 'Business Plan Generator' },
-  ]
+  // Derived from AGENT_HUMAN_NAME rather than typed again: its keys are the roles and its
+  // values are the names, so the seventeen entries this used to hold were a copy of both
+  // halves. The copy had gone stale - it billed Maya as the "Assessment Designer", a role no
+  // registry has held since the interview_script_designer era.
+  //
+  // PAM is the one entry whose role is not its key: 'PAM' is a machine name, and the deck is
+  // read by a client.
+  const agents = Object.entries(AGENT_HUMAN_NAME).map(([role, name]) => ({
+    name,
+    role: role === 'PAM' ? 'PMO / Pipeline Orchestrator' : role,
+  }))
 
   return (
     <div>

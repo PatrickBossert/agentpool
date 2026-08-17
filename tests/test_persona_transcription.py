@@ -83,3 +83,50 @@ def test_the_guard_does_not_cross_the_two_by_formatting_the_id():
     """
     for agent_id, identity in AGENT_IDENTITY.items():
         assert identity.display_name != agent_id.replace("_", " ").title()
+
+
+# ── Where else the seventeen names are typed out ──────────────────────────────
+
+UI_SRC = AGENT_STATUS.parent.parent
+
+# Files allowed to hard-code the persona names, and why. Research for this slice found six
+# lists; the pitch deck now derives its slide from AGENT_HUMAN_NAME, which is how it stopped
+# billing Maya as the "Assessment Designer" - a role no registry has held for two sprints.
+PERMITTED = {
+    # The front end's own declaration, and the source agents/identity.py transcribes.
+    "components/agentStatus.ts": "the declaration",
+    # The privacy audit page. Each row pairs a persona with the tools and external services
+    # that agent reaches, and the graph does not carry egress until slice 2 - so the names
+    # here cannot yet be derived from anything without dropping the fact beside them.
+    "pages/DataArchitecture.tsx": "carries egress, which the graph does not model yet",
+}
+
+
+def _files_naming_personas() -> dict[str, int]:
+    names = {identity.display_name for identity in AGENT_IDENTITY.values()}
+    found: dict[str, int] = {}
+    for path in sorted(UI_SRC.rglob("*.ts*")):
+        if "__tests__" in path.parts:
+            continue
+        text = path.read_text()
+        # Three or more, so a single name quoted in a comment or a fixture is not a list.
+        hits = sum(1 for name in names if f"'{name}'" in text or f"({name})" in text)
+        if hits >= 3:
+            found[str(path.relative_to(UI_SRC))] = hits
+    return found
+
+
+def test_the_persona_scan_finds_the_declaration_itself():
+    """Guard the guard: a scan matching nothing would excuse every file below."""
+    assert _files_naming_personas().get("components/agentStatus.ts", 0) >= 17
+
+
+def test_no_new_module_types_the_seventeen_names_out():
+    unexpected = {
+        path: hits for path, hits in _files_naming_personas().items() if path not in PERMITTED
+    }
+    assert not unexpected, (
+        f"{sorted(unexpected)} hard-code the agents' names. Derive them from "
+        f"AGENT_HUMAN_NAME - the copy the pitch deck used to hold had already gone stale, "
+        f"and a stale persona list is read by a client rather than by a developer."
+    )
