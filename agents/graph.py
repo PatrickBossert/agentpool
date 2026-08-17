@@ -6,6 +6,7 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | Fact | Source |
 |------|--------|
 | Which agents exist, and each one's tier | `AGENT_TIER` - `agents/model_registry.py` |
+| What an agent is called, and its face | `AGENT_IDENTITY` - `agents/identity.py` |
 | Which tools an agent holds | `tool_map` - `agents/tools/registry.py` |
 | Which output types an agent writes | `OUTPUT_OWNERS` inverted - `agents/tools/ownership.py` |
 | Which agents a crew dispatches | `_CREW_AGENT_NAMES` - `api/services/run_service.py` |
@@ -30,6 +31,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from agents.identity import AGENT_IDENTITY as _AGENT_IDENTITY
 from agents.model_registry import AGENT_TIER as _AGENT_TIER
 from agents.tools.ownership import OUTPUT_OWNERS as _OUTPUT_OWNERS
 from api.services.crew_graph import CREW_DEPENDENCIES as _CREW_DEPENDENCIES
@@ -54,12 +56,19 @@ class GraphInconsistent(RuntimeError):
 
 @dataclass(frozen=True)
 class AgentNode:
-    """One agent, as the registries describe it."""
+    """One agent, as the registries describe it.
+
+    `agent_id` is the permanent half and the only thing anything may key on or store -
+    `agent_outputs.agent_name` holds it on every row. `display_name` and `image` are the mutable
+    half, resolved through `AGENT_IDENTITY`, and neither is derivable from the id.
+    """
 
     agent_id: str
     tier: str
     tools: tuple[str, ...]
     writes: tuple[str, ...]
+    display_name: str
+    image: str | None
 
 
 @dataclass(frozen=True)
@@ -151,7 +160,7 @@ def _tool_class_name(entry: ast.expr, agent_id: str) -> str:
 
 
 def _build_agents() -> dict[str, AgentNode]:
-    """Every agent `AGENT_TIER` declares, with its tools and the outputs it owns.
+    """Every agent `AGENT_TIER` declares, with its tools, the outputs it owns, and its identity.
 
     `AGENT_TIER` is the roll: `test_every_dispatched_agent_has_a_tier` already holds it equal to
     `tool_map`'s keys, and that guard is the only cross-registry check the codebase had before
@@ -171,6 +180,16 @@ def _build_agents() -> dict[str, AgentNode]:
             f"AGENT_TIER alone, and create_business_plan_crew raised before its first task."
         )
 
+    unnamed = sorted(set(_AGENT_TIER) - set(_AGENT_IDENTITY))
+    unknown_named = sorted(set(_AGENT_IDENTITY) - set(_AGENT_TIER))
+    if unnamed or unknown_named:
+        raise GraphInconsistent(
+            f"AGENT_TIER and AGENT_IDENTITY disagree about which agents exist - "
+            f"no identity: {unnamed}; identity but no agent: {unknown_named}. "
+            f"Falling back to the id as a name is how the id becomes a label again, and an "
+            f"identity for an agent that does not run is a name nothing answers to."
+        )
+
     unknown_owners = sorted(set(_OUTPUT_OWNERS.values()) - set(_AGENT_TIER))
     if unknown_owners:
         raise GraphInconsistent(
@@ -188,6 +207,8 @@ def _build_agents() -> dict[str, AgentNode]:
             tier=tier,
             tools=tools[agent_id],
             writes=tuple(writes[agent_id]),
+            display_name=_AGENT_IDENTITY[agent_id].display_name,
+            image=_AGENT_IDENTITY[agent_id].image,
         )
         for agent_id, tier in _AGENT_TIER.items()
     }

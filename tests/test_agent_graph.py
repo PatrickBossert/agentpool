@@ -168,3 +168,85 @@ def test_building_the_graph_twice_gives_independent_dictionaries():
     assert first.agents is not second.agents
     first.agents.pop(next(iter(first.agents)))
     assert set(build_graph().agents) == set(second.agents)
+
+
+# --- Identity: a permanent id, a mutable name -------------------------------------------------
+#
+# The id is the snake key every registry and every stored row already uses. The display name and
+# the image are what a human reads, and both may change without anything having to migrate. The
+# tests below therefore never compare identity with a list written beside them: they hold it
+# against `build_graph()` and `AGENT_TIER`, and they check the one property that proves the two
+# halves are actually separate - that the name cannot be computed from the id.
+
+
+def test_every_agent_has_an_identity_and_no_identity_is_orphaned():
+    graph = build_graph()
+    from agents.identity import AGENT_IDENTITY
+    assert set(AGENT_IDENTITY) == set(graph.agents)
+
+
+def test_a_display_name_is_never_used_as_a_key():
+    from agents.model_registry import AGENT_TIER
+    graph = build_graph()
+    for node in graph.agents.values():
+        assert node.agent_id in AGENT_TIER
+        assert node.display_name not in graph.agents or node.display_name == node.agent_id
+
+
+def test_a_display_name_is_not_a_formatting_of_the_id():
+    """The trap this task exists to avoid.
+
+    `_SNAKE_TO_DISPLAY` in `run_service.py` maps every one of its fifteen agents to exactly
+    `id.replace("_", " ").title()`, so it is a formatting function wearing a registry's clothes -
+    rename an agent there and the id changes with it. A display name that can be computed from
+    the id has not been separated from the id; it has been spelled differently.
+    """
+    for node in build_graph().agents.values():
+        spaced = node.agent_id.replace("_", " ")
+        derivations = {spaced, spaced.title(), spaced.upper(), node.agent_id.title()}
+        assert node.display_name not in derivations, (
+            f"{node.agent_id}: '{node.display_name}' is derivable from the id, so renaming "
+            f"the agent would still mean renaming its key"
+        )
+
+
+def test_a_node_carries_the_identity_the_registry_gives_it():
+    """Asserted on the node rather than on the map, because the node is what every reader holds.
+    A test that only compared `AGENT_IDENTITY` with itself would pass with `AgentNode` never
+    having been wired to it at all."""
+    from agents.identity import AGENT_IDENTITY
+    for node in build_graph().agents.values():
+        assert node.display_name == AGENT_IDENTITY[node.agent_id].display_name
+        assert node.image == AGENT_IDENTITY[node.agent_id].image
+
+
+def test_every_image_names_a_file_that_exists():
+    """The seventeen filenames are transcribed, and a transcription error is silent - the browser
+    shows a broken image and nothing raises. The files are the source, so ask them."""
+    from pathlib import Path
+
+    from agents.identity import AGENT_IDENTITY
+
+    public = Path(__file__).resolve().parent.parent / "ui" / "public"
+    missing = sorted(
+        f"{agent_id} -> {identity.image}"
+        for agent_id, identity in AGENT_IDENTITY.items()
+        if identity.image and not (public / identity.image.lstrip("/")).is_file()
+    )
+    assert not missing, f"identity names images that are not in ui/public: {missing}"
+
+
+def test_an_agent_with_no_identity_raises_rather_than_going_unnamed():
+    """Assembly refuses a partial answer here as it does everywhere else. An agent silently
+    falling back to its id as a name is how the id becomes a label again."""
+    from agents import graph as graph_module
+
+    thinned = {
+        agent_id: identity
+        for agent_id, identity in graph_module._AGENT_IDENTITY.items()
+        if agent_id != "pam"
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(graph_module, "_AGENT_IDENTITY", thinned)
+        with pytest.raises(GraphInconsistent, match="pam"):
+            build_graph()
