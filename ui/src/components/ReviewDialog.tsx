@@ -6,7 +6,7 @@ import { X, Check, PauseCircle, Download, XCircle } from 'lucide-react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { projectsApi, skillNotesApi } from '../api/endpoints'
-import { AGENT_RUN_KEYS, AGENT_HUMAN_NAME } from './agentStatus'
+import { AGENT_RUN_KEYS, AGENT_HUMAN_NAME, CREW_LABELS } from './agentStatus'
 import { CREW_OUTPUT_TYPE } from './crewOutputs'
 import type { HumanReview, AgentOutput } from '../types'
 
@@ -37,16 +37,6 @@ function MarkdownBody({ text }: { text: string }) {
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
-}
-
-const CREW_LABEL: Record<string, string> = {
-  discovery_mapping:    'Value Chain Mapper',
-  value_design:         'Value Design',
-  capabilities:         'Capabilities',
-  delivery:             'Delivery Planning',
-  business_plan:        'Business Plan',
-  requirements:            'Requirements',
-  discovery_interviews: 'Interview Synthesis',
 }
 
 const MERMAID_TYPES = new Set(['value_chain', 'architecture', 'roadmap'])
@@ -406,7 +396,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
 
   const outputType = review.crew_name ? CREW_OUTPUT_TYPE[review.crew_name] : undefined
   const matchedOutput = outputType ? outputs.find(o => o.output_type === outputType) : undefined
-  const crewLabel = review.crew_name ? (CREW_LABEL[review.crew_name] ?? review.crew_name) : 'Crew'
+  const crewLabel = review.crew_name ? (CREW_LABELS[review.crew_name] ?? review.crew_name) : 'Crew'
   const promptBody = stripHitlBoilerplate(review.prompt ?? '')
 
   // Derive the rejecting agent's snake_case key and human name from matchedOutput

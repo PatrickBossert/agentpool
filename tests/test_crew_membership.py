@@ -74,3 +74,45 @@ def test_the_display_names_agree_with_the_agents_that_run():
                for crew, agents in _frontend_map("CREW_AGENTS").items()
                if crew != "PAM"}
     assert display == _CREW_AGENT_NAMES
+
+
+def _frontend_labels() -> dict[str, str]:
+    """CREW_LABELS as the frontend declares it, parsed rather than duplicated."""
+    source = AGENT_STATUS.read_text()
+    block = re.search(r"export const CREW_LABELS: Record<string, string> = \{(.*?)\n\}",
+                      source, re.S)
+    assert block, f"CREW_LABELS not found in {AGENT_STATUS} - has it been renamed?"
+    labels = dict(re.findall(r"(\w+):\s*'([^']+)'", block.group(1)))
+    # A parse that came back empty would make the comparison below pass vacuously.
+    assert len(labels) > 5, f"parsed only {len(labels)} labels - the parser has drifted"
+    return labels
+
+
+def test_the_frontend_and_the_backend_agree_about_crew_labels():
+    """A crew's label was declared five times - once in Python and four times in the front
+    end - and no two agreed. `discovery_mapping` was "Value Chain Mapping" here, "Value Chain
+    Mapper" (the agent) on the dashboard, and "Discovery" in the review dialog.
+
+    PAM is excluded deliberately, as it is from CREW_AGENTS above: it is a card on the board
+    and an orchestrator, not a crew anything dispatches.
+    """
+    from agents.identity import CREW_LABEL
+
+    frontend = {crew: label for crew, label in _frontend_labels().items() if crew != "PAM"}
+    assert frontend == CREW_LABEL
+
+
+def test_pam_is_the_only_thing_the_label_check_excuses():
+    """Without this, the cheapest way to make the test above pass is to give a disagreeing
+    crew a name the exclusion happens to cover."""
+    assert set(_frontend_labels()) - set(_CREW_AGENT_NAMES) == {"PAM"}
+
+
+def test_every_crew_the_board_orders_has_a_label():
+    """CREW_ORDER drives the carousel; a crew ordered without a label renders as a blank
+    heading rather than as an error."""
+    source = AGENT_STATUS.read_text()
+    block = re.search(r"export const CREW_ORDER = \[(.*?)\]", source, re.S)
+    assert block, "CREW_ORDER not found - has it been renamed?"
+    order = re.findall(r"'([a-z_]+)'", block.group(1))
+    assert set(order) <= set(_frontend_labels())
