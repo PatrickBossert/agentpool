@@ -403,33 +403,14 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         )
 
     elif crew_name == "requirements":
+        # No discovery brief, links or priority documents. This branch was a copy of the
+        # discovery_mapping dispatch above and passed all three to a factory that takes none
+        # of them, so every path into this crew raised TypeError before an agent was built.
+        # The arguments left with the value chain mapper when this crew stopped being called
+        # `discovery`; Sam and Riley read the initiative and architecture registers out of
+        # state and the documents through Chroma, and neither task mentions the brief.
         from agents.crews.requirements_crew import create_requirements_crew
-
-        discovery_brief = config.get("discovery_brief", "")
-        discovery_links = config.get("discovery_links", [])
-        discovery_document_ids = config.get("discovery_document_ids", [])
-
-        priority_doc_names: list[str] = []
-        if discovery_document_ids:
-            async with get_connection(slug) as conn:
-                project_row = await fetch_project(conn, slug=slug)
-                if project_row:
-                    all_docs = await fetch_documents(conn, project_id=project_row["id"])
-                    doc_map = {d["id"]: d["original_name"] for d in all_docs}
-                    priority_doc_names = [
-                        doc_map[doc_id]
-                        for doc_id in discovery_document_ids
-                        if doc_id in doc_map
-                    ]
-
-        crew = create_requirements_crew(
-            slug=slug,
-            run_id=run_id,
-            sector=sector,
-            discovery_brief=discovery_brief,
-            discovery_links=discovery_links,
-            priority_doc_names=priority_doc_names,
-        )
+        crew = create_requirements_crew(slug=slug, run_id=run_id, sector=sector)
 
     elif crew_name == "value_design":
         from agents.crews.value_design_crew import create_value_design_crew

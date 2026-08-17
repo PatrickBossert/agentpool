@@ -87,7 +87,9 @@ class ProjectResponse(BaseModel):
 
 
 class RunRequest(BaseModel):
-    crew: str | None = None   # None = trigger PAM (full run)
+    # Both absent is refused with 400 by the handler - there is no default crew and no PAM
+    # path here. Optional rather than required because either one alone is a valid request.
+    crew: str | None = None   # crew name — runs that crew
     agent: str | None = None  # internal agent key — runs that single agent standalone
 
 
