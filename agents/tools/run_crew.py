@@ -7,14 +7,20 @@ def _crew_names() -> tuple[str, ...]:
     """The crews PAM may dispatch, read from the graph rather than typed here a second time.
 
     The description used to name `discovery` and `architecture`, neither of which any crew
-    provides, and omitted `assessment_design`, `stakeholder_management`, `requirements` and
+    provides, and omitted `assessment_design`, `stakeholder_management`, `requirements`, and
     `capabilities`, all of which do - see `agents/graph.py` for the incident this replaces.
 
-    Imported lazily, inside this function rather than at module level: `agents/graph.py`
-    imports `api.services.run_service` at module level and assembles at import time, and
-    `get_tools_for_agent` imports this module *inside* a function precisely to avoid
-    re-entering a partially initialised module. A module-level import here would risk the
-    same trap in reverse.
+    The import sits inside the function for tidiness, and **not** because the placement makes
+    it any later. This is called from `RunCrewTool`'s class body below, which runs while this
+    module is being imported - identical timing to a top-level import, as a reviewer confirmed
+    by rewriting the file with an eager one, in both import orders.
+
+    What actually keeps the cycle away is in `agents/graph.py`: `_tools_by_agent()` reads
+    `registry.py` by parsing its source text, never by importing it. The graph's dependency
+    chain therefore never reaches `agents.tools.registry` or this module at all, whatever
+    either does. Worth stating plainly, because the alternative belief - that moving this line
+    protects anything - would leave someone free to change `_tools_by_agent` to a real import
+    and trust a placement that does nothing.
     """
     from agents.graph import build_graph
     return tuple(sorted(build_graph().crews))
