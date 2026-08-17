@@ -251,6 +251,83 @@ async def test_an_empty_project_parameter_is_the_unscoped_list_not_a_refusal(iso
     assert "person" not in resp.json()[0]
 
 
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "../../etc/passwd",
+        "../escapee",
+        "sub/dir",
+        "sub/../../x",   # only escapes once resolved - a textual ".." check would pass it
+        "/etc/passwd",   # Path.__truediv__ replaces the left side when the right is absolute
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_slug_that_would_leave_the_database_directory_is_refused(isolated_db, hostile):
+    """`?project=` is the first slug on this API to arrive in a **query string**.
+
+    Every other project route takes one from a path segment, where the router has already
+    split on `/`. Here `/` and `..` arrive verbatim, and `check_project_access` returns early
+    for a sysadmin without looking at the string - so the highest tier was the one that
+    skipped every check before the path was built. Refused with 400 before either the
+    authorisation or `get_db_path` sees it.
+
+    Note what is *not* in this list. A bare ".." is harmless, because the slug is interpolated
+    into `f"{slug}.db"` and so names a file called "...db" directly inside the directory; so
+    is a pre-encoded "..%2f..%2fx", which a query string delivers verbatim rather than
+    decoding. Both were in this list until they failed, and the failures were the test's fault
+    rather than the guard's. That is the case for testing containment rather than pattern-
+    matching for dangerous-looking characters: the property is where the path lands.
+    """
+    await _add_login("jane@example.com")
+
+    resp = await _get_users(sysadmin(), project=hostile)
+
+    assert resp.status_code == 400, resp.text
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_slug_is_answered_the_same_way_at_every_tier(isolated_db):
+    """The reason the guard sits *before* the authorisation rather than after it.
+
+    Ordering makes no security difference - `check_project_access` returns early for a
+    sysadmin without building any path, so a guard on either side of it stops the traversal.
+    What ordering decides is the *answer*: with the guard second, an org_admin gets 403
+    ("not yours") for a string that is not a slug at all, while a sysadmin gets 400. Same
+    malformed input, same refusal, whoever asks.
+    """
+    org_id = await _register_org("acme", "ours")
+
+    assert (await _get_users(org_admin(org_id), project="../escapee")).status_code == 400
+    assert (await _get_users(sysadmin(), project="../escapee")).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_leaves_no_file_behind_anywhere(isolated_db):
+    """The guard, not the `.exists()` check downstream, is what stops it - so this asserts the
+    directory is untouched rather than merely that the response was a 400."""
+    before = sorted(p.name for p in pathlib.Path(isolated_db).iterdir())
+
+    assert (await _get_users(sysadmin(), project="../escapee")).status_code == 400
+
+    assert sorted(p.name for p in pathlib.Path(isolated_db).iterdir()) == before
+    assert not (pathlib.Path(isolated_db).parent / "escapee.db").exists()
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_slug_with_hyphens_and_digits_is_not_refused(isolated_db):
+    """The guard is containment, not a character class: project creation never validated a
+    slug's charset, so a format rule invented here could refuse a project that legitimately
+    exists. This is the regression that would catch one being invented later."""
+    await _make_project("client-01_beta")
+    stakeholder = await _add_person("client-01_beta", name="Jane Smith")
+    jane = await _add_login("jane@example.com")
+    await _link(jane, "client-01_beta", stakeholder)
+
+    row = _row(await _list(sysadmin(), project="client-01_beta"), "jane@example.com")
+
+    assert row["person"] == {"name": "Jane Smith", "entity": None}
+
+
 @pytest.mark.asyncio
 async def test_the_unscoped_list_still_shows_every_account(isolated_db):
     """It stays the default because it is the only view that can list an account holding no

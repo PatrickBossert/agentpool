@@ -32,6 +32,38 @@ def get_db_path(slug: str) -> Path:
     return Path(get_settings().database_dir) / f"{slug}.db"
 
 
+def is_contained_slug(slug: str) -> bool:
+    """Whether `get_db_path(slug)` names a file directly inside DATABASE_DIR.
+
+    Every other route that resolves a project takes its slug from a **path** segment, where
+    the router has already split on `/` and a traversal needs an encoding trick to survive.
+    `GET /auth/users?project=` is the first to take one from a **query string**, where `/`
+    and `..` arrive verbatim and nothing upstream objects - so `?project=../../x` builds a
+    path outside DATABASE_DIR, and `check_project_access` returns early for a sysadmin
+    without ever looking at the string.
+
+    Containment rather than a character class, deliberately. Project creation never validated
+    the slug's charset (`create_project` takes `req.client_slug` as given), so a format rule
+    invented here could refuse a project that legitimately exists on a live deployment. What
+    is actually required is that the path stay put, and that is what is asserted: the
+    resolved parent must be DATABASE_DIR itself, which rejects a separator (`a/b` lands in a
+    subdirectory), a traversal (`../x` lands above), and an absolute path (`Path.__truediv__`
+    *replaces* the left side when the right is absolute, so `/etc/x` yields `/etc/x.db`).
+    An empty slug yields a bare `.db` and is refused too.
+
+    Not merged with `_SLUG_RE` in `api/routers/projects.py`, which looks like the same rule
+    and is not: that one is a format check on files served out of PROJECTS_DIR, a different
+    root with a different guarantee. Two rules that happen to reject some of the same strings
+    are not one rule, and unifying them would tie a change in either to the other.
+    """
+    root = Path(get_settings().database_dir).resolve()
+    try:
+        candidate = get_db_path(slug).resolve()
+    except (OSError, ValueError):  # NUL bytes, over-long names
+        return False
+    return candidate.parent == root and candidate.name != ".db"
+
+
 async def init_db(conn: aiosqlite.Connection) -> None:
     await conn.execute("PRAGMA foreign_keys = ON")
     await conn.executescript("""

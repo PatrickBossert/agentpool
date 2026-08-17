@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from api.auth import (
     check_org_access, check_project_access, require_sysadmin, require_org_admin_or_above,
 )
+from api.database import is_contained_slug
 from api.services.admin_service import (
     svc_list_orgs, svc_create_org, svc_get_org, svc_update_org, svc_delete_org,
     svc_list_org_members, svc_add_org_member, svc_update_org_member_role, svc_remove_org_member,
@@ -191,6 +192,12 @@ async def list_users(
     # what is plainly the unscoped view. Absent and blank mean the same thing here.
     project = project or None
     if project is not None:
+        # Before authorisation, not after: check_project_access returns early for a sysadmin
+        # without inspecting the string, so a hostile slug would otherwise reach
+        # get_db_path on the one tier that skips every other check. Refusing here also makes
+        # the answer to a malformed slug the same at every tier.
+        if not is_contained_slug(project):
+            raise HTTPException(status_code=400, detail="Invalid project slug.")
         await check_project_access(project, payload)
     return await svc_list_users(payload, project_slug=project)
 
