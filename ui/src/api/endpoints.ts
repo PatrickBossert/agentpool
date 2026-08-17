@@ -13,6 +13,7 @@ import type {
   FinancialSummary,
   HumanReview,
   OrchestrationRunHistory,
+  InviteLinkResponse,
   Stakeholder,
   StakeholderImportResult,
   StakeholderNodeAssignment,
@@ -255,6 +256,20 @@ export const stakeholdersApi = {
 
   remove: (slug: string, id: number): Promise<void> =>
     apiClient.delete(`/projects/${slug}/stakeholders/${id}`).then(() => undefined),
+
+  // Mints a fresh invite token onto this stakeholder's unredeemed invite and hands back the
+  // raw value - there is no wired outbound-email path for invites, so the link is delivered
+  // by hand. Asking again replaces the previous token, killing the earlier link.
+  //
+  // Offered only to a caller whose `can_issue_invite_links` is true: the door is
+  // `require_org_admin_or_above` deliberately, and a project_admin gets a 403. It also
+  // refuses when there is nothing to resend (404) or when the person can already log in on
+  // this project (409), which is why the action is offered only for `access_state:
+  // 'invited'`.
+  resendInvite: (slug: string, id: number): Promise<InviteLinkResponse> =>
+    apiClient
+      .post<InviteLinkResponse>(`/projects/${slug}/stakeholders/${id}/resend-invite`)
+      .then((r) => r.data),
 
   importCsv: (slug: string, file: File): Promise<StakeholderImportResult> => {
     const form = new FormData()

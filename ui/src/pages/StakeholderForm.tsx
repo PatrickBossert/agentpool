@@ -7,7 +7,11 @@ import { COUNTRY_DATA, COUNTRY_OPTIONS } from '../utils/countryData'
 import type { Stakeholder } from '../types'
 import { describeError } from '../utils/describeError'
 
-type FormData = Omit<Stakeholder, 'id' | 'created_at'>
+// access_state is excluded along with the two identity fields: it is a server-computed
+// reading of whether this person can reach the project (see api/services/
+// stakeholder_access.py), not a field anybody edits, and carrying it in the form state
+// would put it on every save for the write doors to discard.
+type FormData = Omit<Stakeholder, 'id' | 'created_at' | 'access_state'>
 
 const EMPTY: FormData = {
   name: '',
@@ -205,7 +209,7 @@ export default function StakeholderForm() {
     if (isEdit && existing && id) {
       const found = existing.find((s) => s.id === Number(id))
       if (found) {
-        const { id: _id, created_at: _ca, ...rest } = found
+        const { id: _id, created_at: _ca, access_state: _as, ...rest } = found
         setForm(rest)
       }
     }

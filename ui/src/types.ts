@@ -176,6 +176,15 @@ export interface ResetLinkResponse {
   email: string
 }
 
+// POST /projects/{slug}/stakeholders/{id}/resend-invite's response. The raw token, for the
+// same reason ResetLinkResponse carries one: no outbound-email path is wired for invites,
+// so an administrator delivers the link by hand. The body is a redeemable credential, which
+// is why the door stayed on the platform tier when sp44 widened the rest of its router -
+// see MyPermissions.can_issue_invite_links.
+export interface InviteLinkResponse {
+  invite_token: string
+}
+
 export interface UserPayload {
   sub: string
   role: 'sysadmin' | 'org_admin' | 'reviewer'
@@ -280,7 +289,30 @@ export interface Stakeholder {
   interview_invited_at: string | null
   interview_completed_at: string | null
   created_at: string
+  // Whether this person can actually reach the engagement, computed by the server - see
+  // api/services/stakeholder_access.py. Two thirds of it (a linked login, an unredeemed
+  // invite) live in system.db, which the browser cannot see at all, so this is not
+  // derivable here even in principle.
+  //
+  // Optional because only the list door serves it: a create or update response is the row
+  // as written, before anything has asked system.db about it.
+  access_state?: AccessState
 }
+
+export type AccessState =
+  // A login linked to this project.
+  | 'has_login'
+  // An unredeemed invite exists - the only state an invite link can be issued for.
+  | 'invited'
+  // Holds a role beyond participant with no deliverable address: cannot be invited at all
+  // until the address is repaired.
+  | 'unreachable'
+  // Holds a deliverable role and has neither a login nor an invite. Roles granted before
+  // the invite trigger existed have this shape; clearing the role and re-setting it is
+  // what issues one.
+  | 'not_invited'
+  // Participant only. Interviews reach them by campaign link, so no login is needed.
+  | 'no_login_needed'
 
 export interface StakeholderNodeAssignment {
   id: number
@@ -783,4 +815,9 @@ export interface MyPermissions {
   // Narrower than administering it: an org_admin configures everything and still
   // cannot mint a project_admin.
   can_grant_roles: boolean
+  // Whether this caller may retrieve an invite link for a stakeholder on this project.
+  // The one permission here that is *narrower* than administering the engagement: the
+  // response body of the door it reports on is a redeemable credential, so it asks the
+  // platform tier (org_admin or sysadmin) and a project_admin is refused.
+  can_issue_invite_links: boolean
 }
