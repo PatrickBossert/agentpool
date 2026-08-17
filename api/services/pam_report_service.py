@@ -8,31 +8,19 @@ stored artefact would stop matching what the UI shows.
 from __future__ import annotations
 import json
 from datetime import datetime, timezone, date as date_t
+from agents.graph import GRAPH
 from api.database import get_connection
 
-CREW_ORDER = [
-    'discovery_mapping',
-    'stakeholder_management',
-    'assessment_design',
-    'discovery_interviews',
-    'discovery',
-    'value_design',
-    'architecture',
-    'delivery',
-    'business_plan',
-]
-
-CREW_LABELS = {
-    'discovery_mapping':      'Value Chain Mapping',
-    'assessment_design':      'Assessment Design',
-    'discovery':              'Discovery',
-    'stakeholder_management': 'Stakeholder Management',
-    'discovery_interviews':   'Discovery Interviews',
-    'value_design':           'Value Design',
-    'architecture':           'Architecture',
-    'delivery':               'Delivery',
-    'business_plan':          'Business Plan',
-}
+# Which crews exist, what order they run in, what each is called, and who runs in it all come
+# from the graph. This module used to declare all four beside each other, and every one had
+# gone stale in a different direction: the order and the labels still named `discovery` and
+# `architecture`, crews retired two sprints ago; nothing named `requirements` or
+# `capabilities`, so neither appeared on Pamela's report at all; and the membership map put
+# the Illustrator in `delivery`, where he is dispatched by nothing.
+#
+# The order the report lists crews in is the order they can run, derived from
+# CREW_DEPENDENCIES. A hand-typed order can contradict the dependency map, and this one did -
+# it showed stakeholder_management before assessment_design, which the graph requires first.
 
 
 def _today() -> str:
@@ -126,21 +114,11 @@ async def build_pam_report(slug: str) -> dict:
         }
 
         # outputs per crew (approximate by agent_name snake_case)
-        CREW_AGENT_KEYS: dict[str, list[str]] = {
-            'discovery_mapping':      ['value_chain_mapper'],
-            'assessment_design':      ['interaction_designer'],
-            'discovery':              ['requirements_capture', 'requirements_analyst', 'value_lever_analyst'],
-            'stakeholder_management': ['stakeholder_manager'],
-            'discovery_interviews':   ['interview_coordinator', 'stakeholder_interviewer', 'synthesis_analyst'],
-            'value_design':           ['value_proposition_generator', 'portfolio_manager'],
-            'architecture':           ['enterprise_architect', 'initiative_identifier'],
-            'delivery':               ['roadmap_generator', 'visual_illustrator'],
-            'business_plan':          ['business_plan_generator'],
-        }
         INTERNAL_TYPES = {'value_chain_tree', 'value_chain_registry', 'value_chain_summary', 'state'}
 
         def _crew_outputs(crew_key: str) -> list[dict]:
-            keys = set(CREW_AGENT_KEYS.get(crew_key, []))
+            crew = GRAPH.crews.get(crew_key)
+            keys = set(crew.agent_ids) if crew else set()
             return [o for o in outputs if o['agent_name'] in keys and o['output_type'] not in INTERNAL_TYPES]
 
         # ── Human reviews ──────────────────────────────────────────────────────
@@ -166,13 +144,13 @@ async def build_pam_report(slug: str) -> dict:
 
     # ── Derive per-crew status ─────────────────────────────────────────────────
     crews = []
-    for ck in CREW_ORDER:
+    for ck, crew in GRAPH.crews.items():
         run = latest_run.get(ck)
         co = _crew_outputs(ck)
         pending_for_crew = [r for r in pending_reviews if r.get('crew_name') == ck]
         crews.append({
             'crew_key':        ck,
-            'crew_label':      CREW_LABELS.get(ck, ck),
+            'crew_label':      crew.display_name,
             'status':          run['status'] if run else 'not_started',
             'last_run_at':     run['started_at'] if run else None,
             'finished_at':     run.get('finished_at') if run else None,
@@ -296,7 +274,8 @@ async def build_pam_report(slug: str) -> dict:
 
     for rev in pending_reviews:
         cn = rev.get('crew_name') or 'Unknown'
-        label = CREW_LABELS.get(cn, cn)
+        crew = GRAPH.crews.get(cn)
+        label = crew.display_name if crew else cn
         prompt_preview = (rev.get('prompt') or '')[:120].strip()
         if len(rev.get('prompt') or '') > 120:
             prompt_preview += '…'
