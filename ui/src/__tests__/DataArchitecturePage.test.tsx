@@ -133,7 +133,18 @@ const PAYLOAD: Model = {
     {
       source: 'invented_sector_store',
       medium: 'a Chroma collection',
+      via: 'InventedQueryTool',
       read_by: ['Alex Chen'],
+      reachable_by: ['Alex Chen', 'Someone Else', 'A Third Person'],
+      handed_to_every_agent: false,
+    },
+    {
+      source: 'invented_system_table',
+      medium: 'a table in a SQLite database',
+      via: 'build_and_run_crew',
+      read_by: [],
+      reachable_by: [],
+      handed_to_every_agent: true,
     },
   ],
   scope: {
@@ -203,6 +214,36 @@ describe('the generated half of the privacy page', () => {
     expect(screen.getByText(/Shared beyond this project/)).toBeInTheDocument()
   })
 
+  it('puts a shared table in the same panel as a shared collection', async () => {
+    // A table in the deployment's own database is shared in exactly the sense the panel is
+    // about. While the flag was asked only of collections it could never appear here, and the
+    // two genuinely shared tables surfaced only inside a note several sections below.
+    renderPage()
+    await screen.findByText(/Not scoped to this project/)
+    expect(screen.getByText(/invented_system_table/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/handed to every agent when a crew is dispatched/),
+    ).toBeInTheDocument()
+  })
+
+  it('names who can reach a collection, not only who is declared to read it', async () => {
+    // The declared readers are half the truth: the collection is an argument to the query
+    // tool, so every holder can reach it. A generated row inherits authority, and this one was
+    // accurate, specific, and short by half.
+    renderPage()
+    await screen.findByText(/Not scoped to this project/)
+    expect(screen.getByText(/agents instructed to read it/)).toBeInTheDocument()
+    expect(screen.getByText(/any of the 3 agents holding that tool can query it/)).toBeInTheDocument()
+    expect(screen.getByText(/Someone Else/)).toBeInTheDocument()
+  })
+
+  it('says once that a collection is named at query time, covering both collections', async () => {
+    renderPage()
+    expect(
+      await screen.findByText(/any agent holding the query tool can reach any collection/),
+    ).toBeInTheDocument()
+  })
+
   it('states its own scope, naming the agent the declarations put in no crew', async () => {
     renderPage()
     expect(await screen.findByText(/1 crews/)).toBeInTheDocument()
@@ -263,6 +304,36 @@ describe('the prose half', () => {
     expect(
       screen.getByText(/The skills library is deliberately always hosted/),
     ).toBeInTheDocument()
+  })
+
+  // The prose is about a deployment the generated half has just described, so it cannot be
+  // rendered blind. The fixture above resolves inference to a local model; a card asserting a
+  // contract about Anthropic processing these prompts would contradict the table two sections
+  // up, on the one question the page exists to answer.
+  it('does not assert an Anthropic inference contract when inference stays on this server', async () => {
+    renderPage()
+    await screen.findByText(/Undertakings/)
+    expect(screen.queryByText(/Anthropic - inference, in flight only/)).toBeNull()
+    expect(screen.getByText(/Anthropic - not this engagement's agents/)).toBeInTheDocument()
+    // And it does not swing the other way: Anthropic is still reached by the skills library on
+    // a sensitive engagement, so the terms are stated rather than dropped.
+    expect(screen.getByText(/the skills library below/)).toBeInTheDocument()
+  })
+
+  it('asserts it when inference does leave', async () => {
+    get.mockResolvedValue({
+      ...PAYLOAD,
+      llm_mode: 'standard',
+      inference: { ...PAYLOAD.inference, leaves_deployment: true },
+    })
+    renderPage()
+    expect(await screen.findByText(/Anthropic - inference, in flight only/)).toBeInTheDocument()
+    expect(screen.queryByText(/Anthropic - not this engagement's agents/)).toBeNull()
+  })
+
+  it('says that the paths outside the crews were checked against the table', async () => {
+    renderPage()
+    expect(await screen.findByText(/Paths outside the crews/)).toBeInTheDocument()
   })
 })
 

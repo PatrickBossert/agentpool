@@ -74,7 +74,15 @@ export interface DataArchitectureDispatchPath {
 export interface DataArchitectureSharedSource {
   source: string
   medium: string
+  via: string
+  // Who is declared to read it. For a store handed to every agent by the dispatch path this is
+  // empty, and handed_to_every_agent says so.
   read_by: string[]
+  // Who *can* reach it: everyone holding the tool the read arrives through. A Chroma collection
+  // is an argument to ChromaQueryTool, so this is wider than read_by and the difference is the
+  // point - the declared list is the instructed readers, not the population with access.
+  reachable_by: string[]
+  handed_to_every_agent: boolean
 }
 
 export interface DataArchitecture {

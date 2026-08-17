@@ -45,6 +45,7 @@ approval door, and that authority lives in `api/auth.py`, not in this graph.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from agents.charter import DISPATCH_PATHS
@@ -96,37 +97,117 @@ def _injecting_dispatchers() -> frozenset[str]:
     return frozenset({VIA_DISPATCH} | wrappers)
 
 
-def _read(read: Read) -> dict:
-    """One declared read, with the one property the page must not get wrong made explicit.
+_DATABASE_SOURCE = Path(__file__).parent.parent / "database.py"
+_CREATE_TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS\s+(\w+)", re.IGNORECASE)
 
-    A Chroma collection whose name template carries no `{slug}` is not this project's store -
-    it is the sector's, shared with every other engagement in it. Derived from the template
-    rather than from the note beside it, so a collection added later inherits the badge.
+
+def system_database_tables() -> frozenset[str]:
+    """Every table `init_system_db` creates, read from the source.
+
+    The system database is the deployment's, not a project's: `users`, the organisations, the
+    skills library. A table in it is shared by every engagement on the server, and two of them
+    are read on every agent's behalf. Parsed rather than opened, because the answer must not
+    depend on which databases happen to exist on the machine rendering the page - and parsed
+    rather than declared, because a hand-kept list of "the shared tables" is precisely the kind
+    of copy that goes quietly out of date beside the schema it describes.
     """
+    tree = ast.parse(_DATABASE_SOURCE.read_text(), filename=str(_DATABASE_SOURCE))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "init_system_db":
+            return frozenset(
+                name
+                for literal in ast.walk(node)
+                if isinstance(literal, ast.Constant) and isinstance(literal.value, str)
+                for name in _CREATE_TABLE.findall(literal.value)
+            )
+    return frozenset()
+
+
+def is_shared_beyond_one_project(read: Read) -> bool:
+    """Whether this source holds more than this engagement's material.
+
+    Asked of **every** medium, not only of collections. The first version of this asked it of
+    `Medium.VECTOR_COLLECTION` alone, so `agent_skill_notes` and `skills` - which are in the
+    system database, are global across engagements, and are folded into every agent's
+    instructions on every crew run - could never earn the badge whatever they were called. The
+    page's sharing panel is where a reader goes with exactly that question, and it could not
+    answer it for the two stores that most needed answering.
+
+    There is no one predicate across the media, because a source's name is only meaningful
+    inside its own namespace: a collection's name is built from the slug and the sector, a
+    table's name says nothing at all and its database is what places it. So each medium is
+    asked in its own terms and every medium is asked:
+
+    - `VECTOR_COLLECTION` - shared when the name template carries no `{slug}`.
+    - `DATABASE_TABLE` - shared when `init_system_db` creates it, read off the schema.
+    - `ARTEFACT_JSON` and `UPLOADED_DOCUMENT` - never shared: both resolve under
+      `projects/{slug}/`, so the slug is in the path rather than in the name.
+    """
+    if read.medium is Medium.VECTOR_COLLECTION:
+        return "{slug}" not in read.source
+    if read.medium is Medium.DATABASE_TABLE:
+        return read.source in system_database_tables()
+    return False
+
+
+def _read(read: Read) -> dict:
     return {
         "source": read.source,
         "medium": read.medium.value,
         "via": read.via,
         "note": read.note,
-        "shared_beyond_this_project": (
-            read.medium is Medium.VECTOR_COLLECTION and "{slug}" not in read.source
-        ),
+        "shared_beyond_this_project": is_shared_beyond_one_project(read),
     }
 
 
-def _shared_sources(graph) -> dict[tuple[str, str], set[str]]:
-    """Sources that are not this project's alone, and who reads each one.
+def _shared_sources(graph) -> list[dict]:
+    """Every source that is not this project's alone, whoever reaches it.
 
-    One entry per source, not per agent: the point of the section it feeds is that the store
-    is shared, and repeating it under each reader would bury that under the readers.
+    One entry per source, not per reader: the point of the panel it feeds is that the store is
+    shared, and repeating it under each reader would bury that under the readers.
+
+    `CREW_DISPATCH_READS` is walked alongside the agents' own sources. Those six tables reach
+    an agent without any agent asking, so a walk over `AGENT_READS` alone leaves the two shared
+    ones out of the panel entirely - which is how the system database's global skills library
+    came to appear only inside a note, several sections below the panel a reader consults for
+    this exact question.
+
+    `reachable_by` is the finding the declared list cannot carry. `AGENT_READS` says which
+    agents are *instructed* to read a collection; `ChromaQueryTool` takes the collection as an
+    argument, so any agent holding it can query any collection it names - and the sector store
+    is the tool's fallback for an unrecognised value rather than a special case. Derived from
+    the route: whoever holds the tool the read arrives through.
     """
-    shared: dict[tuple[str, str], set[str]] = {}
+    holders: dict[str, list[str]] = {}
+    for node in graph.agents.values():
+        for tool in node.tools:
+            holders.setdefault(tool, []).append(node.display_name)
+
+    rows: dict[tuple[str, str, str], set[str]] = {}
     for node in graph.agents.values():
         for source in node.sources:
-            if _read(source)["shared_beyond_this_project"]:
-                key = (source.source, source.medium.value)
-                shared.setdefault(key, set()).add(node.display_name)
-    return shared
+            if is_shared_beyond_one_project(source):
+                rows.setdefault(
+                    (source.source, source.medium.value, source.via), set()
+                ).add(node.display_name)
+    for read in CREW_DISPATCH_READS:
+        if is_shared_beyond_one_project(read):
+            rows.setdefault((read.source, read.medium.value, read.via), set())
+
+    return sorted(
+        (
+            {
+                "source": source,
+                "medium": medium,
+                "via": via,
+                "read_by": sorted(read_by),
+                "reachable_by": sorted(holders.get(via, [])),
+                "handed_to_every_agent": via == VIA_DISPATCH,
+            }
+            for (source, medium, via), read_by in rows.items()
+        ),
+        key=lambda row: row["source"],
+    )
 
 
 def _tool_row(tool: str, llm_mode: str, held_by: list[str]) -> dict:
@@ -185,6 +266,16 @@ def data_architecture(slug: str) -> dict:
         ),
         # Declared, and held by nobody. Rendered so the page cannot be read as claiming a tool
         # is in use, and cannot silently drop one either.
+        #
+        # "Held by nobody" is read off `tool_map`'s source, which by construction cannot see the
+        # one substitution that happens at run time: `get_tools_for_agent` swaps
+        # `ChainlitHumanInputTool` in for every `HumanInputTool` when the Chainlit app passes
+        # `hitl_tool`. That is sound today only because the Chainlit path can start nothing -
+        # all five of its branches raise - and it is `tests/test_crew_charter.py`'s
+        # `CHAINLIT_CONSOLE` defect guard that keeps it so: the guard derives the breakage from
+        # the call sites and the factory signatures, so repairing any branch fails it. Whoever
+        # repairs one must make this page stop saying "nothing here is in use" in the same
+        # change. The dependency is one-way and invisible from here, hence this note.
         "declared_not_held": sorted(
             (
                 {
@@ -240,17 +331,7 @@ def data_architecture(slug: str) -> dict:
         # Lifted to the top level as well as sitting on each agent, because a badge on row
         # eleven of a per-agent list is not where a reader learns that a store is not theirs
         # alone. Derived from the same predicate, so the two cannot say different things.
-        "shared_sources": sorted(
-            (
-                {
-                    "source": source,
-                    "medium": medium,
-                    "read_by": sorted(read_by),
-                }
-                for (source, medium), read_by in _shared_sources(graph).items()
-            ),
-            key=lambda row: row["source"],
-        ),
+        "shared_sources": _shared_sources(graph),
         "scope": {
             "crew_count": len(graph.crews),
             "agents_in_no_crew": [

@@ -106,6 +106,12 @@ function Card({ children }: { children: React.ReactNode }) {
 
 // ── The generated half ────────────────────────────────────────────────────────
 
+// The scope notice derives *who* falls outside the declared crews and deliberately does not
+// explain *why*. It is `pam` today, and the reason is that her own orchestration crews are
+// built outside the graph - but an agent that falls out of every crew for some quite different
+// reason tomorrow would inherit that sentence as an account of its own absence, which is a
+// derived list carrying a hard-coded explanation. What is said instead is true of any orphan:
+// whatever it runs outside the declared crews is not enumerated here.
 function ScopeNotice({ data }: { data: DataArchitectureModel }) {
   const orphans = data.scope.agents_in_no_crew
   return (
@@ -123,9 +129,9 @@ function ScopeNotice({ data }: { data: DataArchitectureModel }) {
           <p className="text-xs text-secondary leading-relaxed mt-2">
             It does not cover everything that runs on an engagement.{' '}
             {orphans.map((a) => a.display_name).join(', ')}{' '}
-            {orphans.length === 1 ? 'runs' : 'run'} in none of those crews: the orchestration crews
-            that dispatch the pipeline are built outside the declared set, so what they themselves
-            execute is not enumerated below. The agents they dispatch are.
+            {orphans.length === 1 ? 'runs' : 'run'} in none of those crews, so whatever{' '}
+            {orphans.length === 1 ? 'that agent executes' : 'those agents execute'} outside them
+            is not enumerated below. Every agent inside the declared crews is.
           </p>
         )}
       </div>
@@ -224,15 +230,30 @@ function SharedSources({ data }: { data: DataArchitectureModel }) {
         </p>
       </div>
       <p className="text-xs text-amber-800 leading-relaxed mb-3">
-        These stores carry no project identifier. They are shared with every other engagement
-        that uses them, and material an agent draws from one of them did not necessarily come
-        from this engagement - nor does material placed in one stay within it.
+        These stores are not this engagement's alone - a Chroma collection whose name carries no
+        project, or a table in the deployment's own database. They are shared with every other
+        engagement that uses them, and material an agent draws from one of them did not
+        necessarily come from this engagement - nor does material placed in one stay within it.
       </p>
       <ul className="space-y-2">
         {data.shared_sources.map((s) => (
           <li key={s.source} className="text-xs text-amber-900">
             <span className="font-mono font-semibold">{s.source}</span>
-            <span className="text-amber-700"> - {s.medium}, read by {s.read_by.join(', ')}</span>
+            <span className="text-amber-700"> - {s.medium}</span>
+            {s.handed_to_every_agent ? (
+              <span className="text-amber-700">
+                , handed to every agent when a crew is dispatched
+              </span>
+            ) : (
+              <span className="text-amber-700">, declared readers: {s.read_by.join(', ')}</span>
+            )}
+            {s.reachable_by.length > s.read_by.length && (
+              <span className="block text-amber-800">
+                Those are the agents instructed to read it. The collection is an argument to{' '}
+                {s.via}, so any of the {s.reachable_by.length} agents holding that tool can query
+                it: {s.reachable_by.join(', ')}.
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -317,11 +338,37 @@ function AgentCard({ agent }: { agent: DataArchitectureModel['agents'][number] }
 // Commitments a person has made, which no declaration in this repository can derive. Kept in
 // one place, under one heading, so that the boundary between "the system says this about
 // itself" and "we promise this" is a section break rather than a matter of tone.
-const UNDERTAKINGS: { title: string; detail: string }[] = [
+//
+// `appliesTo` is what stops this half contradicting the other. These are prose, but they are
+// prose *about* a deployment whose behaviour the generated half has just described, and the
+// first version of this array was mapped unconditionally: on a sensitive engagement the table
+// said inference resolves to the local model and stayed on this server, and two sections later
+// a card headed "Anthropic - inference, in flight only" asserted a contract about Anthropic
+// processing that client's prompts. It over-reported exposure rather than hiding it, so it was
+// not a safety hole - but a visible self-contradiction on the one question the page exists to
+// answer, on the engagement type read most carefully, is worse than most safety holes for what
+// it does to a reader's trust in everything around it.
+//
+// Note what is NOT done here: the Anthropic card is not simply hidden on a sensitive project.
+// Anthropic is still reached on one - the skills library is hosted by decision whatever the
+// project's mode - so removing the terms altogether would under-report. The card is replaced by
+// one that says which paths do and do not reach it.
+const UNDERTAKINGS: {
+  title: string
+  detail: string
+  appliesTo?: (data: DataArchitectureModel) => boolean
+}[] = [
   {
     title: 'Anthropic - inference, in flight only',
     detail:
       "Under Anthropic's commercial terms, API inputs and outputs are not used to train models and are not retained beyond the call. That is a contractual undertaking, not something this system can observe.",
+    appliesTo: (data) => data.inference.leaves_deployment,
+  },
+  {
+    title: "Anthropic - not this engagement's agents",
+    detail:
+      "This engagement's inference resolves to the local model on this host, so no agent's prompt reaches Anthropic. One path still does, whatever the mode: the skills library below. Anthropic's commercial terms - inputs and outputs neither retained beyond the call nor used for training - govern that path.",
+    appliesTo: (data) => !data.inference.leaves_deployment,
   },
   {
     title: 'ElevenLabs - speech synthesis, nothing kept',
@@ -347,6 +394,11 @@ const UNDERTAKINGS: { title: string; detail: string }[] = [
     title: 'The skills library is deliberately always hosted',
     detail:
       "Reviewer feedback about how an agent behaves is summarised by a hosted model regardless of a project's mode. This is a decision rather than an oversight: the library is global across engagements and its endpoints carry no project, so there is no project mode to honour. It is still reviewer feedback typed on an engagement, and a project-scoped library is the fix if that stops being acceptable.",
+  },
+  {
+    title: 'Paths outside the crews',
+    detail:
+      "Not everything that touches this engagement's material is an agent in a crew: uploading a document indexes it, an interview answer is indexed as it is given, the agent chat retrieves against the same collections, and a live interview presses for elaboration. Each of those was checked against the table above and reaches only destinations already named there, and each follows this project's processing mode. They are stated here rather than in the generated half because nothing derives them.",
   },
   {
     title: 'Data at rest, and in transit',
@@ -560,7 +612,16 @@ export default function DataArchitecture() {
       <Section
         title="What each agent draws on"
         icon={<Zap size={16} />}
-        intro="Every agent, with the tools it holds, everywhere its work can reach in this project's mode, and the material the deployment hands it."
+        intro={
+          <>
+            Every agent, with the tools it holds, everywhere its work can reach in this project's
+            mode, and the material the deployment hands it. What is listed against an agent is
+            what it is <strong>instructed</strong> to read. A Chroma collection is named at query
+            time rather than fixed per agent, so any agent holding the query tool can reach any
+            collection - including this project's interview answers and the shared sector store -
+            whether or not it is listed below.
+          </>
+        }
       >
         <div className="space-y-3">
           {data.agents.map((a) => (
@@ -575,7 +636,7 @@ export default function DataArchitecture() {
         intro="This section is not generated. Retention, contractual terms, and deliberate exceptions cannot be derived from the code, so they are written here by a person and kept apart from everything above."
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {UNDERTAKINGS.map((u) => (
+          {UNDERTAKINGS.filter((u) => u.appliesTo?.(data) ?? true).map((u) => (
             <Card key={u.title}>
               <p className="text-sm font-semibold text-primary mb-1">{u.title}</p>
               <p className="text-xs text-muted leading-relaxed">{u.detail}</p>

@@ -35,6 +35,7 @@ from api.services.chroma_client import forget_project_mode
 from api.services.data_architecture_service import (
     data_architecture,
     dispatch_wrapper_reaches_build_and_run_crew,
+    system_database_tables,
 )
 
 SLUG = "data-arch-test"
@@ -306,8 +307,72 @@ async def test_the_shared_sector_store_is_never_reported_as_this_project_alone(c
     assert expected, "no shared collection found - this test would assert nothing"
 
     top_level = {row["source"] for row in payload["shared_sources"]}
-    assert top_level == {source for _, source in expected}
-    assert all(row["read_by"] for row in payload["shared_sources"])
+    assert {source for _, source in expected} <= top_level
+
+
+@pytest.mark.asyncio
+async def test_a_shared_table_earns_the_badge_as_readily_as_a_shared_collection(client):
+    """The predicate is asked of every medium, not only of collections.
+
+    `agent_skill_notes` and `skills` are in the system database - global across engagements -
+    and both are folded into every agent's instructions on every crew run. While the flag was
+    `medium is VECTOR_COLLECTION and ...` they could never earn it whatever they were called,
+    so the panel a reader consults with exactly this question said nothing about the two stores
+    that most needed saying. Both halves are asserted: every system table declared as a read is
+    flagged, and no project table is.
+    """
+    payload = await _payload(client)
+    system_tables = system_database_tables()
+    assert {"agent_skill_notes", "skills"} <= system_tables
+
+    flagged = {row["source"] for row in payload["shared_sources"]}
+    assert {"agent_skill_notes", "skills"} <= flagged
+
+    declared_tables = {
+        read.source
+        for reads in list(AGENT_READS.values()) + [CREW_DISPATCH_READS]
+        for read in reads
+        if read.medium is Medium.DATABASE_TABLE
+    }
+    assert flagged & declared_tables == declared_tables & system_tables
+    # A project table must not be swept in: these are in the project's own database.
+    assert not flagged & {"stakeholders", "interview_sessions", "validation_warnings"}
+
+
+@pytest.mark.asyncio
+async def test_the_panel_names_who_can_reach_a_collection_not_only_who_is_told_to(client):
+    """The declared readers are half the truth, and a generated table inherits authority.
+
+    `AGENT_READS` declares three agents on `sector_{sector}`. `ChromaQueryTool` takes the
+    collection as an argument and falls back to the sector store for any unrecognised value, so
+    every one of its holders can query it. Six do. The panel must carry the wider set beside
+    the declared one, and it is derived from the route rather than counted by hand.
+    """
+    payload = await _payload(client)
+    sector = next(r for r in payload["shared_sources"] if r["source"] == "sector_{sector}")
+
+    holders = sorted(
+        node.display_name
+        for node in build_graph().agents.values()
+        if sector["via"] in node.tools
+    )
+    assert sector["reachable_by"] == holders
+    assert len(sector["reachable_by"]) > len(sector["read_by"])
+    assert set(sector["read_by"]) < set(sector["reachable_by"])
+
+
+@pytest.mark.asyncio
+async def test_a_store_handed_to_every_agent_says_so_rather_than_naming_nobody(client):
+    """`CREW_DISPATCH_READS` reaches an agent without any agent asking, so `read_by` is empty.
+
+    An empty reader list rendered as "read by " would read as "nobody reads it", which of the
+    skills library is the opposite of the truth.
+    """
+    payload = await _payload(client)
+    for source in ("agent_skill_notes", "skills"):
+        row = next(r for r in payload["shared_sources"] if r["source"] == source)
+        assert row["handed_to_every_agent"] is True
+        assert row["read_by"] == []
 
 
 @pytest.mark.asyncio
