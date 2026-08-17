@@ -115,3 +115,91 @@ async def test_revert_supersedes_by_output_type_not_by_agent(project):
     remaining = [dict(r) for r in remaining]
     assert remaining == [{"id": alex_v1, "is_current": 1}]
     assert sum(r["is_current"] for r in remaining) == 1
+
+
+# ── Which crew's reviews a revert clears ──────────────────────────────────────
+#
+# A revert dismisses the pending HITL reviews of the crew whose output it rolled back;
+# human_reviews link via crew_run_id, so they otherwise survive the output's deletion and the
+# board stays stuck waiting on a review of something that no longer exists.
+#
+# Which crew that is came from a hand-written agent-to-crew map in api/database.py. It listed
+# fifteen of the seventeen agents - visual_illustrator and pam were simply absent - and it had
+# already been wrong once about Morgan, sending a revert of her output to a crew she had left.
+# An agent missing from the map fails silently: the revert succeeds and the stale review stays.
+
+
+async def _crew_run(conn, crew_name, run_id):
+    await conn.execute(
+        "INSERT INTO crew_runs (id, project_id, crew_name, status) VALUES (?,1,?,'completed')",
+        (run_id, crew_name),
+    )
+    await conn.execute(
+        "INSERT INTO human_reviews (crew_run_id, decision, prompt) VALUES (?,'pending','p')",
+        (run_id,),
+    )
+    await conn.commit()
+
+
+async def _decisions(conn) -> dict[str, str]:
+    async with conn.execute(
+        "SELECT cr.crew_name, hr.decision FROM human_reviews hr"
+        " JOIN crew_runs cr ON cr.id = hr.crew_run_id"
+    ) as cur:
+        return {r["crew_name"]: r["decision"] for r in await cur.fetchall()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent_name,expected_crew",
+    [
+        # Absent from the deleted map entirely - the Illustrator's revert dismissed nothing.
+        ("visual_illustrator", "business_plan"),
+        # Present and correct in the deleted map: the fix must not have moved this one.
+        ("roadmap_generator", "delivery"),
+    ],
+)
+async def test_a_revert_dismisses_the_pending_review_of_its_own_crew(
+    agent_name, expected_crew, project
+):
+    from agents.graph import build_graph
+
+    other = next(c for c in build_graph().crews if c != expected_crew)
+    async with get_connection(SLUG) as conn:
+        v1 = await _output(conn, agent_name, "brief", 1, is_current=0)
+        await _output(conn, agent_name, "brief", 2, is_current=1)
+        await _crew_run(conn, expected_crew, 1)
+        await _crew_run(conn, other, 2)
+
+    async with get_connection(SLUG) as conn:
+        await revert_to_version(conn, project_id=1, output_id=v1)
+
+    async with get_connection(SLUG) as conn:
+        decisions = await _decisions(conn)
+    assert decisions[expected_crew] == "dismissed"
+    assert decisions[other] == "pending", "a revert cleared a review on a crew it does not own"
+
+
+@pytest.mark.asyncio
+async def test_a_revert_by_an_agent_in_no_crew_dismisses_nothing(project):
+    """PAM is in no crew, so there is no crew whose reviews are hers to clear. A lookup that
+    guessed - by taking the first crew, say - would pass the tests above and clear a stranger's
+    review here.
+
+    Every crew carries a pending review, not one: a single crew leaves the guess free to name
+    a crew with no run row, where the dismissal matches nothing and the test passes anyway.
+    """
+    from agents.graph import build_graph
+
+    crews = list(build_graph().crews)
+    async with get_connection(SLUG) as conn:
+        v1 = await _output(conn, "pam", "state", 1, is_current=0)
+        await _output(conn, "pam", "state", 2, is_current=1)
+        for run_id, crew_id in enumerate(crews, start=1):
+            await _crew_run(conn, crew_id, run_id)
+
+    async with get_connection(SLUG) as conn:
+        await revert_to_version(conn, project_id=1, output_id=v1)
+
+    async with get_connection(SLUG) as conn:
+        assert await _decisions(conn) == {crew_id: "pending" for crew_id in crews}

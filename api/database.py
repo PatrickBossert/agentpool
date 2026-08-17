@@ -6,26 +6,30 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from api.config import get_settings
 
-# Maps snake_case agent_name → crew_name so revert can clear pending HITL reviews
-_AGENT_TO_CREW: dict[str, str] = {
-    "value_chain_mapper":          "discovery_mapping",
-    "interaction_designer":        "assessment_design",
-    "requirements_capture":        "requirements",
-    "requirements_analyst":        "requirements",
-    # Morgan moved to the mapping crew; this map still said otherwise, so a revert of her
-    # output would have cleared pending reviews on the wrong crew entirely.
-    "value_lever_analyst":         "discovery_mapping",
-    "stakeholder_manager":         "stakeholder_management",
-    "interview_coordinator":       "discovery_interviews",
-    "stakeholder_interviewer":     "discovery_interviews",
-    "synthesis_analyst":           "discovery_interviews",
-    "value_proposition_generator": "value_design",
-    "portfolio_manager":           "value_design",
-    "enterprise_architect":        "capabilities",
-    "initiative_identifier":       "capabilities",
-    "roadmap_generator":           "delivery",
-    "business_plan_generator":     "business_plan",
-}
+
+def _crew_of(agent_name: str) -> str | None:
+    """The crew an agent runs in, or None if it runs in none.
+
+    This inverts the graph rather than restating it. The map it replaces listed fifteen of
+    the seventeen agents - `visual_illustrator` and `pam` were absent - and it had already
+    been wrong once about Morgan, sending a revert of her output to clear reviews on a crew
+    she had left. An agent missing from a hand-written inversion is silent in exactly the
+    same way: the revert succeeds and the pending review it should have dismissed stays.
+
+    Imported inside the function, and the reason is a real cycle rather than caution:
+    `agents/graph.py` imports `api.services.run_service`, which imports this module, and
+    `api.services.crew_graph` imports it too. A module-level import here fails at start-up
+    in every import order - verified, not assumed.
+
+    `None` is a legitimate answer, not a lookup failure. PAM is in no crew.
+    """
+    from agents.graph import GRAPH
+
+    for crew in GRAPH.crews.values():
+        if agent_name in crew.agent_ids:
+            return crew.crew_id
+    return None
+
 
 
 def get_db_path(slug: str) -> Path:
@@ -1897,7 +1901,7 @@ async def revert_to_version(
     # Auto-dismiss any pending HITL reviews for this crew so the waiting state clears.
     # HITL reviews link via crew_run_id (not output_id), so they survive output deletion
     # unless explicitly cleared here.
-    crew_name = _AGENT_TO_CREW.get(agent_name)
+    crew_name = _crew_of(agent_name)
     if crew_name:
         await conn.execute(
             """UPDATE human_reviews
