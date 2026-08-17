@@ -9,13 +9,14 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | What an agent is called, and its face | `AGENT_IDENTITY` - `agents/identity.py` |
 | Which tools an agent holds | `tool_map` - `agents/tools/registry.py` |
 | Which output types an agent writes | `OUTPUT_OWNERS` inverted - `agents/tools/ownership.py` |
+| What each agent draws on | `AGENT_READS` - `agents/reads.py` |
 | Which agents a crew dispatches | `_CREW_AGENT_NAMES` - `api/services/run_service.py` |
 | What a crew is called | `CREW_LABEL` - `agents/identity.py` |
 | What a crew waits on | `CREW_DEPENDENCIES` - `api/services/crew_graph.py` |
 | What each tool reaches | `TOOL_EGRESS` - `agents/egress.py` |
 
 A literal list of agent names or crew names in this file would make it one more restatement of
-what those six already say, which is the thing it exists to end - the slice that built this
+what that table already says, which is the thing it exists to end - the slice that built this
 module deleted ten crew-to-agent maps, five disagreeing crew-label maps, two of the six persona
 lists, two of the three `OUTPUT_TYPE_LABELS`, and `crews_enabled`, a settings toggle naming five
 of the nine crews that no dispatch path had ever read. The disagreements were live:
@@ -38,13 +39,15 @@ from pathlib import Path
 from agents.egress import TOOL_EGRESS as _TOOL_EGRESS
 from agents.egress import Destination, agent_destinations
 from agents.identity import AGENT_IDENTITY as _AGENT_IDENTITY
+from agents.reads import AGENT_READS as _AGENT_READS
+from agents.reads import Medium, Read
 from agents.identity import CREW_LABEL as _CREW_LABEL
 from agents.model_registry import AGENT_TIER as _AGENT_TIER
 from agents.tools.ownership import OUTPUT_OWNERS as _OUTPUT_OWNERS
 from api.services.crew_graph import CREW_DEPENDENCIES as _CREW_DEPENDENCIES
 from api.services.run_service import _CREW_AGENT_NAMES
 
-# The seven sources are bound to module-level names above so that this module is the single place
+# Every source in the table above is bound to a module-level name so that this is the single place
 # any of them is looked up. It also means a test can substitute one here - which is where the
 # name is looked up - rather than at its definition, the mistake four crew tests made and
 # CLAUDE.md records.
@@ -84,6 +87,21 @@ class AgentNode:
     display_name: str
     image: str | None
     egress: tuple[Destination, ...]
+    sources: tuple[Read, ...]
+
+    @property
+    def reads(self) -> tuple[str, ...]:
+        """The output types this agent reads: the artefact projection of `sources`.
+
+        A property rather than a second field, so there is exactly one declaration and the two
+        cannot drift. It is deliberately narrower than `sources` - `writes` is the inversion of
+        `OUTPUT_OWNERS`, which knows only artefacts, so `reads` is the half of an agent's inputs
+        that can be held against it. A Chroma collection or a database table has no owner in that
+        map and would fail a guard that means nothing about it.
+        """
+        return tuple(
+            source.source for source in self.sources if source.medium is Medium.ARTEFACT_JSON
+        )
 
 
 @dataclass(frozen=True)
@@ -224,6 +242,18 @@ def _build_agents(llm_mode: str) -> dict[str, AgentNode]:
             f"an agent. An output whose owner cannot run is an output nothing can write."
         )
 
+    unread = sorted(set(_AGENT_TIER) - set(_AGENT_READS))
+    reads_for_nobody = sorted(set(_AGENT_READS) - set(_AGENT_TIER))
+    if unread or reads_for_nobody:
+        raise GraphInconsistent(
+            f"AGENT_TIER and AGENT_READS disagree about which agents exist - "
+            f"no reads declared: {unread}; reads but no agent: {reads_for_nobody}. "
+            f"An empty tuple is the answer for an agent that reads nothing, and two agents "
+            f"have one. Defaulting a missing entry to empty would make an agent nobody has "
+            f"read yet look identical to one that genuinely draws on nothing, on a page whose "
+            f"whole job is to say where the client's material goes."
+        )
+
     undeclared = sorted(
         {tool for held in tools.values() for tool in held} - set(_TOOL_EGRESS)
     )
@@ -248,6 +278,7 @@ def _build_agents(llm_mode: str) -> dict[str, AgentNode]:
             display_name=_AGENT_IDENTITY[agent_id].display_name,
             image=_AGENT_IDENTITY[agent_id].image,
             egress=agent_destinations(tools[agent_id], llm_mode),
+            sources=tuple(_AGENT_READS[agent_id]),
         )
         for agent_id, tier in _AGENT_TIER.items()
     }
