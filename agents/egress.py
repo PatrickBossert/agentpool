@@ -212,6 +212,22 @@ TOOL_EGRESS: dict[str, Egress] = {
 }
 
 
+# The reach every agent has, held by no tool, and the one sentence `TOOL_EGRESS` has nowhere to
+# put. It is an `Egress` rather than a bare string so that a renderer treats the largest thing
+# that leaves the building exactly as it treats a tool's row - `reaches` and `sends`, resolved
+# through the same `(reach, mode)` table - instead of writing its own sentence beside a table it
+# is otherwise reading. It is deliberately outside `TOOL_EGRESS`: that dict is held equal to the
+# tool classes on disk, and inference is not a tool.
+INFERENCE_EGRESS = Egress(
+    reaches=Reach.INFERENCE,
+    sends=(
+        "every prompt the agent builds - its task description, the artefacts, interview "
+        "answers and document excerpts it quotes, and the client's own words inside them - "
+        "and it receives the model's reply"
+    ),
+)
+
+
 _NOWHERE = Destination(label="nothing outside this deployment", leaves_deployment=False)
 _TAVILY = Destination(label="Tavily's search API", leaves_deployment=True)
 _ANY_ADDRESS = Destination(label="any address the agent names", leaves_deployment=True)

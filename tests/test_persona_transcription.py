@@ -134,10 +134,11 @@ UI_SRC = AGENT_STATUS.parent.parent
 PERMITTED = {
     # The front end's own declaration, and the source agents/identity.py transcribes.
     "components/agentStatus.ts": "the declaration",
-    # The privacy audit page. Each row pairs a persona with the tools and external services
-    # that agent reaches, and the graph does not carry egress until slice 2 - so the names
-    # here cannot yet be derived from anything without dropping the fact beside them.
-    "pages/DataArchitecture.tsx": "carries egress, which the graph does not model yet",
+    # pages/DataArchitecture.tsx was the second entry, excused because the graph did not model
+    # egress. It does now - agents/egress.py, agents/reads.py and agents/charter.py, assembled
+    # by agents/graph.py and served by GET /projects/{slug}/data-architecture - so the page
+    # renders the names it is given instead of holding a list of its own, and the exemption is
+    # retired rather than left standing as a reason that has stopped being true.
 }
 
 
