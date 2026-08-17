@@ -12,6 +12,7 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | Which agents a crew dispatches | `_CREW_AGENT_NAMES` - `api/services/run_service.py` |
 | What a crew is called | `CREW_LABEL` - `agents/identity.py` |
 | What a crew waits on | `CREW_DEPENDENCIES` - `api/services/crew_graph.py` |
+| What each tool reaches | `TOOL_EGRESS` - `agents/egress.py` |
 
 A literal list of agent names or crew names in this file would make it one more restatement of
 what those six already say, which is the thing it exists to end - the slice that built this
@@ -34,6 +35,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from agents.egress import TOOL_EGRESS as _TOOL_EGRESS
+from agents.egress import Destination, agent_destinations
 from agents.identity import AGENT_IDENTITY as _AGENT_IDENTITY
 from agents.identity import CREW_LABEL as _CREW_LABEL
 from agents.model_registry import AGENT_TIER as _AGENT_TIER
@@ -41,7 +44,7 @@ from agents.tools.ownership import OUTPUT_OWNERS as _OUTPUT_OWNERS
 from api.services.crew_graph import CREW_DEPENDENCIES as _CREW_DEPENDENCIES
 from api.services.run_service import _CREW_AGENT_NAMES
 
-# The six sources are bound to module-level names above so that this module is the single place
+# The seven sources are bound to module-level names above so that this module is the single place
 # any of them is looked up. It also means a test can substitute one here - which is where the
 # name is looked up - rather than at its definition, the mistake four crew tests made and
 # CLAUDE.md records.
@@ -65,6 +68,13 @@ class AgentNode:
     `agent_id` is the permanent half and the only thing anything may key on or store -
     `agent_outputs.agent_name` holds it on every row. `display_name` and `image` are the mutable
     half, resolved through `AGENT_IDENTITY`, and neither is derivable from the id.
+
+    `egress` is everywhere this agent's work can reach in the mode the graph was built for -
+    its tools' destinations resolved through `agents/egress.py`, plus the model it runs on,
+    which is the largest thing that leaves the building and is held by no tool. It is a
+    property of the graph rather than of the agent because the same agent reaches Chroma Cloud
+    on one project and a local Chroma on the next; `resolve_egress` is the thing to ask about a
+    single tool, since a union cannot say which tool put a member in it.
     """
 
     agent_id: str
@@ -73,6 +83,7 @@ class AgentNode:
     writes: tuple[str, ...]
     display_name: str
     image: str | None
+    egress: tuple[Destination, ...]
 
 
 @dataclass(frozen=True)
@@ -175,7 +186,7 @@ def _tool_class_name(entry: ast.expr, agent_id: str) -> str:
     )
 
 
-def _build_agents() -> dict[str, AgentNode]:
+def _build_agents(llm_mode: str) -> dict[str, AgentNode]:
     """Every agent `AGENT_TIER` declares, with its tools, the outputs it owns, and its identity.
 
     `AGENT_TIER` is the roll: `test_every_dispatched_agent_has_a_tier` already holds it equal to
@@ -213,6 +224,17 @@ def _build_agents() -> dict[str, AgentNode]:
             f"an agent. An output whose owner cannot run is an output nothing can write."
         )
 
+    undeclared = sorted(
+        {tool for held in tools.values() for tool in held} - set(_TOOL_EGRESS)
+    )
+    if undeclared:
+        raise GraphInconsistent(
+            f"These tools do not declare what they reach: {undeclared}. Add an entry to "
+            f"TOOL_EGRESS in agents/egress.py. Assembling the graph without one would leave "
+            f"the tool out of every egress set silently, and the page that answers 'what "
+            f"leaves the building?' would under-report by exactly the tool nobody had read."
+        )
+
     writes: dict[str, list[str]] = {agent_id: [] for agent_id in _AGENT_TIER}
     for output_type, owner in _OUTPUT_OWNERS.items():
         writes[owner].append(output_type)
@@ -225,6 +247,7 @@ def _build_agents() -> dict[str, AgentNode]:
             writes=tuple(writes[agent_id]),
             display_name=_AGENT_IDENTITY[agent_id].display_name,
             image=_AGENT_IDENTITY[agent_id].image,
+            egress=agent_destinations(tools[agent_id], llm_mode),
         )
         for agent_id, tier in _AGENT_TIER.items()
     }
@@ -312,13 +335,24 @@ def _runnable_order() -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def build_graph() -> Graph:
+def build_graph(llm_mode: str = "standard") -> Graph:
     """Assemble the graph, raising `GraphInconsistent` on any edge that does not resolve.
 
     Fresh containers each call, so a caller that mutates what it is given cannot corrupt the
     next reader. Assembly is cheap - the only file read is cached.
+
+    `llm_mode` decides only where each agent's egress resolves to; everything else in the graph
+    is the same in either mode. It is a plain argument rather than a slug, because this is a
+    reading of a declaration and not a route: `project_llm_mode(slug)` is what anything actually
+    dispatching work must consult, and CLAUDE.md is emphatic that no caller may hand a mode to
+    that path.
+
+    It defaults to `"standard"` deliberately, and the direction matters. Standard resolves the
+    two mode-dependent reaches to their hosted destinations, so a caller that forgets the
+    argument over-reports what leaves the building and never under-reports it - the safe way
+    round for a page an auditor reads. Enforcement should still pass the project's real mode.
     """
-    agents = _build_agents()
+    agents = _build_agents(llm_mode)
     return Graph(agents=agents, crews=_build_crews(agents))
 
 
