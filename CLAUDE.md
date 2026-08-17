@@ -479,6 +479,17 @@ was accepted - and an administrator-granted membership (`insert_project_membersh
 fresh invite, which is the route back: redeeming it restores the membership and sends the
 person to sign in with the password they already have.
 
+**Revocation also deletes the outstanding invite** - `cancel_invite` in `invite_service.py`,
+called from the same handler. The membership is what a login already holds; the unredeemed
+token is what a login could still be *made* from, and `POST /auth/accept` takes no
+authentication, so leaving it live left the access nominally withdrawn and actually
+available. The row is deleted rather than stamped `used_at`: nobody redeemed it, and a
+re-grant should insert a fresh one through `issue_invite`'s normal path rather than refresh a
+tombstone. Expect the `auth_tokens` row to be *gone* after a revocation - that is designed,
+not a missing write. `access_state` additionally asks the role question before the invite
+question, so a role-less row cannot read `invited` even if a token survives by some path
+neither of these covers.
+
 **Changing a stakeholder's email is a change of person, not of detail.** "Dougie has left,
 Sam has the seat now" is the ordinary handover edit, and it moves no flag - so the two
 transition handlers above, which both key on the *role* changing, saw nothing happen while

@@ -22,12 +22,11 @@ Three authority levels sit on this router, and they are not the same question.
   body is a redeemable credential, not configuration. See its docstring for the two chains
   that keeps closed.
 """
-import re
-
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.services.authority_service import (
+    caller_may_administer_project,
     caller_may_grant_project_roles,
     require_project_administration,
 )
@@ -38,14 +37,24 @@ from api.services.stakeholder_service import (
     delete_stakeholder_svc,
     import_csv,
 )
-from api.services.invite_service import issue_invite, reissue_invite
+# The three conditions this router decides invites by are stated in stakeholder_access and
+# imported under their long-standing local names, because the stakeholder read model has to
+# report the very same conditions the write doors enforce. Two copies of "holds a role
+# beyond participant" is exactly the divergence CLAUDE.md records for register_scripts_sync
+# and scripts_awaiting_regeneration.
+from api.services.stakeholder_access import (
+    ROLE_FLAGS as _ROLE_FLAGS,
+    has_deliverable_email as _has_valid_email,
+    has_linked_login as _has_linked_login,
+    holds_role_beyond_participant as _holds_other_role,
+)
+from api.services.invite_service import cancel_invite, issue_invite, reissue_invite
 from api.database import (
     get_connection,
     get_system_connection,
     delete_project_membership_by_stakeholder,
     fetch_project,
     fetch_stakeholder,
-    fetch_user,
     get_stakeholder_node_assignments,
     upsert_stakeholder_node_assignments,
 )
@@ -135,20 +144,14 @@ def _404(slug: str):
 
 # Every role but participant confers some form of administration or review authority, so any
 # of these being set is what makes a stakeholder somebody who needs a way to log in.
-_ROLE_FLAGS = ("is_reviewer", "is_approver", "is_project_admin", "is_governor")
+# _ROLE_FLAGS and _holds_other_role are imported above from api/services/stakeholder_access.py,
+# which is also what the stakeholder read model answers "can this person get in?" with.
 
 # Real columns (api/database.py), but neither StakeholderIn nor StakeholderPatch declares
 # them - see _declared_fields_only for why they stay undeclared, and the models'
 # docstrings for why "extra: allow" plus these explicit checks rather than
 # "extra: forbid" outright.
 _UNDECLARED_ROLE_FLAGS = ("is_project_admin", "is_governor")
-
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def _holds_other_role(flags: dict) -> bool:
-    """Whether any role beyond is_participant is set on this (possibly partial) flag dict."""
-    return any(flags.get(f) for f in _ROLE_FLAGS)
 
 
 def _parse_role_flags(body: BaseModel) -> dict[str, bool]:
@@ -289,16 +292,6 @@ def _is_reassignment(before: dict | None, after: dict) -> bool:
     return _normalised_email(before) != _normalised_email(after)
 
 
-def _has_valid_email(flags: dict) -> bool:
-    """Whether this flag dict's email is present and looks like an address - deliverability
-    in isolation, independent of whether a role is held. _is_undeliverable below is this
-    combined with _holds_other_role; _issue_invite_if_newly_privileged needs the two apart,
-    since a row can go from role-with-no-email to role-with-email without ever losing the
-    role, and that transition is itself what must trigger the invite."""
-    email = (flags.get("email") or "").strip()
-    return bool(email) and bool(_EMAIL_RE.match(email))
-
-
 def _is_undeliverable(flags: dict) -> bool:
     """Has a role beyond participant, but no address that could actually be delivered to."""
     return _holds_other_role(flags) and not _has_valid_email(flags)
@@ -354,29 +347,6 @@ async def _fetch_stakeholder_row(slug: str, stakeholder_id: int) -> dict | None:
         if not project:
             return None
         return await fetch_stakeholder(conn, stakeholder_id=stakeholder_id, project_id=project["id"])
-
-
-async def _has_linked_login(slug: str, email: str) -> bool:
-    """Whether this email already has a login linked to *this* project.
-
-    Scoped to (email, slug) via project_memberships - not merely "does this email have a
-    login anywhere" - because project_memberships.stakeholder_id is what "one login, many
-    engagements" is built on (see invite_service.py and
-    tests/test_invite_loop.py::test_inviting_the_same_person_to_a_second_project_keeps_both_live):
-    someone already logged in on one project must still be invitable onto a second one. A
-    login is created only when an invite is accepted, so this is a real, unmocked read - see
-    _issue_invite_if_newly_privileged for why it must be conjoined with, not replace, the
-    transition check.
-    """
-    async with get_system_connection() as conn:
-        user = await fetch_user(conn, username=email)
-        if user is None:
-            return False
-        cur = await conn.execute(
-            "SELECT 1 FROM project_memberships WHERE user_id=? AND project_slug=?",
-            (user["id"], slug),
-        )
-        return await cur.fetchone() is not None
 
 
 async def _issue_invite_if_newly_privileged(slug: str, before: dict | None, after: dict) -> None:
@@ -496,18 +466,38 @@ async def _revoke_membership_if_no_longer_privileged(
     is not now. A row that was already participant-only is left alone - it never had a
     membership from this route to withdraw - and a partial revocation that still leaves
     some other role standing is not a revocation.
+
+    Both halves of the access, or neither. The membership is what a login already holds;
+    the outstanding invite is what a login could be *made* from, and `POST /auth/accept`
+    needs no authentication to make one. Cutting only the membership left the credential
+    alive on a row the administrator had just revoked - and left the roster reporting that
+    person as "Invited", one click from handing it back. See `cancel_invite`.
     """
     if not _holds_other_role(before or {}):
         return
     if _holds_other_role(after):
         return
     await _revoke_membership(slug, after["id"])
+    await cancel_invite(after["email"], slug)
 
 
 @router.get("/{slug}/stakeholders")
 async def list_stakeholders_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
+    """The roster. Readable by any member of the engagement - membership is read access by
+    design - but the three `access_state` values that are answered by looking an account up
+    are served only to a caller who may administer the roster.
+
+    Not `require_project_administration`: this door itself does not narrow, and turning a
+    reviewer's roster into a 403 would be a much larger change than the disclosure warrants.
+    The field is dropped from the response instead, which is why the decision is made here
+    and passed down rather than left to the client - a value the client hides is still on
+    the wire.
+    """
     await check_project_access(slug, payload)
-    result = await list_stakeholders(slug)
+    result = await list_stakeholders(
+        slug,
+        include_account_states=await caller_may_administer_project(slug, payload),
+    )
     if result is None:
         _404(slug)
     return result

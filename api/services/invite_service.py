@@ -189,6 +189,42 @@ async def reissue_invite(email: str, project_slug: str | None = None) -> str | N
     return raw
 
 
+async def cancel_invite(email: str, project_slug: str) -> int:
+    """Withdraw any unredeemed invite to this project for this address. Returns rows removed.
+
+    The other half of revocation. Clearing the last non-participant role deletes the
+    `project_memberships` row, and until this existed it stopped there: the invite issued
+    when the role was granted stayed live, redeemable, and - once the roster started
+    reporting invite state - was shown to the administrator who had just revoked the person
+    as "Invited", one click from being handed back. `POST /auth/accept` takes no
+    authentication and writes the membership again, so the outstanding token *is* the
+    access that was supposedly withdrawn.
+
+    Its mirror already existed for the other way a row stops describing the person it was
+    issued to: `_stakeholder_matches_invite` re-reads the stakeholder's own email at
+    redemption, so a *reassigned* row kills its old token. A *role-cleared* row is the same
+    situation reached by a different edit, and it now dies the same way.
+
+    Deleted rather than stamped `used_at`: nobody redeemed it. A later re-grant then
+    inserts a fresh row through `issue_invite`'s normal path instead of refreshing a
+    tombstone.
+
+    Keyed on (email, project_slug, purpose) - the same key `issue_invite` keeps one live row
+    per, so this removes exactly the token the resend door would otherwise have handed out.
+    It is not keyed on stakeholder_id: the invite is one per address per project by
+    construction, so an id would be the narrower key of the two and could leave the live row
+    behind.
+    """
+    async with get_system_connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM auth_tokens"
+            " WHERE email=? AND project_slug=? AND purpose='invite' AND used_at IS NULL",
+            (email, project_slug),
+        )
+        await conn.commit()
+        return cur.rowcount or 0
+
+
 async def accept_token(
     raw_token: str, password: str, *, purpose: str | None = None
 ) -> tuple[dict, bool] | None:
