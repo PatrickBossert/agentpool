@@ -259,3 +259,102 @@ def test_an_agent_with_no_identity_raises_rather_than_going_unnamed():
         mp.setattr(graph_module, "_AGENT_IDENTITY", thinned)
         with pytest.raises(GraphInconsistent, match="pam"):
             build_graph()
+
+
+# --- A crew's label, and the order the crews are shown in -------------------------------------
+#
+# Same split as an agent's: `crew_id` is stored on `crew_runs.crew_name` and dispatched by PAM,
+# the label is what a reader sees. The order is not declared at all - it is derived from
+# `CREW_DEPENDENCIES`, because an order typed beside the dependency map can contradict it, and
+# a crew shown as next while the graph would refuse to run it is acted on by the reader.
+
+
+def test_every_crew_has_a_label_and_no_label_is_orphaned():
+    from agents.identity import CREW_LABEL
+    assert set(CREW_LABEL) == set(build_graph().crews)
+
+
+def test_a_node_carries_the_label_the_registry_gives_it():
+    """On the node, not on the map: comparing `CREW_LABEL` with itself would pass with
+    `CrewNode` never having been wired to it."""
+    from agents.identity import CREW_LABEL
+    for crew in build_graph().crews.values():
+        assert crew.display_name == CREW_LABEL[crew.crew_id]
+
+
+def test_a_crew_label_is_not_a_formatting_of_the_crew_id():
+    """At least one label must be un-derivable, or the map is a `.title()` in disguise and the
+    id and the name are still the same string. `discovery_mapping` reads Value Chain Mapping."""
+    derivable = {
+        crew.crew_id
+        for crew in build_graph().crews.values()
+        if crew.display_name == crew.crew_id.replace("_", " ").title()
+    }
+    assert "discovery_mapping" not in derivable
+
+
+def test_a_crew_with_no_label_raises_rather_than_showing_its_id():
+    from agents import graph as graph_module
+
+    thinned = {
+        crew_id: label
+        for crew_id, label in graph_module._CREW_LABEL.items()
+        if crew_id != "delivery"
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(graph_module, "_CREW_LABEL", thinned)
+        with pytest.raises(GraphInconsistent, match="delivery"):
+            build_graph()
+
+
+def test_a_label_for_a_crew_nothing_dispatches_raises():
+    from agents import graph as graph_module
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            graph_module, "_CREW_LABEL", {**graph_module._CREW_LABEL, "architecture": "Arch"}
+        )
+        with pytest.raises(GraphInconsistent, match="architecture"):
+            build_graph()
+
+
+def test_no_crew_is_ordered_before_one_it_waits_on():
+    """`list(graph.crews)` is a display order as well as a lookup, and this is the property
+    that makes it one. Asserted against `depends_on` as the node carries it, so a reordering
+    that ignored the dependency map fails here rather than on a board a user is reading."""
+    order = list(build_graph().crews)
+    for position, crew_id in enumerate(order):
+        for upstream in build_graph().crews[crew_id].depends_on:
+            assert order.index(upstream) < position, (
+                f"{crew_id} is ordered before its dependency {upstream}"
+            )
+
+
+def test_the_order_follows_the_dependency_map_rather_than_the_declaration_order():
+    """The weaker test above passes for any order that happens to be legal, including the
+    order `_CREW_AGENT_NAMES` happens to be typed in. This one moves a dependency and checks
+    the sequence moves with it - otherwise the ordering is a coincidence, not a derivation.
+    """
+    from agents import graph as graph_module
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            graph_module,
+            "_CREW_DEPENDENCIES",
+            {**graph_module._CREW_DEPENDENCIES, "delivery": [], "business_plan": []},
+        )
+        order = list(build_graph().crews)
+    assert order.index("delivery") < order.index("value_design"), order
+
+
+def test_a_cycle_in_the_dependency_map_raises_rather_than_returning_a_partial_order():
+    from agents import graph as graph_module
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            graph_module,
+            "_CREW_DEPENDENCIES",
+            {**graph_module._CREW_DEPENDENCIES, "discovery_mapping": ["business_plan"]},
+        )
+        with pytest.raises(GraphInconsistent, match="business_plan"):
+            build_graph()

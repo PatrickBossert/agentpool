@@ -1,5 +1,5 @@
 # agents/identity.py
-"""An agent's permanent id, and the name and face it may change without breaking anything.
+"""Permanent ids, and the names and faces they may change without breaking anything.
 
 `agent_id` is the snake key - `interaction_designer`, `pam`. It is what `AGENT_TIER` is keyed by,
 what `tool_map` is keyed by, what the crews dispatch, and what `agent_outputs.agent_name` has
@@ -70,4 +70,31 @@ AGENT_IDENTITY: dict[str, Identity] = {
     "roadmap_generator":           Identity("River Martinez",  "/agents/river-martinez.jpg"),
     "visual_illustrator":          Identity("Luca Romano",     "/agents/luca-romano.jpg"),
     "business_plan_generator":     Identity("Finley Cooper",   "/agents/finley-cooper.jpg"),
+}
+
+
+# A crew's id is permanent in exactly the way an agent's is - `crew_runs.crew_name` stores it,
+# `CREW_DEPENDENCIES` keys on it, and PAM dispatches by it - and its label is the mutable half.
+#
+# The label is not a formatting of the id and must never become one: `discovery_mapping` is
+# shown as "Value Chain Mapping", `capabilities` as "Capabilities", and titling the id would
+# quietly rename the first while appearing to work for the second.
+#
+# Transcribed from `CREW_LABELS` in `ui/src/components/agentStatus.ts`, the only one of the
+# five crew-label maps that names the nine crews that actually exist. The other four were
+# stale in different directions - `api/services/pam_report_service.py` still labelled
+# `discovery` and `architecture`, crews no dispatch map has known for two sprints, and
+# `ui/src/pages/Dashboard.tsx` showed `discovery_mapping` as "Value Chain Mapper", the agent
+# rather than the crew. `test_the_frontend_and_the_backend_agree_about_crew_labels` now holds
+# the remaining front-end copy against this one.
+CREW_LABEL: dict[str, str] = {
+    "discovery_mapping":      "Value Chain Mapping",
+    "assessment_design":      "Assessment Design",
+    "stakeholder_management": "Stakeholder Management",
+    "discovery_interviews":   "Discovery Interviews",
+    "value_design":           "Value Design",
+    "capabilities":           "Capabilities",
+    "requirements":           "Requirements",
+    "delivery":               "Delivery",
+    "business_plan":          "Business Plan",
 }

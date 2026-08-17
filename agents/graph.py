@@ -10,6 +10,7 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | Which tools an agent holds | `tool_map` - `agents/tools/registry.py` |
 | Which output types an agent writes | `OUTPUT_OWNERS` inverted - `agents/tools/ownership.py` |
 | Which agents a crew dispatches | `_CREW_AGENT_NAMES` - `api/services/run_service.py` |
+| What a crew is called | `CREW_LABEL` - `agents/identity.py` |
 | What a crew waits on | `CREW_DEPENDENCIES` - `api/services/crew_graph.py` |
 
 A literal list of agent names or crew names in this file would make it the tenth restatement of
@@ -32,6 +33,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from agents.identity import AGENT_IDENTITY as _AGENT_IDENTITY
+from agents.identity import CREW_LABEL as _CREW_LABEL
 from agents.model_registry import AGENT_TIER as _AGENT_TIER
 from agents.tools.ownership import OUTPUT_OWNERS as _OUTPUT_OWNERS
 from api.services.crew_graph import CREW_DEPENDENCIES as _CREW_DEPENDENCIES
@@ -73,16 +75,28 @@ class AgentNode:
 
 @dataclass(frozen=True)
 class CrewNode:
-    """One crew: who runs in it, and what must be committed before it may run."""
+    """One crew: who runs in it, what it is called, and what must be committed before it runs.
+
+    `crew_id` is the permanent half - `crew_runs.crew_name` stores it and PAM dispatches by it.
+    `display_name` is the mutable half, resolved through `CREW_LABEL`, and is not derivable
+    from the id: `discovery_mapping` reads as "Value Chain Mapping".
+    """
 
     crew_id: str
     agent_ids: tuple[str, ...]
     depends_on: tuple[str, ...]
+    display_name: str
 
 
 @dataclass(frozen=True)
 class Graph:
-    """The assembled whole, keyed by id in both directions."""
+    """The assembled whole, keyed by id in both directions.
+
+    `crews` is ordered so that no crew precedes one it waits on, which is what makes
+    `list(graph.crews)` a display order as well as a lookup. Iterating it is the reason
+    nothing needs a hand-typed `CREW_ORDER`: an order typed beside the dependency map can
+    contradict it, and did - a crew shown as next while the graph would refuse to run it.
+    """
 
     agents: dict[str, AgentNode]
     crews: dict[str, CrewNode]
@@ -243,14 +257,57 @@ def _build_crews(agents: dict[str, AgentNode]) -> dict[str, CrewNode]:
             f"string, so the dispatch that did nothing reports as a result."
         )
 
+    unlabelled = sorted(set(_CREW_AGENT_NAMES) - set(_CREW_LABEL))
+    unknown_labelled = sorted(set(_CREW_LABEL) - set(_CREW_AGENT_NAMES))
+    if unlabelled or unknown_labelled:
+        raise GraphInconsistent(
+            f"_CREW_AGENT_NAMES and CREW_LABEL disagree about which crews exist - "
+            f"no label: {unlabelled}; label but no crew: {unknown_labelled}. Falling back to "
+            f"the id would show `discovery_mapping` where a reader expects Value Chain "
+            f"Mapping, and a label for a crew nothing dispatches is a row that never fills."
+        )
+
     return {
         crew_id: CrewNode(
             crew_id=crew_id,
-            agent_ids=tuple(agent_ids),
+            agent_ids=tuple(_CREW_AGENT_NAMES[crew_id]),
             depends_on=tuple(_CREW_DEPENDENCIES[crew_id]),
+            display_name=_CREW_LABEL[crew_id],
         )
-        for crew_id, agent_ids in _CREW_AGENT_NAMES.items()
+        for crew_id in _runnable_order()
     }
+
+
+def _runnable_order() -> tuple[str, ...]:
+    """The crews arranged so none precedes a crew it waits on.
+
+    Kahn's algorithm, with ties broken by the order `_CREW_AGENT_NAMES` declares them rather
+    than alphabetically - the declaration is a human's reading of the pipeline, and today's
+    dependencies happen to admit exactly one order anyway, so the tie-break only decides what
+    a future fork looks like. Deterministic either way, which matters because this order is
+    displayed.
+
+    A cycle is raised rather than truncated. `crew_graph.py` releases a crew when its
+    upstreams are committed, so a cycle is a set of crews none of which can ever start - and
+    a partial order would hide most of them from the board instead of naming the problem.
+    """
+    remaining = {crew_id: set(_CREW_DEPENDENCIES[crew_id]) for crew_id in _CREW_AGENT_NAMES}
+    ordered: list[str] = []
+    while remaining:
+        ready = [crew_id for crew_id in remaining if not remaining[crew_id] - set(ordered)]
+        if not ready:
+            stuck = {
+                crew_id: sorted(deps - set(ordered)) for crew_id, deps in remaining.items()
+            }
+            raise GraphInconsistent(
+                f"No crew in {sorted(remaining)} can ever be released by a commit - each is "
+                f"still waiting: {stuck}. Either CREW_DEPENDENCIES has a cycle, or one of "
+                f"these waits on a crew that is never committed because it does not exist."
+            )
+        for crew_id in ready:
+            ordered.append(crew_id)
+            del remaining[crew_id]
+    return tuple(ordered)
 
 
 def build_graph() -> Graph:
