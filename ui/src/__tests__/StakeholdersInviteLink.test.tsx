@@ -67,10 +67,15 @@ function person(id: number, name: string, access_state: AccessState): Stakeholde
 
 // One row in each state, so a test asking "is the action offered here?" is always asking it
 // against the four states where it must not be, on the same page.
+//
+// The invited row sits in the middle deliberately. It was first, and that made the "asks
+// about the row it was clicked on" assertion blind to half of what it claimed: sending
+// `stakeholders[0].id` instead of `s.id` left the whole suite green, and only the
+// last-row mutation could fail it. Neither end now stands in for the right answer.
 const ROSTER: Stakeholder[] = [
-  person(11, 'Ivy Invited', 'invited'),
   person(22, 'Lena Loggedin', 'has_login'),
   person(33, 'Una Unreachable', 'unreachable'),
+  person(11, 'Ivy Invited', 'invited'),
   person(44, 'Nils Notinvited', 'not_invited'),
   person(55, 'Pat Participant', 'no_login_needed'),
 ]
@@ -162,7 +167,8 @@ describe('Stakeholders: invite state and the invite link', () => {
 
     await userEvent.click(button)
 
-    // The slug from the route and Ivy's own id - not the first row's, not the last's.
+    // The slug from the route and Ivy's own id. She is neither the first row nor the last,
+    // so neither end of the roster can stand in for the right answer - see ROSTER.
     expect(stakeholdersApi.resendInvite).toHaveBeenCalledTimes(1)
     expect(stakeholdersApi.resendInvite).toHaveBeenCalledWith('acme', 11)
 

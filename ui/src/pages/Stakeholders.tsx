@@ -58,9 +58,15 @@ const ACCESS_BADGE: Record<AccessState, { label: string; title: string; style: s
     style: 'bg-red-100 text-red-700',
   },
   not_invited: {
+    // Advice a single reader can actually act on. Re-granting a reviewer or approver role
+    // is something an org admin can do alone, and the invite is issued by the write; a
+    // project administrator or governor role can only be re-granted by a project
+    // administrator, while retrieving the resulting link needs an org admin - so that one
+    // takes two people and the tooltip says so rather than implying one.
     label: 'Not invited',
-    title: 'Holds a role but has neither a login nor an invite - clear the role and set it '
-      + 'again to issue one',
+    title: 'Holds a role but has neither a login nor an invite. Clearing the role and '
+      + 'setting it again issues one - for a project administrator or governor role, that '
+      + 're-grant needs a project administrator as well as an org admin.',
     style: 'bg-amber-100 text-amber-700',
   },
   no_login_needed: {

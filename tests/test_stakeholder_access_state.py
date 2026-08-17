@@ -274,6 +274,105 @@ async def test_invited_is_exactly_the_state_the_resend_door_serves(client, proje
 
 
 @pytest.mark.asyncio
+async def test_clearing_the_last_role_kills_the_outstanding_invite(client, project, monkeypatch):
+    """Revocation withdraws the credential as well as the membership.
+
+    Driven as the whole chain rather than as a state assertion, because the state was never
+    the damage: the token is redeemable at an unauthenticated door, so "still invited" means
+    "still able to get in". Every step an administrator would actually take, in order -
+    grant, revoke, then the entire resend-and-accept sequence attempted against the token
+    that was live a moment ago - and the assertions are on the users row and the membership,
+    not on status codes, because the question is whether access comes back.
+
+    `issue_invite` is wrapped rather than mocked so the raw token is recoverable: auth_tokens
+    stores only a digest, and the resend door - the other way to obtain one - is precisely
+    what must stop working here.
+    """
+    import api.routers.stakeholders as stakeholders_router
+    from api.services.invite_service import issue_invite as _real_issue_invite
+
+    issued: dict[str, str] = {}
+
+    async def _capturing(*, email: str, project_slug: str, stakeholder_id: int):
+        raw = await _real_issue_invite(
+            email=email, project_slug=project_slug, stakeholder_id=stakeholder_id
+        )
+        issued[email] = raw
+        return raw
+
+    monkeypatch.setattr(stakeholders_router, "issue_invite", _capturing)
+
+    created = await client.post(
+        f"/projects/{project}/stakeholders",
+        json={"name": "Invited", "email": "invited@example.com", "is_reviewer": True},
+    )
+    assert created.status_code in (200, 201), created.text
+    sid = created.json()["id"]
+    token = issued.get("invited@example.com")
+    assert token, "no invite was issued - the revocation below would have nothing to cancel"
+    assert (await _states(client, project))["Invited"] == "invited"
+
+    revoked = await client.patch(
+        f"/projects/{project}/stakeholders/{sid}", json={"is_reviewer": False}
+    )
+    assert revoked.status_code == 200, revoked.text
+
+    # The roster no longer offers the action, because the row no longer reads as invited.
+    assert (await _states(client, project))["Invited"] == "no_login_needed"
+
+    # The door has nothing left to hand out.
+    resent = await client.post(f"/projects/{project}/stakeholders/{sid}/resend-invite")
+    assert resent.status_code == 404, resent.text
+
+    # And the token that was live before the revocation is dead. Unauthenticated, as
+    # /auth/accept really is.
+    from httpx import ASGITransport, AsyncClient
+    from api.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as anon:
+        redeemed = await anon.post(
+            "/auth/accept", json={"token": token, "password": "handed-back"}
+        )
+    assert redeemed.status_code != 200, redeemed.text
+
+    async with get_system_connection() as conn:
+        cur = await conn.execute(
+            "SELECT id FROM users WHERE username=?", ("invited@example.com",)
+        )
+        assert await cur.fetchone() is None, "a login was created for a revoked person"
+        cur = await conn.execute(
+            "SELECT 1 FROM project_memberships WHERE project_slug=?", (project,)
+        )
+        assert await cur.fetchone() is None, "the revoked membership came back"
+
+
+@pytest.mark.asyncio
+async def test_a_row_holding_no_role_never_reads_as_invited_even_with_a_token_alive(
+    client, project
+):
+    """The guard, witnessed on its own.
+
+    `cancel_invite` is the repair; this is what holds when the repair does not run. The
+    token here is planted straight into auth_tokens - the shape a write that never reached
+    the router would leave behind - so the cancellation cannot be what produces the answer.
+    Without the role check preceding the invite check, this row reads `invited` and the
+    roster offers to hand a revoked person their access back in one click.
+    """
+    await _insert_row(
+        project, name="Taking Part", email="participant@example.com", is_participant=True
+    )
+    async with get_system_connection() as conn:
+        await conn.execute(
+            "INSERT INTO auth_tokens (token_hash, email, project_slug, stakeholder_id,"
+            " purpose, expires_at) VALUES (?,?,?,?,'invite','2099-01-01 00:00:00')",
+            ("planted-digest", "participant@example.com", project, 1),
+        )
+        await conn.commit()
+
+    assert (await _states(client, project))["Taking Part"] == "no_login_needed"
+
+
+@pytest.mark.asyncio
 async def test_an_expired_invite_still_reads_as_invited_because_a_resend_revives_it(
     client, project
 ):

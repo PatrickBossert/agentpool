@@ -11,6 +11,9 @@ The states, in the order they are decided:
   has_login        a login linked to *this* project - the same question
                    `_issue_invite_if_newly_privileged` and the resend door ask before they
                    act.
+  no_login_needed  no role beyond participant. Asked *before* the invite question, so a
+                   revoked row can never read as invited even if its token outlived the
+                   revocation - see `access_state`.
   invited          an unredeemed invite to this project exists. Exactly the set
                    `reissue_invite` can refresh, so it is also the set for which the
                    "issue an invite link" action can succeed.
@@ -23,9 +26,9 @@ The states, in the order they are decided:
                    `invited` would be a read model that lies about precisely the rows an
                    administrator is looking for, and calling it `unreachable` would blame
                    an address that is perfectly good.
-  no_login_needed  no role beyond participant. Participants answer interviews through a
-                   campaign link; they need no login by design, so this is a resting state
-                   rather than an omission.
+
+Participants answer interviews through a campaign link and need no login by design, which
+is why `no_login_needed` is a resting state rather than an omission.
 
 Two comparisons matter and both are deliberately exact rather than case-folded: the doors
 that act on these answers (`has_linked_login` below, `issue_invite`, `reissue_invite`) find
@@ -78,15 +81,32 @@ def access_state(row: dict, *, login_emails: set[str], invited_emails: set[str])
     `login_emails` and `invited_emails` are read once for the whole list rather than per
     row - see `annotate_access_state`. The address is stripped before either lookup because
     that is what the resend door does before asking the same two questions.
+
+    **The role check outranks the invite check, and that ordering is a guard rather than a
+    preference.** Clearing every non-participant flag is the documented revocation, and
+    `cancel_invite` now kills the outstanding token as part of it - but a token that
+    survived by some other path (a write that never reached the router, a row restored from
+    a backup, a future caller of `issue_invite` that forgets) would otherwise make a
+    role-less row read `invited`, which puts the "issue an invite link" action in front of
+    an administrator who has *just revoked this person* and hands the access straight back.
+    The repair and the guard fail differently, so both exist: this ordering holds even when
+    the cancellation does not run.
+
+    A login is asked about before either, and is not subordinated to the role check: a
+    membership on this project is access somebody actually holds, whatever their flags say
+    now. Revocation deletes that membership, so a revoked person does not linger here
+    either.
     """
     email = (row.get("email") or "").strip()
     if email and email in login_emails:
         return HAS_LOGIN
+    if not holds_role_beyond_participant(row):
+        return NO_LOGIN_NEEDED
     if email and email in invited_emails:
         return INVITED
-    if holds_role_beyond_participant(row):
-        return UNREACHABLE if not has_deliverable_email(row) else NOT_INVITED
-    return NO_LOGIN_NEEDED
+    if not has_deliverable_email(row):
+        return UNREACHABLE
+    return NOT_INVITED
 
 
 async def annotate_access_state(slug: str, rows: list[dict]) -> list[dict]:

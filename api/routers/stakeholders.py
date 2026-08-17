@@ -47,7 +47,7 @@ from api.services.stakeholder_access import (
     has_linked_login as _has_linked_login,
     holds_role_beyond_participant as _holds_other_role,
 )
-from api.services.invite_service import issue_invite, reissue_invite
+from api.services.invite_service import cancel_invite, issue_invite, reissue_invite
 from api.database import (
     get_connection,
     get_system_connection,
@@ -465,12 +465,19 @@ async def _revoke_membership_if_no_longer_privileged(
     is not now. A row that was already participant-only is left alone - it never had a
     membership from this route to withdraw - and a partial revocation that still leaves
     some other role standing is not a revocation.
+
+    Both halves of the access, or neither. The membership is what a login already holds;
+    the outstanding invite is what a login could be *made* from, and `POST /auth/accept`
+    needs no authentication to make one. Cutting only the membership left the credential
+    alive on a row the administrator had just revoked - and left the roster reporting that
+    person as "Invited", one click from handing it back. See `cancel_invite`.
     """
     if not _holds_other_role(before or {}):
         return
     if _holds_other_role(after):
         return
     await _revoke_membership(slug, after["id"])
+    await cancel_invite(after["email"], slug)
 
 
 @router.get("/{slug}/stakeholders")
