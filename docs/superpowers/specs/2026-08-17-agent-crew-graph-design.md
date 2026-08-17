@@ -176,6 +176,13 @@ check against, instead of grep-and-hope.
 1. Identity split and the derived core; `RunCrewTool` generated; stale maps deleted.
 2. Declared reads, egress, purposes and triggers. `DataArchitecture.tsx` renders from the graph.
 3. Per-project overrides, with the interviewer voices as the first consumer.
+3a. **The graph viewer**, in the Data Architecture & Privacy section, rendering from the graph.
+   Sequenced after (2) deliberately: that page is what a client is shown to explain where their
+   data goes, so a generated view of structure without egress would read as authoritative while
+   omitting the only question the page exists to answer. Decided 2026-08-17.
+   **The page also becomes administrator-only.** It is currently public by omission rather than
+   by design - nothing public links to it, its only link sits inside `ProtectedRoute`, and
+   `/architecture` beside it is already guarded.
 4. **n8n removed**, and the link-and-token review push built to replace its two notifications.
    Sequenced here because (2) is what proves the footprint is only those two tools.
 5. Enforcement, once the breakage list from (2) and (4) is known - and materially smaller,
