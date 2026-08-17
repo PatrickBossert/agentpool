@@ -92,6 +92,18 @@ agent→writes), the validators, and the standalone-dispatch eligibility list.
 **reads**, each tool's **egress**, each crew's **purpose and triggers**, and the per-project
 overrides.
 
+**Egress is declared per tool, and its destination resolved through `llm_mode` at read time.**
+Decided 2026-08-17. `ChromaQueryTool` reaches Chroma Cloud on a standard project and a local
+instance on a sensitive one - same tool, different destination. One declaration per tool, with
+the mode dependency living in the resolver, rather than a declaration per tool per mode: the
+latter can express it too, but doubles the surface and invites the two halves to drift, which is
+the disease this design treats. `get_llm_for_agent` already solves the equivalent problem the
+same way.
+
+The declaration must therefore say what a tool reaches *in principle* - "a vector store", "the
+public internet", "an LLM" - and the resolver says which one, for this project. A tool whose
+destination does not vary simply resolves to the same answer in every mode.
+
 **Deleted** - the restatements. `RunCrewTool`'s description is generated. `Architecture.tsx` and
 `DataArchitecture.tsx` render from the graph. The stale crew→agent and crew-label maps go.
 `crews_enabled` goes, per the decision to park it: all crews, no toggle.
