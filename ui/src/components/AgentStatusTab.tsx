@@ -19,41 +19,10 @@ import ValidationWarnings from './ValidationWarnings'
 import { CREW_LABELS, CREW_DOWNSTREAM, CREW_AGENTS, AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME } from './agentStatus'
 import type { CrewStatus } from './agentStatus'
 import { CREW_OUTPUT_TYPE, parseDbDate } from './crewOutputs'
+import { outputLabel } from './outputTypeLabels'
 import { bcp47 } from '../utils/holidays'
 import type { AgentOutput, CrewRun } from '../types'
 import type { StatusEvent } from './AgentDetailPanel'
-
-// Human-readable labels for output_type values stored in the DB
-const OUTPUT_TYPE_LABELS: Record<string, string> = {
-  value_chain:                      'Value Chain',
-  value_chain_model:                'Value Chain Model',
-  // WordOutputTool records its output as 'docx'; the fallback label would read "Docx".
-  docx:                             'Business Plan Document',
-  interview_scripts:                'Interview Scripts',
-  l0_interview_summaries:           'L0 Board Summaries',
-  l1_interview_summaries:           'L1 GM Summaries',
-  l2_interview_summaries:           'L2 Process Manager Summaries',
-  audit_interview_summaries:        'Audit Summaries',
-  customer_interview_summaries:     'Customer Summaries',
-  frontline_interview_summaries:    'Frontline Summaries',
-  corp_services_interview_summaries:'Corporate Services Summaries',
-  requirements:                     'Requirements',
-  value_levers:                     'Value Levers',
-  value_propositions:               'Value Propositions',
-  portfolio_register:               'Portfolio Register',
-  architecture_blueprint:           'Architecture Blueprint',
-  roadmap:                          'Roadmap',
-  roadmap_data:                     'Roadmap Data',
-  business_plan:                    'Business Plan',
-  stakeholder_engagement_plan:      'Stakeholder Engagement Plan',
-  interview_transcripts:            'Interview Transcripts',
-  activity_insights:                'Activity Insights',
-  initiative_register:              'Initiative Register',
-}
-
-function outputLabel(outputType: string): string {
-  return OUTPUT_TYPE_LABELS[outputType] ?? outputType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
 
 // Output types this tab's non-primary list should not show for a given crew.
 //
