@@ -14,7 +14,7 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | What a crew waits on | `CREW_DEPENDENCIES` - `api/services/crew_graph.py` |
 
 A literal list of agent names or crew names in this file would make it the tenth restatement of
-what those five already say, which is the thing it exists to end - research found nine crew to
+what those six already say, which is the thing it exists to end - research found nine crew to
 agent maps, four disagreeing crew-label maps, six persona lists, and three `OUTPUT_TYPE_LABELS`,
 and the disagreements are live. `RunCrewTool`'s description offers PAM `discovery` and
 `architecture`, neither of which any dispatch map knows, and `build_and_run_crew` answers an
@@ -39,7 +39,7 @@ from agents.tools.ownership import OUTPUT_OWNERS as _OUTPUT_OWNERS
 from api.services.crew_graph import CREW_DEPENDENCIES as _CREW_DEPENDENCIES
 from api.services.run_service import _CREW_AGENT_NAMES
 
-# The five sources are bound to module-level names above so that this module is the single place
+# The six sources are bound to module-level names above so that this module is the single place
 # any of them is looked up. It also means a test can substitute one here - which is where the
 # name is looked up - rather than at its definition, the mistake four crew tests made and
 # CLAUDE.md records.
@@ -320,6 +320,6 @@ def build_graph() -> Graph:
     return Graph(agents=agents, crews=_build_crews(agents))
 
 
-# Assembled once at import so that a disagreement between the five registries is a loud failure
+# Assembled once at import so that a disagreement between the six registries is a loud failure
 # where a developer meets it, rather than a quiet gap in whatever reads the graph later.
 GRAPH = build_graph()
