@@ -3,12 +3,28 @@
 from crewai.tools import BaseTool
 
 
+def _crew_names() -> tuple[str, ...]:
+    """The crews PAM may dispatch, read from the graph rather than typed here a second time.
+
+    The description used to name `discovery` and `architecture`, neither of which any crew
+    provides, and omitted `assessment_design`, `stakeholder_management`, `requirements` and
+    `capabilities`, all of which do - see `agents/graph.py` for the incident this replaces.
+
+    Imported lazily, inside this function rather than at module level: `agents/graph.py`
+    imports `api.services.run_service` at module level and assembles at import time, and
+    `get_tools_for_agent` imports this module *inside* a function precisely to avoid
+    re-entering a partially initialised module. A module-level import here would risk the
+    same trap in reverse.
+    """
+    from agents.graph import build_graph
+    return tuple(sorted(build_graph().crews))
+
+
 class RunCrewTool(BaseTool):
     name: str = "RunCrewTool"
     description: str = (
         "Run a named crew for the current project and wait for it to complete. "
-        "crew_name must be one of: discovery_mapping, discovery, discovery_interviews, "
-        "value_design, architecture, delivery, business_plan"
+        "crew_name must be one of: " + ", ".join(_crew_names())
     )
     slug: str
     orchestration_run_id: int

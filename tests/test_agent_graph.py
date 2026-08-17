@@ -12,6 +12,13 @@ import pytest
 from agents.graph import GraphInconsistent, build_graph
 
 
+def test_the_tool_offers_pam_exactly_the_crews_that_exist():
+    from agents.tools.run_crew import RunCrewTool
+    tool = RunCrewTool(slug="any", orchestration_run_id=1)
+    offered = {c.strip() for c in tool.description.split("one of:")[1].split(",")}
+    assert offered == set(build_graph().crews)
+
+
 def test_every_agent_in_a_crew_exists_in_the_registries():
     graph = build_graph()
     for crew in graph.crews.values():
@@ -190,7 +197,7 @@ def test_a_display_name_is_never_used_as_a_key():
     graph = build_graph()
     for node in graph.agents.values():
         assert node.agent_id in AGENT_TIER
-        assert node.display_name not in graph.agents or node.display_name == node.agent_id
+        assert node.display_name not in graph.agents
 
 
 def test_a_display_name_is_not_a_formatting_of_the_id():
@@ -203,7 +210,9 @@ def test_a_display_name_is_not_a_formatting_of_the_id():
     """
     for node in build_graph().agents.values():
         spaced = node.agent_id.replace("_", " ")
-        derivations = {spaced, spaced.title(), spaced.upper(), node.agent_id.title()}
+        derivations = {
+            node.agent_id, spaced, spaced.title(), spaced.upper(), node.agent_id.title(),
+        }
         assert node.display_name not in derivations, (
             f"{node.agent_id}: '{node.display_name}' is derivable from the id, so renaming "
             f"the agent would still mean renaming its key"
