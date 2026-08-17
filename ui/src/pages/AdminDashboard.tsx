@@ -19,7 +19,7 @@ export default function AdminDashboard() {
 
   const { data: users = [] } = useQuery<AdminUser[]>({
     queryKey: ['admin', 'users'],
-    queryFn: adminApi.listUsers,
+    queryFn: () => adminApi.listUsers(),
   })
 
   const createOrgMut = useMutation({

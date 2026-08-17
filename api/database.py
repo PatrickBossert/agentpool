@@ -32,6 +32,38 @@ def get_db_path(slug: str) -> Path:
     return Path(get_settings().database_dir) / f"{slug}.db"
 
 
+def is_contained_slug(slug: str) -> bool:
+    """Whether `get_db_path(slug)` names a file directly inside DATABASE_DIR.
+
+    Every other route that resolves a project takes its slug from a **path** segment, where
+    the router has already split on `/` and a traversal needs an encoding trick to survive.
+    `GET /auth/users?project=` is the first to take one from a **query string**, where `/`
+    and `..` arrive verbatim and nothing upstream objects - so `?project=../../x` builds a
+    path outside DATABASE_DIR, and `check_project_access` returns early for a sysadmin
+    without ever looking at the string.
+
+    Containment rather than a character class, deliberately. Project creation never validated
+    the slug's charset (`create_project` takes `req.client_slug` as given), so a format rule
+    invented here could refuse a project that legitimately exists on a live deployment. What
+    is actually required is that the path stay put, and that is what is asserted: the
+    resolved parent must be DATABASE_DIR itself, which rejects a separator (`a/b` lands in a
+    subdirectory), a traversal (`../x` lands above), and an absolute path (`Path.__truediv__`
+    *replaces* the left side when the right is absolute, so `/etc/x` yields `/etc/x.db`).
+    An empty slug yields a bare `.db` and is refused too.
+
+    Not merged with `_SLUG_RE` in `api/routers/projects.py`, which looks like the same rule
+    and is not: that one is a format check on files served out of PROJECTS_DIR, a different
+    root with a different guarantee. Two rules that happen to reject some of the same strings
+    are not one rule, and unifying them would tie a change in either to the other.
+    """
+    root = Path(get_settings().database_dir).resolve()
+    try:
+        candidate = get_db_path(slug).resolve()
+    except (OSError, ValueError):  # NUL bytes, over-long names
+        return False
+    return candidate.parent == root and candidate.name != ".db"
+
+
 async def init_db(conn: aiosqlite.Connection) -> None:
     await conn.execute("PRAGMA foreign_keys = ON")
     await conn.executescript("""
@@ -2381,6 +2413,37 @@ async def fetch_stakeholders(
         return [_deserialize_stakeholder(dict(r)) async for r in cur]
 
 
+async def fetch_stakeholder_identities(
+    conn: aiosqlite.Connection, *, stakeholder_ids: list[int]
+) -> dict[int, dict]:
+    """The name and entity of the named stakeholder rows, keyed by id.
+
+    Two columns and no others, and that is the point rather than an optimisation: this is
+    read by `api/services/user_identity.py` on behalf of an administrator looking at a list
+    of *logins*, and the only fields that screen shows are name and entity. Selecting the
+    row wholesale would put job title, mobile, disposition and every role flag on a code
+    path whose caller has no business with them.
+
+    Not scoped by project_id, because the caller has already opened this project's database
+    by slug - the slug *is* the scope, and it is decided in user_identity.py against the
+    projects the caller may administer. A project_id here would be a second, weaker copy of
+    a check made where it can actually be answered.
+    """
+    out: dict[int, dict] = {}
+    ids = sorted(set(stakeholder_ids))
+    # Chunked under SQLITE_MAX_VARIABLE_NUMBER. Small in practice, free to keep correct.
+    for start in range(0, len(ids), 400):
+        chunk = ids[start:start + 400]
+        placeholders = ",".join("?" * len(chunk))
+        async with conn.execute(
+            f"SELECT id, name, entity FROM stakeholders WHERE id IN ({placeholders})",
+            chunk,
+        ) as cur:
+            async for row in cur:
+                out[row["id"]] = {"name": row["name"], "entity": row["entity"]}
+    return out
+
+
 async def fetch_stakeholder(
     conn: aiosqlite.Connection, *, stakeholder_id: int, project_id: int
 ) -> dict | None:
@@ -3588,6 +3651,28 @@ async def fetch_user_project_memberships(
     async with conn.execute(
         "SELECT * FROM project_memberships WHERE user_id=? ORDER BY project_slug",
         (user_id,),
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
+async def fetch_project_memberships(
+    conn: aiosqlite.Connection, *, project_slug: str
+) -> list[dict]:
+    """Every login on this project, with the stakeholder row it is that person through.
+
+    `stakeholder_id` is kept even when NULL, and that is the point rather than an oversight:
+    a NULL is a membership `insert_project_membership` wrote - the /admin access grant - and
+    the account is genuinely on the project, so it belongs in a project-scoped user list. It
+    simply has no person record behind it (see `delete_project_membership_by_stakeholder`
+    for the other consequence of that distinction). Filtering NULLs here would drop the
+    account from the list rather than drop its name, which is a different and wrong answer.
+
+    One query for the whole project rather than one per user: the caller is rendering a
+    table, and a per-row read here becomes a per-row database open in `user_identity.py`.
+    """
+    async with conn.execute(
+        "SELECT user_id, stakeholder_id FROM project_memberships WHERE project_slug=?",
+        (project_slug,),
     ) as cur:
         return [dict(r) async for r in cur]
 

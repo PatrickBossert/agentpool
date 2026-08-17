@@ -12,12 +12,29 @@
 // administrator who blinked would have quietly invalidated the link they were about to send.
 // The panel says in as many words that nothing was emailed, because the whole failure mode
 // here is an administrator assuming the system did the sending.
-import { useState } from 'react'
+//
+// The list can now be read through a project, which is what lets it show who each account
+// belongs to rather than only what it is called. `users` holds no name; a name lives on a
+// `stakeholders` row, and a stakeholder is a person *on an engagement*, so the question only
+// has an answer once a project is named.
+//
+// **No project selected is the default, and it shows no names at all** - not a name taken from
+// whichever engagement happened to sort first. The Name and Entity columns are absent rather
+// than full of dashes, because there is no question for them to be the answer to. It stays the
+// default because it is the only view that lists every account, including logins holding no
+// membership anywhere (the built-in administrator, anything created directly here) - accounts
+// this screen can still edit, reset and delete, and which a project-scoped default would hide
+// from the administrator looking for them.
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, X } from 'lucide-react'
 import { adminApi } from '../api/admin'
-import type { AdminUser, ResetLinkResponse } from '../types'
+import PersonCell from '../components/PersonCell'
+import SortHeader from '../components/SortHeader'
+import { sortRows, toggleSort, type SortState } from '../utils/tableSort'
+import { userSortKey } from '../utils/userSort'
+import type { AdminUser, ProjectRegistryEntry, ResetLinkResponse } from '../types'
 
 // The route this token is redeemed at, with the router's basename. Built from the current
 // origin so a link issued on a laptop against a local server does not tell somebody to visit
@@ -32,11 +49,26 @@ export default function UserList() {
   const [issued, setIssued] = useState<ResetLinkResponse | null>(null)
   const [copied, setCopied] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
+  // '' is "no project", and the sort key follows it: sorting by a column that is not on
+  // screen would leave the list in an order with no visible explanation.
+  const [project, setProject] = useState('')
+  const [sort, setSort] = useState<SortState>({ key: 'username', direction: 'asc' })
+
+  // The selector's options. Deliberately the same `GET /auth/projects` the admin panel uses -
+  // a sysadmin gets every registered project, an org_admin only their organisation's - so the
+  // options and the refusal on `GET /auth/users?project=` read the same project_registry
+  // rather than being two answers that can drift apart.
+  const { data: projects = [] } = useQuery<ProjectRegistryEntry[]>({
+    queryKey: ['admin', 'projects'],
+    queryFn: adminApi.listRegistry,
+  })
 
   const { data: users = [], isLoading } = useQuery<AdminUser[]>({
-    queryKey: ['admin', 'users'],
-    queryFn: adminApi.listUsers,
+    queryKey: ['admin', 'users', project],
+    queryFn: () => adminApi.listUsers(project || undefined),
   })
+
+  const sorted = useMemo(() => sortRows(users, sort, userSortKey), [users, sort])
 
   const deleteUserMut = useMutation({
     mutationFn: (userId: number) => adminApi.deleteUser(userId),
@@ -58,6 +90,16 @@ export default function UserList() {
       setResetError('That reset link could not be issued - that account is not yours to administer.'),
   })
 
+  const onSort = (key: string) => setSort((current) => toggleSort(current, key))
+
+  // Selecting a project brings the Name column into existence, so it is the natural thing to
+  // sort by; clearing the selection takes it away again, and a sort key pointing at a column
+  // that is no longer rendered orders the list by nothing the reader can see.
+  const onProjectChange = (slug: string) => {
+    setProject(slug)
+    setSort({ key: slug ? 'name' : 'username', direction: 'asc' })
+  }
+
   const roleBadge = (role: string) => {
     const colours: Record<string, string> = {
       sysadmin: 'bg-violet-100 text-violet-700',
@@ -72,9 +114,25 @@ export default function UserList() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="flex items-center gap-3 mb-2">
         <h1 className="text-xl font-bold text-gray-900">Users</h1>
+        <label className="text-xs text-secondary ml-auto" htmlFor="user-list-project">
+          Show as on project
+        </label>
+        <select
+          id="user-list-project"
+          className="bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900"
+          value={project}
+          onChange={(e) => onProjectChange(e.target.value)}
+        >
+          <option value="">All accounts (no names)</option>
+          {projects.map((p) => (
+            <option key={p.slug} value={p.slug}>
+              {p.display_name || p.slug}
+            </option>
+          ))}
+        </select>
         <button
           onClick={() => navigate('/admin/users/new')}
           className="text-xs bg-brand text-white px-3 py-1.5 rounded"
@@ -82,6 +140,14 @@ export default function UserList() {
           + New User
         </button>
       </div>
+
+      <p className="text-xs text-secondary mb-6">
+        {project
+          ? 'Names and entities are as recorded on this project. The list is the accounts holding'
+            + ' access to it - a person can be recorded differently on another engagement.'
+          : 'Every account you administer. Names live on a project, so none are shown here -'
+            + ' choose a project to see who each account belongs to on it.'}
+      </p>
 
       {issued && (
         <div className="bg-surface-card border border-brand rounded-lg p-4 mb-4">
@@ -130,21 +196,35 @@ export default function UserList() {
         {isLoading ? (
           <p className="px-4 py-6 text-sm text-gray-600">Loading…</p>
         ) : users.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-gray-600">No users yet.</p>
+          <p className="px-4 py-6 text-sm text-gray-600">
+            {project ? 'No accounts hold access to this project.' : 'No users yet.'}
+          </p>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-gray-600 border-b border-gray-200">
-                <th className="text-left px-4 py-2">Username</th>
-                <th className="text-left px-4 py-2">Email</th>
-                <th className="text-left px-4 py-2">Role</th>
-                <th className="text-left px-4 py-2">Created</th>
+                {project && (
+                  <>
+                    <SortHeader label="Name" sortKey="name" state={sort} onSort={onSort} />
+                    <SortHeader label="Entity" sortKey="entity" state={sort} onSort={onSort} />
+                  </>
+                )}
+                <SortHeader label="Username" sortKey="username" state={sort} onSort={onSort} />
+                <SortHeader label="Email" sortKey="email" state={sort} onSort={onSort} />
+                <SortHeader label="Role" sortKey="role" state={sort} onSort={onSort} />
+                <SortHeader label="Created" sortKey="created" state={sort} onSort={onSort} />
                 <th className="px-4 py-2" />
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
+              {sorted.map((u) => (
                 <tr key={u.id} className="border-b border-gray-200 hover:bg-surface-raised">
+                  {project && (
+                    <>
+                      <td className="px-4 py-2 text-xs"><PersonCell person={u.person} field="name" /></td>
+                      <td className="px-4 py-2 text-xs"><PersonCell person={u.person} field="entity" /></td>
+                    </>
+                  )}
                   <td className="px-4 py-2 font-mono text-xs text-gray-900">{u.username}</td>
                   <td className="px-4 py-2 text-secondary text-xs">{u.email || '-'}</td>
                   <td className="px-4 py-2">{roleBadge(u.role)}</td>

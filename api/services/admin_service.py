@@ -11,12 +11,13 @@ from api.database import (
     insert_project_registry, fetch_all_registry, fetch_org_projects,
     delete_project_registry, fetch_project_registry,
     insert_project_membership, delete_project_membership,
-    fetch_user_project_memberships,
+    fetch_user_project_memberships, fetch_project_memberships,
     insert_user, fetch_all_users, fetch_users_by_org,
     fetch_user_by_id, update_user, delete_user, fetch_user, fetch_user_org,
     fetch_user_org_ids,
 )
 from api.services.invite_service import deliver_reset
+from api.services.user_identity import person_block, project_identities
 
 
 class OrganisationInUse(Exception):
@@ -143,6 +144,9 @@ async def svc_delete_org(org_id: int) -> bool:
 # ── Org membership services ───────────────────────────────────────────────────
 
 async def svc_list_org_members(org_id: int) -> list[dict]:
+    # Deliberately carries no person block. A name lives on a stakeholder row, which is per
+    # *project*, and an organisation is not a project - there is no lens here to read a name
+    # through. The place that question is asked and answered is the project-scoped user list.
     async with get_system_connection() as conn:
         return await fetch_org_members(conn, org_id=org_id)
 
@@ -210,15 +214,76 @@ async def svc_unregister_project(slug: str) -> bool:
 
 # ── User services ─────────────────────────────────────────────────────────────
 
-async def svc_list_users(payload: dict) -> list[dict]:
+async def svc_list_users(payload: dict, *, project_slug: str | None = None) -> list[dict]:
+    """The accounts this caller may administer - through the lens of one project, or not.
+
+    **Unscoped** (`project_slug` is None) is exactly the list this endpoint has always
+    returned, and it carries **no `person` field at all**. That is deliberate rather than
+    lazy: a name lives on a stakeholder row, per project, so without a project there is no
+    question a name is the answer to, and the honest thing is to have no column rather than
+    an arbitrarily chosen one. It stays the default because it is the only view that can show
+    every account - including the built-in administrator, and any login created directly -
+    and an administration screen that could not list an account it can delete would be a
+    worse defect than the one this change fixes.
+
+    **Scoped** returns the accounts holding a membership on that project, each with the name
+    and entity *that project* records for them. The slug is authorised by the router through
+    `check_project_access` before it gets here, so no project the caller may not administer
+    is ever opened.
+
+    Three properties hold, and each is asserted:
+
+      subset       the scoped list never contains an account the unscoped list would not
+                   have. It is built by *filtering* the caller's own answer, not by querying
+                   `project_memberships` outwards, so an account the caller cannot see cannot
+                   arrive through a membership. This is what keeps the project lens from
+                   becoming a way round `fetch_users_by_org`.
+      sysadmins    a sysadmin holds no membership on most projects, so a platform
+                   administrator selecting a project would otherwise watch their own account
+                   vanish. Sysadmin accounts are therefore kept regardless of membership -
+                   **only for a sysadmin caller**. `fetch_users_by_org` shows an org_admin a
+                   sysadmin only when that sysadmin holds a membership of their organisation,
+                   and starting to show them unconditionally would confirm the existence of
+                   accounts an org_admin has no way to learn about today.
+      no guessing  a membership with a NULL stakeholder_id - the /admin access grant - keeps
+                   its row and gets `person: null`. It is access without a person record, not
+                   a person whose name we failed to find.
+    """
     async with get_system_connection() as conn:
-        if payload.get("role") == "sysadmin":
-            users = await fetch_all_users(conn)
-        else:
-            org_id = payload.get("org_id")
-            users = await fetch_users_by_org(conn, org_id=org_id) if org_id else []
+        users = await _scoped_users(conn, payload)
         # Strip hashed_pw from response
-        return [{k: v for k, v in u.items() if k != "hashed_pw"} for u in users]
+        users = [{k: v for k, v in u.items() if k != "hashed_pw"} for u in users]
+        if project_slug is None:
+            return users
+        memberships = await fetch_project_memberships(conn, project_slug=project_slug)
+
+    stakeholder_by_user = {m["user_id"]: m["stakeholder_id"] for m in memberships}
+    keep_sysadmins = payload.get("role") == "sysadmin"
+    scoped = [
+        u for u in users
+        if u["id"] in stakeholder_by_user or (keep_sysadmins and u["role"] == "sysadmin")
+    ]
+    wanted = [
+        stakeholder_by_user[u["id"]]
+        for u in scoped
+        if stakeholder_by_user.get(u["id"]) is not None
+    ]
+    identities = await project_identities(project_slug, wanted)
+    for user in scoped:
+        stakeholder_id = stakeholder_by_user.get(user["id"])
+        user["person"] = person_block(
+            identities.get(stakeholder_id) if stakeholder_id is not None else None
+        )
+    return scoped
+
+
+async def _scoped_users(conn, payload: dict) -> list[dict]:
+    """The user rows this caller may list at all - the endpoint's long-standing answer,
+    unchanged, and the set every project-scoped view is a subset of."""
+    if payload.get("role") == "sysadmin":
+        return await fetch_all_users(conn)
+    org_id = payload.get("org_id")
+    return await fetch_users_by_org(conn, org_id=org_id) if org_id else []
 
 
 async def svc_create_user(

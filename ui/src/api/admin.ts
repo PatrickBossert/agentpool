@@ -50,9 +50,13 @@ export const adminApi = {
   unregisterProject: (slug: string): Promise<void> =>
     apiClient.delete(`/auth/projects/${slug}`).then(() => undefined),
 
-  // Users
-  listUsers: (): Promise<AdminUser[]> =>
-    apiClient.get<AdminUser[]>('/auth/users').then((r) => r.data),
+  // Users. `project` selects the lens a name is read through - without it the server returns
+  // every account the caller may administer and no `person` field at all, because a name only
+  // exists relative to an engagement.
+  listUsers: (project?: string): Promise<AdminUser[]> =>
+    apiClient
+      .get<AdminUser[]>('/auth/users', project ? { params: { project } } : undefined)
+      .then((r) => r.data),
 
   createUser: (data: {
     username: string
