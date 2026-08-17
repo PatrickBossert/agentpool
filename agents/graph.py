@@ -13,6 +13,7 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | Which agents a crew dispatches | `_CREW_AGENT_NAMES` - `api/services/run_service.py` |
 | What a crew is called | `CREW_LABEL` - `agents/identity.py` |
 | What a crew waits on | `CREW_DEPENDENCIES` - `api/services/crew_graph.py` |
+| What a crew is for, and what can start it | `CREW_CHARTER` - `agents/charter.py` |
 | What each tool reaches | `TOOL_EGRESS` - `agents/egress.py` |
 
 A literal list of agent names or crew names in this file would make it one more restatement of
@@ -36,6 +37,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from agents.charter import CREW_CHARTER as _CREW_CHARTER
+from agents.charter import Trigger
 from agents.egress import TOOL_EGRESS as _TOOL_EGRESS
 from agents.egress import Destination, agent_destinations
 from agents.identity import AGENT_IDENTITY as _AGENT_IDENTITY
@@ -106,17 +109,30 @@ class AgentNode:
 
 @dataclass(frozen=True)
 class CrewNode:
-    """One crew: who runs in it, what it is called, and what must be committed before it runs.
+    """One crew: who runs in it, what it is for, what can start it, and what it waits on.
 
     `crew_id` is the permanent half - `crew_runs.crew_name` stores it and PAM dispatches by it.
     `display_name` is the mutable half, resolved through `CREW_LABEL`, and is not derivable
     from the id: `discovery_mapping` reads as "Value Chain Mapping".
+
+    `triggers` is what **can** start this crew, not what will. `depends_on` beside it is the
+    condition on one of them - `Trigger.APPROVAL_CASCADE` reaches a crew only once every crew it
+    depends on has been committed - so the two fields are read together and neither restates the
+    other.
+
+    `defect` is set only when every one of this crew's triggers currently fails, in which case
+    the triggers above it are nominal: the paths exist and taking any of them raises. One crew
+    has one.
     """
 
     crew_id: str
     agent_ids: tuple[str, ...]
     depends_on: tuple[str, ...]
     display_name: str
+    purpose: str
+    triggers: tuple[Trigger, ...]
+    note: str
+    defect: str | None
 
 
 @dataclass(frozen=True)
@@ -323,12 +339,27 @@ def _build_crews(agents: dict[str, AgentNode]) -> dict[str, CrewNode]:
             f"Mapping, and a label for a crew nothing dispatches is a row that never fills."
         )
 
+    uncharted = sorted(set(_CREW_AGENT_NAMES) - set(_CREW_CHARTER))
+    charter_for_nobody = sorted(set(_CREW_CHARTER) - set(_CREW_AGENT_NAMES))
+    if uncharted or charter_for_nobody:
+        raise GraphInconsistent(
+            f"_CREW_AGENT_NAMES and CREW_CHARTER disagree about which crews exist - "
+            f"no purpose or triggers declared: {uncharted}; charter but no crew: "
+            f"{charter_for_nobody}. There is no default for either: an empty purpose is a blank "
+            f"row on the page a client is shown, and an empty trigger set says a crew cannot be "
+            f"started, which of a crew nobody has read yet is a guess rather than an answer."
+        )
+
     return {
         crew_id: CrewNode(
             crew_id=crew_id,
             agent_ids=tuple(_CREW_AGENT_NAMES[crew_id]),
             depends_on=tuple(_CREW_DEPENDENCIES[crew_id]),
             display_name=_CREW_LABEL[crew_id],
+            purpose=_CREW_CHARTER[crew_id].purpose,
+            triggers=tuple(_CREW_CHARTER[crew_id].triggers),
+            note=_CREW_CHARTER[crew_id].note,
+            defect=_CREW_CHARTER[crew_id].defect,
         )
         for crew_id in _runnable_order()
     }
