@@ -21,6 +21,13 @@ def _crew_names() -> tuple[str, ...]:
     either does. Worth stating plainly, because the alternative belief - that moving this line
     protects anything - would leave someone free to change `_tools_by_agent` to a real import
     and trust a placement that does nothing.
+
+    That covers this module and `registry.py`. It is **not** a statement about `agents.tools`
+    as a whole: `agents/tools/_db.py` imports `agents.graph` at module level, and the graph
+    imports `api.services.run_service`, so `_db` and everything importing it now sit downstream
+    of `run_service`. Adding a module-level `from agents.tools…` import to `run_service` closes
+    that loop and fails app start-up in every import order - verified. The comment above
+    `run_service`'s imports says so where someone editing them will see it.
     """
     from agents.graph import build_graph
     return tuple(sorted(build_graph().crews))

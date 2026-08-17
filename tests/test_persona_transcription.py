@@ -43,6 +43,27 @@ def _frontend_images() -> set[str]:
     return set(re.findall(r"_img\('([^']+)'\)", _block("AGENT_AVATAR_IMAGE")))
 
 
+def _frontend_faces() -> set[tuple[str, str]]:
+    """Each person paired with their headshot, joined on the role key the two maps share.
+
+    The role key never leaves this function - it is how the *TypeScript* relates its own two
+    maps, not a bridge to the Python side, so pairing here buys the mispairing check without
+    introducing any relationship between an agent id and a name.
+    """
+    names = dict(re.findall(r"'([^']+)':\s+'([^']+)'", _block("AGENT_HUMAN_NAME")))
+    images = dict(re.findall(r"'([^']+)':\s+_img\('([^']+)'\)", _block("AGENT_AVATAR_IMAGE")))
+    assert set(names) == set(images), "the two front-end maps cover different roles"
+    return {(names[role], images[role]) for role in names}
+
+
+def _python_faces() -> set[tuple[str, str]]:
+    return {
+        (identity.display_name, identity.image.rsplit("/", 1)[-1])
+        for identity in AGENT_IDENTITY.values()
+        if identity.image
+    }
+
+
 def _python_images() -> set[str]:
     return {
         identity.image.rsplit("/", 1)[-1]
@@ -71,6 +92,24 @@ def test_the_two_files_show_the_same_seventeen_faces():
     assert _python_images() == _frontend_images(), (
         "agents/identity.py and ui/src/components/agentStatus.ts disagree about which "
         "headshot belongs to the roll."
+    )
+
+
+def test_each_person_has_the_same_face_in_both_files():
+    """Two separate set-equality checks cannot see a swap: exchange two agents' images and
+    both sets are unchanged. Pairing name with filename catches it, and needs no derivation -
+    the TypeScript already relates its own two maps through a shared role key, so the pairing
+    is read rather than invented.
+
+    The name-to-id half stays open on purpose. Pairing those would need a key the two files do
+    not share, and the only candidate is `id.replace("_", " ").title()` - the coupling Task 2
+    rejected on evidence. So swapping two *names* between agent ids is still invisible here.
+    The cost of that gap is a mislabelled agent; the cost of closing it this way is writing the
+    rejected derivation into a test, where the next reader takes it for the rule.
+    """
+    assert _python_faces() == _frontend_faces(), (
+        "an agent's name and headshot are paired differently in the two files - most likely "
+        "two rows were transcribed across each other"
     )
 
 

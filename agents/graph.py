@@ -13,12 +13,14 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | What a crew is called | `CREW_LABEL` - `agents/identity.py` |
 | What a crew waits on | `CREW_DEPENDENCIES` - `api/services/crew_graph.py` |
 
-A literal list of agent names or crew names in this file would make it the tenth restatement of
-what those six already say, which is the thing it exists to end - research found nine crew to
-agent maps, four disagreeing crew-label maps, six persona lists, and three `OUTPUT_TYPE_LABELS`,
-and the disagreements are live. `RunCrewTool`'s description offers PAM `discovery` and
-`architecture`, neither of which any dispatch map knows, and `build_and_run_crew` answers an
-unknown crew name with an empty string - so a dispatch that did nothing reports as a result.
+A literal list of agent names or crew names in this file would make it one more restatement of
+what those six already say, which is the thing it exists to end - the slice that built this
+module deleted ten crew-to-agent maps, five disagreeing crew-label maps, two of the six persona
+lists, two of the three `OUTPUT_TYPE_LABELS`, and `crews_enabled`, a settings toggle naming five
+of the nine crews that no dispatch path had ever read. The disagreements were live:
+`RunCrewTool`'s description offered PAM `discovery` and `architecture`, neither of which any
+dispatch map knew, and `build_and_run_crew` answers an unknown crew name with an empty string -
+so a dispatch that did nothing reports as a result.
 
 That is why assembly raises rather than dropping an edge it cannot resolve. A graph that
 silently omitted a broken edge would be the same failure in a new place, and the failure is

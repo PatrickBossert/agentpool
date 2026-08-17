@@ -14,6 +14,12 @@ from api.config import get_settings, load_project_config
 from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_agent_outputs, fetch_stakeholder_assignments, fetch_stakeholders
 from api.routers.ws import push_log
 
+# Do not add a module-level `from agents…` import here. `agents/graph.py` imports
+# `_CREW_AGENT_NAMES` from this module and assembles at import time, and `agents/tools/_db.py`
+# imports the graph, so every tool module now sits downstream of this one. A module-level
+# import in this direction closes the loop and fails app start-up in every import order - which
+# is why every `agents` import below is inside the function that needs it.
+
 log = logging.getLogger(__name__)
 
 # Crew name → snake_case agent names stored in agent_outputs.agent_name

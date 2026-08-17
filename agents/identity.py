@@ -81,7 +81,7 @@ AGENT_IDENTITY: dict[str, Identity] = {
 # quietly rename the first while appearing to work for the second.
 #
 # Transcribed from `CREW_LABELS` in `ui/src/components/agentStatus.ts`, the only one of the
-# five crew-label maps that names the nine crews that actually exist. The other four were
+# five crew-label maps that named the nine crews that actually exist. The other four were
 # stale in different directions - `api/services/pam_report_service.py` still labelled
 # `discovery` and `architecture`, crews no dispatch map has known for two sprints, and
 # `ui/src/pages/Dashboard.tsx` showed `discovery_mapping` as "Value Chain Mapper", the agent
