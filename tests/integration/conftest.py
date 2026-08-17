@@ -112,7 +112,6 @@ def setup_test_project(test_slug, chroma_client):
         "sector": "logistics",
         "stakeholder_groups": ["Operations", "IT", "Finance"],
         "value_stream_labels": ["Inbound", "Warehousing", "Outbound", "Last Mile"],
-        "crews_enabled": ["discovery"],
         "review_gates": True,
         "slack_channel": "",
     }

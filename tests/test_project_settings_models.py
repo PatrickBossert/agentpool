@@ -29,8 +29,7 @@ async def test_the_model_settings_survive_a_round_trip(client):
     """Driven through the real endpoints, not a mocked client."""
     await client.post("/projects", json={
         "client_slug": "modelsettings", "llm_mode": "standard", "sector": "test",
-        "stakeholder_groups": [], "value_stream_labels": [], "crews_enabled": [],
-        "review_gates": True, "slack_channel": "",
+        "stakeholder_groups": [], "value_stream_labels": [], "review_gates": True, "slack_channel": "",
     })
     r = await client.get("/projects/modelsettings/settings")
     body = r.json()

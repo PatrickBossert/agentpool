@@ -73,13 +73,6 @@ def project_id_pam(test_slug_pam) -> int:
         "stakeholder_groups": ["Operations", "Technology"],
         "value_stream_labels": ["Asset Management", "Customer Delivery"],
         "roadmap_time_axis": "quarters",
-        "crews_enabled": [
-            "discovery",
-            "value_design",
-            "architecture",
-            "delivery",
-            "business_plan",
-        ],
         "review_gates": True,
         "slack_channel": "",
     }

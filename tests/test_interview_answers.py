@@ -16,8 +16,7 @@ from api.services.interview_answer_service import record_answers
 SLUG = "answers-test"
 PROJECT = {
     "client_slug": SLUG, "llm_mode": "standard", "sector": "utilities",
-    "stakeholder_groups": [], "value_stream_labels": [], "crews_enabled": ["requirements"],
-    "review_gates": True, "slack_channel": "",
+    "stakeholder_groups": [], "value_stream_labels": [], "review_gates": True, "slack_channel": "",
 }
 SCRIPT = {
     "script_id": "SC-014", "node_id": "1.2", "level": "L2", "relationship": "internal",

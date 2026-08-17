@@ -9,8 +9,6 @@ import { SUPPORTED_LOCALES } from '../utils/holidays'
 const DEFAULT_PRIMARY_COLOR = '#0d9488'  // must match api/models.py default
 const DEFAULT_TEXT_COLOR = '#1f2937'
 
-const KNOWN_CREWS = ['requirements', 'value_design', 'capabilities', 'delivery', 'business_plan']
-
 const DEFAULTS: ProjectSettings = {
   llm_mode: 'standard',
   locale: 'GB',
@@ -18,7 +16,6 @@ const DEFAULTS: ProjectSettings = {
   stakeholder_groups: [],
   value_stream_labels: [],
   roadmap_time_axis: 'quarters',
-  crews_enabled: [...KNOWN_CREWS],
   review_gates: true,
   slack_channel: '',
   discovery_brief: '',
@@ -114,15 +111,6 @@ export default function Settings() {
   })
 
   if (!slug) return null
-
-  function toggleCrew(crew: string) {
-    setForm((f) => ({
-      ...f,
-      crews_enabled: f.crews_enabled.includes(crew)
-        ? f.crews_enabled.filter((c) => c !== crew)
-        : [...f.crews_enabled, crew],
-    }))
-  }
 
   async function handleImageUpload() {
     const file = fileInputRef.current?.files?.[0]
@@ -227,25 +215,6 @@ export default function Settings() {
             value={form.value_stream_labels}
             onChange={(v) => setForm({ ...form, value_stream_labels: v })}
           />
-        </div>
-      </section>
-
-      {/* Crews */}
-      <section>
-        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
-          Crews Enabled
-        </h3>
-        <div className="flex flex-wrap gap-4">
-          {KNOWN_CREWS.map((crew) => (
-            <label key={crew} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.crews_enabled.includes(crew)}
-                onChange={() => toggleCrew(crew)}
-              />
-              {crew}
-            </label>
-          ))}
         </div>
       </section>
 

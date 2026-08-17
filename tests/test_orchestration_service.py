@@ -10,7 +10,6 @@ PROJECT_PAYLOAD = {
     "sector": "transport",
     "stakeholder_groups": ["Ops"],
     "value_stream_labels": ["Ops"],
-    "crews_enabled": ["requirements"],
     "review_gates": True,
     "slack_channel": "",
 }

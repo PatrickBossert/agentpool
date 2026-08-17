@@ -93,7 +93,6 @@ export interface ProjectSettings {
   stakeholder_groups: string[]
   value_stream_labels: string[]
   roadmap_time_axis: 'quarters' | 'years' | 'horizons'
-  crews_enabled: string[]
   review_gates: boolean
   slack_channel: string
   discovery_brief: string

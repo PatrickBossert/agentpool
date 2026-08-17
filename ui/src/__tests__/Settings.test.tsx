@@ -20,7 +20,6 @@ const BASE_SETTINGS: ProjectSettings = {
   stakeholder_groups: [],
   value_stream_labels: [],
   roadmap_time_axis: 'quarters',
-  crews_enabled: [],
   review_gates: true,
   slack_channel: '',
   discovery_brief: '',

@@ -11,9 +11,6 @@ class ProjectCreate(BaseModel):
     stakeholder_groups: list[str] = []
     value_stream_labels: list[str] = []
     roadmap_time_axis: Literal["quarters", "years", "horizons"] = "quarters"
-    crews_enabled: list[str] = [
-        "requirements", "value_design", "capabilities", "delivery", "business_plan"
-    ]
     review_gates: bool = True
     slack_channel: str = ""
 
@@ -24,9 +21,6 @@ class ProjectSettings(BaseModel):
     stakeholder_groups: list[str] = []
     value_stream_labels: list[str] = []
     roadmap_time_axis: Literal["quarters", "years", "horizons"] = "quarters"
-    crews_enabled: list[str] = [
-        "requirements", "value_design", "capabilities", "delivery", "business_plan"
-    ]
     review_gates: bool = True
     slack_channel: str = ""
     # When true, all outbound project email goes to a single dev address instead

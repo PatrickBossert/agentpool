@@ -13,7 +13,6 @@ vi.mock('../api/endpoints', () => ({
       stakeholder_groups: [],
       value_stream_labels: [],
       roadmap_time_axis: 'quarters',
-      crews_enabled: [],
       review_gates: false,
       slack_channel: '',
       discovery_brief: '',
