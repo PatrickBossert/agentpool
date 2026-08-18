@@ -109,6 +109,18 @@ def test_an_undeclared_mode_warns_rather_than_raising(caplog):
     ), "an undeclared mode was denied silently - nothing tells an operator the value was wrong"
 
 
+def test_the_grants_table_cannot_be_written_by_an_importer():
+    """The module's docstring says nothing here may acquire a default that grants something.
+
+    A writable table reaches the same place by a different door: any importer could add a row,
+    at run time, from anywhere, and grant a mode an egress the declaration does not carry. The
+    values were always `frozenset`; this is the mapping itself. Asserted rather than left to the
+    type annotation, which is not enforcement.
+    """
+    with pytest.raises(TypeError):
+        EGRESS_GRANTS["invented-at-run-time"] = frozenset(Capability)
+
+
 def test_the_grants_table_and_the_project_model_declare_the_same_modes():
     """Held equal by set, in both directions, against both models that declare the enum.
 
