@@ -162,7 +162,23 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
     "stakeholder_manager": (
         _artefact(
             "value_chain_registry",
-            "all active L1, L2 and L3 nodes, which is the full coverage target",
+            "every active node at every level, which is the full coverage target",
+        ),
+        Read(
+            "stakeholder_assignments",
+            Medium.DATABASE_TABLE,
+            VIA_DISPATCH,
+            "who is assigned to which node id, with the two coverage proportions derived from "
+            "it - the share of active activities nobody speaks for, and the share of the roster "
+            "assigned to nothing. Computed by the dispatch path, not by him, so the figure he "
+            "reports is the figure Pamela raises",
+        ),
+        Read(
+            "stakeholders",
+            Medium.DATABASE_TABLE,
+            VIA_DISPATCH,
+            "each name and job title, joined onto the mapping, and the roster in full so the "
+            "people assigned to nothing can be named",
         ),
     ),
     # --- discovery_interviews -----------------------------------------------------------------
@@ -176,7 +192,8 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
             "stakeholder_assignments",
             Medium.DATABASE_TABLE,
             VIA_DISPATCH,
-            "who is assigned to which node, for this orchestration run",
+            "who is assigned to which node id, for the project - the mapping is a durable "
+            "project fact, so it is the same rows on every run",
         ),
         Read(
             "stakeholders",
@@ -323,20 +340,13 @@ UNRESOLVABLE_READS: tuple[UnresolvableRead, ...] = (
             "owner."
         ),
     ),
-    UnresolvableRead(
-        agent_id="stakeholder_manager",
-        source="stakeholder_assignments",
-        instructed_via="SQLiteStateTool",
-        finding=(
-            "A database table, and `SQLiteStateTool` resolves a key through `current_output_path` "
-            "against `agent_outputs`, so it can only ever see an output type. No tool this agent "
-            "holds can read the table either - `InterviewSessionTool` has four operations and "
-            "none of them touches it. This agent has therefore never known who is assigned to "
-            "what, while its whole task is to find the gaps in that. The same table does reach "
-            "the Interview Coordinator, injected by `build_and_run_crew`, which is where the fix "
-            "would come from."
-        ),
-    ),
+    # `stakeholder_assignments` was here, and is now declared above as a real read. The finding
+    # stood exactly as written - the tool could never see the table, so the agent whose task is
+    # to find the gaps in the mapping had never seen the mapping - and the fix was the one it
+    # named: `build_and_run_crew` now enriches the rows and prepends them to his task, the same
+    # route by which they already reached the Interview Coordinator, and his step 2 no longer
+    # sends him to `SQLiteStateTool` for them. Recorded here rather than deleted silently,
+    # because the entry is the reason the injection exists.
     UnresolvableRead(
         agent_id="stakeholder_manager",
         source="interview_sessions",

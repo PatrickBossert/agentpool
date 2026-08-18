@@ -55,8 +55,6 @@ from api.database import (
     delete_project_membership_by_stakeholder,
     fetch_project,
     fetch_stakeholder,
-    get_stakeholder_node_assignments,
-    upsert_stakeholder_node_assignments,
 )
 
 router = APIRouter(prefix="/projects", tags=["stakeholders"])
@@ -127,15 +125,6 @@ class StakeholderPatch(BaseModel):
     is_participant: bool | None = None
     is_reviewer: bool | None = None
     is_approver: bool | None = None
-
-
-class NodeAssignmentItem(BaseModel):
-    stakeholder_id: int
-    node_key: str
-
-
-class NodeAssignmentsIn(BaseModel):
-    assignments: list[NodeAssignmentItem] = []
 
 
 def _404(slug: str):
@@ -674,30 +663,7 @@ async def delete_stakeholder_endpoint(slug: str, stakeholder_id: int, payload: d
     await _revoke_membership(slug, stakeholder_id)
 
 
-@router.get("/{slug}/stakeholder-assignments")
-async def get_stakeholder_assignments_endpoint(slug: str, payload: dict = Depends(require_any_auth)):
-    """Return all stakeholder-node assignments for a project."""
-    await check_project_access(slug, payload)
-    async with get_connection(slug) as conn:
-        project = await fetch_project(conn, slug=slug)
-        if not project:
-            _404(slug)
-        return await get_stakeholder_node_assignments(conn, project["id"])
-
-
-@router.put("/{slug}/stakeholder-assignments")
-async def put_stakeholder_assignments_endpoint(
-    slug: str,
-    body: NodeAssignmentsIn,
-    payload: dict = Depends(require_any_auth),
-):
-    """Replace all stakeholder-node assignments for a project."""
-    await check_project_access(slug, payload)
-    await require_project_administration(slug, payload)
-    async with get_connection(slug) as conn:
-        project = await fetch_project(conn, slug=slug)
-        if not project:
-            _404(slug)
-        assignments = [a.model_dump() for a in body.assignments]
-        await upsert_stakeholder_node_assignments(conn, project["id"], assignments)
-        return {"count": len(assignments)}
+# GET/PUT /{slug}/stakeholder-assignments retired. They were the only readers and writers of
+# stakeholder_node_assignments, a second assignment table keyed on 'L2:Some Label' that no
+# agent could ever read. The mapping has one door now - GET/POST /projects/{slug}/assignment
+# on api/routers/assignment.py, keyed on the value chain node id.

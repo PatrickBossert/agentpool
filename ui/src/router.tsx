@@ -19,7 +19,6 @@ import Stakeholders from './pages/Stakeholders'
 import StakeholderForm from './pages/StakeholderForm'
 import Discovery from './pages/Discovery'
 import ValuePropositions from './pages/ValuePropositions'
-import Assignment from './pages/Assignment'
 import VoiceInterview from './pages/VoiceInterview'
 import Templates from './pages/Templates'
 import Report from './pages/Report'
@@ -52,6 +51,15 @@ function AdminRoute({ children, allow }: { children: ReactNode; allow: Role[] })
 function ValueChainRedirect() {
   const { slug } = useParams<{ slug: string }>()
   return <Navigate to={`/${slug}?crew=discovery_mapping&tab=output`} replace />
+}
+
+// The assignment page was retired - the mapping is configuration, and it lives in Jordan's
+// Setup tab now rather than on a page reachable only from a run parked in
+// `awaiting_assignment`. Runs.tsx links straight to the tab, but bookmarks and the links in
+// runs already listed still point here, so this redirects rather than 404s.
+function AssignmentRedirect() {
+  const { slug } = useParams<{ slug: string }>()
+  return <Navigate to={`/${slug}?crew=stakeholder_management&tab=setup`} replace />
 }
 
 // The route array, exported so it can be mounted inside a MemoryRouter/createMemoryRouter in
@@ -170,7 +178,7 @@ export const routes = [
       { path: ':slug/runs', element: <Runs /> },
       { path: ':slug/documents', element: <Documents /> },
       { path: ':slug/runs/:runId', element: <RunDetail /> },
-      { path: ':slug/assignment', element: <Assignment /> },
+      { path: ':slug/assignment', element: <AssignmentRedirect /> },
       { path: ':slug/templates', element: <Templates /> },
       { path: ':slug/settings', element: <Settings /> },
       { path: ':slug/schedule', element: <Schedule /> },

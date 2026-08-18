@@ -16,11 +16,9 @@ import type {
   InviteLinkResponse,
   Stakeholder,
   StakeholderImportResult,
-  StakeholderNodeAssignment,
   ValueChainRegistry,
   PortfolioItem,
   AssignmentData,
-  StakeholderAssignment,
   Milestone,
   PamReport,
   LineageResponse,
@@ -168,19 +166,16 @@ export const projectsApi = {
   listRuns: (slug: string): Promise<OrchestrationRunHistory[]> =>
     apiClient.get<OrchestrationRunHistory[]>(`/projects/${slug}/runs`).then((r) => r.data),
 
-  getAssignment: (slug: string, orchestrationRunId: number): Promise<AssignmentData> =>
-    apiClient
-      .get<AssignmentData>(`/projects/${slug}/assignment/${orchestrationRunId}`)
-      .then((r) => r.data),
+  // The mapping is a project fact, so neither call takes an orchestration run - both
+  // work before the first run and read the same rows after the tenth.
+  getAssignment: (slug: string): Promise<AssignmentData> =>
+    apiClient.get<AssignmentData>(`/projects/${slug}/assignment`).then((r) => r.data),
 
   saveAssignment: (
     slug: string,
-    orchestrationRunId: number,
-    items: StakeholderAssignment[],
+    items: { stakeholder_id: number; node_id: string }[],
   ): Promise<{ saved: number }> =>
-    apiClient
-      .post<{ saved: number }>(`/projects/${slug}/assignment/${orchestrationRunId}`, items)
-      .then((r) => r.data),
+    apiClient.post<{ saved: number }>(`/projects/${slug}/assignment`, items).then((r) => r.data),
 
   advanceOrchestrationRun: (
     slug: string,
@@ -280,15 +275,10 @@ export const stakeholdersApi = {
   },
 }
 
-export const stakeholderNodeAssignmentsApi = {
-  list: (slug: string): Promise<StakeholderNodeAssignment[]> =>
-    apiClient.get<StakeholderNodeAssignment[]>(`/projects/${slug}/stakeholder-assignments`).then((r) => r.data),
-
-  save: (slug: string, assignments: { stakeholder_id: number; node_key: string }[]): Promise<{ count: number }> =>
-    apiClient
-      .put<{ count: number }>(`/projects/${slug}/stakeholder-assignments`, { assignments })
-      .then((r) => r.data),
-}
+// stakeholderNodeAssignmentsApi retired. It was the only caller of GET/PUT
+// /projects/{slug}/stakeholder-assignments, which wrote a second assignment table keyed on
+// 'L2:Some Label' that no agent could read. The mapping is projectsApi.getAssignment /
+// saveAssignment above, keyed on the value chain node id.
 
 export const nonworkingApi = {
   list: (slug: string) =>

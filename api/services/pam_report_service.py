@@ -145,6 +145,22 @@ async def build_pam_report(slug: str) -> dict:
         async with conn.execute("SELECT COUNT(*) as cnt FROM client_documents") as cur:
             doc_count = (await cur.fetchone())['cnt']
 
+        # ── Assignment coverage ────────────────────────────────────────────────
+        # The same derivation the Stakeholder Manager is handed, so the number Pamela
+        # raises and the number Jordan reports are one number. `assignments` is dropped:
+        # eighty-odd names belong in his engagement plan, not in a project health report,
+        # and the report is stored as an artefact and rendered whole.
+        from api.services.assignment_coverage import (
+            build_assignment_coverage, format_coverage_percent,
+        )
+
+        coverage = await build_assignment_coverage(
+            conn, slug=slug, project_id=project['id'])
+        assignment_coverage = {
+            k: v for k, v in coverage.items()
+            if k not in ('assignments', 'off_chain_assignments')
+        }
+
     # ── Derive per-crew status ─────────────────────────────────────────────────
     crews = []
     for ck, crew in GRAPH.crews.items():
@@ -299,6 +315,70 @@ async def build_pam_report(slug: str) -> dict:
             'crew':               None,
         })
 
+    # ── Assignment coverage, in both directions ────────────────────────────────
+    #
+    # Two conditions over one threshold, each raising its own issue, and neither
+    # guarded by the other. A single combined check would let a chain nobody speaks for
+    # and a roster nobody has placed arrive as the same sentence, and the two call for
+    # opposite work: find more people, or give the people you have something to speak
+    # about.
+    #
+    # The number is the content. Pamela reports how many and out of how many, and says
+    # nothing about whether it is acceptable - full coverage is not expected, its absence
+    # is not by itself a fault, and several stakeholders on one activity is the ordinary
+    # shape of frontline work rather than a mismatch. Severity is 'medium' because the
+    # schema requires one, not because a judgement has been made: it keeps the finding out
+    # of the critical and high counts that colour the whole engagement, while still
+    # denying the report its 'no issues' answer.
+    if coverage['uncovered_beyond_threshold']:
+        issues.append({
+            'severity':           'medium',
+            'title':              (
+                f'{coverage["activities_uncovered"]} of {coverage["activities_total"]} '
+                f'activities have no stakeholder assigned '
+                f'({format_coverage_percent(coverage["uncovered_proportion"])})'
+            ),
+            'description': (
+                f'{coverage["activities_uncovered"]} active value chain activities have nobody '
+                f'assigned to speak for them, out of {coverage["activities_total"]} '
+                f'({format_coverage_percent(coverage["uncovered_proportion"])}), which is past '
+                f'the {format_coverage_percent(coverage["threshold"])} reporting threshold. '
+                f'An activity with nobody against it is an activity nobody is interviewed '
+                f'about, because the Interview Coordinator plans one session per assignment. '
+                f'Full coverage is not expected - the figure is reported for you to judge.'
+            ),
+            'recommended_action': (
+                'Open the Stakeholder Manager\'s Setup tab, filter to "Only activities with '
+                'nobody", and either place a stakeholder against each or accept the gap '
+                'deliberately.'
+            ),
+            'crew':               'stakeholder_management',
+        })
+
+    if coverage['unassigned_beyond_threshold']:
+        issues.append({
+            'severity':           'medium',
+            'title':              (
+                f'{coverage["stakeholders_unassigned"]} of {coverage["roster_total"]} '
+                f'stakeholders are assigned to no activity '
+                f'({format_coverage_percent(coverage["unassigned_proportion"])})'
+            ),
+            'description': (
+                f'{coverage["stakeholders_unassigned"]} people on the roster of '
+                f'{coverage["roster_total"]} are assigned to no value chain activity '
+                f'({format_coverage_percent(coverage["unassigned_proportion"])}), which is past '
+                f'the {format_coverage_percent(coverage["threshold"])} reporting threshold. '
+                f'Nobody plans an interview for them, so they will not be asked anything. '
+                f'The figure is reported for you to judge.'
+            ),
+            'recommended_action': (
+                'Open the Stakeholder Manager\'s Setup tab and check "Who is not placed yet". '
+                'Place each person against the activities they can speak for, or remove them '
+                'from the roster if they are not part of this engagement.'
+            ),
+            'crew':               'stakeholder_management',
+        })
+
     # ── Overall health ─────────────────────────────────────────────────────────
     critical_issues   = [i for i in issues if i['severity'] == 'critical']
     high_issues       = [i for i in issues if i['severity'] == 'high']
@@ -310,9 +390,13 @@ async def build_pam_report(slug: str) -> dict:
     elif high_issues or len(high_risks) >= 2:
         overall_health  = 'amber'
         health_summary  = f'{len(issues)} issue{"s" if len(issues) != 1 else ""} and {len(risks)} risk{"s" if len(risks) != 1 else ""} identified. Monitor closely and action outstanding items.'
-    elif risks or len(pending_reviews) > 0:
+    # `issues` joins this condition because the green branch below claims none were
+    # identified. Every issue raised before assignment coverage was critical or high, and
+    # both are caught by the two branches above, so this changes no existing report - it
+    # stops a medium issue from being reported as no issue at all.
+    elif issues or risks or len(pending_reviews) > 0:
         overall_health  = 'amber'
-        health_summary  = f'No critical issues. {len(risks)} risk{"s" if len(risks) != 1 else ""} noted — review mitigations and ensure due dates are tracked.'
+        health_summary  = f'No critical issues. {len(issues)} issue{"s" if len(issues) != 1 else ""} and {len(risks)} risk{"s" if len(risks) != 1 else ""} noted - review mitigations and ensure due dates are tracked.'
     else:
         overall_health  = 'green'
         health_summary  = 'No issues or risks identified. Engagement is progressing to plan.'
@@ -342,4 +426,5 @@ async def build_pam_report(slug: str) -> dict:
         'pending_reviews':    len(pending_reviews),
         'stakeholder_count':  stakeholder_count,
         'doc_count':          doc_count,
+        'assignment_coverage': assignment_coverage,
     }

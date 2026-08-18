@@ -296,6 +296,9 @@ export interface Stakeholder {
   // Optional because only the list door serves it: a create or update response is the row
   // as written, before anything has asked system.db about it.
   access_state?: AccessState
+  // Seeded by scripts/seed_synthetic_stakeholders.py rather than a real person. Sixty of
+  // sp-gs-am's sixty-two rows are, so a surface listing people by name says which.
+  is_synthetic?: boolean
 }
 
 export type AccessState =
@@ -313,18 +316,19 @@ export type AccessState =
   // Participant only. Interviews reach them by campaign link, so no login is needed.
   | 'no_login_needed'
 
-export interface StakeholderNodeAssignment {
-  id: number
-  stakeholder_id: number
-  node_key: string
-}
+// StakeholderNodeAssignment retired with stakeholder_node_assignments, the second
+// assignment table. Its node_key was 'L2:Some Label' - a level and a label glued together,
+// with no node id in it. The mapping is StakeholderAssignment below, keyed on the id.
 
 export interface ValueChainRegistryActivity {
   id: string
   label: string
-  level: 'L1' | 'L2' | 'L3'
+  // L0 belongs here: `0` is the organisation and `0.A` / `0.S` are its audit and corporate
+  // services role nodes, all three registered ids. The assignment page used to invent a
+  // virtual 'L0:Governance' node instead, because this union said they could not exist.
+  level: 'L0' | 'L1' | 'L2' | 'L3'
   active: boolean
-  parent_id: string | null
+  parent_id?: string | null
 }
 
 export interface ValueChainRegistry {
@@ -433,20 +437,22 @@ export interface PortfolioItem {
   }
 }
 
-export interface ValueChainNode {
-  label: string
-  level: 'L1' | 'L2' | 'L3'
-  children?: ValueChainNode[]
-}
+// ValueChainNode retired with the `value_chain_tree` field of the assignment payload. It
+// described value_chain_tree.json - a label, a level and children, and no id anywhere - so
+// nothing could assign against it without keying on a label. The node ids come from
+// ValueChainRegistryActivity, which is what the assignment surface reads.
 
+// One stakeholder against one value chain node. The node is cited by its id, which is a
+// permanent contract; `node_label` and `level` are resolved from the value chain registry
+// on read and are never sent back.
 export interface StakeholderAssignment {
   stakeholder_id: number
-  level: string
-  node_label: string
+  node_id: string
+  node_label?: string
+  level?: string
 }
 
 export interface AssignmentData {
-  value_chain_tree: ValueChainNode[]
   assignments: StakeholderAssignment[]
   stakeholders: Stakeholder[]
 }
@@ -749,6 +755,28 @@ export interface PamReport {
   pending_reviews: number
   stakeholder_count: number
   doc_count: number
+  // Optional because the exporter and its fixtures build a report by hand, and a report
+  // predating this field is still a report. `build_pam_report` always returns it.
+  assignment_coverage?: PamReportAssignmentCoverage
+}
+
+/** What the mapping covers, and what it leaves out. Counts only - the mapping itself is
+ *  Jordan's engagement plan, not a project health report. */
+export interface PamReportAssignmentCoverage {
+  activities_total: number
+  activities_covered: number
+  activities_uncovered: number
+  uncovered_node_ids: string[]
+  uncovered_proportion: number
+  roster_total: number
+  stakeholders_assigned: number
+  stakeholders_unassigned: number
+  unassigned_stakeholders: { id: number; name: string; job_title: string }[]
+  unassigned_proportion: number
+  off_chain_total: number
+  threshold: number
+  uncovered_beyond_threshold: boolean
+  unassigned_beyond_threshold: boolean
 }
 
 export interface LineageOutput {

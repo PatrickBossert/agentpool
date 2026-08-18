@@ -29,11 +29,14 @@ function RunRow({ run, slug, locale = 'GB' }: { run: OrchestrationRunHistory; sl
           <StatusBadge status={run.status} />
           {run.status === 'awaiting_assignment' && (
             <Link
-              to={`/${slug}/assignment`}
+              // Jordan's Setup tab, which is where the mapping is made - and can be made
+              // before any run exists at all. The old /:slug/assignment page redirects
+              // here; this link goes direct so it does not depend on the redirect.
+              to={`/${slug}?crew=stakeholder_management&tab=setup`}
               onClick={(e) => e.stopPropagation()}
-              className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-2"
+              className="text-xs text-brand hover:text-brand-dark underline underline-offset-2"
             >
-              Go to Assignment →
+              Assign stakeholders →
             </Link>
           )}
           {run.crew_runs.length > 0 && (

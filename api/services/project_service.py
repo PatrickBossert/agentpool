@@ -377,26 +377,39 @@ async def get_run_history(slug: str) -> list[dict] | None:
         return await fetch_all_orchestration_runs(conn, project_id=project["id"])
 
 
-async def get_value_chain_tree(slug: str) -> list | None:
-    """Return the value chain tree JSON for the assignment page.
+def get_value_chain_node_index(slug: str) -> dict[str, dict]:
+    """Map every registered activity id to its label, level, and active flag.
 
-    Returns:
-        None  — project DB does not exist (unknown project)
-        []    — project exists but value_chain_tree.json not yet on disk
-        list  — parsed JSON array from outputs/value_chain_tree.json
+    The registry is the canonical spine: an assignment stores only the node id, and the
+    label it should be shown under is read back from here rather than copied onto the
+    assignment row. Ask the ledger, never the copy.
+
+    Returns {} when no registry has been written yet, which is the ordinary state of a
+    project before the value chain mapper has run - a caller shows the raw id then.
     """
-    if not get_db_path(slug).exists():
-        return None
-    async with get_connection(slug) as conn:
-        project = await fetch_project(conn, slug=slug)
-        if not project:
-            return None
     from agents.tools._db import current_output_path
 
-    path = current_output_path(slug, "value_chain_tree")
-    if path is None:
-        return []
+    path = current_output_path(slug, "value_chain_registry")
+    if path is None or not path.exists():
+        return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        registry = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return []
+        return {}
+    index: dict[str, dict] = {}
+    for activity in registry.get("activities", []):
+        node_id = activity.get("id")
+        if not node_id:
+            continue
+        index[str(node_id)] = {
+            "label": activity.get("label", ""),
+            "level": activity.get("level", ""),
+            "active": bool(activity.get("active", True)),
+        }
+    return index
+
+
+# get_value_chain_tree retired with the field it served. It read value_chain_tree.json,
+# whose nodes carry a label, a level and their children and no id at all, for the assignment
+# endpoint - which assigns by node id. `get_value_chain_node_index` above is the id-carrying
+# read, and the registry endpoint serves the browser directly.

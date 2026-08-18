@@ -17,6 +17,7 @@ import type { FC } from 'react'
 import { CREW_AGENTS, AGENT_HUMAN_NAME } from '../agentStatus'
 import TaylorSetupTab from './TaylorSetupTab'
 import AverySetupTab from './AverySetupTab'
+import JordanSetupTab from './JordanSetupTab'
 
 export type SetupSectionFC = FC<{ slug: string }>
 
@@ -28,7 +29,8 @@ export type SetupSectionFC = FC<{ slug: string }>
  * the override map holds only genuinely whole-tab cases.
  */
 export const AGENT_SETUP_SECTION: Record<string, SetupSectionFC> = {
-  'Interview Coordinator':  TaylorSetupTab,
+  'Stakeholder Manager':     JordanSetupTab,
+  'Interview Coordinator':   TaylorSetupTab,
   'Stakeholder Interviewer': AverySetupTab,
 }
 
