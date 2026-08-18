@@ -66,9 +66,30 @@ def test_the_graph_is_acyclic():
         visit(crew, [])
 
 
-def test_jordan_now_follows_maya():
-    """The reordering: stakeholder_management depends on assessment_design."""
-    assert "assessment_design" in CREW_DEPENDENCIES["stakeholder_management"]
+def test_jordan_waits_on_the_value_chain_and_not_on_maya():
+    """The correction: Jordan waits on what he reads, which is the value chain.
+
+    He was declared behind `assessment_design`, which writes `interview_scripts` and nothing
+    else - an output he does not read. What he reads is `value_chain_registry`, which only
+    `discovery_mapping` writes. So the board held him back a whole crew for an input that never
+    arrived, and the input that does arrive was undeclared.
+
+    Asserted as equality rather than membership: the defect was an extra dependency, and
+    `"discovery_mapping" in ...` would pass with the old one still beside it.
+    """
+    assert CREW_DEPENDENCIES["stakeholder_management"] == ["discovery_mapping"]
+
+
+def test_jordan_and_maya_wait_on_the_same_crew_and_on_nothing_of_each_others():
+    """Parallel, stated as the two halves that make it so.
+
+    Neither crew appears in the other's dependencies, and both wait on exactly the same crew -
+    which is what a viewer needs in order to draw them side by side rather than one after the
+    other.
+    """
+    assert CREW_DEPENDENCIES["assessment_design"] == CREW_DEPENDENCIES["stakeholder_management"]
+    assert "stakeholder_management" not in CREW_DEPENDENCIES["assessment_design"]
+    assert "assessment_design" not in CREW_DEPENDENCIES["stakeholder_management"]
 
 
 def test_downstream_is_the_inverse_of_dependencies():

@@ -86,7 +86,13 @@ async def test_committing_freezes_only_that_crews_outputs(client):
 
 
 @pytest.mark.asyncio
-async def test_committing_starts_the_crew_below_it(client):
+async def test_committing_starts_the_crews_below_it(client):
+    """One commit can release more than one crew, and this one does.
+
+    `assessment_design` and `stakeholder_management` both wait on the value chain and on
+    nothing else, so committing it arms both. A cascade that started only the first crew it
+    found would pass a test that asserted membership; this asserts the whole list.
+    """
     await client.post("/projects", json=PROJECT)
     await client.post("/projects/commit-api-test/activate")
 
@@ -96,8 +102,8 @@ async def test_committing_starts_the_crew_below_it(client):
             json={"crew_name": "discovery_mapping", "notes": ""},
         )
 
-    started = [s["crew"] for s in resp.json()["started"]]
-    assert started == ["assessment_design"]
+    started = sorted(s["crew"] for s in resp.json()["started"])
+    assert started == ["assessment_design", "stakeholder_management"]
 
 
 @pytest.mark.asyncio
@@ -112,20 +118,19 @@ async def test_a_second_commit_starts_the_downstream_crew_again(client):
             "/projects/commit-api-test/commits",
             json={"crew_name": "discovery_mapping", "notes": ""},
         )
-        # The first start leaves assessment_design running, which would mask the second
-        # commit as a skip rather than a start. Clear it, as a finished run would.
+        # The first start leaves both crews below running, which would mask the second
+        # commit as a skip rather than a start. Clear them, as finished runs would.
         async with get_connection("commit-api-test") as conn:
-            await conn.execute(
-                "UPDATE crew_runs SET status='completed' WHERE crew_name='assessment_design'"
-            )
+            await conn.execute("UPDATE crew_runs SET status='completed'")
             await conn.commit()
         second = await client.post(
             "/projects/commit-api-test/commits",
             json={"crew_name": "discovery_mapping", "notes": ""},
         )
 
-    assert [s["crew"] for s in first.json()["started"]] == ["assessment_design"]
-    assert [s["crew"] for s in second.json()["started"]] == ["assessment_design"]
+    expected = ["assessment_design", "stakeholder_management"]
+    assert sorted(s["crew"] for s in first.json()["started"]) == expected
+    assert sorted(s["crew"] for s in second.json()["started"]) == expected
 
 
 @pytest.mark.asyncio

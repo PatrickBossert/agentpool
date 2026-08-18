@@ -218,6 +218,15 @@ CREW_CHARTER: dict[str, Charter] = {
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE),
         cluster="pmo",
+        note=(
+            "Runs in parallel with Assessment Design: both wait on the value chain and nothing "
+            "else, and both feed the interviews. What this crew hands on to the interviews is "
+            "not an artefact - the mapping of stakeholders to value chain nodes lives in the "
+            "`stakeholder_assignments` table, which is written when an assignment is confirmed "
+            "and reaches the Interview Coordinator through the dispatch path rather than from "
+            "here - so the arrow into the interviews is sequencing: he invites and chases the "
+            "people who are then interviewed"
+        ),
     ),
     "discovery_interviews": Charter(
         purpose=(

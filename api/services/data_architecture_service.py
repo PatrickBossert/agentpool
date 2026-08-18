@@ -375,6 +375,12 @@ def data_architecture(slug: str) -> dict:
                 "note": cluster.note,
                 "orchestrator_id": cluster.orchestrator_id,
                 "orchestrator": graph.agents[cluster.orchestrator_id].display_name,
+                # The crews grouped by how deep in the pipeline they sit, and the same crews
+                # flattened. Both travel because the view is drawn from the bands - two crews
+                # that wait on the same thing must not be drawn one after the other - while
+                # every table on the page reads the flat order. `crew_ids` is the flattening of
+                # `crew_bands` in the graph itself, so the two cannot disagree here.
+                "crew_bands": [list(band) for band in cluster.crew_bands],
                 "crew_ids": list(cluster.crew_ids),
                 "dispatches": list(cluster.dispatches),
             }

@@ -37,9 +37,11 @@ function crew(id: string, label: string): DataArchitectureCrew {
   }
 }
 
+// Bands in, crew_ids flattened from them - the same relationship agents/graph.py holds between
+// the two, so a fixture cannot describe a payload the endpoint could never send.
 function cluster(
   id: string,
-  crewIds: string[],
+  bands: string[][],
   dispatches: string[],
   orchestrator = 'orch',
 ): DataArchitectureCluster {
@@ -49,7 +51,8 @@ function cluster(
     note: '',
     orchestrator_id: orchestrator,
     orchestrator: `Orchestrator ${orchestrator}`,
-    crew_ids: crewIds,
+    crew_bands: bands,
+    crew_ids: bands.flat(),
     dispatches,
   }
 }
@@ -62,10 +65,24 @@ const EDGES: DataArchitectureCrewEdge[] = [
   { source: 'a', target: 'd', kind: 'inherited', artefacts: ['x'], declared: false, crosses_clusters: false },
 ]
 
+// Four crews, one per band: a pipeline with nothing running in parallel.
 const ONE: AgentGraphInput = {
-  clusters: [cluster('one', ['a', 'b', 'c', 'd'], ['a', 'c'])],
+  clusters: [cluster('one', [['a'], ['b'], ['c'], ['d']], ['a', 'c'])],
   crews: CREWS,
   edges: EDGES,
+}
+
+// The same four crews with `b` and `c` parallel - they wait on `a` and on nothing of each
+// other's - which is three bands, one of them holding two crews.
+const PARALLEL: AgentGraphInput = {
+  clusters: [cluster('one', [['a'], ['b', 'c'], ['d']], ['a', 'c'])],
+  crews: CREWS,
+  edges: [
+    { source: 'a', target: 'b', kind: 'information', artefacts: ['x'], declared: true, crosses_clusters: false },
+    { source: 'a', target: 'c', kind: 'information', artefacts: ['x'], declared: true, crosses_clusters: false },
+    { source: 'b', target: 'd', kind: 'sequencing', artefacts: [], declared: true, crosses_clusters: false },
+    { source: 'c', target: 'd', kind: 'information', artefacts: ['y'], declared: true, crosses_clusters: false },
+  ],
 }
 
 describe('the radial layout', () => {
@@ -79,7 +96,7 @@ describe('the radial layout', () => {
     expect(centre.id).toBe('orch')
     expect(centre.x).toBe(layout.size / 2)
     expect(centre.y).toBe(layout.size / 2)
-    expect(centre.ringPosition).toBe(0)
+    expect(centre.band).toBe(0)
   })
 
   it('starts the ring at twelve o\'clock and runs clockwise', () => {
@@ -96,7 +113,7 @@ describe('the radial layout', () => {
     // Fourth is to the left, so the sweep went clockwise rather than anticlockwise.
     expect(ring[3].x).toBeLessThan(centre)
     expect(ring.map((n) => n.angle)).toEqual([0, 90, 180, 270])
-    expect(ring.map((n) => n.ringPosition)).toEqual([1, 2, 3, 4])
+    expect(ring.map((n) => n.band)).toEqual([1, 2, 3, 4])
   })
 
   it('takes the angular order from the order it is given, and not from anything else', () => {
@@ -104,10 +121,10 @@ describe('the radial layout', () => {
     // crew keeps its place: alphabetical, declaration-order and reverse order all disagree here.
     const reversed = layoutAgentGraph({
       ...ONE,
-      clusters: [cluster('one', ['d', 'c', 'b', 'a'], ['a', 'c'])],
+      clusters: [cluster('one', [['d'], ['c'], ['b'], ['a']], ['a', 'c'])],
     })
     const forward = layoutAgentGraph(ONE)
-    const top = (l: typeof forward) => l.nodes.find((n) => n.ringPosition === 1)!.id
+    const top = (l: typeof forward) => l.nodes.find((n) => n.kind === 'crew' && n.band === 1)!.id
     expect(top(forward)).toBe('a')
     expect(top(reversed)).toBe('d')
   })
@@ -166,11 +183,85 @@ describe('the radial layout', () => {
   })
 })
 
+describe('crews that run in parallel', () => {
+  const at = (layout: ReturnType<typeof layoutAgentGraph>, id: string) =>
+    layout.nodes.find((n) => n.id === id)!
+
+  it('puts a band at one angle rather than at consecutive positions', () => {
+    // The whole point. `b` and `c` wait on the same crew and on nothing of each other's, so
+    // neither may be drawn clockwise of the other - they share an angle and a number, and are
+    // told apart by how far out they sit.
+    const layout = layoutAgentGraph(PARALLEL)
+    const b = at(layout, 'b')
+    const c = at(layout, 'c')
+
+    expect(b.band).toBe(c.band)
+    expect(b.angle).toBe(c.angle)
+    expect(b.orbit).not.toBe(c.orbit)
+    expect(b.x === c.x && b.y === c.y).toBe(false)
+    // And the band after them has moved up: three bands, not four positions.
+    expect(at(layout, 'd').band).toBe(3)
+  })
+
+  it('draws the same four crews differently when the bands say they are parallel', () => {
+    // The mutation. Same crews, same edges' endpoints, only the banding changed - if the
+    // picture were laid out from the flat order these would be identical.
+    const sequential = layoutAgentGraph(ONE)
+    const parallel = layoutAgentGraph(PARALLEL)
+    expect(at(sequential, 'c').angle).not.toBe(at(parallel, 'c').angle)
+    expect(at(sequential, 'c').band).toBe(3)
+    expect(at(parallel, 'c').band).toBe(2)
+  })
+
+  it('keeps the outermost crew of a band on the ring a lone crew would have used', () => {
+    // So a stacked band does not push its labels off the drawing: the ring is pulled inward by
+    // the depth of the stack, never outward.
+    const lone = layoutAgentGraph(ONE)
+    const stacked = layoutAgentGraph(PARALLEL)
+    const outermost = Math.max(...stacked.nodes.filter((n) => n.kind === 'crew').map((n) => n.orbit))
+    expect(outermost).toBeCloseTo(at(lone, 'a').orbit, 6)
+  })
+
+  it('never puts a label on top of a node', () => {
+    // The property that matters, asserted over every pair rather than by trusting the rule that
+    // produces it - a stacked crew's label used to land squarely on the crew in front of it.
+    for (const layout of [layoutAgentGraph(ONE), layoutAgentGraph(PARALLEL)]) {
+      for (const label of layout.nodes) {
+        for (const node of layout.nodes) {
+          const distance = Math.hypot(label.labelX - node.x, label.labelY - node.y)
+          expect(distance).toBeGreaterThan(node.radius)
+        }
+      }
+    }
+  })
+
+  it('runs an edge within a band straight, and one into the band along the ring', () => {
+    // An arc between two crews at the same angle would be a circle. And the two edges into the
+    // band are the same relationship drawn the same way, one of them generalised to a crew that
+    // sits further in.
+    const layout = layoutAgentGraph({
+      ...PARALLEL,
+      edges: [
+        ...PARALLEL.edges,
+        { source: 'b', target: 'c', kind: 'inherited', artefacts: ['z'], declared: false, crosses_clusters: false },
+      ],
+    })
+    const byId = new Map(layout.edges.map((e) => [e.id, e.path]))
+    expect(byId.get('b->c')).toContain(' L ')
+    expect(byId.get('a->b')).toMatch(/ [AQ] /)
+    expect(byId.get('a->c')).toMatch(/ [AQ] /)
+  })
+
+  it('is still the same picture on every load', () => {
+    expect(layoutAgentGraph(PARALLEL)).toEqual(layoutAgentGraph(PARALLEL))
+  })
+})
+
 describe('a second cluster', () => {
   const TWO: AgentGraphInput = {
     clusters: [
-      cluster('one', ['a', 'b'], ['a'], 'orch'),
-      cluster('two', ['c', 'd'], ['c'], 'other'),
+      cluster('one', [['a'], ['b']], ['a'], 'orch'),
+      cluster('two', [['c'], ['d']], ['c'], 'other'),
     ],
     crews: CREWS.map((c) => ({ ...c, cluster: c.crew_id <= 'b' ? 'one' : 'two' })),
     edges: [

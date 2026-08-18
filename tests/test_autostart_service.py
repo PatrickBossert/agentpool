@@ -23,6 +23,7 @@ from api.database import (
     set_project_status,
 )
 from api.services.autostart_service import start_ready_downstream
+from api.services.crew_graph import classify_downstream
 from api.services.run_service import dispatch_crew
 
 SLUG = "autostart-test"
@@ -224,6 +225,13 @@ async def test_committing_requirements_does_start_a_configured_delivery(client):
 
 @pytest.mark.asyncio
 async def test_a_running_crew_is_skipped_and_named(client):
+    """A second run of a crew already running would write versioned outputs twice.
+
+    `discovery_mapping` now releases two crews, and only one of them is running - which makes
+    this sharper than it was: the skip has to be per crew rather than a general "nothing
+    started". Both halves are asserted, so a build that skipped the whole cascade whenever any
+    crew was running would fail here rather than pass for the wrong reason.
+    """
     await client.post("/projects", json=PROJECT)
     await _activate(SLUG)
     async with get_connection(SLUG) as conn:
@@ -242,7 +250,8 @@ async def test_a_running_crew_is_skipped_and_named(client):
         result = await start_ready_downstream(SLUG, "discovery_mapping", committed_by="a")
 
     assert result["skipped"] == ["assessment_design"]
-    assert result["started"] == []
+    assert not any(s["crew"] == "assessment_design" for s in result["started"])
+    assert [s["crew"] for s in result["started"]] == ["stakeholder_management"]
 
 
 @pytest.mark.asyncio
@@ -421,34 +430,46 @@ async def test_a_crew_finishing_starts_nothing_further(client):
     was in _AUTO_ASSIGN_CREWS) - retired along with node_template_assignments, so there is
     nothing left to patch out.
 
-    **assessment_design is committed by the fixture, deliberately.** Without that commit,
-    a dispatch_crew that had grown `await start_ready_downstream(...)` would find
-    stakeholder_management blocked on an uncommitted assessment_design, classify it
-    waiting, and start nothing - so the assertions would hold on the broken
-    implementation and the test would prove nothing. With it, stakeholder_management is
-    genuinely ready at the moment of completion, and only a cascade-free completion path
-    leaves it unstarted. The commit assertion is therefore "no *additional* commit".
+    **discovery_mapping is the crew that completes, and it is committed by the fixture,
+    deliberately.** Without a crew that is genuinely ready below the one finishing, a
+    dispatch_crew that had grown `await start_ready_downstream(...)` would classify everything
+    as waiting, start nothing, and the assertions would hold on the broken implementation - the
+    test would prove nothing. Committing discovery_mapping leaves **two** crews ready at the
+    moment of completion, assessment_design and stakeholder_management, which both wait on it
+    and on nothing else. Only a cascade-free completion path leaves both unstarted. The commit
+    assertion is therefore "no *additional* commit".
+
+    It used to complete assessment_design and watch stakeholder_management, which worked while
+    Jordan was declared behind Maya. He waits on the value chain now, so that pairing would have
+    left the crew below blocked for a reason the test never states, and it would have passed
+    against a cascading implementation.
     """
     await client.post("/projects", json=PROJECT)
     await _activate(SLUG)
     async with get_connection(SLUG) as conn:
         project_row = await fetch_project(conn, slug=SLUG)
         await insert_approval_commit(
-            conn, crew_name="assessment_design", committed_by="a", notes=""
+            conn, crew_name="discovery_mapping", committed_by="a", notes=""
         )
         run_id = await insert_crew_run(
             conn,
             project_id=project_row["id"],
-            crew_name="assessment_design",
+            crew_name="discovery_mapping",
             status="running",
         )
+
+    # The premise, asserted rather than assumed: both crews below are ready right now, so a
+    # cascade would have something to start.
+    async with get_connection(SLUG) as conn:
+        below = await classify_downstream(conn, crew_name="discovery_mapping")
+    assert sorted(below["ready"]) == ["assessment_design", "stakeholder_management"]
 
     with patch(
         "api.services.run_service.build_and_run_crew", AsyncMock(return_value="ok")
     ), patch(
         "api.services.commit_notify_service.notify_crew_awaiting_commit", AsyncMock()
     ):
-        await dispatch_crew(slug=SLUG, crew_name="assessment_design", run_id=run_id)
+        await dispatch_crew(slug=SLUG, crew_name="discovery_mapping", run_id=run_id)
 
     async with get_connection(SLUG) as conn:
         project_row = await fetch_project(conn, slug=SLUG)
@@ -458,6 +479,5 @@ async def test_a_crew_finishing_starts_nothing_further(client):
     # The success path ran to the end - without this, every assertion below could hold
     # because dispatch_crew fell over before reaching anything that might cascade.
     assert [r["status"] for r in runs if r["id"] == run_id] == ["completed"]
-    assert [c["crew_name"] for c in commits] == ["assessment_design"]
-    assert [r["crew_name"] for r in runs] == ["assessment_design"]
-    assert not any(r["crew_name"] == "stakeholder_management" for r in runs)
+    assert [c["crew_name"] for c in commits] == ["discovery_mapping"]
+    assert [r["crew_name"] for r in runs] == ["discovery_mapping"]
