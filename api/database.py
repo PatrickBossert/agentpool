@@ -1117,9 +1117,13 @@ async def mark_inbound_reply_read(
 ) -> bool:
     """Mark one reply as read. False when it is not this project's, or was already read.
 
-    `project_id` is in the WHERE clause and not merely checked by the caller: this is the
-    one write on the surface, and a reply id is a small integer that means something
-    different in every project file.
+    `project_id` is in the WHERE clause as defence in depth and **not** as the thing that
+    keeps one engagement's replies out of another's - said plainly because power-checking
+    proved it cannot be: there is one database file per project, so within this connection
+    `project_id` is a constant and removing it from the clause changes no outcome. What
+    actually isolates the engagements is `get_connection(slug)` opening a different file.
+    The clause is here for the day a table like this is asked to hold two projects, which
+    is the day it stops being free.
     """
     cur = await conn.execute(
         "UPDATE inbound_replies SET read_at=CURRENT_TIMESTAMP, read_by=?"

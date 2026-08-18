@@ -346,6 +346,34 @@ async def test_a_valid_signature_over_a_tampered_body_is_refused(client, secret)
 
 
 @pytest.mark.asyncio
+async def test_the_signature_covers_the_bytes_that_arrived_not_the_json_they_mean(
+    client, secret,
+):
+    """Found by power-checking, and it is the classic form of this defect.
+
+    A verifier that signs `json.dumps(json.loads(body))` - the parsed object re-serialised,
+    which is what "verify the payload" reads like - passes every other test in this file,
+    because every payload here is produced by `json.dumps` and re-serialises to itself. The
+    two bodies below mean the same thing and are different bytes, so only a verifier working
+    on the bytes that actually arrived can tell them apart. It also parses before it
+    verifies, which is the ordering this endpoint exists to get right.
+    """
+    stakeholder_id = await _participant(client)
+    address = await _minted_address(SLUG, stakeholder_id)
+    payload = inbound(address)
+    compact = json.dumps(payload).encode()
+    reformatted = json.dumps(payload, indent=2).encode()
+    assert json.loads(compact) == json.loads(reformatted) and compact != reformatted
+
+    response = await client.post(
+        "/api/inbound-mail/resend", content=reformatted, headers=sign(compact, over=compact)
+    )
+
+    assert response.status_code == 401, response.text
+    assert await _stored(SLUG) == []
+
+
+@pytest.mark.asyncio
 async def test_a_signature_made_with_another_secret_is_refused(client, secret):
     stakeholder_id = await _participant(client)
     address = await _minted_address(SLUG, stakeholder_id)
@@ -522,19 +550,29 @@ async def test_a_reply_lands_on_the_project_that_minted_the_address_and_not_the_
 async def test_our_own_delivery_notification_is_not_filed_as_the_participants_reply(
     client, secret,
 ):
-    """The trap that makes "scan recipients only" load-bearing.
+    """Resend posts outbound lifecycle events to the same webhook, and this is the one shape
+    the recipient-only rule cannot refuse on its own.
 
-    Resend posts outbound lifecycle events to the same webhook, and an `email.delivered`
-    event carries **our own plus-addressed `From`**. A handler that scanned senders would
-    resolve it and file every message the system sent as a reply from the person it was sent
-    to - inventing correspondence that never happened, on the record, in a client engagement.
+    A bounce or delivery report is *addressed back to the sender*, so our own plus-addressed
+    address is in a recipient field rather than only in `from` - which is exactly what a
+    reply looks like. Only the type deny-list tells them apart, and without it the system
+    would file its own bounce notifications as replies from the people it failed to reach.
+
+    Power-checking found this: with the address only in `from`, emptying `_OUTBOUND_EVENT_
+    TYPES` changed nothing, because the recipient-only rule was doing all the work and the
+    deny-list was asserting nothing.
     """
     stakeholder_id = await _participant(client)
     address = await _minted_address(SLUG, stakeholder_id)
 
     response = await deliver(client, {
         "type": "email.delivered",
-        "data": {"from": address, "to": [PARTICIPANT], "subject": REMINDER_SUBJECT},
+        "data": {
+            "from": address,
+            "to": [address],
+            "subject": REMINDER_SUBJECT,
+            "text": "Delivered to harriet.okonkwo@example.test",
+        },
     })
 
     assert response.json() == {"status": "accepted"}
@@ -765,8 +803,15 @@ async def test_marking_a_reply_read_clears_it_from_the_unread_count(client, secr
 
 @pytest.mark.asyncio
 async def test_a_reply_id_cannot_be_marked_read_through_another_project(client, secret):
-    """A reply id is a small integer that means something different in every project file,
-    so the project is in the WHERE clause and not merely checked by the caller."""
+    """A reply id is a small integer that means something different in every project file.
+
+    **What holds this up is the file split, not the SQL**, and that is worth saying rather
+    than implying: `get_connection(slug)` opens a different database, so the id simply is not
+    there to update. Power-checking established it - taking `project_id` out of
+    `mark_inbound_reply_read`'s WHERE clause fails nothing, because within one project file
+    it is a constant. The property below is real and worth asserting; the clause is defence
+    in depth and this test does not pretend to be its witness.
+    """
     ours = await _participant(client, SLUG)
     await _participant(client, OTHER_SLUG, email="someone.else@example.test")
     await deliver(client, inbound(await _minted_address(SLUG, ours)))
