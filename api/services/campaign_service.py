@@ -1,14 +1,15 @@
 # api/services/campaign_service.py
-"""Campaign management — interview tracking service layer."""
+"""Campaign management - interview tracking service layer."""
 import csv
 import io
 import json as _json
 from datetime import datetime, timezone
 
+from agents.identity import AGENT_IDENTITY
 from api.config import get_settings
 
 from api.services.interview_service import interview_url
-from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
+from api.services.outbound_mail import STAKEHOLDERS, correspondent_for, send_project_mail
 from api.database import (
     get_connection,
     get_db_path,
@@ -34,7 +35,7 @@ from api.database import (
 
 REMINDER_TEMPLATES = {
     "gentle": {
-        "subject": "A quick reminder — we'd love your input",
+        "subject": "A quick reminder - we'd love your input",
         "body": (
             "Hi {name},\n\n"
             "We noticed you haven't yet completed your stakeholder interview for the "
@@ -44,11 +45,11 @@ REMINDER_TEMPLATES = {
             "that suits you. Please follow the link below to get started:\n\n"
             "{interview_url}\n\n"
             "Thank you for your time.\n\n"
-            "Best regards,\nThe Project Team"
+            "Best regards,\n{signoff_name}"
         ),
     },
     "firm": {
-        "subject": "Reminder — your interview is still open",
+        "subject": "Reminder - your interview is still open",
         "body": (
             "Hi {name},\n\n"
             "We're still hoping to capture your perspective as part of the "
@@ -57,19 +58,19 @@ REMINDER_TEMPLATES = {
             "{interview_url}\n\n"
             "Your input helps us ensure the recommendations we make reflect "
             "the full range of stakeholder views.\n\n"
-            "Best regards,\nThe Project Team"
+            "Best regards,\n{signoff_name}"
         ),
     },
     "urgent": {
-        "subject": "Final reminder — interview window closing soon",
+        "subject": "Final reminder - interview window closing soon",
         "body": (
             "Hi {name},\n\n"
             "This is a final reminder that the stakeholder interview window for "
             "{campaign_name} is closing very soon. After this date we will not "
             "be able to include your input in the analysis.\n\n"
-            "Please take 10 minutes to complete the interview — your voice matters:\n\n"
+            "Please take 10 minutes to complete the interview - your voice matters:\n\n"
             "{interview_url}\n\n"
-            "Best regards,\nThe Project Team"
+            "Best regards,\n{signoff_name}"
         ),
     },
 }
@@ -340,6 +341,20 @@ async def import_summary_svc(slug: str, campaign_id: int, content: str) -> dict 
 async def generate_reminders_svc(slug: str, campaign_id: int) -> dict | None:
     """Create reminder_email records for non-completed invited stakeholders.
     Returns {"created": N} or None if not found.
+
+    The sign-off is resolved here, at generation, rather than at send time. Unlike the
+    participant-facing subject prefix in `outbound_mail.compose_subject` - which is never
+    stored and is composed fresh on every send precisely so it cannot be edited away - the
+    sign-off lives inside `body`, a field `PATCH /projects/{slug}/reminder-emails/{id}` hands
+    an operator to edit freely, alongside `{name}`, `{campaign_name}` and `{interview_url}`,
+    which are resolved here in the same way. Resolving the sign-off at send time would mean
+    either re-rendering the operator's edited body (overwriting it) or pattern-matching for
+    an existing sign-off to avoid a duplicate - both worse than baking it in alongside the
+    rest of the templated content, where an operator previewing or editing the row sees
+    exactly what will be sent. The cost is the one `compose_subject` was built to avoid: a
+    reminder generated before a rename keeps the old name until it is regenerated or
+    hand-edited. That is judged acceptable here because it is the same cost every other
+    templated field in this body already carries.
     """
     if not get_db_path(slug).exists():
         return None
@@ -357,6 +372,8 @@ async def generate_reminders_svc(slug: str, campaign_id: int) -> dict | None:
             value_stream_name=camp["value_stream_name"],
             exclude_completed=True,
         )
+
+        signoff_name = AGENT_IDENTITY[correspondent_for(STAKEHOLDERS)].display_name
 
         count = 0
         for s in stakeholders:
@@ -377,6 +394,7 @@ async def generate_reminders_svc(slug: str, campaign_id: int) -> dict | None:
                 name=s["name"],
                 campaign_name=camp["campaign_name"] or camp["value_stream_name"],
                 interview_url=url,
+                signoff_name=signoff_name,
             )
             await insert_reminder_email(
                 conn,
