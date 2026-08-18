@@ -4,7 +4,7 @@
 
 **Goal:** Make sector, organisation and project explicit tiers of the knowledge store; remove the silent fallback that makes the sector store the answer to any unrecognised name; add the organisation tier that the data model has but retrieval does not; and enforce that material only ever moves narrower.
 
-**Architecture:** Collections are named by tier - `sector_{sector}`, `org_{org_slug}`, `{slug}_documents`, `{slug}_interviews`. `ChromaQueryTool` names its tier explicitly and refuses anything else. Write authority follows the tier: project administration, `org_admin`, and `sysadmin` respectively. `agents/reads.py` declares which tier each read is against, so the privacy page can say which material is shared.
+**Architecture:** Collections are named by tier - `sector_{sector}`, `org_{org_slug}`, `{slug}_docs`, `{slug}_interviews`. `ChromaQueryTool` names its tier explicitly and refuses anything else. Write authority follows the tier: project administration, `org_admin`, and `sysadmin` respectively. `agents/reads.py` declares which tier each read is against, so the privacy page can say which material is shared.
 
 **Spec:** `docs/superpowers/specs/2026-08-18-knowledge-tiers-design.md`
 
