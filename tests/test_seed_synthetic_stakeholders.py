@@ -171,8 +171,14 @@ async def test_no_seeded_row_holds_a_role_beyond_participant(project):
 
 @pytest.mark.asyncio
 async def test_every_seeded_address_is_undeliverable_by_reservation(project):
-    """.invalid is reserved by RFC 2606. dev_mode does NOT cover the campaign or transcript
-    senders, so the address on the row is the address Resend would be handed."""
+    """.invalid is reserved by RFC 2606, so a seeded row can never be delivered to.
+
+    This was the only thing standing between sixty seeded rows and sixty live sends: the
+    campaign and transcript senders posted the address on the row straight to Resend with
+    no dev_mode check. `send_project_mail` covers both now, so the reservation is a second
+    line rather than the only one - which is the right number of lines for this, and the
+    reason to keep asserting it here.
+    """
     await _seed()
     rows = await _synthetic_rows()
 

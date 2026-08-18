@@ -13,7 +13,6 @@ import re
 import time
 from collections import defaultdict
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -36,6 +35,7 @@ from api.services.interview_service import (
     interview_url,
     speak,
 )
+from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
@@ -368,6 +368,15 @@ class TranscriptEmailRequest(BaseModel):
 async def email_transcript(session_token: str, body: TranscriptEmailRequest):
     """Send the (possibly user-edited) transcript copy to the interviewee.
 
+    This is a thank-you to a participant, so it goes out as stakeholder correspondence
+    and carries the same face every other message that participant receives does.
+
+    The project is derived from the database the session was found in, exactly as
+    `get_session_with_script` derives it, and it is passed to `send_project_mail`
+    because delivery is that function's decision: this endpoint used to post
+    `body.email` straight to Resend with no `dev_mode` check, which is how a project
+    that believed it was holding all outbound mail would have sent to a real address.
+
     Security controls:
     - Session must exist and be in 'completed' status (prevents random-token abuse).
     - Email format validated server-side.
@@ -420,10 +429,7 @@ async def email_transcript(session_token: str, body: TranscriptEmailRequest):
             raise HTTPException(status_code=422, detail="Pair content too long")
 
     # 5 — Check Resend is configured
-    settings = get_settings()
-    api_key = settings.resend_api_key
-    from_addr = settings.from_email
-    if not api_key:
+    if not get_settings().resend_api_key:
         raise HTTPException(status_code=503, detail="Email delivery not configured")
 
     # 6 — Build plain-text body (no HTML — prevents injection)
@@ -433,19 +439,17 @@ async def email_transcript(session_token: str, body: TranscriptEmailRequest):
         lines.append(f"A{i}: {str(pair.get('answer', '') or 'No response recorded')[:10000]}")
         lines.append("")
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            "https://api.resend.com/emails",
-            json={
-                "from": from_addr,
-                "to": [body.email],
-                "subject": "Your interview transcript",
-                "text": "\n".join(lines),
-            },
-            headers={"Authorization": f"Bearer {api_key}"},
+    try:
+        posted = await send_project_mail(
+            slug=Path(db_path).stem,
+            audience=STAKEHOLDERS,
+            to=[body.email],
+            subject="Your interview transcript",
+            body="\n".join(lines),
         )
-
-    if resp.status_code not in (200, 201):
+    except Exception:
+        raise HTTPException(status_code=502, detail="Email delivery failed") from None
+    if not posted:
         raise HTTPException(status_code=502, detail="Email delivery failed")
 
     # Record send timestamp only on success

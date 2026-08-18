@@ -381,10 +381,14 @@ async def deliver_reset(email: str) -> str | None:
     mail 403s - which is the same shape the invite loop already runs on.
 
     **Wiring Resend is a change to this function and nothing else.** Send the link here,
-    between the mint and the return, mirroring `admin_service._send_welcome_email`
-    (httpx against the Resend HTTP API, silently skipped when no key is configured). Both
-    doors then start emailing at once, and the administrator door keeps returning the token
-    so an operator can still deliver by hand when a message does not arrive.
+    between the mint and the return, by calling
+    `api.services.outbound_mail.send_platform_mail` - not by building an httpx request,
+    which is how five separate call sites came to exist and three of them came to ignore
+    `dev_mode`. A reset link is platform correspondence for the same reason the welcome
+    email is: it addresses a *login*, and this function is handed a username rather than a
+    project. Both doors then start emailing at once, and the administrator door keeps
+    returning the token so an operator can still deliver by hand when a message does not
+    arrive.
 
     Two things to keep when that happens. The self-service door must stay 204-always and
     must not begin to differ by outcome - so a send failure must not become an error there.

@@ -6,9 +6,9 @@ import json as _json
 from datetime import datetime, timezone
 
 from api.config import get_settings
-import httpx
 
 from api.services.interview_service import interview_url
+from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
 from api.database import (
     get_connection,
     get_db_path,
@@ -471,51 +471,74 @@ async def update_reminder_email_svc(
 
 
 async def send_reminder_emails_svc(slug: str) -> dict | None:
-    """Send all approved reminder emails via Resend and update their status.
+    """Send all approved reminder emails and update their status.
 
     Returns {"sent": N, "failed": M, "skipped": K} or None if project not found.
     Skips dispatch if RESEND_API_KEY is not configured (returns skipped count).
+
+    Delivery is `send_project_mail`'s decision, not this function's. It used to post
+    each stakeholder's own address straight to Resend with no `dev_mode` check at all -
+    which is what made `dev_mode` a promise the setting did not keep, and it was the
+    reminder sender rather than the invitation sender because there is no invitation
+    sender: an interview link reaches a participant through this path or by hand.
+
+    **Each outcome is recorded before the next message is sent, in its own connection.**
+    That is the property to preserve here, and it is worth more than the shape of the
+    loop. A reminder is a real message to a real stakeholder, and this endpoint is
+    re-runnable: if a batch of sixty dies half way - a hung transport, a crash, or the
+    `--reload` restart CLAUDE.md warns about killing an in-flight request - anything not
+    already marked is sent again the next time somebody presses send. Accumulating the
+    outcomes and writing them in one trailing pass makes the *whole* batch re-sendable,
+    because a death anywhere in it leaves every row at `approved`.
+
+    A connection per row rather than one held open across the sends: `send_project_mail`
+    opens its own connection to read the project's mode, so a write connection held for
+    the length of the batch would be held across sixty of those. Short connections cost a
+    file open each and contend with nothing, which is the cheaper side of that trade -
+    and the expensive half of this loop is the HTTP call, not SQLite.
     """
     if not get_db_path(slug).exists():
         return None
 
-    settings = get_settings()
-    api_key = settings.resend_api_key
-    from_email = settings.from_email
+    if not get_settings().resend_api_key:
+        async with get_connection(slug) as conn:
+            project = await fetch_project(conn, slug=slug)
+            if not project:
+                return None
+            emails = await fetch_approved_reminder_emails(conn, project_id=project["id"])
+        return {"sent": 0, "failed": 0, "skipped": len(emails),
+                "error": "RESEND_API_KEY not configured"}
 
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
             return None
-
         emails = await fetch_approved_reminder_emails(conn, project_id=project["id"])
 
-        if not api_key:
-            return {"sent": 0, "failed": 0, "skipped": len(emails), "error": "RESEND_API_KEY not configured"}
+    sent = failed = 0
+    for email in emails:
+        try:
+            # Stakeholders and participants: a reminder is an interview request, and it
+            # carries the same face as every other message a participant receives.
+            posted = await send_project_mail(
+                slug=slug,
+                audience=STAKEHOLDERS,
+                to=[email["stakeholder_email"]],
+                subject=email["subject"],
+                body=email["body"],
+            )
+            status = "sent" if posted else "failed"
+        except Exception:
+            status = "failed"
 
-        sent = failed = 0
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            for email in emails:
-                payload = {
-                    "from": from_email,
-                    "to": [email["stakeholder_email"]],
-                    "subject": email["subject"],
-                    "text": email["body"],
-                }
-                try:
-                    resp = await client.post(
-                        "https://api.resend.com/emails",
-                        json=payload,
-                        headers={"Authorization": f"Bearer {api_key}"},
-                    )
-                    if resp.status_code in (200, 201):
-                        await mark_reminder_email_sent(conn, email_id=email["id"], status="sent")
-                        sent += 1
-                    else:
-                        await mark_reminder_email_sent(conn, email_id=email["id"], status="failed")
-                        failed += 1
-                except Exception:
-                    await mark_reminder_email_sent(conn, email_id=email["id"], status="failed")
-                    failed += 1
+        # Before the next send, not after the batch - see the docstring.
+        # mark_reminder_email_sent commits, so this row is durable from here on.
+        async with get_connection(slug) as conn:
+            await mark_reminder_email_sent(conn, email_id=email["id"], status=status)
 
-        return {"sent": sent, "failed": failed, "skipped": 0}
+        if status == "sent":
+            sent += 1
+        else:
+            failed += 1
+
+    return {"sent": sent, "failed": failed, "skipped": 0}

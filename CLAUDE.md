@@ -803,6 +803,71 @@ fix if that ever stops being acceptable - not a default slug.
 
 ---
 
+## Sending an email: one seam, and one face per audience
+
+Everything outbound goes through `api/services/outbound_mail.py`. Never build an httpx
+request to Resend, never reach for the `resend` SDK or `smtplib`, and never take a slug's
+mode from a caller. Two entry points:
+
+| Function | For | Redirects on `dev_mode`? |
+|---|---|---|
+| `send_project_mail(slug, audience, to, subject, body)` | anything belonging to a project | yes |
+| `send_platform_mail(to, subject, body)` | correspondence from the product itself | no - there is no project to ask |
+
+This is the same property the LLM seam above has, and it exists for the same reason.
+`dev_mode` reads as "hold all outbound mail for this project" and covered **two of five**
+send paths, because each of the two carried its own copy of the redirect and there was no
+single thing for the other three to call. The three it missed - interview reminders, the
+transcript copy, and the welcome email - are exactly the ones that reach *stakeholders*
+rather than the operator. `dev_mode` also defaults to `True`, so nothing sending looks
+identical to the setting working, which is how it survived.
+
+`test_only_the_seam_posts_to_resend` walks every non-test `.py` and fails if any file
+other than `outbound_mail.py` contains `api.resend.com`. It is a substring match on one
+hostname, so it catches a copy-pasted httpx sender but would not catch the `resend` SDK or
+a URL assembled from parts - tighten it rather than working around it.
+
+**`slug` is required and never defaulted**, for the reason the LLM seam gives one file up:
+a forgotten slug must not become "no project, so no hold". `project_holds_mail` fails
+closed in every direction - absent key, missing database, or a read that raises all hold
+the mail.
+
+**One face per audience, not per composing agent.** The seam owns the sender identity while
+any agent remains the author, because a participant receiving programme updates from one
+person, interview requests from a second and a thank-you from a third experiences the org
+chart rather than a correspondent:
+
+| Audience | Correspondent |
+|---|---|
+| `STAKEHOLDERS` - reminders, interview requests, transcripts, thank-yous | `stakeholder_manager` |
+| `GOVERNANCE` - status reports, crew notices, approval and milestone notices | `pam` |
+| a new login | neither - platform correspondence, unsigned |
+
+Both names resolve through `agents/identity.py` **at send time**. Never hard-code "Jordan"
+or "Pamela"; the permanent `agent_id` beside a mutable display name exists precisely so a
+rename is a one-file change, and `test_renaming_the_correspondent_renames_the_face` fails
+if anybody writes a literal. Only the display name varies - every path already shared one
+sending address, so nothing about deliverability moves.
+
+No `reply_to` is set anywhere, deliberately: `FROM_EMAIL` is `noreply@` on a domain Resend
+has not verified, and there is no inbound routing or threading token. A `reply_to` that
+bounces is worse than none. Two correspondents rather than five is what will make inbound
+tractable when it is built.
+
+**The welcome email is not held by anything**, and neither will reset links be. A
+project-scoped hold cannot honestly cover a message with no project; the fix, if it is ever
+wanted, is a platform-level hold, not a default slug. `dev_mode`'s redirect address is
+`DEV_MODE_ADDRESS` in settings, and sub-project D's test mode - resolving it to a project's
+own administrators - must **refuse to send** when a project has none. A fallback to the
+intended recipients would make this switch fail open, which is the worst direction for it.
+
+One live consequence worth knowing before diagnosing it as a bug: with `dev_mode` on, a
+participant who asks for their interview transcript is answered `{"sent": true}`, never
+receives it, and it arrives in the operator's inbox. That is what the setting means, and it
+is the only path where the recipient triggered the action and is told it worked.
+
+---
+
 ## Anchoring: themes and requirements sit where the insight lives
 
 Themes and requirements must anchor at the level where the insight lives - L0 for
@@ -875,7 +940,8 @@ and never while a run is in flight.
 | `api/auth.py` | JWT + bcrypt — **bcrypt direct, no passlib** |
 | `api/services/run_service.py` | Crew execution dispatch |
 | `api/services/orchestration_service.py` | PAM two-phase orchestration |
-| `api/services/campaign_service.py` | Interview campaigns + Resend email dispatch |
+| `api/services/campaign_service.py` | Interview campaigns; composes reminders, does not deliver them |
+| `api/services/outbound_mail.py` | **Every** outbound email - the only caller of Resend |
 | `agents/crews/pam_crew.py` | Project Automation Manager (top-level orchestrator) |
 | `agents/tools/registry.py` | Agent name → tool list mapping |
 | `ui/src/router.tsx` | All frontend routes |

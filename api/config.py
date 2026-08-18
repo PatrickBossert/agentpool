@@ -26,6 +26,20 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     resend_api_key: str = ""
     from_email: str = "TaskReimagination.ai <noreply@taskreimagination.ai>"
+    # Where a project holding mail (`dev_mode`) sends it instead. One address, and every
+    # audience's mail arrives at it - see api/services/outbound_mail.py.
+    #
+    # This was a hardcoded constant in api/services/pam_report_job.py, which is one
+    # person's address in source, in the module that happened to need it first. It is
+    # still that person's address by default, because changing where held mail goes is
+    # not this change's business - but it is now overridable per deployment, and the
+    # default is one line to edit rather than an import other services reach for.
+    #
+    # Sub-project D's test mode replaces this with the project's own administrators. That
+    # is a larger change than it looks: a redirect resolving to administrators must refuse
+    # to send when a project has none, never fall back to the intended recipients, because
+    # this is the one setting whose failure must not be open.
+    dev_mode_address: str = "Patrick@FutureEdge.consulting"
     # The one organisation every engagement belongs to. Not one organisation per client:
     # this is a project-based application that happens to hold organisation entities, so the
     # organisation is the consultancy and an org_admin appointed in it reaches every

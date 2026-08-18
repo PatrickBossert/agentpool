@@ -43,6 +43,12 @@ def _sh(name, email, *, reviewer=False, approver=False):
             "is_reviewer": int(reviewer), "is_approver": int(approver)}
 
 
+# resolve_recipients answers "who is this message for", and nothing else. It used to
+# return (actual, intended) and apply the dev_mode redirect itself; the redirect is
+# send_project_mail's now, and is asserted against real recipients in
+# tests/test_outbound_mail_seam.py rather than against a tuple position here.
+
+
 def test_recipients_are_reviewers_and_approvers_only():
     people = [
         _sh("Rev", "rev@example.test", reviewer=True),
@@ -50,36 +56,25 @@ def test_recipients_are_reviewers_and_approvers_only():
         _sh("Both", "both@example.test", reviewer=True, approver=True),
         _sh("Neither", "none@example.test"),
     ]
-    actual, intended = resolve_recipients(people, dev_mode=False)
-    assert sorted(actual) == ["app@example.test", "both@example.test", "rev@example.test"]
-    assert sorted(intended) == sorted(actual)
+    assert sorted(resolve_recipients(people)) == [
+        "app@example.test", "both@example.test", "rev@example.test",
+    ]
 
 
 def test_someone_flagged_both_appears_once():
     """The flags are independent, so a person holding both must not be emailed twice."""
     people = [_sh("Both", "both@example.test", reviewer=True, approver=True)]
-    actual, _ = resolve_recipients(people, dev_mode=False)
-    assert actual == ["both@example.test"]
-
-
-def test_dev_mode_redirects_but_still_reports_the_intended_list():
-    people = [_sh("Rev", "rev@example.test", reviewer=True)]
-    actual, intended = resolve_recipients(people, dev_mode=True)
-    assert actual == ["Patrick@FutureEdge.consulting"]
-    assert intended == ["rev@example.test"]
+    assert resolve_recipients(people) == ["both@example.test"]
 
 
 def test_stakeholders_without_an_email_are_skipped():
     people = [_sh("NoMail", "", reviewer=True), _sh("Rev", "rev@example.test", reviewer=True)]
-    actual, _ = resolve_recipients(people, dev_mode=False)
-    assert actual == ["rev@example.test"]
+    assert resolve_recipients(people) == ["rev@example.test"]
 
 
-def test_dev_mode_sends_nowhere_when_there_are_no_eligible_stakeholders():
-    """Redirecting an empty list must not invent a recipient."""
-    actual, intended = resolve_recipients([_sh("Nobody", "a@example.test")], dev_mode=True)
-    assert actual == []
-    assert intended == []
+def test_nobody_eligible_resolves_to_nobody():
+    """An address on a stakeholder carrying no governance flag is not an audience."""
+    assert resolve_recipients([_sh("Nobody", "a@example.test")]) == []
 
 
 @pytest.mark.asyncio
@@ -92,7 +87,7 @@ async def test_job_stores_the_report_as_a_current_versioned_output(client):
         await set_project_status(conn, slug=SLUG, status="active")
     from api.services.pam_report_job import run_pam_daily_report
 
-    with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock):
+    with patch("api.services.pam_report_job.send_project_mail", new_callable=AsyncMock):
         await run_pam_daily_report(SLUG)
 
     resp = await client.get(f"/projects/{SLUG}/outputs")
@@ -113,7 +108,7 @@ async def test_second_run_supersedes_the_first(client):
         await set_project_status(conn, slug="pam-job-super", status="active")
     from api.services.pam_report_job import run_pam_daily_report
 
-    with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock):
+    with patch("api.services.pam_report_job.send_project_mail", new_callable=AsyncMock):
         await run_pam_daily_report("pam-job-super")
         await run_pam_daily_report("pam-job-super")
 
@@ -136,7 +131,7 @@ async def test_first_run_reports_no_changes(client):
         await set_project_status(conn, slug="pam-job-first", status="active")
     from api.services.pam_report_job import run_pam_daily_report
 
-    with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock):
+    with patch("api.services.pam_report_job.send_project_mail", new_callable=AsyncMock):
         await run_pam_daily_report("pam-job-first")
 
     from api.config import get_settings
@@ -157,7 +152,7 @@ async def test_email_failure_does_not_lose_the_report(client):
         await set_project_status(conn, slug="pam-job-mail", status="active")
     from api.services.pam_report_job import run_pam_daily_report
 
-    with patch("api.services.pam_report_job._send_email",
+    with patch("api.services.pam_report_job.send_project_mail",
                new_callable=AsyncMock, side_effect=RuntimeError("resend down")):
         await run_pam_daily_report("pam-job-mail")
 
@@ -182,7 +177,7 @@ def test_email_links_to_the_pam_report_page_not_the_client_report():
     report = {"overall_health": "green", "health_summary": "On track"}
     change = {"summary": "No change since the previous report.",
               "new_risks": [], "new_issues": []}
-    body = _compose_body(SLUG, report, change, intended=[], dev_mode=False)
+    body = _compose_body(SLUG, report, change)
 
     assert f"/dashboard/{SLUG}/pam-report" in body
     assert f"/dashboard/{SLUG}/report" not in body
@@ -202,7 +197,7 @@ async def test_an_inactive_project_produces_no_report(client):
     })  # status defaults to 'created'
 
     from api.services.pam_report_job import run_pam_daily_report
-    with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock) as send:
+    with patch("api.services.pam_report_job.send_project_mail", new_callable=AsyncMock) as send:
         await run_pam_daily_report(SLUG)
 
     assert send.await_count == 0
@@ -225,7 +220,7 @@ async def test_an_active_project_still_produces_a_report(client):
         await set_project_status(conn, slug=SLUG, status="active")
 
     from api.services.pam_report_job import run_pam_daily_report
-    with patch("api.services.pam_report_job._send_email", new_callable=AsyncMock):
+    with patch("api.services.pam_report_job.send_project_mail", new_callable=AsyncMock):
         await run_pam_daily_report(SLUG)
 
     from api.database import fetch_agent_outputs, fetch_project

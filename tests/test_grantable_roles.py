@@ -1403,7 +1403,7 @@ async def test_a_governor_receives_pams_report(roles):
         project = await fetch_project(conn, slug=SLUG)
         stakeholders = await fetch_stakeholders(conn, project_id=project["id"])
 
-    _, intended = resolve_recipients(stakeholders, dev_mode=False)
+    intended = resolve_recipients(stakeholders)
     assert "gr-target@example.com" in intended, (
         "a governor was granted and PAM's report still does not reach them"
     )
