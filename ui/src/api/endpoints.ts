@@ -418,3 +418,23 @@ export const valueChainApi = {
   migrate: (slug: string): Promise<ValueChainMigrationResult> =>
     apiClient.post(`/projects/${slug}/value-chain-model/migrate`).then((r) => r.data),
 }
+
+// What participants have written back. The correspondent owns the conversation - engagement
+// mail goes out over Jordan's name and address - so the replies are read on Jordan's
+// surface, and this is what fetches them.
+//
+// There is no send half, and that is the scope line rather than an omission: this delivers
+// a reply to a human. Jordan composing a response is separate work.
+export const inboundRepliesApi = {
+  list: (slug: string): Promise<import('../types').InboundRepliesResponse> =>
+    apiClient
+      .get<import('../types').InboundRepliesResponse>(`/projects/${slug}/inbound-replies`)
+      .then((r) => r.data),
+
+  // Idempotent - the server answers `changed: false` for a reply that was already read
+  // rather than treating a second click as an error.
+  markRead: (slug: string, id: number): Promise<{ ok: boolean; changed: boolean }> =>
+    apiClient
+      .post<{ ok: boolean; changed: boolean }>(`/projects/${slug}/inbound-replies/${id}/read`)
+      .then((r) => r.data),
+}
