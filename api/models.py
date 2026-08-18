@@ -53,7 +53,12 @@ class ProjectSettings(BaseModel):
     brand_interviewer_image_url: str = ""
     brand_interviewer_name: str = "Avery Singh"
     brand_interviewer_tagline: str = "I'll be guiding our conversation today"
-    # Project context — populated by Alex (Value Chain Mapper) to ground Maya's interview instruments
+    # Project context - set on Alex's setup tab to ground Maya's interview instruments, and
+    # since sp56 also the participant-facing name of the engagement: `outbound_mail` heads
+    # stakeholder mail with it, so a participant reads "GS Asset Management - Your interview
+    # transcript" rather than the slug `sp-gs-am`. Empty is the shipped default and means
+    # "no prefix" - never a fallback to the slug, and never to the registry display_name,
+    # which is initialised *to* the slug at project creation.
     client_name: str = ""
     # The vertical axis Casey groups maturity themes by. Closed so that grouping is an
     # exact-value query rather than prose clustering, and per project because a discipline

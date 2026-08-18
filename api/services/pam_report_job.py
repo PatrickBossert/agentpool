@@ -16,7 +16,7 @@ from api.database import (
     get_connection,
     insert_agent_output,
 )
-from api.services.outbound_mail import GOVERNANCE, send_project_mail
+from api.services.outbound_mail import GOVERNANCE, config_client_name, send_project_mail
 from api.services.pam_report_service import build_pam_report
 from api.services.report_diff_service import diff_reports
 from api.services.scheduler_service import JOB_REGISTRY
@@ -84,11 +84,34 @@ async def _next_version(conn, project_id: int) -> int:
         return ((await cur.fetchone())[0] or 0) + 1
 
 
-def _compose_body(slug: str, report: dict, change: dict) -> str:
+def _report_header(slug: str, client_name: str) -> str:
+    """Who this report is about, named both ways.
+
+    Governance mail is addressed and filed by slug - that is how a governor tracking four
+    engagements at once names this one in a status meeting, so the subject line keeps it and
+    `outbound_mail` deliberately does not prefix governance subjects with the friendly name.
+    The header is where the two names are reconciled: `GS Asset Management (sp-gs-am)` gives
+    the reader the mapping in the one place they will look for it, without changing how the
+    message is addressed.
+
+    Composed here rather than in the seam, and that is not an oversight. The seam owns the
+    envelope - who the message is from, who it reaches, and the subject that heads it - while
+    the report remains the author of its own content. Pushing a body header through
+    `send_project_mail` would make the seam a composer of governance prose, and the next
+    caller with a different body shape would have to be composed for too.
+
+    Falls back to the slug alone when there is no `client_name` - which is every project
+    today - rather than emitting an empty bracket.
+    """
+    named = f"{client_name} ({slug})" if client_name else slug
+    return f"Status report for {named} - {datetime.now().strftime('%d %B %Y')}"
+
+
+def _compose_body(slug: str, report: dict, change: dict, client_name: str = "") -> str:
     settings = get_settings()
     link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/pam-report"
     lines = [
-        f"Status report for {slug} - {datetime.now().strftime('%d %B %Y')}",
+        _report_header(slug, client_name),
         "",
         f"Overall health: {report.get('overall_health', 'unknown')}",
         report.get("health_summary", ""),
@@ -165,8 +188,13 @@ async def run_pam_daily_report(slug: str) -> None:
         )
         return
 
+    # The subject stays keyed on the slug: this audience files by it. The friendly name is
+    # carried in the header of the body instead - see `_report_header`.
     subject = f"{slug} status report - {datetime.now().strftime('%d %b %Y')}"
-    body = _compose_body(slug, report, change)
+    body = _compose_body(
+        slug, report, change,
+        client_name=config_client_name(json.loads(project.get("config_json") or "{}")),
+    )
     try:
         # Governance: this is the report Pamela's own remit produces, and it goes to
         # reviewers, approvers and governors.

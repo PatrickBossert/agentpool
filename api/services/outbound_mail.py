@@ -83,6 +83,40 @@ scope here - this change makes the address scheme ready for it and nothing more.
 Two correspondents rather than five is what makes inbound tractable when it is built -
 two mailboxes, two triage jobs, one owner each.
 
+## The name a participant recognises
+
+A participant knows the engagement as "GS Asset Management", not as `sp-gs-am`. The slug is
+an operator's handle - a filename, a database name, a URL segment - and a stakeholder has no
+reason to meet it. `client_name` in `ProjectSettings` is the participant-facing name, and
+this module heads participant mail with it: `"GS Asset Management - Your interview
+transcript"`.
+
+Composed here rather than at the call sites for the reason everything else in this module is:
+the seam is the one place mail is composed, and a prefix applied at four call sites is a
+prefix three of them will eventually be written without.
+
+**Only participant mail is prefixed.** Governance mail goes to reviewers, approvers and
+governors, who know the engagement by its internal name and act across several of them at
+once - Pamela's daily report is already subject-lined `sp-gs-am status report - 18 Aug 2026`,
+and that slug is the useful discriminator in that inbox rather than a leak. Platform mail has
+no project at all, so it has no name to carry. `SUBJECT_PREFIXED_AUDIENCES` holds the
+decision, so adding an audience does not silently opt it in.
+
+**An empty `client_name` omits the prefix entirely** - the subject is sent exactly as
+composed. That is the default for every project that exists today, so it is the common path
+rather than an edge case, and the two alternatives are both worse:
+
+- `"- Your interview transcript"` is what any unconditional `f"{name} - {subject}"` produces,
+  and it looks like a bug to the person receiving it.
+- Falling back to `project_registry.display_name` reads as the safe option and is the trap:
+  `POST /projects` registers a new project with `display_name=req.client_slug`, so for every
+  project created so far the registry name **is** the slug. That fallback would put
+  `sp-gs-am - Your interview transcript` in front of a participant while looking like it
+  had solved the problem.
+
+Omitting it loses nothing a participant needs: the correspondent's name is on the `From`
+line and the body says what the message is about.
+
 ## The welcome email is not project correspondence
 
 `send_platform_mail` exists for it. It emails a new *login*, not a stakeholder or a
@@ -117,6 +151,12 @@ AUDIENCE_CORRESPONDENT: dict[str, str] = {
     STAKEHOLDERS: "stakeholder_manager",
     GOVERNANCE: "pam",
 }
+
+# The audiences whose subjects are headed with the project's participant-facing name.
+# Membership rather than a rule applied uniformly: a governor reading across four
+# engagements wants the slug they file by, and a participant must never see it. A new
+# audience is opted in deliberately or not at all - see the module docstring.
+SUBJECT_PREFIXED_AUDIENCES: frozenset[str] = frozenset({STAKEHOLDERS})
 
 
 def correspondent_for(audience: str) -> str:
@@ -221,13 +261,13 @@ def _dev_mode_footer(intended: list[str]) -> list[str]:
     ]
 
 
-async def project_holds_mail(slug: str) -> bool:
-    """Whether this project's `dev_mode` is holding outbound mail.
+async def _project_config(slug: str) -> dict | None:
+    """This project's `config_json`, or None when there is no readable project.
 
-    Fails closed in every direction it can fail. `dev_mode` lives inside `config_json`
-    rather than as a column on `projects`, so an absent key reads as true; a slug with no
-    database, or a read that raises, also reads as true. Holding mail that should have
-    gone out is recoverable - a live send to sixty real stakeholders is not.
+    None is deliberately distinct from `{}`: "there is no project here" and "the project
+    has no settings" answer differently for `dev_mode`, which fails closed, and the caller
+    must be able to tell them apart. Every failure - no database, no row, unreadable JSON -
+    collapses to None, because from here they are the same fact.
     """
     # Imported here rather than at module scope: api.database imports a good deal of the
     # application, and this module is imported by routers that are themselves imported
@@ -236,18 +276,65 @@ async def project_holds_mail(slug: str) -> bool:
 
     try:
         if not get_db_path(slug).exists():
-            log.warning("outbound mail: no database for %r - holding mail", slug)
-            return True
+            log.warning("outbound mail: no database for %r", slug)
+            return None
         async with get_connection(slug) as conn:
             project = await fetch_project(conn, slug=slug)
         if not project:
-            log.warning("outbound mail: no project %r - holding mail", slug)
-            return True
-        config = json.loads(project.get("config_json") or "{}")
-        return bool(config.get("dev_mode", True))
+            log.warning("outbound mail: no project %r", slug)
+            return None
+        return json.loads(project.get("config_json") or "{}")
     except Exception:
-        log.exception("outbound mail: could not read dev_mode for %r - holding mail", slug)
+        log.exception("outbound mail: could not read the config for %r", slug)
+        return None
+
+
+def config_holds_mail(config: dict | None) -> bool:
+    """Whether this config's `dev_mode` is holding outbound mail.
+
+    Fails closed in every direction it can fail. `dev_mode` lives inside `config_json`
+    rather than as a column on `projects`, so an absent key reads as true; a slug with no
+    database, or a read that raised - both of which arrive here as None - also read as
+    true. Holding mail that should have gone out is recoverable; a live send to sixty real
+    stakeholders is not.
+    """
+    if config is None:
         return True
+    return bool(config.get("dev_mode", True))
+
+
+def config_client_name(config: dict | None) -> str:
+    """The participant-facing name of the engagement, or "" when there is none.
+
+    Empty is a real answer and the common one - it is the shipped default - so it is
+    returned rather than replaced by something that looks like a name. A whitespace-only
+    setting is empty too: the field is free text on a settings form.
+    """
+    if config is None:
+        return ""
+    return str(config.get("client_name") or "").strip()
+
+
+async def project_holds_mail(slug: str) -> bool:
+    """Whether this project's `dev_mode` is holding outbound mail. See `config_holds_mail`."""
+    return config_holds_mail(await _project_config(slug))
+
+
+def compose_subject(audience: str, subject: str, client_name: str) -> str:
+    """Head a participant-facing subject with the name the participant knows us by.
+
+    Returns `subject` untouched for an audience that is not prefixed and for an engagement
+    with no `client_name`. The second case is the default for every existing project, and
+    the reason the empty check is here rather than at the caller: an unconditional
+    `f"{client_name} - {subject}"` sends `"- Your interview transcript"`, which reads as a
+    bug to the person holding it.
+
+    The slug is not a parameter, and that is the point - there is nothing here that could
+    fall back to it.
+    """
+    if audience not in SUBJECT_PREFIXED_AUDIENCES or not client_name:
+        return subject
+    return f"{client_name} - {subject}"
 
 
 async def _post_to_resend(*, sender: str, to: list[str], subject: str, body: str) -> None:
@@ -275,6 +362,10 @@ async def send_project_mail(
     single redirect address and the message gains a footer naming the list it would have
     reached - which is what makes a redirected message readable rather than mysterious.
 
+    `subject` is likewise what the caller composed; the participant-facing name in front of
+    it is this function's, for the audiences that get one. The project is read once and
+    both decisions are taken from that one read.
+
     `slug` is required and is never defaulted. `project_llm_mode("")` finding no database
     and answering "standard" is how a sensitive project's answers reached a hosted model,
     and the same shape here would be a live send: a forgotten slug must not become
@@ -291,14 +382,19 @@ async def send_project_mail(
         # audience sends no mail whether or not it holds mail.
         return False
 
-    if await project_holds_mail(slug):
+    config = await _project_config(slug)
+
+    if config_holds_mail(config):
         recipients = [get_settings().dev_mode_address]
         body = "\n".join([body, *_dev_mode_footer(intended)])
     else:
         recipients = intended
 
     await _post_to_resend(
-        sender=sender_for(audience), to=recipients, subject=subject, body=body
+        sender=sender_for(audience),
+        to=recipients,
+        subject=compose_subject(audience, subject, config_client_name(config)),
+        body=body,
     )
     return True
 

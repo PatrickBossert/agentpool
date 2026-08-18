@@ -202,6 +202,9 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
               placeholder="e.g. Network Rail, Tesco, HSBC"
               className={inputCls}
             />
+            <p className="text-[10px] text-gray-500 mt-1">
+              Participants see this. It heads every email we send them - "GS Asset Management - Your interview transcript" - so write it as the organisation writes it, not as an internal abbreviation. Left empty, their mail carries no name rather than the project reference.
+            </p>
           </div>
           <div>
             <label className="block text-[10px] text-gray-500 mb-1">Service categories (what the client delivers)</label>
