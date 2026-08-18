@@ -202,11 +202,17 @@ async def require_project_administration(slug: str, payload: dict) -> None:
 #   that already has a row. See the report for the one residual case, which is a hole in
 #   `POST /projects` rather than in this rule.
 #
-#   the caller's own `org_id` - minted from `org_memberships` at login and **re-derived on
-#   every rolled request** (api/main.py `_current_session_claims`), so it is a live read of a
-#   table whose three write doors are all scoped by `check_org_access` to the caller's own
-#   organisation. An org_admin cannot add themselves to another organisation, which is the
-#   chain sp42 closed.
+#   the caller's own `org_id` - a JWT claim, minted from `org_memberships` at login and
+#   refreshed by `roll_session` (api/main.py `_current_session_claims`). Precisely: the
+#   refresh happens on the **response** path of a successful request, so *this* request is
+#   decided on the claim as presented and a demoted org_admin's existing token keeps its
+#   `org_id` until it is next rolled - the same stateless-JWT property CLAUDE.md records
+#   under password resets. What matters for the sp42 argument is the other half, and it is
+#   unqualified: all three writes to `org_memberships` are scoped by `check_org_access` to
+#   the caller's own organisation, so no sequence of requests lets an org_admin put
+#   themselves in another organisation and have a later login mint the claim. This boundary
+#   reads exactly the claim `check_project_access`'s own org branch reads, so it is no
+#   weaker than the floor it stands behind.
 #
 # `check_project_access` refuses an org_admin every slug outside their organisation, so the
 # boundary is enforced twice on today's doors. That is deliberate: the floor answers "is this
@@ -222,7 +228,6 @@ async def may_write_tier_on_project(slug: str, tier: str, payload: dict) -> bool
     answer. Returns False for a tier that exists and is not theirs.
     """
     from api.auth import may_access_org
-    from api.database import fetch_project_registry
     from api.services.knowledge_tiers import TierWriteRefused, assert_may_write_tier
 
     # The login-role half first: it settles the vocabulary (raising on a tier that does not
@@ -236,23 +241,74 @@ async def may_write_tier_on_project(slug: str, tier: str, payload: dict) -> bool
         return True
 
     if tier == "organisation":
-        async with get_system_connection() as conn:
-            row = await fetch_project_registry(conn, slug=slug)
-        if not row:
+        org_id = await _organisation_of_project(slug)
+        if org_id is None:
             raise ValueError(
                 f"'{slug}' has no project_registry row, so it belongs to no organisation "
                 f"and has no organisation tier to write into. Register the project against "
                 f"an organisation first."
             )
-        return may_access_org(row["org_id"], payload)
+        return may_access_org(org_id, payload)
 
     # The project tier. `writable_tiers` hands it to every caller, because a login role says
-    # nothing about one engagement; the authority for a project write is per-project and is
-    # read by the walk. Administration or approval, because both doors' gates are real
-    # authority over this project and the tier must not depend on which one was used.
-    return await caller_may_administer_project(
-        slug, payload
-    ) or await caller_may_approve(slug, payload)
+    # nothing about one engagement; the authority for a project write is per-project.
+    #
+    # Two arms, and neither is global:
+    #
+    #   the platform tier, **scoped to this project's organisation** - see
+    #   `_caller_holds_platform_authority_on_project` below;
+    #   the walk, which is bounded by construction: `caller_roles` starts from a
+    #   `project_memberships` row for this slug and can answer nothing about another.
+    #
+    # Administration *or* approval, because both upload doors' gates are real authority over
+    # this project and the tier must not depend on which one was used. The walk half is
+    # written out rather than delegated to `caller_may_administer_project`, whose platform
+    # arm is the global one this rule deliberately replaces and which offers no way to ask
+    # for one arm without the other.
+    if await _caller_holds_platform_authority_on_project(slug, payload):
+        return True
+    return bool(await caller_roles(slug, payload) & {"project_admin", "approver"})
+
+
+async def _organisation_of_project(slug: str) -> int | None:
+    """The organisation this project belongs to, or None if it belongs to none."""
+    from api.database import fetch_project_registry
+
+    async with get_system_connection() as conn:
+        row = await fetch_project_registry(conn, slug=slug)
+    return row["org_id"] if row else None
+
+
+async def _caller_holds_platform_authority_on_project(slug: str, payload: dict) -> bool:
+    """`caller_may_administer_project`'s platform arm, with the boundary the floor supplies.
+
+    That arm reads the login role and never the slug, which is correct where it lives - its
+    own docstring says it "must always be called *after* the floor, never instead of it",
+    and `check_project_access` is what scopes an org_admin to their own organisation's
+    slugs. This rule does not assume the floor ran. A door that forgot `check_project_access`
+    is the single most repeated defect on this codebase - milestones, nonworking and
+    pam_report, all three recorded in CLAUDE.md - so the organisation tier's boundary was
+    always going to look odd standing beside a project tier that had none.
+
+    `sysadmin` is unconditional, and has to be: a project with no `project_registry` row has
+    no organisation for any comparison to succeed against, and the built-in administrator
+    has no `users` row for the walk either, because `POST /auth/login` matches
+    ADMIN_USERNAME before it ever reads the table. Both arms empty would lock the operator
+    out of the project store of exactly the projects that most need an operator.
+
+    An `org_admin` outside this project's organisation is not refused by this - they fall
+    through to the walk, and hold the tier if a stakeholder row on this project says so.
+    Platform authority is what they lack here, not authority.
+    """
+    from api.auth import may_access_org
+
+    role = (payload or {}).get("role")
+    if role == "sysadmin":
+        return True
+    if role != "org_admin":
+        return False
+    org_id = await _organisation_of_project(slug)
+    return org_id is not None and may_access_org(org_id, payload)
 
 
 async def assert_may_write_tier_on_project(slug: str, tier: str, payload: dict) -> None:

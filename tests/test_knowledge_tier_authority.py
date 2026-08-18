@@ -44,6 +44,7 @@ from api.database import (
 )
 from api.services.authority_service import (
     assert_may_write_tier_on_project,
+    may_write_tier_on_project,
     writable_tiers_on_project,
 )
 from api.services.knowledge_tiers import TierWriteRefused
@@ -112,6 +113,17 @@ def _client_with(token: str) -> AsyncClient:
         base_url="http://test",
         headers={"Authorization": f"Bearer {token}"},
     )
+
+
+def _home_org_collection() -> str:
+    """The organisation store `POST /projects` registers a new project into.
+
+    Read from settings rather than written out. tests/conftest.py pins HOME_ORG_SLUG with a
+    `setdefault` and says why the tests must not name the literal: an operator who exports
+    it in their shell beats the default, and a suite that hardcoded the consultancy's slug
+    would go red for them.
+    """
+    return f"org_{get_settings().home_org_slug}"
 
 
 async def _home_org_id() -> int:
@@ -302,7 +314,7 @@ async def test_an_org_admin_may_write_their_own_organisations_store(
     is satisfied by refusing every org_admin everywhere."""
     resp = await _documents_upload(own_org_admin, tier="organisation")
     assert resp.status_code == 201
-    assert _written_collections(chroma) == ["org_future-edge"]
+    assert _written_collections(chroma) == [_home_org_collection()]
 
 
 @pytest.mark.asyncio
@@ -312,6 +324,11 @@ async def test_an_org_admin_is_refused_the_sector_tier(client, chroma, own_org_a
     resp = await _documents_upload(own_org_admin, tier="sector")
     assert resp.status_code == 403
     assert "at the sector tier" in resp.json()["detail"]
+    # The derived half of the sentence, which is computed rather than echoed back from this
+    # call - so this assertion fails when the rule is wrong, and not merely when the wording
+    # changes. The half above quotes the tier the request named and could not tell a
+    # correctly-refused sector request from an incorrectly-refused one.
+    assert "you may write: organisation, project." in resp.json()["detail"]
     chroma.get_or_create_collection.assert_not_called()
     assert await _library(client) == []
 
@@ -346,7 +363,53 @@ async def test_the_organisation_boundary_holds_in_the_service_not_only_at_the_do
     payload = {"sub": "rival", "role": "org_admin", "org_id": await _other_org_id()}
     with pytest.raises(TierWriteRefused):
         await assert_may_write_tier_on_project(SLUG, "organisation", payload)
-    assert await writable_tiers_on_project(SLUG, payload) == ("project",)
+    assert await writable_tiers_on_project(SLUG, payload) == ()
+
+
+@pytest.mark.asyncio
+async def test_another_organisations_admin_holds_no_project_tier_here_either(project):
+    """The project tier is bounded at the service too, not only by the floor.
+
+    `caller_may_administer_project`'s platform arm reads the login role and never the slug -
+    correctly, since its own docstring says it must always be called *after*
+    `check_project_access`. This rule does not assume the floor ran, and a door forgetting
+    the floor is the single most repeated defect on this codebase (milestones, nonworking
+    and pam_report, all in CLAUDE.md). So the boundary the floor would have supplied is
+    supplied here as well, and every tier is defended at the service rather than two of the
+    three.
+    """
+    payload = {"sub": "rival", "role": "org_admin", "org_id": await _other_org_id()}
+    assert await may_write_tier_on_project(SLUG, "project", payload) is False
+    with pytest.raises(TierWriteRefused):
+        await assert_may_write_tier_on_project(SLUG, "project", payload)
+
+
+@pytest.mark.asyncio
+async def test_the_projects_own_organisations_admin_still_holds_it(project):
+    """The control for the boundary above, at the service and not through a door - so
+    'refused' cannot be the answer the project branch gives every org_admin."""
+    payload = {"sub": "connie", "role": "org_admin", "org_id": await _home_org_id()}
+    assert await may_write_tier_on_project(SLUG, "project", payload) is True
+
+
+@pytest.mark.asyncio
+async def test_a_sysadmin_holds_the_project_tier_of_a_project_belonging_to_no_organisation(
+    client
+):
+    """The bootstrap case, and the one the organisation comparison must not break.
+
+    A project with no `project_registry` row has no organisation for the comparison to
+    succeed against, and `POST /auth/login` matches ADMIN_USERNAME before it ever reads
+    `users` - so the built-in administrator has no row for the walk either. Both arms empty
+    would lock the operator out of the project store of exactly the projects that most need
+    an operator.
+    """
+    await client.post("/projects", json=PROJECT)
+    async with get_system_connection() as conn:
+        await conn.execute("DELETE FROM project_registry WHERE slug=?", (SLUG,))
+        await conn.commit()
+    payload = {"sub": "admin", "role": "sysadmin"}
+    assert await may_write_tier_on_project(SLUG, "project", payload) is True
 
 
 @pytest.mark.asyncio
@@ -397,7 +460,7 @@ async def test_a_sysadmin_may_write_all_three_tiers(client, chroma, project):
     the door could satisfy this module."""
     for tier, collection in (
         ("project", f"{SLUG}_docs"),
-        ("organisation", "org_future-edge"),
+        ("organisation", _home_org_collection()),
         ("sector", "sector_transport"),
     ):
         resp = await _documents_upload(client, tier=tier, name=f"{tier}.txt")
@@ -405,9 +468,102 @@ async def test_a_sysadmin_may_write_all_three_tiers(client, chroma, project):
         assert resp.json()["knowledge_tier"] == tier
     assert _written_collections(chroma) == [
         f"{SLUG}_docs",
-        "org_future-edge",
+        _home_org_collection(),
         "sector_transport",
     ]
+
+
+# ── Removing material is a write, and the least recoverable one ──────────────────────────
+#
+# `DELETE /{slug}/documents/{doc_id}` purges the document's chunks from whichever store its
+# row names. At the sector tier that store spans different clients on a consultancy
+# deployment, so an org_admin of one client destroying material every other client's agents
+# retrieve is the same authority asymmetry as an org_admin adding to it - worse, in fact,
+# because an addition can be deleted and a deletion cannot be undone.
+
+
+@pytest.fixture
+def delete_chroma():
+    """Mocked Chroma patched where the delete door looks it up - inside the handler, off
+    `api.services.chroma_client`, which is a different lookup from the ingest path's."""
+    collection = MagicMock()
+    mocked = MagicMock()
+    mocked.get_or_create_collection.return_value = collection
+    with patch("api.services.chroma_client.get_chroma_client", return_value=mocked):
+        yield mocked
+
+
+async def _uploaded_and_ingested(client, *, tier) -> int:
+    """A document filed at `tier` by a sysadmin, marked ingested so the delete purges."""
+    resp = await _documents_upload(client, tier=tier, name=f"{tier}.txt")
+    assert resp.status_code == 201, resp.text
+    doc_id = resp.json()["id"]
+    from api.database import update_document_ingested
+
+    async with get_connection(SLUG) as conn:
+        await update_document_ingested(conn, doc_id=doc_id)
+    return doc_id
+
+
+@pytest.mark.asyncio
+async def test_an_org_admin_may_not_delete_a_sector_tier_document(
+    client, chroma, delete_chroma, own_org_admin
+):
+    """The sharpest case in the design, in the direction nothing had looked at.
+
+    The refusal is asserted together with the material still being there: the chunks
+    unpurged *and* the row still in the library, because a 403 raised after the purge would
+    be a refusal that had already done the damage.
+    """
+    doc_id = await _uploaded_and_ingested(client, tier="sector")
+    resp = await own_org_admin.delete(f"/projects/{SLUG}/documents/{doc_id}")
+    assert resp.status_code == 403
+    assert "at the sector tier" in resp.json()["detail"]
+    delete_chroma.get_or_create_collection.assert_not_called()
+    assert [d["id"] for d in await _library(client)] == [doc_id]
+
+
+@pytest.mark.asyncio
+async def test_a_sysadmin_may_delete_a_sector_tier_document(
+    client, chroma, delete_chroma, project
+):
+    """The control. Without it the refusal above is satisfied by a door that deletes
+    nothing for anybody."""
+    doc_id = await _uploaded_and_ingested(client, tier="sector")
+    resp = await client.delete(f"/projects/{SLUG}/documents/{doc_id}")
+    assert resp.status_code == 204
+    delete_chroma.get_or_create_collection.assert_called_once_with(name="sector_transport")
+    assert await _library(client) == []
+
+
+@pytest.mark.asyncio
+async def test_an_org_admin_may_delete_their_own_organisations_document(
+    client, chroma, delete_chroma, own_org_admin
+):
+    """The second control, and the one that keeps the fix from being 'org_admins may delete
+    nothing'. Their own organisation's store is theirs to remove from."""
+    doc_id = await _uploaded_and_ingested(client, tier="organisation")
+    resp = await own_org_admin.delete(f"/projects/{SLUG}/documents/{doc_id}")
+    assert resp.status_code == 204
+    delete_chroma.get_or_create_collection.assert_called_once_with(
+        name=_home_org_collection()
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_org_admin_may_not_reingest_a_sector_tier_document(
+    client, chroma, own_org_admin
+):
+    """A reingest re-writes the document's chunks into the same store, so it is a write to
+    it by the plainest reading and takes the same authority. Asserted separately from the
+    delete because the two doors sit side by side and share nothing but the row.
+    """
+    doc_id = await _uploaded_and_ingested(client, tier="sector")
+    with patch("api.routers.documents.ingest_document", new_callable=AsyncMock) as ingest:
+        resp = await own_org_admin.post(f"/projects/{SLUG}/documents/{doc_id}/reingest")
+    assert resp.status_code == 403
+    assert "at the sector tier" in resp.json()["detail"]
+    ingest.assert_not_called()
 
 
 # ── /my-permissions answers with the tiers, so the picker need not restate the rule ──────
@@ -470,4 +626,4 @@ async def test_the_reported_tiers_are_project_scoped_not_merely_role_scoped(
     from api.services.knowledge_tiers import writable_tiers
 
     assert writable_tiers(payload) == ("organisation", "project")
-    assert await writable_tiers_on_project(SLUG, payload) == ("project",)
+    assert await writable_tiers_on_project(SLUG, payload) == ()

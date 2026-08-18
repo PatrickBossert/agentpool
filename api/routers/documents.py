@@ -126,6 +126,13 @@ async def reingest_document(
     # retry of a write that already declared where it belongs, and re-deciding it here would
     # let a retry quietly move an organisation document into the project store - the one-way
     # rule broken by a button labelled "retry".
+    #
+    # And the authority follows the tier here as it does at the upload door: a reingest
+    # writes the document's chunks into the store its row names, which is a write to that
+    # store by the plainest reading. The caller does not choose the tier, so this refuses a
+    # retry rather than a mistake - but "the sector store is sysadmin alone" is a statement
+    # about who may put text in it, not about which verb they used.
+    await require_writable_tier(slug, _tier_of(doc), payload)
     background_tasks.add_task(
         ingest_document, slug, doc_id, doc["file_path"], tier=_tier_of(doc)
     )
@@ -146,6 +153,20 @@ async def delete_document_endpoint(
         doc = await fetch_document(conn, doc_id=doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # Removal is a write to the store, and the least recoverable one there is.
+    #
+    # This door was `require_org_admin_or_above` and nothing else, so an org_admin of one
+    # client could purge a sector-tier document out of `sector_{sector}` - the store that on
+    # a consultancy deployment spans *different clients*, and whose write authority the
+    # design deliberately makes the narrowest in the system. Adding to that store was
+    # refused them and destroying from it was not, which is the asymmetry the wrong way
+    # round: an addition can be deleted afterwards and a deletion cannot be undone.
+    #
+    # The tier comes off the row, exactly as the collection name below does, so the
+    # authority asked for and the store actually reached cannot disagree. Before the purge,
+    # necessarily - a refusal raised afterwards would have already done the damage.
+    await require_writable_tier(slug, _tier_of(doc), payload)
 
     # The chunks go first, and a failure refuses the delete rather than reporting one.
     #

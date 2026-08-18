@@ -113,6 +113,8 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      // Not what these tests are about - the invite-link action does not read it.
+      writable_knowledge_tiers: ['project'],
     })
     renderRoster()
     await screen.findByText('Ivy Invited')
@@ -135,6 +137,8 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      // Not what these tests are about - the invite-link action does not read it.
+      writable_knowledge_tiers: ['project'],
     })
     renderRoster()
     await screen.findByText('Withheld Row')
@@ -151,6 +155,8 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      // Not what these tests are about - the invite-link action does not read it.
+      writable_knowledge_tiers: ['project'],
     })
     renderRoster()
 
@@ -168,6 +174,8 @@ describe('Stakeholders: invite state and the invite link', () => {
       // A project_admin: administers this engagement, and is refused this door.
       can_review: true, can_approve: true, can_grant_roles: true,
       can_issue_invite_links: false,
+      // Not what these tests are about - the invite-link action does not read it.
+      writable_knowledge_tiers: ['project'],
     })
     renderRoster()
 
@@ -182,6 +190,8 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      // Not what these tests are about - the invite-link action does not read it.
+      writable_knowledge_tiers: ['project'],
     })
     renderRoster()
     const button = await screen.findByRole('button', { name: 'Invite link' })
@@ -208,6 +218,8 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      // Not what these tests are about - the invite-link action does not read it.
+      writable_knowledge_tiers: ['project'],
     })
     // The 409: this person accepted while the page was open. "Try again" would be wrong
     // advice - there is nothing to resend, and the state has genuinely moved on.
