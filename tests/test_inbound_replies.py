@@ -515,14 +515,29 @@ async def test_a_reply_to_a_revoked_address_is_dropped(client, secret):
 
 @pytest.mark.asyncio
 async def test_a_message_carrying_no_tag_at_all_is_dropped(client, secret):
-    """The bare role address. Everything on this deployment sent before Task 2 carries it."""
+    """The bare role address - and this is where governance replies currently go.
+
+    Everything sent before Task 2 carries it, and so does **all governance mail today**:
+    only participant mail is tagged, because a report addressed to a list of reviewers has
+    no one person a reply could be about. A governor who answers Pamela's daily report, which
+    invites an answer, lands here and is dropped with a log line.
+
+    Pinned rather than fixed. Routing a governance reply means deciding what it is about -
+    the run, the report, or the engagement - and that belongs with whoever decides what PAM
+    does with one. This asserts the current behaviour so that changing it is deliberate.
+
+    Driven for both correspondents, because a rule that happened to hold for one mailbox and
+    not the other is exactly the gap this records.
+    """
     await _participant(client)
 
-    response = await deliver(
-        client, inbound(outbound_mail.role_address(outbound_mail.STAKEHOLDERS))
-    )
-
-    assert response.json() == {"status": "accepted"}
+    for audience in (outbound_mail.STAKEHOLDERS, outbound_mail.GOVERNANCE):
+        response = await deliver(
+            client,
+            inbound(outbound_mail.role_address(audience)),
+            message_id=f"msg_untagged_{audience}",
+        )
+        assert response.json() == {"status": "accepted"}
     assert await _stored(SLUG) == []
 
 

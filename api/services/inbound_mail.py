@@ -90,6 +90,24 @@ reply. Every message the system sent would arrive back as a reply from the perso
 written to. The deny-list above stops the events we know about; the recipient-only rule
 stops the ones we do not.
 
+## Governance replies have no route, and this records that rather than closing it
+
+Only participant mail carries a `+tag`: `send_project_mail` mints one from
+`stakeholder_id`, and governance mail is addressed to a list of reviewers with no single
+person a reply could be about. So a governor who answers Pamela's daily report - and the
+report does invite an answer - sends to a bare `pam@`. If inbound routing is configured for
+that mailbox, the message reaches here, `token_from_address` returns None, and it is dropped
+with a log line: **it is lost, quietly, and nobody is told.** If inbound routing is not
+configured for it, it sits in an unread mailbox instead, which is the same outcome with a
+different shape.
+
+Closing it is a design question rather than a line of code, and it is not this task's: a
+governance reply is about a *report*, not about a person, so the token would have to key on
+something else - the run, the report, or the engagement - and that decision belongs with
+whoever decides what PAM does with one. What is fixed here is that the failure is visible in
+a log rather than invisible, and `test_a_message_carrying_no_tag_at_all_is_dropped` pins the
+current behaviour so a future change to it is deliberate.
+
 ## What is accepted, and what is refused
 
 | Bound | Value | Why |
