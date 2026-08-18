@@ -150,11 +150,19 @@ class EdgeKind(Enum):
     """What one crew actually gets from another.
 
     The distinction the ordering alone cannot make. `CREW_DEPENDENCIES` says a crew waits on
-    another; it does not say whether anything travels between them, and three of the nine
-    declared edges carry nothing at all. An unlabelled arrow presents those three as if they
+    another; it does not say whether anything travels between them, and two of the nine
+    declared edges carry nothing at all. An unlabelled arrow presents those two as if they
     were the same relationship as `discovery_mapping -> assessment_design`, which hands over
     three artefacts, and that is a materially different claim to anyone reading the page to
     find out where a client's material goes.
+
+    It is also the distinction that finds a dependency declared against the wrong crew. A
+    sequencing edge into a crew that has an inherited edge from somewhere else is the shape of
+    exactly that error, and it was one: `stakeholder_management` waited on `assessment_design`,
+    which writes nothing it reads, while reading the value chain from `discovery_mapping`, which
+    it did not wait on. Not every sequencing edge is a mistake - `stakeholder_management ->
+    discovery_interviews` is ordering that genuinely carries no artefact - so the shape is a
+    question to ask of the declarations rather than a rule to enforce here.
     """
 
     INFORMATION = "information"
@@ -199,9 +207,18 @@ class CrewEdge:
 class ClusterNode:
     """One orchestrator, and the crews it owns.
 
-    `crew_ids` is in the graph's own topological order, so it is the clockwise order of the
-    ring a viewer draws and the order a reader sees in a table - one ordering, not two that can
-    disagree.
+    `crew_bands` is the cluster's crews grouped by how deep in the pipeline they sit: one band
+    is a set of crews that could run at the same moment, because every crew any of them waits
+    on is in an earlier band. It is the graph's own topological order with the ties kept rather
+    than flattened away, and it is what a viewer needs to draw parallel work as parallel -
+    `assessment_design` and `stakeholder_management` both wait on the value chain and nothing
+    else, so putting one at position two and the other at position three would assert an
+    ordering between them that no declaration makes.
+
+    `crew_ids` is that same grouping flattened, so it is still the order a reader sees in a
+    table and still consistent with the picture. A property rather than a second field: two
+    orderings of one set of crews is exactly the drift this module exists to end, and the
+    flattening cannot disagree with what it flattens.
 
     `dispatches` is narrower than `crew_ids` and deliberately so: it is the crews this
     orchestrator can itself start, derived from the tool it holds and the triggers each crew
@@ -214,8 +231,13 @@ class ClusterNode:
     label: str
     orchestrator_id: str
     note: str
-    crew_ids: tuple[str, ...]
+    crew_bands: tuple[tuple[str, ...], ...]
     dispatches: tuple[str, ...]
+
+    @property
+    def crew_ids(self) -> tuple[str, ...]:
+        """Every crew this cluster owns, in the graph's own topological order."""
+        return tuple(crew_id for band in self.crew_bands for crew_id in band)
 
 
 @dataclass(frozen=True)
@@ -519,6 +541,7 @@ def _build_clusters(
     empty is one whose centre is decorative - so `CLUSTERS` cannot assert an ownership the
     dispatch paths do not support.
     """
+    bands = _runnable_bands()
     unknown = sorted({crew.cluster for crew in crews.values()} - set(_CLUSTERS))
     if unknown:
         raise GraphInconsistent(
@@ -527,9 +550,16 @@ def _build_clusters(
             f"drawn per cluster while still appearing in the crew table."
         )
 
-    members: dict[str, list[str]] = {cluster_id: [] for cluster_id in _CLUSTERS}
-    for crew_id, crew in crews.items():
-        members[crew.cluster].append(crew_id)
+    # A cluster's bands are the graph's bands with everyone else's crews taken out. A band that
+    # holds none of this cluster's crews is dropped rather than kept empty: it is a moment when
+    # this orchestrator has nothing to run, which is a fact about another cluster and would
+    # otherwise put a gap in this one's ring.
+    members: dict[str, list[tuple[str, ...]]] = {cluster_id: [] for cluster_id in _CLUSTERS}
+    for band in bands:
+        for cluster_id in _CLUSTERS:
+            held = tuple(c for c in band if crews[c].cluster == cluster_id)
+            if held:
+                members[cluster_id].append(held)
 
     empty = sorted(cluster_id for cluster_id, held in members.items() if not held)
     if empty:
@@ -562,7 +592,8 @@ def _build_clusters(
     by_tool = _tool_dispatched_triggers()
     nodes: dict[str, ClusterNode] = {}
     for cluster_id, cluster in _CLUSTERS.items():
-        crew_ids = tuple(members[cluster_id])
+        crew_bands = tuple(members[cluster_id])
+        crew_ids = tuple(crew_id for band in crew_bands for crew_id in band)
         inside = [c for c in crew_ids if cluster.orchestrator in crews[c].agent_ids]
         if inside:
             raise GraphInconsistent(
@@ -588,7 +619,7 @@ def _build_clusters(
             label=cluster.label,
             orchestrator_id=cluster.orchestrator,
             note=cluster.note,
-            crew_ids=crew_ids,
+            crew_bands=crew_bands,
             dispatches=dispatches,
         )
     return nodes
@@ -638,14 +669,18 @@ def _build_edges(graph: Graph) -> tuple[CrewEdge, ...]:
     return tuple(edges)
 
 
-def _runnable_order() -> tuple[str, ...]:
-    """The crews arranged so none precedes a crew it waits on.
+def _runnable_bands() -> tuple[tuple[str, ...], ...]:
+    """The crews in bands: everything in one band could run the moment the band above commits.
 
-    Kahn's algorithm, with ties broken by the order `_CREW_AGENT_NAMES` declares them rather
-    than alphabetically - the declaration is a human's reading of the pipeline, and today's
-    dependencies happen to admit exactly one order anyway, so the tie-break only decides what
-    a future fork looks like. Deterministic either way, which matters because this order is
-    displayed.
+    Kahn's algorithm, keeping each round rather than flattening it. A round is exactly the set
+    of crews whose every upstream is already behind them, which is the definition of work that
+    can proceed in parallel - so the bands are not a second computation beside the order, they
+    are the shape the order was always being read out of.
+
+    Within a band the order is the order `_CREW_AGENT_NAMES` declares them rather than
+    alphabetical - the declaration is a human's reading of the pipeline - but it is an order
+    only in the sense that a list has one. Two crews in a band wait on nothing of each other's,
+    and anything drawing them must say so.
 
     A cycle is raised rather than truncated. `crew_graph.py` releases a crew when its
     upstreams are committed, so a cycle is a set of crews none of which can ever start - and
@@ -653,6 +688,7 @@ def _runnable_order() -> tuple[str, ...]:
     """
     remaining = {crew_id: set(_CREW_DEPENDENCIES[crew_id]) for crew_id in _CREW_AGENT_NAMES}
     ordered: list[str] = []
+    bands: list[tuple[str, ...]] = []
     while remaining:
         ready = [crew_id for crew_id in remaining if not remaining[crew_id] - set(ordered)]
         if not ready:
@@ -664,10 +700,21 @@ def _runnable_order() -> tuple[str, ...]:
                 f"still waiting: {stuck}. Either CREW_DEPENDENCIES has a cycle, or one of "
                 f"these waits on a crew that is never committed because it does not exist."
             )
+        bands.append(tuple(ready))
         for crew_id in ready:
             ordered.append(crew_id)
             del remaining[crew_id]
-    return tuple(ordered)
+    return tuple(bands)
+
+
+def _runnable_order() -> tuple[str, ...]:
+    """The crews arranged so none precedes a crew it waits on - the bands, flattened.
+
+    Derived from `_runnable_bands` rather than computed beside it, so the table's order and
+    the picture's bands cannot answer the same question differently. Deterministic, which
+    matters because this order is displayed.
+    """
+    return tuple(crew_id for band in _runnable_bands() for crew_id in band)
 
 
 def build_graph(llm_mode: str = "standard") -> Graph:

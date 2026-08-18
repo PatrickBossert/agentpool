@@ -19,8 +19,11 @@ from api.database import get_connection
 # the Illustrator in `delivery`, where he is dispatched by nothing.
 #
 # The order the report lists crews in is the order they can run, derived from
-# CREW_DEPENDENCIES. A hand-typed order can contradict the dependency map, and this one did -
-# it showed stakeholder_management before assessment_design, which the graph requires first.
+# CREW_DEPENDENCIES. A hand-typed order can contradict the dependency map, and this one did.
+# Where two crews wait on the same thing and on each other for nothing - assessment_design and
+# stakeholder_management do - this list still prints one before the other, because a list has an
+# order and parallel work does not. The ring on the data-architecture page is drawn from the
+# graph's bands instead, which is where that distinction can be seen.
 
 
 def _today() -> str:

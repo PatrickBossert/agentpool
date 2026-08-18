@@ -81,7 +81,13 @@ export interface DataArchitectureCluster {
   note: string
   orchestrator_id: string
   orchestrator: string
-  // In the graph's own topological order, which is the clockwise order of the ring.
+  // The crews grouped by how deep in the pipeline they sit: one band is a set of crews that
+  // could run at the same moment, because everything any of them waits on is in an earlier
+  // band. This is what the ring is laid out from - a band is one position clockwise, however
+  // many crews share it - because a flat list cannot say that two crews are parallel.
+  crew_bands: string[][]
+  // The same crews, flattened: the graph's own topological order, which the tables read. It is
+  // crew_bands flattened in agents/graph.py, so the two cannot disagree.
   crew_ids: string[]
   // The crews the orchestrator can itself start - narrower than crew_ids, because three crews
   // are reachable only by a REST call or an approval cascade.

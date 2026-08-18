@@ -197,6 +197,10 @@ const PAYLOAD: Model = {
       note: 'An invented cluster of invented crews',
       orchestrator_id: 'pam',
       orchestrator: 'Pamela Reid',
+      // One crew per band: this payload's three crews run one after another. The parallel case
+      // is a payload of its own further down, so that the difference between them is what the
+      // picture is asserted to show.
+      crew_bands: [['invented_first'], ['invented_second'], ['invented_third']],
       crew_ids: ['invented_first', 'invented_second', 'invented_third'],
       // Deliberately not all three: a centre that could start everything on its ring would let
       // a view drawing one spoke per crew pass.
@@ -503,6 +507,13 @@ function crewName(id: string): string {
   return PAYLOAD.crews.find((c) => c.crew_id === id)!.display_name
 }
 
+/** The circle the page actually drew for a node, read off the SVG rather than off the layout. */
+function circleOf(testId: string): { cx: number; cy: number; r: number } {
+  const circle = screen.getByTestId(testId).querySelector('circle')!
+  const read = (name: string) => Number(circle.getAttribute(name))
+  return { cx: read('cx'), cy: read('cy'), r: read('r') }
+}
+
 describe('the graph view', () => {
   it('draws one node per crew, plus each cluster\'s orchestrator', async () => {
     renderPage()
@@ -517,22 +528,77 @@ describe('the graph view', () => {
     renderPage()
     await screen.findAllByText(/Invented search API/)
     const positions = PAYLOAD.clusters[0].crew_ids.map((id) =>
-      screen.getByTestId(`node-${id}`).getAttribute('data-ring-position'),
+      screen.getByTestId(`node-${id}`).getAttribute('data-band'),
     )
     expect(positions).toEqual(['1', '2', '3'])
   })
 
   it('moves the picture when the declared order moves', async () => {
     // The property the whole view rests on. Reversed, so no crew keeps its place.
-    const reversed = [...PAYLOAD.clusters[0].crew_ids].reverse()
+    const reversed = [...PAYLOAD.clusters[0].crew_bands].reverse()
     get.mockResolvedValue({
       ...PAYLOAD,
-      clusters: [{ ...PAYLOAD.clusters[0], crew_ids: reversed }],
+      clusters: [{ ...PAYLOAD.clusters[0], crew_bands: reversed, crew_ids: reversed.flat() }],
     })
     renderPage()
     await screen.findAllByText(/Invented search API/)
-    expect(screen.getByTestId(`node-${reversed[0]}`)).toHaveAttribute('data-ring-position', '1')
-    expect(screen.getByTestId('node-invented_first')).toHaveAttribute('data-ring-position', '3')
+    expect(screen.getByTestId(`node-${reversed[0][0]}`)).toHaveAttribute('data-band', '1')
+    expect(screen.getByTestId('node-invented_first')).toHaveAttribute('data-band', '3')
+  })
+
+  it('draws two crews in one band at one angle, not at two positions', async () => {
+    // The rendered consequence of a band, which is where it has to hold: the layout function
+    // agreeing with itself proves nothing about the picture on the page. Same three crews as
+    // every other test here - only the banding differs - and the second and third are now
+    // parallel, so the drawing must give them the same number and the same bearing from the
+    // centre while keeping them apart.
+    const parallel = [['invented_first'], ['invented_second', 'invented_third']]
+    get.mockResolvedValue({
+      ...PAYLOAD,
+      clusters: [{ ...PAYLOAD.clusters[0], crew_bands: parallel, crew_ids: parallel.flat() }],
+    })
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+
+    const second = screen.getByTestId('node-invented_second')
+    const third = screen.getByTestId('node-invented_third')
+    expect(second.getAttribute('data-band')).toBe('2')
+    expect(third.getAttribute('data-band')).toBe('2')
+    expect(second.getAttribute('data-angle')).toBe(third.getAttribute('data-angle'))
+
+    // Same bearing, different distance: on one ray from the orchestrator, not on top of each
+    // other. Read off the circles the page actually drew rather than off the layout.
+    const centre = circleOf('node-pam')
+    const a = circleOf('node-invented_second')
+    const b = circleOf('node-invented_third')
+    const bearing = (p: { cx: number; cy: number }) =>
+      Math.atan2(p.cy - centre.cy, p.cx - centre.cx)
+    expect(bearing(a)).toBeCloseTo(bearing(b), 3)
+    expect(Math.hypot(a.cx - b.cx, a.cy - b.cy)).toBeGreaterThan(a.r + b.r)
+  })
+
+  it('redraws the ring when two crews stop being parallel', async () => {
+    // The same three crews banded one way and then the other. If the view laid itself out from
+    // the flat order - which is identical in both payloads - nothing here would move.
+    const parallel = [['invented_first'], ['invented_second', 'invented_third']]
+    get.mockResolvedValue({
+      ...PAYLOAD,
+      clusters: [{ ...PAYLOAD.clusters[0], crew_bands: parallel, crew_ids: parallel.flat() }],
+    })
+    const { unmount } = renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const banded = {
+      band: screen.getByTestId('node-invented_third').getAttribute('data-band'),
+      angle: screen.getByTestId('node-invented_third').getAttribute('data-angle'),
+    }
+    unmount()
+
+    get.mockResolvedValue(PAYLOAD)
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const sequential = screen.getByTestId('node-invented_third')
+    expect(sequential.getAttribute('data-band')).not.toBe(banded.band)
+    expect(sequential.getAttribute('data-angle')).not.toBe(banded.angle)
   })
 
   it('draws a spoke only to a crew the orchestrator can start', async () => {

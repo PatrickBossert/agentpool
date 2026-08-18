@@ -511,6 +511,61 @@ async def test_the_payload_carries_every_cluster_with_its_crews_in_pipeline_orde
 
 
 @pytest.mark.asyncio
+async def test_the_payload_carries_the_bands_the_view_is_laid_out_from(client):
+    """The view draws parallel crews side by side, and only the bands say which those are.
+
+    A payload with the flat order alone would leave the frontend to work out the depths for
+    itself - a second computation of the pipeline, in the one place that cannot be held against
+    `CREW_DEPENDENCIES`. So the grouping travels, and it must agree with the flat order it is
+    printed beside.
+    """
+    payload = await _payload(client)
+    graph = build_graph()
+
+    for row in payload["clusters"]:
+        node = graph.clusters[row["cluster_id"]]
+        assert row["crew_bands"] == [list(band) for band in node.crew_bands]
+        assert [c for band in row["crew_bands"] for c in band] == row["crew_ids"]
+
+    banded = {
+        crew_id: index
+        for cluster in payload["clusters"]
+        for index, band in enumerate(cluster["crew_bands"])
+        for crew_id in band
+    }
+    for crew in payload["crews"]:
+        for upstream in crew["depends_on_ids"]:
+            assert banded[upstream] < banded[crew["crew_id"]], (
+                f"{crew['crew_id']} is banded no lower than {upstream}, which it waits on"
+            )
+
+
+@pytest.mark.asyncio
+async def test_two_crews_waiting_on_the_same_crew_are_banded_together(client):
+    """The parallel pair, at the endpoint the picture is drawn from."""
+    payload = await _payload(client)
+    band = next(
+        band
+        for cluster in payload["clusters"]
+        for band in cluster["crew_bands"]
+        if "assessment_design" in band
+    )
+    assert set(band) == {"assessment_design", "stakeholder_management"}
+
+
+@pytest.mark.asyncio
+async def test_the_stakeholder_crews_flow_is_the_value_chain_at_the_endpoint(client):
+    """The corrected dependency, as the page receives it."""
+    payload = await _payload(client)
+    into_jordan = {
+        e["source"]: e for e in payload["crew_edges"] if e["target"] == "stakeholder_management"
+    }
+    assert "assessment_design" not in into_jordan
+    assert into_jordan["discovery_mapping"]["kind"] == "information"
+    assert "value_chain_registry" in into_jordan["discovery_mapping"]["artefacts"]
+
+
+@pytest.mark.asyncio
 async def test_every_crew_in_the_payload_names_the_cluster_that_owns_it(client):
     """No crew may fall outside the clusters, or the view is shorter than the table beside it."""
     payload = await _payload(client)
@@ -553,7 +608,7 @@ async def test_the_payloads_edges_are_the_graphs_edges(client):
 async def test_an_edge_that_carries_nothing_is_reported_as_sequencing(client):
     """The auditor's distinction, at the endpoint.
 
-    Three declared edges hand over no artefact. Reporting them the same way as the six that do
+    Two declared edges hand over no artefact. Reporting them the same way as the seven that do
     would tell a reader material passes between two crews when none does.
     """
     payload = await _payload(client)

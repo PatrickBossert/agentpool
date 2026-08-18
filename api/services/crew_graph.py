@@ -12,13 +12,29 @@ import aiosqlite
 from api.database import crew_has_commit, crew_is_running
 
 # Each crew maps to the crews that must be committed before it may run.
-# Alex -> Maya -> Jordan: stakeholder_management follows assessment_design, because
-# Jordan's coming role is to report which steps and roles have no interview covering
-# them, which he can only do once Maya's interviews exist.
+#
+# `assessment_design` and `stakeholder_management` are **parallel**: both wait on the value
+# chain and nothing else, and both feed the interviews. Jordan used to be declared behind Maya,
+# on the reading that he reports which steps and roles have no interview covering them - but the
+# artefacts disagreed and had done since the reads were declared. He reads `value_chain_registry`,
+# which only `discovery_mapping` writes; `assessment_design` writes `interview_scripts` alone,
+# which he does not read. So the declared edge carried nothing while the real one - the value
+# chain his coverage target is computed from - was undeclared, and the board held him back a
+# whole crew for an input he never took.
+#
+# `discovery_interviews` waits on both of them, and only one of the two hands anything over.
+# `stakeholder_management -> discovery_interviews` is a **sequencing** dependency and is meant to
+# stay one: what actually connects the two is `stakeholder_assignments`, a table written when an
+# assignment is confirmed on PAM's orchestration path and injected into the Interview
+# Coordinator by the dispatch path - not an artefact either crew writes. Jordan does not write
+# it, and his own task tells him to read it through `SQLiteStateTool`, which reads
+# `outputs/<key>.json` and so has never been able to see it (a defect of its own, recorded in
+# the slice-2 plan). The ordering is real all the same: he invites and chases the people Avery
+# then interviews. Do not invent a flow to make the arrow look busier than it is.
 CREW_DEPENDENCIES: dict[str, list[str]] = {
     "discovery_mapping":      [],
     "assessment_design":      ["discovery_mapping"],
-    "stakeholder_management": ["assessment_design"],
+    "stakeholder_management": ["discovery_mapping"],
     "discovery_interviews":   ["assessment_design", "stakeholder_management"],
     # Value propositions come from Casey's themes. This used to also wait on `discovery`,
     # which now runs two steps later - leaving that in place would deadlock the board,

@@ -3,6 +3,11 @@
 // The agent graph as a picture: each orchestrator at a centre, its crews on a ring around it in
 // pipeline order, clockwise from twelve o'clock.
 //
+// **One position on the ring is one band, and a band can hold more than one crew.** Crews that
+// wait on the same thing and on nothing of each other's run in parallel, and are drawn at the
+// same angle, stacked along it - because putting them at consecutive positions would assert an
+// ordering between them that no declaration makes.
+//
 // **It carries no fact of its own.** Every node, every edge, every label and every arrow comes
 // out of `GET /projects/{slug}/data-architecture` - the same answer the tables on this page are
 // drawn from, resolved for the same engagement in the same processing mode. Positions come from
@@ -17,9 +22,10 @@
 //
 // Three edge kinds, and the distinction is the reason the edges are derived rather than drawn.
 // `CREW_DEPENDENCIES` says a crew waits on another; it does not say whether anything travels.
-// Three of the nine declared edges hand over no artefact at all, and presenting those as
-// identical to the six that do would tell a reader material passes between two crews when none
-// does.
+// Two of the nine declared edges hand over no artefact at all, and presenting those as
+// identical to the seven that do would tell a reader material passes between two crews when none
+// does. It is also what found a dependency declared against the wrong crew: an empty arrow into
+// a crew that was reading its real input from somewhere else entirely.
 import { useId, useState } from 'react'
 import { AlertTriangle, GitBranch } from 'lucide-react'
 import type { DataArchitecture } from '../api/dataArchitecture'
@@ -60,8 +66,8 @@ const MARKER_FILL: Record<Kind, string> = {
 const KINDS: Kind[] = ['information', 'sequencing', 'inherited']
 
 export function AgentGraphView({ data }: { data: DataArchitecture }) {
-  // Off by default. Twelve inherited flows across a ring of nine is a legible finding in the
-  // table below and an unreadable one on the ring, and hiding them costs no fact: the table
+  // Off by default. Eleven inherited flows across a ring of nine crews is a legible finding in
+  // the table below and an unreadable one on the ring, and hiding them costs no fact: the table
   // lists every edge whatever this is set to. Toggling changes which edges are drawn and never
   // where anything sits, so the picture stays comparable with itself.
   const [showInherited, setShowInherited] = useState(false)
@@ -82,10 +88,12 @@ export function AgentGraphView({ data }: { data: DataArchitecture }) {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <p className="text-xs text-muted leading-relaxed max-w-2xl">
           Each orchestrator sits at a centre with the crews it owns around it, clockwise from the
-          top in the order the pipeline runs them. A spoke from the centre is a crew that
-          orchestrator can start itself; a crew with no spoke is reachable only by one of the
-          other dispatch paths below. Nothing here is placed by hand, so this is the same picture
-          on every load.
+          top in the order the pipeline runs them. Two crews at the same number and the same
+          angle are parallel - they wait on the same work and on nothing of each other's - and
+          are stacked along one radius rather than drawn one after the other. A spoke from the
+          centre is a crew that orchestrator can start itself; a crew with no spoke is reachable
+          only by one of the other dispatch paths below. Nothing here is placed by hand, so this
+          is the same picture on every load.
         </p>
         <label className="flex items-center gap-2 text-xs text-secondary whitespace-nowrap">
           <input
@@ -164,11 +172,12 @@ export function AgentGraphView({ data }: { data: DataArchitecture }) {
               key={node.id}
               href={node.kind === 'crew' ? `#crew-${node.id}` : `#agent-${node.id}`}
               data-testid={`node-${node.id}`}
-              data-ring-position={node.ringPosition}
+              data-band={node.band}
+              data-angle={node.angle ?? ''}
             >
               <title>
                 {node.kind === 'crew'
-                  ? `${node.label} - ${node.ringPosition} clockwise from the top`
+                  ? `${node.label} - band ${node.band} clockwise from the top`
                   : `${node.label} - orchestrator`}
               </title>
               <circle
@@ -191,7 +200,7 @@ export function AgentGraphView({ data }: { data: DataArchitecture }) {
                 textAnchor="middle"
                 className="fill-primary text-[12px] font-semibold"
               >
-                {node.kind === 'orchestrator' ? '•' : node.ringPosition}
+                {node.kind === 'orchestrator' ? '•' : node.band}
               </text>
               <text
                 x={node.labelX}

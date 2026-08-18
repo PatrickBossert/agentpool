@@ -822,7 +822,7 @@ export default function DataArchitecture() {
         id="crews"
         title="The crews"
         icon={<Users size={16} />}
-        intro="Each crew's purpose, what it waits on, and which of the paths above can start it. The order is the order they run in, which is the clockwise order of the ring above."
+        intro="Each crew's purpose, what it waits on, and which of the paths above can start it. The order is the order they run in - a list, so two crews that in fact run in parallel are printed one after the other. The ring above draws those at one position instead."
       >
         <div className="space-y-3">
           {data.crews.map((c) => (
