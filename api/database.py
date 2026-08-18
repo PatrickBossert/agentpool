@@ -3184,6 +3184,18 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             last_tick_at TEXT NOT NULL
         );
 
+        -- The address this deployment answers on, settable by a sysadmin rather than
+        -- only by editing .env and restarting. Singleton, like scheduler_heartbeat
+        -- above: CHECK (id = 1) makes a second row impossible rather than merely
+        -- unwritten. A blank public_url is the unset state, not a chosen empty string -
+        -- api.services.platform_settings.platform_public_url() falls back to the
+        -- PUBLIC_URL environment variable whenever this is blank or the row is absent.
+        CREATE TABLE IF NOT EXISTS platform_settings (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            public_url TEXT NOT NULL DEFAULT '',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS auth_tokens (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             token_hash     TEXT    NOT NULL UNIQUE,
