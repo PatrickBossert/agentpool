@@ -65,10 +65,15 @@ import asyncio
 import json
 import shutil
 import sqlite3
+import sys
 from datetime import date
 from pathlib import Path
 
-from api.config import get_settings
+# Running this by path puts `scripts/` on `sys.path`, not the repository root, so `api` is not
+# importable. See the note in `backfill_project_registry.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from api.config import get_settings  # noqa: E402 - must follow the bootstrap above
 
 # Reserved by RFC 2606: no MX record can ever exist under it, so nothing addressed here can
 # be delivered even if every other guard were removed.

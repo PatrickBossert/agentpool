@@ -16,10 +16,15 @@ import contextlib
 import json
 import shutil
 import sqlite3
+import sys
 from datetime import date
 from pathlib import Path
 
-from api.config import get_settings
+# Running this by path puts `scripts/` on `sys.path`, not the repository root, so `api` is not
+# importable. See the note in `backfill_project_registry.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from api.config import get_settings  # noqa: E402 - must follow the bootstrap above
 
 INTERVIEW_OUTPUT_TYPES = (
     "interview_scripts",
