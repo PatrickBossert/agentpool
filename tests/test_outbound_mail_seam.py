@@ -515,6 +515,11 @@ async def test_stakeholder_mail_is_sent_from_the_stakeholder_management_role(cli
     engagement. The local part is asserted literally because the hyphenated form of the
     `agent_id` is the decision under test; the domain is read from settings because it is
     an operator's to change.
+
+    A reminder now also carries that participant's reply token as a `+tag` (sp56 Task 2),
+    which is a third independent field and not a move of the mailbox: the part before the
+    `+` is still the role, and that is exactly what is asserted here. What the tag *is* is
+    `tests/test_reply_tokens.py`'s subject, not this test's.
     """
     slug = "seam-face"
     await _make_project(client, slug, holds_mail=False)
@@ -523,7 +528,9 @@ async def test_stakeholder_mail_is_sent_from_the_stakeholder_management_role(cli
     from api.services.campaign_service import send_reminder_emails_svc
     await send_reminder_emails_svc(slug)
 
-    assert sender_address(sent[0]) == f"stakeholder-manager@{domain()}"
+    local, _, sent_domain = sender_address(sent[0]).partition("@")
+    assert local.partition("+")[0] == "stakeholder-manager", sender_address(sent[0])
+    assert sent_domain == domain()
 
 
 @pytest.mark.asyncio
@@ -570,7 +577,11 @@ async def test_renaming_the_correspondent_renames_the_face_and_not_the_address(
 
     assert "Wilhelmina Testcase" in sender(sent[0])
     assert "Jordan" not in sender(sent[0])
-    assert sender_address(sent[0]) == f"stakeholder-manager@{domain()}"
+    # The role, read past the reply-token tag a reminder now carries - see the note on
+    # test_stakeholder_mail_is_sent_from_the_stakeholder_management_role.
+    local, _, sent_domain = sender_address(sent[0]).partition("@")
+    assert local.partition("+")[0] == "stakeholder-manager", sender_address(sent[0])
+    assert sent_domain == domain()
 
 
 @pytest.mark.asyncio

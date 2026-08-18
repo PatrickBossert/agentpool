@@ -31,6 +31,7 @@ import AlexSetupTab from './tabs/AlexSetupTab'
 import MayaSetupTab from './tabs/MayaSetupTab'
 import { CrewSetupSections, AGENT_SETUP_SECTION } from './tabs/CrewSetupSections'
 import AveryOutputExtra from './tabs/AveryOutputExtra'
+import JordanOutputExtra from './tabs/JordanOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
 import MayaOutputExtra from './tabs/MayaOutputExtra'
 import PamSetupTab from './tabs/PamSetupTab'
@@ -57,9 +58,12 @@ const CREW_SETUP_OVERRIDE: Partial<Record<string, SlotFC>> = {
 // empty state has to know a crew has one of these: "No outputs yet" printed directly above a
 // populated interview-sessions or scripts panel is wrong on its face.
 export const CREW_OUTPUT_EXTRA: Partial<Record<string, SlotFC>> = {
-  assessment_design:    MayaOutputExtra,
-  discovery_interviews: AveryOutputExtra,
-  delivery:             LucaOutputExtra,
+  assessment_design:      MayaOutputExtra,
+  discovery_interviews:   AveryOutputExtra,
+  delivery:               LucaOutputExtra,
+  // What participants wrote back. The correspondent owns the conversation - engagement mail
+  // leaves over Jordan's name and address - so the replies to it are read here.
+  stakeholder_management: JordanOutputExtra,
 }
 
 // The bespoke editor for an agent's primary output. An agent absent from this map renders

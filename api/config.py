@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
     deepgram_api_key: str = ""
     resend_api_key: str = ""
+    # The signing secret for Resend's inbound webhook, as issued in its dashboard
+    # (`whsec_` followed by base64). Empty is not "verification off" - it is the one
+    # setting whose absence must close the door rather than open it, so
+    # POST /api/inbound-mail/resend refuses every request while this is unset. See
+    # api/services/inbound_mail.py: that endpoint is unauthenticated, reachable from the
+    # public internet, and writes to a project database, which is the combination that
+    # makes an unverified payload a way of putting words in a client's mouth.
+    resend_webhook_secret: str = ""
     # Platform mail (the welcome email) sends from this entire. A project's mail takes only
     # the *domain* from it and mints a role address on that domain from the correspondent's
     # agent id - see api/services/outbound_mail.py. There is deliberately no second setting

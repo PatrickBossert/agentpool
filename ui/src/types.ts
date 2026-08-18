@@ -866,3 +866,40 @@ export interface MyPermissions {
   // platform tier (org_admin or sysadmin) and a project_admin is refused.
   can_issue_invite_links: boolean
 }
+
+// One reply a participant sent back to the correspondent, resolved to the person who sent
+// it. Arrives through the inbound webhook (api/services/inbound_mail.py), which stores it
+// against the project and the stakeholder and does nothing else with it - reading it and
+// deciding what it means is a human's job, and this is what they read it on.
+//
+// `body` is plain text and never markup: the webhook is unauthenticated, so what it stores
+// must not be something a browser will later render. Render it as text.
+export interface InboundReply {
+  id: number
+  stakeholder_id: number
+  stakeholder_name: string
+  stakeholder_email: string
+  // Who actually wrote it, which is not the same question as which thread it routed to.
+  // The reply token proves possession of an address and never authorship - and the two come
+  // apart today, because dev_mode holds participant mail at DEV_MODE_ADDRESS with the
+  // participant's live token on it. So the sender is always shown, and `sender_confirmed`
+  // says whether it matches the stakeholder's address on file. The server computes it; a
+  // second answer worked out in the browser could disagree with it.
+  from_address: string
+  sender_confirmed: boolean
+  subject: string
+  body: string
+  // Whether the reply was longer than the endpoint stores. The full message is in the
+  // mailbox; the panel says so rather than quietly showing a fragment as if it were whole.
+  truncated: boolean
+  // Attachments are counted and never stored - see api/services/inbound_mail.py. The count
+  // is here so a reader knows to go and ask for the file.
+  attachment_count: number
+  received_at: string
+  read_at: string | null
+}
+
+export interface InboundRepliesResponse {
+  replies: InboundReply[]
+  unread: number
+}

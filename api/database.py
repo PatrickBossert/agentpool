@@ -1009,6 +1009,131 @@ async def _migrate_registry_output_type(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_inbound_replies(conn: aiosqlite.Connection) -> None:
+    """What a participant wrote back, kept where the engagement keeps its facts.
+
+    It lands in the **project's** database rather than in `system.db`, beside the
+    stakeholder it is about, for the reason `[[durable-keyed-artefacts-and-rag]]` gives:
+    a reply is a fact about the engagement, not an event inside a run and not a row about
+    the platform. `stakeholder_id` only means anything inside one project file - ids
+    restart at 1 in every one of them - so a reply stored anywhere else would be keyed on
+    a number that names a different person depending on which database you read it beside.
+
+    `provider_event_id` is the webhook message id, and it is UNIQUE because a webhook is
+    redelivered on any failure to answer. Without it, a reply that arrived while the API
+    was restarting would be stored once per retry and a reviewer would read the same
+    sentence four times. It comes out of the *signed* headers, so it is the provider's
+    word and not the payload's.
+
+    `body` is plain text and never HTML. Storing markup that a browser later renders is
+    how an unauthenticated endpoint becomes a way of running script in an operator's
+    session; the surface shows text, so text is what is kept.
+
+    **Nothing here reaches a RAG store**, and that is the point of it being a table. The
+    knowledge-tier work makes writing to a project's Chroma collections a deliberate act
+    with authority for the destination tier, and a webhook holds none - it has no user, no
+    role, and its content came from outside. A human reads the reply here and decides.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS inbound_replies (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id        INTEGER NOT NULL REFERENCES projects(id),
+            stakeholder_id    INTEGER NOT NULL REFERENCES stakeholders(id),
+            provider_event_id TEXT    NOT NULL UNIQUE,
+            event_type        TEXT    NOT NULL DEFAULT '',
+            from_address      TEXT    NOT NULL DEFAULT '',
+            subject           TEXT    NOT NULL DEFAULT '',
+            body              TEXT    NOT NULL DEFAULT '',
+            truncated         INTEGER NOT NULL DEFAULT 0,
+            attachment_count  INTEGER NOT NULL DEFAULT 0,
+            in_reply_to       TEXT    NOT NULL DEFAULT '',
+            received_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+            read_at           DATETIME,
+            read_by           TEXT
+        )
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_inbound_replies_project
+        ON inbound_replies (project_id, received_at DESC)
+    """)
+    await conn.commit()
+
+
+async def insert_inbound_reply(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    stakeholder_id: int,
+    provider_event_id: str,
+    event_type: str,
+    from_address: str,
+    subject: str,
+    body: str,
+    truncated: bool,
+    attachment_count: int,
+    in_reply_to: str,
+) -> int | None:
+    """Store one reply. Returns its id, or None when this delivery was already stored.
+
+    `INSERT ... ON CONFLICT DO NOTHING` rather than a check-then-insert: the webhook is
+    retried concurrently by the provider on a slow answer, and two requests that both
+    looked first would both find nothing.
+    """
+    cur = await conn.execute(
+        "INSERT INTO inbound_replies (project_id, stakeholder_id, provider_event_id,"
+        " event_type, from_address, subject, body, truncated, attachment_count,"
+        " in_reply_to) VALUES (?,?,?,?,?,?,?,?,?,?)"
+        " ON CONFLICT(provider_event_id) DO NOTHING",
+        (
+            project_id, stakeholder_id, provider_event_id, event_type, from_address,
+            subject, body, int(truncated), attachment_count, in_reply_to,
+        ),
+    )
+    await conn.commit()
+    return cur.lastrowid if cur.rowcount else None
+
+
+async def fetch_inbound_replies(
+    conn: aiosqlite.Connection, *, project_id: int, limit: int = 200
+) -> list[dict]:
+    """Replies on this project, newest first, each carrying the person who sent it.
+
+    The stakeholder's name is joined here rather than resolved by the caller, because the
+    caller is a surface: a list of ids is a list nobody can triage.
+    """
+    async with conn.execute(
+        "SELECT r.*, s.name AS stakeholder_name, s.email AS stakeholder_email"
+        " FROM inbound_replies r"
+        " LEFT JOIN stakeholders s ON s.id = r.stakeholder_id"
+        " WHERE r.project_id = ?"
+        " ORDER BY r.received_at DESC, r.id DESC LIMIT ?",
+        (project_id, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def mark_inbound_reply_read(
+    conn: aiosqlite.Connection, *, project_id: int, reply_id: int, by: str
+) -> bool:
+    """Mark one reply as read. False when it is not this project's, or was already read.
+
+    `project_id` is in the WHERE clause as defence in depth and **not** as the thing that
+    keeps one engagement's replies out of another's - said plainly because power-checking
+    proved it cannot be: there is one database file per project, so within this connection
+    `project_id` is a constant and removing it from the clause changes no outcome. What
+    actually isolates the engagements is `get_connection(slug)` opening a different file.
+    The clause is here for the day a table like this is asked to hold two projects, which
+    is the day it stops being free.
+    """
+    cur = await conn.execute(
+        "UPDATE inbound_replies SET read_at=CURRENT_TIMESTAMP, read_by=?"
+        " WHERE id=? AND project_id=? AND read_at IS NULL",
+        (by, reply_id, project_id),
+    )
+    await conn.commit()
+    return (cur.rowcount or 0) > 0
+
+
 async def fetch_validation_warnings(
     conn: aiosqlite.Connection,
     *,
@@ -1403,9 +1528,11 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # missed bump *in general* - it is a fact about this constant, not about behaviour - but a
 # migration can be made to catch its own: build a database in the pre-migration shape,
 # stamp it with the PREVIOUS version, open it, and assert the migration reached it. See
-# tests/test_stakeholder_synthetic_migration.py, which fails on 8 and passes on 9, and
-# tests/test_stakeholder_node_assignments_retired.py, which fails on 9 and passes on 10.
-_SCHEMA_VERSION = 10
+# tests/test_stakeholder_synthetic_migration.py, which fails on 8 and passes on 9;
+# tests/test_stakeholder_node_assignments_retired.py, which fails on 9 and passes on 10;
+# and tests/test_inbound_replies.py::test_a_database_already_at_the_previous_version_gets_
+# the_inbound_replies_table, which fails on 10 and passes on 11.
+_SCHEMA_VERSION = 11
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1518,6 +1645,7 @@ async def get_connection(slug: str):
             await _migrate_output_changes_kind(conn)
             await _migrate_validation_warnings(conn)
             await _migrate_registry_output_type(conn)
+            await _migrate_inbound_replies(conn)
             # PRAGMA does not accept bound parameters; _SCHEMA_VERSION is a hardcoded
             # module constant, never user input, so formatting it in is safe.
             await conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
@@ -2906,6 +3034,43 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
         -- with table size is exactly the property token_hash's own index was added to close
         -- on the accept path.
         CREATE INDEX IF NOT EXISTS idx_auth_tokens_email_purpose ON auth_tokens(email, purpose);
+
+        -- One reply address per person per engagement, and deliberately NOT a new
+        -- `purpose` on auth_tokens. Every purpose that table holds is single-use and
+        -- expiring: `_find_live_token` filters `used_at IS NULL AND expires_at > now`,
+        -- `accept_token` stamps `used_at` on redemption, and `expires_at` is NOT NULL.
+        -- A reply token is the opposite of all three - it is long-lived, it is reused on
+        -- every message, and `used_at` has no meaning for something that is never used
+        -- up. Sharing the table would mean a NOT NULL expiry filled with a sentinel, a
+        -- `used_at` column that must never be stamped, and a row that
+        -- `accept_token(raw, password)` - which takes `purpose=None` and accepts any live
+        -- row - would happily redeem as a login.
+        --
+        -- `issue` is what makes revocation stick. Re-minting after a revocation bumps it,
+        -- which derives a different token and overwrites `token_hash`, so the revoked
+        -- address is not merely refused - its digest is no longer in the table at all.
+        -- Nothing deletes from here, so `issue` only ever climbs.
+        CREATE TABLE IF NOT EXISTS reply_tokens (
+            project_slug   TEXT    NOT NULL,
+            stakeholder_id INTEGER NOT NULL,
+            token_hash     TEXT    NOT NULL UNIQUE,
+            issue          INTEGER NOT NULL DEFAULT 1,
+            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+            revoked_at     DATETIME,
+            PRIMARY KEY (project_slug, stakeholder_id)
+        );
+
+        -- The provider's id for a message that was actually sent to a named person.
+        -- Recorded from the first send rather than when it is needed, because it cannot
+        -- be recovered afterwards: if inbound routing turns out to strip the `+tag` from
+        -- the recipient address, `In-Reply-To` matched against this table is the only
+        -- fallback, and it only exists for messages sent after it started being kept.
+        CREATE TABLE IF NOT EXISTS sent_messages (
+            provider_message_id TEXT PRIMARY KEY,
+            project_slug        TEXT    NOT NULL,
+            stakeholder_id      INTEGER NOT NULL,
+            sent_at             DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     await conn.commit()
 
@@ -3792,6 +3957,111 @@ async def fetch_open_invite_emails(
         (project_slug,),
     ) as cur:
         return {row[0] async for row in cur}
+
+
+# ── Reply tokens: the routing key in a participant's reply address ────────────
+#
+# Raw tokens never appear here. `api/services/outbound_mail.py` derives one and hands
+# down its digest; these helpers know nothing but the digest, which is the whole point -
+# a copy of this table, a backup of it, or a stray SELECT into a log yields no working
+# address.
+
+async def fetch_reply_token(
+    conn: aiosqlite.Connection, *, project_slug: str, stakeholder_id: int
+) -> dict | None:
+    """The reply-token row for this person on this project, live or revoked.
+
+    Revoked rows are returned rather than filtered, because the caller minting a
+    replacement needs the `issue` it must climb past. Resolution uses
+    `fetch_reply_token_by_hash`, which does filter.
+    """
+    async with conn.execute(
+        "SELECT * FROM reply_tokens WHERE project_slug=? AND stakeholder_id=?",
+        (project_slug, stakeholder_id),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def fetch_reply_token_by_hash(
+    conn: aiosqlite.Connection, *, token_hash: str
+) -> dict | None:
+    """The live row carrying this digest, or None.
+
+    A single indexed equality lookup - `token_hash` is UNIQUE, so the constraint's index
+    serves it - for the same reason `invite_service` hashes with sha256 rather than
+    bcrypt: this runs on an unauthenticated inbound path, and a scan there is a denial of
+    service wearing a lookup's clothes.
+
+    Costs the same whether or not the digest is present, which is what keeps an unknown
+    token from being distinguishable from a known one by how long the answer took.
+    """
+    async with conn.execute(
+        "SELECT * FROM reply_tokens WHERE token_hash=? AND revoked_at IS NULL",
+        (token_hash,),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def upsert_reply_token(
+    conn: aiosqlite.Connection,
+    *,
+    project_slug: str,
+    stakeholder_id: int,
+    token_hash: str,
+    issue: int,
+) -> None:
+    """Write the live digest for this person on this project.
+
+    On conflict the row is *replaced*, not left alone: the conflicting row is the revoked
+    predecessor being rotated past, and overwriting its `token_hash` is what takes the
+    revoked address out of the table entirely rather than leaving a refused row behind
+    that a later change could accidentally start honouring again.
+    """
+    await conn.execute(
+        "INSERT INTO reply_tokens (project_slug, stakeholder_id, token_hash, issue)"
+        " VALUES (?,?,?,?)"
+        " ON CONFLICT(project_slug, stakeholder_id) DO UPDATE SET"
+        " token_hash=excluded.token_hash, issue=excluded.issue,"
+        " revoked_at=NULL, created_at=CURRENT_TIMESTAMP",
+        (project_slug, stakeholder_id, token_hash, issue),
+    )
+    await conn.commit()
+
+
+async def mark_reply_token_revoked(
+    conn: aiosqlite.Connection, *, project_slug: str, stakeholder_id: int
+) -> bool:
+    """Stop this person's reply address routing. Returns whether a live row was revoked."""
+    cur = await conn.execute(
+        "UPDATE reply_tokens SET revoked_at=CURRENT_TIMESTAMP"
+        " WHERE project_slug=? AND stakeholder_id=? AND revoked_at IS NULL",
+        (project_slug, stakeholder_id),
+    )
+    await conn.commit()
+    return (cur.rowcount or 0) > 0
+
+
+async def record_sent_message(
+    conn: aiosqlite.Connection,
+    *,
+    provider_message_id: str,
+    project_slug: str,
+    stakeholder_id: int,
+) -> None:
+    """Remember which person a sent message was about, by the provider's id for it.
+
+    `INSERT OR REPLACE` rather than a plain insert: the id comes from outside, and a
+    provider that ever repeated one must not turn a successful send into an exception
+    after the message has already gone.
+    """
+    await conn.execute(
+        "INSERT OR REPLACE INTO sent_messages"
+        " (provider_message_id, project_slug, stakeholder_id) VALUES (?,?,?)",
+        (provider_message_id, project_slug, stakeholder_id),
+    )
+    await conn.commit()
 
 
 async def has_project_membership(
