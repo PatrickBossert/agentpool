@@ -339,6 +339,9 @@ async def test_a_refused_url_is_not_stored(sysadmin, tmp_path):
         ("https://app.example.com///", "https://app.example.com"),
         ("  https://app.example.com/dashboard/  ", "https://app.example.com/dashboard"),
         ("https://app.example.com/?utm=x#frag", "https://app.example.com"),
+        # urlparse splits ";params" off the last path segment, so it is dropped alongside
+        # the query and the fragment. Asserted rather than left to the docstring.
+        ("https://app.example.com/dashboard;v=2", "https://app.example.com/dashboard"),
     ],
 )
 async def test_the_stored_form_carries_no_trailing_slash(sysadmin, sent, stored):
@@ -348,6 +351,45 @@ async def test_the_stored_form_carries_no_trailing_slash(sysadmin, sent, stored)
 
     assert resp.status_code == 200
     assert resp.json()["public_url"] == stored
+
+
+@pytest.mark.asyncio
+async def test_the_two_halves_of_a_read_cannot_disagree(sysadmin, monkeypatch, tmp_path):
+    """`public_url` and `source` must describe the same moment.
+
+    The arrangement is the one that broke it: populate the module cache from a stored value,
+    then blank the row underneath without forgetting. A `public_url` taken from the cache
+    and a `source` taken from a fresh row read then answer
+    `{"public_url": "https://stored.example", "source": "environment"}` - a response
+    asserting the value came from the environment while displaying the stored one.
+
+    It is asserted as a whole-body equality rather than on `source` alone, because the half
+    that is wrong is not fixed: either side of the split could be the stale one depending on
+    which way the row moved, and an assertion naming only one of them would pass on the
+    other.
+    """
+    monkeypatch.setenv("PUBLIC_URL", "https://env.example")
+    get_settings.cache_clear()
+
+    stored = await sysadmin.patch(
+        "/admin/platform-settings", json={"public_url": "https://stored.example"}
+    )
+    assert stored.status_code == 200
+
+    assert ps.platform_public_url() == "https://stored.example"  # populates the cache
+
+    # The hand-edit shape: the row changes without anything calling forget().
+    conn = sqlite3.connect(tmp_path / "system.db")
+    try:
+        conn.execute("UPDATE platform_settings SET public_url = '' WHERE id = 1")
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = await sysadmin.get("/admin/platform-settings")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"public_url": "https://env.example", "source": "environment"}
 
 
 @pytest.mark.asyncio

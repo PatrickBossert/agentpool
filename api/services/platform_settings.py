@@ -29,6 +29,29 @@ _UNSET = object()
 _CACHED_URL = _UNSET
 
 
+def _resolve(stored: str, env_url: str) -> tuple[str, str]:
+    """The precedence rule and its own name for the answer: (public_url, source).
+
+    Stated once, and returning both halves together, because they are one fact about one
+    moment. `read_platform_settings` used to build `public_url` from the module cache and
+    `source` from a fresh row read, so an operator could be shown
+    `{"public_url": "https://stored.example", "source": "environment"}` - a response
+    asserting the value came from the environment while displaying the stored one.
+
+    That is worse than an ordinary inconsistency because of what `source` is *for*: it is
+    the only thing that tells an administrator whether the field they are looking at is a
+    saved setting or the PUBLIC_URL the deployment booted with, and "the page shows the
+    right thing but the links are wrong" is undiagnosable without it. A diagnostic that can
+    contradict the value beside it is worse than none.
+
+    A blank stored value is the unset state, not a chosen empty string - the column's own
+    default, meaning nothing has been saved through the door yet.
+    """
+    if stored:
+        return stored, "stored"
+    return env_url, "environment"
+
+
 def forget_platform_settings() -> None:
     """Drop the cached public_url so the next call re-reads system.db.
 
@@ -91,8 +114,7 @@ def platform_public_url() -> str:
         )
         return env_url
 
-    stored = row[0] if row else ""
-    resolved = stored or env_url
+    resolved, _source = _resolve(row[0] if row else "", env_url)
     _CACHED_URL = resolved
     return resolved
 
@@ -132,8 +154,14 @@ def normalise_public_url(raw: str) -> str:
     Normalisation is the fourth job, and it is why this is a function rather than a
     validator: the stored form carries no trailing slash, so the five link builders that
     each wrote ``.rstrip('/')`` for themselves stop being five places the rule can be
-    forgotten. Query and fragment are dropped - a base URL every builder appends a path to
-    cannot carry either and still produce a valid link.
+    forgotten. Three parts of the URL are dropped along the way, and all three for the same
+    reason - a base URL that every builder appends a path to cannot carry them and still
+    produce a valid link: the **query**, the **fragment**, and the ``;params`` segment
+    ``urlparse`` splits off the end of the last path component (``/dashboard;v=2`` stores as
+    ``/dashboard``). Dropping is silent rather than a refusal, which is safe in one
+    direction only, and it is this one: discarding a trailing part of a URL can only narrow
+    what it addresses, never point it at a host or path it did not already name. The
+    response returns the normalised value, so a caller is always told what was stored.
     """
     parsed = urlparse(raw.strip())
     if parsed.scheme not in ("http", "https"):
@@ -162,15 +190,21 @@ async def save_platform_public_url(conn: aiosqlite.Connection, raw: str) -> str:
 
 
 async def read_platform_settings(conn: aiosqlite.Connection) -> dict:
-    """What the settings door reports: the URL in force, and where it came from.
+    """What the settings door reports: the URL the stored row resolves to, and where it
+    came from.
 
-    ``source`` is not decoration. A blank stored value resolves to the environment, so an
-    operator looking at a populated field has no way to tell a saved setting from the
-    PUBLIC_URL the deployment booted with - and those behave differently the next time the
-    environment changes.
+    **Both halves come from one read**, resolved together by `_resolve` - see its docstring
+    for the contradiction this shape exists to make impossible. Deliberately the row rather
+    than `platform_public_url()`: the cached accessor answers from a moment that may predate
+    this request, and a door whose job is to report the setting must report the setting.
+
+    One residual, and it is not this function's to close: a row edited by hand leaves the
+    module cache stale, so this door would report the new value while the link builders kept
+    serving the old one until the process restarts. The fix is an explicit action that
+    clears the row *and* calls `forget_platform_settings()`, which is Task 4's work - not a
+    second read here, which would only move the disagreement rather than remove it.
     """
-    stored = await fetch_platform_public_url(conn)
-    return {
-        "public_url": platform_public_url(),
-        "source": "stored" if stored else "environment",
-    }
+    public_url, source = _resolve(
+        await fetch_platform_public_url(conn), get_settings().public_url
+    )
+    return {"public_url": public_url, "source": source}
