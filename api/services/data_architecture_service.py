@@ -40,7 +40,13 @@ would let a page be shown a reassuring answer that no run would ever produce.
 - **It must not let `sector_{sector}` read as project-scoped.** That collection carries no slug
   and six agents read it, so it is one store shared by every engagement in the sector.
   `shared_beyond_this_project` is set structurally - a vector collection whose name template
-  has no `{slug}` in it - and the page badges it.
+  has no `{slug}` in it - and the page badges it. The badge says a store is not this project's;
+  `tier` and `tier_scope` say **why, and with whom**, which the name alone cannot: `sector_` is
+  shared with other clients and `org_` with this organisation's own sibling projects, and a
+  reader who is told only "not scoped to this project" has no way to tell those apart. The two
+  are separate derivations - one off the name template, one off the declared tier - and
+  `test_the_name_and_the_tier_agree_about_which_stores_are_shared` holds them equal rather than
+  letting either become the sole authority.
 
 `Trigger` is not an access-control statement, and nothing here presents it as one. The charter
 says what **can** start a crew, not who may; the two REST doors differ in authority from the
@@ -70,8 +76,9 @@ from agents.egress import (
     resolve_egress,
 )
 from agents.graph import build_graph
-from agents.reads import CREW_DISPATCH_READS, Medium, Read, VIA_DISPATCH
+from agents.reads import CREW_DISPATCH_READS, Medium, Read, UNINSTRUCTED_READS, VIA_DISPATCH
 from api.services.chroma_client import project_llm_mode
+from api.services.knowledge_tiers import TIER_SCOPE
 
 _RUN_SERVICE_SOURCE = Path(__file__).parent / "run_service.py"
 
@@ -164,12 +171,21 @@ def is_shared_beyond_one_project(read: Read) -> bool:
 
 
 def _read(read: Read) -> dict:
+    """One declared read, with its tier and what that tier means.
+
+    `tier` and `tier_scope` travel together and are both `None` for a read that has no tier -
+    an artefact or a table is not in the knowledge store. The scope sentence is looked up
+    rather than sent as a tier name the page would have to translate: the page's job is to
+    render the reason, and a second copy of the vocabulary in TypeScript is a copy that drifts.
+    """
     return {
         "source": read.source,
         "medium": read.medium.value,
         "via": read.via,
         "note": read.note,
         "shared_beyond_this_project": is_shared_beyond_one_project(read),
+        "tier": read.tier,
+        "tier_scope": TIER_SCOPE[read.tier] if read.tier else None,
     }
 
 
@@ -210,20 +226,45 @@ def _shared_sources(graph) -> list[dict]:
     now refuses anything outside the four tiers, so reaching a tier requires naming it - the
     gap between `read_by` and `reachable_by` is real, but it is no longer something an agent
     can fall into.
+
+    `UNINSTRUCTED_READS` is walked alongside both, and it is the widest case of that same gap:
+    the organisation store is offered to all six holders and instructed to none of them, so
+    every reader of it is a reachable one. A panel built from declared reads alone omitted the
+    store entirely - not with an empty reader list, which is at least a statement, but by never
+    mentioning a store whose material is shared with every sibling project of this organisation.
     """
     holders = _holders(graph)
     name = {agent_id: node.display_name for agent_id, node in graph.agents.items()}
 
+    # Keyed on what identifies the store on the page; the tier travels with the key rather than
+    # inside it, because two reads of one collection must not become two rows over a tier that
+    # is a property of the collection anyway. `_tier_of` refuses a disagreement rather than
+    # letting the last write win.
     rows: dict[tuple[str, str, str], set[str]] = {}
+    tiers: dict[tuple[str, str, str], str | None] = {}
+
+    def _record(read: Read, agent_id: str | None) -> None:
+        if not is_shared_beyond_one_project(read):
+            return
+        key = (read.source, read.medium.value, read.via)
+        if key in tiers and tiers[key] != read.tier:
+            raise ValueError(
+                f"{read.source} is declared at two different knowledge tiers "
+                f"({tiers[key]!r} and {read.tier!r}) - one collection is one tier, and the "
+                "privacy page cannot say which material is shared and why while they disagree."
+            )
+        tiers[key] = read.tier
+        readers = rows.setdefault(key, set())
+        if agent_id is not None:
+            readers.add(agent_id)
+
     for node in graph.agents.values():
         for source in node.sources:
-            if is_shared_beyond_one_project(source):
-                rows.setdefault(
-                    (source.source, source.medium.value, source.via), set()
-                ).add(node.agent_id)
+            _record(source, node.agent_id)
     for read in CREW_DISPATCH_READS:
-        if is_shared_beyond_one_project(read):
-            rows.setdefault((read.source, read.medium.value, read.via), set())
+        _record(read, None)
+    for read in UNINSTRUCTED_READS:
+        _record(read, None)
 
     # Sorted on the display name, which is what the panel shows, with the ids kept in step so a
     # link and the name it is under can never belong to two different agents.
@@ -231,7 +272,7 @@ def _shared_sources(graph) -> list[dict]:
         ordered = sorted(agent_ids, key=lambda agent_id: name[agent_id])
         return [name[agent_id] for agent_id in ordered], list(ordered)
 
-    def _row(source, medium, via, read_by) -> dict:
+    def _row(source, medium, via, read_by, tier) -> dict:
         readers, reader_ids = _people(read_by)
         reachable, reachable_ids = _people(holders.get(via, []))
         return {
@@ -243,11 +284,13 @@ def _shared_sources(graph) -> list[dict]:
             "reachable_by": reachable,
             "reachable_by_ids": reachable_ids,
             "handed_to_every_agent": via == VIA_DISPATCH,
+            "tier": tier,
+            "tier_scope": TIER_SCOPE[tier] if tier else None,
         }
 
     return sorted(
         (
-            _row(source, medium, via, read_by)
+            _row(source, medium, via, read_by, tiers[(source, medium, via)])
             for (source, medium, via), read_by in rows.items()
         ),
         key=lambda row: row["source"],

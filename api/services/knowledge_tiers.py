@@ -48,6 +48,36 @@ KNOWLEDGE_TIERS: tuple[str, ...] = ("sector", "organisation", "project", "interv
 
 Tier = Literal["sector", "organisation", "project", "interviews"]
 
+# The tiers whose store holds more than this engagement's material. Declared rather than
+# derived from the collection template, because the two are different claims and the privacy
+# page asserts them against each other: `is_shared_beyond_one_project` reads the *name* and
+# answers "this template carries no slug", while this reads the *tier* and answers "this store
+# is meant to be shared". A tier renamed into a slug-less template, or a template that gained a
+# slug without the tier changing, is a disagreement worth failing on rather than a rename.
+SHARED_TIERS: tuple[str, ...] = ("sector", "organisation")
+
+# How wide each tier's store is, in the sentence an auditor reads on the privacy page. Prose,
+# because nothing derives it, and it is the *reason* rather than the fact: the page could
+# already say `sector_{sector}` is "not scoped to this project" and had no vocabulary for why
+# it is not, nor any way to tell that store apart from `org_{org_slug}`, which is shared with a
+# quite different set of people.
+#
+# Written from the reader's side of the boundary - "other clients'", not "other engagements" -
+# because a client reading this page wants to know who else is in the store, and the honest
+# answer for the sector tier on the consultancy's own deployment is: their competitors.
+TIER_SCOPE: dict[str, str] = {
+    "sector": (
+        "shared by every engagement in this sector, on this deployment - including other "
+        "clients' engagements"
+    ),
+    "organisation": (
+        "shared by every project of this organisation, and by no project of any other "
+        "organisation"
+    ),
+    "project": "this project's own uploaded documents, and no other project's",
+    "interviews": "this project's own interview answers, and no other project's",
+}
+
 
 def collection_for(
     tier: str,

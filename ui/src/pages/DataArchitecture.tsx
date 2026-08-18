@@ -344,9 +344,25 @@ function SharedSources({ data }: { data: DataArchitectureModel }) {
               <span className="text-amber-700">
                 , handed to every agent when a crew is dispatched
               </span>
+            ) : s.read_by.length === 0 ? (
+              /* Not the same statement as an empty list rendered as "declared readers: ".
+                 The organisation store is offered to every agent holding the tool and named
+                 in no task description, so nothing draws on it - which is a fact about the
+                 instructions, not about who could. The reachable line below says who could. */
+              <span className="text-amber-700">
+                , which no agent is instructed to read
+              </span>
             ) : (
               <span className="text-amber-700">
                 , declared readers: <AgentLinks ids={s.read_by_ids} names={s.read_by} />
+              </span>
+            )}
+            {/* Which tier it is, and with whom it is shared. The panel's heading says a store
+                is not this engagement's alone; this says who else is in it, and sector and
+                organisation are shared with very different people. */}
+            {s.tier_scope && (
+              <span className="block text-amber-800">
+                <span className="font-semibold capitalize">{s.tier}</span> tier - {s.tier_scope}.
               </span>
             )}
             {/* The declared readers and the wider set able to reach it are two different
@@ -447,7 +463,8 @@ function AgentCard({
                 <li key={`${s.source}:${s.via}`} className="text-[11px] text-secondary leading-relaxed">
                   <span className="font-mono font-semibold text-primary">{s.source}</span>{' '}
                   <span className="text-muted">
-                    ({s.medium}, through <ToolLink tool={s.via} known={tools} />)
+                    ({s.tier ? `${s.tier} tier, ` : ''}
+                    {s.medium}, through <ToolLink tool={s.via} known={tools} />)
                   </span>
                   {s.shared_beyond_this_project && (
                     <span className="ml-1">

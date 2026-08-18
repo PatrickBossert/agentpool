@@ -84,6 +84,8 @@ const PAYLOAD: Model = {
           via: 'ChromaQueryTool',
           note: 'how this sector usually works',
           shared_beyond_this_project: true,
+          tier: 'sector',
+          tier_scope: 'shared by every engagement in this sector, including other clients',
         },
         {
           source: 'invented_project_artefact',
@@ -91,6 +93,10 @@ const PAYLOAD: Model = {
           via: 'SQLiteStateTool',
           note: 'his own ledger',
           shared_beyond_this_project: false,
+          // An artefact is not in the knowledge store, so it has no tier. Null is the answer,
+          // not an unfilled field.
+          tier: null,
+          tier_scope: null,
         },
         {
           source: 'invented_dispatch_table',
@@ -100,6 +106,8 @@ const PAYLOAD: Model = {
           via: 'build_and_run_crew',
           note: 'handed to him without his asking',
           shared_beyond_this_project: false,
+          tier: null,
+          tier_scope: null,
         },
       ],
     },
@@ -256,6 +264,8 @@ const PAYLOAD: Model = {
       via: 'build_and_run_crew',
       note: 'reviewer feedback, global across engagements',
       shared_beyond_this_project: false,
+      tier: null,
+      tier_scope: null,
     },
   ],
   shared_sources: [
@@ -268,6 +278,25 @@ const PAYLOAD: Model = {
       reachable_by: ['Alex Chen', 'Someone Else', 'A Third Person'],
       reachable_by_ids: ['value_chain_mapper', 'someone_else', 'a_third_person'],
       handed_to_every_agent: false,
+      tier: 'sector',
+      tier_scope: 'shared by every engagement in this sector, including other clients',
+    },
+    // Offered to every holder of the query tool and named in no task description: nobody is
+    // instructed to read it, and it is not handed to anybody either. The two absences render
+    // differently on purpose - "handed to every agent" and "no agent is instructed to read it"
+    // are opposite statements, and an empty reader list rendered as a bare list would read as
+    // neither.
+    {
+      source: 'invented_organisation_store',
+      medium: 'a Chroma collection',
+      via: 'InventedQueryTool',
+      read_by: [],
+      read_by_ids: [],
+      reachable_by: ['Alex Chen', 'Someone Else', 'A Third Person'],
+      reachable_by_ids: ['value_chain_mapper', 'someone_else', 'a_third_person'],
+      handed_to_every_agent: false,
+      tier: 'organisation',
+      tier_scope: 'shared by every project of this organisation',
     },
     {
       source: 'invented_system_table',
@@ -278,6 +307,10 @@ const PAYLOAD: Model = {
       reachable_by: [],
       reachable_by_ids: [],
       handed_to_every_agent: true,
+      // A table in the deployment's own database is shared for a different reason - it is not a
+      // width of the knowledge store - so it carries no tier, and must not be given one.
+      tier: null,
+      tier_scope: null,
     },
   ],
   scope: {
@@ -389,14 +422,45 @@ describe('the generated half of the privacy page', () => {
     ).toBeInTheDocument()
   })
 
+  it('says with whom a shared store is shared, not only that it is shared', async () => {
+    // "Not scoped to this project" is true of the sector store and of the organisation store,
+    // and they are shared with entirely different people - other clients on this deployment,
+    // against this organisation's own sibling projects. The panel heading cannot tell those
+    // apart; the tier and its scope sentence are what do.
+    renderPage()
+    await screen.findByText(/Not scoped to this project/)
+    expect(
+      screen.getByText(/shared by every engagement in this sector, including other clients/),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/shared by every project of this organisation/),
+    ).toBeInTheDocument()
+  })
+
+  it('says a store nobody is instructed to read is unread, not that it is handed out', async () => {
+    // The organisation tier is writable today and named in no task description. An empty
+    // reader list rendered as "declared readers: " reads as a rendering fault; rendered as
+    // "handed to every agent" it would be the opposite of the truth.
+    renderPage()
+    await screen.findByText(/Not scoped to this project/)
+    const entry = within(document.getElementById('source-invented_organisation_store')!)
+    expect(entry.getByText(/which no agent is instructed to read/)).toBeInTheDocument()
+    expect(entry.queryByText(/handed to every agent/)).not.toBeInTheDocument()
+    // Nobody is told to read it and three people can, which is the whole point of the row.
+    expect(entry.getByText(/any of the 3 agents holding that tool can query it/)).toBeInTheDocument()
+  })
+
   it('names who can reach a collection, not only who is declared to read it', async () => {
     // The declared readers are half the truth: the collection is an argument to the query
     // tool, so every holder can reach it. A generated row inherits authority, and this one was
     // accurate, specific, and short by half.
+    // Scoped to the sector row rather than to the page: two shared collections now carry this
+    // line, and an unscoped query would have started matching the other one's copy.
     renderPage()
     await screen.findByText(/Not scoped to this project/)
-    expect(screen.getByText(/agents instructed to read it/)).toBeInTheDocument()
-    expect(screen.getByText(/any of the 3 agents holding that tool can query it/)).toBeInTheDocument()
+    const entry = within(document.getElementById('source-invented_sector_store')!)
+    expect(entry.getByText(/agents instructed to read it/)).toBeInTheDocument()
+    expect(entry.getByText(/any of the 3 agents holding that tool can query it/)).toBeInTheDocument()
     expect(screen.getAllByText(/Someone Else/).length).toBeGreaterThan(0)
   })
 

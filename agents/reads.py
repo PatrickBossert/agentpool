@@ -43,11 +43,27 @@ covers and no task description reads), and `.md` files a client uploads, which r
 (`agents/tools/chroma_query.py`), because the slug and the sector are what say whose material it
 is. `sector_{sector}` carries no slug on purpose: it is one collection shared by every engagement
 in that sector.
+
+## Tiers
+
+A `VECTOR_COLLECTION` read also names its **knowledge tier** - `sector`, `organisation`,
+`project` or `interviews`, the vocabulary `api/services/knowledge_tiers.py` owns. The name alone
+could already tell the privacy page that `sector_{sector}` is not this project's; it could not
+tell it *why*, nor tell that store apart from `org_{org_slug}`, which is shared with a quite
+different set of people. The tier is what carries the reason.
+
+It is a declaration held equal to the code: `test_every_collection_read_names_the_tier_that_
+builds_it` rebuilds each `source` by calling `collection_for` with the tier, so a template typed
+here that the resolver would never produce fails rather than reassures. Nothing but a collection
+carries one - an artefact and a table are not in the knowledge store, and giving them a tier
+would make the word mean two things.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+
+from api.services.knowledge_tiers import Tier
 
 
 class Medium(Enum):
@@ -66,12 +82,17 @@ class Read:
     `note` is prose because nothing derives it. It says what the agent is actually after, which
     is the sentence a reader of the privacy page needs - "the client's own strategy and board
     material" tells them something that `{slug}_docs` does not.
+
+    `tier` is set on `VECTOR_COLLECTION` reads and on nothing else, and `None` is a real answer
+    rather than an unfilled one: an artefact under `projects/{slug}/outputs/` and a row in a
+    SQLite table are not in the knowledge store, and there is no tier that would be true of them.
     """
 
     source: str
     medium: Medium
     via: str
     note: str
+    tier: Tier | None = None
 
 
 # The route for anything the dispatch path reads on an agent's behalf and folds into its task
@@ -92,7 +113,7 @@ def _artefact(source: str, note: str) -> Read:
 
 
 def _project_docs(note: str) -> Read:
-    return Read("{slug}_docs", Medium.VECTOR_COLLECTION, "ChromaQueryTool", note)
+    return Read("{slug}_docs", Medium.VECTOR_COLLECTION, "ChromaQueryTool", note, tier="project")
 
 
 def _sector_knowledge(note: str) -> Read:
@@ -101,6 +122,7 @@ def _sector_knowledge(note: str) -> Read:
         Medium.VECTOR_COLLECTION,
         "ChromaQueryTool",
         f"{note}. Shared across every engagement in this sector - it carries no slug",
+        tier="sector",
     )
 
 
@@ -226,6 +248,7 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
             "ChromaQueryTool",
             "interview answers verbatim, each carrying its node, level, relationship, "
             "discipline, elicitation and answer_id. Queried per area rather than whole",
+            tier="interviews",
         ),
     ),
     # --- value_design -------------------------------------------------------------------------
@@ -303,6 +326,40 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
         # inferring a read from a tool is how a declaration becomes a guess.
     ),
 }
+
+
+# A tier the tool offers and no agent's task description asks for.
+#
+# `ChromaQueryTool` accepts all four tiers from any of the six agents holding it, and the
+# organisation store is the one nothing is instructed to read: no task description names the
+# organisation tier as the tool's collection argument. That is a live gap rather than a hypothetical
+# one - the tier became genuinely *writable* on this branch, so an org_admin can put an
+# organisation's strategy and group policy into `org_{org_slug}` today and no agent will draw
+# on it until somebody writes the instruction.
+#
+# Declared here rather than left out, because leaving it out is what the page did: a store with
+# no declared reader appeared nowhere on it at all, so a reader looking for "what is shared
+# beyond this project" was shown the sector store and the two system tables and nothing about
+# the organisation one - and its material is shared with every sibling project whether or not an
+# agent has been told to query it. It is deliberately **not** in `AGENT_READS`: that map says
+# what an agent is instructed to draw on, and inventing an instruction to make a store visible
+# would be the same fabrication `UNRESOLVABLE_READS` exists to avoid in the other direction.
+#
+# The page renders it with an empty `read_by` and the six holders under `reachable_by`, which is
+# exactly the truth. When an agent is instructed to read it, the entry moves into that agent's
+# `AGENT_READS` tuple and out of here - `test_no_uninstructed_read_is_also_a_declared_one`
+# fails if both hold it.
+UNINSTRUCTED_READS: tuple[Read, ...] = (
+    Read(
+        "org_{org_slug}",
+        Medium.VECTOR_COLLECTION,
+        "ChromaQueryTool",
+        "annual reports, strategy and group policy filed against the organisation rather than "
+        "against one engagement. Offered to every agent holding the tool and instructed to "
+        "none of them, so nothing draws on it today",
+        tier="organisation",
+    ),
+)
 
 
 @dataclass(frozen=True)
