@@ -164,6 +164,13 @@ class Charter:
     material, which "Assessment Design" does not. It is deliberately not the docstring of the
     crew factory - four of the nine have none, and two of the rest document their arguments.
 
+    `cluster` names the orchestrator's cluster this crew belongs to - an id in
+    `agents/clusters.py`. It is declared on the crew rather than as a crew list on the cluster
+    for the reason nothing in this graph is ever declared twice: a list of crew ids beside the
+    cluster would be one more restatement of the roll, and the one that could go stale silently.
+    There is no default. A crew added without one is a crew nobody orchestrates, and inheriting
+    today's single cluster would hide exactly the case this field was added for.
+
     `defect` is `None` for a crew that runs. When it is set, every trigger in `triggers` is
     nominal: the path exists, and taking it fails. It is per crew rather than per trigger
     because the case it was written for is a mismatch inside `build_and_run_crew`, which every
@@ -173,6 +180,7 @@ class Charter:
 
     purpose: str
     triggers: tuple[Trigger, ...]
+    cluster: str
     note: str = ""
     defect: str | None = None
 
@@ -187,6 +195,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "rewrite the chain"
         ),
         triggers=(Trigger.REST_RUN, Trigger.PAM_ORCHESTRATION),
+        cluster="pmo",
         note=(
             "No approval can start it: nothing precedes it, so it is never downstream of a "
             "commit"
@@ -200,6 +209,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "set converges over several runs rather than in one"
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE),
+        cluster="pmo",
     ),
     "stakeholder_management": Charter(
         purpose=(
@@ -207,6 +217,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "gaps in the interview programme are visible before the interviews begin"
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE),
+        cluster="pmo",
     ),
     "discovery_interviews": Charter(
         purpose=(
@@ -215,6 +226,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "from. The interviewees' own words are what this crew works from"
         ),
         triggers=(Trigger.PAM_ORCHESTRATION,),
+        cluster="pmo",
         note=(
             "Pamela's alone, and not by convention: `build_and_run_crew` refuses it unless the "
             "`crew_runs` row carries an `orchestration_run_id`, and hers is the only path that "
@@ -229,6 +241,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "propositions - then scores and ranks them into a portfolio"
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE, Trigger.PAM_ORCHESTRATION),
+        cluster="pmo",
     ),
     "capabilities": Charter(
         purpose=(
@@ -237,6 +250,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "that would close the gap between that and the propositions"
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE, Trigger.PAM_ORCHESTRATION),
+        cluster="pmo",
     ),
     "requirements": Charter(
         purpose=(
@@ -244,6 +258,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "exists, then analyses the whole set for completeness, consistency and conflict"
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE),
+        cluster="pmo",
     ),
     "delivery": Charter(
         purpose=(
@@ -251,6 +266,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "each proposition's benefit is realised"
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE, Trigger.PAM_ORCHESTRATION),
+        cluster="pmo",
         note=(
             "Needs the project's value streams and stakeholder groups set first. "
             "`REQUIRED_CONFIG_KEYS` is checked by the approval path before it inserts a run, so "
@@ -265,6 +281,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "reads"
         ),
         triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE, Trigger.PAM_ORCHESTRATION),
+        cluster="pmo",
         note=(
             "Has never completed a real run. It only became buildable when "
             "`visual_illustrator` was registered as an agent; before that its factory raised "

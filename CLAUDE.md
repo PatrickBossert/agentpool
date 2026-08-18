@@ -733,6 +733,38 @@ several people and approved once. A send-back carries `review_return_to`: only `
 enters Maya's differential, because a return to `reviewer` that regenerated the script
 would rewrite the instrument the reviewer was about to re-read.
 
+### Clusters, and the edges between crews
+
+A **cluster** is one orchestrator and the crews it owns. There is one - `pmo`, orchestrated by
+`pam` - and the concept exists so that a second PMO is a data addition rather than a rewrite.
+Membership is declared once, on the crew, as `Charter.cluster`; `agents/clusters.py` declares only
+the cluster's id, label, orchestrator and note. `agents/graph.py` inverts the first into
+`ClusterNode.crew_ids` and refuses five disagreements, including an orchestrator that runs inside
+one of its own crews and one that can start none of them - the last derived from the tool it holds
+against the triggers its crews declare, so `orchestrator` is checked rather than believed.
+
+**Edges between crews are derived, never declared.** `CREW_DEPENDENCIES` says a crew waits on
+another; it does not say whether anything travels. `Graph.edges` meets each crew's writes
+(`OUTPUT_OWNERS` inverted) with the next crew's reads (`AGENT_READS`, artefacts only) and
+classifies:
+
+| Kind | Meaning | Count today |
+|------|---------|-------------|
+| `information` | Waits on it, and reads an artefact it wrote | 6 |
+| `sequencing` | Waits on it, and reads **nothing** it wrote - ordering only | 3 |
+| `inherited` | Reads an artefact it wrote without waiting on it directly | 12 |
+
+The `sequencing` three (`assessment_design -> stakeholder_management`,
+`stakeholder_management -> discovery_interviews`, `requirements -> delivery`) are why the edges
+are derived at all: an unlabelled arrow would present them as the same relationship as the six
+that hand material over.
+
+The radial view on `/data-architecture/{slug}` is drawn from these two - `ui/src/components/
+agentGraphLayout.ts` is trigonometry over `ClusterNode.crew_ids`, with **no force simulation and
+no layout library**, because the page is shown to clients and auditors and "the third crew
+clockwise" must mean the same thing tomorrow. Nothing the picture shows is absent from the tables
+below it.
+
 ### Routing a call outside a crew: two protocols, one setting
 
 Anything that is not a CrewAI agent goes through `project_completion(slug, tier, messages)` in
