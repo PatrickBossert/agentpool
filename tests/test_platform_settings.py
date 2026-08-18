@@ -129,12 +129,35 @@ def test_a_successful_read_is_cached(tmp_path, monkeypatch):
 
 
 def test_forget_platform_settings_clears_the_cache(tmp_path, monkeypatch):
+    """forget() must actually invalidate a populated cache - not merely be called while
+    there is nothing cached to invalidate.
+
+    An earlier version of this test called platform_public_url() once against a database
+    that did not exist yet (the uncached "file absent" branch), so its own forget() call
+    cleared a cache that was already empty - a no-op forget_platform_settings() still
+    passed it when run alone. Reachable only because CLAUDE.md's "one layer away from
+    where it holds" failure mode has a mirror image on a module-level cache: the test
+    read as complete but never put anything in the cache for forget() to remove.
+
+    This version establishes the state it claims to invalidate before ever calling
+    forget(): populate the cache from a real stored value, change what is stored
+    underneath, and confirm the stale cached value is still served - proving the cache is
+    actually holding something - before forget() and the fresh read that follows. It
+    differs from test_a_successful_read_is_cached in what shows up after the
+    invalidation: here the row underneath is cleared to blank, so the fresh read after
+    forget() falls all the way through the stored value to the environment, rather than
+    to a second stored value.
+    """
     monkeypatch.setenv("PUBLIC_URL", "https://env.example")
     get_settings.cache_clear()
-
-    assert ps.platform_public_url() == "https://env.example"
-
     _write_system_db(tmp_path, "https://stored.example")
+
+    assert ps.platform_public_url() == "https://stored.example"  # populates the cache
+
+    _write_system_db(tmp_path, "")  # blank the row underneath, without forgetting yet
+
+    assert ps.platform_public_url() == "https://stored.example"  # still the stale cache
+
     ps.forget_platform_settings()
 
-    assert ps.platform_public_url() == "https://stored.example"
+    assert ps.platform_public_url() == "https://env.example"  # blank row falls to env
