@@ -17,7 +17,6 @@ def create_capabilities_crew(
     run_id: int,
     sector: str,
     llm: LLM | None = None,
-    hitl_tool=None,
 ) -> Crew:
     """
     Assemble and return the Architecture Crew.
@@ -31,12 +30,12 @@ def create_capabilities_crew(
     ea = create_enterprise_architect(
         slug=slug,
         llm=llm or get_llm_for_agent("enterprise_architect", slug),
-        tools=get_tools_for_agent("enterprise_architect", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
+        tools=get_tools_for_agent("enterprise_architect", slug=slug, run_id=run_id, sector=sector),
     )
     ii = create_initiative_identifier(
         slug=slug,
         llm=llm or get_llm_for_agent("initiative_identifier", slug),
-        tools=get_tools_for_agent("initiative_identifier", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
+        tools=get_tools_for_agent("initiative_identifier", slug=slug, run_id=run_id, sector=sector),
     )
 
     ea_task = create_enterprise_architect_task(agent=ea)

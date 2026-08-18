@@ -17,7 +17,6 @@ def create_requirements_crew(
     run_id: int,
     sector: str,
     llm: LLM | None = None,
-    hitl_tool=None,
 ) -> Crew:
     """
     Assemble and return the Requirements Crew.
@@ -41,12 +40,12 @@ def create_requirements_crew(
     rc = create_requirements_capture(
         slug=slug,
         llm=llm or get_llm_for_agent("requirements_capture", slug),
-        tools=get_tools_for_agent("requirements_capture", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
+        tools=get_tools_for_agent("requirements_capture", slug=slug, run_id=run_id, sector=sector),
     )
     ra = create_requirements_analyst(
         slug=slug,
         llm=llm or get_llm_for_agent("requirements_analyst", slug),
-        tools=get_tools_for_agent("requirements_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
+        tools=get_tools_for_agent("requirements_analyst", slug=slug, run_id=run_id, sector=sector),
     )
 
     rc_task = create_requirements_capture_task(agent=rc, context_tasks=[])

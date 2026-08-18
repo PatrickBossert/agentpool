@@ -17,7 +17,6 @@ def create_business_plan_crew(
     run_id: int,
     sector: str,
     llm: LLM | None = None,
-    hitl_tool=None,
     # Defaulted so every existing caller keeps working; run_service passes the real one.
     client_name: str = "",
 ) -> Crew:
@@ -36,7 +35,7 @@ def create_business_plan_crew(
         slug=slug,
         llm=bpg_llm,
         tools=get_tools_for_agent(
-            "business_plan_generator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
+            "business_plan_generator", slug=slug, run_id=run_id, sector=sector
         ),
     )
 
@@ -47,7 +46,7 @@ def create_business_plan_crew(
         slug=slug,
         llm=llm or get_llm_for_agent("visual_illustrator", slug),
         tools=get_tools_for_agent(
-            "visual_illustrator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
+            "visual_illustrator", slug=slug, run_id=run_id, sector=sector
         ),
     )
 

@@ -169,18 +169,3 @@ def test_value_design_crew_asks_the_registry_per_agent(mock_llm):
     mock_get_llm.assert_any_call("value_proposition_generator", "test")
     mock_get_llm.assert_any_call("portfolio_manager", "test")
     assert mock_get_llm.call_count == 2
-
-
-def test_value_design_crew_accepts_hitl_tool_override(mock_llm):
-    """hitl_tool is forwarded to every get_tools_for_agent call."""
-    mock_hitl = MagicMock()
-    with patch("agents.crews.value_design_crew.get_tools_for_agent", return_value=[]) as mock_reg:
-        from agents.crews.value_design_crew import create_value_design_crew
-        create_value_design_crew(
-            slug="test", run_id=1, sector="logistics",
-            llm=mock_llm, hitl_tool=mock_hitl,
-        )
-    assert mock_reg.call_args_list, "get_tools_for_agent was never called"
-    for call in mock_reg.call_args_list:
-        assert call.kwargs.get("hitl_tool") == mock_hitl, \
-            f"Expected hitl_tool in call: {call}"
