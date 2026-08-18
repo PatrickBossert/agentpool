@@ -33,6 +33,8 @@ vi.mock('../api/dataArchitecture', () => ({
       declared_not_held: [],
       agents: [],
       crews: [],
+      clusters: [],
+      crew_edges: [],
       dispatch_paths: [],
       dispatch_reads: [],
       shared_sources: [],

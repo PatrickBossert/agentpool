@@ -12,7 +12,7 @@
 // The payload's shape is what api/services/data_architecture_service.py returns, and
 // tests/test_data_architecture_page.py is what holds that service to the declarations. The two
 // halves meet at the type in ui/src/api/dataArchitecture.ts, which tsc checks.
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -46,6 +46,7 @@ const PAYLOAD: Model = {
       leaves_deployment: true,
       gated_by_mode: false,
       held_by: ['Alex Chen'],
+      held_by_ids: ['value_chain_mapper'],
     },
     {
       tool: 'InventedLocalTool',
@@ -55,6 +56,7 @@ const PAYLOAD: Model = {
       leaves_deployment: false,
       gated_by_mode: false,
       held_by: ['Alex Chen'],
+      held_by_ids: ['value_chain_mapper'],
     },
   ],
   declared_not_held: [
@@ -70,7 +72,8 @@ const PAYLOAD: Model = {
       agent_id: 'value_chain_mapper',
       display_name: 'Alex Chen',
       tier: 'deep',
-      crews: ['Invented Crew'],
+      crews: ['Invented First', 'Invented Second', 'Invented Third'],
+      crew_ids: ['invented_first', 'invented_second', 'invented_third'],
       tools: ['InventedSearchTool', 'InventedLocalTool'],
       writes: ['invented_artefact'],
       destinations: [{ label: 'the Invented search API', leaves_deployment: true }],
@@ -89,19 +92,141 @@ const PAYLOAD: Model = {
           note: 'his own ledger',
           shared_beyond_this_project: false,
         },
+        {
+          source: 'invented_dispatch_table',
+          medium: 'a table in a SQLite database',
+          // Not a tool: what the dispatch path reads on the agent's behalf. There is no row for
+          // it in the egress table, so it must not be rendered as a link to one.
+          via: 'build_and_run_crew',
+          note: 'handed to him without his asking',
+          shared_beyond_this_project: false,
+        },
       ],
     },
+    // Two agents who hold the query tool without being told to read the shared store. They exist
+    // so that reachable_by is genuinely wider than read_by, which is the distinction the sharing
+    // panel turns on - and so that every id the payload references has a card to land on.
+    // The orchestrator, who is in no crew. She is here for the same reason she is in the real
+    // payload: the graph draws her at a centre and links to her card, and a centre with no card
+    // is a link that lands nowhere.
+    {
+      agent_id: 'pam',
+      display_name: 'Pamela Reid',
+      tier: 'deep',
+      crews: [],
+      crew_ids: [],
+      tools: [],
+      writes: [],
+      destinations: [],
+      sources: [],
+    },
+    {
+      agent_id: 'someone_else',
+      display_name: 'Someone Else',
+      tier: 'fast',
+      crews: ['Invented Second'],
+      crew_ids: ['invented_second'],
+      tools: ['InventedLocalTool'],
+      writes: [],
+      destinations: [],
+      sources: [],
+    },
+    {
+      agent_id: 'a_third_person',
+      display_name: 'A Third Person',
+      tier: 'fast',
+      crews: ['Invented Second'],
+      crew_ids: ['invented_second'],
+      tools: ['InventedLocalTool'],
+      writes: [],
+      destinations: [],
+      sources: [],
+    },
   ],
+  // Three crews, because one cannot show an order, a ring, or an edge. The third waits on the
+  // second and reads nothing it writes, which is the sequencing case; the first reaches the third
+  // without the third waiting on it, which is the inherited case.
   crews: [
     {
-      crew_id: 'invented_crew',
-      display_name: 'Invented Crew',
+      crew_id: 'invented_first',
+      display_name: 'Invented First',
       purpose: 'Builds the invented thing from the invented inputs',
       note: 'An invented note',
       defect: 'An invented defect',
+      cluster: 'invented_cluster',
       depends_on: [],
+      depends_on_ids: [],
       agents: ['Alex Chen'],
+      agent_ids: ['value_chain_mapper'],
       triggers: ['An invented administrator presses an invented button'],
+      trigger_ids: ['invented_path'],
+    },
+    {
+      crew_id: 'invented_second',
+      display_name: 'Invented Second',
+      purpose: 'Takes the invented artefact and invents something further',
+      note: '',
+      defect: null,
+      cluster: 'invented_cluster',
+      depends_on: ['Invented First'],
+      depends_on_ids: ['invented_first'],
+      agents: ['Alex Chen', 'Someone Else', 'A Third Person'],
+      agent_ids: ['value_chain_mapper', 'someone_else', 'a_third_person'],
+      triggers: ['An invented second way in'],
+      trigger_ids: ['invented_dead_path'],
+    },
+    {
+      crew_id: 'invented_third',
+      display_name: 'Invented Third',
+      purpose: 'Assembles the invented documents',
+      note: '',
+      defect: null,
+      cluster: 'invented_cluster',
+      depends_on: ['Invented Second'],
+      depends_on_ids: ['invented_second'],
+      agents: ['Alex Chen'],
+      agent_ids: ['value_chain_mapper'],
+      triggers: ['An invented third way in'],
+      trigger_ids: ['invented_path'],
+    },
+  ],
+  clusters: [
+    {
+      cluster_id: 'invented_cluster',
+      label: 'Invented Cluster',
+      note: 'An invented cluster of invented crews',
+      orchestrator_id: 'pam',
+      orchestrator: 'Pamela Reid',
+      crew_ids: ['invented_first', 'invented_second', 'invented_third'],
+      // Deliberately not all three: a centre that could start everything on its ring would let
+      // a view drawing one spoke per crew pass.
+      dispatches: ['invented_first', 'invented_third'],
+    },
+  ],
+  crew_edges: [
+    {
+      source: 'invented_first',
+      target: 'invented_second',
+      kind: 'information',
+      artefacts: ['invented_artefact'],
+      declared: true,
+      crosses_clusters: false,
+    },
+    {
+      source: 'invented_second',
+      target: 'invented_third',
+      kind: 'sequencing',
+      artefacts: [],
+      declared: true,
+      crosses_clusters: false,
+    },
+    {
+      source: 'invented_first',
+      target: 'invented_third',
+      kind: 'inherited',
+      artefacts: ['invented_artefact'],
+      declared: false,
+      crosses_clusters: false,
     },
   ],
   dispatch_paths: [
@@ -135,7 +260,9 @@ const PAYLOAD: Model = {
       medium: 'a Chroma collection',
       via: 'InventedQueryTool',
       read_by: ['Alex Chen'],
+      read_by_ids: ['value_chain_mapper'],
       reachable_by: ['Alex Chen', 'Someone Else', 'A Third Person'],
+      reachable_by_ids: ['value_chain_mapper', 'someone_else', 'a_third_person'],
       handed_to_every_agent: false,
     },
     {
@@ -143,12 +270,14 @@ const PAYLOAD: Model = {
       medium: 'a table in a SQLite database',
       via: 'build_and_run_crew',
       read_by: [],
+      read_by_ids: [],
       reachable_by: [],
+      reachable_by_ids: [],
       handed_to_every_agent: true,
     },
   ],
   scope: {
-    crew_count: 1,
+    crew_count: 3,
     agents_in_no_crew: [{ agent_id: 'pam', display_name: 'Pamela Reid' }],
   },
 }
@@ -234,7 +363,7 @@ describe('the generated half of the privacy page', () => {
     await screen.findByText(/Not scoped to this project/)
     expect(screen.getByText(/agents instructed to read it/)).toBeInTheDocument()
     expect(screen.getByText(/any of the 3 agents holding that tool can query it/)).toBeInTheDocument()
-    expect(screen.getByText(/Someone Else/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Someone Else/).length).toBeGreaterThan(0)
   })
 
   it('says once that a collection is named at query time, covering both collections', async () => {
@@ -245,10 +374,25 @@ describe('the generated half of the privacy page', () => {
   })
 
   it('states its own scope, naming the agent the declarations put in no crew', async () => {
+    // Scoped to the notice itself. The orchestrator is now named in the cluster summary and on
+    // the graph as well, so an unscoped query would pass on any of those three - and the one
+    // that matters is the caveat.
     renderPage()
-    expect(await screen.findByText(/1 crews/)).toBeInTheDocument()
-    expect(screen.getByText(/Pamela Reid/)).toBeInTheDocument()
-    expect(screen.getByText(/not enumerated below/)).toBeInTheDocument()
+    await screen.findAllByText(/Invented search API/)
+    const notice = within(document.getElementById('scope')!)
+    expect(notice.getByText(/3 crews/)).toBeInTheDocument()
+    expect(notice.getByText(/Pamela Reid/)).toBeInTheDocument()
+    expect(notice.getByText(/not enumerated below/)).toBeInTheDocument()
+  })
+
+  it('keeps the scope statement reachable from wherever a reader lands', async () => {
+    // Anchors make it easy to arrive in the middle of this page from a link somebody sent. A
+    // caveat that only sits at the top is one such a reader never meets.
+    renderPage()
+    const nav = within(await screen.findByRole('navigation', { name: /Sections of this page/ }))
+    const link = nav.getByRole('link', { name: /What this page covers/ })
+    expect(link).toHaveAttribute('href', '#scope')
+    expect(link.textContent).toMatch(/3 declared crews/)
   })
 
   it("renders each crew's purpose, trigger, and defect", async () => {
@@ -297,7 +441,7 @@ describe('the generated half of the privacy page', () => {
 describe('the prose half', () => {
   it('keeps the retention undertakings, apart from the generated table', async () => {
     renderPage()
-    expect(await screen.findByText(/Undertakings/)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Undertakings' })).toBeInTheDocument()
     expect(screen.getByText(/This section is not generated/)).toBeInTheDocument()
     expect(screen.getByText(/ElevenLabs - speech synthesis, nothing kept/)).toBeInTheDocument()
     expect(screen.getByText(/Deepgram - transcription, nothing kept/)).toBeInTheDocument()
@@ -312,7 +456,7 @@ describe('the prose half', () => {
   // up, on the one question the page exists to answer.
   it('does not assert an Anthropic inference contract when inference stays on this server', async () => {
     renderPage()
-    await screen.findByText(/Undertakings/)
+    await screen.findByRole('heading', { name: 'Undertakings' })
     expect(screen.queryByText(/Anthropic - inference, in flight only/)).toBeNull()
     expect(screen.getByText(/Anthropic - not this engagement's agents/)).toBeInTheDocument()
     // And it does not swing the other way: Anthropic is still reached by the skills library on
@@ -345,5 +489,242 @@ describe('when the engagement cannot be read', () => {
     })
     renderPage()
     expect(await screen.findByText(/Access denied to this project/)).toBeInTheDocument()
+  })
+})
+
+// ── The view ──────────────────────────────────────────────────────────────────
+//
+// Every assertion here reads the payload and looks for the consequence on the drawing. A test
+// that checked the SVG had nodes would pass against a picture drawn by hand, which is the exact
+// failure this page exists to end - so each one that fixes something about the picture also
+// changes the payload and asserts the picture changed with it.
+
+function crewName(id: string): string {
+  return PAYLOAD.crews.find((c) => c.crew_id === id)!.display_name
+}
+
+describe('the graph view', () => {
+  it('draws one node per crew, plus each cluster\'s orchestrator', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    for (const c of PAYLOAD.crews) {
+      expect(screen.getByTestId(`node-${c.crew_id}`)).toBeInTheDocument()
+    }
+    expect(screen.getByTestId('node-pam')).toBeInTheDocument()
+  })
+
+  it('numbers the ring in the order the payload gives, clockwise', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const positions = PAYLOAD.clusters[0].crew_ids.map((id) =>
+      screen.getByTestId(`node-${id}`).getAttribute('data-ring-position'),
+    )
+    expect(positions).toEqual(['1', '2', '3'])
+  })
+
+  it('moves the picture when the declared order moves', async () => {
+    // The property the whole view rests on. Reversed, so no crew keeps its place.
+    const reversed = [...PAYLOAD.clusters[0].crew_ids].reverse()
+    get.mockResolvedValue({
+      ...PAYLOAD,
+      clusters: [{ ...PAYLOAD.clusters[0], crew_ids: reversed }],
+    })
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    expect(screen.getByTestId(`node-${reversed[0]}`)).toHaveAttribute('data-ring-position', '1')
+    expect(screen.getByTestId('node-invented_first')).toHaveAttribute('data-ring-position', '3')
+  })
+
+  it('draws a spoke only to a crew the orchestrator can start', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    for (const id of PAYLOAD.clusters[0].dispatches) {
+      expect(screen.getByTestId(`spoke-${id}`)).toBeInTheDocument()
+    }
+    expect(screen.queryByTestId('spoke-invented_second')).toBeNull()
+  })
+
+  it('distinguishes a flow that carries material from one that carries none', async () => {
+    // The reason to derive the edges rather than draw them. An unlabelled arrow would present
+    // the sequencing edge as the same relationship as the information one.
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    expect(screen.getByTestId('edge-invented_first-invented_second')).toHaveAttribute(
+      'data-kind',
+      'information',
+    )
+    expect(screen.getByTestId('edge-invented_second-invented_third')).toHaveAttribute(
+      'data-kind',
+      'sequencing',
+    )
+  })
+
+  it('redraws an edge when the declaration behind it changes kind', async () => {
+    get.mockResolvedValue({
+      ...PAYLOAD,
+      crew_edges: PAYLOAD.crew_edges.map((e) =>
+        e.target === 'invented_third' && e.declared
+          ? { ...e, kind: 'information' as const, artefacts: ['a_newly_shared_artefact'] }
+          : e,
+      ),
+    })
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    expect(screen.getByTestId('edge-invented_second-invented_third')).toHaveAttribute(
+      'data-kind',
+      'information',
+    )
+    expect(screen.getAllByText(/a_newly_shared_artefact/).length).toBeGreaterThan(0)
+  })
+
+  it('leaves inherited flows off the drawing until asked, and never off the table', async () => {
+    // Twelve inherited flows across a ring of nine is a legible finding in a table and an
+    // unreadable one on a ring. Hiding them from the drawing may not hide them from the page.
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    expect(screen.queryByTestId('edge-invented_first-invented_third')).toBeNull()
+
+    const rows = screen.getAllByRole('row')
+    expect(
+      rows.some((row) => within(row).queryAllByText(/inherited/i).length > 0),
+    ).toBe(true)
+
+    fireEvent.click(screen.getByLabelText(/Show inherited flows/))
+    expect(screen.getByTestId('edge-invented_first-invented_third')).toHaveAttribute(
+      'data-kind',
+      'inherited',
+    )
+  })
+
+  it('is never the only carrier: every edge is written out below it', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const rows = screen.getAllByRole('row')
+    for (const edge of PAYLOAD.crew_edges) {
+      const row = rows.find(
+        (r) =>
+          within(r).queryAllByRole('link', { name: crewName(edge.source) }).length > 0 &&
+          within(r).queryAllByRole('link', { name: crewName(edge.target) }).length > 0,
+      )
+      expect(row, `${edge.source} -> ${edge.target} is missing from the table`).toBeTruthy()
+      for (const artefact of edge.artefacts) {
+        expect(within(row!).getByText(new RegExp(artefact))).toBeInTheDocument()
+      }
+    }
+    // And the sequencing row says so in words rather than only by a dashed line.
+    expect(screen.getByText(/this crew reads none of its outputs/)).toBeInTheDocument()
+  })
+
+  it('names each cluster, its orchestrator, and what that orchestrator cannot start', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const summary = within(document.getElementById('cluster-invented_cluster')!)
+    expect(summary.getByText(/An invented cluster of invented crews/)).toBeInTheDocument()
+    expect(summary.getByText(/can start/)).toBeInTheDocument()
+    expect(summary.getByRole('link', { name: 'Invented Second' })).toBeInTheDocument()
+  })
+})
+
+describe('following a thread through the tables', () => {
+  it('has no link that lands nowhere', async () => {
+    // The whole of the navigation, checked at once. A href built from a label rather than an id -
+    // the mistake the ids exist to prevent - shows up here and nowhere else.
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const targets = Array.from(document.querySelectorAll('a[href^="#"]')).map((a) =>
+      (a.getAttribute('href') ?? '').slice(1),
+    )
+    expect(targets.length).toBeGreaterThan(10)
+    for (const id of new Set(targets)) {
+      expect(document.getElementById(id), `nothing on this page has id "${id}"`).not.toBeNull()
+    }
+  })
+
+  it('goes from an agent to its crews, its tools, and where they reach', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const card = within(document.getElementById('agent-value_chain_mapper')!)
+    expect(card.getByRole('link', { name: 'Invented First' })).toHaveAttribute(
+      'href',
+      '#crew-invented_first',
+    )
+    expect(card.getAllByRole('link', { name: 'InventedSearchTool' })[0]).toHaveAttribute(
+      'href',
+      '#tool-InventedSearchTool',
+    )
+  })
+
+  it('goes from a crew to its agents, and to how it can be started', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const card = within(document.getElementById('crew-invented_first')!)
+    expect(card.getByRole('link', { name: 'Alex Chen' })).toHaveAttribute(
+      'href',
+      '#agent-value_chain_mapper',
+    )
+    expect(
+      card.getByRole('link', { name: /An invented administrator presses an invented button/ }),
+    ).toHaveAttribute('href', '#dispatch-invented_path')
+  })
+
+  it('goes from a tool to the agents that hold it', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const row = within(document.getElementById('tool-InventedSearchTool')!)
+    expect(row.getByRole('link', { name: 'Alex Chen' })).toHaveAttribute(
+      'href',
+      '#agent-value_chain_mapper',
+    )
+  })
+
+  it('keeps the declared readers of a shared store apart from those able to reach it', async () => {
+    // The panel's sharpest honesty feature. Navigation must not flatten the two into one list.
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    const entry = within(document.getElementById('source-invented_sector_store')!)
+    expect(entry.getByText(/declared readers/)).toBeInTheDocument()
+    expect(entry.getByText(/agents instructed to read it/)).toBeInTheDocument()
+    expect(entry.getByRole('link', { name: 'Someone Else' })).toHaveAttribute(
+      'href',
+      '#agent-someone_else',
+    )
+  })
+
+  it('says nothing about who may press a dispatch path, only that it exists', async () => {
+    renderPage()
+    await screen.findAllByText(/Invented search API/)
+    expect(within(document.getElementById('dispatch')!).getByText(/not who may/)).toBeInTheDocument()
+  })
+})
+
+describe('the two halves stay apart', () => {
+  it('runs no thread between what is generated and what is undertaken', async () => {
+    // A reader being able to tell what the system asserts about itself from what a person has
+    // promised is most of this page's value, and a link crossing the boundary would blur it.
+    renderPage()
+    await screen.findByRole('heading', { name: 'Undertakings' })
+    const undertakings = document.getElementById('undertakings')!
+    expect(undertakings.querySelectorAll('a')).toHaveLength(0)
+
+    // And nothing generated links into the prose either - the nav bar is the only route, and it
+    // labels the section as not generated rather than presenting it as one more table.
+    const intoProse = Array.from(document.querySelectorAll('a[href="#undertakings"]'))
+    expect(intoProse).toHaveLength(1)
+    expect(intoProse[0].textContent).toMatch(/not generated/)
+  })
+
+  it('keeps an undertaking out of the generated tables, and a derived fact out of the prose', async () => {
+    renderPage()
+    await screen.findByRole('heading', { name: 'Undertakings' })
+    const undertakings = document.getElementById('undertakings')!
+
+    const promise = screen.getByText(/ElevenLabs - speech synthesis, nothing kept/)
+    expect(undertakings.contains(promise)).toBe(true)
+    for (const generated of ['flows', 'egress', 'crews', 'agents']) {
+      expect(document.getElementById(generated)!.contains(promise)).toBe(false)
+    }
+
+    const derived = screen.getByText(PAYLOAD.crews[0].purpose)
+    expect(undertakings.contains(derived)).toBe(false)
   })
 })
