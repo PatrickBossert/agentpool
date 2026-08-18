@@ -4,7 +4,7 @@
 
 **Goal:** Make sector, organisation and project explicit tiers of the knowledge store; remove the silent fallback that makes the sector store the answer to any unrecognised name; add the organisation tier that the data model has but retrieval does not; and enforce that material only ever moves narrower.
 
-**Architecture:** Collections are named by tier - `sector_{sector}`, `org_{org_slug}`, `{slug}_documents`, `{slug}_interviews`. `ChromaQueryTool` names its tier explicitly and refuses anything else. Write authority follows the tier: project administration, `org_admin`, and `sysadmin` respectively. `agents/reads.py` declares which tier each read is against, so the privacy page can say which material is shared.
+**Architecture:** Collections are named by tier - `sector_{sector}`, `org_{org_slug}`, `{slug}_docs`, `{slug}_interviews`. `ChromaQueryTool` names its tier explicitly and refuses anything else. Write authority follows the tier: project administration, `org_admin`, and `sysadmin` respectively. `agents/reads.py` declares which tier each read is against, so the privacy page can say which material is shared.
 
 **Spec:** `docs/superpowers/specs/2026-08-18-knowledge-tiers-design.md`
 
@@ -29,11 +29,11 @@
 **Interfaces:**
 - Produces: a tier vocabulary - `sector`, `organisation`, `project`, `interviews` - and a resolver `collection_for(tier, *, slug, sector, org_slug) -> str`. Tasks 2, 3 and 4 consume it.
 
-- [ ] **Step 1: Report the current shape before changing it**
+- [x] **Step 1: Report the current shape before changing it**
 
 `ChromaQueryTool` takes `collection: Literal["project", "interviews", "sector"]` and resolves with `.get(collection, f"sector_{self.sector}")` (`agents/tools/chroma_query.py:115-118`). Find every caller and every other place a collection name is built - `ingest_service`, `chat_retrieval_service`, `interview_answer_service` were all named in the egress work. Report them.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```python
 def test_an_unrecognised_tier_is_refused_not_answered_from_the_sector_store():
@@ -41,11 +41,11 @@ def test_an_unrecognised_tier_is_refused_not_answered_from_the_sector_store():
         collection_for("sectr", slug="acme", sector="energy", org_slug="sp")
 ```
 
-- [ ] **Step 3: Run it and watch it fail** - today it returns `sector_energy`.
+- [x] **Step 3: Run it and watch it fail** - today it returns `sector_energy`.
 
-- [ ] **Step 4: Add the resolver and the organisation tier.** `org_slug` comes from `project_registry.org_id`, which every project now has. A project with no registry row is a real state - decide what it means for the organisation tier and say.
+- [x] **Step 4: Add the resolver and the organisation tier.** `org_slug` comes from `project_registry.org_id`, which every project now has. A project with no registry row is a real state - decide what it means for the organisation tier and say.
 
-- [ ] **Step 5: Suites twice. Power-check each tier separately**, and separately again for the refusal. Commit.
+- [x] **Step 5: Suites twice. Power-check each tier separately**, and separately again for the refusal. Commit.
 
 ---
 

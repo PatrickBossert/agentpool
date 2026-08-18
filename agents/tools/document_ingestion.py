@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from api.config import get_settings
 from api.services.chroma_client import get_chroma_client
-from api.services.ingest_service import UPSERT_BATCH
+from api.services.ingest_service import UPSERT_BATCH, ingest_collection
 
 
 def _chroma_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
@@ -76,9 +76,18 @@ class DocumentIngestionTool(BaseTool):
         # a sensitive project's documents to Chroma Cloud, and left the sensitive path broken
         # as well as leaking: ChromaQueryTool reads local for that project while this wrote
         # cloud, so nothing Alex ingested could be retrieved.
+        # Always the project tier, and there is no argument that could make it anything else -
+        # `DocumentIngestionToolInput` offers a filename and nothing more. An agent reading
+        # the client's own documents must not be able to publish them into a store shared with
+        # the organisation's other engagements, or with other clients in the sector; promotion
+        # is a human act with authority for the destination, never something a crew can reach.
+        # Resolved through `ingest_collection` rather than built by hand here - this was one of
+        # the five sites spelling out `f"{slug}_docs"`, and the delete door that disagreed with
+        # them was silently deleting nothing.
         try:
+            collection_name = ingest_collection(self.slug, "project")
             client = get_chroma_client(self.slug)
-            collection = client.get_or_create_collection(name=f"{self.slug}_docs")
+            collection = client.get_or_create_collection(name=collection_name)
         except Exception as e:
             # The probe runs only once construction has already failed: it costs a socket
             # connection, and its one job is to tell "Docker is not running" apart from every

@@ -16,6 +16,7 @@ from pathlib import Path
 import chromadb
 
 from api.config import get_settings
+from api.services.deployment_modes import Capability, permits
 
 _log = logging.getLogger(__name__)
 
@@ -46,11 +47,23 @@ def project_llm_mode(slug: str) -> str:
     sets no busy_timeout - so it can raise "database is locked" under contention rather than
     waiting, which is exactly the read error the fail-closed branch below exists to handle.
 
-    Two failure shapes, deliberately treated differently:
+    Three shapes, deliberately treated differently:
 
+    - **No slug at all.** Refused, and this is the only one that raises. Every caller of this
+      seam is about to decide where a *particular* project's material goes, so a blank slug is
+      a caller that lost one rather than a project that does not exist yet - and the two are
+      indistinguishable from the branch below, which is why the empty string is treated here
+      rather than by changing what a missing database answers. Answering "standard" for it sent
+      the test interview dialog's answers to Anthropic while it held the slug in its props and
+      discarded them (CLAUDE.md records that incident on the LLM seam); the shared tiers make it
+      sharper, because `sector_` and `org_` are the collections whose names carry no slug, so a
+      caller assembling a shared-tier operation is the likeliest to think it has no project to
+      name. `elaboration_press` already made exactly this repair one seam over.
     - The database file does not exist at all: the project has never been created, so it
       has no secrets to protect. This is a stable fact, safe to default to "standard" and
-      cache.
+      cache. Kept as it is on purpose - `create_project` resolves a mode inside the window
+      between `get_connection` making the file and `insert_project` writing the row, and a
+      genuinely absent project is not a mistake.
     - The database file exists but the read fails (locked, corrupt, permission denied,
       whatever): this says nothing about the project's real mode, and defaulting to
       "standard" here would silently route a possibly-sensitive project's data to Chroma
@@ -58,6 +71,15 @@ def project_llm_mode(slug: str) -> str:
       NOT cached - caching a guess born of a failed read is what would turn one bad read
       into a permanent, silent breach.
     """
+    if not (slug or "").strip():
+        raise ValueError(
+            "project_llm_mode needs the slug of the project whose material is about to move. "
+            "It was given none, and a blank slug is a caller that lost one rather than a "
+            "project that does not exist yet - answering for it would route that project's "
+            "documents to Chroma Cloud and its prompts to a hosted model, silently. Pass the "
+            "slug through rather than defaulting it."
+        )
+
     if slug in _MODE_CACHE:
         return _MODE_CACHE[slug]
 
@@ -86,11 +108,16 @@ def project_llm_mode(slug: str) -> str:
 def get_chroma_client(slug: str):
     """A Chroma client for this project.
 
-    Sensitive projects always get a local HttpClient. Standard projects get CloudClient when
-    an API key is set, else the same local client.
+    A project whose mode is not granted `CLOUD_VECTOR_STORE` always gets a local HttpClient.
+    One that is granted it gets CloudClient when an API key is set, else the same local client.
+
+    Asked as a grant rather than as `mode == "sensitive"`: this is the site where forgetting a
+    mode is silent, because a CloudClient built for a project that should never have had one
+    raises nothing and warns nobody - it just works, off the premises. An undeclared mode is
+    refused the cloud here, so the failure it causes is a project that stays local.
     """
     settings = get_settings()
-    if project_llm_mode(slug) == "sensitive":
+    if not permits(project_llm_mode(slug), Capability.CLOUD_VECTOR_STORE):
         return chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
     if settings.chroma_api_key:
         return chromadb.CloudClient(

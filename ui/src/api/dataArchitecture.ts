@@ -8,12 +8,21 @@
 // forty-four times, and had gone stale in four separate directions.
 import { apiClient } from './client'
 
+// The knowledge tier a Chroma collection belongs to, and the sentence saying how wide that
+// store is. Both are null for a read that is not in the knowledge store at all - an artefact
+// under projects/{slug}/outputs/, or a row in a SQLite table.
+//
+// tier_scope arrives as prose rather than being written here from the tier name: the vocabulary
+// belongs to api/services/knowledge_tiers.py, and a second copy in TypeScript is a copy that
+// drifts from the one the ingest and query paths actually obey.
 export interface DataArchitectureRead {
   source: string
   medium: string
   via: string
   note: string
   shared_beyond_this_project: boolean
+  tier: string | null
+  tier_scope: string | null
 }
 
 export interface DataArchitectureToolRow {
@@ -129,6 +138,11 @@ export interface DataArchitectureSharedSource {
   reachable_by: string[]
   reachable_by_ids: string[]
   handed_to_every_agent: boolean
+  // Which knowledge tier this store is, and with whom it is shared. Null for the system
+  // database's tables, which are shared for a different reason - they are the deployment's,
+  // not a tier of the knowledge store - and saying so with a tier name would be wrong.
+  tier: string | null
+  tier_scope: string | null
 }
 
 export interface DataArchitecture {

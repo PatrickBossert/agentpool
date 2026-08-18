@@ -865,6 +865,13 @@ export interface MyPermissions {
   // response body of the door it reports on is a redeemable credential, so it asks the
   // platform tier (org_admin or sysadmin) and a project_admin is refused.
   can_issue_invite_links: boolean
+  // The knowledge tiers this caller may add material at on this project, broadest first -
+  // some subset of 'sector', 'organisation', 'project'. What an upload tier picker offers,
+  // and the whole of what it may offer: the rule is the server's
+  // (authority_service.writable_tiers_on_project) and must not be restated here. A tier the
+  // caller cannot write, or one that does not exist for this project - the organisation
+  // tier of a project belonging to no organisation - is simply absent from the list.
+  writable_knowledge_tiers: string[]
 }
 
 // One reply a participant sent back to the correspondent, resolved to the person who sent

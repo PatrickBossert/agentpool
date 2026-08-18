@@ -37,6 +37,7 @@ from api.services.data_architecture_service import (
     dispatch_wrapper_reaches_build_and_run_crew,
     system_database_tables,
 )
+from api.services.knowledge_tiers import SHARED_TIERS, TIER_SCOPE
 
 SLUG = "data-arch-test"
 PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail"}
@@ -363,9 +364,14 @@ async def test_the_panel_names_who_can_reach_a_collection_not_only_who_is_told_t
     """The declared readers are half the truth, and a generated table inherits authority.
 
     `AGENT_READS` declares three agents on `sector_{sector}`. `ChromaQueryTool` takes the
-    collection as an argument and falls back to the sector store for any unrecognised value, so
-    every one of its holders can query it. Six do. The panel must carry the wider set beside
-    the declared one, and it is derived from the route rather than counted by hand.
+    collection as an argument, so every one of its holders can query it by naming it. Six can.
+    The panel must carry the wider set beside the declared one, and it is derived from the route
+    rather than counted by hand.
+
+    The gap used to be wider than that: the sector store was the tool's *fallback* for any
+    unrecognised value, so an agent reached it without naming it. `collection_for` refuses
+    anything outside the four tiers now, so reaching a tier takes naming it - the gap is real
+    and no longer something an agent can fall into.
     """
     payload = await _payload(client)
     sector = next(r for r in payload["shared_sources"] if r["source"] == "sector_{sector}")
@@ -378,6 +384,90 @@ async def test_the_panel_names_who_can_reach_a_collection_not_only_who_is_told_t
     assert sector["reachable_by"] == holders
     assert len(sector["reachable_by"]) > len(sector["read_by"])
     assert set(sector["read_by"]) < set(sector["reachable_by"])
+
+
+@pytest.mark.asyncio
+async def test_the_name_and_the_tier_agree_about_which_stores_are_shared(client):
+    """Two derivations of one fact, held equal rather than one trusted.
+
+    `shared_beyond_this_project` is read off the collection **name** - a template with no
+    `{slug}` in it. `SHARED_TIERS` is read off the declared **tier**. They must agree for every
+    collection on the page, and a disagreement is the interesting case either way round: a
+    collection renamed into a slug-less template without its tier changing, or a tier moved onto
+    a collection that is this project's alone.
+    """
+    payload = await _payload(client)
+    reads = [
+        source
+        for agent in payload["agents"]
+        for source in agent["sources"]
+    ] + payload["dispatch_reads"]
+
+    checked = 0
+    for source in reads:
+        if source["tier"] is None:
+            continue
+        assert source["shared_beyond_this_project"] == (source["tier"] in SHARED_TIERS), (
+            f"{source['source']} is declared at the {source['tier']!r} tier and flagged "
+            f"shared={source['shared_beyond_this_project']} - the name and the tier disagree"
+        )
+        checked += 1
+    assert checked, "no tiered read reached the payload"
+
+
+@pytest.mark.asyncio
+async def test_every_shared_store_says_with_whom_and_not_only_that_it_is_shared(client):
+    """The reason, which "not scoped to this project" could never carry.
+
+    `sector_{sector}` and `org_{org_slug}` are both outside this engagement and are shared with
+    entirely different people - the first with other clients on this deployment, the second with
+    this organisation's own sibling projects. A reader told only that neither is theirs cannot
+    tell those apart, and the difference is the one that matters to them.
+    """
+    payload = await _payload(client)
+    tiered = {row["source"]: row for row in payload["shared_sources"] if row["tier"]}
+    assert set(tiered) == {"sector_{sector}", "org_{org_slug}"}
+
+    for source, row in tiered.items():
+        assert row["tier_scope"] == TIER_SCOPE[row["tier"]]
+        assert row["tier_scope"], f"{source} carries a tier with no reason beside it"
+    assert tiered["sector_{sector}"]["tier_scope"] != tiered["org_{org_slug}"]["tier_scope"], (
+        "the two shared tiers are given the same reason, so the panel still cannot tell a "
+        "store shared with other clients from one shared inside this organisation"
+    )
+
+    # The system database's tables are shared for a different reason and must not be dressed as
+    # a tier: they are the deployment's own, not a width of the knowledge store.
+    for source in ("agent_skill_notes", "skills"):
+        row = next(r for r in payload["shared_sources"] if r["source"] == source)
+        assert row["tier"] is None and row["tier_scope"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_organisation_store_appears_with_nobody_instructed_to_read_it(client):
+    """The empty `read_by` this change makes live rather than hypothetical.
+
+    The organisation tier became writable on this branch, so an org_admin can put an
+    organisation's strategy into `org_{org_slug}` today. No agent's task description names it,
+    so nothing draws on it - but every holder of `ChromaQueryTool` could, and until this change
+    the store appeared nowhere on the page at all. Absent is the one answer that is worse than
+    either of those.
+    """
+    payload = await _payload(client)
+    row = next(r for r in payload["shared_sources"] if r["source"] == "org_{org_slug}")
+
+    assert row["read_by"] == [], "an agent is instructed to read the organisation store"
+    assert row["handed_to_every_agent"] is False, (
+        "the organisation store is not handed to anybody - it is offered and unasked for, and "
+        "the two must not render the same way"
+    )
+    holders = sorted(
+        node.display_name
+        for node in build_graph().agents.values()
+        if row["via"] in node.tools
+    )
+    assert row["reachable_by"] == holders
+    assert row["reachable_by"], "nobody can reach it either, so the row says nothing"
 
 
 @pytest.mark.asyncio

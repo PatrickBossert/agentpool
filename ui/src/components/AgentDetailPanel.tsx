@@ -8,7 +8,7 @@ import {
   Play, CheckCircle2, XCircle,
   PauseCircle, Check, X, AlertTriangle, Settings,
   ArrowRight, ArrowLeft,
-  Wrench, MessageSquare, Trash2, Sparkles, Loader,
+  Wrench, MessageSquare, Trash2, Sparkles, Loader, Paperclip,
 } from 'lucide-react'
 import { agentChatApi } from '../api/agentChat'
 import { skillsApi } from '../api/skills'
@@ -24,7 +24,8 @@ import AgentHoverCard from './AgentHoverCard'
 import PamReportView, { PamCrewStatusDetail } from './PamReportView'
 import { AgentOutputTab } from './AgentOutputTab'
 import { AgentStatusTab, type PrimaryModelCounts } from './AgentStatusTab'
-import { valueChainApi } from '../api/endpoints'
+import { projectsApi, valueChainApi } from '../api/endpoints'
+import { describeError } from '../utils/describeError'
 import type { CrewRun, AgentOutput, HumanReview } from '../types'
 import StructureTab from './StructureTab'
 import AlexSetupTab from './tabs/AlexSetupTab'
@@ -35,6 +36,20 @@ import JordanOutputExtra from './tabs/JordanOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
 import MayaOutputExtra from './tabs/MayaOutputExtra'
 import PamSetupTab from './tabs/PamSetupTab'
+
+// ── Chat attachments: the tier picker ───────────────────────────────────────────
+//
+// Display labels only, for the three values `/my-permissions` can ever put in
+// `writable_knowledge_tiers` (`interviews` is never offered - see
+// api.services.knowledge_tiers.UPLOADABLE_TIERS). The *set* the picker offers is never
+// decided here: it is exactly what the server returns, broadest first, because a second copy
+// of that rule is the one that drifts and a tier rendered here that the door then refuses is
+// worse than a tier not offered at all.
+const KNOWLEDGE_TIER_LABEL: Record<string, string> = {
+  sector: 'Sector - shared across every client in this sector',
+  organisation: 'Organisation - shared across this organisation',
+  project: 'This project only',
+}
 
 // ── Per-crew slot injection ────────────────────────────────────────────────────
 
@@ -824,6 +839,33 @@ export default function AgentDetailPanel({
   const [chatLoading, setChatLoading] = useState(false)
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const statusScrollRef = useRef<HTMLDivElement>(null)
+  const chatFileInputRef = useRef<HTMLInputElement>(null)
+  // Defaults to project - the narrowest tier - so the common case stays a single click and
+  // the tier is visible rather than implicit. Corrected below, once permissions arrive, if
+  // 'project' turns out not to be one this caller may write.
+  const [uploadTier, setUploadTier] = useState('project')
+  const [attaching, setAttaching] = useState(false)
+  const [attachError, setAttachError] = useState<string | null>(null)
+
+  // Same query key as StakeholderForm.tsx and MayaOutputExtra.tsx - one cache entry per
+  // project, shared with whichever of those is also mounted, rather than a second fetch of a
+  // rule that must answer identically wherever it is asked.
+  const { data: permissions } = useQuery({
+    queryKey: ['my-permissions', slug],
+    queryFn: () => projectsApi.getMyPermissions(slug),
+  })
+  const writableTiers = permissions?.writable_knowledge_tiers ?? []
+
+  useEffect(() => {
+    // The list this caller may write can change under them (a role grant, a different
+    // project) or simply arrive after the first render. If the selection is no longer one of
+    // the offered tiers, fall back to project rather than let a stale, now-unwritable choice
+    // sit selected in a control that would then 403 on submit.
+    if (writableTiers.length > 0 && !writableTiers.includes(uploadTier)) {
+      setUploadTier(writableTiers.includes('project') ? 'project' : writableTiers[0])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permissions])
 
   useEffect(() => {
     if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight
@@ -852,6 +894,31 @@ export default function AgentDetailPanel({
     setMessages([])
     await agentChatApi.clearHistory(slug, crewKey).catch(() => {})
   }
+
+  function openChatAttach() {
+    chatFileInputRef.current?.click()
+  }
+
+  async function handleChatFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (e.target) e.target.value = '' // allow re-selecting the same file next time
+    if (!file) return
+    setAttachError(null)
+    setAttaching(true)
+    try {
+      const result = await agentChatApi.uploadFile(slug, primaryAgent, file, uploadTier)
+      const tierLabel = KNOWLEDGE_TIER_LABEL[result.knowledge_tier] ?? result.knowledge_tier
+      setMessages(prev => [
+        ...prev,
+        { role: 'user', content: `Attached "${result.original_name}" - ${tierLabel}.` },
+      ])
+    } catch (err) {
+      setAttachError(describeError(err, 'Could not attach that file.'))
+    } finally {
+      setAttaching(false)
+    }
+  }
+
   const primaryAvatar = AGENT_AVATAR[primaryAgent] ?? { emoji: '🤖', gradient: 'from-gray-400 to-gray-600' }
   const primaryHumanName = AGENT_HUMAN_NAME[primaryAgent] ?? primaryAgent
   const firstName = primaryHumanName.split(' ')[0]
@@ -1123,6 +1190,51 @@ export default function AgentDetailPanel({
             )}
           </div>
           <div className="border-t border-gray-100 px-4 py-3 flex-shrink-0">
+            {/* Attaching a file also files it in the project's document library
+                (POST /{slug}/agent-chat/upload), which is gated on the same approver
+                authority as the Documents page's own upload door - so the control is offered
+                only to a caller /my-permissions says can_approve, never to one it would then
+                refuse. The tier picker inside it is narrower still: it offers exactly
+                writable_knowledge_tiers, broadest first, and nothing this component decided
+                for itself. */}
+            {permissions?.can_approve && (
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  ref={chatFileInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={handleChatFileSelected}
+                  aria-label="Attach a file"
+                />
+                <button
+                  type="button"
+                  onClick={openChatAttach}
+                  disabled={attaching}
+                  title="Attach a file to this project's knowledge store"
+                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-teal-700 disabled:opacity-40 border border-gray-200 rounded-lg px-2 py-1 flex-shrink-0"
+                >
+                  <Paperclip size={12} />
+                  {attaching ? 'Attaching…' : 'Attach'}
+                </button>
+                {writableTiers.length > 1 ? (
+                  <select
+                    aria-label="Knowledge tier"
+                    value={uploadTier}
+                    onChange={e => setUploadTier(e.target.value)}
+                    className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-600 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  >
+                    {writableTiers.map(tier => (
+                      <option key={tier} value={tier}>{KNOWLEDGE_TIER_LABEL[tier] ?? tier}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-[11px] text-gray-400">
+                    {KNOWLEDGE_TIER_LABEL[uploadTier] ?? uploadTier}
+                  </span>
+                )}
+              </div>
+            )}
+            {attachError && <p className="text-[11px] text-red-600 mb-2">{attachError}</p>}
             <div className="flex gap-2 items-end">
               <textarea
                 value={chatInput}

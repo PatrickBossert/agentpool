@@ -23,8 +23,9 @@ from api.database import (
     update_project_config,
 )
 from api.services.agent_chat_service import AGENT_PERSONAS, run_agent_chat
-from api.services.authority_service import caller_may_approve
+from api.services.authority_service import caller_may_approve, require_writable_tier
 from api.services.ingest_service import SUPPORTED_SUFFIXES, IngestError, ingest_document
+from api.services.knowledge_tiers import DEFAULT_UPLOAD_TIER
 from api.services.llm_client import LocalModelError, UnsupportedForSensitiveProject
 
 router = APIRouter(prefix="/projects", tags=["agent-chat"])
@@ -224,6 +225,7 @@ async def chat_upload(
     slug: str,
     agent_name: str = Form(...),
     file: UploadFile = File(...),
+    tier: str = Form(DEFAULT_UPLOAD_TIER),
     payload: dict = Depends(require_any_auth),
 ):
     """Attach a file to a chat - which also files it in the project's document library.
@@ -234,6 +236,12 @@ async def chat_upload(
     require_org_admin_or_above, so this one had become the weaker way through it - a
     corpus write behind nothing but membership. It fits neither "feedback" nor exactly
     "canonical state", so it takes the stricter of the two gates.
+
+    The tier is a second, independent question, and the answer must not depend on which of
+    the two doors the caller used: clearing this door buys the project tier and nothing
+    wider, exactly as it does at the documents door. `require_writable_tier` decides it, and
+    it takes the slug because the destination of an organisation-tier write is one particular
+    organisation's store - the one this project belongs to.
     """
     await check_project_access(slug, payload)
     if not await caller_may_approve(slug, payload):
@@ -241,6 +249,7 @@ async def chat_upload(
             status_code=403,
             detail="Only an approver may add a document to this project",
         )
+    await require_writable_tier(slug, tier, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
@@ -281,23 +290,34 @@ async def chat_upload(
                 file_path=str(dest),
                 content_type=file.content_type or "application/octet-stream",
                 size_bytes=len(content),
+                knowledge_tier=tier,
             )
         except Exception:
             dest.unlink(missing_ok=True)
             raise
 
-        # Auto-enable in discovery_document_ids
-        config = json.loads(project.get("config_json") or "{}")
-        doc_ids: list[int] = config.get("discovery_document_ids", [])
-        if doc_id not in doc_ids:
-            doc_ids.append(doc_id)
-            await _patch_config(conn, project, "discovery_document_ids", doc_ids)
+        # Auto-enable in discovery_document_ids - at the project tier and nowhere else.
+        #
+        # `discovery_document_ids` is this project's list of inputs, so enabling a document
+        # there is a decision about one engagement. At the project tier that is a sensible
+        # convenience: the file was uploaded here and is readable here alone. At any broader
+        # tier it is shared material with unshared enablement - an organisation-level document
+        # silently added to one division's discovery inputs, which nobody would think to look
+        # for and which the tier declaration exists precisely to make visible. Somebody who
+        # wants a shared document read by this project enables it from the Documents page,
+        # where the act is theirs and legible.
+        if tier == DEFAULT_UPLOAD_TIER:
+            config = json.loads(project.get("config_json") or "{}")
+            doc_ids: list[int] = config.get("discovery_document_ids", [])
+            if doc_id not in doc_ids:
+                doc_ids.append(doc_id)
+                await _patch_config(conn, project, "discovery_document_ids", doc_ids)
 
     is_image = suffix in _IMAGE_SUFFIXES
 
     if not is_image:
         try:
-            await ingest_document(slug, doc_id, str(dest), raise_on_error=True)
+            await ingest_document(slug, doc_id, str(dest), raise_on_error=True, tier=tier)
         except IngestError:
             raise HTTPException(
                 status_code=502,
@@ -314,6 +334,9 @@ async def chat_upload(
         "filename": unique_name,
         "original_name": file.filename or unique_name,
         "is_image": is_image,
+        # Echoed so the caller can see where it actually went rather than where they meant it
+        # to go - the two differ whenever a client sends nothing and gets the default.
+        "knowledge_tier": tier,
     }
 
 

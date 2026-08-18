@@ -55,6 +55,8 @@ describe('Stakeholders: a seeded row says so', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: false,
+      // Not what these tests are about - the invite-link action does not read it.
+      writable_knowledge_tiers: ['project'],
     })
   })
 

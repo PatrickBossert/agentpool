@@ -1071,6 +1071,10 @@ async def test_the_logins_a_project_admin_can_cause_are_confined_to_this_project
             # Nor may the account a redeemed invite minted go on to mint another: the
             # resend door is platform tier, and this login is not.
             "can_issue_invite_links": False,
+            # Nor may it add material to any knowledge store, at any width. Membership is
+            # read access by design; writing the project's own store takes administration
+            # of this project or approval on it, and this login has neither.
+            "writable_knowledge_tiers": [],
         }
 
 

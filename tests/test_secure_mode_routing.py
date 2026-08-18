@@ -177,6 +177,54 @@ def test_a_read_error_against_an_existing_database_fails_closed(tmp_path, monkey
         get_settings.cache_clear()
 
 
+def test_a_slug_that_was_never_passed_is_refused_rather_than_answered(tmp_path, monkeypatch):
+    """The blank slug is a lost caller, not a project that does not exist yet.
+
+    `project_llm_mode("")` used to find no database, answer "standard", and cache it - so a
+    caller reaching the vector-store seam with an empty slug got Chroma Cloud, silently, for
+    material that may belong to a sensitive engagement. CLAUDE.md records the same shape one
+    seam over on the LLM side, where the test interview dialog held the slug in its props and
+    discarded it.
+
+    Refused *specifically for the empty string* rather than by changing what a missing database
+    answers: a project that genuinely does not exist yet is a real state that `create_project`
+    passes through, and the two are indistinguishable once the path has been built. The empty
+    string is distinguishable before that, and it is never a project.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    from api.services import chroma_client
+    chroma_client._MODE_CACHE.clear()
+    try:
+        for lost in ("", "   "):
+            with pytest.raises(ValueError, match="slug"):
+                chroma_client.project_llm_mode(lost)
+        assert not list(tmp_path.iterdir()), (
+            "a refused slug must not have materialised a database file"
+        )
+    finally:
+        chroma_client._MODE_CACHE.clear()
+        get_settings.cache_clear()
+
+
+def test_refusing_the_blank_slug_leaves_the_absent_project_default_alone(tmp_path, monkeypatch):
+    """The asymmetry is deliberate, and it is asserted so a later tidy-up cannot flatten it.
+
+    `create_project` resolves a mode inside the window between `get_connection` making the file
+    and `insert_project` writing the row, and the standard-and-cache answer for a database that
+    is not there is what that window relies on. Only the blank slug moved.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    from api.services import chroma_client
+    chroma_client._MODE_CACHE.clear()
+    try:
+        assert chroma_client.project_llm_mode("no-such-project") == "standard"
+    finally:
+        chroma_client._MODE_CACHE.clear()
+        get_settings.cache_clear()
+
+
 def test_a_failed_read_is_not_cached(tmp_path, monkeypatch):
     """A transient read failure must not poison the cache: the next, successful read has to
     see the database's real mode, not the fail-closed guess from the failed one - caching a

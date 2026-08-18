@@ -23,6 +23,9 @@ export interface UploadResult {
   filename: string
   original_name: string
   is_image: boolean
+  // Echoed by the door so the caller can see where the upload actually landed - which differs
+  // from what was asked for whenever the caller asked for nothing and got the default.
+  knowledge_tier: string
 }
 
 export interface LinkResult {
@@ -67,10 +70,15 @@ export const agentChatApi = {
     slug: string,
     agentName: string,
     file: File,
+    // The narrowest tier, because the safe case must not be the one that requires thought -
+    // matches api.services.knowledge_tiers.DEFAULT_UPLOAD_TIER, which the door itself falls
+    // back to when a caller sends none.
+    tier: string = 'project',
   ): Promise<UploadResult> => {
     const form = new FormData()
     form.append('agent_name', agentName)
     form.append('file', file)
+    form.append('tier', tier)
     const res = await apiClient.post(`/projects/${slug}/agent-chat/upload`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })

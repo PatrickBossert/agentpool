@@ -17,8 +17,15 @@ Two layers, because "what it reaches" and "where that is" are different facts:
 - `resolve_egress(tool_name, llm_mode)` answers **where that is for this project**.
   `ChromaQueryTool` reaches a vector store either way; on a standard project that store is
   Chroma Cloud and on a sensitive one it is the Chroma on this host. One declaration, with the
-  mode dependency in the resolver - the shape `get_llm_for_agent` already uses, down to the
-  `(kind, mode)` tuple key that `_TIER_SETTINGS` uses in `agents/model_registry.py`.
+  mode dependency in the resolver.
+
+  **The resolver derives that dependency; it does not restate it.** `_mode_key` used to answer
+  `"sensitive" if llm_mode == "sensitive" else "standard"` - the equality test the routing code
+  was making, typed out a second time by hand, with a docstring saying as much. So a mode added
+  to `api/models.py` and wired into the routing would have been collapsed to "standard" here,
+  and the auditor's page would have reported egress that was not happening or, worse, missed
+  egress that was. The resolver now asks `api/services/deployment_modes.py` which capabilities
+  the mode holds, per reach, exactly as the four routing sites do.
 
 **What this module does not do is gate anything.** It declares. A declaration whose honest
 content is "reaches the public internet, on a sensitive engagement, with no mode check" is
@@ -56,6 +63,8 @@ import ast
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+from api.services.deployment_modes import Capability, permits
 
 _TOOLS_DIR = Path(__file__).parent / "tools"
 
@@ -222,10 +231,27 @@ _NOWHERE = Destination(label="nothing outside this deployment", leaves_deploymen
 _TAVILY = Destination(label="Tavily's search API", leaves_deployment=True)
 _ANY_ADDRESS = Destination(label="any address the agent names", leaves_deployment=True)
 
-# `(reach, mode)` to a concrete destination, mirroring `_TIER_SETTINGS` in
-# `agents/model_registry.py`. Both modes are written out for every reach, including the four
-# whose two entries are the same object - an implicit "and otherwise the same" would make an
-# ungated path look like an omission, and it is the opposite: it is the finding.
+# Which egress grant moves each reach. A reach absent from this table is not moved by the
+# project's mode at all, and that is the finding rather than an omission: Tavily and the open
+# web are reached in every mode, by tools that ask nothing before reaching them.
+#
+# This is not a second copy of `EGRESS_GRANTS`. That table says what a *mode* is permitted to
+# do; this one says which permission a *reach* depends on. The mode-to-capability mapping
+# exists once, in `api/services/deployment_modes.py`, and this module derives from it - which
+# is the whole point of the change that introduced it. Before, `_mode_key` re-stated the
+# `== "sensitive"` test that `get_chroma_client` and `get_llm_for_agent` were making, by hand,
+# and its docstring said so.
+_REACH_GRANT: dict[Reach, Capability] = {
+    Reach.VECTOR_STORE: Capability.CLOUD_VECTOR_STORE,
+    Reach.INFERENCE: Capability.HOSTED_INFERENCE,
+}
+
+
+# `(reach, granted)` to a concrete destination, where `granted` is whether the project's mode
+# holds the capability `_REACH_GRANT` names for that reach. Both answers are written out for
+# every reach, including the three whose two entries are the same object - an implicit "and
+# otherwise the same" would make an ungated path look like an omission, and it is the opposite:
+# it is the finding.
 #
 # The same object, not two with differently-worded labels. A destination is a place, and whether
 # `llm_mode` moves it is derivable - `resolve_egress(t, "standard") == resolve_egress(t,
@@ -233,41 +259,45 @@ _ANY_ADDRESS = Destination(label="any address the agent names", leaves_deploymen
 # ungated rows differently would have hidden that behind a string comparison, and it did: the
 # first draft of this table appended " - not gated on mode" to those labels and broke both the
 # derivation and the guarantee that standard is always the fuller answer.
-_DESTINATION: dict[tuple[Reach, str], Destination] = {
-    (Reach.NOTHING, "standard"): _NOWHERE,
-    (Reach.NOTHING, "sensitive"): _NOWHERE,
-    (Reach.VECTOR_STORE, "standard"): Destination(
+_DESTINATION: dict[tuple[Reach, bool], Destination] = {
+    (Reach.NOTHING, True): _NOWHERE,
+    (Reach.NOTHING, False): _NOWHERE,
+    (Reach.VECTOR_STORE, True): Destination(
         label="Chroma Cloud, when CHROMA_API_KEY is set - otherwise the Chroma on this host",
         leaves_deployment=True,
     ),
-    (Reach.VECTOR_STORE, "sensitive"): Destination(
+    (Reach.VECTOR_STORE, False): Destination(
         label="the Chroma on this host", leaves_deployment=False
     ),
-    (Reach.INFERENCE, "standard"): Destination(
+    (Reach.INFERENCE, True): Destination(
         label="Anthropic's API", leaves_deployment=True
     ),
-    (Reach.INFERENCE, "sensitive"): Destination(
+    (Reach.INFERENCE, False): Destination(
         label="the local model on this host", leaves_deployment=False
     ),
-    (Reach.WEB_SEARCH, "standard"): _TAVILY,
-    (Reach.WEB_SEARCH, "sensitive"): _TAVILY,
-    (Reach.PUBLIC_WEB, "standard"): _ANY_ADDRESS,
-    (Reach.PUBLIC_WEB, "sensitive"): _ANY_ADDRESS,
+    (Reach.WEB_SEARCH, True): _TAVILY,
+    (Reach.WEB_SEARCH, False): _TAVILY,
+    (Reach.PUBLIC_WEB, True): _ANY_ADDRESS,
+    (Reach.PUBLIC_WEB, False): _ANY_ADDRESS,
 }
 
 
-def _mode_key(llm_mode: str) -> str:
-    """Either `"sensitive"` or `"standard"`, by the same rule the code that routes work uses.
+def _destination(reach: Reach, llm_mode: str) -> Destination:
+    """Where `reach` actually goes for a project in this mode.
 
-    `get_llm_for_agent` and `get_chroma_client` both branch on `mode == "sensitive"` and treat
-    everything else as hosted. `llm_mode` has a third accepted value - `ProjectSettings` allows
-    `"fallback"` (api/models.py:9) - which neither of them mentions, so a project set to it
-    routes hosted. This mirrors that rather than correcting it: a declaration that disagreed
-    with the routing would be a lie in the direction of reassurance, which is the worst
-    direction for this page. If `"fallback"` is ever given its own routing, this is one of the
-    places that has to learn about it.
+    Per reach, not per project: a single "is this project the strict one" answer could not
+    express a mode that keeps its vector store on the premises while running hosted models,
+    which is exactly the shape the deferred sovereign mode has. Asking each reach for its own
+    grant means such a mode is described correctly on the privacy page by adding it to
+    `EGRESS_GRANTS` and nowhere else.
+
+    A reach with no entry in `_REACH_GRANT` is treated as ungranted. That is the containing
+    direction - the ungranted column is never the wider destination - and for the three reaches
+    that have no grant today both columns are the same object anyway, so it changes no answer
+    while a new gated reach is being wired up.
     """
-    return "sensitive" if llm_mode == "sensitive" else "standard"
+    grant = _REACH_GRANT.get(reach)
+    return _DESTINATION[(reach, grant is not None and permits(llm_mode, grant))]
 
 
 def resolve_egress(tool_name: str, llm_mode: str) -> Destination:
@@ -277,8 +307,12 @@ def resolve_egress(tool_name: str, llm_mode: str) -> Destination:
     `get_llm_for_agent` raises for an unregistered agent for the same reason: a default here
     would answer "nothing leaves" for a tool nobody has read yet, which is the one wrong answer
     that cannot be noticed.
+
+    An unrecognised *mode*, by contrast, does not raise - it resolves to the on-premises column
+    everywhere, which is what the routing code does with it too. The declaration must agree with
+    the routing even when the routing is refusing something.
     """
-    return _DESTINATION[(TOOL_EGRESS[tool_name].reaches, _mode_key(llm_mode))]
+    return _destination(TOOL_EGRESS[tool_name].reaches, llm_mode)
 
 
 def is_gated_by_mode(tool_name: str) -> bool:
@@ -294,10 +328,12 @@ def is_gated_by_mode(tool_name: str) -> bool:
 def inference_destination(llm_mode: str) -> Destination:
     """Where the agent's own model calls go. Not a tool, and held by every agent.
 
-    Cross-checked against `get_llm_for_agent` in `tests/test_agent_egress.py`, because this is a
-    second statement of a rule that module already implements, and the two must not drift.
+    Cross-checked against `get_llm_for_agent` in `tests/test_agent_egress.py`. It is no longer a
+    second statement of that module's rule - both now read `HOSTED_INFERENCE` out of
+    `EGRESS_GRANTS` - but the cross-check stays, because "the page and the router consult the
+    same table" and "the page says what the router does" are still two different claims.
     """
-    return _DESTINATION[(Reach.INFERENCE, _mode_key(llm_mode))]
+    return _destination(Reach.INFERENCE, llm_mode)
 
 
 def agent_destinations(tool_names: tuple[str, ...], llm_mode: str) -> tuple[Destination, ...]:

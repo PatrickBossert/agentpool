@@ -6,15 +6,16 @@
 // they built themselves, so neither can see what the panel does to that array on the way in -
 // and the panel's own filtering is where Maya's entire Output tab went missing. Every
 // assertion here therefore mounts AgentDetailPanel and reads what a user would actually see.
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import AgentDetailPanel from '../components/AgentDetailPanel'
-import { valueChainApi } from '../api/endpoints'
-import type { AgentOutput } from '../types'
+import { projectsApi, valueChainApi } from '../api/endpoints'
+import { agentChatApi } from '../api/agentChat'
+import type { AgentOutput, MyPermissions } from '../types'
 
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({
@@ -34,6 +35,17 @@ vi.mock('../api/endpoints', () => ({
     getSettings: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn(),
     documents: vi.fn().mockResolvedValue([]),
+    // Undefined-while-loading collapses into "not permitted" for can_approve below, the same
+    // shape MayaOutputExtra's own can_approve read relies on - so a default of {} rather than
+    // a resolved value here would still be safe. Resolved anyway so the attach control's own
+    // tests (a separate file) can override this per-case rather than fight a pending promise.
+    getMyPermissions: vi.fn().mockResolvedValue({
+      can_review: false,
+      can_approve: false,
+      can_grant_roles: false,
+      can_issue_invite_links: false,
+      writable_knowledge_tiers: [],
+    }),
   },
   valueChainApi: {
     get: vi.fn().mockResolvedValue({ model: null }),
@@ -50,6 +62,7 @@ vi.mock('../api/agentChat', () => ({
     getHistory: vi.fn().mockResolvedValue([]),
     clearHistory: vi.fn().mockResolvedValue(undefined),
     send: vi.fn(),
+    uploadFile: vi.fn(),
   },
 }))
 
@@ -280,5 +293,90 @@ describe('AgentDetailPanel - unsaved work across a tab change', () => {
 
     expect(await screen.findByPlaceholderText(/The client operates primarily/i))
       .toHaveValue('Focus on depot operations')
+  })
+})
+
+describe('AgentDetailPanel - Chat attach control', () => {
+  // What gets sent, never what renders - "a radio tested as rendered, not as sent" is one of
+  // the documented defects this project has already shipped. Every test below drives a real
+  // file selection through to the call agentChatApi.uploadFile receives, rather than stopping
+  // once the control is found in the DOM.
+  function permissions(overrides: Partial<MyPermissions>): MyPermissions {
+    return {
+      can_review: false,
+      can_approve: false,
+      can_grant_roles: false,
+      can_issue_invite_links: false,
+      writable_knowledge_tiers: [],
+      ...overrides,
+    }
+  }
+
+  const file = new File(['hello'], 'brief.pdf', { type: 'application/pdf' })
+
+  beforeEach(() => {
+    vi.mocked(agentChatApi.uploadFile).mockReset()
+    vi.mocked(agentChatApi.uploadFile).mockResolvedValue({
+      doc_id: 1, filename: 'x', original_name: 'brief.pdf', is_image: false, knowledge_tier: 'project',
+    })
+  })
+
+  it('offers no attach control to a caller /my-permissions refuses at every tier', async () => {
+    // The chat upload door is gated on caller_may_approve - the same permission that decides
+    // writable_knowledge_tiers' project entry - so a caller offered no tier at all must not
+    // see a control that would then 403 on submit.
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue(
+      permissions({ can_approve: false, writable_knowledge_tiers: [] }),
+    )
+    renderPanel({ initialTab: 'chat' })
+
+    await screen.findByPlaceholderText(/Ask/)
+    expect(screen.queryByLabelText('Attach a file')).not.toBeInTheDocument()
+  })
+
+  it('defaults the tier to project and sends exactly that when the caller does not touch the picker', async () => {
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue(
+      permissions({ can_approve: true, writable_knowledge_tiers: ['organisation', 'project'] }),
+    )
+    const user = userEvent.setup()
+    renderPanel({ initialTab: 'chat' })
+
+    const input = await screen.findByLabelText('Attach a file')
+    await user.upload(input, file)
+
+    expect(agentChatApi.uploadFile).toHaveBeenCalledWith('t', 'Interaction Designer', file, 'project')
+  })
+
+  it('offers only the tiers the server names, broadest first, and sends the one chosen', async () => {
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue(
+      permissions({ can_approve: true, writable_knowledge_tiers: ['organisation', 'project'] }),
+    )
+    const user = userEvent.setup()
+    renderPanel({ initialTab: 'chat' })
+
+    const select = await screen.findByLabelText('Knowledge tier')
+    // Never renders the sector tier this fixture did not offer.
+    expect(within(select).queryByRole('option', { name: /Sector/ })).not.toBeInTheDocument()
+    expect(within(select).getAllByRole('option')).toHaveLength(2)
+
+    await user.selectOptions(select, 'organisation')
+    const input = screen.getByLabelText('Attach a file')
+    await user.upload(input, file)
+
+    expect(agentChatApi.uploadFile).toHaveBeenCalledWith('t', 'Interaction Designer', file, 'organisation')
+  })
+
+  it('offers no picker, and sends project, when project is the only tier the caller may write', async () => {
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue(
+      permissions({ can_approve: true, writable_knowledge_tiers: ['project'] }),
+    )
+    const user = userEvent.setup()
+    renderPanel({ initialTab: 'chat' })
+
+    const input = await screen.findByLabelText('Attach a file')
+    expect(screen.queryByLabelText('Knowledge tier')).not.toBeInTheDocument()
+
+    await user.upload(input, file)
+    expect(agentChatApi.uploadFile).toHaveBeenCalledWith('t', 'Interaction Designer', file, 'project')
   })
 })

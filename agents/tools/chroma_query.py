@@ -8,6 +8,7 @@ from crewai.tools import BaseTool
 from agents.tools._db import _db_path, record_run_document_sync
 from api.config import get_settings
 from api.services.chroma_client import get_chroma_client
+from api.services.knowledge_tiers import collection_for, org_slug_for_project
 
 
 def _chroma_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
@@ -73,11 +74,12 @@ def _citation(meta: dict | None, names: dict[int, str]) -> str:
 
 class ChromaQueryToolInput(BaseModel):
     query: str = Field(description="The search query to run against the document collection.")
-    collection: Literal["project", "interviews", "sector"] = Field(
+    collection: Literal["project", "interviews", "organisation", "sector"] = Field(
         default="project",
         description=(
             "'project' queries this project's ingested docs; 'interviews' queries interview "
-            "answers; 'sector' queries the shared sector knowledge base."
+            "answers; 'organisation' queries material shared across this organisation's "
+            "projects; 'sector' queries the shared sector knowledge base."
         ),
     )
     top_k: int = Field(default=5, description="Number of results to return.")
@@ -89,7 +91,10 @@ class ChromaQueryTool(BaseTool):
         "Retrieve relevant text chunks from ChromaDB. "
         "Use collection='project' for ingested client documents; "
         "use collection='interviews' for interview answers; "
-        "use collection='sector' for the shared sector knowledge base. "
+        "use collection='organisation' for material shared across this organisation's "
+        "projects; use collection='sector' for the shared sector knowledge base. "
+        "Those four names are the only ones accepted - anything else is refused rather "
+        "than answered from a wider store. "
         "Every chunk is preceded by its citation in square brackets - [doc_id=3 | "
         "SPUK_2025_Annual_Accounts.pdf | chunk 12] for a document, or [answer_id=812 | node | "
         "level | relationship | discipline | elicitation] for an interview answer. Cite the "
@@ -107,15 +112,29 @@ class ChromaQueryTool(BaseTool):
         collection: str = "project",
         top_k: int = 5,
     ) -> str:
+        # Resolved before anything is opened, so a tier this tool does not know costs the
+        # agent an error and reaches no store at all. It used to resolve to
+        # `sector_{sector}` - the collection shared by every engagement in the sector - which
+        # made a typo into a cross-client read that looked exactly like a deliberate one.
+        try:
+            collection_name = collection_for(
+                collection,
+                slug=self.slug,
+                sector=self.sector,
+                # Looked up only when it is asked for: it is a system-database read, and the
+                # other three tiers have no business paying for it.
+                org_slug=(
+                    org_slug_for_project(self.slug)
+                    if collection == "organisation" else None
+                ),
+            )
+        except ValueError as e:
+            return f"Error: {e}"
+
         settings = get_settings()
         if not settings.chroma_api_key and not _chroma_reachable(settings.chroma_host, settings.chroma_port):
             return "ChromaDB is not reachable. Start Docker (docker compose up -d) and retry."
         client = get_chroma_client(self.slug)
-
-        collection_name = {
-            "project": f"{self.slug}_docs",
-            "interviews": f"{self.slug}_interviews",
-        }.get(collection, f"sector_{self.sector}")
 
         try:
             col = client.get_collection(collection_name)

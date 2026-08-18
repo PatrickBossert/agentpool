@@ -41,6 +41,16 @@ vi.mock('../api/endpoints', () => ({
     getSettings: vi.fn().mockResolvedValue({}),
     documents: vi.fn().mockResolvedValue([]),
     updateSettings: vi.fn(),
+    // The Chat tab's attach control asks this on mount too, unconditionally like the chat
+    // history load below - can_approve: false keeps the control hidden, which is all these
+    // tests need.
+    getMyPermissions: vi.fn().mockResolvedValue({
+      can_review: false,
+      can_approve: false,
+      can_grant_roles: false,
+      can_issue_invite_links: false,
+      writable_knowledge_tiers: [],
+    }),
   },
 }))
 
@@ -51,6 +61,7 @@ vi.mock('../api/agentChat', () => ({
   agentChatApi: {
     getHistory: vi.fn().mockResolvedValue([]),
     clearHistory: vi.fn().mockResolvedValue(undefined),
+    uploadFile: vi.fn(),
   },
 }))
 

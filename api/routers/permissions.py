@@ -10,7 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import check_project_access, is_org_admin_or_above, require_any_auth
 from api.database import fetch_project, get_connection
-from api.services.authority_service import caller_may_grant_project_roles, caller_roles
+from api.services.authority_service import (
+    caller_may_grant_project_roles,
+    caller_roles,
+    writable_tiers_on_project,
+)
 
 router = APIRouter(prefix="/projects", tags=["permissions"])
 
@@ -37,4 +41,16 @@ async def get_my_permissions(slug: str, payload: dict = Depends(require_any_auth
         # engagement. `is_org_admin_or_above` is the same predicate the door refuses with
         # rather than a restatement of it.
         "can_issue_invite_links": is_org_admin_or_above(payload),
+        # What the upload dialog's tier picker offers, broadest first. Answered here rather
+        # than restated in TypeScript for the reason this whole endpoint exists: a second
+        # copy of an authority rule drifts, and the copy the UI trusts is the wrong one -
+        # here it would render a tier the door then refuses, which this project has
+        # established twice is worse than not offering it at all.
+        #
+        # Project-scoped, not role-scoped. `knowledge_tiers.writable_tiers` reads the login
+        # role alone and would tell every org_admin "organisation" on every project; the
+        # honest answer on a project belonging to another organisation is that they may not
+        # write it. A tier that does not exist for this project - the organisation tier of an
+        # unregistered project - is absent for the same reason.
+        "writable_knowledge_tiers": list(await writable_tiers_on_project(slug, payload)),
     }

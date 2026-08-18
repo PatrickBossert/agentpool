@@ -50,7 +50,7 @@ from the widest store.
 
 ## Naming, and the one-way rule
 
-Collections are named by tier: `sector_{sector}`, `org_{org_slug}`, `{slug}_documents`,
+Collections are named by tier: `sector_{sector}`, `org_{org_slug}`, `{slug}_docs`,
 `{slug}_interviews`.
 
 **Material only ever moves narrower.** A project's documents never land in its organisation's

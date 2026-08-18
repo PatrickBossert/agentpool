@@ -151,13 +151,21 @@ def test_the_resolver_refuses_a_tool_it_has_no_declaration_for():
         resolve_egress("SomeToolWrittenNextTuesday", "standard")
 
 
-def test_every_reach_resolves_in_both_modes():
-    """A reach added with only one mode's destination filled in would raise `KeyError` from
-    whichever page happened to read the other mode first."""
+def test_every_reach_resolves_whether_or_not_its_grant_is_held():
+    """A reach added with only one column filled in would raise `KeyError` from whichever page
+    happened to read the other one first.
+
+    The key is now "does this project's mode hold the grant this reach depends on", not a mode
+    name - see `_REACH_GRANT`. Both answers are required for every reach, including the reaches
+    no grant moves, because a reach that is gated later must not need a new row at the same time.
+    """
+    from agents.egress import _DESTINATION
+
     for reach in Reach:
-        for mode in ("standard", "sensitive"):
-            from agents.egress import _DESTINATION
-            assert (reach, mode) in _DESTINATION, f"{reach.name} has no {mode} destination"
+        for granted in (True, False):
+            assert (reach, granted) in _DESTINATION, (
+                f"{reach.name} has no destination for granted={granted}"
+            )
 
 
 @pytest.mark.parametrize("mode", _MODES)

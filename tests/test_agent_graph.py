@@ -7,6 +7,8 @@ remove, wearing a test's clothes. Every assertion below therefore names the sour
 derives from: `AGENT_TIER`, `tool_map` as `get_tools_for_agent` actually returns it,
 `OUTPUT_OWNERS`, `_CREW_AGENT_NAMES`, or `CREW_DEPENDENCIES`.
 """
+from pathlib import Path
+
 import pytest
 
 from agents.graph import GraphInconsistent, build_graph
@@ -291,6 +293,134 @@ def test_an_unresolvable_read_is_not_also_declared_as_one_that_works():
             f"{entry.agent_id} both declares {entry.source} as a read and records it as "
             f"unresolvable"
         )
+
+
+def _all_declared_reads():
+    """Every `Read` the module declares, whoever it reaches, as (owner, read) pairs."""
+    from agents.reads import AGENT_READS, CREW_DISPATCH_READS, UNINSTRUCTED_READS
+
+    pairs = [(agent_id, read) for agent_id, reads in AGENT_READS.items() for read in reads]
+    pairs += [("CREW_DISPATCH_READS", read) for read in CREW_DISPATCH_READS]
+    pairs += [("UNINSTRUCTED_READS", read) for read in UNINSTRUCTED_READS]
+    return pairs
+
+
+def test_every_collection_read_names_the_tier_that_builds_it():
+    """The tier is held equal to the resolver, not merely typed beside the collection name.
+
+    `collection_for` is the one place a collection name is built, so rebuilding each declared
+    `source` from its declared tier is what makes the declaration a fact rather than a label. A
+    template typed here that the resolver would never produce - `{slug}_documents`, which the
+    design document actually says, or a tier moved onto the wrong collection - fails here
+    instead of appearing on the privacy page as a store that does not exist.
+
+    Driven with the templates themselves as the keys, which is what the declarations hold:
+    `collection_for` interpolates nothing, so `slug="{slug}"` comes back as `{slug}_docs`.
+    """
+    from agents.reads import Medium
+    from api.services.knowledge_tiers import collection_for
+
+    checked = 0
+    for owner, read in _all_declared_reads():
+        if read.medium is not Medium.VECTOR_COLLECTION:
+            continue
+        assert read.tier, f"{owner} declares {read.source} with no knowledge tier"
+        assert read.source == collection_for(
+            read.tier, slug="{slug}", sector="{sector}", org_slug="{org_slug}"
+        ), (
+            f"{owner} declares {read.source} at the {read.tier!r} tier, but that tier resolves "
+            f"to a different collection"
+        )
+        checked += 1
+    assert checked, "no collection read found - this test would assert nothing"
+
+
+def test_only_a_collection_read_carries_a_tier():
+    """A tier is a property of the knowledge store and of nothing else.
+
+    An artefact resolves under `projects/{slug}/outputs/` and a table lives in a database; there
+    is no tier that would be true of either, and giving one a tier to fill the field in would
+    make the word mean two things on the page that renders it.
+    """
+    from agents.reads import Medium
+
+    for owner, read in _all_declared_reads():
+        if read.medium is not Medium.VECTOR_COLLECTION:
+            assert read.tier is None, (
+                f"{owner} gives {read.source} the {read.tier!r} tier, but it is held in "
+                f"{read.medium.value}"
+            )
+
+
+def test_every_tier_the_store_has_is_one_the_graph_can_name():
+    """A tier the deployment writes and the graph cannot describe is a hole in the page.
+
+    The organisation tier was exactly that until this change: writable since Tasks 2 and 3,
+    declared by no read, and therefore absent from the privacy page altogether rather than
+    present with nobody reading it.
+    """
+    from agents.reads import Medium
+    from api.services.knowledge_tiers import KNOWLEDGE_TIERS
+
+    declared = {
+        read.tier
+        for _, read in _all_declared_reads()
+        if read.medium is Medium.VECTOR_COLLECTION
+    }
+    assert declared == set(KNOWLEDGE_TIERS), (
+        f"the knowledge store has tiers the graph declares nothing for: "
+        f"{set(KNOWLEDGE_TIERS) - declared}"
+    )
+
+
+def test_no_uninstructed_read_is_also_a_declared_one():
+    """The two lists say opposite things, so a source may not sit in both.
+
+    `UNINSTRUCTED_READS` means "the tool offers it and no task description asks for it". The
+    moment an agent is instructed to read the organisation store, the entry moves into that
+    agent's `AGENT_READS` tuple - leaving it here as well would have the page report a store as
+    read by somebody and read by nobody at the same time.
+    """
+    from agents.reads import AGENT_READS, UNINSTRUCTED_READS
+
+    declared = {read.source for reads in AGENT_READS.values() for read in reads}
+    for read in UNINSTRUCTED_READS:
+        assert read.source not in declared, (
+            f"{read.source} is recorded as instructed to nobody and declared as an agent read"
+        )
+
+
+def test_no_task_description_instructs_the_uninstructed_tier():
+    """The claim `UNINSTRUCTED_READS` makes, checked against the prompts rather than believed.
+
+    This is the half a declaration cannot self-certify: the entry says no agent is told to query
+    the organisation store, and the agents' task descriptions are where that is either true or
+    not. When somebody writes `collection='organisation'` into a prompt, this fails and points
+    at the entry that has to move.
+    """
+    from agents.reads import UNINSTRUCTED_READS
+    from api.services.knowledge_tiers import KNOWLEDGE_TIERS
+
+    uninstructed = {read.tier for read in UNINSTRUCTED_READS}
+    assert uninstructed <= set(KNOWLEDGE_TIERS)
+
+    # The agent and crew modules, which is where a task description lives. Not `agents/*.py`
+    # itself: the declarations there discuss the tiers in prose, and a sweep that read them
+    # would be answering a question about its own commentary.
+    agents_dir = Path(__file__).resolve().parent.parent / "agents"
+    prompts = "\n".join(
+        path.read_text()
+        for path in sorted(agents_dir.rglob("*.py"))
+        if path.parent != agents_dir and "tools" not in path.parts
+    )
+    for tier in uninstructed:
+        assert f"collection='{tier}'" not in prompts, (
+            f"an agent is now instructed to read the {tier!r} tier - move its entry out of "
+            f"UNINSTRUCTED_READS and into that agent's AGENT_READS tuple"
+        )
+    # The negative control: the phrase this searches for is one the prompts really do use, so a
+    # rewording that made every search miss would fail here rather than pass everything above.
+    assert "collection='sector'" in prompts
 
 
 def test_what_the_dispatch_path_reads_names_tables_that_exist(tmp_path, monkeypatch):
