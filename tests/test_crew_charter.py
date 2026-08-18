@@ -4,14 +4,23 @@
 The declaration is `agents/charter.py`. Nothing here compares it with a list written in this
 file: each trigger set is **derived from the code that implements that dispatch path** - the
 `elif` ladder in `build_and_run_crew`, the approval graph plus `autostart_service`'s own
-exclusion, the crew names Pamela's task descriptions contain, and the Chainlit console's
-frozenset - and the declaration is held equal to the derivation. A test that asserted the
-charter against a second hand-typed table would pass while both were wrong together, which is
-this project's recorded failure mode.
+exclusion, and the crew names Pamela's task descriptions contain - and the declaration is held
+equal to the derivation. A test that asserted the charter against a second hand-typed table
+would pass while both were wrong together, which is this project's recorded failure mode.
 
-The two declared defects are derived the same way, from the call sites and the factory
+The declared crew defect is derived the same way, from the call sites and the factory
 signatures. So a defect fixed in the code and left declared here fails, and a new one
 introduced and not declared fails too - neither direction can go quiet.
+
+There was a fourth path and a second kind of defect. `CHAINLIT_CONSOLE` was a dispatch ladder
+of its own and every one of its five branches raised, which
+`test_every_branch_of_the_chainlit_path_fails_as_its_defect_claims` derived branch by branch
+from the ladder's source. Retiring the console deleted the ladder, so that test had nothing
+left to read and went with it rather than passing on an empty derivation - it opened by parsing
+`chainlit_app/app.py`, which now does not exist, so it could only ever have failed loudly.
+`DispatchPath.defect` outlived its derivation, and
+`test_no_dispatch_path_declares_a_defect_nothing_derives` is what stops it becoming prose no
+test reads.
 """
 from __future__ import annotations
 
@@ -42,9 +51,8 @@ def _definition(reference: str) -> str:
     """The source of the function or class a `"path/to/file.py:Name"` reference names.
 
     Parsed rather than imported, for the reason `agents/graph.py` and `agents/egress.py` parse
-    rather than import: one of the four dispatch paths lives in `chainlit_app/app.py`, which
-    pulls in Chainlit and reads settings at module scope, and a path whose module is merely
-    heavy to import must not look absent.
+    rather than import: a dispatch module pulls in the crew factories and reads settings at
+    module scope, and a path whose module is merely heavy to import must not look absent.
     """
     relative_path, _, name = reference.partition(":")
     source = _module_source(relative_path)
@@ -183,24 +191,10 @@ def _pam_startable() -> frozenset[str]:
     return frozenset(named)
 
 
-def _chainlit_offered() -> frozenset[str]:
-    """The names the Chainlit console accepts, from its `_VALID_CREWS` frozenset."""
-    source = _module_source("chainlit_app/app.py")
-    assignment = next(
-        node for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Assign)
-        and any(getattr(target, "id", None) == "_VALID_CREWS" for target in node.targets)
-    )
-    return frozenset(
-        node.value for node in ast.walk(assignment.value) if isinstance(node, ast.Constant)
-    )
-
-
 _DERIVED_STARTABLE = {
     Trigger.REST_RUN: _rest_startable,
     Trigger.APPROVAL_CASCADE: _approval_startable,
     Trigger.PAM_ORCHESTRATION: _pam_startable,
-    Trigger.CHAINLIT_CONSOLE: lambda: _chainlit_offered() & CREW_IDS,
 }
 
 
@@ -429,75 +423,38 @@ def test_the_declared_crew_defect_names_the_argument_that_does_not_bind():
         )
 
 
-def test_every_branch_of_the_chainlit_path_fails_as_its_defect_claims():
-    """The path-level defect: this dispatch ladder can start nothing.
+def test_no_dispatch_path_declares_a_defect_nothing_derives():
+    """`DispatchPath.defect` outlived the derivation that held it to the code.
 
-    Two of its five names import a crew module that does not exist; the other three pass
-    `llm_mode` to a factory that has not taken it since agents began resolving their own model.
-    Derived per branch, so a repaired branch fails this and the declaration has to go.
+    It was written for the Chainlit console, and every branch of that ladder was checked
+    against the ladder's own source. The ladder is gone and the per-branch test with it, so a
+    defect written here now would be prose no test reads - which is the failure this whole
+    module exists to refuse, and the charter's own docstring forbids.
+
+    Every path that remains funnels through `build_and_run_crew`, so a broken path is a broken
+    crew, and `Charter.defect` - derived from the call sites and the factory signatures two
+    tests below - is where that belongs. If a path ever genuinely breaks on its own, this is
+    the test that must be replaced by a derivation rather than deleted.
     """
-    source = _module_source("chainlit_app/app.py")
-    builder = next(
-        node for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.FunctionDef) and node.name == "_build_crew"
+    declared = {
+        trigger.value: path.defect
+        for trigger, path in DISPATCH_PATHS.items()
+        if path.defect is not None
+    }
+    assert not declared, (
+        f"{sorted(declared)} declare a path-level defect and nothing derives it. Either derive "
+        f"it from the code that implements the path, as the Chainlit test did, or say it on the "
+        f"crew where `Charter.defect` is checked"
     )
-    body = ast.Module(body=builder.body, type_ignores=[])
-
-    shared = next(
-        node for node in ast.walk(body)
-        if isinstance(node, ast.Assign)
-        and any(getattr(target, "id", None) == "base" for target in node.targets)
-    )
-    shared_keywords = tuple(keyword.arg for keyword in shared.value.keywords)
-    assert shared_keywords, "the shared argument dict in _build_crew read as empty"
-
-    offered = _chainlit_offered()
-    assert offered, "the Chainlit console's crew list read as empty"
-
-    reasons: dict[str, str] = {}
-    for statement in builder.body:
-        if not isinstance(statement, ast.If):
-            continue
-        branch = ast.Module(body=statement.body, type_ignores=[])
-        crew = statement.test.comparators[0].value
-        imported = {
-            alias.name: node.module
-            for node in ast.walk(branch) if isinstance(node, ast.ImportFrom)
-            for alias in node.names
-        }
-        call = next(
-            node for node in ast.walk(branch)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-            and node.func.id.startswith("create_")
-        )
-        module_name = imported[call.func.id]
-        if not Path(*module_name.split(".")).with_suffix(".py").exists():
-            reasons[crew] = f"no module {module_name}"
-            continue
-        keywords = tuple(
-            keyword.arg for keyword in call.keywords if keyword.arg is not None
-        )
-        if any(keyword.arg is None for keyword in call.keywords):
-            keywords += shared_keywords
-        message = _binds(call.func.id, module_name, keywords)
-        if message is not None:
-            reasons[crew] = message
-
-    assert set(reasons) == offered, (
-        f"the Chainlit console offers {sorted(offered)} and only {sorted(reasons)} fail - "
-        f"its declared defect says the path can start nothing"
-    )
-    assert DISPATCH_PATHS[Trigger.CHAINLIT_CONSOLE].defect is not None
-    assert sum("no module" in reason for reason in reasons.values()) == 2, reasons
-    assert sum("llm_mode" in reason for reason in reasons.values()) == 3, reasons
 
 
 def test_every_dispatch_path_is_declared_on_at_least_one_crew():
-    """A path no crew names describes nothing - including the broken one.
+    """A path no crew names describes nothing.
 
-    The Chainlit console is declared on three crews and starts none of them, which is the whole
-    point of a path-level defect: were it declared on no crew at all, the defect would be a
-    sentence about a path the model had already forgotten.
+    It is what a retired dispatch path looks like on the way out: the Chainlit console was
+    declared on three crews and could start none of them, and had it been left declared on no
+    crew at all it would have been a `DISPATCH_PATHS` entry describing a path the rest of the
+    model had already forgotten.
     """
     for trigger in DISPATCH_PATHS:
         declared = {
@@ -533,11 +490,13 @@ def test_no_scheduled_job_starts_a_crew():
 def test_every_crew_name_a_dispatch_path_offers_is_a_crew_or_recorded_as_not_one():
     """A name a path accepts that no registry knows is a dispatch that reports having worked.
 
-    Both enumerable ladders are checked: `build_and_run_crew`'s branches and the Chainlit
-    console's frozenset. Three such names exist and each is in `NOT_A_CREW` with what it
-    actually is.
+    One enumerable ladder is left - `build_and_run_crew`'s branches - and one such name is in
+    it. The stale half of this test is the half that matters here: retiring the Chainlit
+    console retired the only path offering `discovery` and `architecture`, and the assertion
+    below is what required those two entries out of `NOT_A_CREW` rather than leaving them as a
+    record of a dispatch nothing can now make.
     """
-    offered = set(_crew_dispatch_call_sites()) | _chainlit_offered()
+    offered = set(_crew_dispatch_call_sites())
     assert offered, "no offered names found - this proves nothing"
 
     unknown = sorted(offered - CREW_IDS - set(NOT_A_CREW))

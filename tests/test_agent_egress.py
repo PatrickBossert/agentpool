@@ -35,16 +35,18 @@ def test_every_tool_an_agent_can_hold_declares_its_egress():
 
 
 def test_the_declaration_covers_every_tool_class_that_exists_and_invents_none():
-    """The test above cannot see `ChainlitHumanInputTool`.
+    """The test above can only see what an agent holds.
 
-    `get_tools_for_agent` swaps it in for every `HumanInputTool` when the Chainlit app passes
-    `hitl_tool`, but `tool_map` names only the base class, so the graph's tool lists never
-    mention the substitute and a coverage guard drawn from them excuses it. Comparing the
-    declaration with the classes that actually exist on disk closes that hole without an
-    exception list, and catches the next tool written before it is declared as well.
+    A tool class that exists and is declared but reaches no agent is invisible to a coverage
+    guard drawn from the graph's tool lists - which is how `ChainlitHumanInputTool` stayed
+    declared, and swapped in at run time for every `HumanInputTool`, while `tool_map` named
+    only the base class. Comparing the declaration with the classes that actually exist on
+    disk closes that hole without an exception list, and catches the next tool written before
+    it is declared as well.
 
     Equality rather than containment, so a declaration for a tool that has been deleted or
-    misspelled fails here too.
+    misspelled fails here too - which is what held the declaration to the deletion when the
+    Chainlit tool went.
     """
     assert set(TOOL_EGRESS) == tool_classes_on_disk()
 
@@ -57,38 +59,25 @@ def test_the_class_scan_finds_the_tools_the_registry_actually_hands_out():
     assert held <= tool_classes_on_disk(), sorted(held - tool_classes_on_disk())
 
 
-def test_the_substituted_hitl_tool_is_declared_where_the_registry_installs_it():
-    """Asserted at the layer that does the substituting, not on the class in isolation.
+def test_the_registry_hands_out_nothing_the_resolver_cannot_answer_for():
+    """Asserted on what the registry actually returns, not on the graph's reading of it.
 
-    `test_the_declaration_covers_every_tool_class...` proves the name is declared; this proves
-    the thing the registry actually returns under the substitution is a thing the resolver can
-    answer for. The two-line vacuity check matters: if the substitution ever stopped happening,
-    the assertion below would pass while testing the unsubstituted list.
+    The graph reads `tool_map` from source, so it reports the classes the dict *names*. This
+    instantiates the tools instead and asks the resolver about each one by its real class name,
+    which is the only reading a run-time substitution could ever have moved - and a
+    substitution is exactly what `hitl_tool` was.
     """
-    from agents.tools.chainlit_human_input import ChainlitHumanInputTool
     from agents.tools.registry import get_tools_for_agent
 
-    plain = [
-        type(t).__name__
-        for t in get_tools_for_agent("value_chain_mapper", slug="egress-probe", sector="probe")
-    ]
-    substituted = [
-        type(t).__name__
-        for t in get_tools_for_agent(
-            "value_chain_mapper",
-            slug="egress-probe",
-            sector="probe",
-            hitl_tool=ChainlitHumanInputTool(slug="egress-probe", run_id=0),
-        )
-    ]
-    assert substituted != plain, (
-        "the registry no longer substitutes the Chainlit tool, so this test is asserting "
-        "against the ordinary tool list"
-    )
-    assert "ChainlitHumanInputTool" in substituted
+    handed = {
+        type(tool).__name__
+        for agent_id in build_graph().agents
+        for tool in get_tools_for_agent(agent_id, slug="egress-probe", sector="probe")
+    }
+    assert handed, "the registry handed out no tools at all - this guard proves nothing"
 
     for mode in _MODES:
-        for tool_name in substituted:
+        for tool_name in sorted(handed):
             resolve_egress(tool_name, mode)
 
 

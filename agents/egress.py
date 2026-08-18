@@ -194,21 +194,6 @@ TOOL_EGRESS: dict[str, Egress] = {
             "the polling loop starts, on every gated step, with no mode check"
         ),
     ),
-    # `get_tools_for_agent` swaps this in for every HumanInputTool when the Chainlit app passes
-    # `hitl_tool` (agents/tools/registry.py:161-162, chainlit_app/app.py:119). It is declared
-    # here because a declaration keyed on class name has a hole otherwise: the graph reads
-    # `tool_map`, which names the base class, so nothing else in this codebase would ever
-    # mention the substitute. Same reach as its base, and for a reason worth stating - it
-    # overrides `_arun` to ask through the Chainlit session, but inherits `_run` untouched, so
-    # the class can still post the prompt to the webhook. A declaration covers a class, not a
-    # method.
-    "ChainlitHumanInputTool": Egress(
-        reaches=Reach.AUTOMATION_WEBHOOK,
-        sends=(
-            "the prompt, to the Chainlit session it asks through; and, by the `_run` it "
-            "inherits from HumanInputTool, the same webhook post that tool makes"
-        ),
-    ),
 }
 
 
@@ -337,11 +322,12 @@ def agent_destinations(tool_names: tuple[str, ...], llm_mode: str) -> tuple[Dest
 def tool_classes_on_disk() -> frozenset[str]:
     """Every tool class defined under `agents/tools/`, read from the source.
 
-    This is what closes the `ChainlitHumanInputTool` hole structurally rather than by an
-    exception in a list somewhere. `tool_map` names the base class, so a guard that only
-    compared declarations with the graph's tools would never mention the substitute; comparing
-    them with the classes that actually exist does, and it also catches the next tool written
-    but not yet declared.
+    A guard drawn from the graph's tool lists alone would only ever see the classes `tool_map`
+    names, so a tool class that exists and is declared but reaches no agent would be invisible
+    to it - which is how `ChainlitHumanInputTool` stayed declared, and substituted in at run
+    time, without any comparison mentioning it. Comparing the declaration with the classes that
+    actually exist on disk closes that without an exception list, and it also catches the next
+    tool written but not yet declared.
 
     Read by parsing rather than importing, for `agents/graph.py`'s reason: importing the
     package pulls in every tool module, one of which builds its description from the graph.

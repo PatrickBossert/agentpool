@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agents.charter import CREW_CHARTER, DISPATCH_PATHS, Trigger
+from agents.charter import CREW_CHARTER, DISPATCH_PATHS
 from agents.egress import TOOL_EGRESS, Egress, Reach, is_gated_by_mode
 from agents.graph import build_graph
 from agents.reads import AGENT_READS, CREW_DISPATCH_READS, Medium
@@ -249,18 +249,28 @@ async def test_a_sensitive_project_moves_the_vector_store_and_inference_and_noth
 
 
 @pytest.mark.asyncio
-async def test_a_declared_tool_no_agent_holds_is_reported_as_held_by_nobody(client):
-    """`ChainlitHumanInputTool` must not read as a live review channel.
+async def test_no_declared_tool_is_held_by_nobody(client):
+    """The caveat the page carried, asserted gone rather than observed gone.
 
-    Its only production caller sits in a Chainlit handler whose every branch fails, so no crew
-    can reach it. It is still declared, and dropping it silently would be the under-reporting
-    this page exists to end - so it appears, and it appears as unheld.
+    `ChainlitHumanInputTool` was its one member: declared, reachable only through a Chainlit
+    handler whose every branch failed, and rendered under "Declared, and held by no agent on
+    this deployment". Retiring Chainlit makes every declared tool a tool some agent holds, so
+    the list is empty and the caveat does not render at all.
+
+    Both assertions, because they fail differently. The first says the declaration and the
+    holders now agree exactly; the second says the join that computes the difference still
+    works, so an emptiness produced by a broken derivation cannot pass for this one.
     """
     payload = await _payload(client)
     unheld = {row["tool"] for row in payload["declared_not_held"]}
     held = {row["tool"] for row in payload["tools"]}
+
     assert unheld == set(TOOL_EGRESS) - held
-    assert "ChainlitHumanInputTool" in unheld
+    assert held == set(TOOL_EGRESS), (
+        f"declared and held by nobody: {sorted(set(TOOL_EGRESS) - held)}; held and undeclared: "
+        f"{sorted(held - set(TOOL_EGRESS))}"
+    )
+    assert not unheld
 
 
 # ── Reads ─────────────────────────────────────────────────────────────────────
@@ -386,14 +396,17 @@ async def test_what_the_dispatch_path_hands_every_agent_is_rendered(client):
 async def test_only_the_paths_that_reach_build_and_run_crew_carry_that_material(client):
     """Derived from the dispatchers, not from a count typed into the caption.
 
-    Three of the four paths funnel through `build_and_run_crew`; the Chainlit console calls
-    `kickoff_async` itself and injects none of the skill notes, change requests or validation
-    warnings. Saying "every crew run carries these" would be wrong for that path, and it is
-    the path that carries none of them that a reader most needs told.
+    Every path that remains funnels through `build_and_run_crew`, so all three carry the
+    material - but the derivation is what says so, not this sentence. The discriminating case
+    was the Chainlit console: it called `kickoff_async` itself and injected none of the skill
+    notes, change requests or validation warnings, so "every crew run carries these" was wrong
+    for it. With it gone this reads as a flat "all of them", and the flag it is derived from is
+    still per path, which is the point - `build_and_run_agent` is reachable from the API and
+    injects none of this, so a fourth path with the same shape would land here as False.
     """
     payload = await _payload(client)
     carrying = {p["trigger"] for p in payload["dispatch_paths"] if p["injects_dispatch_reads"]}
-    assert carrying == {t.value for t in DISPATCH_PATHS} - {Trigger.CHAINLIT_CONSOLE.value}
+    assert carrying == {t.value for t in DISPATCH_PATHS}
 
 
 def test_dispatch_crew_still_reaches_build_and_run_crew():

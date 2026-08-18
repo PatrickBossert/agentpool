@@ -29,10 +29,14 @@ would let a page be shown a reassuring answer that no run would ever produce.
   has nine crews while the deployment runs eleven, and `pam` is consequently the one agent in
   no crew. `scope` below carries that fact **derived** - the agents the graph places in no crew
   - rather than as a sentence somebody might forget to update, and the page states it.
-- **It must not imply the Chainlit review channel is live.** `ChainlitHumanInputTool` is
-  declared in `TOOL_EGRESS` and held by no agent in `tool_map`; its only caller sits in a
-  Chainlit handler whose every branch fails. It therefore appears under `declared_not_held`,
-  which the page renders as exactly that, rather than in the table of what this project reaches.
+- **It must not present a declared tool no agent holds as something this project reaches.**
+  `ChainlitHumanInputTool` was exactly that - declared in `TOOL_EGRESS`, named by no entry in
+  `tool_map`, and reachable only through a Chainlit handler whose every branch failed - so it
+  appeared under `declared_not_held`, which the page renders as its own caveat rather than as a
+  row in the egress table. Retiring Chainlit emptied that list, and the caveat stops rendering
+  with it: `test_no_declared_tool_is_held_by_nobody` asserts the list is empty rather than
+  leaving it observed. The mechanism stays, because a tool declared and unheld must appear
+  somewhere rather than be dropped, and the next one will land here.
 - **It must not let `sector_{sector}` read as project-scoped.** That collection carries no slug
   and six agents read it, so it is one store shared by every engagement in the sector.
   `shared_beyond_this_project` is set structurally - a vector collection whose name template
@@ -267,15 +271,14 @@ def data_architecture(slug: str) -> dict:
         # Declared, and held by nobody. Rendered so the page cannot be read as claiming a tool
         # is in use, and cannot silently drop one either.
         #
-        # "Held by nobody" is read off `tool_map`'s source, which by construction cannot see the
-        # one substitution that happens at run time: `get_tools_for_agent` swaps
-        # `ChainlitHumanInputTool` in for every `HumanInputTool` when the Chainlit app passes
-        # `hitl_tool`. That is sound today only because the Chainlit path can start nothing -
-        # all five of its branches raise - and it is `tests/test_crew_charter.py`'s
-        # `CHAINLIT_CONSOLE` defect guard that keeps it so: the guard derives the breakage from
-        # the call sites and the factory signatures, so repairing any branch fails it. Whoever
-        # repairs one must make this page stop saying "nothing here is in use" in the same
-        # change. The dependency is one-way and invisible from here, hence this note.
+        # Empty today, and the page's caveat therefore does not render. It had one member and
+        # one reason to exist: "held by nobody" is read off `tool_map`'s source, which by
+        # construction could not see the one substitution that happened at run time - the
+        # registry swapped `ChainlitHumanInputTool` in for every `HumanInputTool` when the
+        # Chainlit console passed `hitl_tool`, so the page reported a class as unheld that a
+        # live console would have put in an agent's hands. The console is gone and nothing
+        # passes `hitl_tool`, so what `tool_map` names is now what an agent is handed, and this
+        # list is exact rather than sound-because-the-caller-is-broken.
         "declared_not_held": sorted(
             (
                 {
