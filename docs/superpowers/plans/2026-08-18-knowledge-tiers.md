@@ -61,7 +61,29 @@ def test_an_unrecognised_tier_is_refused_not_answered_from_the_sector_store():
 
 - [ ] **Step 4: Upload declares a tier**, defaulting to **project**, the narrowest. A default of anything broader would make the safe case the one requiring thought.
 
-- [ ] **Step 5: Suites twice, power-check, commit.**
+Both upload doors declare it: `POST /{slug}/documents/upload` and `POST /{slug}/agent-chat/upload`. They carry different authority today - the chat door is gated on the `approver` content role, the documents door on `require_org_admin_or_above` - which is a known asymmetry recorded in the egress work. Do not reconcile it here; just make sure the tier a caller may write is decided by their authority, not by which door they came through.
+
+- [ ] **Step 5: Auto-enabling into discovery is conditional on project tier**
+
+`api/routers/agent_chat.py:289` auto-enables a chat upload in `discovery_document_ids`, so attaching a file mid-conversation also adds it to **what the discovery crew reads**. That is a sensible convenience at project tier and wrong at any other: an organisation-level document auto-enabled into one project's discovery inputs would be shared material with unshared enablement - a mismatch nobody would think to look for.
+
+Decided (Patrick, 2026-08-18): **auto-enable only at project tier.** Write the test first - an organisation-tier chat upload lands in the organisation store and **does not** appear in `discovery_document_ids` - and power-check by making the enable unconditional again.
+
+- [ ] **Step 6: Suites twice, power-check, commit.**
+
+---
+
+### Task 2a: The chat dialog offers the tiers the caller may write
+
+**Files:** Modify the agent chat upload dialog in `ui/src/`; Test: frontend
+
+- [ ] **Step 1: Find the attach control and report what it does today.** Note that a chat upload with an **image** on a sensitive project is refused with 503 by design - image blocks have no chat-completions equivalent, and dropping or sending them are both wrong. Do not disturb that.
+
+- [ ] **Step 2: Offer a tier picker, filtered by authority.** Options come from `/my-permissions`; a caller who may write only the project tier sees only that. **Never render a tier the caller cannot write** - a control that 403s on submit is worse than one that is not there, which this project has now established twice.
+
+- [ ] **Step 3: Default to project**, so the common case stays a single click and the tier is visible rather than implicit.
+
+- [ ] **Step 4: Assert what is sent**, not what renders - `ui/src/__tests__/client.test.ts` is the axios-adapter pattern. A test that finds a picker proves nothing about the request. Power-check, commit.
 
 ---
 
