@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
     deepgram_api_key: str = ""
     resend_api_key: str = ""
+    # Platform mail (the welcome email) sends from this entire. A project's mail takes only
+    # the *domain* from it and mints a role address on that domain from the correspondent's
+    # agent id - see api/services/outbound_mail.py. There is deliberately no second setting
+    # for the domain: one that disagreed with this would half-move a deployment.
     from_email: str = "TaskReimagination.ai <noreply@taskreimagination.ai>"
     # Where a project holding mail (`dev_mode`) sends it instead. One address, and every
     # audience's mail arrives at it - see api/services/outbound_mail.py.
