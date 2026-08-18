@@ -23,13 +23,18 @@ that will not run rather than a project that leaks.
 | `sensitive` | no | no |
 | anything else | no | no |
 
-**On the default.** `_EGRESS_GRANTS.get(mode, frozenset())` is a `.get()` with a default, and
-this branch has just spent a task deleting one - `ChromaQueryTool`'s
+**On the miss.** `granted_to` resolves an undeclared mode to `_NOTHING`, and this branch has
+just spent a task deleting a lookup that resolved a miss the other way - `ChromaQueryTool`'s
 `.get(collection, f"sector_{self.sector}")`, which made the store shared across every
 engagement in a sector the answer to any name the dict did not hold. These are not the same
-thing, and the difference is the whole point: **that default fell towards disclosure, this one
+thing, and the difference is the whole point: **that miss fell towards disclosure, this one
 falls towards containment.** A default is not a defect; a default pointing the wrong way is.
-Nothing here may ever acquire a default that grants something.
+Nothing here may ever acquire one that grants something.
+
+Written as `EGRESS_GRANTS.get(mode)` followed by an `is None` test rather than as
+`.get(mode, _NOTHING)`, so that "no row" and "a row granting nothing" stay distinguishable -
+`sensitive` is a declared decision and an unrecognised mode is an accident, and only the second
+is worth a warning.
 
 Unknown modes are logged rather than raised, matching `project_llm_mode`'s own
 fail-closed-and-warn behaviour in `chroma_client.py`. Raising would take a whole project down
@@ -50,6 +55,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
+from types import MappingProxyType
 
 _log = logging.getLogger(__name__)
 
@@ -71,14 +77,21 @@ _NOTHING: frozenset[Capability] = frozenset()
 # Every declared mode, and what it is permitted to do. Written out per mode rather than as
 # "sensitive is the strict one and the rest are open", because the second form is the defect:
 # it makes every future mode open by omission.
-EGRESS_GRANTS: dict[str, frozenset[Capability]] = {
+_EGRESS_GRANTS: dict[str, frozenset[Capability]] = {
     "standard": _EVERYTHING,
     # `fallback` has never had routing of its own - it resolves exactly as `standard` does
-    # everywhere in the codebase. Stated here rather than left to fall through the default, so
+    # everywhere in the codebase. Stated here rather than left to fall through the miss, so
     # that "this mode sends material off the premises" is a thing somebody wrote down.
     "fallback": _EVERYTHING,
     "sensitive": _NOTHING,
 }
+
+# The values were always `frozenset`; the mapping is now unmodifiable too. An importer that
+# could write a row could grant a mode an egress the declaration does not carry, at run time,
+# from anywhere - which is the same defect as a default that grants something, reached by a
+# different door. Read through this everywhere. `_EGRESS_GRANTS` exists only so that a test may
+# monkeypatch a hypothetical mode into it; nothing in `api/` or `agents/` names it.
+EGRESS_GRANTS: MappingProxyType[str, frozenset[Capability]] = MappingProxyType(_EGRESS_GRANTS)
 
 
 def granted_to(mode: str) -> frozenset[Capability]:

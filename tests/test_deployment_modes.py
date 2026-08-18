@@ -21,9 +21,10 @@ that comes back, the `LLM` object that is built, the HTTP request that actually 
 """
 import ast
 import json
+import re
 import sqlite3
 from pathlib import Path
-from typing import Literal, get_args
+from typing import get_args
 
 import httpx
 import pytest
@@ -131,32 +132,190 @@ def test_the_grants_table_and_the_project_model_declare_the_same_modes():
         )
 
 
-def test_no_egress_decision_is_written_as_a_comparison_against_a_mode_name():
-    """The shape that was inverted, guarded against coming back in a fifth site.
+# Every place in `api/`, `agents/` and `scripts/` that is allowed to write a mode name as a
+# literal, and how many times. Held equal - not as a subset - by the test below.
+#
+# This is an inventory, not an exemption list. Nothing here is excused from the rule; each entry
+# *is* the rule, written down with its reason, and the count is part of it. Adding a mode-name
+# literal anywhere - a new file, or a second one inside a function already listed - fails the
+# test and has to be justified here in one line before it can pass.
+_MODE_LITERALS: dict[str, tuple[int, str]] = {
+    "api/models.py::ProjectCreate": (4, "the Literal, and its default"),
+    "api/models.py::ProjectSettings": (4, "the Literal, and its default"),
+    "api/services/deployment_modes.py::<module>": (3, "the grants table - the declaration itself"),
+    "api/services/chroma_client.py::project_llm_mode": (
+        4, "reads the column and fails closed to 'sensitive'; decides no egress"
+    ),
+    "agents/model_registry.py::<module>": (
+        4, "_TIER_SETTINGS' second key, which means local/hosted rather than a mode - see M2"
+    ),
+    "agents/model_registry.py::get_llm_for_agent": (2, "indexes _TIER_SETTINGS, having asked permits()"),
+    "api/services/llm_client.py::resolve_model": (2, "indexes _TIER_SETTINGS, having asked permits()"),
+    "agents/egress.py::is_gated_by_mode": (
+        2, "asks the resolver the same question in two modes - a question, not a rule"
+    ),
+    "api/services/data_architecture_service.py::data_architecture": (
+        2, "the same two-mode question, for the page's 'gated_by_mode' badge"
+    ),
+    "agents/graph.py::build_graph": (1, "a default argument, documented in place"),
+}
 
-    Parsed rather than grepped: this file, `chroma_client.py` and `egress.py` all discuss
-    `mode == "sensitive"` in prose, and a substring search cannot tell a comment describing the
-    old shape from a line implementing it. An `ast.Compare` whose operand is one of the mode
-    literals is the thing itself.
 
-    `data_architecture_service.py:299` compares `inference_destination("standard")` with
-    `inference_destination("sensitive")` and is deliberately not caught: its operands are calls,
-    and it is asking whether the mode moves the destination rather than deciding egress by name.
+def _mode_literal_sites() -> dict[str, int]:
+    """Every mode-name string literal under `api/`, `agents/` and `scripts/`, by enclosing scope.
+
+    Keyed `path::qualname` and counted, because a location alone is too coarse: a fifth egress
+    decision added inside `resolve_model`, which legitimately holds two already, would not
+    create a new key. The count makes it visible.
     """
-    offenders = []
-    for path in sorted(_REPO_ROOT.glob("api/**/*.py")) + sorted(_REPO_ROOT.glob("agents/**/*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Compare):
+    found: dict[str, int] = {}
+
+    def visit(node: ast.AST, path: Path, scope: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                visit(child, path, scope + [child.name])
                 continue
-            operands = [node.left, *node.comparators]
-            for operand in operands:
-                if isinstance(operand, ast.Constant) and operand.value in EGRESS_GRANTS:
-                    offenders.append(f"{path.relative_to(_REPO_ROOT)}:{node.lineno}")
-    assert not offenders, (
-        "egress is decided by a grant, not by a mode's name - ask "
-        "api.services.deployment_modes.permits instead: " + ", ".join(offenders)
+            if isinstance(child, ast.Constant) and child.value in EGRESS_GRANTS:
+                key = f"{path.relative_to(_REPO_ROOT)}::{'.'.join(scope) or '<module>'}"
+                found[key] = found.get(key, 0) + 1
+            visit(child, path, scope)
+
+    for pattern in ("api/**/*.py", "agents/**/*.py", "scripts/**/*.py"):
+        for path in sorted(_REPO_ROOT.glob(pattern)):
+            visit(ast.parse(path.read_text(), filename=str(path)), path, [])
+    return found
+
+
+def test_every_mode_name_written_into_the_code_is_one_somebody_declared():
+    """Egress is decided by a grant, never by a mode's name - guarded against a *fifth* site.
+
+    **This test exists only for a site that does not exist yet.** The four that do are each
+    covered by a behavioural test above, which fails on what the site builds whatever the
+    condition is spelled like. So this one earns its place only if it detects the *coupling* -
+    a module deciding something from a mode name instead of from the grants table - rather than
+    one syntax for it. The first version did not, and review proved it: it matched only an
+    `ast.Compare` against a constant, so `== "standard"` was caught while
+    `in ("standard", "fallback")`, `!= _SENSITIVE` via a named constant, and `_TIER_SETTINGS[
+    (tier, "sensitive")]` all walked past. Worse, the report's own power-check technique used
+    the membership form precisely *because* it evaded the guard - which was evidence about the
+    guard that should have closed it.
+
+    So the rule is not about syntax at all: **every literal mode name in the source is
+    inventoried.** A comparison, a tuple membership, a `match` case, a dict subscript, a module
+    constant assigned for later use, a default argument - all of them are an `ast.Constant`
+    holding a mode name, and all of them land here. `scripts/` is swept as well as `api/` and
+    `agents/`, so a fifth site cannot hide by being somewhere the earlier glob did not look.
+
+    Docstrings and comments are structurally invisible: a docstring is one `Constant` holding
+    the whole docstring, never a bare `"sensitive"`, which is why three files may discuss the
+    old shape in prose without tripping this. That was the one thing the first version got
+    right, and it is kept.
+
+    **What remains out of reach, so the next reader knows the edge rather than trusting the
+    silence:**
+
+    - A name assembled at run time - `"sensi" + "tive"`, `"".join(...)`, a value read from
+      configuration or from another table. Nothing in the AST is the mode name.
+    - A comparison against a mode that is **not yet declared**: `mode == "sovereign"` written
+      before `sovereign` is in the table is invisible, because the inventory is keyed on the
+      table's own values. Declaring the mode arms the guard retroactively, which is the right
+      order, but it does mean the guard is weakest during exactly the change it protects. When
+      sovereign lands, add it to the table *first*.
+    - The frontend, which is a different language and is guarded separately below.
+    """
+    found = _mode_literal_sites()
+    expected = {key: count for key, (count, _) in _MODE_LITERALS.items()}
+
+    new = {k: v for k, v in found.items() if k not in expected}
+    assert not new, (
+        "a mode name is written into code that has not declared why: "
+        f"{new}. Egress is decided by asking api.services.deployment_modes.permits() for a "
+        "capability, never by testing a mode's name. If this literal genuinely decides no "
+        "egress, add it to _MODE_LITERALS with its reason."
     )
+    gone = {k: v for k, v in expected.items() if k not in found}
+    assert not gone, (
+        f"_MODE_LITERALS lists places that no longer hold a mode name: {gone}. Remove them - a "
+        "stale inventory entry is a place a real one could hide."
+    )
+    assert found == expected, (
+        "the number of mode-name literals changed in a place that already had some: "
+        f"{ {k: (expected[k], found[k]) for k in expected if expected[k] != found[k]} }. "
+        "A second literal inside a scope that legitimately holds one is exactly how a fifth "
+        "egress decision would arrive unnoticed."
+    )
+
+
+# --- The vocabulary across the language boundary ------------------------------------------------
+
+_FRONTEND_MODE_LISTS = {
+    "ui/src/types.ts": 1,
+    "ui/src/components/NewProjectModal.tsx": 3,
+    "ui/src/pages/Settings.tsx": 1,
+}
+
+
+def _frontend_mode_lists() -> dict[str, list[set[str]]]:
+    """Every list of modes the front end declares, extracted structurally.
+
+    Structurally, and not by searching for the three known names: a search keyed on the modes
+    would catch one going *missing* from a dropdown and would be blind to an extra one nobody
+    declared, which is the more dangerous direction - a mode a user can select and the grants
+    table has never heard of.
+
+    Two shapes, because the front end holds two kinds of list. A union type is read off any line
+    naming `llm_mode` or `llmMode`; the selectable options are read out of the `<select>` that
+    follows an `LLM Mode` label, which is the anchor both pages already share.
+    """
+    lists: dict[str, list[set[str]]] = {}
+    for relative in _FRONTEND_MODE_LISTS:
+        source = (_REPO_ROOT / relative).read_text()
+        found: list[set[str]] = []
+        for line in source.splitlines():
+            # Case-insensitive: the state hook is `llmMode` and its setter `setLlmMode`, so a
+            # case-sensitive anchor silently covered one of the modal's two unions and not the
+            # other - which is why the count above is asserted rather than assumed.
+            if not re.search(r"llm_?mode", line, re.IGNORECASE):
+                continue
+            for union in re.findall(r"'[a-z_]+'(?:\s*\|\s*'[a-z_]+')+", line):
+                found.append(set(re.findall(r"'([a-z_]+)'", union)))
+        for block in re.findall(r"LLM Mode</label>(.*?)</select>", source, re.S):
+            options = set(re.findall(r"<option value=\"([a-z_]+)\"", block))
+            if options:
+                found.append(options)
+        lists[relative] = found
+    return lists
+
+
+def test_the_front_end_offers_exactly_the_modes_the_grants_table_declares():
+    """A third and fourth copy of the vocabulary, one language over.
+
+    `api/models.py`'s two `Literal`s are now held equal to the table. A TypeScript copy free to
+    drift is the same defect in a different language, and there are four of them: the union in
+    `types.ts`, two more in `NewProjectModal.tsx`, and the `<option>` lists in that modal and in
+    `Settings.tsx` - the door that changes an *existing* project's mode, which is the one that
+    matters most and which nothing previously guarded.
+
+    Both directions are asserted, and the second is the sharp one. A mode in the table and
+    missing from a dropdown merely cannot be chosen. A mode in a dropdown and missing from the
+    table is selectable by a user and granted nothing by the server - which is safe, but is a
+    project that silently will not run rather than a form that refuses.
+
+    The shape `agents/identity.py` is already held to against `ui/src/components/agentStatus.ts`
+    - set equality, read out of the TypeScript source, with no derivation crossing the boundary.
+    """
+    declared = set(EGRESS_GRANTS)
+    lists = _frontend_mode_lists()
+
+    for relative, expected_count in _FRONTEND_MODE_LISTS.items():
+        assert len(lists[relative]) == expected_count, (
+            f"{relative} holds {len(lists[relative])} mode lists, expected {expected_count} - "
+            f"one was renamed, removed, or added, and this guard stopped covering it"
+        )
+        for found in lists[relative]:
+            assert found == declared, (
+                f"{relative} and EGRESS_GRANTS disagree about the modes: {found ^ declared}"
+            )
 
 
 # --- Site 1: the Chroma client ------------------------------------------------------------------
@@ -327,9 +486,14 @@ def test_the_privacy_view_reads_the_grants_rather_than_a_second_copy_of_them(mon
     move together here, something is still collapsing the mode to one word.
     """
     from agents.egress import inference_destination, resolve_egress
+    from api.services.deployment_modes import _EGRESS_GRANTS
 
+    # The private dict behind the public read-only view. `EGRESS_GRANTS` is a MappingProxyType
+    # precisely so that nothing in `api/` or `agents/` can write a row at run time; a test
+    # inventing a hypothetical mode is the one caller that needs to, and it says so by reaching
+    # for the private name rather than by the table being writable to everybody.
     monkeypatch.setitem(
-        EGRESS_GRANTS, "half-granted", frozenset({Capability.CLOUD_VECTOR_STORE})
+        _EGRESS_GRANTS, "half-granted", frozenset({Capability.CLOUD_VECTOR_STORE})
     )
     assert resolve_egress("ChromaQueryTool", "half-granted").leaves_deployment
     assert not inference_destination("half-granted").leaves_deployment
