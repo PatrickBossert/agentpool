@@ -201,9 +201,15 @@ def _shared_sources(graph) -> list[dict]:
 
     `reachable_by` is the finding the declared list cannot carry. `AGENT_READS` says which
     agents are *instructed* to read a collection; `ChromaQueryTool` takes the collection as an
-    argument, so any agent holding it can query any collection it names - and the sector store
-    is the tool's fallback for an unrecognised value rather than a special case. Derived from
-    the route: whoever holds the tool the read arrives through.
+    argument, so any agent holding it can query any tier it names. Derived from the route:
+    whoever holds the tool the read arrives through.
+
+    The gap used to be wider than that sentence admits. The sector store was the tool's
+    **fallback** for an unrecognised value, so an agent reached it without naming it and a
+    typo read as a deliberate sector query. `api.services.knowledge_tiers.collection_for`
+    now refuses anything outside the four tiers, so reaching a tier requires naming it - the
+    gap between `read_by` and `reachable_by` is real, but it is no longer something an agent
+    can fall into.
     """
     holders = _holders(graph)
     name = {agent_id: node.display_name for agent_id, node in graph.agents.items()}

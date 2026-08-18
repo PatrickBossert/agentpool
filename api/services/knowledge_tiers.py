@@ -1,0 +1,127 @@
+# api/services/knowledge_tiers.py
+"""The four knowledge tiers, and the one place a Chroma collection name is built.
+
+Knowledge in this deployment sits at one of three widths, and the difference should be a
+declaration rather than an accident:
+
+| Tier | Collection | Holds |
+|---|---|---|
+| `sector` | `sector_{sector}` | industry trends, regulatory context, benchmarks - shared by every engagement in that sector |
+| `organisation` | `org_{org_slug}` | annual reports, strategy, group policy - shared by every project of one organisation |
+| `project` | `{slug}_docs` | this project's own uploaded documents |
+| `interviews` | `{slug}_interviews` | this project's interview answers |
+
+Containment, not override: an agent may read all four, and nothing broader is hidden by
+anything narrower. A query names **one** tier and gets that tier - there is no cross-tier
+merging or ranking here, deliberately.
+
+**Why this module exists at all: the fallback.** `ChromaQueryTool` resolved its collection
+argument with
+
+    }.get(collection, f"sector_{self.sector}")
+
+so the store shared across every engagement in a sector was the answer to any name the dict
+did not hold - a typo, a renamed tier, an agent inventing a plausible word. That is one
+client's material arriving in another client's search results, silently, and it read in the
+graph as a deliberate sector read. Six agents hold the tool; three are declared to read the
+sector store.
+
+So the vocabulary is closed and **an unrecognised tier raises**. Refusal is the whole point:
+falling back to anything, and to the widest store in particular, is the defect.
+
+The same reasoning applies one level down, to a tier whose key is missing or blank.
+`sector_` and `_docs` are perfectly valid Chroma collection names, and each would be a store
+silently shared by every project whose key happened to be empty. They raise too.
+"""
+from __future__ import annotations
+
+import contextlib
+import sqlite3
+from pathlib import Path
+from typing import Literal
+
+from api.config import get_settings
+
+# Broadest to narrowest. The order is the containment hierarchy and is worth preserving:
+# anything presenting the tiers to a person should present them this way round.
+KNOWLEDGE_TIERS: tuple[str, ...] = ("sector", "organisation", "project", "interviews")
+
+Tier = Literal["sector", "organisation", "project", "interviews"]
+
+
+def collection_for(
+    tier: str,
+    *,
+    slug: str,
+    sector: str | None = None,
+    org_slug: str | None = None,
+) -> str:
+    """The Chroma collection holding `tier`'s material for this project.
+
+    Raises `ValueError` for anything that is not one of `KNOWLEDGE_TIERS`, and for a tier
+    whose key is missing or blank. Never falls back to another tier.
+
+    `org_slug` comes from `project_registry.org_id` (see `org_slug_for_project`). A project
+    with no registry row has **no organisation tier** - not an empty one, and certainly not
+    the sector store - so the organisation tier is refused for it. That is the same answer
+    `check_project_access` already gives such a project on its org branch, and it is a live
+    state rather than a hypothetical one: before sp39 every project lacked a registry row.
+    """
+    if tier not in KNOWLEDGE_TIERS:
+        raise ValueError(
+            f"Unknown knowledge tier {tier!r}. Valid tiers are: "
+            f"{', '.join(KNOWLEDGE_TIERS)}."
+        )
+
+    if tier == "sector":
+        if not (sector or "").strip():
+            raise ValueError(
+                "The sector tier needs a sector. This project names none, and 'sector_' "
+                "would be a store shared by every project that names none."
+            )
+        return f"sector_{sector}"
+
+    if tier == "organisation":
+        if not (org_slug or "").strip():
+            raise ValueError(
+                "The organisation tier needs an organisation. This project has no "
+                "project_registry row, so it belongs to no organisation and has no "
+                "organisation tier to read."
+            )
+        return f"org_{org_slug}"
+
+    if not (slug or "").strip():
+        raise ValueError(f"The {tier} tier needs a project slug.")
+
+    # `_docs`, not `_documents`: the design document writes `{slug}_documents`, but every
+    # collection this deployment has ever written is `{slug}_docs` - the ingest service, the
+    # document router's delete, and DocumentIngestionTool all build it that way. Renaming it
+    # here would orphan every ingested document on the live deployment, so the code wins.
+    return f"{slug}_docs" if tier == "project" else f"{slug}_interviews"
+
+
+def org_slug_for_project(slug: str) -> str | None:
+    """The slug of the organisation this project belongs to, or None if it belongs to none.
+
+    Synchronous, and opening its own connection, because the callers are: `ChromaQueryTool`
+    runs in CrewAI's thread pool rather than the event loop. This is the shape
+    `chroma_client.project_llm_mode` already uses for the same reason.
+
+    None on any failure, including a missing system database. The caller's response to None
+    is to refuse the organisation tier, so a failed read costs a refusal rather than a wrong
+    store - which is the direction to fail in when the alternative is reading somebody
+    else's material.
+    """
+    path = Path(get_settings().database_dir) / "system.db"
+    if not path.exists():
+        return None
+    try:
+        with contextlib.closing(sqlite3.connect(path)) as conn:
+            row = conn.execute(
+                "SELECT o.slug FROM project_registry p "
+                "JOIN organisations o ON o.id = p.org_id WHERE p.slug=?",
+                (slug,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None

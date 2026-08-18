@@ -10,6 +10,7 @@ never break one.
 import logging
 
 from api.services.chroma_client import get_chroma_client
+from api.services.knowledge_tiers import collection_for
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,9 @@ def search(slug: str, query: str, k: int = RETRIEVAL_TOP_K) -> list[dict]:
             return []
 
         client = get_chroma_client(slug)
-        collection = client.get_collection(f"{slug}_docs")
+        # The project tier, named rather than assembled: agent chat searches this project's
+        # own documents and nothing wider, and naming the tier is what makes that reviewable.
+        collection = client.get_collection(collection_for("project", slug=slug))
         count = collection.count()
         if not count:
             return []
