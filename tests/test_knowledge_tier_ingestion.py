@@ -601,6 +601,39 @@ async def test_a_reingest_returns_the_document_to_the_store_it_was_filed_in(clie
     assert _written_collections(chroma) == ["org_future-edge"]
 
 
+# ── The agent's own ingestion has no lever at all ────────────────────────────────────────
+
+def test_the_agent_ingestion_tool_offers_no_tier_to_name():
+    """An agent reading the client's own documents must not be able to publish them into a
+    store shared with the organisation's other engagements, or with other clients in the
+    sector. The guarantee is the absence of an argument, not a check it could argue with -
+    so it is asserted on the schema, which is the whole of what a crew can send."""
+    from agents.tools.document_ingestion import DocumentIngestionToolInput
+
+    assert set(DocumentIngestionToolInput.model_fields) == {"filename"}
+
+
+def test_the_agent_ingestion_tool_writes_the_project_store(tmp_path, monkeypatch):
+    """Asserted on the collection it asks Chroma for, because that is what decides whose
+    material a later retrieval returns."""
+    from agents.tools.document_ingestion import DocumentIngestionTool
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path))
+    docs_dir = tmp_path / SLUG / "docs"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "operating-model.txt").write_text("the depot runs two shifts")
+
+    collection = MagicMock()
+    chroma_client = MagicMock()
+    chroma_client.get_or_create_collection.return_value = collection
+    with patch("agents.tools.document_ingestion.get_chroma_client", return_value=chroma_client):
+        DocumentIngestionTool(slug=SLUG)._run()
+
+    chroma_client.get_or_create_collection.assert_called_once_with(name=f"{SLUG}_docs")
+    get_settings.cache_clear()
+
+
 # ── The column reaches a database that already exists ────────────────────────────────────
 
 @pytest.mark.asyncio
