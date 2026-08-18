@@ -100,6 +100,23 @@ must use `monkeypatch.setenv("DATABASE_DIR", str(tmp_path))` with `get_settings.
 both sides; tests using the shared `client` fixture must scope every assertion to a row they
 created rather than hardcoding an id or counting globally.
 
+**A module fixture that wipes the project `.db` is not enough.** `project_registry` lives in
+the *shared system* database, and `POST /projects` registers with `INSERT OR IGNORE` - so a
+test that reassigns a slug to another organisation leaves it owned by that organisation, and
+the next test's freshly created project silently inherits the owner. This is the half of the
+poisoned-database trap that no `.db` unlink reaches, and it applies to every module using the
+sibling pattern: clear the registry row and the organisation too.
+
+Two things that look like evidence during forensics on `data/` and are not:
+
+- **An AUTOINCREMENT high-water mark is not evidence of row churn here.** `init_system_db`
+  runs on *every* system connection with no version gate, and its `INSERT OR IGNORE INTO
+  organisations` bumps `sqlite_sequence` even when no row is created. It counts connection
+  opens. It read as thousands of phantom inserts against one real row during sp57 and is
+  nothing of the kind.
+- **A running server on :8000 rewrites `data/system.db` while idle** - the scheduler restamps
+  its heartbeat. Checksum before and after before attributing a change to the suite.
+
 ## Reviewing changes: the recurring failure mode
 
 Five times on this project a test has verified a property **one layer away from where it holds**.
@@ -419,6 +436,92 @@ Three sets of writes have neither gate, and all three are deliberate:
 - `/auth/*`, `/admin/skills/*`, templates and skill notes carry no slug, so there is nothing
   to walk. They take login-role dependencies instead.
 
+**A third question, and it is not one of the two axes.** Both axes ask who the caller is on
+this engagement. Neither asks **which store the write reaches**, and since sp57 that is a
+separate question with a separate answer, because a document filed at the sector tier leaves
+the engagement entirely - on a consultancy deployment `sector_{sector}` spans different
+clients. Four doors answer it, all through `require_writable_tier(slug, tier, payload,
+action=...)` in `authority_service.py`:
+
+| Door | Where the tier comes from | Verb |
+|------|---------------------------|------|
+| `POST /{slug}/documents/upload` | declared in the request, defaulting to `project` | `WRITE_ADD` (the default) |
+| `POST /{slug}/agent-chat/upload` | declared in the request, defaulting to `project` | `WRITE_ADD` (the default) |
+| `DELETE /{slug}/documents/{doc_id}` | read off the row - `_tier_of(doc)` | `WRITE_REMOVE` |
+| `POST /{slug}/documents/{doc_id}/reingest` | read off the row - `_tier_of(doc)` | `WRITE_REINDEX` |
+
+So a new write door has **four** things to remember, not three: the floor, the gate, the tier,
+and the verb. The verb reaches the refusal *sentence* and nothing else - the rule does not
+branch on it and must not start to, since adding, removing and re-indexing are all writes to
+one store and the authority for a store is the same whichever verb reaches it. It defaults to
+the upload doors', so forgetting it yields a slightly wrong sentence rather than a wrong
+decision, and the wrong sentence matters: an operator refused a delete and told they "may not
+add material" reads the product as broken rather than as refusing them.
+
+The two upload doors *declare* a tier; the two that act on an existing document *read* the one
+its row already carries. Never infer a tier from the caller or the project - a project belongs
+to one organisation and one sector, but a tier is a property of the **document**.
+
+`may_write_tier_on_project` decides in two halves and the order is load-bearing. The
+login-role half (`assert_may_write_tier`, in `knowledge_tiers.py`) settles the **vocabulary** -
+raising `ValueError` for a tier that does not exist rather than refusing it, because "no such
+tier" and "not yours" owe the caller different answers, and `require_writable_tier` is the one
+place they become 422 and 403 - and settles the **sector**, which is `sysadmin` alone and
+needs no project to decide. The project-scoped half settles the other two: `organisation`
+compares the project's `project_registry.org_id` through `may_access_org`, and `project` takes
+platform authority *scoped to this project's organisation*, or `project_admin` or `approver`
+from the walk.
+
+Sector is deliberately the narrowest authority in the system. That is not a judgement about
+how consequential the write feels; it is that the sector store is the only one whose
+readership is other clients. **A consequence to expect rather than diagnose:** a sector-tier
+document uploaded in error is removable by a `sysadmin` alone, so an `org_admin` cannot undo
+their own misfiling. The refusal names the tier so they can say what to ask for.
+
+**Removing material is a write**, and the check sits **before** the purge - a refusal raised
+after the chunks are gone is not a refusal. `reingest` took the same check unasked, because it
+re-writes the document's chunks into the store its row names; two adjacent doors where only
+one asks is how the next sweep finds the second.
+
+**Material only ever moves narrower**, and at the ingest path that is structural rather than
+checked: the project branch passes neither the sector nor the organisation key to
+`collection_for`, and no caller anywhere hands the ingest path a collection *name*. There is
+no promotion door, deliberately - a document reaches a broader store only by being uploaded
+there by somebody who may write there.
+
+**Deleting from a shared store needs the slug on the chunk, not just the collection.**
+`doc_id` is a per-project SQLite id, so deleting by `doc_id` alone in `org_` or `sector_`
+would take a sibling project's chunks with it. `chunk_filter_for(slug, doc_id, tier)` in
+`ingest_service.py` is the one place that is decided, and it is **asymmetric on purpose**:
+`{"doc_id": ...}` at the project tier, `{"$and": [...]}` at the broader ones. The asymmetry is
+a correctness requirement running in the direction that surprises people. Every chunk ingested
+before sp57 carries no `slug` metadata at all, so a project-tier filter naming `slug` would
+match none of them and the delete would remove nothing - a failure that looks like a working
+delete. The broader tiers are safe to filter strictly for the mirror-image reason: nothing was
+ever written there before.
+
+`GET /my-permissions` answers `writable_knowledge_tiers`, project-scoped and broadest first,
+and the upload dialog's tier picker filters on it. **Never restate the rule in TypeScript** - a
+tier a caller cannot write must not be rendered at all.
+
+**The store a document is in is recorded, not recalculated.**
+`client_documents.knowledge_collection` holds the name Chroma was actually handed, written in
+`update_document_ingested` at the moment the write succeeds - the moment an address stops
+being a calculation and becomes a fact. The tier alone was durable from the start, and it is
+only **one of three inputs** to a collection name; the other two were re-read at delete time
+and both move through ordinary, correctly-gated doors. `projects.sector` sits deliberately
+outside `_PLATFORM_TIER_SETTINGS`, so a `project_admin` may change it through `PATCH
+/{slug}/settings`, and `insert_project_registry` is an upsert whose whole purpose is
+reassigning an engagement. Change either between upload and delete, and the delete purged a
+store the write had never touched, answered **204**, and removed the row and the file - leaving
+the text permanently retrievable in a shared store with nothing left that could name it,
+because the row was the handle. The organisation variant strands it in a *different client's*
+store, and `get_or_create_collection` creates that store on the way past. Both doors now read
+the recorded name and fall back to re-derivation only when it is blank, so no legacy document
+becomes undeletable. This is the same principle stated below under *Resolving an output: ask
+the ledger, never the disk* - an address that is re-derived is an address that can move
+underneath the thing it points at.
+
 **Never alias an auth dependency on import.** `milestones.py` and `nonworking.py` used to do
 `from api.auth import require_any_auth as get_current_user`, and it hid a cross-project hole
 for as long as the files existed: every handler read `Depends(get_current_user)`, which is
@@ -448,22 +551,39 @@ question is which authenticated write path should have done it earlier.
 **Enumerate by behaviour, not by name.** The alias hid two files from a `require_any_auth`
 grep; `pam_report.py` then hid from the *alias* sweep by not aliasing, and it had the same
 hole. Two accidental discoveries meant the enumeration was wrong twice, so it was done
-properly: 96 handlers are mounted under a path containing `{slug}`, and the check is whether
-each one calls `check_project_access`. Reproduce it with an AST walk over `api/routers/*.py`
-that joins each `APIRouter(prefix=...)` to its `@router.<method>` paths - not with a grep for
-a dependency name, which is what missed it both times. **Ninety-three of the ninety-six call
-it.** The three that do not:
+properly: 97 handlers are mounted under a path containing `{slug}`, and the check is whether
+each one calls `check_project_access`. **Ninety-five of the ninety-seven call it.** The two
+that do not:
 
 | Door | Why not |
 |------|---------|
 | `GET /projects/{slug}/branding/image` | Deliberate - no auth at all. The interview page renders it for a participant who has no login. If that image ever becomes client-confidential the fix is session-token scoping, not `check_project_access`. |
 | `DELETE /auth/projects/{slug}` | Registry administration, `require_sysadmin`. Global by nature, and a sysadmin passes the floor unconditionally, so the call would be a no-op. |
-| `WEBSOCKET /ws/{slug}` | **Open, and unauthenticated entirely** - no token, no dependency. Streams agent log lines for any slug to anyone who can reach the port. `useWebSocket.ts` connects with no credential, so closing it needs a token-passing scheme (subprotocol or query parameter) before a gate can exist at all. The largest remaining exposure on this surface. |
+
+`WEBSOCKET /ws/{slug}` was the third row and this file called it the largest remaining
+exposure on the surface: open to anyone who could reach the port, streaming agent log lines
+that carry client material verbatim. It is closed and has been for a while - `api/routers/
+ws.py` reads the JWT out of `Sec-WebSocket-Protocol` (two offered names, the literal `bearer`
+then the token) and calls `check_project_access` **before** `accept()`, so a refused caller
+never holds a socket at all. A browser cannot set an `Authorization` header on a handshake,
+which is why this stayed open; `?token=` was rejected as worse than the hole, since sessions
+here roll for thirty days and a URL lands in proxy logs, history and referrers. **The row
+outlived the defect by several sprints, which is the reason to distrust a table like this one
+rather than the reason to delete it** - a stale hole lends false confidence to the entries
+beside it.
+
+**Reproduce the sweep by enumerating `app.routes`, not by grepping decorators.** The recipe
+this file used to give - an AST walk joining each `APIRouter(prefix=...)` to its
+`@router.<method>` paths - undercounts by two today, because `api/routers/inbound_mail.py`
+names its second router `replies_router` and both its doors are invisible to a walk keyed on
+the name `router`. They do call `check_project_access`; the point is that the technique could
+not have told you. That is *enumerate by behaviour, not by name* biting the recipe written to
+enforce it, which is the third time on this codebase a name-keyed sweep has missed a file.
 
 **The sweep counts routes whose *path* holds `{slug}` and nothing else.** A project-scoped
 door taking its slug from the request *body* does not appear in it - `POST
 /api/interviews/test/elaboration-press` is that shape, and does call `check_project_access`,
-but the technique cannot see it. Ninety-six is not a completeness guarantee.
+but the technique cannot see it. Ninety-seven is not a completeness guarantee.
 
 `POST` and `DELETE /auth/users/{user_id}/projects/{slug}` were the sweep's most important
 find and are closed. They write the `project_memberships` table that every
@@ -779,10 +899,15 @@ Reaching for `AsyncAnthropic(base_url=...)` instead POSTs `{base_url}/v1/message
 test that swaps the client class cannot see this; assert against an `httpx.MockTransport` and
 read the request's real URL.
 
-The slug is required, not defaulted. `project_llm_mode("")` finds no database and answers
-`"standard"`, so a forgotten slug is a silent hosted call - which is exactly how the test
-interview dialog sent a sensitive project's answers to Anthropic while holding the slug in its
-props and discarding it.
+The slug is required, not defaulted. `project_llm_mode("")` used to find no database and
+answer `"standard"`, so a forgotten slug was a silent hosted call - which is exactly how the
+test interview dialog sent a sensitive project's answers to Anthropic while holding the slug
+in its props and discarding it. A blank or whitespace-only slug now **raises**, and the other
+two branches are untouched and asserted apart from it: a database that does not exist still
+answers `"standard"` (a genuinely absent project has no secrets, and `create_project` resolves
+a mode inside the window between `get_connection` and `insert_project`), and a database that
+exists but cannot be read still fails closed to `"sensitive"`, uncached. Three branches, not
+two - a later tidy-up that flattens them re-opens whichever one it merges away.
 
 **What is covered, precisely:**
 
@@ -795,11 +920,57 @@ props and discarding it.
 | Agent Chat with an **image** attached, sensitive project | **Refused** (503) - image blocks have no chat-completions equivalent here, and dropping or sending them are both wrong |
 | Skills library (`api/services/skills_service.py`, `api/routers/skill_notes.py`) | **No** - always hosted Haiku |
 
-The skills library is the one remaining hosted path. It is a deliberate gap rather than an
-oversight: the library is global across engagements, its endpoints carry no slug, and the text
-is reviewer feedback about an agent's behaviour rather than client material. It is still
-reviewer feedback typed on a sensitive engagement, so a project-scoped skills library is the
-fix if that ever stops being acceptable - not a default slug.
+The skills library is the one remaining hosted *inference* path. It is a deliberate gap rather
+than an oversight: the library is global across engagements, its endpoints carry no slug, and
+the text is reviewer feedback about an agent's behaviour rather than client material. It is
+still reviewer feedback typed on a sensitive engagement, so a project-scoped skills library is
+the fix if that ever stops being acceptable - not a default slug.
+
+### Egress is granted, never assumed
+
+`api/services/deployment_modes.py` declares, per mode, what it may do with a project's
+material - `CLOUD_VECTOR_STORE`, `HOSTED_INFERENCE` - and a site asks `permits(mode,
+capability)` rather than comparing a mode name. Four sites used to ask `mode == "sensitive"`
+and hand everything else the off-premises branch: the Chroma client, the crew LLM, the
+non-crew completion, and the auditor-facing privacy view. That shape is safe for exactly as
+long as nobody adds a mode, `api/models.py` already declared three, and a fourth - sovereign:
+hosted models, a local vector store - is planned. **A mode absent from the table is granted
+nothing**, warned about rather than raised (matching `project_llm_mode`'s neighbouring
+fail-closed-and-warn), so the cost of forgetting is a project that will not run rather than a
+project that leaks. The miss falls towards containment; the fallback this branch deleted -
+`ChromaQueryTool`'s `.get(collection, f"sector_{self.sector}")` - fell towards disclosure. A
+default is not a defect; a default pointing the wrong way is.
+
+Adding a mode means a row here **and** a value in *both* `Literal`s in `api/models.py`
+(`ProjectCreate` and `ProjectSettings`, which is one more than anybody remembers), and the
+declaration is held equal to those and to five frontend option lists - including
+`Settings.tsx`, the door that changes an *existing* project's mode. The frontend lists are
+extracted structurally rather than by searching for the three known names, because a
+name-keyed search catches a *missing* mode and is blind to an *extra* one, which is the
+dangerous direction: selectable by a user, unknown to the server.
+
+**The boundary, stated honestly.** For those two declared capabilities, nothing leaves a
+`sensitive` deployment. Five paths still send material off-premises with **no mode question
+asked at all** - the skills library, `TavilySearchTool`, `WebFetchTool`, Deepgram/ElevenLabs,
+and Resend - every one pre-existing, none widened here, and each already documented in this
+file or declared in `agents/egress.py` (where an ungated reach resolves to the same
+`Destination` in both modes, written out rather than left implicit, because that sameness *is*
+the finding). "Nothing escapes secure mode" is true of the two capabilities and of nothing
+wider.
+
+**The guard, and its blind spot.** `tests/test_deployment_modes.py` inventories every literal
+mode name under `api/`, `agents/` and `scripts/`, attributed to `path::qualname` and
+**counted**, held equal to a ten-entry table in which each entry carries its reason. Syntax
+stops mattering - a comparison, a tuple membership, a `match` case, a dict subscript and a
+default argument are all one `ast.Constant` - and the count is load-bearing, because
+`resolve_model` legitimately holds two, so a fifth decision *inside* it would create no new
+key. The first version matched only `ast.Compare` against a constant and walked past
+everything else; the tell was that the author's own power-check technique had adopted the
+membership form *because* it evaded the guard. A technique adopted to evade a guard is
+evidence about the guard. What the inventory still cannot see is a name assembled at run time,
+and **a mode name written before it is declared**, since it keys on the table's own values -
+so it is weakest during exactly the change it protects. **When sovereign lands, add it to
+`EGRESS_GRANTS` first, then wire the routing.**
 
 ---
 
@@ -1051,6 +1222,39 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   row sent back to the agent is therefore invisible to the query but still reset by the copy -
   a send-back cleared without ever having been actionable. Unreachable only because
   retirement is (see above). Extract the condition rather than copying it a third time.
+- **`POST /projects` lets an `org_admin` claim an unregistered project.** It is the one route
+  in `api/routers/projects.py` with no `check_project_access`, it answers **200** to a re-POST
+  of a slug that already exists, and it registers that slug to the *caller's* organisation. So
+  an org_admin of an unrelated organisation goes 403, re-POSTs the slug, and then reads the
+  whole engagement as a legitimate member. Bounded twice: `register_project_if_unregistered`
+  is `INSERT OR IGNORE`, so a project that *has* a registry row cannot be dragged out of its
+  organisation, and `list_all_projects` filters by organisation, so the slug is never disclosed
+  to the attacker - they must already know it, and slugs travel in URLs and report headers.
+  Not merely an access grant: claiming repoints the project's **organisation store**, read and
+  write, so an org-tier upload afterwards lands in the claimant's `org_` collection. The
+  precondition is non-empty on the current deployment - `vc-sort-check` is a project database
+  with no `project_registry` row. Its own task, not a patch inside a tier rule: the same fix
+  is `check_project_access` on `POST /projects` for the whole engagement.
+- **A failed reingest leaves chunks behind with `ingested=0`.** The first ingest's chunks stay
+  in the store while the row is marked not-ingested, and `DELETE /{slug}/documents/{doc_id}`
+  purges only `if doc["ingested"]` (`api/routers/documents.py:225`) - so the delete answers
+  204 and removes nothing. Pre-existing. `knowledge_collection` now records the handle that
+  would close it.
+- **`api/services/interview_answer_service.py:217` still builds `f"{slug}_interviews"` by
+  hand** - the sixth site constructing a collection name outside `collection_for`, and the
+  shape this class of defect keeps arriving in.
+- **A migration that raises takes every later migration in the block down with it**, so each
+  one must be defensive about the shape it finds. SQLite prepares a correlated subquery when
+  the statement is prepared rather than when a row matches, so a `SELECT p.sector ...` raises
+  on any database whose hand-built `projects` table lacks the column - several test fixtures
+  build that table by hand. Guard each half with `PRAGMA table_info` and skip *itself* rather
+  than the rest of the block.
+- `agents/model_registry.py`'s `_TIER_SETTINGS` has a second key spelled `"standard"` /
+  `"sensitive"` but **meaning** hosted / local, and any non-granted mode now reads its
+  `"sensitive"` row. Rename it to local/hosted **before** sovereign lands, or a
+  hosted-inference-with-local-vectors mode will read `("deep", "standard")` and the key becomes
+  actively misleading rather than merely dated. Not renamed already because `llm_client.py`
+  imports the table.
 
 ---
 
