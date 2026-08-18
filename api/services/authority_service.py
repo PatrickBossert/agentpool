@@ -170,6 +170,27 @@ async def require_project_administration(slug: str, payload: dict) -> None:
         raise HTTPException(status_code=403, detail=PROJECT_ADMINISTRATION_REQUIRED)
 
 
+def require_writable_tier(tier: str, payload: dict) -> None:
+    """`assert_may_write_tier` as a status code, for the two upload doors.
+
+    The rule itself lives in `api/services/knowledge_tiers.py` - this is only the translation,
+    stated once so the two doors cannot answer the same refusal differently. Same shape as
+    `require_project_administration` above, and for the same reason.
+
+    422 for a tier that does not exist, 403 for one that does and is not the caller's. Folding
+    them together would tell a reviewer who asked for the sector store that they had made a
+    typo, and tell somebody who did make a typo that they lacked authority.
+    """
+    from api.services.knowledge_tiers import TierWriteRefused, assert_may_write_tier
+
+    try:
+        assert_may_write_tier(tier, payload)
+    except TierWriteRefused as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 async def caller_may_grant_project_roles(slug: str, payload: dict) -> bool:
     """Whether this caller may *grant* `is_project_admin` or `is_governor` on this project.
 

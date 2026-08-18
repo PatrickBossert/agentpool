@@ -100,6 +100,88 @@ def collection_for(
     return f"{slug}_docs" if tier == "project" else f"{slug}_interviews"
 
 
+# ── Writing: material only ever moves narrower ───────────────────────────────────────────
+#
+# Reading is containment - an agent may read all four tiers and nothing broader is hidden by
+# anything narrower. Writing is the opposite shape, and deliberately so: a project's documents
+# never land in its organisation's store, and an organisation's never land in its sector's.
+# Without that rule one division's investment proposals become another division's search
+# results, and nobody would think to look for the reason.
+#
+# So promotion to a broader tier is a **deliberate act with authority for the destination**,
+# never a side effect of ingestion. There is no promotion door on this branch (see the task
+# report): a document reaches a broader store only by being uploaded there, by somebody who
+# may write there, and the tier is declared at the door rather than inferred afterwards.
+
+# The tiers a document may be uploaded at. `interviews` is deliberately absent: that store is
+# written by the interview pipeline out of what somebody actually said, and a document filed
+# into it would be retrieved with an answer's provenance.
+UPLOADABLE_TIERS: tuple[str, ...] = ("sector", "organisation", "project")
+
+# The narrowest, because the safe case must not be the one that requires thought. A default of
+# `organisation` would make every unconsidered upload a shared one.
+DEFAULT_UPLOAD_TIER = "project"
+
+
+class TierWriteRefused(Exception):
+    """The caller may not write the tier they declared.
+
+    Distinct from `ValueError`, which is what an unknown tier raises: one is a caller who
+    asked for something that does not exist, the other a caller who asked for something that
+    does exist and is not theirs. The routers owe them different status codes.
+    """
+
+
+def writable_tiers(payload: dict | None) -> tuple[str, ...]:
+    """The tiers this caller may write material into, broadest first.
+
+    Decided by the caller's authority and by nothing else - emphatically not by which door
+    they came through. The two upload doors are gated differently today (the chat door on the
+    `approver` content role, the documents door on `require_org_admin_or_above`), which is a
+    known asymmetry this branch does not reconcile; what it must not do is let that asymmetry
+    decide how wide a store a caller can reach.
+
+    `sector` is sysadmin alone. On a consultancy deployment a sector store spans *different
+    clients*, which is either the product's value or its worst leak depending entirely on
+    what goes into it, so it takes the only role that is scoped to the whole deployment.
+
+    `organisation` is org_admin or above. An org_admin administers exactly one organisation
+    and `check_project_access` already refuses them every slug outside it, so the destination
+    they can reach is their own organisation's store and no other.
+
+    `project` is everybody who got through the door at all. The tier adds nothing there - the
+    door's own gate is the authority for a project write, and always has been.
+    """
+    role = (payload or {}).get("role")
+    if role == "sysadmin":
+        return ("sector", "organisation", "project")
+    if role == "org_admin":
+        return ("organisation", "project")
+    return ("project",)
+
+
+def assert_may_write_tier(tier: str, payload: dict | None) -> None:
+    """Raise unless this caller may write `tier`. The rule, not its status code.
+
+    Lives here rather than in either router because a condition copied into two call sites is
+    a condition that has already started to diverge - see the register_scripts_sync /
+    scripts_awaiting_regeneration entry in CLAUDE.md, where two copies of one WHERE clause did
+    exactly that. Routers translate the refusal into a status code; they do not own the rule.
+    """
+    if tier not in UPLOADABLE_TIERS:
+        raise ValueError(
+            f"Unknown knowledge tier {tier!r}. A document may be uploaded at: "
+            f"{', '.join(UPLOADABLE_TIERS)}."
+        )
+    if tier not in writable_tiers(payload):
+        raise TierWriteRefused(
+            f"You may not add material at the {tier} tier. Material only ever moves narrower, "
+            f"so writing it needs authority for the destination: the sector store is sysadmin "
+            f"alone and the organisation store is org admin or above. You may write: "
+            f"{', '.join(writable_tiers(payload))}."
+        )
+
+
 def org_slug_for_project(slug: str) -> str | None:
     """The slug of the organisation this project belongs to, or None if it belongs to none.
 

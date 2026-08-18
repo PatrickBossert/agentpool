@@ -167,6 +167,11 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             ingested     INTEGER NOT NULL DEFAULT 0,
             ingest_status TEXT NOT NULL DEFAULT 'pending',
             ingest_error TEXT,
+            -- Which knowledge store this document's chunks were written into. Recorded rather
+            -- than re-derived, because it is what the delete door has to address: a document
+            -- uploaded at the organisation tier whose chunks are removed from `{slug}_docs`
+            -- is a delete that removes nothing.
+            knowledge_tier TEXT NOT NULL DEFAULT 'project',
             uploaded_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -723,6 +728,25 @@ async def _migrate_document_ingest_status(conn: aiosqlite.Connection) -> None:
         )
     if "ingest_error" not in cols:
         await conn.execute("ALTER TABLE client_documents ADD COLUMN ingest_error TEXT")
+    await conn.commit()
+
+
+async def _migrate_document_knowledge_tier(conn: aiosqlite.Connection) -> None:
+    """Record which knowledge store each document's chunks went into.
+
+    Every existing row is 'project' and that is not a default standing in for "unknown": until
+    this branch there was no other store anything could be written to, so the column's default
+    is a statement of fact about every document that predates it. The delete door reads it to
+    decide which collection to purge, and a wrong answer there leaves chunks retrievable after
+    an operator believes the document gone.
+    """
+    async with conn.execute("PRAGMA table_info(client_documents)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "knowledge_tier" not in cols:
+        await conn.execute(
+            "ALTER TABLE client_documents ADD COLUMN knowledge_tier TEXT NOT NULL "
+            "DEFAULT 'project'"
+        )
     await conn.commit()
 
 
@@ -1530,9 +1554,11 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # stamp it with the PREVIOUS version, open it, and assert the migration reached it. See
 # tests/test_stakeholder_synthetic_migration.py, which fails on 8 and passes on 9;
 # tests/test_stakeholder_node_assignments_retired.py, which fails on 9 and passes on 10;
-# and tests/test_inbound_replies.py::test_a_database_already_at_the_previous_version_gets_
-# the_inbound_replies_table, which fails on 10 and passes on 11.
-_SCHEMA_VERSION = 11
+# tests/test_inbound_replies.py::test_a_database_already_at_the_previous_version_gets_
+# the_inbound_replies_table, which fails on 10 and passes on 11; and
+# tests/test_knowledge_tier_ingestion.py::test_a_database_at_the_previous_version_gains_the_
+# knowledge_tier_column, which fails on 11 and passes on 12.
+_SCHEMA_VERSION = 12
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1629,6 +1655,7 @@ async def get_connection(slug: str):
             await _migrate_interview_sessions_checkpoint(conn)
             await _migrate_interview_answers(conn)
             await _migrate_document_ingest_status(conn)
+            await _migrate_document_knowledge_tier(conn)
             await _migrate_project_milestones(conn)
             await _migrate_milestone_baselines(conn)
             await rename_crew_in_stored_rows(conn)
@@ -1859,12 +1886,22 @@ async def insert_document(
     file_path: str,
     content_type: str,
     size_bytes: int,
+    knowledge_tier: str = "project",
 ) -> int:
+    """Record an uploaded document.
+
+    `knowledge_tier` defaults to the narrowest store, so a caller that has not thought about
+    tiers files the document where it can only be read by this project. It is recorded here
+    rather than derived later because the delete door has to purge the store the write
+    actually used.
+    """
     cur = await conn.execute(
         """INSERT INTO client_documents
-           (project_id, filename, original_name, file_path, content_type, size_bytes)
-           VALUES (?,?,?,?,?,?)""",
-        (project_id, filename, original_name, file_path, content_type, size_bytes),
+           (project_id, filename, original_name, file_path, content_type, size_bytes,
+            knowledge_tier)
+           VALUES (?,?,?,?,?,?,?)""",
+        (project_id, filename, original_name, file_path, content_type, size_bytes,
+         knowledge_tier),
     )
     await conn.commit()
     return cur.lastrowid
