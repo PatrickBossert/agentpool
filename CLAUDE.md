@@ -209,6 +209,22 @@ no-ops — notes that save, display in the UI, and never reach the agent. `Rerun
 out**, posting one review per crew output, so anything assembling review feedback into a prompt
 must deduplicate or it repeats the same instruction N times.
 
+**Nothing notifies a reviewer that a gate is waiting.** `HumanInputTool` writes the review to the
+project database and polls it until a human decides. It used to post the review to an n8n webhook
+first, which relayed to Slack; SP50 retired n8n and no channel replaced the post. The gate is
+unaffected — the polling was always the mechanism and the post only a nudge, and any deployment
+that never configured `N8N_WEBHOOK_URL` already ran exactly this way — but an agent can now sit on
+a gate for the full 24-hour timeout with nobody aware. `tests/test_human_input.py` asserts the
+absence at the boundary rather than describing it, so the state is checked rather than assumed.
+
+The intended replacement, decided 2026-08-17, is a **message push carrying a link and a token that
+brings the reviewer to the content on the server** — never the content itself. Half of it already
+existed in the retired payload, which carried a `review_url` pointing at the dashboard; what it
+lacked was a token and a channel that was not n8n. `deliver_reset` in
+`api/services/invite_service.py` is the established shape for "one place delivery is decided", and
+while `FROM_EMAIL` names an unverified Resend domain an administrator-visible link is the honest
+channel — the same one the invite and reset doors run on today.
+
 Authority on a project is read, never inferred. `caller_roles(slug, payload)` in
 `api/services/authority_service.py` walks JWT to `users`, to `project_memberships` for that
 slug, to the `stakeholders` row it names, and returns the roles that row carries -
