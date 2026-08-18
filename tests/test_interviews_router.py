@@ -564,7 +564,7 @@ async def test_email_transcript_rejects_foreign_destination(client, clean_email_
     token = "email-token-foreign"
     await _seed_completed_session(client, token)
 
-    with patch("api.routers.interviews.httpx.AsyncClient") as mock_client:
+    with patch("api.routers.interviews.send_project_mail", AsyncMock()) as mock_send:
         r = await client.post(
             f"/api/interviews/{token}/email-transcript",
             json={
@@ -576,7 +576,7 @@ async def test_email_transcript_rejects_foreign_destination(client, clean_email_
     assert r.status_code == 403
     assert r.json()["detail"] == "Email does not match session"
     # Crucially: no outbound request was attempted
-    mock_client.assert_not_called()
+    mock_send.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -585,15 +585,10 @@ async def test_email_transcript_allows_matching_destination(client, clean_email_
     token = "email-token-match"
     await _seed_completed_session(client, token)
 
-    mock_resp = type("R", (), {"status_code": 200})()
-    mock_ctx = AsyncMock()
-    mock_ctx.post = AsyncMock(return_value=mock_resp)
-
-    with patch("api.routers.interviews.httpx.AsyncClient") as mock_client, \
+    with patch("api.routers.interviews.send_project_mail",
+               AsyncMock(return_value=True)) as mock_send, \
          patch("api.routers.interviews.get_settings") as mock_settings:
-        mock_client.return_value.__aenter__.return_value = mock_ctx
         mock_settings.return_value.resend_api_key = "re_test"
-        mock_settings.return_value.from_email = "T <noreply@example.com>"
 
         r = await client.post(
             f"/api/interviews/{token}/email-transcript",
@@ -604,10 +599,13 @@ async def test_email_transcript_allows_matching_destination(client, clean_email_
         )
 
     assert r.status_code == 200
-    sent = mock_ctx.post.call_args.kwargs["json"]
-    assert sent["to"] == [_STAKEHOLDER_EMAIL]
+    # The address the endpoint *intends* - which is the security control this test is
+    # about. Where it actually lands is send_project_mail's decision, asserted against
+    # a real transport in tests/test_outbound_mail_seam.py.
+    assert mock_send.await_args.kwargs["to"] == [_STAKEHOLDER_EMAIL]
     # The caller's edited text is preserved — that feature must keep working
-    assert "edited answer" in sent["text"]
+    assert "edited answer" in mock_send.await_args.kwargs["body"]
+    assert mock_send.await_args.kwargs["slug"] == _EMAIL_SLUG
 
 
 @pytest.mark.asyncio
@@ -616,15 +614,10 @@ async def test_email_transcript_match_is_case_insensitive(client, clean_email_tr
     token = "email-token-case"
     await _seed_completed_session(client, token)
 
-    mock_resp = type("R", (), {"status_code": 200})()
-    mock_ctx = AsyncMock()
-    mock_ctx.post = AsyncMock(return_value=mock_resp)
-
-    with patch("api.routers.interviews.httpx.AsyncClient") as mock_client, \
+    with patch("api.routers.interviews.send_project_mail",
+               AsyncMock(return_value=True)), \
          patch("api.routers.interviews.get_settings") as mock_settings:
-        mock_client.return_value.__aenter__.return_value = mock_ctx
         mock_settings.return_value.resend_api_key = "re_test"
-        mock_settings.return_value.from_email = "T <noreply@example.com>"
 
         r = await client.post(
             f"/api/interviews/{token}/email-transcript",
@@ -643,7 +636,7 @@ async def test_email_transcript_rejects_whitespace_padded_address(client, clean_
     token = "email-token-padded"
     await _seed_completed_session(client, token)
 
-    with patch("api.routers.interviews.httpx.AsyncClient") as mock_client:
+    with patch("api.routers.interviews.send_project_mail", AsyncMock()) as mock_send:
         r = await client.post(
             f"/api/interviews/{token}/email-transcript",
             json={
@@ -653,7 +646,7 @@ async def test_email_transcript_rejects_whitespace_padded_address(client, clean_
         )
 
     assert r.status_code == 422
-    mock_client.assert_not_called()
+    mock_send.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

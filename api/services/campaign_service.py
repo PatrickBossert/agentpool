@@ -6,9 +6,9 @@ import json as _json
 from datetime import datetime, timezone
 
 from api.config import get_settings
-import httpx
 
 from api.services.interview_service import interview_url
+from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
 from api.database import (
     get_connection,
     get_db_path,
@@ -471,51 +471,59 @@ async def update_reminder_email_svc(
 
 
 async def send_reminder_emails_svc(slug: str) -> dict | None:
-    """Send all approved reminder emails via Resend and update their status.
+    """Send all approved reminder emails and update their status.
 
     Returns {"sent": N, "failed": M, "skipped": K} or None if project not found.
     Skips dispatch if RESEND_API_KEY is not configured (returns skipped count).
+
+    Delivery is `send_project_mail`'s decision, not this function's. It used to post
+    each stakeholder's own address straight to Resend with no `dev_mode` check at all -
+    which is what made `dev_mode` a promise the setting did not keep, and it was the
+    reminder sender rather than the invitation sender because there is no invitation
+    sender: an interview link reaches a participant through this path or by hand.
+
+    The reads and the writes are deliberately either side of the sends rather than
+    wrapped around them. `send_project_mail` opens its own connection to read the
+    project's mode, and holding a write connection open across sixty of those is a
+    self-inflicted contention problem with nothing to gain from it.
     """
     if not get_db_path(slug).exists():
         return None
 
-    settings = get_settings()
-    api_key = settings.resend_api_key
-    from_email = settings.from_email
+    if not get_settings().resend_api_key:
+        async with get_connection(slug) as conn:
+            project = await fetch_project(conn, slug=slug)
+            if not project:
+                return None
+            emails = await fetch_approved_reminder_emails(conn, project_id=project["id"])
+        return {"sent": 0, "failed": 0, "skipped": len(emails),
+                "error": "RESEND_API_KEY not configured"}
 
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
             return None
-
         emails = await fetch_approved_reminder_emails(conn, project_id=project["id"])
 
-        if not api_key:
-            return {"sent": 0, "failed": 0, "skipped": len(emails), "error": "RESEND_API_KEY not configured"}
+    outcomes: list[tuple[int, str]] = []
+    for email in emails:
+        try:
+            # Stakeholders and participants: a reminder is an interview request, and it
+            # carries the same face as every other message a participant receives.
+            posted = await send_project_mail(
+                slug=slug,
+                audience=STAKEHOLDERS,
+                to=[email["stakeholder_email"]],
+                subject=email["subject"],
+                body=email["body"],
+            )
+            outcomes.append((email["id"], "sent" if posted else "failed"))
+        except Exception:
+            outcomes.append((email["id"], "failed"))
 
-        sent = failed = 0
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            for email in emails:
-                payload = {
-                    "from": from_email,
-                    "to": [email["stakeholder_email"]],
-                    "subject": email["subject"],
-                    "text": email["body"],
-                }
-                try:
-                    resp = await client.post(
-                        "https://api.resend.com/emails",
-                        json=payload,
-                        headers={"Authorization": f"Bearer {api_key}"},
-                    )
-                    if resp.status_code in (200, 201):
-                        await mark_reminder_email_sent(conn, email_id=email["id"], status="sent")
-                        sent += 1
-                    else:
-                        await mark_reminder_email_sent(conn, email_id=email["id"], status="failed")
-                        failed += 1
-                except Exception:
-                    await mark_reminder_email_sent(conn, email_id=email["id"], status="failed")
-                    failed += 1
+    async with get_connection(slug) as conn:
+        for email_id, status in outcomes:
+            await mark_reminder_email_sent(conn, email_id=email_id, status=status)
 
-        return {"sent": sent, "failed": failed, "skipped": 0}
+    sent = sum(1 for _, status in outcomes if status == "sent")
+    return {"sent": sent, "failed": len(outcomes) - sent, "skipped": 0}

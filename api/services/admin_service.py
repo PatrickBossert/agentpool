@@ -1,5 +1,4 @@
 # api/services/admin_service.py
-import httpx
 from api.config import get_settings
 from api.auth import hash_password
 from api.database import (
@@ -17,6 +16,7 @@ from api.database import (
     fetch_user_org_ids,
 )
 from api.services.invite_service import deliver_reset
+from api.services.outbound_mail import send_platform_mail
 from api.services.user_identity import person_block, project_identities
 
 
@@ -56,7 +56,20 @@ class ForbiddenRoleChange(Exception):
 
 
 async def _send_welcome_email(email: str, username: str, password: str) -> None:
-    """Send one-time welcome email with credentials via Resend. Silently skips if no API key."""
+    """Send one-time welcome email with credentials. Silently skips if no API key.
+
+    Platform correspondence, not a project correspondent's - so it goes through
+    `send_platform_mail` rather than `send_project_mail`, and no project's `dev_mode`
+    is consulted. This message announces a *login*, not an engagement: it carries no
+    slug, the account may belong to no project yet, and it is issued by the platform
+    rather than composed by an agent. Forcing it through a project-scoped seam would
+    mean inventing a project to consult, and signing it as a persona would put
+    somebody's name on credentials they did not issue.
+
+    The consequence is stated rather than hidden: `dev_mode` does not hold this
+    message. A project-scoped hold cannot honestly cover a message with no project.
+    The setting that should cover it is a platform-level one, and it does not exist.
+    """
     settings = get_settings()
     if not settings.resend_api_key or not email:
         return
@@ -71,17 +84,11 @@ async def _send_welcome_email(email: str, username: str, password: str) -> None:
         f"TaskReimagination.ai"
     )
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
-                "https://api.resend.com/emails",
-                json={
-                    "from": settings.from_email,
-                    "to": [email],
-                    "subject": "Your TaskReimagination.ai account has been created",
-                    "text": body,
-                },
-                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
-            )
+        await send_platform_mail(
+            to=email,
+            subject="Your TaskReimagination.ai account has been created",
+            body=body,
+        )
     except Exception:
         pass  # Email failure must never block user creation
 

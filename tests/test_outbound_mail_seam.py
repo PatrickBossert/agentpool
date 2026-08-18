@@ -1,0 +1,552 @@
+# tests/test_outbound_mail_seam.py
+"""dev_mode holds outbound mail on every path, and each path is asked separately.
+
+`dev_mode` reads as "hold all outbound mail for this project" and covered two of the
+five send paths. The three it missed - the interview reminder sender, the transcript
+sender, and the welcome email - are the ones that email stakeholders rather than the
+operator. A test that drove only the two that already worked would have passed on the
+day the defect was live, so every path is driven here, and each is driven on its own.
+
+**The assertion is who receives the message, not that a function was called.** Every
+test below reads the recipients out of the real HTTP request `_post_to_resend` builds,
+through an `httpx.MockTransport` that also carries the URL - so a send that reached the
+wrong host, or reached Resend with the participant's own address in `to`, fails here.
+
+**Every path is asserted with the mode off as well as on.** A seam that redirected
+unconditionally would hold mail for ever and satisfy every "is it redirected" test in
+the file; the "not held" half is what stops that passing.
+
+**Each path is powered separately.** These five paths now share one function, and a
+shared seam is exactly the shape that lets one path's test cover another's - which has
+bitten this project twice. Each pair below drives one caller end to end, so breaking the
+transcript path fails the transcript tests and nothing else.
+"""
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import httpx
+import pytest
+
+from api.config import get_settings
+from api.services import outbound_mail
+
+_SLUGS = (
+    "seam-governance-held", "seam-governance-open",
+    "seam-notice-held", "seam-notice-open",
+    "seam-reminder-held", "seam-reminder-open",
+    "seam-transcript-held", "seam-transcript-open",
+    "seam-face", "seam-footer",
+)
+
+_REDIRECT = "Patrick@FutureEdge.consulting"
+
+
+@pytest.fixture(autouse=True)
+def clean():
+    """Remove this file's databases and project directories either side of each test.
+
+    Without this a project created by one run leaks into the next, and a test that
+    asserts "held" would pass against a leftover row rather than the one it wrote.
+    """
+    settings = get_settings()
+    def _wipe():
+        for slug in _SLUGS:
+            (Path(settings.database_dir) / f"{slug}.db").unlink(missing_ok=True)
+            for suffix in ("-wal", "-shm"):
+                (Path(settings.database_dir) / f"{slug}.db{suffix}").unlink(missing_ok=True)
+            proj = Path(settings.projects_dir) / slug
+            if proj.exists():
+                import shutil
+                shutil.rmtree(proj)
+    _wipe()
+    yield
+    _wipe()
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    """Capture the real outbound requests, and return the list they land in.
+
+    `httpx.MockTransport` rather than a swapped client class, so what is asserted is the
+    request that would actually have gone on the wire - method, URL and JSON body. A
+    mock standing in for `AsyncClient` cannot see a wrong URL, and this project has been
+    caught by exactly that before (`local_fast_url` producing `/v1/v1/messages`).
+
+    `httpx` is replaced on the module rather than globally, so the ASGI transport the
+    `client` fixture runs on is untouched.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"id": "mock-message-id"})
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return httpx.AsyncClient(*args, **kwargs)
+
+    monkeypatch.setattr(outbound_mail, "httpx", SimpleNamespace(AsyncClient=factory))
+    monkeypatch.setattr(get_settings(), "resend_api_key", "re_seam_test")
+    return captured
+
+
+def recipients(request: httpx.Request) -> list[str]:
+    """The addresses this request would actually deliver to."""
+    assert str(request.url) == "https://api.resend.com/emails", str(request.url)
+    return json.loads(request.content)["to"]
+
+
+def payload(request: httpx.Request) -> dict:
+    return json.loads(request.content)
+
+
+async def _make_project(client, slug: str, *, holds_mail: bool) -> None:
+    await client.post("/projects", json={
+        "client_slug": slug, "llm_mode": "standard", "sector": "rail",
+    })
+    await _set_dev_mode(slug, holds_mail)
+
+
+async def _set_dev_mode(slug: str, value: bool) -> None:
+    """dev_mode lives inside config_json, not as a column on projects."""
+    from api.database import fetch_project, get_connection
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        config = json.loads(project.get("config_json") or "{}")
+        config["dev_mode"] = value
+        await conn.execute(
+            "UPDATE projects SET config_json=? WHERE slug=?", (json.dumps(config), slug)
+        )
+        await conn.commit()
+
+
+async def _add_stakeholder(slug: str, name: str, email: str, **flags) -> int:
+    from api.database import fetch_project, get_connection
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        cur = await conn.execute(
+            "INSERT INTO stakeholders (project_id, name, email, project_role, "
+            "is_reviewer, is_approver, is_governor) VALUES (?,?,?,?,?,?,?)",
+            (project["id"], name, email, "governing",
+             int(flags.get("reviewer", False)), int(flags.get("approver", False)),
+             int(flags.get("governor", False))),
+        )
+        await conn.commit()
+        return cur.lastrowid
+
+
+async def _activate(slug: str) -> None:
+    from api.database import get_connection, set_project_status
+    async with get_connection(slug) as conn:
+        await set_project_status(conn, slug=slug, status="active")
+
+
+# ── Path 1: Pamela's daily status report (already honoured dev_mode) ──────────
+
+@pytest.mark.asyncio
+async def test_the_status_report_reaches_governance_when_mail_is_not_held(client, sent):
+    slug = "seam-governance-open"
+    await _make_project(client, slug, holds_mail=False)
+    await _activate(slug)
+    await _add_stakeholder(slug, "Gov", "governor@example.test", governor=True)
+
+    from api.services.pam_report_job import run_pam_daily_report
+    await run_pam_daily_report(slug)
+
+    assert len(sent) == 1
+    assert recipients(sent[0]) == ["governor@example.test"]
+
+
+@pytest.mark.asyncio
+async def test_the_status_report_is_held_when_the_project_holds_mail(client, sent):
+    slug = "seam-governance-held"
+    await _make_project(client, slug, holds_mail=True)
+    await _activate(slug)
+    await _add_stakeholder(slug, "Gov", "governor@example.test", governor=True)
+
+    from api.services.pam_report_job import run_pam_daily_report
+    await run_pam_daily_report(slug)
+
+    assert len(sent) == 1
+    assert recipients(sent[0]) == [_REDIRECT]
+    assert "governor@example.test" not in recipients(sent[0])
+
+
+# ── Path 2: the crew notices (already honoured dev_mode) ─────────────────────
+
+@pytest.mark.asyncio
+async def test_a_crew_notice_reaches_reviewers_when_mail_is_not_held(client, sent):
+    slug = "seam-notice-open"
+    await _make_project(client, slug, holds_mail=False)
+    await _add_stakeholder(slug, "Rev", "reviewer@example.test", reviewer=True)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    await notify_crew_awaiting_commit(slug, "discovery_mapping")
+
+    assert len(sent) == 1
+    assert recipients(sent[0]) == ["reviewer@example.test"]
+
+
+@pytest.mark.asyncio
+async def test_a_crew_notice_is_held_when_the_project_holds_mail(client, sent):
+    slug = "seam-notice-held"
+    await _make_project(client, slug, holds_mail=True)
+    await _add_stakeholder(slug, "Rev", "reviewer@example.test", reviewer=True)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    await notify_crew_awaiting_commit(slug, "discovery_mapping")
+
+    assert len(sent) == 1
+    assert recipients(sent[0]) == [_REDIRECT]
+    assert "reviewer@example.test" not in recipients(sent[0])
+
+
+# ── Path 3: interview reminders - one of the three that ignored dev_mode ─────
+
+async def _approved_reminder(slug: str, email: str) -> None:
+    """One approved reminder addressed to a participant, ready for the sender."""
+    from api.database import fetch_project, get_connection, insert_reminder_email
+    stakeholder_id = await _add_stakeholder(slug, "Participant", email)
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        campaign_cur = await conn.execute(
+            "INSERT INTO campaigns (project_id, campaign_name) VALUES (?,?)",
+            (project["id"], "Seam campaign"),
+        )
+        await conn.commit()
+        email_id = await insert_reminder_email(
+            conn, project_id=project["id"], campaign_id=campaign_cur.lastrowid,
+            stakeholder_id=stakeholder_id, subject="A quick reminder",
+            body="Please complete your interview.", escalation_level="gentle",
+        )
+        await conn.execute(
+            "UPDATE reminder_emails SET status='approved' WHERE id=?", (email_id,)
+        )
+        await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_reaches_the_participant_when_mail_is_not_held(client, sent):
+    slug = "seam-reminder-open"
+    await _make_project(client, slug, holds_mail=False)
+    await _approved_reminder(slug, "participant@example.test")
+
+    from api.services.campaign_service import send_reminder_emails_svc
+    result = await send_reminder_emails_svc(slug)
+
+    assert result == {"sent": 1, "failed": 0, "skipped": 0}
+    assert len(sent) == 1
+    assert recipients(sent[0]) == ["participant@example.test"]
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_is_held_when_the_project_holds_mail(client, sent):
+    """The defect, stated directly.
+
+    This path posted `stakeholder_email` straight to Resend with no dev_mode check.
+    Sixty seeded stakeholders with plausible addresses would have been sixty live sends
+    on a project whose settings said mail was held.
+    """
+    slug = "seam-reminder-held"
+    await _make_project(client, slug, holds_mail=True)
+    await _approved_reminder(slug, "participant@example.test")
+
+    from api.services.campaign_service import send_reminder_emails_svc
+    result = await send_reminder_emails_svc(slug)
+
+    assert result == {"sent": 1, "failed": 0, "skipped": 0}
+    assert len(sent) == 1
+    assert recipients(sent[0]) == [_REDIRECT]
+    assert "participant@example.test" not in recipients(sent[0])
+
+
+@pytest.mark.asyncio
+async def test_a_held_reminder_is_still_recorded_as_sent(client, sent):
+    """A redirected message was posted, so the row must not read as pending for ever."""
+    slug = "seam-reminder-held"
+    await _make_project(client, slug, holds_mail=True)
+    await _approved_reminder(slug, "participant@example.test")
+
+    from api.services.campaign_service import send_reminder_emails_svc
+    await send_reminder_emails_svc(slug)
+
+    from api.database import fetch_project, get_connection
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        async with conn.execute(
+            "SELECT status FROM reminder_emails WHERE project_id=?", (project["id"],)
+        ) as cur:
+            rows = [dict(r) async for r in cur]
+    assert [r["status"] for r in rows] == ["sent"]
+
+
+# ── Path 4: the interview transcript - the second of the three ───────────────
+
+_TRANSCRIPT_EMAIL = "interviewee@example.test"
+
+
+async def _completed_session(client, slug: str, token: str) -> None:
+    from api.database import fetch_project, get_connection, insert_interview_session
+    stakeholder_id = await _add_stakeholder(slug, "Interviewee", _TRANSCRIPT_EMAIL)
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        await insert_interview_session(
+            conn, project_id=project["id"], orchestration_run_id=None,
+            stakeholder_id=stakeholder_id, node_label="Goods-in Inspection",
+            session_token=token,
+        )
+        await conn.execute(
+            "UPDATE interview_sessions SET status='completed' WHERE session_token=?",
+            (token,),
+        )
+        await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_transcript_reaches_the_interviewee_when_mail_is_not_held(client, sent):
+    slug = "seam-transcript-open"
+    await _make_project(client, slug, holds_mail=False)
+    await _completed_session(client, slug, "seam-transcript-token-open")
+
+    r = await client.post(
+        "/api/interviews/seam-transcript-token-open/email-transcript",
+        json={"email": _TRANSCRIPT_EMAIL,
+              "qa_pairs": [{"question": "Q1", "answer": "A1"}]},
+    )
+
+    assert r.status_code == 200, r.text
+    assert len(sent) == 1
+    assert recipients(sent[0]) == [_TRANSCRIPT_EMAIL]
+
+
+@pytest.mark.asyncio
+async def test_a_transcript_is_held_when_the_project_holds_mail(client, sent):
+    """The second gap. This endpoint posted `body.email` straight to Resend.
+
+    The destination check that constrains it to the session's own stakeholder still
+    holds - it is a different control, guarding a leaked token rather than a held
+    project - so the address the endpoint intends is unchanged and only its delivery
+    moves.
+    """
+    slug = "seam-transcript-held"
+    await _make_project(client, slug, holds_mail=True)
+    await _completed_session(client, slug, "seam-transcript-token-held")
+
+    r = await client.post(
+        "/api/interviews/seam-transcript-token-held/email-transcript",
+        json={"email": _TRANSCRIPT_EMAIL,
+              "qa_pairs": [{"question": "Q1", "answer": "A1"}]},
+    )
+
+    assert r.status_code == 200, r.text
+    assert len(sent) == 1
+    assert recipients(sent[0]) == [_REDIRECT]
+    assert _TRANSCRIPT_EMAIL not in recipients(sent[0])
+
+
+# ── Path 5: the welcome email - platform correspondence, and not redirected ──
+
+@pytest.mark.asyncio
+async def test_the_welcome_email_goes_to_the_new_login_and_is_not_redirected(sent):
+    """The decision, asserted rather than only written down.
+
+    This message announces a login, not an engagement. It carries no slug, so there is
+    no project whose `dev_mode` could honestly be consulted, and it is not signed by a
+    correspondent because the platform issued the credentials rather than an agent. It
+    still leaves through the seam module, which is what keeps the single-egress property
+    true - the test below proves nothing else posts to Resend.
+
+    The consequence is real and is stated here so a reader meets it: `dev_mode` does not
+    hold this message, and no setting currently does.
+    """
+    from api.services.admin_service import _send_welcome_email
+    await _send_welcome_email("newcomer@example.test", "newcomer", "temp-password")
+
+    assert len(sent) == 1
+    assert recipients(sent[0]) == ["newcomer@example.test"]
+    assert _REDIRECT not in recipients(sent[0])
+
+
+@pytest.mark.asyncio
+async def test_the_welcome_email_is_not_signed_by_a_correspondent(sent):
+    """No persona's name on credentials the platform issued."""
+    from agents.identity import AGENT_IDENTITY
+    from api.services.admin_service import _send_welcome_email
+    await _send_welcome_email("newcomer@example.test", "newcomer", "temp-password")
+
+    sender = payload(sent[0])["from"]
+    assert sender == get_settings().from_email
+    for identity in AGENT_IDENTITY.values():
+        assert identity.display_name not in sender
+
+
+# ── One face per audience, derived and not hard-coded ────────────────────────
+
+@pytest.mark.asyncio
+async def test_stakeholder_mail_carries_the_stakeholder_managers_name(client, sent):
+    from agents.identity import AGENT_IDENTITY
+    slug = "seam-face"
+    await _make_project(client, slug, holds_mail=False)
+    await _approved_reminder(slug, "participant@example.test")
+
+    from api.services.campaign_service import send_reminder_emails_svc
+    await send_reminder_emails_svc(slug)
+
+    assert AGENT_IDENTITY["stakeholder_manager"].display_name in payload(sent[0])["from"]
+
+
+@pytest.mark.asyncio
+async def test_governance_mail_carries_pams_name(client, sent):
+    from agents.identity import AGENT_IDENTITY
+    slug = "seam-face"
+    await _make_project(client, slug, holds_mail=False)
+    await _add_stakeholder(slug, "Rev", "reviewer@example.test", reviewer=True)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    await notify_crew_awaiting_commit(slug, "discovery_mapping")
+
+    assert AGENT_IDENTITY["pam"].display_name in payload(sent[0])["from"]
+
+
+@pytest.mark.asyncio
+async def test_renaming_the_correspondent_renames_the_face(client, sent, monkeypatch):
+    """The name is derived from agents/identity.py at send time, not written here.
+
+    The whole point of a permanent `agent_id` beside a mutable display name is that
+    renaming the person is a one-file change. A hard-coded "Jordan Williams" in the mail
+    seam would pass every other test in this file and fail this one - which is why this
+    test renames him rather than asserting the current name a second time.
+    """
+    from agents.identity import AGENT_IDENTITY, Identity
+
+    slug = "seam-face"
+    await _make_project(client, slug, holds_mail=False)
+    await _approved_reminder(slug, "participant@example.test")
+
+    monkeypatch.setitem(
+        AGENT_IDENTITY, "stakeholder_manager", Identity("Wilhelmina Testcase", None)
+    )
+    from api.services.campaign_service import send_reminder_emails_svc
+    await send_reminder_emails_svc(slug)
+
+    assert "Wilhelmina Testcase" in payload(sent[0])["from"]
+    assert "Jordan" not in payload(sent[0])["from"]
+
+
+def test_every_audience_resolves_to_an_agent_that_exists():
+    """A correspondent naming an agent the identity map does not hold would only fail
+    at send time, on a path a test may not drive."""
+    from agents.identity import AGENT_IDENTITY
+    for audience, agent_id in outbound_mail.AUDIENCE_CORRESPONDENT.items():
+        assert agent_id in AGENT_IDENTITY, audience
+
+
+def test_an_unknown_audience_is_refused_rather_than_given_someones_name():
+    with pytest.raises(ValueError, match="no correspondent"):
+        outbound_mail.correspondent_for("finance")
+
+
+# ── The redirect itself ──────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_a_held_message_names_the_people_it_would_have_reached(client, sent):
+    """A message that arrives at the redirect address with no explanation is a message
+    the reader cannot act on - they cannot tell whose mail they are holding."""
+    slug = "seam-footer"
+    await _make_project(client, slug, holds_mail=True)
+    await _add_stakeholder(slug, "Rev", "reviewer@example.test", reviewer=True)
+    await _add_stakeholder(slug, "Two", "second@example.test", reviewer=True)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    await notify_crew_awaiting_commit(slug, "discovery_mapping")
+
+    text = payload(sent[0])["text"]
+    assert "reviewer@example.test" in text
+    assert "second@example.test" in text
+
+
+@pytest.mark.asyncio
+async def test_an_open_message_carries_no_development_mode_footer(client, sent):
+    slug = "seam-footer"
+    await _make_project(client, slug, holds_mail=False)
+    await _add_stakeholder(slug, "Rev", "reviewer@example.test", reviewer=True)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    await notify_crew_awaiting_commit(slug, "discovery_mapping")
+
+    assert "development mode" not in payload(sent[0])["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_slug_with_no_database_holds_its_mail(sent):
+    """Fails closed. `project_llm_mode("")` answering "standard" for a missing database
+    is how a sensitive project's answers reached a hosted model; the same shape here
+    would be a live send to a real address."""
+    posted = await outbound_mail.send_project_mail(
+        slug="no-such-project-anywhere", audience=outbound_mail.STAKEHOLDERS,
+        to=["real.person@example.test"], subject="s", body="b",
+    )
+    assert posted is True
+    assert recipients(sent[0]) == [_REDIRECT]
+
+
+@pytest.mark.asyncio
+async def test_redirecting_nobody_does_not_invent_a_recipient(client, sent):
+    slug = "seam-footer"
+    await _make_project(client, slug, holds_mail=True)
+
+    posted = await outbound_mail.send_project_mail(
+        slug=slug, audience=outbound_mail.GOVERNANCE, to=[], subject="s", body="b",
+    )
+    assert posted is False
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_address_does_not_cost_everyone_else_the_message(client, sent):
+    """Resend rejects the whole request when one entry in `to` is malformed, so a stray
+    username would take every other recipient's message down with it."""
+    slug = "seam-footer"
+    await _make_project(client, slug, holds_mail=False)
+
+    await outbound_mail.send_project_mail(
+        slug=slug, audience=outbound_mail.GOVERNANCE,
+        to=["admin", "real@example.test"], subject="s", body="b",
+    )
+    assert recipients(sent[0]) == ["real@example.test"]
+
+
+# ── The structural half: one place posts to Resend ───────────────────────────
+
+def test_only_the_seam_posts_to_resend():
+    """Anything posting to `api.resend.com/emails` from anywhere else is the defect
+    returning: five call sites is how three of them came to have no dev_mode check.
+
+    Asserted structurally because the alternative is noticing it in review, and this
+    project's own history says that a send path added beside an existing one inherits
+    whatever that one happened to do.
+    """
+    root = Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in root.rglob("*.py"):
+        parts = set(path.parts)
+        if parts & {"venv", "node_modules", ".git", "tests"}:
+            continue
+        if "api.resend.com" in path.read_text():
+            offenders.append(str(path.relative_to(root)))
+
+    assert offenders == ["api/services/outbound_mail.py"], offenders
+
+
+def test_the_redirect_address_is_not_hardcoded_in_a_service_module():
+    """It was a module constant in `pam_report_job`, imported by `commit_notify_service`
+    - one person's address in source, in the module that happened to need it first."""
+    root = Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in (root / "api").rglob("*.py"):
+        if path.name == "config.py":
+            continue
+        if _REDIRECT in path.read_text():
+            offenders.append(str(path.relative_to(root)))
+    assert offenders == [], offenders

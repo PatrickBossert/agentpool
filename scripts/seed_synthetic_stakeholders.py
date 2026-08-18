@@ -27,13 +27,18 @@ needs and which no convention can offer.
 The addresses are a second, weaker signal, and they are there for the human rather than the
 machine: `forename.surname@synthetic.invalid`. `.invalid` is reserved by RFC 2606 and can
 never have an MX record, so a seeded row is unmistakable at a glance in the roster AND
-cannot be delivered to. That matters more than it looks: `dev_mode` holds outbound mail to
-one address on the PAM report and commit-notification paths ONLY. The interview reminder
-sender (`campaign_service.send_reminder_emails_svc`) and the transcript sender
-(`routers/interviews.py`) both post the stakeholder's own address straight to Resend with no
-dev_mode check at all. Sixty rows carrying plausible-looking real addresses would be sixty
-live sends waiting for the FROM domain to be verified. `.invalid` closes that by
-construction.
+cannot be delivered to. That mattered more than it looked when this script was written:
+`dev_mode` held outbound mail on the PAM report and commit-notification paths ONLY, and the
+interview reminder sender (`campaign_service.send_reminder_emails_svc`) and the transcript
+sender (`routers/interviews.py`) both posted the stakeholder's own address straight to
+Resend with no dev_mode check at all. Sixty rows carrying plausible-looking real addresses
+would have been sixty live sends waiting for the FROM domain to be verified.
+
+That hole is closed at the seam now - every send goes through
+`api/services/outbound_mail.send_project_mail`, which reads the project's mode and decides
+the recipients - so `.invalid` is no longer the only thing standing in the way. Keep it
+anyway. A reserved address cannot be delivered to whatever any setting says, and a seeded
+row should not depend on a setting being right.
 
 NO INVITES. Every seeded row is `is_participant` and nothing else. A role beyond participant
 is what makes `stakeholders.py` mint an invite, and an invite is a redeemable credential.

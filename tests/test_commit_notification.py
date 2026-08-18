@@ -91,7 +91,7 @@ async def test_notification_goes_to_reviewers_and_approvers_only(client, monkeyp
     from api.services.commit_notify_service import notify_crew_awaiting_commit
 
     with patch(
-        "api.services.commit_notify_service._send_email", AsyncMock()
+        "api.services.commit_notify_service.send_project_mail", AsyncMock()
     ) as send:
         await notify_crew_awaiting_commit("notify-test", "discovery_mapping")
 
@@ -116,7 +116,7 @@ async def test_a_failing_send_does_not_raise(client):
     from api.services.commit_notify_service import notify_crew_awaiting_commit
 
     with patch(
-        "api.services.commit_notify_service._send_email",
+        "api.services.commit_notify_service.send_project_mail",
         AsyncMock(side_effect=RuntimeError("resend is down")),
     ) as send:
         await notify_crew_awaiting_commit("notify-test", "discovery_mapping")
@@ -131,7 +131,7 @@ async def test_no_recipients_sends_nothing(client):
     from api.services.commit_notify_service import notify_crew_awaiting_commit
 
     with patch(
-        "api.services.commit_notify_service._send_email", AsyncMock()
+        "api.services.commit_notify_service.send_project_mail", AsyncMock()
     ) as send:
         await notify_crew_awaiting_commit("notify-test", "discovery_mapping")
 
@@ -149,7 +149,7 @@ async def test_a_failed_run_notifies_reviewers_and_whoever_triggered_it(client):
 
     from api.services.commit_notify_service import notify_crew_failed
 
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_failed(SLUG, "assessment_design", triggered_by="gov@example.com")
 
     recipients = send.await_args.kwargs["to"]
@@ -170,7 +170,7 @@ async def test_a_failed_run_with_no_trigger_notifies_reviewers_only(client):
 
     from api.services.commit_notify_service import notify_crew_failed
 
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_failed(SLUG, "assessment_design", triggered_by=None)
 
     recipients = send.await_args.kwargs["to"]
@@ -194,7 +194,7 @@ async def test_a_triggered_by_that_is_not_an_address_does_not_cost_reviewers_the
 
     from api.services.commit_notify_service import notify_crew_failed
 
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_failed(SLUG, "assessment_design", triggered_by="admin")
 
     assert send.await_count == 1
@@ -213,7 +213,7 @@ async def test_a_failing_send_does_not_mask_the_run_failure(client):
     from api.services.commit_notify_service import notify_crew_failed
 
     with patch(
-        "api.services.commit_notify_service._send_email",
+        "api.services.commit_notify_service.send_project_mail",
         AsyncMock(side_effect=RuntimeError("resend down")),
     ) as send:
         await notify_crew_failed(SLUG, "assessment_design", triggered_by="gov@example.com")
@@ -243,7 +243,7 @@ async def test_the_notification_links_to_the_crew_it_is_about(client):
 
     from api.services.commit_notify_service import notify_crew_awaiting_commit
 
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_awaiting_commit(SLUG, "assessment_design")
 
     body = send.await_args.kwargs["body"]
@@ -260,7 +260,7 @@ async def test_the_approval_notification_links_to_the_crew_it_is_about(client):
 
     from api.services.commit_notify_service import notify_crew_ready_for_approval
 
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_ready_for_approval(SLUG, "stakeholder_management")
 
     body = send.await_args.kwargs["body"]
@@ -277,7 +277,7 @@ async def test_the_failure_notification_links_to_the_crew_it_is_about(client):
 
     from api.services.commit_notify_service import notify_crew_failed
 
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_failed(SLUG, "discovery_interviews", triggered_by=None)
 
     body = send.await_args.kwargs["body"]
@@ -293,7 +293,7 @@ async def test_a_successful_run_still_sends_the_completion_notice_not_a_failure_
 
     from api.services.commit_notify_service import notify_crew_awaiting_commit
 
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_awaiting_commit(SLUG, "assessment_design")
 
     assert "failed" not in send.await_args.kwargs["subject"].lower()

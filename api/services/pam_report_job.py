@@ -9,8 +9,6 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-import httpx
-
 from api.config import get_settings
 from api.database import (
     fetch_project,
@@ -18,6 +16,7 @@ from api.database import (
     get_connection,
     insert_agent_output,
 )
+from api.services.outbound_mail import GOVERNANCE, send_project_mail
 from api.services.pam_report_service import build_pam_report
 from api.services.report_diff_service import diff_reports
 from api.services.scheduler_service import JOB_REGISTRY
@@ -26,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 JOB_NAME = "pam_daily_report"
 OUTPUT_TYPE = "pam_report"
-DEV_MODE_ADDRESS = "Patrick@FutureEdge.consulting"
 # The multi-valued engagement-role columns, not project_role: one person can be
 # a reviewer, an approver and a governor at once, which a single-select role cannot
 # express.
@@ -40,26 +38,24 @@ REVIEW_FLAGS = ("is_reviewer", "is_approver", "is_governor")
 
 
 def resolve_recipients(
-    stakeholders: list[dict], dev_mode: bool, flags: tuple[str, ...] = REVIEW_FLAGS
-) -> tuple[list[str], list[str]]:
-    """Return (actual, intended) email lists for stakeholders carrying any of `flags`.
+    stakeholders: list[dict], flags: tuple[str, ...] = REVIEW_FLAGS
+) -> list[str]:
+    """The addresses this message is *for* - stakeholders carrying any of `flags`.
 
-    In dev mode everything is redirected to one address, but the intended list is
-    still computed so the message can say who would have received it. An empty
-    intended list stays empty - redirecting nothing must not invent a recipient.
+    Audience selection only. It used to return `(actual, intended)` and apply the
+    `dev_mode` redirect itself, which meant the delivery decision lived in two modules
+    and was absent from three others; `outbound_mail.send_project_mail` owns it now, and
+    this function answers the question it is actually qualified to answer.
 
-    Defaulting to both review flags keeps the daily report's audience unchanged: it
+    Defaulting to all three review flags keeps the daily report's audience unchanged: it
     goes to everyone with a governance role, which is what it is for. The crew
     notifications pass a narrower tuple, because a completed crew concerns reviewers
     and a submission concerns approvers.
     """
-    intended = [
+    return [
         s["email"] for s in stakeholders
         if any(s.get(flag) for flag in flags) and (s.get("email") or "").strip()
     ]
-    if not intended:
-        return [], []
-    return ([DEV_MODE_ADDRESS] if dev_mode else list(intended)), intended
 
 
 async def _previous_report(conn, project_id: int) -> dict | None:
@@ -88,22 +84,7 @@ async def _next_version(conn, project_id: int) -> int:
         return ((await cur.fetchone())[0] or 0) + 1
 
 
-async def _send_email(to: list[str], subject: str, body: str) -> None:
-    """Send a plain-text message through Resend. Raises on failure."""
-    settings = get_settings()
-    if not settings.resend_api_key:
-        raise RuntimeError("RESEND_API_KEY is not configured")
-    async with httpx.AsyncClient(timeout=15.0) as http:
-        resp = await http.post(
-            "https://api.resend.com/emails",
-            json={"from": settings.from_email, "to": to, "subject": subject, "text": body},
-            headers={"Authorization": f"Bearer {settings.resend_api_key}"},
-        )
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Resend returned {resp.status_code}: {resp.text[:200]}")
-
-
-def _compose_body(slug: str, report: dict, change: dict, intended: list[str], dev_mode: bool) -> str:
+def _compose_body(slug: str, report: dict, change: dict) -> str:
     settings = get_settings()
     link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/pam-report"
     lines = [
@@ -119,14 +100,9 @@ def _compose_body(slug: str, report: dict, change: dict, intended: list[str], de
             lines.append("")
             lines.append(f"{label}:")
             lines.extend(f"  - {t}" for t in change[key])
+    # No dev-mode footer here any more: send_project_mail appends it, because it is the
+    # thing that decides whether the message was redirected at all.
     lines += ["", f"Read the full report: {link}"]
-    if dev_mode:
-        lines += [
-            "",
-            "-- dev mode --",
-            "This project has dev_mode enabled, so this message was sent only to you.",
-            "Intended recipients: " + (", ".join(intended) or "none"),
-        ]
     return "\n".join(lines)
 
 
@@ -154,8 +130,6 @@ async def run_pam_daily_report(slug: str) -> None:
             logger.warning("pam report job: project %s not found - skipping", slug)
             return
         project_id = project["id"]
-        config = json.loads(project.get("config_json") or "{}")
-        dev_mode = bool(config.get("dev_mode", True))
 
         previous = await _previous_report(conn, project_id)
         change = diff_reports(previous, report)
@@ -183,8 +157,8 @@ async def run_pam_daily_report(slug: str) -> None:
 
         stakeholders = await fetch_stakeholders(conn, project_id=project_id)
 
-    actual, intended = resolve_recipients(stakeholders, dev_mode)
-    if not actual:
+    intended = resolve_recipients(stakeholders)
+    if not intended:
         logger.info(
             "pam report job: %s has no reviewer, approver or governor stakeholders "
             "- stored, not sent", slug,
@@ -192,9 +166,13 @@ async def run_pam_daily_report(slug: str) -> None:
         return
 
     subject = f"{slug} status report - {datetime.now().strftime('%d %b %Y')}"
-    body = _compose_body(slug, report, change, intended, dev_mode)
+    body = _compose_body(slug, report, change)
     try:
-        await _send_email(actual, subject, body)
+        # Governance: this is the report Pamela's own remit produces, and it goes to
+        # reviewers, approvers and governors.
+        await send_project_mail(
+            slug=slug, audience=GOVERNANCE, to=intended, subject=subject, body=body,
+        )
     except Exception as exc:
         # The report is already stored. A notification failure must not lose it.
         logger.warning("pam report job: email failed for %s: %s", slug, exc)

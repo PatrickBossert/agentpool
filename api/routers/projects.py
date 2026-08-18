@@ -174,7 +174,11 @@ async def get_settings_endpoint(slug: str, payload: dict = Depends(require_any_a
 #                   a different base URL and the traffic goes wherever that names.
 #   dev_mode      - holds all outbound project email to one address. Clearing it is what
 #                   makes the scheduler email real stakeholders, which is not a decision the
-#                   person being emailed about should be able to take unilaterally.
+#                   person being emailed about should be able to take unilaterally. It now
+#                   means what it says: every project send path goes through
+#                   `outbound_mail.send_project_mail`, where the mode is read. It covered
+#                   two of five paths when this line was written, and the three it missed
+#                   were the ones reaching participants rather than the operator.
 _PLATFORM_TIER_SETTINGS = (
     "llm_mode",
     "dev_mode",

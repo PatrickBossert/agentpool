@@ -20,30 +20,14 @@ notify_crew_failed is called from dispatch_crew's failure path, before it re-rai
 """
 from __future__ import annotations
 
-import json
 import logging
-
-import httpx
 
 from api.config import get_settings
 from api.database import fetch_project, fetch_stakeholders, get_connection
-from api.services.pam_report_job import DEV_MODE_ADDRESS, resolve_recipients
+from api.services.outbound_mail import GOVERNANCE, send_project_mail
+from api.services.pam_report_job import resolve_recipients
 
 log = logging.getLogger(__name__)
-
-
-async def _send_email(*, to: list[str], subject: str, body: str) -> None:
-    settings = get_settings()
-    if not settings.resend_api_key:
-        raise RuntimeError("RESEND_API_KEY is not configured")
-    async with httpx.AsyncClient(timeout=15.0) as http:
-        resp = await http.post(
-            "https://api.resend.com/emails",
-            json={"from": settings.from_email, "to": to, "subject": subject, "text": body},
-            headers={"Authorization": f"Bearer {settings.resend_api_key}"},
-        )
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Resend returned {resp.status_code}: {resp.text[:200]}")
 
 
 async def _notify(
@@ -65,11 +49,14 @@ async def _notify(
     extra_recipient: an address to add to the flag-resolved audience, on top of
     whatever stakeholder flags produced - used by notify_crew_failed to reach
     whoever's approval triggered the run, in addition to reviewers. Subject to
-    the same dev_mode routing as everyone else: in dev mode it is folded into the
-    "would have gone to" list rather than sent to directly. Anything that is not
-    an address is discarded before it reaches the recipient list: Resend rejects
+    the same dev_mode routing as everyone else, because send_project_mail decides
+    the recipients for every entry in this list alike. Anything that is not an
+    address is discarded before it reaches the recipient list: Resend rejects
     the whole request when one entry is malformed, so a stray username would take
-    the reviewers' notification down with it."""
+    the reviewers' notification down with it.
+
+    The dev_mode read and the "would have gone to" footer both used to live here.
+    They are send_project_mail's now - see api/services/outbound_mail.py."""
     try:
         settings = get_settings()
         link = (
@@ -82,14 +69,10 @@ async def _notify(
             if not project:
                 return
             stakeholders = await fetch_stakeholders(conn, project_id=project["id"])
-            # dev_mode lives inside config_json, not as a column - the same read
-            # pam_report_job.py:129 performs.
-            config = json.loads(project.get("config_json") or "{}")
-            dev_mode = bool(config.get("dev_mode", True))
 
-        actual, intended = resolve_recipients(stakeholders, dev_mode, flags=flags)
-        if not actual and fallback_flags:
-            actual, intended = resolve_recipients(stakeholders, dev_mode, flags=fallback_flags)
+        intended = resolve_recipients(stakeholders, flags=flags)
+        if not intended and fallback_flags:
+            intended = resolve_recipients(stakeholders, flags=fallback_flags)
 
         if extra_recipient and "@" not in extra_recipient:
             log.warning(
@@ -100,22 +83,17 @@ async def _notify(
 
         if extra_recipient and extra_recipient not in intended:
             intended = [*intended, extra_recipient]
-            if dev_mode:
-                actual = [DEV_MODE_ADDRESS]
-            elif extra_recipient not in actual:
-                actual = [*actual, extra_recipient]
 
-        if not actual:
+        if not intended:
             return
 
         lines = [intro, "", f"Review it here: {link}"]
-        if dev_mode:
-            lines += [
-                "",
-                f"Development mode - this would have gone to: {', '.join(intended) or 'nobody'}",
-            ]
 
-        await _send_email(to=actual, subject=subject, body="\n".join(lines))
+        # Governance: reviewers, approvers, and whoever's approval started the run.
+        await send_project_mail(
+            slug=slug, audience=GOVERNANCE, to=intended,
+            subject=subject, body="\n".join(lines),
+        )
     except Exception:
         log.exception("could not notify %s about %s", audience_label, crew_name)
 

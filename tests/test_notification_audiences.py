@@ -78,7 +78,7 @@ async def test_a_completed_crew_notifies_reviewers_and_not_approvers(client):
     await _set_dev_mode(SLUG, False)
 
     from api.services.commit_notify_service import notify_crew_awaiting_commit
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_awaiting_commit(SLUG, "discovery_mapping")
 
     assert send.await_count == 1
@@ -95,7 +95,7 @@ async def test_a_submission_notifies_approvers_and_not_reviewers(client):
     await _set_dev_mode(SLUG, False)
 
     from api.services.commit_notify_service import notify_crew_ready_for_approval
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_ready_for_approval(SLUG, "discovery_mapping")
 
     assert send.await_count == 1
@@ -113,7 +113,7 @@ async def test_somebody_who_is_both_hears_at_both_moments(client):
     from api.services.commit_notify_service import (
         notify_crew_awaiting_commit, notify_crew_ready_for_approval,
     )
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_awaiting_commit(SLUG, "discovery_mapping")
         await notify_crew_ready_for_approval(SLUG, "discovery_mapping")
 
@@ -131,7 +131,7 @@ async def test_completion_falls_back_to_approvers_when_there_are_no_reviewers(cl
     await _set_dev_mode(SLUG, False)
 
     from api.services.commit_notify_service import notify_crew_awaiting_commit
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_awaiting_commit(SLUG, "discovery_mapping")
 
     assert send.await_count == 1
@@ -147,7 +147,7 @@ async def test_submission_does_not_fall_back_to_reviewers_when_there_are_no_appr
     await _set_dev_mode(SLUG, False)
 
     from api.services.commit_notify_service import notify_crew_ready_for_approval
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_ready_for_approval(SLUG, "discovery_mapping")
 
     send.assert_not_awaited()
@@ -163,7 +163,7 @@ async def test_completion_notification_unaffected_when_both_flags_are_present(cl
     await _set_dev_mode(SLUG, False)
 
     from api.services.commit_notify_service import notify_crew_awaiting_commit
-    with patch("api.services.commit_notify_service._send_email", AsyncMock()) as send:
+    with patch("api.services.commit_notify_service.send_project_mail", AsyncMock()) as send:
         await notify_crew_awaiting_commit(SLUG, "discovery_mapping")
 
     assert send.await_count == 1
@@ -180,7 +180,7 @@ async def test_a_submission_notification_failure_does_not_raise(client):
 
     from api.services.commit_notify_service import notify_crew_ready_for_approval
     with patch(
-        "api.services.commit_notify_service._send_email",
+        "api.services.commit_notify_service.send_project_mail",
         AsyncMock(side_effect=RuntimeError("resend is down")),
     ):
         await notify_crew_ready_for_approval(SLUG, "discovery_mapping")
