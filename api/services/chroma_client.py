@@ -16,6 +16,7 @@ from pathlib import Path
 import chromadb
 
 from api.config import get_settings
+from api.services.deployment_modes import Capability, permits
 
 _log = logging.getLogger(__name__)
 
@@ -86,11 +87,16 @@ def project_llm_mode(slug: str) -> str:
 def get_chroma_client(slug: str):
     """A Chroma client for this project.
 
-    Sensitive projects always get a local HttpClient. Standard projects get CloudClient when
-    an API key is set, else the same local client.
+    A project whose mode is not granted `CLOUD_VECTOR_STORE` always gets a local HttpClient.
+    One that is granted it gets CloudClient when an API key is set, else the same local client.
+
+    Asked as a grant rather than as `mode == "sensitive"`: this is the site where forgetting a
+    mode is silent, because a CloudClient built for a project that should never have had one
+    raises nothing and warns nobody - it just works, off the premises. An undeclared mode is
+    refused the cloud here, so the failure it causes is a project that stays local.
     """
     settings = get_settings()
-    if project_llm_mode(slug) == "sensitive":
+    if not permits(project_llm_mode(slug), Capability.CLOUD_VECTOR_STORE):
         return chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
     if settings.chroma_api_key:
         return chromadb.CloudClient(

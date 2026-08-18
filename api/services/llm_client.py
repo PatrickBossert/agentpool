@@ -26,6 +26,7 @@ import logging
 import httpx
 
 from api.services.chroma_client import project_llm_mode
+from api.services.deployment_modes import Capability, permits
 from api.services.http_clients import get_anthropic_client, get_local_llm_client
 
 _log = logging.getLogger(__name__)
@@ -67,31 +68,28 @@ def resolve_model(slug: str, tier: str) -> tuple[str, str | None]:
     """The model this project runs a `tier` call on, and its base URL if it is local.
 
     Returns ``(model, base_url)``; ``base_url`` is None on the hosted path. Raises
-    LocalModelUnavailable for a sensitive project with the tier unconfigured - never a
-    hosted fallback, and never the other tier's model.
+    LocalModelUnavailable when the project's mode is not granted hosted inference and the
+    tier is unconfigured - never a hosted fallback, and never the other tier's model.
     """
     if tier not in _TIERS:
         raise ValueError(f"unknown tier {tier!r} - expected one of {_TIERS}")
     # Imported inside the function: agents.model_registry pulls in crewai, which is slow and
     # is not needed to import an api.services module.
     from agents.model_registry import (
-        LocalModelUnavailable,
+        _local_model_unavailable,
         _project_setting,
         _setting_default,
         _TIER_SETTINGS,
     )
 
     mode = project_llm_mode(slug)
-    if mode == "sensitive":
+    # The same grant the crew path asks, so the two cannot answer differently for one project.
+    if not permits(mode, Capability.HOSTED_INFERENCE):
         model_key, url_key = _TIER_SETTINGS[(tier, "sensitive")]
         model = _project_setting(slug, model_key, _setting_default(model_key))
         base_url = _project_setting(slug, url_key, _setting_default(url_key))
         if not model or not base_url:
-            raise LocalModelUnavailable(
-                f"Project '{slug}' is sensitive and has no local model for the '{tier}' tier. "
-                f"Set {model_key} and {url_key} in the project's settings. "
-                f"A hosted model is never substituted for a sensitive project."
-            )
+            raise _local_model_unavailable(slug, mode, tier, model_key, url_key)
         return model, base_url
 
     model_key, _ = _TIER_SETTINGS[(tier, "standard")]

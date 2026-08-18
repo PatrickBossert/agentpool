@@ -19,6 +19,7 @@ from crewai import LLM
 from api.config import get_settings
 from api.models import ProjectSettings
 from api.services.chroma_client import project_llm_mode
+from api.services.deployment_modes import Capability, permits
 from agents.anthropic_compat import ensure_conversation_ends_with_user
 
 ensure_conversation_ends_with_user()
@@ -68,6 +69,11 @@ AGENT_TIER: dict[str, str] = {
     "pam":                         "deep",   # no exemption - PAM can read project outputs
 }
 
+# The second key is which *pair of settings* holds the model, not which mode the project is in.
+# It is spelled with the two mode names it grew from, and any mode that is not granted
+# HOSTED_INFERENCE now reads the "sensitive" row - so read it as "local" and "hosted". Renaming
+# the keys would touch api/services/llm_client.py, which imports this table; the reading is what
+# matters, and it is written down here rather than left to be inferred.
 _TIER_SETTINGS = {
     ("fast", "standard"):  ("anthropic_fast_model", None),
     ("deep", "standard"):  ("anthropic_deep_model", None),
@@ -124,6 +130,24 @@ def _project_setting(slug: str, key: str, default: str) -> str:
     return default
 
 
+def _local_model_unavailable(
+    slug: str, mode: str, tier: str, model_key: str, url_key: str
+) -> LocalModelUnavailable:
+    """The refusal, worded once.
+
+    `api/services/llm_client.py` raises the same thing for the same reason on the non-crew
+    path, and the two sentences were identical copies. They both said "is sensitive", which
+    stopped being true the moment the branch was taken by *any* mode that is not granted
+    hosted inference - so the sentence names the mode it actually read.
+    """
+    return LocalModelUnavailable(
+        f"Project '{slug}' is in '{mode}' mode, which is not permitted to send prompts to a "
+        f"hosted model, and it has no local model for the '{tier}' tier. "
+        f"Set {model_key} and {url_key} in the project's settings. "
+        f"A hosted model is never substituted for a project whose mode does not grant one."
+    )
+
+
 def get_llm_for_agent(agent_name: str, slug: str) -> LLM:
     """The LLM this agent runs on for this project.
 
@@ -135,16 +159,14 @@ def get_llm_for_agent(agent_name: str, slug: str) -> LLM:
     mode = project_llm_mode(slug)
     settings = get_settings()
 
-    if mode == "sensitive":
+    # A grant, not an equality test: a mode nobody has declared gets the local branch, so a
+    # forgotten mode cannot quietly put a client's prompts on a hosted provider.
+    if not permits(mode, Capability.HOSTED_INFERENCE):
         model_key, url_key = _TIER_SETTINGS[(tier, "sensitive")]
         model = _project_setting(slug, model_key, _setting_default(model_key))
         base_url = _project_setting(slug, url_key, _setting_default(url_key))
         if not model or not base_url:
-            raise LocalModelUnavailable(
-                f"Project '{slug}' is sensitive and has no local model for the '{tier}' tier. "
-                f"Set {model_key} and {url_key} in the project's settings. "
-                f"A hosted model is never substituted for a sensitive project."
-            )
+            raise _local_model_unavailable(slug, mode, tier, model_key, url_key)
         return LLM(
             model=f"openai/{model}",
             base_url=base_url,
