@@ -46,22 +46,21 @@ if [ ! -x "$PY_UVICORN" ]; then
 fi
 
 # ── Optional Docker services ─────────────────────────────────────────────────
-# Only n8n needs Docker now. ChromaDB runs in the cloud whenever CHROMA_API_KEY
-# is set - that is how ingest_service and chroma_query pick CloudClient over
-# HttpClient.
-if have docker; then
-  echo "Starting Docker services (n8n)..."
+# ChromaDB is the only Docker service since n8n was retired, and it is needed
+# only when CHROMA_API_KEY is unset - that is how ingest_service and chroma_query
+# pick CloudClient over HttpClient. So this is skipped outright when Chroma Cloud
+# is in use, rather than starting a container nothing will connect to.
+if [ -n "$(env_value CHROMA_API_KEY)" ]; then
+  SKIPPED+=("Local ChromaDB - CHROMA_API_KEY is set, so Chroma Cloud is in use")
+elif have docker; then
+  echo "Starting Docker services (ChromaDB)..."
   if docker compose up -d 2>/dev/null; then
-    STARTED+=("n8n            http://localhost:5678")
+    STARTED+=("ChromaDB       http://localhost:8002")
   else
     SKIPPED+=("Docker services - 'docker compose up' failed (is Docker running?)")
   fi
 else
-  SKIPPED+=("Docker services - docker not installed (only n8n needs it)")
-fi
-
-if [ -n "$(env_value CHROMA_API_KEY)" ]; then
-  SKIPPED+=("Local ChromaDB - CHROMA_API_KEY is set, so Chroma Cloud is in use")
+  SKIPPED+=("Docker services - docker not installed (ChromaDB needs it)")
 fi
 
 # ── LiteLLM proxy - only needed for local / sensitive-mode routing ────────────
@@ -84,16 +83,6 @@ else
 fi
 echo $! > .pids/fastapi.pid
 STARTED+=("FastAPI        http://localhost:8000/docs")
-
-# ── Chainlit - human-in-the-loop review interface ────────────────────────────
-if [ -x ./venv/bin/chainlit ] && [ -f chainlit_app/app.py ]; then
-  echo "Starting Chainlit on :8001..."
-  ( cd chainlit_app && ../venv/bin/chainlit run app.py --port 8001 >/dev/null 2>&1 &
-    echo $! > ../.pids/chainlit.pid )
-  STARTED+=("Chainlit       http://localhost:8001")
-else
-  SKIPPED+=("Chainlit - not in venv")
-fi
 
 # ── React UI - required ──────────────────────────────────────────────────────
 echo "Starting React UI on :3000..."

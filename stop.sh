@@ -22,8 +22,9 @@ if [ -d .pids ]; then
   done
 fi
 
-# The UI and Chainlit spawn children that outlive the recorded pid, so clear any
-# stragglers holding the ports we own.
+# The UI spawns children that outlive the recorded pid, so clear any stragglers
+# holding the ports we own. 8001 is still swept: it was Chainlit's, and a stale
+# process from before SP50 retired it would still be holding the port.
 for port in 3000 8000 8001 4000; do
   pids="$(lsof -ti :$port 2>/dev/null)"
   if [ -n "$pids" ]; then

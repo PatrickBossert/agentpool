@@ -33,8 +33,7 @@ These rules apply to all content produced for this project — UI labels, copy, 
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS v3, React Router v6 |
 | Email | Resend HTTP API (httpx — not SMTP) |
 | Voice | ElevenLabs (TTS) + Web Speech API + Deepgram (STT) |
-| Workflow | n8n (Docker, :5678) — triggers /orchestrate webhook |
-| Infra | Docker Compose (ChromaDB + n8n), Caddy (prod), cloudflared (prod) |
+| Infra | Docker Compose (ChromaDB), Caddy (prod), cloudflared (prod) |
 
 ---
 
@@ -849,7 +848,7 @@ and never while a run is in flight.
 | `agents/tools/registry.py` | Agent name → tool list mapping |
 | `ui/src/router.tsx` | All frontend routes |
 | `ui/src/pages/Architecture.tsx` | Hidden `/architecture` reference page |
-| `docker-compose.yml` | ChromaDB + n8n (credentials from `.env`) |
+| `docker-compose.yml` | ChromaDB — the only Docker service since n8n was retired |
 | `.env.example` | All environment variables documented |
 
 ---
@@ -865,7 +864,6 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 ## Known issues / tech debt
 
 - `python-pptx` must be installed inside the venv (not system pip on macOS with Homebrew Python 3.13 / PEP 668)
-- Slack bot must be manually invited to the target channel (`/invite @TaskReimagination` in Slack) before `SlackNotifyTool` works
 - `taskreimagination.ai` must be a verified sender domain in Resend before reminder emails deliver
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
 - The `business_plan` crew has never completed a real run. It only became buildable when
@@ -892,7 +890,7 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   warnings, skill notes, or change requests, so an agent dispatched that way is missing all
   three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
   `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
-  re-run goes through the crew path. It is reachable from the API and from n8n.
+  re-run goes through the crew path. It is reachable from the API.
 - The Interview Coordinator still matches a stakeholder to a script by `node_label` when it
   plans a session, because `stakeholder_assignments` carries no script id. The match is now made
   once and recorded on `interview_sessions.script_id` rather than re-derived per answer, so the
@@ -930,5 +928,4 @@ All env vars are documented in `.env.example`. Never commit `.env`. Key vars:
 
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD` — **required**, no defaults
 - `JWT_SECRET` — generate with `openssl rand -hex 32`
-- `N8N_BASIC_AUTH_USER` / `N8N_BASIC_AUTH_PASSWORD` — must match docker-compose.yml
 - `PUBLIC_URL` — full public URL used in interview email links

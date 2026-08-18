@@ -98,17 +98,15 @@ export default function Architecture() {
             <tbody>
               <TableRow cells={['Caddy reverse proxy', ':80', 'Caddy', 'Routes /api/* → FastAPI, /dashboard* → React, / → landing HTML']} />
               <TableRow cells={['FastAPI backend', ':8000', 'Python / FastAPI / uvicorn', 'REST API, crew dispatch, DB management, auth']} />
-              <TableRow cells={['Chainlit app', ':8001', 'Python / Chainlit', 'Streaming crew execution UI']} />
               <TableRow cells={['React dashboard', ':3000', 'React / Vite / Tailwind', 'Main consultant UI (served under /dashboard)']} />
               <TableRow cells={['LiteLLM proxy', ':4000', 'LiteLLM', 'LLM routing - Claude Opus/Sonnet/Haiku + local qwen3']} />
               <TableRow cells={['ChromaDB', ':8002', 'ChromaDB (Docker)', 'Vector store - project docs + sector knowledge']} />
-              <TableRow cells={['n8n', ':5678', 'n8n (Docker)', 'Webhook relay, HITL review events, Slack notifications']} />
               <TableRow cells={['Cloudflare Tunnel', '(managed)', 'cloudflared', 'Exposes :80 publicly at https://taskreimagination.ai']} />
               <TableRow cells={['llama.cpp', ':10000', 'llama.cpp / Unsloth', 'Local LLM endpoint (sensitive mode, Qwen3-4B)']} />
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-slate-500 mt-2">All services started by <code className="text-slate-300">start.sh</code>; Docker manages ChromaDB + n8n.</p>
+        <p className="text-xs text-slate-500 mt-2">All services started by <code className="text-slate-300">start.sh</code>; Docker manages ChromaDB. Chainlit (:8001) and n8n (:5678) were retired in SP50.</p>
       </Section>
 
       {/* ── Orchestration Pipeline ── */}
@@ -121,7 +119,6 @@ export default function Architecture() {
           <div className="bg-surface-card rounded-lg border border-violet-700/50 p-4">
             <div className="text-xs text-violet-400 mb-1 uppercase tracking-wide">Trigger</div>
             <div className="font-mono text-sm text-white">POST /projects/{'{slug}'}/orchestrate</div>
-            <p className="text-sm text-slate-400 mt-1">Also triggerable from Slack: <code className="text-slate-300">/run {'{'}{'{slug}'}{'}'}</code> → n8n → FastAPI</p>
           </div>
 
           {/* Phase 1 */}
@@ -155,15 +152,17 @@ export default function Architecture() {
               <li><strong>Delivery Crew</strong> - phased roadmap HTML</li>
               <li><strong>Business Plan Crew</strong> - Word doc, PowerPoint deck, financial model</li>
             </ol>
-            <p className="text-sm text-slate-400 mt-2">PAM uses <code className="text-slate-300">RunCrewTool</code> to dispatch each sub-crew sequentially. Slack notifications fire at each stage.</p>
+            <p className="text-sm text-slate-400 mt-2">PAM uses <code className="text-slate-300">RunCrewTool</code> to dispatch each sub-crew sequentially, reporting at each stage into the run log.</p>
           </div>
 
           {/* HITL reviews */}
           <div className="bg-surface-card rounded-lg border border-slate-600 p-4">
             <div className="text-xs text-slate-400 mb-1 uppercase tracking-wide">HITL Review Gates (optional, per settings)</div>
             <p className="text-sm text-slate-300">
-              <code>HumanInputTool</code> pauses a crew, posts review event to n8n webhook → Slack DM to reviewer.
+              <code>HumanInputTool</code> pauses a crew and writes the review to the project database.
               Reviewer approves/rejects via Reviews page. Crew polls DB for response (24h timeout).
+              <strong className="text-slate-200"> Nothing notifies the reviewer</strong> - the n8n webhook that
+              relayed review events to Slack was retired in SP50 and no channel replaced it.
             </p>
           </div>
         </div>
@@ -387,8 +386,8 @@ export default function Architecture() {
                 name: 'PAM - Programme Architecture Manager',
                 file: 'agents/pam/pam_agent.py',
                 role: 'Top-level orchestrator. Dispatches and sequences all specialist crews across Phase 1 and Phase 2.',
-                tools: ['RunCrewTool', 'SlackNotifyTool', 'SQLiteStateTool'],
-                output: 'Orchestration log; downstream crew outputs; Slack progress messages',
+                tools: ['RunCrewTool', 'SQLiteStateTool'],
+                output: 'Orchestration log; downstream crew outputs',
               },
             ],
           },
@@ -431,9 +430,8 @@ export default function Architecture() {
                 ['WebFetchTool', 'agents/tools/web_fetch_tool.py', 'Fetch and extract plain text from URLs (used for discovery_links).', 'HTTP/S'],
                 ['MermaidRenderTool', 'agents/tools/mermaid_render.py', 'Save Mermaid syntax to outputs/{filename}.md for front-end rendering.', 'None (local)'],
                 ['SQLiteStateTool', 'agents/tools/sqlite_state.py', 'Read/write structured JSON state per (slug, agent_name, key). Persists agent outputs across crew tasks.', 'SQLite per-project DB'],
-                ['HumanInputTool', 'agents/tools/human_input.py', 'Pause crew execution. POST HITL event to n8n webhook. Poll DB for reviewer decision (24h timeout).', 'n8n webhook → Slack'],
+                ['HumanInputTool', 'agents/tools/human_input.py', 'Pause crew execution. Write the review to the project DB and poll it for a reviewer decision (24h timeout). Notifies nobody.', 'None (local)'],
                 ['RunCrewTool', 'agents/tools/run_crew.py', 'Dispatch a named sub-crew (discovery, value_design, architecture, delivery, business_plan, discovery_interviews) and await completion.', 'None (internal async)'],
-                ['SlackNotifyTool', 'agents/tools/slack_notify.py', 'POST crew_notification event to n8n webhook → Slack channel message.', 'n8n webhook → Slack'],
                 ['InterviewSessionTool', 'agents/tools/interview_session_tool.py', 'CRUD interview_sessions table. Operations: create, get_status, get_transcripts, mark_abandoned.', 'SQLite per-project DB'],
                 ['ExcelOutputTool', 'agents/tools/excel_output.py', 'Export JSON data to .xlsx (portfolio output).', 'None (openpyxl local)'],
                 ['HtmlRoadmapTool', 'agents/tools/html_roadmap.py', 'Render roadmap JSON to interactive Mermaid-timeline HTML. Also writes roadmap_data.json.', 'None (local)'],
@@ -618,26 +616,20 @@ export default function Architecture() {
       {/* ── External Integrations ── */}
       <Section id="integrations" title="External Integrations">
 
-        <Card title="n8n Automation" accent="border-orange-700/50">
-          <KV k="URL" v="http://localhost:5678" />
-          <KV k="Web UI" v="http://localhost:5678 (browser)" />
-          <KV k="Auth method" v="Username + password (set during first-run setup)" />
-          <KV k="Webhook path" v="/webhook/agentpool  (N8N_WEBHOOK_URL env var)" />
-          <div className="mt-3 text-sm text-slate-300">
-            <p className="text-slate-400 text-xs mb-1">Workflows:</p>
-            <div className="space-y-1">
-              <div><Tag color="amber">TaskReimagination Notifications</Tag> <span className="text-slate-400 text-xs">- Webhook → Switch on event_type → Slack HITL DM or Slack Channel Notify</span></div>
-              <div><Tag color="amber">TaskReimagination Slack Run Command</Tag> <span className="text-slate-400 text-xs">- Slack /run slash command → POST /orchestrate → Slack confirm</span></div>
-            </div>
-          </div>
-        </Card>
-
-        <Card title="Slack" accent="border-purple-700/50">
-          <KV k="Access method" v="OAuth2 via n8n (not direct API)" />
-          <KV k="n8n credential name" v="AgentPool Slack (OAuth2)" />
-          <KV k="HITL reviews" v="DM to reviewer's Slack ID (reviewer_slack_id field)" />
-          <KV k="Crew notifications" v="Message to project's slack_channel (config.yaml)" />
-          <KV k="Slash command" v="/run {slug}  →  triggers PAM Phase 1" />
+        <Card title="n8n and Slack - retired" accent="border-slate-600">
+          <p className="text-sm text-slate-300">
+            n8n (:5678) relayed three things: review gates to a Slack DM, crew notifications to a
+            Slack channel, and a <code className="text-slate-400">/run</code> slash command inbound to{' '}
+            <code className="text-slate-400">POST /orchestrate</code>. SP50 retired it. The inbound door
+            is unaffected - <code className="text-slate-400">/orchestrate</code> is PAM's own endpoint and
+            the dashboard calls it directly - and both outbound posts are gone, along with{' '}
+            <code className="text-slate-400">SlackNotifyTool</code>. No channel replaced the review
+            notification.
+          </p>
+          <p className="text-sm text-slate-400 mt-2">
+            <code className="text-slate-400">slack_channel</code> remains a project setting on the
+            Settings page and nothing reads it.
+          </p>
         </Card>
 
         <Card title="Resend (Email)" accent="border-teal-700/50">

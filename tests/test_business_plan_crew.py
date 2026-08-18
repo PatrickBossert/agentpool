@@ -144,9 +144,9 @@ def test_every_agent_in_the_crew_is_given_the_registry_tools_for_its_own_name(mo
 
     Asserting a single call was only ever true because the crew held one agent, and an agent
     built with a tool list assembled for a different name would be a quiet gap rather than a
-    visible one. What was asserted alongside it - that a caller's `hitl_tool` reached every
-    call - went with the parameter: the Chainlit console was the only caller that ever passed
-    one, and a tool list that varies by caller is precisely what the graph could not read.
+    visible one. What was asserted alongside it - that a caller's own review tool was forwarded
+    into every call - went with the registry parameter that allowed it, and the keywords below
+    are now the whole call.
     """
     with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]) as mock_reg:
         from agents.crews.business_plan_crew import create_business_plan_crew
