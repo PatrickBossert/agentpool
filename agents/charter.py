@@ -222,10 +222,15 @@ CREW_CHARTER: dict[str, Charter] = {
             "Runs in parallel with Assessment Design: both wait on the value chain and nothing "
             "else, and both feed the interviews. What this crew hands on to the interviews is "
             "not an artefact - the mapping of stakeholders to value chain nodes lives in the "
-            "`stakeholder_assignments` table, which is written when an assignment is confirmed "
-            "and reaches the Interview Coordinator through the dispatch path rather than from "
-            "here - so the arrow into the interviews is sequencing: he invites and chases the "
-            "people who are then interviewed"
+            "`stakeholder_assignments` table, made by hand in this crew's own Setup tab, and "
+            "the dispatch path enriches it and prepends it to each crew that needs it. It now "
+            "reaches this crew that way as well as the Interview Coordinator, which is what "
+            "closed the defect where Jordan was told to read the table through `SQLiteStateTool` "
+            "and never could. The arrow into the interviews stays sequencing all the same, and "
+            "not for want of trying: the table is not an artefact either crew writes, so nothing "
+            "travels from this crew to that one. Two crews reading the same table from the "
+            "dispatch path is not one handing over to the other. What is real is the ordering - "
+            "he invites and chases the people who are then interviewed"
         ),
     ),
     "discovery_interviews": Charter(

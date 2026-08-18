@@ -11,8 +11,9 @@ import logging
 from pathlib import Path
 from typing import Any
 from api.config import get_settings, load_project_config
-from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_agent_outputs, fetch_stakeholder_assignments, fetch_stakeholders
+from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_agent_outputs
 from api.routers.ws import push_log
+from api.services.assignment_coverage import build_assignment_coverage
 
 # Do not add a module-level `from agents…` import here. `agents/graph.py` imports
 # `_CREW_AGENT_NAMES` from this module and assembles at import time, and `agents/tools/_db.py`
@@ -342,31 +343,19 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             # Keyed on the project, not on this run: the mapping is made by hand in
             # Jordan's surface, before any orchestration, and every later run reads the
             # same rows. The row stores only the node id, so the label and level the
-            # coordinator's prompt shows are resolved from the value chain registry here
-            # - the registry is the canonical spine, and a copy on the assignment row
-            # would go stale the next time Alex re-emits a label.
+            # coordinator's prompt shows are resolved from the value chain registry - the
+            # registry is the canonical spine, and a copy on the assignment row would go
+            # stale the next time Alex re-emits a label.
+            #
+            # Built by `build_assignment_coverage`, which the Stakeholder Manager branch
+            # below and Pamela's report also call. This branch takes the mapping and
+            # ignores the proportions; that is the point of one derivation with three
+            # readers rather than three enrichments of the same rows.
             project_row = await fetch_project(conn, slug=slug)
-            raw_assignments = await fetch_stakeholder_assignments(
-                conn, project_id=project_row["id"]
+            coverage = await build_assignment_coverage(
+                conn, slug=slug, project_id=project_row["id"]
             )
-            all_stakeholders = await fetch_stakeholders(conn, project_id=project_row["id"])
-            stakeholder_map = {s["id"]: s for s in all_stakeholders}
-
-            from api.services.project_service import get_value_chain_node_index
-            nodes = get_value_chain_node_index(slug)
-
-            stakeholder_assignments = [
-                {
-                    "stakeholder_id": a["stakeholder_id"],
-                    "name": stakeholder_map.get(a["stakeholder_id"], {}).get("name", "Unknown"),
-                    "job_title": stakeholder_map.get(a["stakeholder_id"], {}).get("job_title", ""),
-                    "node_id": a["node_id"],
-                    "level": nodes.get(a["node_id"], {}).get("level", ""),
-                    "node_label": nodes.get(a["node_id"], {}).get("label", a["node_id"]),
-                }
-                for a in raw_assignments
-                if a["stakeholder_id"] in stakeholder_map
-            ]
+            stakeholder_assignments = coverage["assignments"]
 
         # node_templates_block used to be built from node_template_assignments, retired along
         # with that table. This is a real prompt change on any project where assessment_design
@@ -488,12 +477,36 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     elif crew_name == "stakeholder_management":
         public_url = config.get("public_url", "")
         public_interview_url_base = f"{public_url}/dashboard/interview" if public_url else ""
+
+        # The mapping reaches Jordan here, and only here.
+        #
+        # His task has instructed him to read `stakeholder_assignments` through
+        # `SQLiteStateTool` since the crew was written. That tool resolves a key through
+        # `agent_outputs` and can only ever see an output type, so the read returned
+        # "Error: no state found", CrewAI handed the string back as an ordinary tool
+        # result, and the agent whose whole job is finding the gaps in the mapping had
+        # never seen the mapping. `agents/reads.py` recorded it as unresolvable.
+        #
+        # Injected rather than given as a tool, for three reasons. The same table already
+        # reaches the Interview Coordinator this way, and a second door onto one fact is
+        # what this branch spent three tasks deleting. The proportions must be one
+        # derivation shared with Pamela's report - hand an agent the rows and the
+        # percentage he reports is a language model's arithmetic, which is not the number
+        # a human was promised. And an injected block always arrives, where a tool the
+        # agent may decline to call fails exactly as silently as the read it replaces.
+        async with get_connection(slug) as conn:
+            project_row = await fetch_project(conn, slug=slug)
+            coverage = await build_assignment_coverage(
+                conn, slug=slug, project_id=project_row["id"]
+            )
+
         from agents.crews.stakeholder_management_crew import create_stakeholder_management_crew
         crew = create_stakeholder_management_crew(
             slug=slug,
             run_id=run_id,
             sector=sector,
             public_interview_url_base=public_interview_url_base,
+            coverage=coverage,
         )
 
     else:

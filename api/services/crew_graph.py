@@ -24,12 +24,14 @@ from api.database import crew_has_commit, crew_is_running
 #
 # `discovery_interviews` waits on both of them, and only one of the two hands anything over.
 # `stakeholder_management -> discovery_interviews` is a **sequencing** dependency and is meant to
-# stay one: what actually connects the two is `stakeholder_assignments`, a table written when an
-# assignment is confirmed on PAM's orchestration path and injected into the Interview
-# Coordinator by the dispatch path - not an artefact either crew writes. Jordan does not write
-# it, and his own task tells him to read it through `SQLiteStateTool`, which reads
-# `outputs/<key>.json` and so has never been able to see it (a defect of its own, recorded in
-# the slice-2 plan). The ordering is real all the same: he invites and chases the people Avery
+# stay one: what actually connects the two is `stakeholder_assignments`, a table made by hand in
+# Jordan's Setup tab and injected into both crews by the dispatch path - not an artefact either
+# crew writes. Jordan does not write it. He can now read it: it is enriched and prepended to his
+# task, which closed the defect where his own task told him to read it through `SQLiteStateTool`,
+# a door onto `outputs/<key>.json` that could never see a table. That makes him better informed
+# and moves nothing along this edge - two crews reading one table from the dispatch path is not
+# one handing over to the other, and `EdgeKind` derives INFORMATION from artefacts that travel,
+# which these are not. The ordering is real all the same: he invites and chases the people Avery
 # then interviews. Do not invent a flow to make the arrow look busier than it is.
 CREW_DEPENDENCIES: dict[str, list[str]] = {
     "discovery_mapping":      [],
