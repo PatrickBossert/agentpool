@@ -487,3 +487,157 @@ def test_a_changed_declaration_changes_the_answer(monkeypatch):
     now = next(r for r in after["tools"] if r["tool"] == "WebFetchTool")
     assert was["leaves_deployment"] is True and now["leaves_deployment"] is False
     assert now["sends"] == "nothing at all, in this test"
+
+
+# ── The clusters and the edges the view is drawn from ─────────────────────────
+#
+# The view renders these and nothing else, so this is the layer at which "would the picture be
+# wrong?" can be asked of the back end. Every expectation is rebuilt from `build_graph()` rather
+# than typed out, for the reason the rest of this file gives.
+
+
+@pytest.mark.asyncio
+async def test_the_payload_carries_every_cluster_with_its_crews_in_pipeline_order(client):
+    payload = await _payload(client)
+    graph = build_graph()
+
+    assert [c["cluster_id"] for c in payload["clusters"]] == list(graph.clusters)
+    for row in payload["clusters"]:
+        node = graph.clusters[row["cluster_id"]]
+        assert row["crew_ids"] == list(node.crew_ids)
+        assert row["orchestrator_id"] == node.orchestrator_id
+        assert row["orchestrator"] == graph.agents[node.orchestrator_id].display_name
+        assert row["dispatches"] == list(node.dispatches)
+
+
+@pytest.mark.asyncio
+async def test_every_crew_in_the_payload_names_the_cluster_that_owns_it(client):
+    """No crew may fall outside the clusters, or the view is shorter than the table beside it."""
+    payload = await _payload(client)
+    owner = {
+        crew_id: cluster["cluster_id"]
+        for cluster in payload["clusters"]
+        for crew_id in cluster["crew_ids"]
+    }
+    assert {crew["crew_id"] for crew in payload["crews"]} == set(owner)
+    for crew in payload["crews"]:
+        assert crew["cluster"] == owner[crew["crew_id"]]
+
+
+@pytest.mark.asyncio
+async def test_a_crew_row_carries_the_ids_its_names_stand_for(client):
+    """The page shows the label and links on the id, so both must travel and must agree."""
+    payload = await _payload(client)
+    graph = build_graph()
+    for crew in payload["crews"]:
+        node = graph.crews[crew["crew_id"]]
+        assert crew["agent_ids"] == list(node.agent_ids)
+        assert crew["agents"] == [graph.agents[a].display_name for a in node.agent_ids]
+        assert crew["depends_on_ids"] == list(node.depends_on)
+        assert crew["trigger_ids"] == [t.value for t in node.triggers]
+
+
+@pytest.mark.asyncio
+async def test_the_payloads_edges_are_the_graphs_edges(client):
+    payload = await _payload(client)
+    graph = build_graph()
+    assert [
+        (e["source"], e["target"], e["kind"], tuple(e["artefacts"]), e["declared"])
+        for e in payload["crew_edges"]
+    ] == [
+        (e.source, e.target, e.kind.value, e.artefacts, e.declared) for e in graph.edges
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_edge_that_carries_nothing_is_reported_as_sequencing(client):
+    """The auditor's distinction, at the endpoint.
+
+    Three declared edges hand over no artefact. Reporting them the same way as the six that do
+    would tell a reader material passes between two crews when none does.
+    """
+    payload = await _payload(client)
+    declared = [e for e in payload["crew_edges"] if e["declared"]]
+    assert {e["kind"] for e in declared} == {"information", "sequencing"}
+    for edge in declared:
+        assert bool(edge["artefacts"]) == (edge["kind"] == "information")
+
+
+@pytest.mark.asyncio
+async def test_no_edge_names_a_crew_the_payload_does_not_carry(client):
+    payload = await _payload(client)
+    known = {crew["crew_id"] for crew in payload["crews"]}
+    for edge in payload["crew_edges"]:
+        assert edge["source"] in known and edge["target"] in known
+
+
+@pytest.mark.asyncio
+async def test_the_edges_move_when_a_read_is_declared(client, monkeypatch):
+    """Driven, not observed: change one declaration and the endpoint's edge changes with it.
+
+    `requirements -> delivery` carries nothing today. Declaring one of the requirements crew's
+    outputs as a read of the roadmap generator must turn that edge into an information flow in
+    the payload the page renders.
+    """
+    from agents.reads import AGENT_READS, Medium, Read
+
+    def edge(payload):
+        return next(
+            e for e in payload["crew_edges"]
+            if e["source"] == "requirements" and e["target"] == "delivery"
+        )
+
+    assert edge(await _payload(client))["kind"] == "sequencing"
+
+    artefact = sorted(build_graph().crew_writes("requirements"))[0]
+    reads = dict(AGENT_READS)
+    reads["roadmap_generator"] = reads["roadmap_generator"] + (
+        Read(artefact, Medium.ARTEFACT_JSON, "SQLiteStateTool", "invented for this test"),
+    )
+    monkeypatch.setattr("agents.graph._AGENT_READS", reads)
+
+    after = edge(data_architecture(SLUG))
+    assert after["kind"] == "information"
+    assert artefact in after["artefacts"]
+
+
+@pytest.mark.asyncio
+async def test_every_name_the_payload_shows_travels_with_the_id_it_stands_for(client):
+    """A link is made on the id and rendered on the name, so the two must stay in step.
+
+    Parallel arrays are the risk this closes: `held_by` and `held_by_ids` are sorted separately
+    in the sense that either could be, and a page that showed one agent's name over another's
+    anchor would be quietly wrong in the direction hardest to notice. Two display names could
+    also become identical - nothing refuses that - which is why the join is on the id.
+    """
+    payload = await _payload(client)
+    graph = build_graph()
+    name = {agent_id: node.display_name for agent_id, node in graph.agents.items()}
+
+    def agree(names, ids, where):
+        assert [name[i] for i in ids] == list(names), where
+
+    for row in payload["tools"]:
+        agree(row["held_by"], row["held_by_ids"], row["tool"])
+    for row in payload["shared_sources"]:
+        agree(row["read_by"], row["read_by_ids"], f"{row['source']} read_by")
+        agree(row["reachable_by"], row["reachable_by_ids"], f"{row['source']} reachable_by")
+    for row in payload["agents"]:
+        assert row["crews"] == [graph.crews[c].display_name for c in row["crew_ids"]]
+
+
+@pytest.mark.asyncio
+async def test_the_agents_a_crew_names_and_the_crews_an_agent_names_are_one_relation(client):
+    """Read from the crew and read from the agent, the membership must be the same set."""
+    payload = await _payload(client)
+    from_crews = {
+        (crew["crew_id"], agent_id)
+        for crew in payload["crews"]
+        for agent_id in crew["agent_ids"]
+    }
+    from_agents = {
+        (crew_id, agent["agent_id"])
+        for agent in payload["agents"]
+        for crew_id in agent["crew_ids"]
+    }
+    assert from_crews == from_agents
