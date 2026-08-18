@@ -209,17 +209,44 @@ function ScopeNotice({ data }: { data: DataArchitectureModel }) {
   )
 }
 
+// What a mode is granted is CLOUD_VECTOR_STORE and HOSTED_INFERENCE independently
+// (api/services/deployment_modes.py) - not one combined "strict or not" tone. A single Pill
+// collapsing the two was the whole complaint that sent egress from an assumption to a grant:
+// it read `sensitive` as contained and everything else as open, which is only true while
+// exactly two modes exist. A mode planned but not yet built (sovereign: hosted models, a
+// local vector store) grants one and not the other, and a reader of this page - the auditor
+// this table exists for - needs to see that split rather than one badge averaging it away.
+//
+// So each mode-gated capability gets its own pill, read straight off the payload's own
+// leaves_deployment flags. Nothing here decides what "sensitive" or "sovereign" mean; the
+// renderer just stops being the thing that has to change when a third mode lands.
+function ContainmentPill({ label, leaves }: { label: string; leaves: boolean }) {
+  return (
+    <Pill tone={leaves ? 'leaves' : 'stays'}>
+      {leaves ? <Globe size={10} /> : <Lock size={10} />}
+      {label}: {leaves ? 'hosted' : 'local'}
+    </Pill>
+  )
+}
+
 function ModeBanner({ data }: { data: DataArchitectureModel }) {
+  const movedTools = data.tools.filter((t) => t.gated_by_mode)
   const moved = [
-    ...data.tools.filter((t) => t.gated_by_mode).map((t) => t.tool),
+    ...movedTools.map((t) => t.tool),
     ...(data.inference.gated_by_mode ? ["the agents' own model calls"] : []),
   ]
   const unmoved = data.tools.filter((t) => !t.gated_by_mode && t.leaves_deployment)
   return (
     <Card>
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <p className="text-sm font-semibold text-primary">Processing mode</p>
-        <Pill tone={data.llm_mode === 'sensitive' ? 'stays' : 'neutral'}>{data.llm_mode}</Pill>
+        <Pill tone="neutral">{data.llm_mode}</Pill>
+        {data.inference.gated_by_mode && (
+          <ContainmentPill label="Model inference" leaves={data.inference.leaves_deployment} />
+        )}
+        {movedTools.map((t) => (
+          <ContainmentPill key={t.tool} label={t.tool} leaves={t.leaves_deployment} />
+        ))}
       </div>
       <p className="text-xs text-muted leading-relaxed">
         The mode moves {moved.length} of the destinations below: {moved.join(', ')}. It moves

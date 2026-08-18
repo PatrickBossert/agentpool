@@ -38,6 +38,16 @@ vi.mock('../api/endpoints', () => ({
     outputs: vi.fn().mockResolvedValue([]),
     listReviews: vi.fn().mockResolvedValue([]),
     getSettings: vi.fn().mockResolvedValue({}),
+    // AgentDetailPanel's chat tab now asks this on mount for its attach control's tier
+    // picker. Undefined-while-loading is safe (the control stays hidden), but resolving it
+    // keeps this suite's queries settled rather than left pending.
+    getMyPermissions: vi.fn().mockResolvedValue({
+      can_review: false,
+      can_approve: false,
+      can_grant_roles: false,
+      can_issue_invite_links: false,
+      writable_knowledge_tiers: [],
+    }),
   },
   milestonesApi: {
     list: vi.fn().mockResolvedValue([]),

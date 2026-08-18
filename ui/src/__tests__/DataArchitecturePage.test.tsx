@@ -334,6 +334,36 @@ describe('the generated half of the privacy page', () => {
     expect(screen.getAllByText(/Stays on this server/).length).toBe(2)
   })
 
+  it('badges the processing mode by what is actually granted, not by the mode name alone', async () => {
+    // The fixture's own mode is 'sensitive' and its inference stays local - the case the old
+    // `llm_mode === 'sensitive' ? 'stays' : 'neutral'` collapse happened to get right. This
+    // proves the badge is read off inference.leaves_deployment, not off the mode string: it
+    // would have said the same thing for a llm_mode this fixture does not use.
+    renderPage()
+    expect(await screen.findByText(/Model inference: local/)).toBeInTheDocument()
+  })
+
+  it('shows a mode that grants one capability and not the other as two separate badges, never one collapsed tone', async () => {
+    // The case the old single Pill could not express, and the reason sovereign (hosted
+    // models, a local vector store) was named in the brief as the mode still to come:
+    // HOSTED_INFERENCE and CLOUD_VECTOR_STORE are granted independently
+    // (api/services/deployment_modes.py), so a mode may open one and keep the other closed.
+    // llm_mode itself is left as an untouched string the fixture invents - the page must not
+    // be reading meaning out of the name, only out of the two leaves_deployment flags.
+    get.mockResolvedValue({
+      ...PAYLOAD,
+      llm_mode: 'invented-split-mode',
+      inference: { ...PAYLOAD.inference, gated_by_mode: true, leaves_deployment: true },
+      tools: [
+        { ...PAYLOAD.tools[1], tool: 'ChromaQueryTool', gated_by_mode: true, leaves_deployment: false },
+        PAYLOAD.tools[0],
+      ],
+    })
+    renderPage()
+    expect(await screen.findByText(/Model inference: hosted/)).toBeInTheDocument()
+    expect(screen.getByText(/ChromaQueryTool: local/)).toBeInTheDocument()
+  })
+
   it('names a declared tool no agent holds, and says nobody holds it', async () => {
     renderPage()
     await screen.findByText(/Declared, and held by no agent/)
