@@ -921,15 +921,26 @@ async def test_a_reply_from_the_dev_mode_mailbox_is_attributed_to_whoever_sent_i
 
 @pytest.mark.asyncio
 async def test_a_stakeholder_with_no_address_on_file_is_never_confirmed(client, secret):
-    """"We could not check" must not present as "we checked and it matched"."""
+    """"We could not check" must not present as "we checked and it matched".
+
+    Both empty sides are driven. A comparison written as a bare `from_key == stakeholder_key`
+    answers False for the first case and **True** for the second - two empty strings match -
+    so a message with no sender at all, about a person with no address on file, would report
+    as confirmed having compared nothing with nothing. Power-checking found that; the first
+    case alone could not see it.
+    """
     await _make_project(client, SLUG)
     stakeholder_id = await _add_stakeholder(SLUG, PARTICIPANT_NAME, "")
     address = await _minted_address(SLUG, stakeholder_id)
 
-    await deliver(client, inbound(address))
+    await deliver(client, inbound(address), message_id="msg_no_email_on_file")
+    await deliver(
+        client, inbound(address, **{"from": ""}), message_id="msg_no_sender_either"
+    )
 
-    reply = (await client.get(f"/projects/{SLUG}/inbound-replies")).json()["replies"][0]
-    assert reply["sender_confirmed"] is False
+    replies = (await client.get(f"/projects/{SLUG}/inbound-replies")).json()["replies"]
+    assert len(replies) == 2
+    assert [reply["sender_confirmed"] for reply in replies] == [False, False]
 
 
 @pytest.mark.asyncio
