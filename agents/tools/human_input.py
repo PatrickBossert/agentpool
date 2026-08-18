@@ -1,10 +1,31 @@
 # agents/tools/human_input.py
+"""Pause a crew at a review gate and wait for a human decision.
+
+**Nothing notifies the reviewer that a gate is open.** This tool used to post the review to an
+n8n webhook - `review_id`, the prompt, the slug, the run id, and a dashboard link - which n8n
+relayed to Slack. n8n is retired, the post is gone, and no channel replaced it. Say so here
+rather than let a reader infer it from an absence: a reviewer learns a gate is waiting by
+opening the dashboard, and until something pushes, an agent can sit on a gate for the full
+24 hours below with nobody aware.
+
+The gate itself is unaffected, and this is the distinction that made removing the post safe.
+The post was a nudge; the mechanism is `insert_hitl_review` followed by the polling loop, which
+ends when `PATCH /projects/{slug}/reviews/{id}` records a decision. That was true while the
+webhook existed too - `settings.n8n_webhook_url` was optional and the post sat inside
+`except Exception: pass`, so every deployment without n8n configured already ran exactly as
+this does.
+
+The intended replacement is a message push carrying a link and a token that brings the reviewer
+to the content on the server, never the content itself - the shape the invite and reset loops
+already run on. `deliver_reset` in `api/services/invite_service.py` is where that kind of
+decision lives, and `FROM_EMAIL` naming an unverified Resend domain is why an administrator
+handing over a link is the honest channel today. None of that is built. This tool has no
+outbound call at all, and `tests/test_human_input.py` asserts that rather than describing it.
+"""
 import os
 import time
-import httpx
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
-from api.config import get_settings
 from agents.tools._db import insert_hitl_review, get_review_decision, complete_hitl_review
 
 _DEFAULT_HITL_TIMEOUT = 86400  # 24 hours
@@ -45,25 +66,8 @@ class HumanInputTool(BaseTool):
             complete_hitl_review(slug=self.slug, review_id=review_id, decision=auto)
             return auto
 
-        # Notify n8n (fire and forget — don't fail the crew if n8n is unavailable)
-        settings = get_settings()
-        if settings.n8n_webhook_url:
-            try:
-                httpx.post(
-                    settings.n8n_webhook_url,
-                    json={
-                        "review_id": review_id,
-                        "prompt": prompt,
-                        "project_slug": self.slug,
-                        "run_id": self.run_id,
-                        "review_url": (
-                            f"{settings.public_url.rstrip('/')}/dashboard/{self.slug}/reviews"
-                        ),
-                    },
-                    timeout=5.0,
-                )
-            except Exception:
-                pass  # Don't block the crew if n8n is unreachable
+        # Nothing is notified. See the module docstring: the review is now in the database and
+        # visible on the dashboard, and a reviewer finds it by looking.
 
         # Poll until the human updates the review via PATCH /projects/{slug}/reviews/{id}
         timeout_seconds = int(os.getenv("HITL_TIMEOUT_SECONDS", str(_DEFAULT_HITL_TIMEOUT)))

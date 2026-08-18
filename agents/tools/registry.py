@@ -18,13 +18,18 @@ def get_tools_for_agent(
     slug: str,
     run_id: int = 0,
     sector: str = "",
-    hitl_tool=None,
 ) -> list[BaseTool]:
-    """Return instantiated tools for the given agent, scoped to the project slug."""
+    """Return instantiated tools for the given agent, scoped to the project slug.
+
+    What this returns is what `tool_map` names, class for class. There was once a `hitl_tool`
+    parameter that substituted a caller's own tool for every `HumanInputTool` in the list, and
+    the Chainlit console was the only thing that ever passed it. It made the tool lists a
+    property of the caller rather than of the agent, which every reader of the registry - the
+    graph, the egress declaration, the privacy page - had to be told about and could not see.
+    """
     from agents.tools.sqlite_state import SQLiteStateTool
     from agents.tools.human_input import HumanInputTool
     from agents.tools.run_crew import RunCrewTool
-    from agents.tools.slack_notify import SlackNotifyTool
     from agents.tools.document_ingestion import DocumentIngestionTool
     from agents.tools.chroma_query import ChromaQueryTool
     from agents.tools.tavily_search import TavilySearchTool
@@ -78,7 +83,6 @@ def get_tools_for_agent(
         ],
         "pam": [
             RunCrewTool(slug=slug, orchestration_run_id=run_id),
-            SlackNotifyTool(slug=slug),
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
         ],
         "value_proposition_generator": [
@@ -118,8 +122,7 @@ def get_tools_for_agent(
         #
         # No HumanInputTool: the Illustrator has no approval gate, which
         # test_vi_task_has_no_hitl_gate states of the task and this states of the tool list.
-        # A tool an agent holds is a tool it can decide to call. `hitl_tool` is still passed
-        # in by the crew and is a no-op here, as it is for any agent with no gate.
+        # A tool an agent holds is a tool it can decide to call.
         #
         # No MermaidRenderTool: he produces prompts for an image generator, not diagrams.
         "visual_illustrator": [
@@ -150,15 +153,11 @@ def get_tools_for_agent(
         "stakeholder_manager": [
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
             InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
-            SlackNotifyTool(slug=slug),
         ],
     }
 
     tools = tool_map.get(agent_name)
     if tools is None:
         raise ValueError(f"Unknown agent: {agent_name}")
-
-    if hitl_tool is not None:
-        tools = [hitl_tool if isinstance(t, HumanInputTool) else t for t in tools]
 
     return tools

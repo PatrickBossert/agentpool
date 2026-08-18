@@ -9,13 +9,13 @@ dependencies and the display name are absent from this file and come from the gr
 
 ## Why triggers are declared here rather than derived
 
-Four dispatch paths reach a crew, and no two of them agree about which crews they can reach.
+Three dispatch paths reach a crew, and no two of them agree about which crews they can reach.
 Nothing in the code holds them together, and each is enumerable only by reading a different
-module - one an `elif` ladder, one an approval graph, one a set of CrewAI task descriptions, and
-one a frozenset in a Chainlit handler. `DISPATCH_PATHS` below names each path and where it lives;
-`CREW_CHARTER` says which of them can start each crew. `tests/test_crew_charter.py` derives every
-one of those sets from the code that implements it and holds this declaration equal to it, so
-what is written here is checked rather than believed.
+module - one an `elif` ladder, one an approval graph, and one a set of CrewAI task descriptions.
+`DISPATCH_PATHS` below names each path and where it lives; `CREW_CHARTER` says which of them can
+start each crew. `tests/test_crew_charter.py` derives every one of those sets from the code that
+implements it and holds this declaration equal to it, so what is written here is checked rather
+than believed.
 
 The extensibility reason for declaring them at all: a crew outside this application - technical
 requirements handed to a coding-agent crew - is a graph entry whose dispatch is a webhook rather
@@ -37,22 +37,23 @@ page for a mechanism that does not exist.
 
 ## A path can exist and be broken, and this must be able to say so
 
-One failure is live on master, and a model that could not express it would be lying about what
-starts a crew:
+**`Charter.defect`** says that of a crew: no path can start it, because every path funnels
+through the same call in `build_and_run_crew`. `requirements` carried one - that call passed it
+three arguments its factory does not take, and raised `TypeError` before an agent was built -
+until the call site was corrected. No crew declares one now, and the guard below is what keeps
+that honest in both directions: it derives the truth from the call sites and the factory
+signatures, so a defect that is fixed and left declared fails, and a new one that is introduced
+and not declared fails too.
 
-- **`DispatchPath.defect`** - this path can start nothing. `CHAINLIT_CONSOLE` has one: it is a
-  second, older dispatch ladder that never learned about two crew renames or about crew factories
-  ceasing to take `llm_mode`.
-
-**`Charter.defect`** says the same thing about a crew rather than a path: no path can start it,
-because every path but the console funnels through the same call in `build_and_run_crew`.
-`requirements` carried one - that call passed it three arguments its factory does not take, and
-raised `TypeError` before an agent was built - until the call site was corrected. No crew declares
-one now, and the guard below is what keeps that honest in both directions.
-
-Both are prose, and neither is trusted: the guard derives the truth from the call sites and the
-factory signatures, so a defect that is fixed and left declared fails, and a new one that is
-introduced and not declared fails too.
+**`DispatchPath.defect`** says it of a path instead, and is currently declared by none. It was
+written for `CHAINLIT_CONSOLE`, a second dispatch ladder that had never learned about two crew
+renames or about crew factories ceasing to take `llm_mode`, so all five of its branches raised.
+That console is gone, and with it the per-branch derivation that held its prose to the code. The
+field is kept, because a crew dispatched by webhook rather than by factory is the extensibility
+case this file exists for and such a path can break on its own - but
+`test_no_dispatch_path_declares_a_defect_nothing_derives` refuses a defect written here until
+something derives it, so the field cannot go back to carrying an unchecked claim. Today a broken
+path is a broken crew, and `Charter.defect` is where that belongs.
 """
 from __future__ import annotations
 
@@ -66,7 +67,6 @@ class Trigger(Enum):
     REST_RUN = "rest_run"
     APPROVAL_CASCADE = "approval_cascade"
     PAM_ORCHESTRATION = "pam_orchestration"
-    CHAINLIT_CONSOLE = "chainlit_console"
 
 
 @dataclass(frozen=True)
@@ -79,9 +79,9 @@ class DispatchPath:
     fails if either has moved, so a trigger can only be named for a path that genuinely exists.
 
     Resolved by parsing the module file rather than importing it, for the reason
-    `agents/graph.py` and `agents/egress.py` already parse rather than import: importing
-    `chainlit_app.app` pulls in Chainlit and reads settings at module scope, and a path whose
-    module cannot be imported in a test process would look absent when it is merely heavy.
+    `agents/graph.py` and `agents/egress.py` already parse rather than import: a dispatch
+    module pulls in the crew factories and reads settings at module scope, and a path whose
+    module is merely heavy to import must not look absent.
 
     `doors` are the outside-facing handlers a request arrives at before it reaches the
     entrypoint. They are a separate field because the door and the dispatcher are rarely the same
@@ -112,8 +112,8 @@ DISPATCH_PATHS: dict[Trigger, DispatchPath] = {
             "crew in the graph, and an unknown name reaches `build_and_run_crew`'s final `else`. "
             "A request naming neither a crew nor an agent is refused with 400 rather than "
             "defaulting, so this path starts nothing that was not asked for. "
-            "One of the two inbound HTTP doors, and the only one that starts a single crew: n8n's "
-            "workflow calls `/orchestrate` instead, which is the orchestration path's door. "
+            "One of the two inbound HTTP doors, and the only one that starts a single crew: the "
+            "other is `/orchestrate`, which is the orchestration path's door. "
             "`req.agent` on the same endpoint starts a single agent rather than a crew, which is "
             "not a crew dispatch and carries none of the feedback the crew path injects"
         ),
@@ -152,31 +152,6 @@ DISPATCH_PATHS: dict[Trigger, DispatchPath] = {
             "three cannot be built at all"
         ),
     ),
-    Trigger.CHAINLIT_CONSOLE: DispatchPath(
-        trigger=Trigger.CHAINLIT_CONSOLE,
-        label="An operator types a crew name into the Chainlit console",
-        doors=("chainlit_app/app.py:handle_message",),
-        entrypoint="chainlit_app/app.py:_run_crew",
-        dispatcher="kickoff_async",
-        note=(
-            "A separate process, started by hand with `chainlit run`, and a second crew-building "
-            "ladder of its own: it writes its own `crew_runs` row and calls `kickoff_async` "
-            "directly, so it goes nowhere near `build_and_run_crew` and injects none of the skill "
-            "notes, change requests or validation warnings the other three paths do. It is also "
-            "the only production caller of `ChainlitHumanInputTool`"
-        ),
-        defect=(
-            "This path can start nothing. Its `_VALID_CREWS` frozenset is the pre-rename crew "
-            "vocabulary: `discovery` and `architecture` are what `requirements` and "
-            "`capabilities` were called two sprints ago, and `agents/crews/discovery_crew.py` and "
-            "`architecture_crew.py` do not exist, so those two branches raise `ImportError`. The "
-            "three names that are still crews - `value_design`, `delivery` and `business_plan` - "
-            "each fail on `TypeError`, because `_build_crew` passes `llm_mode` and no crew "
-            "factory has taken that argument since agents began resolving their own model through "
-            "`get_llm_for_agent`. Five branches, five failures, and the console reports each as "
-            "'Crew failed' in the chat"
-        ),
-    ),
 }
 
 
@@ -192,8 +167,8 @@ class Charter:
     `defect` is `None` for a crew that runs. When it is set, every trigger in `triggers` is
     nominal: the path exists, and taking it fails. It is per crew rather than per trigger
     because the case it was written for is a mismatch inside `build_and_run_crew`, which every
-    path except the Chainlit console goes through - a per-trigger field would invite the same
-    sentence to be written three times and to disagree with itself.
+    path goes through - a per-trigger field would invite the same sentence to be written three
+    times and to disagree with itself.
     """
 
     purpose: str
@@ -253,12 +228,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "Turns the challenges the interviews evidenced, and the value levers, into value "
             "propositions - then scores and ranks them into a portfolio"
         ),
-        triggers=(
-            Trigger.REST_RUN,
-            Trigger.APPROVAL_CASCADE,
-            Trigger.PAM_ORCHESTRATION,
-            Trigger.CHAINLIT_CONSOLE,
-        ),
+        triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE, Trigger.PAM_ORCHESTRATION),
     ),
     "capabilities": Charter(
         purpose=(
@@ -280,12 +250,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "Sequences the initiatives into a roadmap - the periods, the time axis, and when "
             "each proposition's benefit is realised"
         ),
-        triggers=(
-            Trigger.REST_RUN,
-            Trigger.APPROVAL_CASCADE,
-            Trigger.PAM_ORCHESTRATION,
-            Trigger.CHAINLIT_CONSOLE,
-        ),
+        triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE, Trigger.PAM_ORCHESTRATION),
         note=(
             "Needs the project's value streams and stakeholder groups set first. "
             "`REQUIRED_CONFIG_KEYS` is checked by the approval path before it inserts a run, so "
@@ -299,12 +264,7 @@ CREW_CHARTER: dict[str, Charter] = {
             "propositions, the costs by complexity, and the roadmap - into the documents a board "
             "reads"
         ),
-        triggers=(
-            Trigger.REST_RUN,
-            Trigger.APPROVAL_CASCADE,
-            Trigger.PAM_ORCHESTRATION,
-            Trigger.CHAINLIT_CONSOLE,
-        ),
+        triggers=(Trigger.REST_RUN, Trigger.APPROVAL_CASCADE, Trigger.PAM_ORCHESTRATION),
         note=(
             "Has never completed a real run. It only became buildable when "
             "`visual_illustrator` was registered as an agent; before that its factory raised "
@@ -318,19 +278,14 @@ CREW_CHARTER: dict[str, Charter] = {
 # because each one is a dispatch that reports a result while having done nothing - the exact
 # failure `agents/graph.py` exists to end - and because the guard that holds every offered name
 # against the graph needs somewhere honest to put them.
+#
+# Two entries left with the Chainlit console: `discovery` and `architecture`, the pre-rename
+# names of `requirements` and `capabilities`. No dispatch path offers either now, and the guard
+# fails on a stale entry as readily as on an unrecorded name.
 NOT_A_CREW: dict[str, str] = {
     "questionnaire_builder": (
         "An alias `build_and_run_crew` still accepts for `assessment_design`, kept for stored "
         "`crew_runs` rows in other environments. It builds the right crew, so it is harmless - "
         "but it is a tenth name the REST path answers to and no registry knows"
-    ),
-    "discovery": (
-        "What `requirements` was called before the crews were re-sequenced. Offered by the "
-        "Chainlit console, which imports `agents/crews/discovery_crew.py` - a module that does "
-        "not exist"
-    ),
-    "architecture": (
-        "What `capabilities` was called before the same re-sequencing. Offered by the Chainlit "
-        "console, which imports `agents/crews/architecture_crew.py` - also absent"
     ),
 }

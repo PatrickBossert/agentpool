@@ -386,9 +386,9 @@ const UNDERTAKINGS: {
       "Interview invitations carry a stakeholder's name and a unique link. Delivery logs are held by Resend under its own policy. Email is a dispatch path rather than an agent tool, so it does not appear in the generated table above.",
   },
   {
-    title: 'Slack - visible to the workspace',
+    title: 'Review gates notify nobody',
     detail:
-      'Notifications reach Slack through the automation webhook and are visible to everyone in the target channel. Treat anything an agent notifies as semi-public; nothing removes it once posted.',
+      'When an agent pauses for a review, the request is written to this project’s own database and the agent waits there for a decision. Nothing is pushed out to announce it - the automation webhook that used to relay review prompts to Slack has been retired and no channel has replaced it, so a reviewer finds a waiting gate by opening this dashboard.',
   },
   {
     title: 'The skills library is deliberately always hosted',

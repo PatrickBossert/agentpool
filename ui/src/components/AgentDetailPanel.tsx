@@ -154,7 +154,6 @@ const TOOL_LABELS: Record<string, string> = {
   FinancialModelTool:     'Running financial model',
   InterviewSessionTool:   'Managing interview session',
   RunCrewTool:            'Dispatching sub-crew',
-  SlackNotifyTool:        'Sending Slack notification',
 }
 
 export interface StatusEvent { ts: number; icon: ReactNode; text: string; sub?: string; isToolUse?: boolean }

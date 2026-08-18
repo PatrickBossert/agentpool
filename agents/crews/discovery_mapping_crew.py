@@ -17,7 +17,6 @@ def create_discovery_mapping_crew(
     run_id: int,
     sector: str,
     llm: LLM | None = None,
-    hitl_tool=None,
     discovery_brief: str = "",
     discovery_links: list[dict] | None = None,
     priority_doc_names: list[str] | None = None,
@@ -29,7 +28,6 @@ def create_discovery_mapping_crew(
         run_id: crew_runs.id for this execution.
         sector: Client sector for ChromaDB sector queries.
         llm: Optional LLM override (used in tests).
-        hitl_tool: Optional HumanInputTool override (used in tests).
         discovery_brief: Free-text research brief from project settings.
         discovery_links: List of {"url": str, "label": str} dicts.
         priority_doc_names: Original filenames of prioritised documents.
@@ -42,7 +40,6 @@ def create_discovery_mapping_crew(
             slug=slug,
             run_id=run_id,
             sector=sector,
-            hitl_tool=hitl_tool,
         ),
     )
     # Morgan reads the levers and KPIs the organisation itself uses out of the documents.
@@ -52,7 +49,7 @@ def create_discovery_mapping_crew(
         slug=slug,
         llm=llm or get_llm_for_agent("value_lever_analyst", slug),
         tools=get_tools_for_agent(
-            "value_lever_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
+            "value_lever_analyst", slug=slug, run_id=run_id, sector=sector
         ),
     )
 

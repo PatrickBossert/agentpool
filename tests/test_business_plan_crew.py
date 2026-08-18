@@ -139,20 +139,19 @@ def test_business_plan_crew_asks_the_registry_per_agent(mock_llm):
     assert mock_get_llm.call_count == 2
 
 
-def test_business_plan_crew_accepts_hitl_tool_override(mock_llm):
-    """hitl_tool is forwarded to get_tools_for_agent."""
-    mock_hitl = MagicMock()
+def test_every_agent_in_the_crew_is_given_the_registry_tools_for_its_own_name(mock_llm):
+    """Both agents, not just the writer.
+
+    Asserting a single call was only ever true because the crew held one agent, and an agent
+    built with a tool list assembled for a different name would be a quiet gap rather than a
+    visible one. What was asserted alongside it - that a caller's own review tool was forwarded
+    into every call - went with the registry parameter that allowed it, and the keywords below
+    are now the whole call.
+    """
     with patch("agents.crews.business_plan_crew.get_tools_for_agent", return_value=[]) as mock_reg:
         from agents.crews.business_plan_crew import create_business_plan_crew
-        create_business_plan_crew(
-            slug="test", run_id=1, sector="logistics",
-            llm=mock_llm, hitl_tool=mock_hitl,
-        )
-    # Both agents, not just the writer. Asserting a single call was only ever true because
-    # the crew held one agent, and an Illustrator that could not raise a review gate would
-    # be a quiet gap rather than a visible one.
+        create_business_plan_crew(slug="test", run_id=1, sector="logistics", llm=mock_llm)
+
     for agent in ("business_plan_generator", "visual_illustrator"):
-        mock_reg.assert_any_call(
-            agent, slug="test", run_id=1, sector="logistics", hitl_tool=mock_hitl,
-        )
+        mock_reg.assert_any_call(agent, slug="test", run_id=1, sector="logistics")
     assert mock_reg.call_count == 2

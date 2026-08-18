@@ -10,21 +10,6 @@ def mock_llm():
     return MagicMock(spec=LLM)
 
 
-def test_requirements_crew_accepts_hitl_tool_override(mock_llm):
-    """hitl_tool is forwarded to every get_tools_for_agent call."""
-    mock_hitl = MagicMock()
-    with patch("agents.crews.requirements_crew.get_tools_for_agent", return_value=[]) as mock_reg:
-        from agents.crews.requirements_crew import create_requirements_crew
-        create_requirements_crew(
-            slug="test", run_id=1, sector="logistics",
-            llm=mock_llm, hitl_tool=mock_hitl,
-        )
-    assert mock_reg.call_args_list, "get_tools_for_agent was never called"
-    for call in mock_reg.call_args_list:
-        assert call.kwargs.get("hitl_tool") == mock_hitl, \
-            f"Expected hitl_tool in call: {call}"
-
-
 def test_value_chain_mapper_task_includes_discovery_brief():
     """Task description includes the discovery brief when provided."""
     from agents.discovery.value_chain_mapper import create_value_chain_mapper_task

@@ -102,26 +102,6 @@ export default function AppLayout() {
           ))}
         </nav>
         <div className="ml-auto flex items-center gap-3 flex-shrink-0">
-          {slug && (
-            <>
-              <a
-                href="http://localhost:8001"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-gray-400 hover:text-gray-600"
-              >
-                Chainlit ↗
-              </a>
-              <a
-                href="http://localhost:5678"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-gray-400 hover:text-gray-600"
-              >
-                n8n ↗
-              </a>
-            </>
-          )}
           <HeartbeatDot />
           <span className="text-xs text-gray-400">{user?.sub}</span>
           <Link

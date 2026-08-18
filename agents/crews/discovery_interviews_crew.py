@@ -49,7 +49,6 @@ def create_discovery_interviews_crew(
     discovery_brief: str = "",
     node_templates_block: str = "",
     llm: LLM | None = None,
-    hitl_tool=None,
 ) -> Crew:
     """Conduct and synthesise stakeholder interviews using pre-designed scripts.
 
@@ -70,17 +69,17 @@ def create_discovery_interviews_crew(
     coordinator = create_interview_coordinator(
         slug=slug,
         llm=llm or get_llm_for_agent("interview_coordinator", slug),
-        tools=get_tools_for_agent("interview_coordinator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
+        tools=get_tools_for_agent("interview_coordinator", slug=slug, run_id=run_id, sector=sector),
     )
     interviewer = create_stakeholder_interviewer(
         slug=slug,
         llm=llm or get_llm_for_agent("stakeholder_interviewer", slug),
-        tools=get_tools_for_agent("stakeholder_interviewer", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
+        tools=get_tools_for_agent("stakeholder_interviewer", slug=slug, run_id=run_id, sector=sector),
     )
     analyst = create_synthesis_analyst(
         slug=slug,
         llm=llm or get_llm_for_agent("synthesis_analyst", slug),
-        tools=get_tools_for_agent("synthesis_analyst", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool),
+        tools=get_tools_for_agent("synthesis_analyst", slug=slug, run_id=run_id, sector=sector),
     )
 
     t1 = create_interview_coordinator_task(

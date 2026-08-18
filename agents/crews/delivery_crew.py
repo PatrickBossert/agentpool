@@ -17,7 +17,6 @@ def create_delivery_crew(
     roadmap_time_axis: str,
     client_name: str = "",
     llm: LLM | None = None,
-    hitl_tool=None,
 ) -> Crew:
     """
     Assemble and return the Delivery Planning Crew.
@@ -37,7 +36,7 @@ def create_delivery_crew(
         slug=slug,
         llm=resolved_llm,
         tools=get_tools_for_agent(
-            "roadmap_generator", slug=slug, run_id=run_id, sector=sector, hitl_tool=hitl_tool
+            "roadmap_generator", slug=slug, run_id=run_id, sector=sector
         ),
     )
 

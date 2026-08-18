@@ -281,9 +281,9 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
     # --- orchestration ------------------------------------------------------------------------
     "pam": (
         # PAM holds SQLiteStateTool and no task of hers tells her to read with it. Every one of
-        # her six tasks dispatches a crew and posts to Slack. The empty tuple is what the task
-        # descriptions say; the tool she holds is already on `AgentNode.tools`, and inferring a
-        # read from a tool is how a declaration becomes a guess.
+        # her six tasks dispatches a crew and reports what it did. The empty tuple is what the
+        # task descriptions say; the tool she holds is already on `AgentNode.tools`, and
+        # inferring a read from a tool is how a declaration becomes a guess.
     ),
 }
 
@@ -354,8 +354,8 @@ UNRESOLVABLE_READS: tuple[UnresolvableRead, ...] = (
 # Read on every agent's behalf by `build_and_run_crew`, and prepended to every task description
 # in the crew before it starts. Declared once, and deliberately not folded into `AGENT_READS`:
 # it is a property of the dispatch path rather than of any agent, and `build_and_run_agent` - the
-# other dispatch, reachable from the API and from n8n - performs none of it, so an agent run that
-# way reads none of this.
+# other dispatch, reachable from the API - performs none of it, so an agent run that way reads
+# none of this.
 CREW_DISPATCH_READS: tuple[Read, ...] = (
     Read(
         "agent_skill_notes",

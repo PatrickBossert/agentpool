@@ -11,8 +11,11 @@
 # ── Data volumes (databases, vector store) ──────────────────────
 data/chroma/*
 !data/chroma/.gitkeep
-data/n8n/*
-!data/n8n/.gitkeep
+# n8n's volume, left behind when SP50 retired the integration. Nothing writes it any more and
+# it is safe to delete by hand; it stays ignored rather than merely deleted from this file,
+# because dropping the rule while the directory is still on disk turns a live volume into
+# untracked files that `git add -A` would stage. It did, on the branch that retired n8n.
+data/n8n/
 data/*.db
 data/*.sqlite
 data/*.sqlite3
@@ -50,7 +53,6 @@ ui/dist/
 .pids/
 .worktrees/
 .superpowers/
-.chainlit/
 .playwright-mcp/
 .DS_Store
 *.log
