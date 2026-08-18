@@ -27,6 +27,8 @@ const REPLY = {
   stakeholder_id: 3,
   stakeholder_name: 'Harriet Okonkwo',
   stakeholder_email: 'harriet.okonkwo@example.test',
+  from_address: 'harriet.okonkwo@example.test',
+  sender_confirmed: true,
   subject: 'Re: GS Asset Management - A quick reminder',
   body: 'Thursday afternoon suits me. Could we do 3pm?',
   truncated: false,
@@ -46,14 +48,47 @@ describe('JordanOutputExtra', () => {
     vi.mocked(inboundRepliesApi.markRead).mockReset()
   })
 
-  it('shows what the participant wrote, and who wrote it', async () => {
+  it('shows what the participant wrote, and the address it came from', async () => {
     vi.mocked(inboundRepliesApi.list).mockResolvedValue({ replies: [REPLY], unread: 1 })
 
     render(<Wrapper><JordanOutputExtra slug="p" /></Wrapper>)
 
     expect(await screen.findByText(/Thursday afternoon suits me/)).toBeInTheDocument()
-    expect(screen.getByText('Harriet Okonkwo')).toBeInTheDocument()
+    // The sender leads. Attributing the reply to the stakeholder alone is what the panel
+    // used to do, and the token that routed it proves possession of an address, not
+    // authorship.
+    expect(screen.getByText('harriet.okonkwo@example.test')).toBeInTheDocument()
+    expect(screen.getByText(/Harriet Okonkwo's thread/)).toBeInTheDocument()
     expect(screen.getByText('1 unread')).toBeInTheDocument()
+  })
+
+  it('flags a reply that did not come from the stakeholder it routed to', async () => {
+    // The reachable case today: dev_mode holds participant mail at DEV_MODE_ADDRESS with
+    // the participant's live token on it, so an operator hitting Reply lands here. Showing
+    // it as Harriet's would put an operator's words on the record as a client's.
+    vi.mocked(inboundRepliesApi.list).mockResolvedValue({
+      replies: [{
+        ...REPLY,
+        from_address: 'dev-mode-redirect@example.test',
+        sender_confirmed: false,
+      }],
+      unread: 1,
+    })
+
+    render(<Wrapper><JordanOutputExtra slug="p" /></Wrapper>)
+
+    expect(await screen.findByText('dev-mode-redirect@example.test')).toBeInTheDocument()
+    expect(screen.getByText(/author is not confirmed/)).toBeInTheDocument()
+  })
+
+  it('says nothing about the sender when the reply did come from them', async () => {
+    // A warning on every reply is a warning nobody reads.
+    vi.mocked(inboundRepliesApi.list).mockResolvedValue({ replies: [REPLY], unread: 1 })
+
+    render(<Wrapper><JordanOutputExtra slug="p" /></Wrapper>)
+
+    await screen.findByText(/Thursday afternoon suits me/)
+    expect(screen.queryByText(/author is not confirmed/)).not.toBeInTheDocument()
   })
 
   it('marks a reply read against the project it is on', async () => {

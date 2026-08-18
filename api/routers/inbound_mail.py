@@ -33,6 +33,7 @@ from api.services.inbound_mail import (
     ACCEPTED_CONTENT_TYPE,
     MAX_BODY_BYTES,
     InboundRefused,
+    sender_is_the_stakeholder,
     store_inbound_reply,
     verify_signature,
 )
@@ -47,12 +48,33 @@ ACCEPTED: dict[str, str] = {"status": "accepted"}
 
 
 async def _bounded_body(request: Request) -> bytes:
-    """The request body, refused with 413 if it is over the limit.
+    """The request body, **stopped mid-stream** once it passes the limit.
 
-    Checked twice on purpose. `Content-Length` is checked first so an oversized body is
-    refused without being read at all, and the read result is checked again because a
-    chunked request carries no `Content-Length` to have checked - a limit that trusted the
-    header would be a limit any caller could opt out of by omitting it.
+    The first version of this called `await request.body()` and checked `len(body)`
+    afterwards. That proves the *refusal* and never the *bound*: Starlette accumulates the
+    whole stream into a list with no cap of its own, so by the time the length is checked
+    every byte is already in memory. A review drove the ASGI app with a chunked request and
+    got `status=413` after **512 MiB had been buffered**.
+
+    A `Transfer-Encoding: chunked` request carries no `Content-Length` - which is precisely
+    the case the second check was written for - so on that path the header check never fired
+    and the read was unbounded. Three things made that worse than latent: it happens **before
+    signature verification**, so the fail-closed 503 when `RESEND_WEBHOOK_SECRET` is unset
+    does not cover it and the door was shut to storing while wide open to reading on every
+    deployment today; the `Caddyfile` sets no `request_body max_size`, so nothing upstream
+    caps it either; and this API runs as a single worker whose death takes every in-flight
+    crew run with it (see CLAUDE.md).
+
+    So the bound is enforced **while the body is still arriving**: the stream is consumed a
+    chunk at a time and abandoned the moment the running total passes the limit. Peak memory
+    is one chunk past `MAX_BODY_BYTES` regardless of what the caller intends to send, and the
+    rest is never pulled off the wire.
+
+    The `Content-Length` pre-check stays and now earns its place on its own terms: an honest
+    provider that declares an oversized body is refused with **nothing read at all** - not
+    one chunk - which the streaming cap cannot do because it has to look before it can stop.
+    `test_a_declared_oversize_is_refused_without_pulling_a_single_chunk` is its witness; it
+    is not a second bound, and it is not trusted as one.
     """
     declared = request.headers.get("content-length")
     if declared is not None:
@@ -61,10 +83,17 @@ async def _bounded_body(request: Request) -> bytes:
                 raise InboundRefused(413, "payload too large")
         except ValueError:
             raise InboundRefused(400, "malformed content-length") from None
-    body = await request.body()
-    if len(body) > MAX_BODY_BYTES:
-        raise InboundRefused(413, "payload too large")
-    return body
+
+    chunks: list[bytes] = []
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > MAX_BODY_BYTES:
+            # Abandoned rather than drained. The remaining chunks are never requested, which
+            # is the whole point - draining politely would buffer exactly what this refuses.
+            raise InboundRefused(413, "payload too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.post("/resend")
@@ -125,6 +154,16 @@ async def list_inbound_replies(slug: str, payload: dict = Depends(require_any_au
                 "stakeholder_id": row["stakeholder_id"],
                 "stakeholder_name": row["stakeholder_name"] or "",
                 "stakeholder_email": row["stakeholder_email"] or "",
+                # Who actually wrote it, and whether that is the person the token routed it
+                # to. The routing token proves possession of an address and never
+                # authorship - see sender_is_the_stakeholder - and the surface must not
+                # present a reply as a named client individual's without saying where it
+                # came from. Computed here rather than in the browser so a second surface
+                # cannot reach a different answer.
+                "from_address": row["from_address"] or "",
+                "sender_confirmed": sender_is_the_stakeholder(
+                    row["from_address"] or "", row["stakeholder_email"] or ""
+                ),
                 "subject": row["subject"],
                 "body": row["body"],
                 "truncated": bool(row["truncated"]),

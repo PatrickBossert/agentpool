@@ -195,6 +195,19 @@ async def _make_project(client, slug: str, **config_keys) -> None:
         await conn.commit()
 
 
+async def _set_config(slug: str, **keys) -> None:
+    from api.database import fetch_project, get_connection
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        config = json.loads(project.get("config_json") or "{}")
+        config.update(keys)
+        await conn.execute(
+            "UPDATE projects SET config_json=? WHERE slug=?", (json.dumps(config), slug)
+        )
+        await conn.commit()
+
+
 async def _add_stakeholder(slug: str, name: str, email: str) -> int:
     from api.database import fetch_project, get_connection
 
@@ -694,25 +707,83 @@ async def test_an_oversized_body_is_refused(client, secret):
     assert await _stored(SLUG) == []
 
 
-@pytest.mark.asyncio
-async def test_a_body_with_no_declared_length_is_still_bounded():
-    """The second check, which the first cannot stand in for.
+async def _chunked_post(headers: dict[str, str], chunk: bytes, offered: int) -> tuple:
+    """POST a chunked body, and report how many chunks were pulled off the wire.
 
-    A chunked request carries no `Content-Length`, so a limit that trusted the header would
-    be a limit any caller could opt out of by omitting it. Driven against the helper because
-    the ASGI client always declares a length.
+    `httpx` sends an async iterator as `Transfer-Encoding: chunked` with no `Content-Length`,
+    and its ASGI transport advances the iterator only when the application calls `receive` -
+    so the number of chunks this generator yields *is* the number the application asked for.
+    That is the measurement, and it is the one a test handing over complete bytes cannot make.
     """
-    from api.routers.inbound_mail import _bounded_body
+    from httpx import ASGITransport, AsyncClient
 
-    class _Chunked:
-        headers: dict[str, str] = {}
+    from api.main import app
 
-        async def body(self) -> bytes:
-            return b"x" * (inbound_mail.MAX_BODY_BYTES + 1)
+    pulled = 0
 
-    with pytest.raises(inbound_mail.InboundRefused) as refused:
-        await _bounded_body(_Chunked())
-    assert refused.value.status_code == 413
+    async def stream():
+        nonlocal pulled
+        for _ in range(offered):
+            pulled += 1
+            yield chunk
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as chunked_client:
+        response = await chunked_client.post(
+            "/api/inbound-mail/resend", content=stream(), headers=headers
+        )
+    return response, pulled
+
+
+@pytest.mark.asyncio
+async def test_a_chunked_body_is_stopped_while_it_is_still_arriving(secret):
+    """The bound has to bound the *read*, not just the answer.
+
+    The first version called `await request.body()` and checked `len(body)` afterwards.
+    Starlette accumulates the whole stream with no cap of its own, so that proved the refusal
+    and never the bound: a review drove this endpoint with a chunked request and got a 413
+    after **512 MiB had been buffered**. A chunked request carries no `Content-Length` - the
+    very case the length check was written for - so nothing fired until every byte was in
+    memory, and it happens *before* signature verification, so the fail-closed 503 does not
+    cover it either.
+
+    The measurement is chunks pulled off the wire, because that is the property. A test that
+    hands the function complete bytes asserts the 413 one layer from where it matters and
+    passes against the defect.
+    """
+    chunk_size = inbound_mail.MAX_BODY_BYTES // 4
+    response, pulled = await _chunked_post(
+        {"content-type": "application/json"}, b"x" * chunk_size, offered=512
+    )
+
+    assert response.status_code == 413, response.text
+    # Five chunks take the running total past the limit; the sixth is never asked for. The
+    # ceiling is what matters: unbounded, this pulls all 512 - 128 MiB of them.
+    assert pulled <= 6, pulled
+    assert pulled * chunk_size <= inbound_mail.MAX_BODY_BYTES + chunk_size
+
+
+@pytest.mark.asyncio
+async def test_a_declared_oversize_is_refused_without_pulling_a_single_chunk(secret):
+    """What the `Content-Length` pre-check is for, now that it is not pretending to be a
+    bound. The streaming cap has to look before it can stop; this refuses an honest provider
+    that declares an oversized body having read nothing at all.
+
+    Reviewed as dead weight because removing it failed nothing - which was true, and the fix
+    is a test rather than a deletion: the property is real and was simply unasserted.
+    """
+    response, pulled = await _chunked_post(
+        {
+            "content-type": "application/json",
+            "content-length": str(inbound_mail.MAX_BODY_BYTES + 1),
+        },
+        b"x" * 1024,
+        offered=512,
+    )
+
+    assert response.status_code == 413, response.text
+    assert pulled == 0, pulled
 
 
 @pytest.mark.asyncio
@@ -795,6 +866,86 @@ async def test_a_reply_that_carried_only_html_is_stored_as_text(client, secret):
 
 
 # ── Link: the surface ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_surface_names_who_actually_wrote_the_reply(client, secret):
+    """The token proves possession of an address, never authorship, so the sender travels
+    with the row and the surface shows it. `from_address` was stored and then dropped from
+    the response, which left the panel attributing every reply to the stakeholder."""
+    stakeholder_id = await _participant(client)
+    address = await _minted_address(SLUG, stakeholder_id)
+
+    await deliver(client, inbound(address))
+
+    reply = (await client.get(f"/projects/{SLUG}/inbound-replies")).json()["replies"][0]
+    assert reply["from_address"] == PARTICIPANT
+    assert reply["sender_confirmed"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_reply_from_the_dev_mode_mailbox_is_attributed_to_whoever_sent_it(
+    client, sent, secret,
+):
+    """The reachable failure, driven the way it actually happens - today, not after the
+    domain verifies.
+
+    `dev_mode` defaults to true and `send_project_mail` mints and stamps the reply token in
+    **both** branches, deliberately, so an operator reading a held message sees the message
+    that would have gone out. So every participant message currently lands in
+    `DEV_MODE_ADDRESS` carrying a live routing token for a named client individual. An
+    operator who hits Reply there - or anyone a participant forwards to - resolves to that
+    individual, and the signature does not help: it proves Resend posted the message and
+    never who wrote it.
+
+    The reply is stored rather than refused, because a forwarded answer is still real
+    correspondence. What must not happen is it being presented as the participant's.
+    """
+    stakeholder_id = await _participant(client)
+    await _set_config(SLUG, dev_mode=True)
+    await _approved_reminder(SLUG, stakeholder_id)
+    await _send_reminders(SLUG)
+
+    held_to = json.loads(sent[0].content)["to"]
+    operator = get_settings().dev_mode_address
+    assert held_to == [operator], held_to
+    reply_to = await _reply_address_from_the_wire(sent)
+    assert "+" in reply_to, reply_to
+
+    await deliver(client, inbound(reply_to, **{"from": operator}))
+
+    reply = (await client.get(f"/projects/{SLUG}/inbound-replies")).json()["replies"][0]
+    assert reply["stakeholder_name"] == PARTICIPANT_NAME
+    assert reply["from_address"] == operator
+    assert reply["sender_confirmed"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_stakeholder_with_no_address_on_file_is_never_confirmed(client, secret):
+    """"We could not check" must not present as "we checked and it matched"."""
+    await _make_project(client, SLUG)
+    stakeholder_id = await _add_stakeholder(SLUG, PARTICIPANT_NAME, "")
+    address = await _minted_address(SLUG, stakeholder_id)
+
+    await deliver(client, inbound(address))
+
+    reply = (await client.get(f"/projects/{SLUG}/inbound-replies")).json()["replies"][0]
+    assert reply["sender_confirmed"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_senders_own_address_is_matched_however_it_was_written(client, secret):
+    """A display name and a different case are the same person. A comparison that missed
+    that would flag every genuine reply and teach a reader to ignore the flag."""
+    stakeholder_id = await _participant(client)
+    address = await _minted_address(SLUG, stakeholder_id)
+
+    await deliver(client, inbound(
+        address, **{"from": f"{PARTICIPANT_NAME} <{PARTICIPANT.upper()}>"}
+    ))
+
+    reply = (await client.get(f"/projects/{SLUG}/inbound-replies")).json()["replies"][0]
+    assert reply["sender_confirmed"] is True
+
 
 @pytest.mark.asyncio
 async def test_marking_a_reply_read_clears_it_from_the_unread_count(client, secret):

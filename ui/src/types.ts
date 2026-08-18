@@ -879,6 +879,14 @@ export interface InboundReply {
   stakeholder_id: number
   stakeholder_name: string
   stakeholder_email: string
+  // Who actually wrote it, which is not the same question as which thread it routed to.
+  // The reply token proves possession of an address and never authorship - and the two come
+  // apart today, because dev_mode holds participant mail at DEV_MODE_ADDRESS with the
+  // participant's live token on it. So the sender is always shown, and `sender_confirmed`
+  // says whether it matches the stakeholder's address on file. The server computes it; a
+  // second answer worked out in the browser could disagree with it.
+  from_address: string
+  sender_confirmed: boolean
   subject: string
   body: string
   // Whether the reply was longer than the endpoint stores. The full message is in the

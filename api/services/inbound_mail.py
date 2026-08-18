@@ -9,6 +9,12 @@ module is arranged around, and it is worth naming plainly: an unverified endpoin
 shape lets anyone who learns the URL put sentences in a client's mouth, on the record, in a
 place a consultant will later read and act on.
 
+**The signature closes half of that and is not the mitigation for the other half.** It proves
+Resend posted the message; it says nothing about who wrote it. Possession of a reply address
+is not authorship, and on this deployment those two come apart *today* rather than after the
+domain verifies - see `sender_is_the_stakeholder`, which is why every reply carries its real
+sender to the surface and a mismatch is shown rather than smoothed over.
+
 ## Nothing here has met a mail server
 
 `taskreimagination.ai` is not a verified sender domain in Resend, so nothing sends and
@@ -161,7 +167,7 @@ import logging
 import re
 import time
 from collections.abc import Mapping
-from email.utils import getaddresses
+from email.utils import getaddresses, parseaddr
 
 from api.config import get_settings
 from api.services.outbound_mail import resolve_reply_token, token_from_address
@@ -300,6 +306,32 @@ def verify_signature(
 # ── Reading a payload ────────────────────────────────────────────────────────
 
 
+def sender_is_the_stakeholder(from_address: str, stakeholder_email: str) -> bool:
+    """Whether the person who wrote this is the person the token routed it to.
+
+    **The token proves possession of an address, never authorship**, and the two come apart
+    on the path this deployment is actually on today. `dev_mode` defaults to true and
+    `send_project_mail` mints and stamps the reply token in *both* branches - deliberately,
+    so an operator reading a held message sees the message that would have gone out - so
+    every participant message currently lands in `DEV_MODE_ADDRESS` carrying a live routing
+    token for a named client individual. An operator who hits Reply in that mailbox, or
+    anyone a participant forwards to, resolves to that individual. The signature does not
+    help: it proves Resend posted the message, never who wrote it.
+
+    So the sender is compared and the answer travels with the row. It is not a refusal - a
+    reply forwarded from a colleague's address is still worth reading, and dropping it would
+    lose real correspondence - it is a caveat the surface must show, because the alternative
+    is a consultant reading somebody else's words as a client's.
+
+    Empty either side answers False. A stakeholder with no address on file cannot be
+    confirmed as the author of anything, and "we could not check" must not present as "we
+    checked and it matched".
+    """
+    from_key = parseaddr(from_address or "")[1].strip().lower()
+    stakeholder_key = (stakeholder_email or "").strip().lower()
+    return bool(from_key) and from_key == stakeholder_key
+
+
 def _as_list(value: object) -> list[str]:
     """A header or address field as a list of strings, whichever shape it arrived in."""
     if isinstance(value, str):
@@ -410,10 +442,15 @@ async def _route(data: Mapping[str, object]) -> tuple[str, int] | None:
     None for every reason there is, and the caller may not learn which - see "The endpoint
     is not an oracle".
     """
+    tried: set[str] = set()
     for address in recipient_addresses(data):
         token = token_from_address(address)
-        if token is None:
+        # De-duplicated on the token rather than the address, because `To` and `Delivered-To`
+        # routinely carry the same one: each distinct token costs a system-database
+        # connection, and fifty addresses naming one token was fifty opens.
+        if token is None or token in tried:
             continue
+        tried.add(token)
         resolved = await resolve_reply_token(token)
         if resolved is not None:
             return resolved

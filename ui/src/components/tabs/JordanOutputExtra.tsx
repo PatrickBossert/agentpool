@@ -47,10 +47,29 @@ function ReplyCard({ slug, reply }: { slug: string; reply: InboundReply }) {
           {unread ? <Mail size={13} /> : <MailOpen size={13} />}
         </span>
         <div className="flex-1 min-w-0">
+          {/*
+            The author is the address the message came from, and the stakeholder is the
+            thread it routed to. Those are two different facts and the heading used to show
+            only the second, which reads as "this client individual said this" for a message
+            anybody holding the address could have sent - including the operator, since
+            dev_mode holds participant mail at DEV_MODE_ADDRESS with the participant's live
+            token on it. The sender leads; the thread is stated underneath.
+          */}
           <p className="text-xs font-medium text-gray-800 truncate">
-            {reply.stakeholder_name || 'Unknown sender'}
+            {reply.from_address || 'Unknown sender'}
           </p>
-          <p className="text-[11px] text-gray-500 truncate">{reply.subject || '(no subject)'}</p>
+          <p className="text-[11px] text-gray-500 truncate">
+            Reply on {reply.stakeholder_name || 'an unknown participant'}&apos;s thread
+          </p>
+          {!reply.sender_confirmed && (
+            <p className="mt-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+              Not {reply.stakeholder_name || 'that participant'}&apos;s address on file -
+              routed by reply token, so the author is not confirmed
+            </p>
+          )}
+          <p className="mt-1 text-[11px] text-gray-500 truncate">
+            {reply.subject || '(no subject)'}
+          </p>
           <p className="mt-1.5 text-xs text-gray-700 whitespace-pre-wrap break-words">
             {reply.body || '(no text content)'}
           </p>

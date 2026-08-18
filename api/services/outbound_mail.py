@@ -168,6 +168,15 @@ so a removed id is never handed to somebody else and a stale token can only ever
 nobody. `revoke_reply_token` is the separate, deliberate door for stopping an address that is
 being abused; the next message to that person mints a fresh one.
 
+**The constraint that rests on, stated as a constraint and not as a guarantee:** that
+AUTOINCREMENT sequence lives in `data/<slug>.db`, and the digests live in `system.db`.
+Nothing prunes `reply_tokens` - `svc_unregister_project` removes the registry row and leaves
+them - so **deleting and recreating a project's database file restarts its stakeholder ids at
+1 while the old digests survive**, and an address issued to the first person is then resolved
+against a second one wearing their id. Nothing in the code prevents this, because nothing in
+the code sees an `rm`. If a project database is ever deleted and rebuilt under the same slug,
+its `reply_tokens` rows must go with it.
+
 ## The `Message-ID`, recorded before anything needs it
 
 The whole scheme rests on inbound routing preserving the `+tag`, and some providers normalise
