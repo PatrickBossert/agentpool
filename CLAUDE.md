@@ -845,14 +845,48 @@ chart rather than a correspondent:
 
 Both names resolve through `agents/identity.py` **at send time**. Never hard-code "Jordan"
 or "Pamela"; the permanent `agent_id` beside a mutable display name exists precisely so a
-rename is a one-file change, and `test_renaming_the_correspondent_renames_the_face` fails
-if anybody writes a literal. Only the display name varies - every path already shared one
-sending address, so nothing about deliverability moves.
+rename is a one-file change, and
+`test_renaming_the_correspondent_renames_the_face_and_not_the_address` fails if anybody
+writes a literal.
 
-No `reply_to` is set anywhere, deliberately: `FROM_EMAIL` is `noreply@` on a domain Resend
-has not verified, and there is no inbound routing or threading token. A `reply_to` that
-bounces is worse than none. Two correspondents rather than five is what will make inbound
-tractable when it is built.
+**The name is the person; the address is the role.** `From` carries two independent fields
+and they are two different kinds of thing:
+
+```
+From: "Jordan Williams" <stakeholder-manager@taskreimagination.ai>
+```
+
+| Half | What it is | Keyed on | Changes when |
+|---|---|---|---|
+| display name | the person | nothing - free text | the persona is renamed, or (future work) per project |
+| address | the role | the permanent `agent_id` | never |
+
+A reply reaches whoever does stakeholder engagement, not a particular person, so the
+address must outlive the agent being renamed, re-personed or replaced, and a year-old
+thread must still route - the same reason `accounts@` and `admissions@` outlive the people
+behind them. The operational consequence: **one mailbox per role, ever.** Per-project
+display names add none, and a coding-agent crew would add one, not one per engagement.
+
+The local part is the `agent_id` with underscores as hyphens - `stakeholder_manager` →
+`stakeholder-manager`, `pam` → `pam`. It is a **rule over the id, never a table**: a
+mapping of ids to addresses is a second registry free to drift from `agents/identity.py`.
+The domain is parsed out of `FROM_EMAIL` so a deployment cannot half-move; there is no
+second domain setting, and a `FROM_EMAIL` with no address raises rather than minting
+`pam@`. Platform mail (the welcome email) keeps `FROM_EMAIL` **entire**, name and address
+both - no role owns it, and `noreply@` is honest for a message nobody should answer.
+
+Two things are **assumed and unconfirmed**, because the domain is not verified in Resend
+and nothing can be tested against it: that Resend permits sending from arbitrary local
+parts on a verified domain (verification is per-domain, so almost certainly yes), and that
+inbound routing can fan several addresses into one webhook. Confirm both when the domain is
+verified, before relying on either.
+
+No `reply_to` is set anywhere, deliberately: nothing can receive - the domain is
+unverified, and there is no inbound routing, mailbox or threading token. A `reply_to` that
+bounces is worse than none. A role-keyed `From` does not change that yet, but it does mean
+that when the mailboxes exist a reply already goes to the right place by default, and a
+`reply_to` would only be needed to say something *different*. Inbound routing itself -
+associating an arbitrary reply with a project and a person - remains unbuilt.
 
 **The welcome email is not held by anything**, and neither will reset links be. A
 project-scoped hold cannot honestly cover a message with no project; the fix, if it is ever

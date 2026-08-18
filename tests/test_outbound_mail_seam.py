@@ -22,6 +22,7 @@ bitten this project twice. Each pair below drives one caller end to end, so brea
 transcript path fails the transcript tests and nothing else.
 """
 import json
+from email.utils import parseaddr
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -108,6 +109,26 @@ def recipients(request: httpx.Request) -> list[str]:
 
 def payload(request: httpx.Request) -> dict:
     return json.loads(request.content)
+
+
+def sender(request: httpx.Request) -> str:
+    """The whole `From` header this request would have carried."""
+    return payload(request)["from"]
+
+
+def sender_address(request: httpx.Request) -> str:
+    """Just the address half of `From` - the role, with the person's name stripped off."""
+    return parseaddr(sender(request))[1]
+
+
+def domain() -> str:
+    """The sending domain, per configuration.
+
+    Read rather than written literally, for the reason `redirect()` is: FROM_EMAIL is
+    configurable and a deployment on another domain must not go red. The *local* parts
+    below are written literally, because those are what these tests are about.
+    """
+    return parseaddr(get_settings().from_email)[1].rpartition("@")[2]
 
 
 async def _make_project(client, slug: str, *, holds_mail: bool) -> None:
@@ -437,18 +458,28 @@ async def test_the_welcome_email_goes_to_the_new_login_and_is_not_redirected(sen
 
 @pytest.mark.asyncio
 async def test_the_welcome_email_is_not_signed_by_a_correspondent(sent):
-    """No persona's name on credentials the platform issued."""
+    """No persona's name on credentials the platform issued, and no role's address.
+
+    `FROM_EMAIL` exactly as configured, both halves. No role owns this message, so putting
+    a role address on it would invite the reply to a mailbox with no reason to answer -
+    `noreply@` is the honest sender for a message nobody should answer.
+    """
     from agents.identity import AGENT_IDENTITY
     from api.services.admin_service import _send_welcome_email
     await _send_welcome_email("newcomer@example.test", "newcomer", "temp-password")
 
-    sender = payload(sent[0])["from"]
-    assert sender == get_settings().from_email
+    assert sender(sent[0]) == get_settings().from_email
     for identity in AGENT_IDENTITY.values():
-        assert identity.display_name not in sender
+        assert identity.display_name not in sender(sent[0])
+    for audience in outbound_mail.AUDIENCE_CORRESPONDENT:
+        assert sender_address(sent[0]) != outbound_mail.role_address(audience)
 
 
-# ── One face per audience, derived and not hard-coded ────────────────────────
+# ── One face per audience: a mutable name, and an address keyed on the role ──
+#
+# Every test below reads the `From` header out of the request that would have gone on the
+# wire, because that header is the artefact - a helper returning the right string while
+# the send path builds its own would satisfy a test of the helper and none of these.
 
 @pytest.mark.asyncio
 async def test_stakeholder_mail_carries_the_stakeholder_managers_name(client, sent):
@@ -460,7 +491,7 @@ async def test_stakeholder_mail_carries_the_stakeholder_managers_name(client, se
     from api.services.campaign_service import send_reminder_emails_svc
     await send_reminder_emails_svc(slug)
 
-    assert AGENT_IDENTITY["stakeholder_manager"].display_name in payload(sent[0])["from"]
+    assert AGENT_IDENTITY["stakeholder_manager"].display_name in sender(sent[0])
 
 
 @pytest.mark.asyncio
@@ -473,17 +504,57 @@ async def test_governance_mail_carries_pams_name(client, sent):
     from api.services.commit_notify_service import notify_crew_awaiting_commit
     await notify_crew_awaiting_commit(slug, "discovery_mapping")
 
-    assert AGENT_IDENTITY["pam"].display_name in payload(sent[0])["from"]
+    assert AGENT_IDENTITY["pam"].display_name in sender(sent[0])
 
 
 @pytest.mark.asyncio
-async def test_renaming_the_correspondent_renames_the_face(client, sent, monkeypatch):
-    """The name is derived from agents/identity.py at send time, not written here.
+async def test_stakeholder_mail_is_sent_from_the_stakeholder_management_role(client, sent):
+    """The address is the role, not `noreply@` and not the person.
 
-    The whole point of a permanent `agent_id` beside a mutable display name is that
-    renaming the person is a one-file change. A hard-coded "Jordan Williams" in the mail
-    seam would pass every other test in this file and fail this one - which is why this
-    test renames him rather than asserting the current name a second time.
+    A participant replying to an interview reminder is answering whoever does stakeholder
+    engagement. The local part is asserted literally because the hyphenated form of the
+    `agent_id` is the decision under test; the domain is read from settings because it is
+    an operator's to change.
+    """
+    slug = "seam-face"
+    await _make_project(client, slug, holds_mail=False)
+    await _approved_reminder(slug, "participant@example.test")
+
+    from api.services.campaign_service import send_reminder_emails_svc
+    await send_reminder_emails_svc(slug)
+
+    assert sender_address(sent[0]) == f"stakeholder-manager@{domain()}"
+
+
+@pytest.mark.asyncio
+async def test_governance_mail_is_sent_from_the_orchestrator_role(client, sent):
+    """`pam` has no underscore to convert, so this is also the case that would pass if
+    the rule were applied to nothing at all - which is why the stakeholder one exists."""
+    slug = "seam-face"
+    await _make_project(client, slug, holds_mail=False)
+    await _add_stakeholder(slug, "Rev", "reviewer@example.test", reviewer=True)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    await notify_crew_awaiting_commit(slug, "discovery_mapping")
+
+    assert sender_address(sent[0]) == f"pam@{domain()}"
+
+
+@pytest.mark.asyncio
+async def test_renaming_the_correspondent_renames_the_face_and_not_the_address(
+    client, sent, monkeypatch,
+):
+    """The property the whole scheme exists for, in one test.
+
+    The name is derived from agents/identity.py at send time, so renaming the person is a
+    one-file change - a hard-coded "Jordan Williams" in the seam would pass every other
+    test in this file and fail the first half of this one.
+
+    The address is keyed on the permanent `agent_id`, so the *same* rename must not move
+    it. That is what makes a mailbox outlive the person behind it, what keeps a year-old
+    thread routing correctly, and what stops per-project display names - the next piece of
+    work here - multiplying into per-project mailboxes. Deriving the local part from the
+    display name would pass the first half and fail the second.
     """
     from agents.identity import AGENT_IDENTITY, Identity
 
@@ -497,8 +568,81 @@ async def test_renaming_the_correspondent_renames_the_face(client, sent, monkeyp
     from api.services.campaign_service import send_reminder_emails_svc
     await send_reminder_emails_svc(slug)
 
-    assert "Wilhelmina Testcase" in payload(sent[0])["from"]
-    assert "Jordan" not in payload(sent[0])["from"]
+    assert "Wilhelmina Testcase" in sender(sent[0])
+    assert "Jordan" not in sender(sent[0])
+    assert sender_address(sent[0]) == f"stakeholder-manager@{domain()}"
+
+
+@pytest.mark.asyncio
+async def test_a_display_name_that_needs_quoting_does_not_split_the_header(
+    client, sent, monkeypatch,
+):
+    """Display names become project-settable, and a comma in one is not exotic.
+
+    An unquoted `Reid, Pamela <pam@...>` is two addresses to a parser, the first of them
+    malformed. The header must survive a round trip through the same parsing a mail server
+    would do it.
+    """
+    from email.utils import getaddresses
+
+    from agents.identity import AGENT_IDENTITY, Identity
+
+    slug = "seam-face"
+    await _make_project(client, slug, holds_mail=False)
+    await _add_stakeholder(slug, "Rev", "reviewer@example.test", reviewer=True)
+
+    monkeypatch.setitem(AGENT_IDENTITY, "pam", Identity("Reid, Pamela", None))
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    await notify_crew_awaiting_commit(slug, "discovery_mapping")
+
+    parsed = getaddresses([sender(sent[0])])
+    assert parsed == [("Reid, Pamela", f"pam@{domain()}")], sender(sent[0])
+
+
+def test_a_role_address_is_a_rule_over_the_id_and_never_a_second_registry():
+    """No id-to-address table exists, so every agent already has a usable address.
+
+    A mapping would be a second registry mirroring agents/identity.py, free to drift from
+    the ids it names. The cost of deriving instead is that a future `agent_id` could mint
+    a local part no mail server accepts - so the rule is checked against every id on the
+    roll rather than against the two audiences that use it today.
+    """
+    import re
+
+    from agents.identity import AGENT_IDENTITY
+
+    for agent_id in AGENT_IDENTITY:
+        local = agent_id.replace("_", "-")
+        assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", local), agent_id
+
+
+@pytest.mark.asyncio
+async def test_moving_from_email_moves_every_role_address_with_it(
+    client, sent, monkeypatch,
+):
+    """One setting names the domain, and the role addresses follow it.
+
+    A second setting for the domain - or a literal in the seam - would let a deployment
+    half-move: `FROM_EMAIL` on the new domain, project mail still leaving from the old
+    one. Asserted by actually moving it and reading the header off the wire, because a
+    hardcoded `taskreimagination.ai` passes every other test in this file.
+    """
+    slug = "seam-face"
+    await _make_project(client, slug, holds_mail=False)
+    await _add_stakeholder(slug, "Rev", "reviewer@example.test", reviewer=True)
+
+    monkeypatch.setattr(get_settings(), "from_email", "Elsewhere <noreply@example.org>")
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+    await notify_crew_awaiting_commit(slug, "discovery_mapping")
+
+    assert sender_address(sent[0]) == "pam@example.org"
+
+
+def test_a_from_email_with_no_address_is_refused_rather_than_half_built(monkeypatch):
+    """Better than minting `pam@` with an empty domain and learning from a Resend 4xx."""
+    monkeypatch.setattr(get_settings(), "from_email", "TaskReimagination.ai")
+    with pytest.raises(RuntimeError, match="sending domain"):
+        outbound_mail.role_address(outbound_mail.STAKEHOLDERS)
 
 
 def test_every_audience_resolves_to_an_agent_that_exists():

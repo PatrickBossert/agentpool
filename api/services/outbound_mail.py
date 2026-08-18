@@ -37,18 +37,51 @@ any agent remains the author: `_notify` still writes the governance notices and
 `REMINDER_TEMPLATES` still writes the reminders, and neither decides whose name is on
 the envelope.
 
-## No reply_to, deliberately
+## Name and role: the two halves of a From line
 
-None is set, because no address can receive today. `FROM_EMAIL` names
-`noreply@taskreimagination.ai` on a domain that is not yet verified in Resend, and there
-is no inbound routing, no mailbox and no threading token that could associate an
-arbitrary reply with a project and a person. A `reply_to` pointing at an address that
-bounces would be worse than none: a message claiming to be from a person and then
-refusing replies is a worse experience than one that never claimed a person.
+RFC 5322 gives `From` two independent fields, and this module uses them as two different
+kinds of thing:
+
+    From: "Jordan Williams" <stakeholder-manager@taskreimagination.ai>
+
+The **display name is the person** and is mutable - it is read from `agents/identity.py`
+at send time, and it becomes settable per project in future work, so an engagement that
+renames the stakeholder manager sends as `"Fiona Grant" <stakeholder-manager@...>`.
+
+The **address is the role**, keyed on the permanent `agent_id` and never on the display
+name. A reply reaches whoever does stakeholder engagement, not a particular person, which
+is why the address must survive the agent being renamed, re-personed, or replaced - and
+why a thread from a year ago still routes correctly. It is the same reason `accounts@`
+and `admissions@` outlive the people behind them.
+
+The consequence that matters operationally: **one mailbox per role, ever.** Two today.
+Per-project display names add none, and a coding-agent crew would add one for the crew's
+role rather than one per engagement.
+
+The local part is the `agent_id` with underscores written as hyphens - `stakeholder_manager`
+becomes `stakeholder-manager`, `pam` stays `pam`. Underscores are legal in a local part but
+hyphens are what people expect to type, and mail providers vary in how happily they accept
+an underscore. It is a **rule applied to the id**, not a table of ids to addresses: a second
+registry is exactly what `agents/identity.py` exists to avoid, and one that could drift from
+the ids it mirrors would put the wrong role on somebody's mail.
+
+The domain is parsed out of `FROM_EMAIL` rather than configured separately, so a deployment
+that moves domain moves every address with it and cannot half-move.
+
+## No reply_to, and now not much of a gap
+
+None is set, and a role address does not make one honest yet. Nothing can receive today:
+the domain is not verified in Resend, there is no inbound routing, no mailbox, and no
+threading token that could associate an arbitrary reply with a project and a person. A
+`reply_to` pointing at an address that bounces is worse than none.
+
+The scheme changes the shape of that gap, though. A reply goes to `From` by default, so
+once the mailboxes exist a role-keyed `From` is *already* the right reply target and a
+`reply_to` would only be needed to say something different. Inbound routing remains out of
+scope here - this change makes the address scheme ready for it and nothing more.
 
 Two correspondents rather than five is what makes inbound tractable when it is built -
-two mailboxes, two triage jobs, one owner each - and that is the reason to decide the
-face now rather than when the replies exist.
+two mailboxes, two triage jobs, one owner each.
 
 ## The welcome email is not project correspondence
 
@@ -56,15 +89,17 @@ face now rather than when the replies exist.
 governor, it carries no slug, and the account it announces may not belong to any
 project at all. Consulting some project's `dev_mode` would mean inventing a project the
 message does not have, and picking a correspondent would put a persona's name on
-credentials the platform issued. It still leaves through this module, so the "one place
-that posts to Resend" property holds; it simply is not redirected and is not signed by
-an agent.
+credentials the platform issued. It sends from `FROM_EMAIL` exactly as configured, name
+and address both: no role owns it, so it carries no role address either, and `noreply@`
+is the honest thing for a message nobody should answer. It still leaves through this
+module, so the "one place that posts to Resend" property holds; it simply is not
+redirected and is not signed by an agent.
 """
 from __future__ import annotations
 
 import json
 import logging
-from email.utils import parseaddr
+from email.utils import formataddr, parseaddr
 
 import httpx
 
@@ -100,17 +135,57 @@ def correspondent_for(audience: str) -> str:
         ) from None
 
 
-def sender_for(audience: str) -> str:
-    """`Display Name <address>` for this audience's correspondent.
+def sending_domain() -> str:
+    """The domain every project address is minted on, read from `FROM_EMAIL`.
 
-    The address half is `FROM_EMAIL`'s, unchanged - all five send paths already used the
-    same sending address, so nothing about deliverability moves here. Only the display
-    name varies, and it is read from the identity map on every send so that renaming an
-    agent is a one-file change exactly as that module promises.
+    Parsed rather than configured separately so that a deployment cannot half-move: one
+    setting names the domain, and a second setting that disagreed with it would send
+    project mail from somewhere the operator had already stopped using.
+
+    Raises when `FROM_EMAIL` carries no address. That is a misconfiguration under which
+    nothing could send anyway - Resend rejects a malformed `from` - and the alternative is
+    minting `stakeholder-manager@` with an empty domain and finding out from a 4xx.
+    """
+    address = parseaddr(get_settings().from_email)[1]
+    # `rpartition` alone would answer the whole string when there is no `@` at all -
+    # `parseaddr("TaskReimagination.ai")` returns exactly that - so the separator is
+    # checked rather than only the tail.
+    local, at, domain = address.rpartition("@")
+    if not (local and at and domain):
+        raise RuntimeError(
+            f"FROM_EMAIL does not contain a sending domain: {get_settings().from_email!r}"
+        )
+    return domain
+
+
+def role_address(audience: str) -> str:
+    """The address mail to this audience is sent from, and replies to it would reach.
+
+    Keyed on the correspondent's permanent `agent_id`, never on the display name: the
+    address belongs to the role, and must not move when the person behind it is renamed
+    or replaced. See the module docstring for why that is the whole point.
+
+    Derived by rule - underscores become hyphens - rather than looked up in a table. A
+    table of ids to addresses would be a second registry mirroring `agents/identity.py`,
+    and this project has spent a week deleting those.
+    """
+    return f"{correspondent_for(audience).replace('_', '-')}@{sending_domain()}"
+
+
+def sender_for(audience: str) -> str:
+    """`Display Name <role@domain>` for this audience's correspondent.
+
+    The two halves are independent and are meant to be: the name is the person, read from
+    the identity map on every send so renaming an agent stays a one-file change, and the
+    address is the role, so renaming the agent does not move the mailbox.
+
+    `formataddr` rather than an f-string, because the display name is about to become
+    project-settable: a name carrying a comma or a non-ASCII character has to be quoted or
+    encoded, and hand-assembling the header would emit a `From` that splits into two
+    recipients at the comma.
     """
     display = AGENT_IDENTITY[correspondent_for(audience)].display_name
-    address = parseaddr(get_settings().from_email)[1]
-    return f"{display} <{address}>"
+    return formataddr((display, role_address(audience)))
 
 
 def _normalise(addresses: list[str] | tuple[str, ...]) -> list[str]:
