@@ -409,26 +409,7 @@ def get_value_chain_node_index(slug: str) -> dict[str, dict]:
     return index
 
 
-async def get_value_chain_tree(slug: str) -> list | None:
-    """Return the value chain tree JSON for the assignment page.
-
-    Returns:
-        None  — project DB does not exist (unknown project)
-        []    — project exists but value_chain_tree.json not yet on disk
-        list  — parsed JSON array from outputs/value_chain_tree.json
-    """
-    if not get_db_path(slug).exists():
-        return None
-    async with get_connection(slug) as conn:
-        project = await fetch_project(conn, slug=slug)
-        if not project:
-            return None
-    from agents.tools._db import current_output_path
-
-    path = current_output_path(slug, "value_chain_tree")
-    if path is None:
-        return []
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
+# get_value_chain_tree retired with the field it served. It read value_chain_tree.json,
+# whose nodes carry a label, a level and their children and no id at all, for the assignment
+# endpoint - which assigns by node id. `get_value_chain_node_index` above is the id-carrying
+# read, and the registry endpoint serves the browser directly.

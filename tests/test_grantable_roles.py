@@ -503,6 +503,29 @@ async def test_a_project_admin_may_configure_the_project_and_its_branding(roles)
 
 
 @pytest.mark.asyncio
+async def test_a_project_admin_may_map_this_projects_people_to_the_value_chain(roles):
+    """`POST /{slug}/assignment`. The door was org-admin-or-above while the page that wrote
+    it was gated behind an orchestration run; the surface is Jordan's Setup tab now, and the
+    person who adds the stakeholders is the person who says which activities they speak for.
+
+    Asserted on the effect as well as the status, because a 200 from a handler that stored
+    nothing is exactly the shape this branch is fixing.
+    """
+    padmin = roles["padmin"]
+    saved = await padmin.post(
+        f"/projects/{SLUG}/assignment",
+        json=[{"stakeholder_id": roles["target"], "node_id": "1.2"}],
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["saved"] == 1
+
+    read_back = await padmin.get(f"/projects/{SLUG}/assignment")
+    assert [
+        (a["stakeholder_id"], a["node_id"]) for a in read_back.json()["assignments"]
+    ] == [(roles["target"], "1.2")]
+
+
+@pytest.mark.asyncio
 async def test_a_project_admin_may_administer_this_projects_people(roles):
     padmin = roles["padmin"]
     created = await padmin.post(
@@ -632,29 +655,34 @@ async def test_a_member_cannot_delete_a_stakeholder(roles):
 
 @pytest.mark.asyncio
 async def test_a_member_cannot_rewrite_the_node_assignments(roles):
-    """`PUT /{slug}/stakeholder-assignments`. A full replace of who is assigned to which value
-    chain node - which is what the Interview Coordinator plans sessions from, so rewriting it
-    redirects the interview programme."""
+    """`POST /{slug}/assignment`. A full replace of who is assigned to which value chain
+    node - which is what the Interview Coordinator plans sessions from, so rewriting it
+    redirects the interview programme.
+
+    This used to drive `PUT /{slug}/stakeholder-assignments`, which wrote the second,
+    unread assignment table. Both are retired; the mapping has one door now, and the gate
+    moved with it rather than being dropped.
+    """
     from api.database import (
-        get_stakeholder_node_assignments,
-        upsert_stakeholder_node_assignments,
+        fetch_stakeholder_assignments,
+        replace_stakeholder_assignments,
     )
 
     async with get_connection(SLUG) as conn:
         project = await fetch_project(conn, slug=SLUG)
-        await upsert_stakeholder_node_assignments(
-            conn, project["id"], [{"stakeholder_id": roles["target"], "node_key": "1.2"}]
+        await replace_stakeholder_assignments(
+            conn,
+            project_id=project["id"],
+            assignments=[{"stakeholder_id": roles["target"], "node_id": "1.2"}],
         )
-        before = await get_stakeholder_node_assignments(conn, project["id"])
+        before = await fetch_stakeholder_assignments(conn, project_id=project["id"])
     assert before, "precondition: there is an assignment to overwrite"
 
-    r = await roles["plain"].put(
-        f"/projects/{SLUG}/stakeholder-assignments", json={"assignments": []}
-    )
+    r = await roles["plain"].post(f"/projects/{SLUG}/assignment", json=[])
 
     assert _refusal(r) == (403, ADMIN_REQUIRED)
     async with get_connection(SLUG) as conn:
-        after = await get_stakeholder_node_assignments(conn, project["id"])
+        after = await fetch_stakeholder_assignments(conn, project_id=project["id"])
     assert after == before, "the assignments were replaced anyway"
 
 

@@ -152,14 +152,29 @@ STAKEHOLDER = {
 
 
 @pytest.mark.asyncio
-async def test_get_assignment_returns_empty_tree_when_no_file(client):
+async def test_get_assignment_answers_a_project_with_no_mapping_yet(client):
     await client.post("/projects", json=PROJECT)
 
     resp = await client.get(f"/projects/{SLUG}/assignment")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["value_chain_tree"] == []
     assert data["assignments"] == []
+    assert data["stakeholders"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_assignment_does_not_serve_a_label_keyed_value_chain(client):
+    """It used to also return `value_chain_tree`, the label-only nesting with no ids in it.
+
+    Assigning against that is only possible by keying on a label, which is precisely what
+    the retired `stakeholder_node_assignments` table did ('L2:Some Label'). The surface
+    reads node ids from the value chain registry instead, so the field is gone rather than
+    left as a second, id-less description of the same tree.
+    """
+    await client.post("/projects", json=PROJECT)
+
+    resp = await client.get(f"/projects/{SLUG}/assignment")
+    assert "value_chain_tree" not in resp.json()
 
 
 @pytest.mark.asyncio

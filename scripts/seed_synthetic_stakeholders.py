@@ -435,17 +435,9 @@ async def _remove(conn, project_id: int) -> dict:
         [project_id, *ids],
     )
     assignments_deleted = cur.rowcount
-    # The doomed table too: Assignment.tsx still writes it on this branch, so a seeded row
-    # dragged around the current page leaves rows here that would outlive the person.
-    legacy = await conn.execute_fetchall(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='stakeholder_node_assignments'"
-    )
-    if legacy:
-        await conn.execute(
-            f"DELETE FROM stakeholder_node_assignments WHERE project_id=?"
-            f" AND stakeholder_id IN ({placeholders})",
-            [project_id, *ids],
-        )
+    # The second assignment table used to be swept here too. It is gone - dropped by
+    # _migrate_drop_stakeholder_node_assignments, which `get_connection` above has already
+    # run against this file - so there is one table left for a seeded row to leave rows in.
     cur = await conn.execute(
         f"DELETE FROM stakeholders WHERE id IN ({placeholders})", ids
     )

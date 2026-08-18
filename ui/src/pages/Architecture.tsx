@@ -136,8 +136,8 @@ export default function Architecture() {
           <div className="bg-surface-card rounded-lg border border-amber-700/50 p-4">
             <div className="text-xs text-amber-400 mb-1 uppercase tracking-wide">Human Gate - Stakeholder Assignment</div>
             <p className="text-sm text-slate-300">
-              Consultant reviews the value chain, assigns stakeholders to value chain nodes via the
-              Assignment page. <code className="text-slate-300">POST /projects/{'{slug}'}/assignment</code> stores the
+              Consultant reviews the value chain, assigns stakeholders to value chain nodes in
+              Jordan's Setup tab. <code className="text-slate-300">POST /projects/{'{slug}'}/assignment</code> stores the
               mapping - a project fact, made before or between runs - and
               <code className="text-slate-300"> PATCH /orchestration-runs/{'{run_id}'}/advance</code> triggers Phase 2.
             </p>
@@ -528,7 +528,7 @@ export default function Architecture() {
                 ['POST', '/projects', 'Create project'],
                 ['GET', '/projects/{slug}/status', 'Project status + latest orchestration run'],
                 ['POST', '/projects/{slug}/orchestrate', 'Trigger PAM Phase 1 (async)'],
-                ['GET', '/projects/{slug}/assignment', 'Value chain tree, the project mapping, and the roster'],
+                ['GET', '/projects/{slug}/assignment', 'The project mapping and the roster (node ids come from the registry)'],
                 ['POST', '/projects/{slug}/assignment', 'Replace the project stakeholder-to-node mapping'],
                 ['PATCH', '/projects/{slug}/orchestration-runs/{run_id}/advance', 'Manually advance run status'],
                 ['GET/PATCH', '/projects/{slug}/settings', 'Project settings (LLM mode, sector, etc.)'],
@@ -602,7 +602,7 @@ export default function Architecture() {
                 ['/:slug/stakeholders', 'Stakeholders', 'Protected', 'Stakeholder registry list'],
                 ['/:slug/stakeholders/new', 'StakeholderForm', 'Protected', 'Add stakeholder'],
                 ['/:slug/stakeholders/:id/edit', 'StakeholderForm', 'Protected', 'Edit stakeholder'],
-                ['/:slug/assignment', 'Assignment', 'Protected', 'Assign stakeholders to value chain nodes (PAM gate)'],
+                ['/:slug/assignment', 'AssignmentRedirect', 'Protected', "Retired page - redirects to Jordan's Setup tab, where the mapping is made"],
                 ['/:slug/documents', 'Documents', 'Protected', 'Upload and manage source documents'],
                 ['/:slug/templates', 'Templates', 'Protected', 'Interview template library'],
                 ['/:slug/settings', 'Settings', 'Protected', 'Project configuration'],

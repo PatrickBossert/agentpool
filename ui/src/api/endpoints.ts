@@ -16,7 +16,6 @@ import type {
   InviteLinkResponse,
   Stakeholder,
   StakeholderImportResult,
-  StakeholderNodeAssignment,
   ValueChainRegistry,
   PortfolioItem,
   AssignmentData,
@@ -276,15 +275,10 @@ export const stakeholdersApi = {
   },
 }
 
-export const stakeholderNodeAssignmentsApi = {
-  list: (slug: string): Promise<StakeholderNodeAssignment[]> =>
-    apiClient.get<StakeholderNodeAssignment[]>(`/projects/${slug}/stakeholder-assignments`).then((r) => r.data),
-
-  save: (slug: string, assignments: { stakeholder_id: number; node_key: string }[]): Promise<{ count: number }> =>
-    apiClient
-      .put<{ count: number }>(`/projects/${slug}/stakeholder-assignments`, { assignments })
-      .then((r) => r.data),
-}
+// stakeholderNodeAssignmentsApi retired. It was the only caller of GET/PUT
+// /projects/{slug}/stakeholder-assignments, which wrote a second assignment table keyed on
+// 'L2:Some Label' that no agent could read. The mapping is projectsApi.getAssignment /
+// saveAssignment above, keyed on the value chain node id.
 
 export const nonworkingApi = {
   list: (slug: string) =>

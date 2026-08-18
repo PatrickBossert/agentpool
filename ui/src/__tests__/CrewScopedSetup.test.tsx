@@ -33,6 +33,13 @@ vi.mock('../api/endpoints', () => ({
     getSettings: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn().mockResolvedValue({}),
     outputs: vi.fn().mockResolvedValue([]),
+    // Jordan's section, which is a real section on stakeholder_management now. Left out,
+    // its queries would throw inside react-query and the section below would be asserted
+    // against a component that never got past its first render.
+    getAssignment: vi.fn().mockResolvedValue({ assignments: [], stakeholders: [] }),
+    getValueChainRegistry: vi.fn().mockResolvedValue({ schema_version: 1, activities: [] }),
+    listRuns: vi.fn().mockResolvedValue([]),
+    saveAssignment: vi.fn().mockResolvedValue({ saved: 0 }),
   },
   stakeholdersApi: { list: vi.fn().mockResolvedValue([]) },
   campaignsApi: { listReminderEmails: vi.fn().mockResolvedValue([]) },
@@ -57,6 +64,8 @@ describe('a crew-scoped Setup tab', () => {
     // which is Jordan's crew and contains no interview coordinator at all.
     renderSections('stakeholder_management')
     expect(screen.queryByTestId('setup-section-Interview Coordinator')).toBeNull()
+    // Jordan's own configuration is what belongs there, and does render.
+    expect(screen.getByTestId('setup-section-Stakeholder Manager')).toBeInTheDocument()
   })
 
   it('renders sections in the crew\'s own agent order', () => {
