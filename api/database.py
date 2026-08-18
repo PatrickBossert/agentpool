@@ -399,18 +399,66 @@ async def _migrate_campaigns(conn: aiosqlite.Connection) -> None:
 
 
 async def _migrate_stakeholder_assignments(conn: aiosqlite.Connection) -> None:
-    """Create stakeholder_assignments table if it doesn't exist."""
+    """Create stakeholder_assignments table if it doesn't exist.
+
+    An assignment is a fact about the project, not an event inside a run: it is made by
+    hand before any orchestration has happened, and it survives every run afterwards.
+    That is why the key is `project_id` and not `orchestration_run_id`.
+
+    The node is cited by its value chain **id**, never by its label. Ids are a permanent
+    contract (see CLAUDE.md); labels drift on every run Alex makes - one run produced 59
+    label changes - so a label-keyed assignment silently detaches from its node.
+
+    Several stakeholders on one activity is the normal case, not a duplicate, and one
+    person legitimately speaks for several activities. The uniqueness constraint is
+    therefore on the *pair* - the same person filed against the same node twice - and on
+    nothing else.
+    """
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS stakeholder_assignments (
-            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-            orchestration_run_id  INTEGER NOT NULL REFERENCES orchestration_runs(id),
-            stakeholder_id        INTEGER NOT NULL REFERENCES stakeholders(id),
-            level                 TEXT NOT NULL,
-            node_label            TEXT NOT NULL,
-            created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            stakeholder_id  INTEGER NOT NULL REFERENCES stakeholders(id) ON DELETE CASCADE,
+            node_id         TEXT NOT NULL,
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, stakeholder_id, node_id)
         )
     """)
     await conn.commit()
+
+
+async def _migrate_stakeholder_assignments_to_project(conn: aiosqlite.Connection) -> None:
+    """Re-key an existing stakeholder_assignments table from a run to the project.
+
+    The old shape was `(id, orchestration_run_id, stakeholder_id, level, node_label,
+    created_at)`. Every project database held zero rows in it - the only writer was a
+    router endpoint no UI ever called - so this is a free re-key with nothing to backfill
+    and no compatibility shim.
+
+    `level` is not carried over. It was the *node's* level, so it belongs to the node and
+    is read back from the value chain registry alongside the label; storing a copy on the
+    assignment is the same denormalisation as `node_label` and drifts the same way.
+
+    Rows are never dropped on the floor. If a database somewhere does hold assignments,
+    the old table is renamed aside rather than deleted - nothing reads the renamed table,
+    so this is a safety net, not a shim.
+    """
+    async with conn.execute("PRAGMA table_info(stakeholder_assignments)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    if not cols or "project_id" in cols:
+        return  # absent (the create above makes the new shape) or already re-keyed
+
+    async with conn.execute("SELECT COUNT(*) FROM stakeholder_assignments") as cur:
+        existing = (await cur.fetchone())[0]
+    if existing:
+        await conn.execute(
+            "ALTER TABLE stakeholder_assignments "
+            "RENAME TO stakeholder_assignments_pre_project_rekey"
+        )
+    else:
+        await conn.execute("DROP TABLE stakeholder_assignments")
+    await conn.commit()
+    await _migrate_stakeholder_assignments(conn)
 
 
 async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
@@ -1360,7 +1408,7 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # runs again after a database's first post-upgrade open in a process - there is no test
 # that catches a missed bump, because none can: it is a fact about this constant, not
 # about behaviour.
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1451,6 +1499,7 @@ async def get_connection(slug: str):
             await _migrate_stakeholders(conn)
             await _migrate_campaigns(conn)
             await _migrate_stakeholder_assignments(conn)
+            await _migrate_stakeholder_assignments_to_project(conn)
             await _migrate_interview_sessions(conn)
             await _migrate_interview_sessions_ratings(conn)
             await _migrate_interview_sessions_checkpoint(conn)
@@ -3112,12 +3161,16 @@ async def insert_user(
 # ── Stakeholder Assignments ───────────────────────────────────────────────────
 
 async def fetch_stakeholder_assignments(
-    conn: aiosqlite.Connection, *, orchestration_run_id: int
+    conn: aiosqlite.Connection, *, project_id: int
 ) -> list[dict]:
-    """Return all assignments for an orchestration run, ordered by id."""
+    """Return every assignment held by the project, ordered by id.
+
+    Keyed on the project, so this answers before the first orchestration run and still
+    answers after the tenth.
+    """
     async with conn.execute(
-        "SELECT * FROM stakeholder_assignments WHERE orchestration_run_id=? ORDER BY id",
-        (orchestration_run_id,),
+        "SELECT * FROM stakeholder_assignments WHERE project_id=? ORDER BY id",
+        (project_id,),
     ) as cur:
         return [dict(r) async for r in cur]
 
@@ -3125,22 +3178,35 @@ async def fetch_stakeholder_assignments(
 async def replace_stakeholder_assignments(
     conn: aiosqlite.Connection,
     *,
-    orchestration_run_id: int,
+    project_id: int,
     assignments: list[dict],
 ) -> int:
-    """Replace all assignments for this run. Returns count saved."""
+    """Replace the project's whole mapping. Returns the number of rows stored.
+
+    Each item needs `stakeholder_id` and `node_id`. An empty list is accepted and clears
+    the mapping - removing the last assignment is a legitimate edit of a durable fact,
+    not a malformed request.
+
+    Repeated pairs in one payload collapse to one row; different stakeholders on one node,
+    and one stakeholder across several nodes, are both kept, because many-to-many is the
+    whole point.
+    """
     await conn.execute(
-        "DELETE FROM stakeholder_assignments WHERE orchestration_run_id=?",
-        (orchestration_run_id,),
+        "DELETE FROM stakeholder_assignments WHERE project_id=?", (project_id,)
     )
+    seen: set[tuple[int, str]] = set()
     for a in assignments:
+        pair = (a["stakeholder_id"], a["node_id"])
+        if pair in seen:
+            continue
+        seen.add(pair)
         await conn.execute(
-            "INSERT INTO stakeholder_assignments "
-            "(orchestration_run_id, stakeholder_id, level, node_label) VALUES (?,?,?,?)",
-            (orchestration_run_id, a["stakeholder_id"], a["level"], a["node_label"]),
+            "INSERT INTO stakeholder_assignments (project_id, stakeholder_id, node_id)"
+            " VALUES (?,?,?)",
+            (project_id, pair[0], pair[1]),
         )
     await conn.commit()
-    return len(assignments)
+    return len(seen)
 
 
 # ── Interview Sessions ────────────────────────────────────────────────────────

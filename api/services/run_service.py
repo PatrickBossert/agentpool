@@ -319,7 +319,12 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
                 f"interview_method is '{interview_method}', expected 'agent'"
             )
 
-        # Recover orchestration_run_id from the crew_run row
+        # This crew is PAM's to dispatch, and the crew_run row carrying an
+        # orchestration_run_id is what says so - insert_crew_run leaves it NULL, only
+        # orchestration sets it. The assignments no longer depend on it (they are keyed
+        # on the project now), so this is purely the dispatch gate that
+        # autostart_service._PAM_DISPATCHED_ONLY is the counterpart of. Read the comment
+        # there before removing it.
         async with get_connection(slug) as conn:
             async with conn.execute(
                 "SELECT orchestration_run_id FROM crew_runs WHERE id=?", (run_id,)
@@ -332,21 +337,32 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
                     "discovery_interviews must be dispatched via PAM"
                 )
 
-            # Fetch assignments and enrich with stakeholder details
-            raw_assignments = await fetch_stakeholder_assignments(
-                conn, orchestration_run_id=orchestration_run_id
-            )
+            # Fetch assignments and enrich with stakeholder details.
+            #
+            # Keyed on the project, not on this run: the mapping is made by hand in
+            # Jordan's surface, before any orchestration, and every later run reads the
+            # same rows. The row stores only the node id, so the label and level the
+            # coordinator's prompt shows are resolved from the value chain registry here
+            # - the registry is the canonical spine, and a copy on the assignment row
+            # would go stale the next time Alex re-emits a label.
             project_row = await fetch_project(conn, slug=slug)
+            raw_assignments = await fetch_stakeholder_assignments(
+                conn, project_id=project_row["id"]
+            )
             all_stakeholders = await fetch_stakeholders(conn, project_id=project_row["id"])
             stakeholder_map = {s["id"]: s for s in all_stakeholders}
+
+            from api.services.project_service import get_value_chain_node_index
+            nodes = get_value_chain_node_index(slug)
 
             stakeholder_assignments = [
                 {
                     "stakeholder_id": a["stakeholder_id"],
                     "name": stakeholder_map.get(a["stakeholder_id"], {}).get("name", "Unknown"),
                     "job_title": stakeholder_map.get(a["stakeholder_id"], {}).get("job_title", ""),
-                    "level": a["level"],
-                    "node_label": a["node_label"],
+                    "node_id": a["node_id"],
+                    "level": nodes.get(a["node_id"], {}).get("level", ""),
+                    "node_label": nodes.get(a["node_id"], {}).get("label", a["node_id"]),
                 }
                 for a in raw_assignments
                 if a["stakeholder_id"] in stakeholder_map

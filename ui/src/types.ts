@@ -439,10 +439,14 @@ export interface ValueChainNode {
   children?: ValueChainNode[]
 }
 
+// One stakeholder against one value chain node. The node is cited by its id, which is a
+// permanent contract; `node_label` and `level` are resolved from the value chain registry
+// on read and are never sent back.
 export interface StakeholderAssignment {
   stakeholder_id: number
-  level: string
-  node_label: string
+  node_id: string
+  node_label?: string
+  level?: string
 }
 
 export interface AssignmentData {

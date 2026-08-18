@@ -137,8 +137,9 @@ export default function Architecture() {
             <div className="text-xs text-amber-400 mb-1 uppercase tracking-wide">Human Gate - Stakeholder Assignment</div>
             <p className="text-sm text-slate-300">
               Consultant reviews the value chain, assigns stakeholders to value chain nodes via the
-              Assignment page. <code className="text-slate-300">POST /projects/{'{slug}'}/assignment/{'{run_id}'}</code> stores assignments
-              and triggers Phase 2.
+              Assignment page. <code className="text-slate-300">POST /projects/{'{slug}'}/assignment</code> stores the
+              mapping - a project fact, made before or between runs - and
+              <code className="text-slate-300"> PATCH /orchestration-runs/{'{run_id}'}/advance</code> triggers Phase 2.
             </p>
           </div>
 
@@ -225,7 +226,7 @@ export default function Architecture() {
             file: 'agents/crews/pam_crew.py',
             agents: ['PAM (Programme Architecture Manager)'],
             produces: 'Orchestrates Phase 2 pipeline end-to-end',
-            trigger: 'POST /assignment/{run_id}',
+            trigger: 'PATCH /orchestration-runs/{run_id}/advance',
           },
         ].map((c) => (
           <Card key={c.name} title={c.name}>
@@ -457,7 +458,7 @@ export default function Architecture() {
               { table: 'human_reviews', desc: 'HITL review records', cols: 'id, output_id, crew_run_id, reviewer, decision, prompt, notes' },
               { table: 'client_documents', desc: 'Uploaded source documents', cols: 'id, project_id, filename, file_path, content_type, ingested' },
               { table: 'stakeholders', desc: 'Stakeholder master register', cols: 'id, project_id, name, email, job_title, value_streams, interview_status, interview_invited_at' },
-              { table: 'stakeholder_assignments', desc: 'PAM Phase 1 node assignments', cols: 'id, orchestration_run_id, stakeholder_id, level, node_label' },
+              { table: 'stakeholder_assignments', desc: 'Who speaks for which value chain node - a durable project fact, many-to-many', cols: 'id, project_id, stakeholder_id, node_id' },
               { table: 'interview_sessions', desc: 'Voice interview sessions', cols: 'id, project_id, stakeholder_id, session_token, status, transcript_json, ratings_json' },
               { table: 'campaigns', desc: 'Interview campaign tracking', cols: 'id, project_id, value_stream_name, campaign_name, interview_start, interview_close' },
               { table: 'interview_responses', desc: 'Imported interview data', cols: 'id, stakeholder_id, campaign_id, raw_data' },
@@ -527,8 +528,8 @@ export default function Architecture() {
                 ['POST', '/projects', 'Create project'],
                 ['GET', '/projects/{slug}/status', 'Project status + latest orchestration run'],
                 ['POST', '/projects/{slug}/orchestrate', 'Trigger PAM Phase 1 (async)'],
-                ['GET', '/projects/{slug}/assignment/{run_id}', 'Get stakeholder assignments'],
-                ['POST', '/projects/{slug}/assignment/{run_id}', 'Submit assignments → triggers Phase 2'],
+                ['GET', '/projects/{slug}/assignment', 'Value chain tree, the project mapping, and the roster'],
+                ['POST', '/projects/{slug}/assignment', 'Replace the project stakeholder-to-node mapping'],
                 ['PATCH', '/projects/{slug}/orchestration-runs/{run_id}/advance', 'Manually advance run status'],
                 ['GET/PATCH', '/projects/{slug}/settings', 'Project settings (LLM mode, sector, etc.)'],
                 ['GET', '/projects/{slug}/runs', 'All orchestration + crew run history'],

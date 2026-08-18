@@ -45,7 +45,6 @@ async def test_replace_and_fetch_stakeholder_assignments():
     async with get_connection(SLUG) as conn:
         await insert_project(conn, slug=SLUG, llm_mode="standard", sector="rail", config_json="{}")
         project = await fetch_project(conn, slug=SLUG)
-        run_id = await insert_orchestration_run(conn, project_id=project["id"])
         sh_id = await insert_stakeholder(
             conn,
             project_id=project["id"],
@@ -68,15 +67,14 @@ async def test_replace_and_fetch_stakeholder_assignments():
         )
         count = await replace_stakeholder_assignments(
             conn,
-            orchestration_run_id=run_id,
-            assignments=[{"stakeholder_id": sh_id, "level": "L2", "node_label": "Billing"}],
+            project_id=project["id"],
+            assignments=[{"stakeholder_id": sh_id, "node_id": "1.2"}],
         )
     assert count == 1
     async with get_connection(SLUG) as conn:
-        rows = await fetch_stakeholder_assignments(conn, orchestration_run_id=run_id)
+        rows = await fetch_stakeholder_assignments(conn, project_id=project["id"])
     assert len(rows) == 1
-    assert rows[0]["level"] == "L2"
-    assert rows[0]["node_label"] == "Billing"
+    assert rows[0]["node_id"] == "1.2"
     assert rows[0]["stakeholder_id"] == sh_id
 
 
@@ -86,7 +84,6 @@ async def test_replace_stakeholder_assignments_replaces_not_appends():
     async with get_connection(SLUG) as conn:
         await insert_project(conn, slug=SLUG, llm_mode="standard", sector="rail", config_json="{}")
         project = await fetch_project(conn, slug=SLUG)
-        run_id = await insert_orchestration_run(conn, project_id=project["id"])
         sh_id = await insert_stakeholder(
             conn,
             project_id=project["id"],
@@ -109,29 +106,28 @@ async def test_replace_stakeholder_assignments_replaces_not_appends():
         )
         await replace_stakeholder_assignments(
             conn,
-            orchestration_run_id=run_id,
-            assignments=[{"stakeholder_id": sh_id, "level": "L1", "node_label": "Operations"}],
+            project_id=project["id"],
+            assignments=[{"stakeholder_id": sh_id, "node_id": "1"}],
         )
         count = await replace_stakeholder_assignments(
             conn,
-            orchestration_run_id=run_id,
-            assignments=[{"stakeholder_id": sh_id, "level": "L2", "node_label": "Billing"}],
+            project_id=project["id"],
+            assignments=[{"stakeholder_id": sh_id, "node_id": "1.2"}],
         )
     assert count == 1
     async with get_connection(SLUG) as conn:
-        rows = await fetch_stakeholder_assignments(conn, orchestration_run_id=run_id)
+        rows = await fetch_stakeholder_assignments(conn, project_id=project["id"])
     assert len(rows) == 1
-    assert rows[0]["node_label"] == "Billing"
+    assert rows[0]["node_id"] == "1.2"
 
 
 @pytest.mark.asyncio
-async def test_fetch_stakeholder_assignments_empty_for_unknown_run():
-    """Returns [] when no assignments exist for a run."""
+async def test_fetch_stakeholder_assignments_empty_for_project_with_none():
+    """Returns [] when the project has no assignments."""
     async with get_connection(SLUG) as conn:
         await insert_project(conn, slug=SLUG, llm_mode="standard", sector="rail", config_json="{}")
         project = await fetch_project(conn, slug=SLUG)
-        run_id = await insert_orchestration_run(conn, project_id=project["id"])
-        rows = await fetch_stakeholder_assignments(conn, orchestration_run_id=run_id)
+        rows = await fetch_stakeholder_assignments(conn, project_id=project["id"])
     assert rows == []
 
 
@@ -158,11 +154,8 @@ STAKEHOLDER = {
 @pytest.mark.asyncio
 async def test_get_assignment_returns_empty_tree_when_no_file(client):
     await client.post("/projects", json=PROJECT)
-    async with get_connection(SLUG) as conn:
-        project = await fetch_project(conn, slug=SLUG)
-        run_id = await insert_orchestration_run(conn, project_id=project["id"])
 
-    resp = await client.get(f"/projects/{SLUG}/assignment/{run_id}")
+    resp = await client.get(f"/projects/{SLUG}/assignment")
     assert resp.status_code == 200
     data = resp.json()
     assert data["value_chain_tree"] == []
@@ -171,7 +164,7 @@ async def test_get_assignment_returns_empty_tree_when_no_file(client):
 
 @pytest.mark.asyncio
 async def test_get_assignment_returns_404_for_unknown_project(client):
-    resp = await client.get("/projects/unknown-proj/assignment/1")
+    resp = await client.get("/projects/unknown-proj/assignment")
     assert resp.status_code == 404
 
 
@@ -180,11 +173,10 @@ async def test_post_assignment_saves_and_returns_count(client):
     await client.post("/projects", json=PROJECT)
     async with get_connection(SLUG) as conn:
         project = await fetch_project(conn, slug=SLUG)
-        run_id = await insert_orchestration_run(conn, project_id=project["id"])
         sh_id = await insert_stakeholder(conn, project_id=project["id"], **STAKEHOLDER)
 
-    payload = [{"stakeholder_id": sh_id, "level": "L2", "node_label": "Billing"}]
-    resp = await client.post(f"/projects/{SLUG}/assignment/{run_id}", json=payload)
+    payload = [{"stakeholder_id": sh_id, "node_id": "1.2"}]
+    resp = await client.post(f"/projects/{SLUG}/assignment", json=payload)
     assert resp.status_code == 200
     assert resp.json()["saved"] == 1
 
@@ -194,36 +186,49 @@ async def test_post_assignment_replaces_existing(client):
     await client.post("/projects", json=PROJECT)
     async with get_connection(SLUG) as conn:
         project = await fetch_project(conn, slug=SLUG)
-        run_id = await insert_orchestration_run(conn, project_id=project["id"])
         sh_id = await insert_stakeholder(conn, project_id=project["id"], **STAKEHOLDER)
 
     # First save
     await client.post(
-        f"/projects/{SLUG}/assignment/{run_id}",
-        json=[{"stakeholder_id": sh_id, "level": "L1", "node_label": "Operations"}],
+        f"/projects/{SLUG}/assignment",
+        json=[{"stakeholder_id": sh_id, "node_id": "1"}],
     )
     # Replace with different assignment
     resp = await client.post(
-        f"/projects/{SLUG}/assignment/{run_id}",
-        json=[{"stakeholder_id": sh_id, "level": "L2", "node_label": "Billing"}],
+        f"/projects/{SLUG}/assignment",
+        json=[{"stakeholder_id": sh_id, "node_id": "1.2"}],
     )
     assert resp.json()["saved"] == 1
 
     # Verify only 1 row remains
-    resp2 = await client.get(f"/projects/{SLUG}/assignment/{run_id}")
+    resp2 = await client.get(f"/projects/{SLUG}/assignment")
     assert len(resp2.json()["assignments"]) == 1
-    assert resp2.json()["assignments"][0]["node_label"] == "Billing"
+    assert resp2.json()["assignments"][0]["node_id"] == "1.2"
 
 
 @pytest.mark.asyncio
-async def test_post_assignment_422_for_empty_body(client):
+async def test_post_assignment_accepts_empty_body_and_clears(client):
+    """Unassigning the last stakeholder is an edit, not a malformed request.
+
+    The old endpoint answered 422 to an empty list because posting it was the gate that
+    advanced an orchestration run. The mapping is a durable project fact now, so it has to
+    be possible to empty it.
+    """
     await client.post("/projects", json=PROJECT)
     async with get_connection(SLUG) as conn:
         project = await fetch_project(conn, slug=SLUG)
-        run_id = await insert_orchestration_run(conn, project_id=project["id"])
+        sh_id = await insert_stakeholder(conn, project_id=project["id"], **STAKEHOLDER)
 
-    resp = await client.post(f"/projects/{SLUG}/assignment/{run_id}", json=[])
-    assert resp.status_code == 422
+    await client.post(
+        f"/projects/{SLUG}/assignment",
+        json=[{"stakeholder_id": sh_id, "node_id": "1.2"}],
+    )
+    resp = await client.post(f"/projects/{SLUG}/assignment", json=[])
+    assert resp.status_code == 200
+    assert resp.json()["saved"] == 0
+
+    resp2 = await client.get(f"/projects/{SLUG}/assignment")
+    assert resp2.json()["assignments"] == []
 
 
 @pytest.mark.asyncio

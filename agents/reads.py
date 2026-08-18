@@ -176,7 +176,8 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
             "stakeholder_assignments",
             Medium.DATABASE_TABLE,
             VIA_DISPATCH,
-            "who is assigned to which node, for this orchestration run",
+            "who is assigned to which node id, for the project - the mapping is a durable "
+            "project fact, so it is the same rows on every run",
         ),
         Read(
             "stakeholders",
