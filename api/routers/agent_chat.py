@@ -239,7 +239,9 @@ async def chat_upload(
 
     The tier is a second, independent question, and the answer must not depend on which of
     the two doors the caller used: clearing this door buys the project tier and nothing
-    wider, exactly as it does at the documents door. `require_writable_tier` decides it.
+    wider, exactly as it does at the documents door. `require_writable_tier` decides it, and
+    it takes the slug because the destination of an organisation-tier write is one particular
+    organisation's store - the one this project belongs to.
     """
     await check_project_access(slug, payload)
     if not await caller_may_approve(slug, payload):
@@ -247,7 +249,7 @@ async def chat_upload(
             status_code=403,
             detail="Only an approver may add a document to this project",
         )
-    require_writable_tier(tier, payload)
+    await require_writable_tier(slug, tier, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 

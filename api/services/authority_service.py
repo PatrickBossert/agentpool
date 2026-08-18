@@ -170,21 +170,151 @@ async def require_project_administration(slug: str, payload: dict) -> None:
         raise HTTPException(status_code=403, detail=PROJECT_ADMINISTRATION_REQUIRED)
 
 
-def require_writable_tier(tier: str, payload: dict) -> None:
-    """`assert_may_write_tier` as a status code, for the two upload doors.
+# ── Write authority follows the tier ──────────────────────────────────────────
+#
+# `knowledge_tiers.writable_tiers` answers how wide a caller may write **from their login
+# role alone** - sector is sysadmin, organisation is org_admin or above, project is narrower
+# still. It is pure and it knows no slug, which is what lets GET /my-permissions and the
+# upload doors share one statement of it, and it is also exactly what it cannot answer:
+# *which* organisation's store an org_admin may write into.
+#
+# That distinction is the whole of the risk. `org_{org_slug}` is shared by every project of
+# one organisation, and on a consultancy deployment the organisations are different clients.
+# "May write the organisation tier" in the abstract is not a permission anybody should hold;
+# "may write their own organisation's store" is.
+#
+# So the rule is completed here, where a slug is available:
+#
+#   sector       sysadmin. A deployment-wide store takes the deployment-wide role, and there
+#                is no second question - it is one store, not one per organisation.
+#   organisation org_admin or above, **for the organisation this project belongs to**. The
+#                destination is read from `project_registry`; a project with no row belongs
+#                to no organisation and has no organisation tier at all.
+#   project      authority over this project - administering it, or approving its content.
+#                Both are per-project and both are read by the walk above, so neither
+#                depends on which door the caller came through.
+#
+# **Whether the caller can write the row the boundary reads** is the question sp42 and sp38
+# were both about, and it is asked of both premises here:
+#
+#   `project_registry.org_id` - `POST`/`DELETE /auth/projects` are sysadmin-only, and project
+#   creation registers through `register_project_if_unregistered`, which cannot move a slug
+#   that already has a row. See the report for the one residual case, which is a hole in
+#   `POST /projects` rather than in this rule.
+#
+#   the caller's own `org_id` - minted from `org_memberships` at login and **re-derived on
+#   every rolled request** (api/main.py `_current_session_claims`), so it is a live read of a
+#   table whose three write doors are all scoped by `check_org_access` to the caller's own
+#   organisation. An org_admin cannot add themselves to another organisation, which is the
+#   chain sp42 closed.
+#
+# `check_project_access` refuses an org_admin every slug outside their organisation, so the
+# boundary is enforced twice on today's doors. That is deliberate: the floor answers "is this
+# your engagement", this answers "is that your store", and they are only the same answer for
+# as long as every door remembers the floor.
 
-    The rule itself lives in `api/services/knowledge_tiers.py` - this is only the translation,
-    stated once so the two doors cannot answer the same refusal differently. Same shape as
-    `require_project_administration` above, and for the same reason.
 
-    422 for a tier that does not exist, 403 for one that does and is not the caller's. Folding
-    them together would tell a reviewer who asked for the sector store that they had made a
-    typo, and tell somebody who did make a typo that they lacked authority.
+async def may_write_tier_on_project(slug: str, tier: str, payload: dict) -> bool:
+    """Whether this caller may add material at `tier` on this project.
+
+    Raises `ValueError` for a tier that does not exist, or that does not exist *for this
+    project* - which is a different thing from a refusal and owes the caller a different
+    answer. Returns False for a tier that exists and is not theirs.
     """
+    from api.auth import may_access_org
+    from api.database import fetch_project_registry
     from api.services.knowledge_tiers import TierWriteRefused, assert_may_write_tier
 
+    # The login-role half first: it settles the vocabulary (raising on a tier that does not
+    # exist) and the sector, and it is the only half GET /my-permissions could answer before.
     try:
         assert_may_write_tier(tier, payload)
+    except TierWriteRefused:
+        return False
+
+    if tier == "sector":
+        return True
+
+    if tier == "organisation":
+        async with get_system_connection() as conn:
+            row = await fetch_project_registry(conn, slug=slug)
+        if not row:
+            raise ValueError(
+                f"'{slug}' has no project_registry row, so it belongs to no organisation "
+                f"and has no organisation tier to write into. Register the project against "
+                f"an organisation first."
+            )
+        return may_access_org(row["org_id"], payload)
+
+    # The project tier. `writable_tiers` hands it to every caller, because a login role says
+    # nothing about one engagement; the authority for a project write is per-project and is
+    # read by the walk. Administration or approval, because both doors' gates are real
+    # authority over this project and the tier must not depend on which one was used.
+    return await caller_may_administer_project(
+        slug, payload
+    ) or await caller_may_approve(slug, payload)
+
+
+async def assert_may_write_tier_on_project(slug: str, tier: str, payload: dict) -> None:
+    """`may_write_tier_on_project` as a refusal. The rule, not its status code.
+
+    The sentence names the tier it is refusing once, as `at the <tier> tier`, and the tiers
+    it is *not* refusing only as stores - so a test asserting the refusal cannot be satisfied
+    by a refusal of some other tier. CLAUDE.md records the shape: a refusal message that
+    quotes the key it is refusing turns a substring assertion into a tautology.
+    """
+    from api.services.knowledge_tiers import TierWriteRefused
+
+    if not await may_write_tier_on_project(slug, tier, payload):
+        permitted = await writable_tiers_on_project(slug, payload)
+        raise TierWriteRefused(
+            f"You may not add material at the {tier} tier of '{slug}'. Material only ever "
+            f"moves narrower, so writing it needs authority for the destination: the sector "
+            f"store is sysadmin alone and the organisation store is org admin or above for "
+            f"that organisation. On this project you may write: "
+            f"{', '.join(permitted) or 'nothing'}."
+        )
+
+
+async def writable_tiers_on_project(slug: str, payload: dict) -> tuple[str, ...]:
+    """The tiers this caller may write on this project, broadest first.
+
+    What GET /my-permissions answers with, so the upload dialog's tier picker filters on the
+    server's answer rather than restating the rule in TypeScript - a second copy of an
+    authority rule is what this codebase has spent a fortnight deleting, and the copy the UI
+    trusted would be the one that drifted.
+
+    A tier that does not exist for this project is simply absent, exactly like one the caller
+    may not write: a control that 403s on submit is worse than one that is not there.
+    """
+    from api.services.knowledge_tiers import UPLOADABLE_TIERS
+
+    allowed = []
+    for tier in UPLOADABLE_TIERS:
+        try:
+            if await may_write_tier_on_project(slug, tier, payload):
+                allowed.append(tier)
+        except ValueError:
+            continue
+    return tuple(allowed)
+
+
+async def require_writable_tier(slug: str, tier: str, payload: dict) -> None:
+    """The tier rule as a status code, for the two upload doors.
+
+    The rule is above and in `api/services/knowledge_tiers.py`; this is only the translation,
+    stated once so the two doors cannot answer the same refusal differently. Same shape as
+    `require_project_administration`, and for the same reason.
+
+    422 for a tier that does not exist - including one that does not exist *for this project*,
+    which is the unregistered-project case - and 403 for one that does and is not the
+    caller's. Folding them together would tell a reviewer who asked for the sector store that
+    they had made a typo, and tell somebody who did make a typo that they lacked authority.
+    """
+    from api.services.knowledge_tiers import TierWriteRefused
+
+    try:
+        await assert_may_write_tier_on_project(slug, tier, payload)
     except TierWriteRefused as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:

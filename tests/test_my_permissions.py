@@ -57,9 +57,17 @@ async def test_it_reports_what_the_shared_authority_check_says(client, seeded_pr
     # the resend door it reports on is `require_org_admin_or_above`, not the walk. The
     # client fixture's token says sysadmin, so True. tests/test_grantable_roles.py drives
     # it against the door itself.
+    # writable_knowledge_tiers is not built from the patched set either - it asks
+    # authority_service, and the tiers a caller may add material at are a different axis
+    # from the content roles. A sysadmin may write every tier that *exists*; the
+    # organisation tier is absent because this fixture's project is seeded straight into
+    # DATABASE_DIR with no project_registry row, so it belongs to no organisation and has
+    # no organisation store to write into. tests/test_knowledge_tier_authority.py drives
+    # the rule itself.
     assert r.json() == {
         "can_review": True, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
+        "writable_knowledge_tiers": ["sector", "project"],
     }
     # The roles the response is built from are the rule; the booleans are only its shadow.
     gate.assert_awaited_once()
@@ -88,6 +96,8 @@ async def test_a_caller_with_no_content_roles_is_told_so(client, seeded_project_
     assert r.json() == {
         "can_review": False, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
+        # Unmoved by the patch above, for the reason given in the test before this one.
+        "writable_knowledge_tiers": ["sector", "project"],
     }
 
 

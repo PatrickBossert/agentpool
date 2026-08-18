@@ -61,9 +61,13 @@ async def upload_document(
     tiers is readable by this project alone. Anything broader is a deliberate act needing
     authority for the destination, which `require_writable_tier` decides; this door only
     turns its refusal into a status code.
+
+    The slug is passed because the destination is a store, not a tier name: an org_admin may
+    write *their own* organisation's, and which one that is depends on the project. See the
+    rule's own commentary in authority_service.
     """
     await check_project_access(slug, payload)
-    require_writable_tier(tier, payload)
+    await require_writable_tier(slug, tier, payload)
     if not get_db_path(slug).exists():
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 

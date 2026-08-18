@@ -110,6 +110,21 @@ def require_any_auth(payload: dict = Depends(get_token_payload)) -> dict:
 
 # ── Project-level access check ────────────────────────────────────────────────
 
+def may_access_org(org_id: int, payload: dict) -> bool:
+    """The rule `check_org_access` refuses with, as a question rather than a refusal.
+
+    Same split as `is_org_admin_or_above` / `require_org_admin_or_above` above, and for the
+    same reason: a caller that needs the *answer* rather than a 403 - the knowledge tiers'
+    organisation-boundary check, which asks it about a destination store rather than a path
+    segment - cannot use a function whose only output is an exception it would have to
+    catch. Stated once, so the two cannot drift; the reasoning is in `check_org_access`.
+    """
+    role = (payload or {}).get("role")
+    if role == "sysadmin":
+        return True
+    return role == "org_admin" and (payload or {}).get("org_id") == org_id
+
+
 def check_org_access(org_id: int, payload: dict) -> None:
     """Raises 403 if the caller may not administer this organisation.
 
@@ -131,12 +146,8 @@ def check_org_access(org_id: int, payload: dict) -> None:
     up. sysadmin returns early, so administering across organisations stays a sysadmin
     capability.
     """
-    role = payload.get("role")
-    if role == "sysadmin":
-        return
-    if role == "org_admin" and payload.get("org_id") == org_id:
-        return
-    raise HTTPException(status_code=403, detail="Access denied to this organisation")
+    if not may_access_org(org_id, payload):
+        raise HTTPException(status_code=403, detail="Access denied to this organisation")
 
 
 async def check_project_access(slug: str, payload: dict) -> None:

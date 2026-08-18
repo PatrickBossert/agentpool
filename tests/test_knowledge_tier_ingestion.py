@@ -367,7 +367,9 @@ async def test_an_org_admin_is_refused_the_sector_store_at_the_documents_door(cl
             data={"tier": "sector"},
         )
     assert resp.status_code == 403
-    assert "sector" in resp.json()["detail"]
+    # The phrase names the tier being refused, and the refusal's explanation names the
+    # others only as *stores* - so this cannot be satisfied by a refusal of some other tier.
+    assert "at the sector tier" in resp.json()["detail"]
     chroma.get_or_create_collection.assert_not_called()
     listing = await client.get(f"/projects/{SLUG}/documents")
     assert listing.json() == []
@@ -489,7 +491,7 @@ async def test_an_approver_may_not_promote_material_through_the_chat_door(
                 files={"file": ("notes.txt", b"text", "text/plain")},
             )
     assert resp.status_code == 403
-    assert "organisation" in resp.json()["detail"]
+    assert "at the organisation tier" in resp.json()["detail"]
     chroma.get_or_create_collection.assert_not_called()
     listing = await client.get(f"/projects/{SLUG}/documents")
     assert listing.json() == []

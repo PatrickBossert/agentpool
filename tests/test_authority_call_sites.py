@@ -55,7 +55,11 @@ async def test_permissions_reports_the_same_roles_the_gates_read(client, seeded_
     # can_grant_roles asks caller_may_grant_project_roles rather than this patched set, and
     # can_issue_invite_links asks the platform tier off the token. The client fixture's token
     # is the platform administrator, so both are True here - see test_my_permissions.py.
+    # writable_knowledge_tiers is unpatched for the same reason and holds no organisation
+    # tier, because this fixture's project is seeded with no project_registry row and so
+    # belongs to no organisation - tests/test_knowledge_tier_authority.py drives the rule.
     assert r.json() == {
         "can_review": True, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
+        "writable_knowledge_tiers": ["sector", "project"],
     }
