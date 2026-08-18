@@ -308,16 +308,27 @@ async def test_a_refusal_names_its_own_rule(sysadmin, sent, expected, not_expect
 
 
 @pytest.mark.asyncio
-async def test_a_refused_url_is_not_stored(sysadmin):
-    """The refusal is a refusal to *store*, not a warning issued alongside the write."""
+async def test_a_refused_url_is_not_stored(sysadmin, tmp_path):
+    """The refusal is a refusal to *store*, not a warning issued alongside the write.
+
+    Asserted against the row itself rather than against `GET /admin/platform-settings`, and
+    the difference is not pedantry: a refused write leaves the module cache untouched (the
+    forget only runs on the success path), so the GET would keep answering the previous good
+    value even on an implementation that had just written the bad one underneath it. The
+    door's own read cannot see this property, so the test reads the table.
+    """
     await sysadmin.patch(
         "/admin/platform-settings", json={"public_url": "https://good.example"}
     )
 
     await sysadmin.patch("/admin/platform-settings", json={"public_url": "ftp://bad.example"})
 
-    resp = await sysadmin.get("/admin/platform-settings")
-    assert resp.json()["public_url"] == "https://good.example"
+    conn = sqlite3.connect(tmp_path / "system.db")
+    try:
+        row = conn.execute("SELECT public_url FROM platform_settings WHERE id = 1").fetchone()
+    finally:
+        conn.close()
+    assert row[0] == "https://good.example"
 
 
 @pytest.mark.asyncio
