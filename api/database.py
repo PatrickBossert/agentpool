@@ -2906,6 +2906,43 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
         -- with table size is exactly the property token_hash's own index was added to close
         -- on the accept path.
         CREATE INDEX IF NOT EXISTS idx_auth_tokens_email_purpose ON auth_tokens(email, purpose);
+
+        -- One reply address per person per engagement, and deliberately NOT a new
+        -- `purpose` on auth_tokens. Every purpose that table holds is single-use and
+        -- expiring: `_find_live_token` filters `used_at IS NULL AND expires_at > now`,
+        -- `accept_token` stamps `used_at` on redemption, and `expires_at` is NOT NULL.
+        -- A reply token is the opposite of all three - it is long-lived, it is reused on
+        -- every message, and `used_at` has no meaning for something that is never used
+        -- up. Sharing the table would mean a NOT NULL expiry filled with a sentinel, a
+        -- `used_at` column that must never be stamped, and a row that
+        -- `accept_token(raw, password)` - which takes `purpose=None` and accepts any live
+        -- row - would happily redeem as a login.
+        --
+        -- `issue` is what makes revocation stick. Re-minting after a revocation bumps it,
+        -- which derives a different token and overwrites `token_hash`, so the revoked
+        -- address is not merely refused - its digest is no longer in the table at all.
+        -- Nothing deletes from here, so `issue` only ever climbs.
+        CREATE TABLE IF NOT EXISTS reply_tokens (
+            project_slug   TEXT    NOT NULL,
+            stakeholder_id INTEGER NOT NULL,
+            token_hash     TEXT    NOT NULL UNIQUE,
+            issue          INTEGER NOT NULL DEFAULT 1,
+            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+            revoked_at     DATETIME,
+            PRIMARY KEY (project_slug, stakeholder_id)
+        );
+
+        -- The provider's id for a message that was actually sent to a named person.
+        -- Recorded from the first send rather than when it is needed, because it cannot
+        -- be recovered afterwards: if inbound routing turns out to strip the `+tag` from
+        -- the recipient address, `In-Reply-To` matched against this table is the only
+        -- fallback, and it only exists for messages sent after it started being kept.
+        CREATE TABLE IF NOT EXISTS sent_messages (
+            provider_message_id TEXT PRIMARY KEY,
+            project_slug        TEXT    NOT NULL,
+            stakeholder_id      INTEGER NOT NULL,
+            sent_at             DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     await conn.commit()
 
@@ -3792,6 +3829,111 @@ async def fetch_open_invite_emails(
         (project_slug,),
     ) as cur:
         return {row[0] async for row in cur}
+
+
+# ── Reply tokens: the routing key in a participant's reply address ────────────
+#
+# Raw tokens never appear here. `api/services/outbound_mail.py` derives one and hands
+# down its digest; these helpers know nothing but the digest, which is the whole point -
+# a copy of this table, a backup of it, or a stray SELECT into a log yields no working
+# address.
+
+async def fetch_reply_token(
+    conn: aiosqlite.Connection, *, project_slug: str, stakeholder_id: int
+) -> dict | None:
+    """The reply-token row for this person on this project, live or revoked.
+
+    Revoked rows are returned rather than filtered, because the caller minting a
+    replacement needs the `issue` it must climb past. Resolution uses
+    `fetch_reply_token_by_hash`, which does filter.
+    """
+    async with conn.execute(
+        "SELECT * FROM reply_tokens WHERE project_slug=? AND stakeholder_id=?",
+        (project_slug, stakeholder_id),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def fetch_reply_token_by_hash(
+    conn: aiosqlite.Connection, *, token_hash: str
+) -> dict | None:
+    """The live row carrying this digest, or None.
+
+    A single indexed equality lookup - `token_hash` is UNIQUE, so the constraint's index
+    serves it - for the same reason `invite_service` hashes with sha256 rather than
+    bcrypt: this runs on an unauthenticated inbound path, and a scan there is a denial of
+    service wearing a lookup's clothes.
+
+    Costs the same whether or not the digest is present, which is what keeps an unknown
+    token from being distinguishable from a known one by how long the answer took.
+    """
+    async with conn.execute(
+        "SELECT * FROM reply_tokens WHERE token_hash=? AND revoked_at IS NULL",
+        (token_hash,),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def upsert_reply_token(
+    conn: aiosqlite.Connection,
+    *,
+    project_slug: str,
+    stakeholder_id: int,
+    token_hash: str,
+    issue: int,
+) -> None:
+    """Write the live digest for this person on this project.
+
+    On conflict the row is *replaced*, not left alone: the conflicting row is the revoked
+    predecessor being rotated past, and overwriting its `token_hash` is what takes the
+    revoked address out of the table entirely rather than leaving a refused row behind
+    that a later change could accidentally start honouring again.
+    """
+    await conn.execute(
+        "INSERT INTO reply_tokens (project_slug, stakeholder_id, token_hash, issue)"
+        " VALUES (?,?,?,?)"
+        " ON CONFLICT(project_slug, stakeholder_id) DO UPDATE SET"
+        " token_hash=excluded.token_hash, issue=excluded.issue,"
+        " revoked_at=NULL, created_at=CURRENT_TIMESTAMP",
+        (project_slug, stakeholder_id, token_hash, issue),
+    )
+    await conn.commit()
+
+
+async def mark_reply_token_revoked(
+    conn: aiosqlite.Connection, *, project_slug: str, stakeholder_id: int
+) -> bool:
+    """Stop this person's reply address routing. Returns whether a live row was revoked."""
+    cur = await conn.execute(
+        "UPDATE reply_tokens SET revoked_at=CURRENT_TIMESTAMP"
+        " WHERE project_slug=? AND stakeholder_id=? AND revoked_at IS NULL",
+        (project_slug, stakeholder_id),
+    )
+    await conn.commit()
+    return (cur.rowcount or 0) > 0
+
+
+async def record_sent_message(
+    conn: aiosqlite.Connection,
+    *,
+    provider_message_id: str,
+    project_slug: str,
+    stakeholder_id: int,
+) -> None:
+    """Remember which person a sent message was about, by the provider's id for it.
+
+    `INSERT OR REPLACE` rather than a plain insert: the id comes from outside, and a
+    provider that ever repeated one must not turn a successful send into an exception
+    after the message has already gone.
+    """
+    await conn.execute(
+        "INSERT OR REPLACE INTO sent_messages"
+        " (provider_message_id, project_slug, stakeholder_id) VALUES (?,?,?)",
+        (provider_message_id, project_slug, stakeholder_id),
+    )
+    await conn.commit()
 
 
 async def has_project_membership(

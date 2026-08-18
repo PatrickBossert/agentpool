@@ -544,6 +544,10 @@ async def send_reminder_emails_svc(slug: str) -> dict | None:
                 to=[email["stakeholder_email"]],
                 subject=email["subject"],
                 body=email["body"],
+                # Whose reply this would be. Taken from the reminder row rather than
+                # matched back from the address it is going to, because under dev_mode
+                # that address is the operator's.
+                stakeholder_id=email["stakeholder_id"],
             )
             status = "sent" if posted else "failed"
         except Exception:

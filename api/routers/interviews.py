@@ -398,7 +398,7 @@ async def email_transcript(session_token: str, body: TranscriptEmailRequest):
 
     async with interview_db_connection(db_path) as _conn:
         async with _conn.execute(
-            "SELECT s.status, st.email AS stakeholder_email "
+            "SELECT s.status, s.stakeholder_id, st.email AS stakeholder_email "
             "FROM interview_sessions s "
             "JOIN stakeholders st ON st.id = s.stakeholder_id "
             "WHERE s.session_token=?",
@@ -446,6 +446,9 @@ async def email_transcript(session_token: str, body: TranscriptEmailRequest):
             to=[body.email],
             subject="Your interview transcript",
             body="\n".join(lines),
+            # The interviewee this session belongs to, so a reply to their transcript
+            # routes back to them and to this project.
+            stakeholder_id=row["stakeholder_id"],
         )
     except Exception:
         raise HTTPException(status_code=502, detail="Email delivery failed") from None
