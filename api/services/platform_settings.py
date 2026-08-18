@@ -11,8 +11,12 @@ import contextlib
 import logging
 import sqlite3
 from pathlib import Path
+from urllib.parse import urlparse
+
+import aiosqlite
 
 from api.config import get_settings
+from api.database import fetch_platform_public_url, store_platform_public_url
 
 _log = logging.getLogger(__name__)
 
@@ -91,3 +95,82 @@ def platform_public_url() -> str:
     resolved = stored or env_url
     _CACHED_URL = resolved
     return resolved
+
+
+class PublicUrlRefused(ValueError):
+    """A proposed public_url broke one of the three rules below.
+
+    Its message names the rule, in a sentence a sysadmin can act on. Routers turn it into a
+    400 and pass the sentence through unchanged - the rule lives here, and a router that
+    restated it would be a second opinion free to drift from this one.
+    """
+
+
+# The three refusals, each written once. They are module constants rather than literals
+# inside normalise_public_url so that a test can assert a refusal by the sentence the
+# *service* owns, instead of by a substring the test itself supplied in the URL it sent -
+# the shape CLAUDE.md records under check_write, where the refusal quoted the key it was
+# refusing and the assertion therefore could not fail.
+SCHEME_REFUSAL = "A public URL must begin http:// or https://"
+NO_HOST_REFUSAL = "A public URL must name a host"
+CREDENTIALS_REFUSAL = "A public URL must not carry a username or password"
+
+
+def normalise_public_url(raw: str) -> str:
+    """The stored form of a public URL, or a refusal saying which rule it broke.
+
+    Three rules, and each exists because this value is pasted into links that arrive in a
+    participant's inbox and end at a sign-in page:
+
+    - **A scheme, and one a browser follows.** Anything else produces a link that does not
+      open, so every interview invitation on the deployment is dead until somebody notices.
+    - **A host.** ``urlparse`` accepts ``https:///dashboard`` and similar happily; the
+      result is a link that resolves against nothing.
+    - **No credentials.** ``https://user:pw@host`` is the classic phishing shape, and here
+      it would be *stored* and then mailed out under the deployment's own name.
+
+    Normalisation is the fourth job, and it is why this is a function rather than a
+    validator: the stored form carries no trailing slash, so the five link builders that
+    each wrote ``.rstrip('/')`` for themselves stop being five places the rule can be
+    forgotten. Query and fragment are dropped - a base URL every builder appends a path to
+    cannot carry either and still produce a valid link.
+    """
+    parsed = urlparse(raw.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise PublicUrlRefused(f"{SCHEME_REFUSAL} - {parsed.scheme or '(none)'!r} is neither.")
+    if not parsed.netloc:
+        raise PublicUrlRefused(f"{NO_HOST_REFUSAL} - there is nothing for a link to resolve against.")
+    if parsed.username or parsed.password:
+        raise PublicUrlRefused(
+            f"{CREDENTIALS_REFUSAL} - it would be stored and mailed to every participant."
+        )
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+
+
+async def save_platform_public_url(conn: aiosqlite.Connection, raw: str) -> str:
+    """Validate, normalise, store, and drop the cache. Returns the value now stored.
+
+    The order matters in one direction only: forgetting *after* the write. Forget first and
+    a concurrent read could repopulate the cache from the old row in the window before the
+    write lands, which is the stale value the forget was there to prevent - and it would
+    then persist for the life of the process.
+    """
+    normalised = normalise_public_url(raw)
+    await store_platform_public_url(conn, normalised)
+    forget_platform_settings()
+    return normalised
+
+
+async def read_platform_settings(conn: aiosqlite.Connection) -> dict:
+    """What the settings door reports: the URL in force, and where it came from.
+
+    ``source`` is not decoration. A blank stored value resolves to the environment, so an
+    operator looking at a populated field has no way to tell a saved setting from the
+    PUBLIC_URL the deployment booted with - and those behave differently the next time the
+    environment changes.
+    """
+    stored = await fetch_platform_public_url(conn)
+    return {
+        "public_url": platform_public_url(),
+        "source": "stored" if stored else "environment",
+    }
