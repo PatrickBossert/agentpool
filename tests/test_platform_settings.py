@@ -28,7 +28,10 @@ def _isolated_platform_settings(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def _write_system_db(tmp_path, public_url, *, with_table=True):
+def _write_system_db(tmp_path, public_url=None, *, with_table=True):
+    """Create system.db. public_url=None leaves the table with no row at all - the
+    "nothing stored yet" shape - rather than a row holding a blank string.
+    """
     db_path = tmp_path / "system.db"
     conn = sqlite3.connect(db_path)
     try:
@@ -40,11 +43,12 @@ def _write_system_db(tmp_path, public_url, *, with_table=True):
                 " updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                 ")"
             )
-            conn.execute(
-                "INSERT INTO platform_settings (id, public_url) VALUES (1, ?) "
-                "ON CONFLICT(id) DO UPDATE SET public_url=excluded.public_url",
-                (public_url,),
-            )
+            if public_url is not None:
+                conn.execute(
+                    "INSERT INTO platform_settings (id, public_url) VALUES (1, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET public_url=excluded.public_url",
+                    (public_url,),
+                )
             conn.commit()
     finally:
         conn.close()
@@ -62,7 +66,9 @@ def test_the_stored_value_wins_over_the_environment(tmp_path, monkeypatch):
 def test_the_environment_wins_when_nothing_is_stored(tmp_path, monkeypatch):
     monkeypatch.setenv("PUBLIC_URL", "https://env.example")
     get_settings.cache_clear()
-    # No system.db at all: a deployment that has not started.
+    # platform_settings exists but holds no row - nothing has been saved through the
+    # settings door yet, distinct from the "database does not exist" shape below.
+    _write_system_db(tmp_path, public_url=None)
 
     assert ps.platform_public_url() == "https://env.example"
 
