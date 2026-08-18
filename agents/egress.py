@@ -11,7 +11,7 @@ external-services row mentions one, and the page's external-services table has n
 Two layers, because "what it reaches" and "where that is" are different facts:
 
 - `TOOL_EGRESS` declares what a tool reaches **in principle** - a vector store, a search
-  service, any address the agent names, the automation webhook, or nothing. One entry per tool
+  service, any address the agent names, or nothing. One entry per tool
   class, keyed on the class name, because that is the only identity the graph can read out of
   `tool_map` without importing sixteen modules.
 - `resolve_egress(tool_name, llm_mode)` answers **where that is for this project**.
@@ -30,12 +30,19 @@ worth having precisely because it is uncomfortable, and three rows below read ex
 | `INFERENCE` | Anthropic's API | the local model on this host |
 | `WEB_SEARCH` | Tavily | **Tavily** |
 | `PUBLIC_WEB` | any address the agent names | **any address the agent names** |
-| `AUTOMATION_WEBHOOK` | n8n, and onward as n8n is configured | **the same** |
+
+There was a fifth reach, `AUTOMATION_WEBHOOK`, resolving in both modes to the n8n webhook and
+onward to Slack as n8n was configured. Two tools declared it: `SlackNotifyTool`, and
+`HumanInputTool`, which posted every review prompt - carrying whatever excerpt of its output
+the agent chose to quote - before it began polling. n8n is retired, both those posts are gone,
+`SlackNotifyTool` with them, and `HumanInputTool` now reaches nothing. The reach is removed
+rather than left with no members, because an enum member no tool names is a destination a
+reader has to rule out by searching.
 
 CLAUDE.md states the secure-mode guarantee in absolute terms - every agent including PAM routes
 locally on a sensitive project, no fallback. That is true of the **model**, and of **Chroma**,
 and of nothing else: `llm_mode` is consulted in `get_llm_for_agent` and in `get_chroma_client`,
-and in no tool that reaches out on its own. Whether the last three rows should be gated is a
+and in no tool that reaches out on its own. Whether the last two rows should be gated is a
 later question; this module's job is to stop the answer depending on who read which file.
 
 `INFERENCE` is the one reach that is not a tool's. Every agent runs on a model whether or not
@@ -64,7 +71,6 @@ class Reach(Enum):
     VECTOR_STORE = "a vector store"
     WEB_SEARCH = "a web search service"
     PUBLIC_WEB = "any web address the agent names"
-    AUTOMATION_WEBHOOK = "the automation webhook"
     INFERENCE = "a language model"
 
 
@@ -148,6 +154,20 @@ TOOL_EGRESS: dict[str, Egress] = {
             "in that crew carries its own egress, so PAM reaches everything its crews reach"
         ),
     ),
+    # Here since n8n was retired, and the one row in this block that moved. It used to post the
+    # review prompt - carrying whatever excerpt of its output the agent chose to quote - to the
+    # automation webhook before the polling loop started, on every gated step, with no mode
+    # check. That post is gone and nothing replaced it, so a gate now waits on the database
+    # alone and notifies nobody. `agents/tools/human_input.py` says so at the top of the module,
+    # because a reader arriving at this row would otherwise read a reassuring "nothing" without
+    # learning that the reassurance is the absence of a notification rather than a safer one.
+    "HumanInputTool": Egress(
+        reaches=Reach.NOTHING,
+        sends=(
+            "nothing - it writes the review to this project's database and polls that database "
+            "until a human decides. No notification is sent, on any channel, to anyone"
+        ),
+    ),
     # --- Reaches a vector store: the only tool egress `llm_mode` currently moves --------------
     "ChromaQueryTool": Egress(
         reaches=Reach.VECTOR_STORE,
@@ -179,21 +199,6 @@ TOOL_EGRESS: dict[str, Egress] = {
             "user-agent. There is no allowlist, no mode check, and no record of the request"
         ),
     ),
-    "SlackNotifyTool": Egress(
-        reaches=Reach.AUTOMATION_WEBHOOK,
-        sends=(
-            "the notification text the agent wrote, the project slug, and the target Slack "
-            "channel. No mode check: a sensitive project notifies the same way"
-        ),
-    ),
-    "HumanInputTool": Egress(
-        reaches=Reach.AUTOMATION_WEBHOOK,
-        sends=(
-            "the review prompt - which carries whatever excerpt of its output the agent chose "
-            "to quote - with the project slug, the run id, and a dashboard link. Posted before "
-            "the polling loop starts, on every gated step, with no mode check"
-        ),
-    ),
 }
 
 
@@ -216,9 +221,6 @@ INFERENCE_EGRESS = Egress(
 _NOWHERE = Destination(label="nothing outside this deployment", leaves_deployment=False)
 _TAVILY = Destination(label="Tavily's search API", leaves_deployment=True)
 _ANY_ADDRESS = Destination(label="any address the agent names", leaves_deployment=True)
-_N8N = Destination(
-    label="the n8n webhook, and onward to Slack as n8n is configured", leaves_deployment=True
-)
 
 # `(reach, mode)` to a concrete destination, mirroring `_TIER_SETTINGS` in
 # `agents/model_registry.py`. Both modes are written out for every reach, including the four
@@ -251,8 +253,6 @@ _DESTINATION: dict[tuple[Reach, str], Destination] = {
     (Reach.WEB_SEARCH, "sensitive"): _TAVILY,
     (Reach.PUBLIC_WEB, "standard"): _ANY_ADDRESS,
     (Reach.PUBLIC_WEB, "sensitive"): _ANY_ADDRESS,
-    (Reach.AUTOMATION_WEBHOOK, "standard"): _N8N,
-    (Reach.AUTOMATION_WEBHOOK, "sensitive"): _N8N,
 }
 
 

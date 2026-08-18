@@ -264,8 +264,7 @@ async def _pam_context(conn, project_id: int) -> str:
                 settings_lines.append(
                     f"Spelling convention: {spelling} — use this spelling throughout"
                 )
-                for key in ("sched_start", "sched_duration_weeks",
-                            "n8n_webhook_url", "public_url"):
+                for key in ("sched_start", "sched_duration_weeks", "public_url"):
                     val = cfg.get(key)
                     if val is not None:
                         label = key.replace("_", " ").title()

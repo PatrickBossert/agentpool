@@ -37,7 +37,6 @@ os.environ.setdefault("RESEND_API_KEY", "")
 os.environ.setdefault("TAVILY_API_KEY", "")
 os.environ.setdefault("ELEVENLABS_API_KEY", "")
 os.environ.setdefault("DEEPGRAM_API_KEY", "")
-os.environ.setdefault("N8N_WEBHOOK_URL", "")
 # The home organisation, for the same reason as everything above it: .env is read directly by
 # pydantic-settings, and a deployment that renamed its consultancy - which is the entire reason
 # these are settings rather than constants - would otherwise change what the suite asserts.

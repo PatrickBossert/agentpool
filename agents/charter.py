@@ -112,8 +112,8 @@ DISPATCH_PATHS: dict[Trigger, DispatchPath] = {
             "crew in the graph, and an unknown name reaches `build_and_run_crew`'s final `else`. "
             "A request naming neither a crew nor an agent is refused with 400 rather than "
             "defaulting, so this path starts nothing that was not asked for. "
-            "One of the two inbound HTTP doors, and the only one that starts a single crew: n8n's "
-            "workflow calls `/orchestrate` instead, which is the orchestration path's door. "
+            "One of the two inbound HTTP doors, and the only one that starts a single crew: the "
+            "other is `/orchestrate`, which is the orchestration path's door. "
             "`req.agent` on the same endpoint starts a single agent rather than a crew, which is "
             "not a crew dispatch and carries none of the feedback the crew path injects"
         ),

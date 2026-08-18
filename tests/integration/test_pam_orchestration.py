@@ -219,7 +219,6 @@ def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collectio
       3. Key output file exists for each crew
 
     All LLM factories (PAM + 5 sub-crews) are patched to Haiku.
-    SlackNotifyTool skips silently because N8N_WEBHOOK_URL is set to "".
     HITL gates auto-respond because HITL_AUTO_RESPOND='approved' is set by
     tests/integration/conftest.py.
     """
@@ -240,12 +239,6 @@ def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collectio
             return await insert_orchestration_run(conn, project_id=project["id"])
 
     orchestration_run_id = asyncio.run(_insert_run())
-
-    # Override N8N_WEBHOOK_URL so SlackNotifyTool returns "notification skipped"
-    # instead of attempting an HTTP call. Restore on exit.
-    original_n8n = os.environ.get("N8N_WEBHOOK_URL")
-    os.environ["N8N_WEBHOOK_URL"] = ""
-    cfg.get_settings.cache_clear()
 
     try:
         test_llm = get_test_llm()
@@ -270,10 +263,6 @@ def test_pam_pipeline_end_to_end(test_slug_pam, project_id_pam, chroma_collectio
                 )
             asyncio.run(run_pam_crew(slug, orchestration_run_id))
     finally:
-        if original_n8n is None:
-            os.environ.pop("N8N_WEBHOOK_URL", None)
-        else:
-            os.environ["N8N_WEBHOOK_URL"] = original_n8n
         cfg.get_settings.cache_clear()
 
     # ── Assertion 1: orchestration_runs record completed ─────────────────────

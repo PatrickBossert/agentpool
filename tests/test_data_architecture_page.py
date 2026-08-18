@@ -230,10 +230,19 @@ async def test_a_sensitive_project_moves_the_vector_store_and_inference_and_noth
     }
     assert moved == {"ChromaQueryTool", "DocumentIngestionTool"}
 
+    # The uncomfortable half, and the reason the page names it: a sensitive project still
+    # reaches out through the search and fetch tools, neither of which consults `llm_mode`.
+    # `SlackNotifyTool` and `HumanInputTool` were named here too, both reaching the n8n webhook
+    # in either mode. Retiring n8n removed the first tool and left the second reaching nothing,
+    # so this set shrank by two - which is a narrowing of the exposure, not of the assertion.
     still_out = {
         row["tool"] for row in sensitive["tools"] if row["leaves_deployment"]
     }
-    assert {"TavilySearchTool", "WebFetchTool", "SlackNotifyTool", "HumanInputTool"} <= still_out
+    assert {"TavilySearchTool", "WebFetchTool"} <= still_out
+    assert "HumanInputTool" not in still_out, (
+        "the review gate reaches out again on a sensitive project - it posted to n8n before "
+        "that integration was retired, and nothing has replaced the notification"
+    )
 
     # The per-agent summary is resolved separately from the table - it comes off the graph,
     # which is built for a mode of its own - so it needs its own assertion. Without this, the
