@@ -318,6 +318,7 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
             is_approver         INTEGER NOT NULL DEFAULT 0,
             is_project_admin    INTEGER NOT NULL DEFAULT 0,
             is_governor         INTEGER NOT NULL DEFAULT 0,
+            is_synthetic        INTEGER NOT NULL DEFAULT 0,
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -337,6 +338,18 @@ async def _migrate_stakeholders(conn: aiosqlite.Connection) -> None:
         ("is_approver",      "INTEGER NOT NULL DEFAULT 0"),
         ("is_project_admin", "INTEGER NOT NULL DEFAULT 0"),
         ("is_governor",      "INTEGER NOT NULL DEFAULT 0"),
+        # Not a person, and never was: a row seeded by scripts/seed_synthetic_stakeholders.py
+        # so an assignment surface and a coverage report can be exercised at real scale
+        # before any real roster exists. It is a column rather than a naming convention
+        # because the rows have to come out again cleanly, and the only removal predicate
+        # worth having is one nobody can edit by accident.
+        #
+        # Deliberately absent from `insert_stakeholder`'s signature and from
+        # `_STAKEHOLDER_UPDATABLE_FIELDS`: no API door can set it, and no API door can clear
+        # it. A row created through the API is synthetic=0 by column default and stays that
+        # way; a seeded row stays 1 however much of it a human edits afterwards. Only the
+        # seeder writes it, and only the seeder's --remove reads it.
+        ("is_synthetic",     "INTEGER NOT NULL DEFAULT 0"),
     ]:
         if col not in cols:
             await conn.execute(f"ALTER TABLE stakeholders ADD COLUMN {col} {defn}")
@@ -1402,13 +1415,18 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
     return cur.rowcount > 0
 
 
-# Bumped whenever a _migrate_* function is added to (or removed from) the block below.
+# Bumped whenever a _migrate_* function is added to (or removed from) the block below -
+# and equally whenever an existing one starts doing something new, such as adding a column.
+# The gate is `user_version < _SCHEMA_VERSION`, so an unbumped change to a migration that
+# has already run is exactly as invisible as an unbumped new migration.
 # Written to the database file itself as PRAGMA user_version once the block has run, so
 # forgetting to bump this after adding a migration means the new migration silently never
-# runs again after a database's first post-upgrade open in a process - there is no test
-# that catches a missed bump, because none can: it is a fact about this constant, not
-# about behaviour.
-_SCHEMA_VERSION = 8
+# runs again after a database's first post-upgrade open in a process. No test can catch a
+# missed bump *in general* - it is a fact about this constant, not about behaviour - but a
+# migration can be made to catch its own: build a database in the pre-migration shape,
+# stamp it with the PREVIOUS version, open it, and assert the migration reached it. See
+# tests/test_stakeholder_synthetic_migration.py, which fails on 8 and passes on 9.
+_SCHEMA_VERSION = 9
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -2452,6 +2470,9 @@ def _deserialize_stakeholder(row: dict) -> dict:
     row["is_approver"] = bool(row.get("is_approver", 0))
     row["is_project_admin"] = bool(row.get("is_project_admin", 0))
     row["is_governor"] = bool(row.get("is_governor", 0))
+    # SELECT * carries this to every reader whatever we do here, so the choice is between a
+    # 0/1 int and a bool. A reader that can see a seeded row should be told it is one.
+    row["is_synthetic"] = bool(row.get("is_synthetic", 0))
     return row
 
 
