@@ -482,10 +482,20 @@ async def send_reminder_emails_svc(slug: str) -> dict | None:
     reminder sender rather than the invitation sender because there is no invitation
     sender: an interview link reaches a participant through this path or by hand.
 
-    The reads and the writes are deliberately either side of the sends rather than
-    wrapped around them. `send_project_mail` opens its own connection to read the
-    project's mode, and holding a write connection open across sixty of those is a
-    self-inflicted contention problem with nothing to gain from it.
+    **Each outcome is recorded before the next message is sent, in its own connection.**
+    That is the property to preserve here, and it is worth more than the shape of the
+    loop. A reminder is a real message to a real stakeholder, and this endpoint is
+    re-runnable: if a batch of sixty dies half way - a hung transport, a crash, or the
+    `--reload` restart CLAUDE.md warns about killing an in-flight request - anything not
+    already marked is sent again the next time somebody presses send. Accumulating the
+    outcomes and writing them in one trailing pass makes the *whole* batch re-sendable,
+    because a death anywhere in it leaves every row at `approved`.
+
+    A connection per row rather than one held open across the sends: `send_project_mail`
+    opens its own connection to read the project's mode, so a write connection held for
+    the length of the batch would be held across sixty of those. Short connections cost a
+    file open each and contend with nothing, which is the cheaper side of that trade -
+    and the expensive half of this loop is the HTTP call, not SQLite.
     """
     if not get_db_path(slug).exists():
         return None
@@ -505,7 +515,7 @@ async def send_reminder_emails_svc(slug: str) -> dict | None:
             return None
         emails = await fetch_approved_reminder_emails(conn, project_id=project["id"])
 
-    outcomes: list[tuple[int, str]] = []
+    sent = failed = 0
     for email in emails:
         try:
             # Stakeholders and participants: a reminder is an interview request, and it
@@ -517,13 +527,18 @@ async def send_reminder_emails_svc(slug: str) -> dict | None:
                 subject=email["subject"],
                 body=email["body"],
             )
-            outcomes.append((email["id"], "sent" if posted else "failed"))
+            status = "sent" if posted else "failed"
         except Exception:
-            outcomes.append((email["id"], "failed"))
+            status = "failed"
 
-    async with get_connection(slug) as conn:
-        for email_id, status in outcomes:
-            await mark_reminder_email_sent(conn, email_id=email_id, status=status)
+        # Before the next send, not after the batch - see the docstring.
+        # mark_reminder_email_sent commits, so this row is durable from here on.
+        async with get_connection(slug) as conn:
+            await mark_reminder_email_sent(conn, email_id=email["id"], status=status)
 
-    sent = sum(1 for _, status in outcomes if status == "sent")
-    return {"sent": sent, "failed": len(outcomes) - sent, "skipped": 0}
+        if status == "sent":
+            sent += 1
+        else:
+            failed += 1
+
+    return {"sent": sent, "failed": failed, "skipped": 0}

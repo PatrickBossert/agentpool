@@ -45,6 +45,15 @@ os.environ.setdefault("DEEPGRAM_API_KEY", "")
 # HOME_ORG_SLUG in their shell (which beats a setdefault) still gets a green suite.
 os.environ.setdefault("HOME_ORG_SLUG", "future-edge")
 os.environ.setdefault("HOME_ORG_NAME", "Future Edge Consulting")
+# Where a project holding its mail (dev_mode) redirects to. Same reason again, and a
+# sharper one: .env.example instructs operators to change DEV_MODE_ADDRESS to an address
+# they own, so an unpinned suite would go red for anyone who followed the instruction.
+# Deliberately not the shipped default, so a test that quietly asserted the default
+# instead of the configured value fails here rather than in somebody's deployment.
+# The tests' half is the same as the home organisation's: they read get_settings()
+# rather than the literal. The one exception is documented where it lives - the guard
+# asserting no service module hardcodes the shipped address must name that address.
+os.environ.setdefault("DEV_MODE_ADDRESS", "dev-mode-redirect@example.test")
 
 Path("/tmp/agentpool_test").mkdir(exist_ok=True)
 Path("/tmp/agentpool_test_projects").mkdir(exist_ok=True)

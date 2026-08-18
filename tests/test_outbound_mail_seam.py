@@ -39,7 +39,16 @@ _SLUGS = (
     "seam-face", "seam-footer",
 )
 
-_REDIRECT = "Patrick@FutureEdge.consulting"
+# The shipped default, named only where the assertion is *about* that literal - the guard
+# below that no service module hardcodes it. Everywhere else the redirect is read from
+# settings, because DEV_MODE_ADDRESS is configurable and .env.example tells operators to
+# change it: a test asserting the literal would go red for anybody who did.
+_SHIPPED_DEFAULT = "Patrick@FutureEdge.consulting"
+
+
+def redirect() -> str:
+    """Where a held project's mail actually goes, per configuration."""
+    return get_settings().dev_mode_address
 
 
 @pytest.fixture(autouse=True)
@@ -169,7 +178,7 @@ async def test_the_status_report_is_held_when_the_project_holds_mail(client, sen
     await run_pam_daily_report(slug)
 
     assert len(sent) == 1
-    assert recipients(sent[0]) == [_REDIRECT]
+    assert recipients(sent[0]) == [redirect()]
     assert "governor@example.test" not in recipients(sent[0])
 
 
@@ -198,7 +207,7 @@ async def test_a_crew_notice_is_held_when_the_project_holds_mail(client, sent):
     await notify_crew_awaiting_commit(slug, "discovery_mapping")
 
     assert len(sent) == 1
-    assert recipients(sent[0]) == [_REDIRECT]
+    assert recipients(sent[0]) == [redirect()]
     assert "reviewer@example.test" not in recipients(sent[0])
 
 
@@ -257,7 +266,7 @@ async def test_a_reminder_is_held_when_the_project_holds_mail(client, sent):
 
     assert result == {"sent": 1, "failed": 0, "skipped": 0}
     assert len(sent) == 1
-    assert recipients(sent[0]) == [_REDIRECT]
+    assert recipients(sent[0]) == [redirect()]
     assert "participant@example.test" not in recipients(sent[0])
 
 
@@ -279,6 +288,64 @@ async def test_a_held_reminder_is_still_recorded_as_sent(client, sent):
         ) as cur:
             rows = [dict(r) async for r in cur]
     assert [r["status"] for r in rows] == ["sent"]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_that_dies_half_way_does_not_re_send_what_it_already_sent(
+    client, sent, monkeypatch,
+):
+    """Each outcome is durable before the next message goes out.
+
+    `POST /reminder-emails/send` is re-runnable and its recipients are real
+    stakeholders, so the question that matters is what a *second* press does after the
+    first press died part-way. If the statuses are accumulated and written after the
+    loop, a death anywhere in a batch of sixty leaves every row at `approved` and the
+    whole batch is sent again - to people who have already had it.
+
+    Death is modelled with `asyncio.CancelledError`, which is what an interrupted
+    request actually raises and which `except Exception` deliberately does not catch -
+    the same event as the `--reload` restart CLAUDE.md warns about killing an in-flight
+    run. A batched write fails this test; a per-row write passes it.
+    """
+    import asyncio
+
+    slug = "seam-reminder-open"
+    await _make_project(client, slug, holds_mail=False)
+    await _approved_reminder(slug, "first@example.test")
+    await _approved_reminder(slug, "second@example.test")
+
+    real_post = outbound_mail._post_to_resend
+
+    async def die_on_the_second(**kwargs):
+        if kwargs["to"] == ["second@example.test"]:
+            raise asyncio.CancelledError()
+        await real_post(**kwargs)
+
+    monkeypatch.setattr(outbound_mail, "_post_to_resend", die_on_the_second)
+
+    from api.services.campaign_service import send_reminder_emails_svc
+    with pytest.raises(asyncio.CancelledError):
+        await send_reminder_emails_svc(slug)
+
+    # The first message really did go out.
+    assert [recipients(r) for r in sent] == [["first@example.test"]]
+
+    from api.database import fetch_project, get_connection
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        async with conn.execute(
+            "SELECT s.email, re.status FROM reminder_emails re "
+            "JOIN stakeholders s ON s.id = re.stakeholder_id WHERE re.project_id=?",
+            (project["id"],),
+        ) as cur:
+            rows = {r["email"]: r["status"] async for r in cur}
+
+    assert rows["first@example.test"] == "sent", (
+        "the delivered message is still approved, so pressing send again re-sends it"
+    )
+    assert rows["second@example.test"] == "approved", (
+        "the undelivered message must stay sendable"
+    )
 
 
 # ── Path 4: the interview transcript - the second of the three ───────────────
@@ -341,7 +408,7 @@ async def test_a_transcript_is_held_when_the_project_holds_mail(client, sent):
 
     assert r.status_code == 200, r.text
     assert len(sent) == 1
-    assert recipients(sent[0]) == [_REDIRECT]
+    assert recipients(sent[0]) == [redirect()]
     assert _TRANSCRIPT_EMAIL not in recipients(sent[0])
 
 
@@ -365,7 +432,7 @@ async def test_the_welcome_email_goes_to_the_new_login_and_is_not_redirected(sen
 
     assert len(sent) == 1
     assert recipients(sent[0]) == ["newcomer@example.test"]
-    assert _REDIRECT not in recipients(sent[0])
+    assert redirect() not in recipients(sent[0])
 
 
 @pytest.mark.asyncio
@@ -488,7 +555,7 @@ async def test_a_slug_with_no_database_holds_its_mail(sent):
         to=["real.person@example.test"], subject="s", body="b",
     )
     assert posted is True
-    assert recipients(sent[0]) == [_REDIRECT]
+    assert recipients(sent[0]) == [redirect()]
 
 
 @pytest.mark.asyncio
@@ -547,6 +614,6 @@ def test_the_redirect_address_is_not_hardcoded_in_a_service_module():
     for path in (root / "api").rglob("*.py"):
         if path.name == "config.py":
             continue
-        if _REDIRECT in path.read_text():
+        if _SHIPPED_DEFAULT in path.read_text():
             offenders.append(str(path.relative_to(root)))
     assert offenders == [], offenders
