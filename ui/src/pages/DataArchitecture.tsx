@@ -18,6 +18,22 @@
 //
 // The route is administrator-only (see router.tsx). It was outside ProtectedRoute - public by
 // omission rather than design - while its only link has always sat inside the guard.
+//
+// ## Navigation, added in the slice that made this page the viewer
+//
+// There is no second surface. A separate explorer would have been two renderings of one graph
+// with nothing comparing them, and the prettier one would gradually have become the one people
+// trusted - so the tables are the viewer, and what was added is the ability to follow a thread
+// through them rather than scroll and correlate by eye. Every link is an in-page anchor built on
+// a permanent id, never on a label: `discovery_mapping` reads as "Value Chain Mapping", so a
+// href slugified from the display name would point at nothing the day a label was rewritten.
+//
+// Two constraints shape where links may go. The generated half and the promised half never link
+// to each other, because a reader being able to tell what the system asserts about itself from
+// what a person has undertaken is most of this page's value, and a thread running between them
+// would blur exactly that. And the scope notice is reachable from anywhere, through the bar that
+// stays on screen - anchors make it easy to arrive in the middle of the page and miss a caveat
+// that only sits at the top.
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -27,6 +43,7 @@ import {
   FileSignature,
   Globe,
   Lock,
+  Network,
   Server,
   Share2,
   ShieldCheck,
@@ -36,6 +53,7 @@ import {
 } from 'lucide-react'
 import { dataArchitectureApi } from '../api/dataArchitecture'
 import type { DataArchitecture as DataArchitectureModel } from '../api/dataArchitecture'
+import { AgentGraphView, CrewFlowTable } from '../components/AgentGraphView'
 import { projectsApi } from '../api/endpoints'
 import { describeError } from '../utils/describeError'
 import logoUrl from '../assets/TR_Logo_strapiline.png'
@@ -76,18 +94,20 @@ function EgressPill({ leaves }: { leaves: boolean }) {
 }
 
 function Section({
+  id,
   title,
   icon,
   intro,
   children,
 }: {
+  id: string
   title: string
   icon: React.ReactNode
   intro?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
-    <section className="mb-10">
+    <section id={id} className="mb-10 scroll-mt-28">
       <div className="flex items-center gap-2 mb-3 pb-2 border-b border-surface-border">
         <span className="text-brand-dark">{icon}</span>
         <h2 className="text-base font-bold text-primary">{title}</h2>
@@ -95,6 +115,53 @@ function Section({
       {intro && <p className="text-xs text-muted leading-relaxed mb-4">{intro}</p>}
       {children}
     </section>
+  )
+}
+
+// ── Following a thread ────────────────────────────────────────────────────────
+//
+// One link component per kind of thing, so every href in the page is built in exactly one place
+// and from the id rather than from the name. `scroll-mt-28` on each landing keeps it clear of the
+// bar that stays on screen; `target:` outlines whatever the reader has just arrived at, which is
+// what makes an anchor into the middle of a long table usable at all.
+
+const LANDING = 'scroll-mt-28 target:ring-2 target:ring-brand target:rounded-lg'
+
+function Jump({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <a href={`#${to}`} className="text-brand-dark hover:underline">
+      {children}
+    </a>
+  )
+}
+
+function AgentLink({ id, name }: { id: string; name: string }) {
+  return <Jump to={`agent-${id}`}>{name}</Jump>
+}
+
+function CrewLink({ id, name }: { id: string; name: string }) {
+  return <Jump to={`crew-${id}`}>{name}</Jump>
+}
+
+// A route is not always a tool. `via` on a read is whatever fetches it, and for anything the
+// dispatch path reads on an agent's behalf that is `build_and_run_crew` - a function, with no row
+// in the egress table and no anchor to land on. Linking it unconditionally produced a href to
+// nothing, on a page whose links are meant to be the way a reader follows a thread.
+function ToolLink({ tool, known }: { tool: string; known: Set<string> }) {
+  return known.has(tool) ? <Jump to={`tool-${tool}`}>{tool}</Jump> : <>{tool}</>
+}
+
+/** A list of agents rendered as links, joined by commas - the join every panel here needs. */
+function AgentLinks({ ids, names }: { ids: string[]; names: string[] }) {
+  return (
+    <>
+      {names.map((name, index) => (
+        <span key={ids[index] ?? name}>
+          {index > 0 && ', '}
+          <AgentLink id={ids[index]} name={name} />
+        </span>
+      ))}
+    </>
   )
 }
 
@@ -115,7 +182,10 @@ function Card({ children }: { children: React.ReactNode }) {
 function ScopeNotice({ data }: { data: DataArchitectureModel }) {
   const orphans = data.scope.agents_in_no_crew
   return (
-    <div className="rounded-xl border border-brand-light bg-surface-raised p-5 mb-8 flex items-start gap-3">
+    <div
+      id="scope"
+      className="rounded-xl border border-brand-light bg-surface-raised p-5 mb-8 flex items-start gap-3 scroll-mt-28"
+    >
       <ShieldCheck size={18} className="text-brand-dark flex-shrink-0 mt-0.5" />
       <div>
         <p className="text-sm font-semibold text-primary mb-1">What this page covers, and what it does not</p>
@@ -193,7 +263,7 @@ function EgressTable({ data }: { data: DataArchitectureModel }) {
             <td className="px-4 py-2.5 text-muted">All {data.agents.length} agents</td>
           </tr>
           {data.tools.map((row) => (
-            <tr key={row.tool} className="border-t border-surface-border">
+            <tr key={row.tool} id={`tool-${row.tool}`} className={`border-t border-surface-border ${LANDING}`}>
               <td className="px-4 py-2.5 font-medium text-primary">
                 {row.tool}
                 {row.gated_by_mode && (
@@ -210,7 +280,9 @@ function EgressTable({ data }: { data: DataArchitectureModel }) {
                 </div>
               </td>
               <td className="px-4 py-2.5 text-secondary">{row.sends}</td>
-              <td className="px-4 py-2.5 text-muted">{row.held_by.join(', ')}</td>
+              <td className="px-4 py-2.5 text-muted">
+                <AgentLinks ids={row.held_by_ids} names={row.held_by} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -220,6 +292,7 @@ function EgressTable({ data }: { data: DataArchitectureModel }) {
 }
 
 function SharedSources({ data }: { data: DataArchitectureModel }) {
+  const tools = new Set(data.tools.map((t) => t.tool))
   if (data.shared_sources.length === 0) return null
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
@@ -237,7 +310,7 @@ function SharedSources({ data }: { data: DataArchitectureModel }) {
       </p>
       <ul className="space-y-2">
         {data.shared_sources.map((s) => (
-          <li key={s.source} className="text-xs text-amber-900">
+          <li key={s.source} id={`source-${s.source}`} className={`text-xs text-amber-900 ${LANDING}`}>
             <span className="font-mono font-semibold">{s.source}</span>
             <span className="text-amber-700"> - {s.medium}</span>
             {s.handed_to_every_agent ? (
@@ -245,13 +318,19 @@ function SharedSources({ data }: { data: DataArchitectureModel }) {
                 , handed to every agent when a crew is dispatched
               </span>
             ) : (
-              <span className="text-amber-700">, declared readers: {s.read_by.join(', ')}</span>
+              <span className="text-amber-700">
+                , declared readers: <AgentLinks ids={s.read_by_ids} names={s.read_by} />
+              </span>
             )}
+            {/* The declared readers and the wider set able to reach it are two different
+                answers, and the difference is this panel's sharpest honesty. Both are
+                navigable and neither is folded into the other. */}
             {s.reachable_by.length > s.read_by.length && (
               <span className="block text-amber-800">
                 Those are the agents instructed to read it. The collection is an argument to{' '}
-                {s.via}, so any of the {s.reachable_by.length} agents holding that tool can query
-                it: {s.reachable_by.join(', ')}.
+                <ToolLink tool={s.via} known={tools} />, so any of the {s.reachable_by.length} agents holding
+                that tool can query it:{' '}
+                <AgentLinks ids={s.reachable_by_ids} names={s.reachable_by} />.
               </span>
             )}
           </li>
@@ -261,14 +340,36 @@ function SharedSources({ data }: { data: DataArchitectureModel }) {
   )
 }
 
-function AgentCard({ agent }: { agent: DataArchitectureModel['agents'][number] }) {
+function AgentCard({
+  agent,
+  shared,
+  tools,
+}: {
+  agent: DataArchitectureModel['agents'][number]
+  shared: Set<string>
+  tools: Set<string>
+}) {
   return (
-    <div className="rounded-lg border border-surface-border bg-surface-raised">
+    <div
+      id={`agent-${agent.agent_id}`}
+      className={`rounded-lg border border-surface-border bg-surface-raised ${LANDING}`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3 border-b border-surface-border">
         <div>
           <p className="text-sm font-semibold text-primary">{agent.display_name}</p>
-          <p className="text-[11px] text-brand-dark font-medium">
-            {agent.crews.length > 0 ? agent.crews.join(', ') : 'In no declared crew'}
+          <p className="text-[11px] font-medium">
+            {agent.crews.length > 0 ? (
+              agent.crews.map((name, index) => (
+                <span key={agent.crew_ids[index] ?? name}>
+                  {index > 0 && ', '}
+                  <CrewLink id={agent.crew_ids[index]} name={name} />
+                </span>
+              ))
+            ) : (
+              <span className="text-muted">
+                In no declared crew - see <Jump to="scope">what this page covers</Jump>
+              </span>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-1 justify-end">
@@ -285,7 +386,11 @@ function AgentCard({ agent }: { agent: DataArchitectureModel['agents'][number] }
           <p className="text-[10px] font-bold text-muted uppercase tracking-widest mb-1">Tools</p>
           <div className="flex flex-wrap gap-1">
             {agent.tools.length > 0 ? (
-              agent.tools.map((t) => <Pill key={t}>{t}</Pill>)
+              agent.tools.map((t) => (
+                <Pill key={t}>
+                  <ToolLink tool={t} known={tools} />
+                </Pill>
+              ))
             ) : (
               <span className="text-[11px] text-muted">None</span>
             )}
@@ -315,11 +420,17 @@ function AgentCard({ agent }: { agent: DataArchitectureModel['agents'][number] }
                 <li key={`${s.source}:${s.via}`} className="text-[11px] text-secondary leading-relaxed">
                   <span className="font-mono font-semibold text-primary">{s.source}</span>{' '}
                   <span className="text-muted">
-                    ({s.medium}, through {s.via})
+                    ({s.medium}, through <ToolLink tool={s.via} known={tools} />)
                   </span>
                   {s.shared_beyond_this_project && (
                     <span className="ml-1">
-                      <Pill tone="warn">Shared beyond this project</Pill>
+                      <Pill tone="warn">
+                        {shared.has(s.source) ? (
+                          <Jump to={`source-${s.source}`}>Shared beyond this project</Jump>
+                        ) : (
+                          'Shared beyond this project'
+                        )}
+                      </Pill>
                     </span>
                   )}
                   <span className="block text-muted">{s.note}</span>
@@ -330,6 +441,106 @@ function AgentCard({ agent }: { agent: DataArchitectureModel['agents'][number] }
         </div>
       </div>
     </div>
+  )
+}
+
+// The clusters, in prose beside the picture. An orchestrator, the crews it owns, and the ones it
+// can start itself - all three derived. It sits above the drawing rather than inside it so that
+// the picture is never the only place any of it is said, and so that a reader who cannot use a
+// diagram loses nothing but the diagram.
+function ClusterSummary({ data }: { data: DataArchitectureModel }) {
+  const crewName = new Map(data.crews.map((c) => [c.crew_id, c.display_name]))
+  return (
+    <div className="space-y-3">
+      {data.clusters.map((cluster) => {
+        const dispatched = new Set(cluster.dispatches)
+        const others = cluster.crew_ids.filter((id) => !dispatched.has(id))
+        return (
+          <div
+            key={cluster.cluster_id}
+            id={`cluster-${cluster.cluster_id}`}
+            className={`rounded-lg border border-surface-border bg-surface-raised p-4 ${LANDING}`}
+          >
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <p className="text-sm font-semibold text-primary">{cluster.label}</p>
+              <Pill tone="neutral">
+                {cluster.crew_ids.length} crews, orchestrated by{' '}
+                <AgentLink id={cluster.orchestrator_id} name={cluster.orchestrator} />
+              </Pill>
+            </div>
+            <p className="text-xs text-secondary leading-relaxed">{cluster.note}.</p>
+            <p className="text-[11px] text-muted leading-relaxed mt-2">
+              <AgentLink id={cluster.orchestrator_id} name={cluster.orchestrator} /> can start{' '}
+              {cluster.dispatches.length} of them herself:{' '}
+              {cluster.dispatches.map((id, index) => (
+                <span key={id}>
+                  {index > 0 && ', '}
+                  <CrewLink id={id} name={crewName.get(id) ?? id} />
+                </span>
+              ))}
+              .
+              {others.length > 0 && (
+                <>
+                  {' '}
+                  The others -{' '}
+                  {others.map((id, index) => (
+                    <span key={id}>
+                      {index > 0 && ', '}
+                      <CrewLink id={id} name={crewName.get(id) ?? id} />
+                    </span>
+                  ))}{' '}
+                  - are reachable only by one of the other{' '}
+                  <Jump to="dispatch">dispatch paths</Jump>.
+                </>
+              )}
+            </p>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// The bar that stays on screen. Its first job is the scope statement: anchors make it easy to
+// arrive in the middle of this page from a link somebody has sent, and a caveat that only sits at
+// the top is a caveat such a reader never meets. Its second is to keep the boundary between the
+// two halves visible in the navigation as well as in the page - "Undertakings" is set apart and
+// labelled, rather than being the ninth item in a list of sections.
+function PageNav({ data }: { data: DataArchitectureModel }) {
+  const sections: [string, string][] = [
+    ['self', 'This system'],
+    ['flows', 'How the crews fit together'],
+    ['egress', 'Where work reaches'],
+    ['handed', 'Handed to every agent'],
+    ['dispatch', 'How a crew starts'],
+    ['crews', 'The crews'],
+    ['agents', 'The agents'],
+  ]
+  return (
+    <nav
+      aria-label="Sections of this page"
+      className="sticky top-0 z-10 -mx-6 px-6 py-2 mb-6 bg-surface/95 backdrop-blur border-b border-surface-border"
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+        <a
+          href="#scope"
+          className="inline-flex items-center gap-1 font-semibold text-brand-dark hover:underline"
+        >
+          <ShieldCheck size={12} />
+          What this page covers - {data.scope.crew_count} declared crews
+        </a>
+        <span className="text-surface-border">|</span>
+        {sections.map(([id, label]) => (
+          <a key={id} href={`#${id}`} className="text-muted hover:text-brand-dark hover:underline">
+            {label}
+          </a>
+        ))}
+        <span className="text-surface-border">|</span>
+        <a href="#undertakings" className="text-muted hover:text-brand-dark hover:underline">
+          Undertakings (not generated)
+        </a>
+      </div>
+    </nav>
   )
 }
 
@@ -438,6 +649,7 @@ function ProjectChooser() {
   return (
     <Chrome subtitle="Choose an engagement">
       <Section
+        id="chooser"
         title="Which engagement?"
         icon={<Server size={16} />}
         intro="The answer depends on the project: its processing mode decides where inference and the document store actually are, so this page is generated per engagement rather than once."
@@ -498,9 +710,11 @@ export default function DataArchitecture() {
 
   return (
     <Chrome subtitle={`${data.slug} - how this engagement's material is stored, processed, and passed on`}>
+      <PageNav data={data} />
       <ScopeNotice data={data} />
 
       <Section
+        id="self"
         title="What this system says about itself"
         icon={<Server size={16} />}
         intro="Generated from the declarations, not written by hand. If a tool's destination or an agent's inputs change, this changes with them."
@@ -512,6 +726,23 @@ export default function DataArchitecture() {
       </Section>
 
       <Section
+        id="flows"
+        title="How the crews fit together"
+        icon={<Network size={16} />}
+        intro="Each orchestrator with the crews it owns, the order they run in, and what actually passes between them. Every position and every arrow is computed from the declarations - the ring order is the same order the crew table below is in - so this is a second reading of those declarations rather than a second source of them. Nothing is shown here that is not also written out underneath."
+      >
+        <ClusterSummary data={data} />
+        <div className="mt-4">
+          <AgentGraphView data={data} />
+        </div>
+        <p className="text-xs font-semibold text-primary mt-6 mb-2">
+          Every flow between two crews, including the ones the picture leaves out
+        </p>
+        <CrewFlowTable data={data} />
+      </Section>
+
+      <Section
+        id="egress"
         title="Where this project's work reaches"
         icon={<Cloud size={16} />}
         intro="One row per tool this project's agents hold, plus the model calls every agent makes. The destination is the one that applies in this project's mode."
@@ -538,6 +769,7 @@ export default function DataArchitecture() {
       </Section>
 
       <Section
+        id="handed"
         title="What is handed to every agent when a crew runs"
         icon={<Share2 size={16} />}
         intro="Read on the agent's behalf by the dispatch path and folded into its instructions before the crew starts. No agent asks for these, and none can decline them."
@@ -554,13 +786,21 @@ export default function DataArchitecture() {
       </Section>
 
       <Section
+        id="dispatch"
         title="How a crew can be started"
         icon={<Workflow size={16} />}
+        // A crew links here to say how it can be started, so this caveat has to survive being
+        // arrived at rather than read on the way past. It is the sentence a link from a trigger
+        // most easily turns into a claim about permission, which the charter never makes.
         intro="What can start a crew, not who may - the authority to press any of these is a question of the caller's role, and is enforced by the API rather than described here."
       >
         <div className="space-y-2">
           {data.dispatch_paths.map((p) => (
-            <div key={p.trigger} className="rounded-lg border border-surface-border bg-surface-raised p-3">
+            <div
+              key={p.trigger}
+              id={`dispatch-${p.trigger}`}
+              className={`rounded-lg border border-surface-border bg-surface-raised p-3 ${LANDING}`}
+            >
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-xs font-semibold text-primary">{p.label}</p>
                 {p.injects_dispatch_reads ? (
@@ -579,13 +819,18 @@ export default function DataArchitecture() {
       </Section>
 
       <Section
+        id="crews"
         title="The crews"
         icon={<Users size={16} />}
-        intro="Each crew's purpose, what it waits on, and which of the paths above can start it."
+        intro="Each crew's purpose, what it waits on, and which of the paths above can start it. The order is the order they run in, which is the clockwise order of the ring above."
       >
         <div className="space-y-3">
           {data.crews.map((c) => (
-            <div key={c.crew_id} className="rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div
+              key={c.crew_id}
+              id={`crew-${c.crew_id}`}
+              className={`rounded-lg border border-surface-border bg-surface-raised p-4 ${LANDING}`}
+            >
               <div className="flex flex-wrap items-center gap-2 mb-1">
                 <p className="text-sm font-semibold text-primary">{c.display_name}</p>
                 {c.defect && <Pill tone="warn">Cannot currently run</Pill>}
@@ -596,13 +841,35 @@ export default function DataArchitecture() {
                 <p className="text-[11px] text-red-700 leading-relaxed mt-1">{c.defect}</p>
               )}
               <div className="flex flex-wrap gap-1 mt-2">
-                {c.agents.map((a) => (
-                  <Pill key={a}>{a}</Pill>
+                {c.agents.map((a, index) => (
+                  <Pill key={c.agent_ids[index] ?? a}>
+                    <AgentLink id={c.agent_ids[index]} name={a} />
+                  </Pill>
                 ))}
               </div>
               <p className="text-[11px] text-muted mt-2">
-                Started by: {c.triggers.join('; ')}.
-                {c.depends_on.length > 0 && ` Waits on ${c.depends_on.join(', ')}.`}
+                Started by:{' '}
+                {c.triggers.map((t, index) => (
+                  <span key={c.trigger_ids[index] ?? t}>
+                    {index > 0 && '; '}
+                    <Jump to={`dispatch-${c.trigger_ids[index]}`}>{t}</Jump>
+                  </span>
+                ))}
+                .
+                {c.depends_on.length > 0 && (
+                  <>
+                    {' '}
+                    Waits on{' '}
+                    {c.depends_on.map((name, index) => (
+                      <span key={c.depends_on_ids[index] ?? name}>
+                        {index > 0 && ', '}
+                        <CrewLink id={c.depends_on_ids[index]} name={name} />
+                      </span>
+                    ))}
+                    .
+                  </>
+                )}{' '}
+                <Jump to="flows">What passes between them</Jump>.
               </p>
             </div>
           ))}
@@ -610,6 +877,7 @@ export default function DataArchitecture() {
       </Section>
 
       <Section
+        id="agents"
         title="What each agent draws on"
         icon={<Zap size={16} />}
         intro={
@@ -625,12 +893,18 @@ export default function DataArchitecture() {
       >
         <div className="space-y-3">
           {data.agents.map((a) => (
-            <AgentCard key={a.agent_id} agent={a} />
+            <AgentCard
+              key={a.agent_id}
+              agent={a}
+              shared={new Set(data.shared_sources.map((s) => s.source))}
+              tools={new Set(data.tools.map((t) => t.tool))}
+            />
           ))}
         </div>
       </Section>
 
       <Section
+        id="undertakings"
         title="Undertakings"
         icon={<FileSignature size={16} />}
         intro="This section is not generated. Retention, contractual terms, and deliberate exceptions cannot be derived from the code, so they are written here by a person and kept apart from everything above."

@@ -45,6 +45,15 @@ would let a page be shown a reassuring answer that no run would ever produce.
 `Trigger` is not an access-control statement, and nothing here presents it as one. The charter
 says what **can** start a crew, not who may; the two REST doors differ in authority from the
 approval door, and that authority lives in `api/auth.py`, not in this graph.
+
+## The view is fed from this answer, not from a second one
+
+`clusters` and `crew_edges` are what the page's radial view is drawn from, and they come out of
+the same `build_graph(llm_mode)` call as everything else - resolved for the same project, in the
+same mode, at the same moment. A view fetching its own answer, or holding its own copy of the
+pipeline, is the failure this whole module exists to end, one surface further out: two
+renderings of one graph, nothing comparing them, and the prettier one gradually becoming the one
+people trust.
 """
 from __future__ import annotations
 
@@ -164,6 +173,20 @@ def _read(read: Read) -> dict:
     }
 
 
+def _holders(graph) -> dict[str, list[str]]:
+    """Tool class name to the agent ids holding it, in the graph's own agent order.
+
+    Ids rather than display names, because a join is made on the permanent half and rendered on
+    the mutable one. The two personas could be renamed to the same string tomorrow and nothing
+    would notice; an id collision is refused at assembly.
+    """
+    holders: dict[str, list[str]] = {}
+    for node in graph.agents.values():
+        for tool in node.tools:
+            holders.setdefault(tool, []).append(node.agent_id)
+    return holders
+
+
 def _shared_sources(graph) -> list[dict]:
     """Every source that is not this project's alone, whoever reaches it.
 
@@ -182,10 +205,8 @@ def _shared_sources(graph) -> list[dict]:
     is the tool's fallback for an unrecognised value rather than a special case. Derived from
     the route: whoever holds the tool the read arrives through.
     """
-    holders: dict[str, list[str]] = {}
-    for node in graph.agents.values():
-        for tool in node.tools:
-            holders.setdefault(tool, []).append(node.display_name)
+    holders = _holders(graph)
+    name = {agent_id: node.display_name for agent_id, node in graph.agents.items()}
 
     rows: dict[tuple[str, str, str], set[str]] = {}
     for node in graph.agents.values():
@@ -193,29 +214,43 @@ def _shared_sources(graph) -> list[dict]:
             if is_shared_beyond_one_project(source):
                 rows.setdefault(
                     (source.source, source.medium.value, source.via), set()
-                ).add(node.display_name)
+                ).add(node.agent_id)
     for read in CREW_DISPATCH_READS:
         if is_shared_beyond_one_project(read):
             rows.setdefault((read.source, read.medium.value, read.via), set())
 
+    # Sorted on the display name, which is what the panel shows, with the ids kept in step so a
+    # link and the name it is under can never belong to two different agents.
+    def _people(agent_ids) -> tuple[list[str], list[str]]:
+        ordered = sorted(agent_ids, key=lambda agent_id: name[agent_id])
+        return [name[agent_id] for agent_id in ordered], list(ordered)
+
+    def _row(source, medium, via, read_by) -> dict:
+        readers, reader_ids = _people(read_by)
+        reachable, reachable_ids = _people(holders.get(via, []))
+        return {
+            "source": source,
+            "medium": medium,
+            "via": via,
+            "read_by": readers,
+            "read_by_ids": reader_ids,
+            "reachable_by": reachable,
+            "reachable_by_ids": reachable_ids,
+            "handed_to_every_agent": via == VIA_DISPATCH,
+        }
+
     return sorted(
         (
-            {
-                "source": source,
-                "medium": medium,
-                "via": via,
-                "read_by": sorted(read_by),
-                "reachable_by": sorted(holders.get(via, [])),
-                "handed_to_every_agent": via == VIA_DISPATCH,
-            }
+            _row(source, medium, via, read_by)
             for (source, medium, via), read_by in rows.items()
         ),
         key=lambda row: row["source"],
     )
 
 
-def _tool_row(tool: str, llm_mode: str, held_by: list[str]) -> dict:
+def _tool_row(tool: str, llm_mode: str, held_by: list[str], name: dict[str, str]) -> dict:
     destination = resolve_egress(tool, llm_mode)
+    ordered = sorted(held_by, key=lambda agent_id: name[agent_id])
     return {
         "tool": tool,
         "reaches": TOOL_EGRESS[tool].reaches.value,
@@ -223,7 +258,8 @@ def _tool_row(tool: str, llm_mode: str, held_by: list[str]) -> dict:
         "destination": destination.label,
         "leaves_deployment": destination.leaves_deployment,
         "gated_by_mode": is_gated_by_mode(tool),
-        "held_by": held_by,
+        "held_by": [name[agent_id] for agent_id in ordered],
+        "held_by_ids": ordered,
     }
 
 
@@ -235,12 +271,10 @@ def data_architecture(slug: str) -> dict:
     crews_of: dict[str, list[str]] = {agent_id: [] for agent_id in graph.agents}
     for crew in graph.crews.values():
         for agent_id in crew.agent_ids:
-            crews_of[agent_id].append(crew.display_name)
+            crews_of[agent_id].append(crew.crew_id)
 
-    holders: dict[str, list[str]] = {}
-    for node in graph.agents.values():
-        for tool in node.tools:
-            holders.setdefault(tool, []).append(node.display_name)
+    holders = _holders(graph)
+    name = {agent_id: node.display_name for agent_id, node in graph.agents.items()}
 
     inference = inference_destination(llm_mode)
 
@@ -263,7 +297,7 @@ def data_architecture(slug: str) -> dict:
         # the egress, and a stable order keeps a re-read comparable.
         "tools": sorted(
             (
-                _tool_row(tool, llm_mode, sorted(held_by))
+                _tool_row(tool, llm_mode, held_by, name)
                 for tool, held_by in holders.items()
             ),
             key=lambda row: (not row["leaves_deployment"], row["tool"]),
@@ -296,7 +330,8 @@ def data_architecture(slug: str) -> dict:
                 "agent_id": node.agent_id,
                 "display_name": node.display_name,
                 "tier": node.tier,
-                "crews": crews_of[node.agent_id],
+                "crews": [graph.crews[c].display_name for c in crews_of[node.agent_id]],
+                "crew_ids": crews_of[node.agent_id],
                 "tools": list(node.tools),
                 "writes": list(node.writes),
                 "destinations": [
@@ -307,6 +342,10 @@ def data_architecture(slug: str) -> dict:
             }
             for node in graph.agents.values()
         ],
+        # Ids travel beside the display names rather than instead of them. The page shows the
+        # name and links on the id, and it needs both: `discovery_mapping` reads as "Value Chain
+        # Mapping", so a link built by slugifying the label would point at nothing - and a
+        # rendering that showed the id instead would undo `CREW_LABEL`.
         "crews": [
             {
                 "crew_id": crew.crew_id,
@@ -314,11 +353,43 @@ def data_architecture(slug: str) -> dict:
                 "purpose": crew.purpose,
                 "note": crew.note,
                 "defect": crew.defect,
+                "cluster": crew.cluster,
                 "depends_on": [graph.crews[dep].display_name for dep in crew.depends_on],
+                "depends_on_ids": list(crew.depends_on),
                 "agents": [graph.agents[a].display_name for a in crew.agent_ids],
+                "agent_ids": list(crew.agent_ids),
                 "triggers": [DISPATCH_PATHS[t].label for t in crew.triggers],
+                "trigger_ids": [t.value for t in crew.triggers],
             }
             for crew in graph.crews.values()
+        ],
+        # The clusters, and the edges between crews. Both are derived in `agents/graph.py` and
+        # neither is a second telling of anything above: a cluster is `Charter.cluster`
+        # inverted, and an edge is one crew's writes met with another's reads. They are here so
+        # that a view can be drawn from the same answer the tables are drawn from, rather than
+        # from a parallel one that would drift the first time a declaration changed.
+        "clusters": [
+            {
+                "cluster_id": cluster.cluster_id,
+                "label": cluster.label,
+                "note": cluster.note,
+                "orchestrator_id": cluster.orchestrator_id,
+                "orchestrator": graph.agents[cluster.orchestrator_id].display_name,
+                "crew_ids": list(cluster.crew_ids),
+                "dispatches": list(cluster.dispatches),
+            }
+            for cluster in graph.clusters.values()
+        ],
+        "crew_edges": [
+            {
+                "source": edge.source,
+                "target": edge.target,
+                "kind": edge.kind.value,
+                "artefacts": list(edge.artefacts),
+                "declared": edge.declared,
+                "crosses_clusters": edge.crosses_clusters,
+            }
+            for edge in graph.edges
         ],
         "dispatch_paths": [
             {
@@ -338,7 +409,7 @@ def data_architecture(slug: str) -> dict:
         "scope": {
             "crew_count": len(graph.crews),
             "agents_in_no_crew": [
-                {"agent_id": agent_id, "display_name": graph.agents[agent_id].display_name}
+                {"agent_id": agent_id, "display_name": name[agent_id]}
                 for agent_id, crews in crews_of.items()
                 if not crews
             ],

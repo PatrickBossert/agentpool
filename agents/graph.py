@@ -13,8 +13,15 @@ Nothing here is declared. Every fact is read from the one place that owns it:
 | Which agents a crew dispatches | `_CREW_AGENT_NAMES` - `api/services/run_service.py` |
 | What a crew is called | `CREW_LABEL` - `agents/identity.py` |
 | What a crew waits on | `CREW_DEPENDENCIES` - `api/services/crew_graph.py` |
-| What a crew is for, and what can start it | `CREW_CHARTER` - `agents/charter.py` |
+| What a crew is for, what can start it, and whose cluster it is in | `CREW_CHARTER` - `agents/charter.py` |
+| Which agent orchestrates a cluster | `CLUSTERS` - `agents/clusters.py` |
 | What each tool reaches | `TOOL_EGRESS` - `agents/egress.py` |
+
+Two things this module derives rather than reads, because no registry holds either and both are
+intersections of registries that do: a cluster's crews (`Charter.cluster` inverted) and the
+edges between crews (`OUTPUT_OWNERS` inverted, met with `AGENT_READS`, against
+`CREW_DEPENDENCIES`). Both exist so that a picture of this graph can be drawn without a single
+hand-placed node or hand-written arrow label - see `ClusterNode` and `CrewEdge`.
 
 A literal list of agent names or crew names in this file would make it one more restatement of
 what that table already says, which is the thing it exists to end - the slice that built this
@@ -33,12 +40,15 @@ reads it as an answer.
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
 from agents.charter import CREW_CHARTER as _CREW_CHARTER
+from agents.charter import DISPATCH_PATHS as _DISPATCH_PATHS
 from agents.charter import Trigger
+from agents.clusters import CLUSTERS as _CLUSTERS
 from agents.egress import TOOL_EGRESS as _TOOL_EGRESS
 from agents.egress import Destination, agent_destinations
 from agents.identity import AGENT_IDENTITY as _AGENT_IDENTITY
@@ -131,8 +141,81 @@ class CrewNode:
     display_name: str
     purpose: str
     triggers: tuple[Trigger, ...]
+    cluster: str
     note: str
     defect: str | None
+
+
+class EdgeKind(Enum):
+    """What one crew actually gets from another.
+
+    The distinction the ordering alone cannot make. `CREW_DEPENDENCIES` says a crew waits on
+    another; it does not say whether anything travels between them, and three of the nine
+    declared edges carry nothing at all. An unlabelled arrow presents those three as if they
+    were the same relationship as `discovery_mapping -> assessment_design`, which hands over
+    three artefacts, and that is a materially different claim to anyone reading the page to
+    find out where a client's material goes.
+    """
+
+    INFORMATION = "information"
+    """Waits on it, and reads an artefact it wrote."""
+
+    SEQUENCING = "sequencing"
+    """Waits on it, and reads nothing it wrote. Ordering only - no material passes."""
+
+    INHERITED = "inherited"
+    """Reads an artefact it wrote without waiting on it directly.
+
+    The ordering is transitive rather than declared: the writer is upstream somewhere further
+    back in the chain, so the artefact exists by the time it is read.
+    `test_an_inherited_edge_is_transitively_ordered` holds that sentence to the dependency
+    graph, so a flow that nothing orders would fail rather than be labelled as this.
+    """
+
+
+@dataclass(frozen=True)
+class CrewEdge:
+    """One relationship between two crews, derived from what they write and read.
+
+    Nothing declares these. `source` writes, `target` reads, and `artefacts` is the
+    intersection - the output types that genuinely travel. `declared` says whether
+    `CREW_DEPENDENCIES` also holds the pair, which is what separates an ordering the system
+    enforces from a flow it merely permits.
+
+    `crosses_clusters` is the whole of what an inter-cluster edge needs: the same derivation
+    run over crews in two clusters rather than one. A second orchestrator therefore brings its
+    edges with it without anything here changing.
+    """
+
+    source: str
+    target: str
+    kind: EdgeKind
+    artefacts: tuple[str, ...]
+    declared: bool
+    crosses_clusters: bool
+
+
+@dataclass(frozen=True)
+class ClusterNode:
+    """One orchestrator, and the crews it owns.
+
+    `crew_ids` is in the graph's own topological order, so it is the clockwise order of the
+    ring a viewer draws and the order a reader sees in a table - one ordering, not two that can
+    disagree.
+
+    `dispatches` is narrower than `crew_ids` and deliberately so: it is the crews this
+    orchestrator can itself start, derived from the tool it holds and the triggers each crew
+    declares. Six of the nine crews in the one cluster today; the other three are reachable
+    only by a REST call or by an approval cascade. Drawing a spoke from the centre to all nine
+    would assert a dispatch that does not exist.
+    """
+
+    cluster_id: str
+    label: str
+    orchestrator_id: str
+    note: str
+    crew_ids: tuple[str, ...]
+    dispatches: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -143,10 +226,37 @@ class Graph:
     `list(graph.crews)` a display order as well as a lookup. Iterating it is the reason
     nothing needs a hand-typed `CREW_ORDER`: an order typed beside the dependency map can
     contradict it, and did - a crew shown as next while the graph would refuse to run it.
+
+    `clusters` and `edges` are what a picture of this graph is drawn from, and both are
+    derived. Neither is a second rendering of anything above: a cluster is the inversion of
+    `Charter.cluster`, and an edge is the intersection of one crew's writes with another's
+    reads. A viewer that placed a node or labelled an arrow by hand would be re-declaring what
+    these two already say.
     """
 
     agents: dict[str, AgentNode]
     crews: dict[str, CrewNode]
+    clusters: dict[str, ClusterNode]
+    edges: tuple[CrewEdge, ...]
+
+    def crew_writes(self, crew_id: str) -> frozenset[str]:
+        """The output types this crew's agents own, from `OUTPUT_OWNERS` inverted."""
+        return frozenset(
+            output for agent_id in self.crews[crew_id].agent_ids
+            for output in self.agents[agent_id].writes
+        )
+
+    def crew_reads(self, crew_id: str) -> frozenset[str]:
+        """The output types this crew's agents are declared to read.
+
+        `AgentNode.reads` rather than `sources`, so this is the artefact half alone. A Chroma
+        collection or a database table has no writing crew, and an edge derived from one would
+        be an arrow drawn from nowhere.
+        """
+        return frozenset(
+            source for agent_id in self.crews[crew_id].agent_ids
+            for source in self.agents[agent_id].reads
+        )
 
 
 @lru_cache(maxsize=1)
@@ -358,11 +468,174 @@ def _build_crews(agents: dict[str, AgentNode]) -> dict[str, CrewNode]:
             display_name=_CREW_LABEL[crew_id],
             purpose=_CREW_CHARTER[crew_id].purpose,
             triggers=tuple(_CREW_CHARTER[crew_id].triggers),
+            cluster=_CREW_CHARTER[crew_id].cluster,
             note=_CREW_CHARTER[crew_id].note,
             defect=_CREW_CHARTER[crew_id].defect,
         )
         for crew_id in _runnable_order()
     }
+
+
+def _tool_dispatched_triggers() -> dict[Trigger, str]:
+    """The triggers an agent takes by holding a tool, and the tool class that is that trigger.
+
+    `DispatchPath.entrypoint` is `module.py:Symbol`. Two of the three paths name a function in
+    a router; one names `RunCrewTool`, a tool class - and an agent takes that path by holding
+    it. That is the only link between an agent and a dispatch path anywhere in the
+    declarations, and it is what lets `Cluster.orchestrator` be checked rather than believed.
+
+    A symbol is read as a tool when `TOOL_EGRESS` declares it, which is the roll of tools; a
+    router function is not in it and so cannot be mistaken for one.
+    """
+    return {
+        trigger: path.entrypoint.split(":")[-1]
+        for trigger, path in _DISPATCH_PATHS.items()
+        if path.entrypoint.split(":")[-1] in _TOOL_EGRESS
+    }
+
+
+def _build_clusters(
+    agents: dict[str, AgentNode], crews: dict[str, CrewNode]
+) -> dict[str, ClusterNode]:
+    """Every cluster `CLUSTERS` declares, with the crews whose charters name it.
+
+    Membership is inverted from the crews rather than read from the cluster, so there is one
+    declaration of it and the two halves cannot drift - the same reason `AgentNode.writes` is
+    `OUTPUT_OWNERS` inverted rather than a second list.
+
+    Four disagreements are raised rather than tolerated, and each is a picture that would draw
+    itself wrongly rather than fail:
+
+    - A crew naming a cluster nothing declares would vanish from every cluster and from the
+      ring drawn around one, while still appearing in the crew table - the view silently
+      shorter than the tables it is meant to summarise.
+    - A cluster with no crews is a centre with nothing around it.
+    - An orchestrator no registry knows as an agent is a centre with no name, tier or egress.
+    - An orchestrator that runs inside one of its own crews is both the centre and a point on
+      the circle.
+
+    A fifth is derived rather than declared: an orchestrator that can start none of its own
+    crews. `dispatches` is what the orchestrator can itself reach, and a cluster where that is
+    empty is one whose centre is decorative - so `CLUSTERS` cannot assert an ownership the
+    dispatch paths do not support.
+    """
+    unknown = sorted({crew.cluster for crew in crews.values()} - set(_CLUSTERS))
+    if unknown:
+        raise GraphInconsistent(
+            f"A crew names a cluster that agents/clusters.py does not declare: {unknown}. "
+            f"A crew in no cluster has no orchestrator, and would be missing from any view "
+            f"drawn per cluster while still appearing in the crew table."
+        )
+
+    members: dict[str, list[str]] = {cluster_id: [] for cluster_id in _CLUSTERS}
+    for crew_id, crew in crews.items():
+        members[crew.cluster].append(crew_id)
+
+    empty = sorted(cluster_id for cluster_id, held in members.items() if not held)
+    if empty:
+        raise GraphInconsistent(
+            f"These clusters own no crew: {empty}. A cluster is an orchestrator and the crews "
+            f"it owns; one with no crews is a centre with nothing around it, and naming it "
+            f"would put an empty ring on the page."
+        )
+
+    unknown_orchestrators = sorted(
+        cluster.orchestrator for cluster in _CLUSTERS.values()
+        if cluster.orchestrator not in agents
+    )
+    if unknown_orchestrators:
+        raise GraphInconsistent(
+            f"A cluster names an orchestrator no registry knows as an agent: "
+            f"{unknown_orchestrators}. The orchestrator is drawn like any other agent - name, "
+            f"tier and everywhere its work reaches - and none of that exists for an id "
+            f"AGENT_TIER has never heard of."
+        )
+
+    orchestrators = [cluster.orchestrator for cluster in _CLUSTERS.values()]
+    if len(set(orchestrators)) != len(orchestrators):
+        raise GraphInconsistent(
+            f"One agent orchestrates more than one cluster: {sorted(orchestrators)}. An agent "
+            f"is drawn once, at one centre, so two clusters sharing an orchestrator is one "
+            f"cluster whose crews have been split in two."
+        )
+
+    by_tool = _tool_dispatched_triggers()
+    nodes: dict[str, ClusterNode] = {}
+    for cluster_id, cluster in _CLUSTERS.items():
+        crew_ids = tuple(members[cluster_id])
+        inside = [c for c in crew_ids if cluster.orchestrator in crews[c].agent_ids]
+        if inside:
+            raise GraphInconsistent(
+                f"Cluster '{cluster_id}' is orchestrated by '{cluster.orchestrator}', who also "
+                f"runs inside {inside}. An orchestrator dispatches its crews rather than "
+                f"working in them, and one that is both the centre and a point on its own ring "
+                f"cannot be placed."
+            )
+        held = set(agents[cluster.orchestrator].tools)
+        dispatches = tuple(
+            crew_id for crew_id in crew_ids
+            if any(by_tool.get(t) in held for t in crews[crew_id].triggers)
+        )
+        if not dispatches:
+            raise GraphInconsistent(
+                f"Cluster '{cluster_id}' is orchestrated by '{cluster.orchestrator}', who can "
+                f"start none of {list(crew_ids)}: no crew declares a trigger whose entrypoint "
+                f"is a tool that agent holds. Ownership the dispatch paths do not support is a "
+                f"centre nothing radiates from."
+            )
+        nodes[cluster_id] = ClusterNode(
+            cluster_id=cluster_id,
+            label=cluster.label,
+            orchestrator_id=cluster.orchestrator,
+            note=cluster.note,
+            crew_ids=crew_ids,
+            dispatches=dispatches,
+        )
+    return nodes
+
+
+def _build_edges(graph: Graph) -> tuple[CrewEdge, ...]:
+    """Every relationship between two crews, derived from the writes, the reads and the order.
+
+    Three kinds fall out of two questions asked of every ordered pair - does the target wait on
+    the source, and does the target read anything the source wrote - and the pair that answers
+    no to both is not an edge at all.
+
+    Emitted in the graph's own topological order, source then target, so the same declarations
+    produce the same tuple in the same order on every call. A viewer that drew edges in
+    dictionary-iteration order would be stable only by accident.
+    """
+    order = list(graph.crews)
+    position = {crew_id: index for index, crew_id in enumerate(order)}
+    edges: list[CrewEdge] = []
+    for target in order:
+        node = graph.crews[target]
+        reads = graph.crew_reads(target)
+        candidates = sorted(
+            set(node.depends_on) | {
+                source for source in order
+                if source != target and graph.crew_writes(source) & reads
+            },
+            key=lambda crew_id: position[crew_id],
+        )
+        for source in candidates:
+            artefacts = tuple(sorted(graph.crew_writes(source) & reads))
+            declared = source in node.depends_on
+            if declared:
+                kind = EdgeKind.INFORMATION if artefacts else EdgeKind.SEQUENCING
+            else:
+                kind = EdgeKind.INHERITED
+            edges.append(
+                CrewEdge(
+                    source=source,
+                    target=target,
+                    kind=kind,
+                    artefacts=artefacts,
+                    declared=declared,
+                    crosses_clusters=node.cluster != graph.crews[source].cluster,
+                )
+            )
+    return tuple(edges)
 
 
 def _runnable_order() -> tuple[str, ...]:
@@ -415,7 +688,18 @@ def build_graph(llm_mode: str = "standard") -> Graph:
     round for a page an auditor reads. Enforcement should still pass the project's real mode.
     """
     agents = _build_agents(llm_mode)
-    return Graph(agents=agents, crews=_build_crews(agents))
+    crews = _build_crews(agents)
+    graph = Graph(
+        agents=agents,
+        crews=crews,
+        clusters=_build_clusters(agents, crews),
+        edges=(),
+    )
+    # Assembled in two steps so that edge derivation asks the graph its own questions -
+    # `crew_writes` and `crew_reads` - rather than a private pair of helpers computing the same
+    # intersection beside them. There is one definition of what a crew writes and one of what it
+    # reads, and the picture and the tables are both drawn from it.
+    return replace(graph, edges=_build_edges(graph))
 
 
 # Assembled once at import so that a disagreement between the six registries is a loud failure
