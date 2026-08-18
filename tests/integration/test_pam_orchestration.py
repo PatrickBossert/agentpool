@@ -132,6 +132,11 @@ def project_id_pam(test_slug_pam) -> int:
             content_type TEXT,
             size_bytes INTEGER,
             ingested INTEGER NOT NULL DEFAULT 0,
+            -- Both knowledge columns, matching api/database.py's own CREATE TABLE. A
+            -- hand-built fixture that omits a column the production table has is a fixture
+            -- that stops exercising the code paths reading it.
+            knowledge_tier TEXT NOT NULL DEFAULT 'project',
+            knowledge_collection TEXT NOT NULL DEFAULT '',
             uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS orchestration_runs (

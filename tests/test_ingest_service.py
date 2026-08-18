@@ -101,7 +101,13 @@ async def test_happy_path_txt(tmp_path):
     call_kwargs = collection.upsert.call_args
     assert len(call_kwargs.kwargs["documents"]) >= 1
     assert call_kwargs.kwargs["ids"][0].startswith("brief.txt::")
-    mock_db.assert_awaited_once_with(mock_conn, doc_id=4)
+    # The store goes onto the row with the success, because that is the moment it stops
+    # being a calculation and becomes a fact about where the text is - the delete and
+    # reingest doors read it rather than working the name out again from values that
+    # move (see tests/test_knowledge_collection_is_recorded.py).
+    mock_db.assert_awaited_once_with(
+        mock_conn, doc_id=4, collection="test-slug_docs"
+    )
 
 
 @pytest.mark.asyncio
@@ -178,4 +184,10 @@ async def test_happy_path_docx(tmp_path):
         await ingest_document("test-slug", doc_id=5, file_path=str(docx_path))
 
     collection.upsert.assert_called_once()
-    mock_db.assert_awaited_once_with(mock_conn, doc_id=5)
+    # The store goes onto the row with the success, because that is the moment it stops
+    # being a calculation and becomes a fact about where the text is - the delete and
+    # reingest doors read it rather than working the name out again from values that
+    # move (see tests/test_knowledge_collection_is_recorded.py).
+    mock_db.assert_awaited_once_with(
+        mock_conn, doc_id=5, collection="test-slug_docs"
+    )

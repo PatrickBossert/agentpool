@@ -172,6 +172,16 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             -- uploaded at the organisation tier whose chunks are removed from `{slug}_docs`
             -- is a delete that removes nothing.
             knowledge_tier TEXT NOT NULL DEFAULT 'project',
+            -- The Chroma collection the chunks actually landed in, recorded at the moment
+            -- they did. The tier above is only one of three inputs to that name: the other
+            -- two - the project's sector and the organisation its slug is registered to -
+            -- both move through ordinary, correctly-gated doors, so a delete that re-derived
+            -- the name could purge a store the write never used and destroy the only handle
+            -- on the chunks it left behind. Empty for a row whose chunks were never written,
+            -- and for a row that predates the column; the delete door falls back to
+            -- re-deriving for those, which is the best that can be done for an address
+            -- nothing recorded.
+            knowledge_collection TEXT NOT NULL DEFAULT '',
             uploaded_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -747,6 +757,111 @@ async def _migrate_document_knowledge_tier(conn: aiosqlite.Connection) -> None:
             "ALTER TABLE client_documents ADD COLUMN knowledge_tier TEXT NOT NULL "
             "DEFAULT 'project'"
         )
+    await conn.commit()
+
+
+async def _migrate_document_knowledge_collection(conn: aiosqlite.Connection) -> None:
+    """Record the *store* each document's chunks went into, not only the tier.
+
+    `knowledge_tier` made the tier durable so a later operation could not re-decide it, but
+    the tier is one of three inputs to a collection name. The other two are read fresh on
+    every call and both move through ordinary, correctly-gated doors: `sector` is deliberately
+    outside `_PLATFORM_TIER_SETTINGS`, so a project_admin may change it through
+    `PATCH /{slug}/settings`, and `insert_project_registry` is an upsert whose whole purpose
+    is reassigning an engagement to another organisation. Change either between upload and
+    delete and the delete purges a store the write never touched, answers 204, and removes
+    the row and the file - leaving the text retrievable in a shared store with nothing left
+    that could name it, because the row was the handle.
+
+    **The backfill, and what it can and cannot promise:**
+
+    - `project` - **exact.** The collection has always been `{slug}_docs`, the slug is the
+      database's own identity and cannot move, and until the tiers existed there was nowhere
+      else to be.
+    - `sector` and `organisation` - **a freeze, not a recovery.** The true address is whatever
+      the sector or the organisation was when the chunks were written, and nothing recorded
+      it, so this can only write what re-derivation would say today - which is precisely the
+      value that may already have moved. What it buys is that the answer stops moving from
+      here: the drift window closes at the migration instead of staying open for ever. No row
+      is *worse* off, since a blank column falls back to the same re-derivation.
+    - A project naming no sector is left blank rather than filled with `sector_`, which would
+      be a store silently shared by every project that names none - the fallback defect this
+      branch exists to remove, in a second costume.
+
+    Only rows that actually reached a store are touched (`ingested = 1`). A pending or failed
+    row has no address to record, and inventing one would make a later reingest write
+    somewhere it was never told to.
+    """
+    async with conn.execute("PRAGMA table_info(client_documents)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "knowledge_collection" not in cols:
+        await conn.execute(
+            "ALTER TABLE client_documents ADD COLUMN knowledge_collection TEXT NOT NULL "
+            "DEFAULT ''"
+        )
+
+    # What the backfill can read at all, asked rather than assumed. SQLite parses a
+    # correlated subquery when the statement is prepared, not when a row matches, so
+    # `SELECT p.sector ...` raises on any database whose `projects` table lacks the column -
+    # and several test fixtures build that table by hand. A migration that raises on a shape
+    # it did not expect takes every later migration in the block down with it, so each half
+    # of the backfill asks for its own column and skips itself rather than the rest.
+    async with conn.execute("PRAGMA table_info(projects)") as cur:
+        project_cols = {row["name"] async for row in cur}
+
+    _UNADDRESSED = (
+        " WHERE knowledge_collection = '' AND ingested = 1 AND knowledge_tier = ?"
+        " AND EXISTS (SELECT 1 FROM projects p WHERE p.id = client_documents.project_id"
+    )
+    if "slug" in project_cols:
+        await conn.execute(
+            "UPDATE client_documents SET knowledge_collection ="
+            " (SELECT p.slug || '_docs' FROM projects p"
+            "  WHERE p.id = client_documents.project_id)"
+            + _UNADDRESSED + ")",
+            ("project",),
+        )
+    if "sector" in project_cols:
+        await conn.execute(
+            "UPDATE client_documents SET knowledge_collection ="
+            " (SELECT 'sector_' || p.sector FROM projects p"
+            "  WHERE p.id = client_documents.project_id)"
+            + _UNADDRESSED + " AND COALESCE(TRIM(p.sector), '') <> '')",
+            ("sector",),
+        )
+
+    # The organisation tier alone needs the *system* database, so it is guarded by the
+    # question "is there anything to do" - on every deployment the answer is no, because the
+    # tier only became writable on the branch that added this column, and a cross-database
+    # read on every project's first open at this version would be a cost paid by everyone for
+    # a case belonging to nobody.
+    slugs: list[str] = []
+    if "slug" in project_cols:
+        async with conn.execute(
+            "SELECT DISTINCT p.slug FROM client_documents d"
+            " JOIN projects p ON p.id = d.project_id"
+            " WHERE d.knowledge_collection = '' AND d.ingested = 1"
+            " AND d.knowledge_tier = 'organisation'"
+        ) as cur:
+            slugs = [row["slug"] async for row in cur]
+    if slugs:
+        async with get_system_connection() as sys_conn:
+            for slug in slugs:
+                async with sys_conn.execute(
+                    "SELECT o.slug FROM project_registry p"
+                    " JOIN organisations o ON o.id = p.org_id WHERE p.slug=?",
+                    (slug,),
+                ) as org_cur:
+                    row = await org_cur.fetchone()
+                if not row or not (row["slug"] or "").strip():
+                    continue
+                await conn.execute(
+                    "UPDATE client_documents SET knowledge_collection = ?"
+                    " WHERE knowledge_collection = '' AND ingested = 1"
+                    " AND knowledge_tier = 'organisation' AND project_id IN"
+                    " (SELECT id FROM projects WHERE slug = ?)",
+                    (f"org_{row['slug']}", slug),
+                )
     await conn.commit()
 
 
@@ -1557,8 +1672,10 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_inbound_replies.py::test_a_database_already_at_the_previous_version_gets_
 # the_inbound_replies_table, which fails on 10 and passes on 11; and
 # tests/test_knowledge_tier_ingestion.py::test_a_database_at_the_previous_version_gains_the_
-# knowledge_tier_column, which fails on 11 and passes on 12.
-_SCHEMA_VERSION = 12
+# knowledge_tier_column, which fails on 11 and passes on 12; and
+# tests/test_knowledge_collection_is_recorded.py::test_a_database_at_the_previous_version_
+# gains_the_collection_column, which fails on 12 and passes on 13.
+_SCHEMA_VERSION = 13
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1656,6 +1773,7 @@ async def get_connection(slug: str):
             await _migrate_interview_answers(conn)
             await _migrate_document_ingest_status(conn)
             await _migrate_document_knowledge_tier(conn)
+            await _migrate_document_knowledge_collection(conn)
             await _migrate_project_milestones(conn)
             await _migrate_milestone_baselines(conn)
             await rename_crew_in_stored_rows(conn)
@@ -1984,10 +2102,23 @@ async def _set_document_ingest_state(
 
 
 async def update_document_ingested(
-    conn: aiosqlite.Connection, *, doc_id: int
+    conn: aiosqlite.Connection, *, doc_id: int, collection: str | None = None
 ) -> None:
     """Indexed successfully. Clears any earlier failure: a stale reason beside a green
-    status is worse than none, because a reader trusts the older, louder signal."""
+    status is worse than none, because a reader trusts the older, louder signal.
+
+    `collection` is the store the chunks actually landed in, recorded here because this is
+    the moment it becomes a fact rather than a calculation - the delete and reingest doors
+    read it instead of working the name out again from values that may have moved since. It
+    is optional so a caller that has not been given one leaves the column as it found it;
+    the doors fall back to re-deriving, which is the best that can be done for an address
+    nothing recorded.
+    """
+    if collection:
+        await conn.execute(
+            "UPDATE client_documents SET knowledge_collection=? WHERE id=?",
+            (collection, doc_id),
+        )
     await _set_document_ingest_state(conn, doc_id=doc_id, status="ingested", error=None)
 
 

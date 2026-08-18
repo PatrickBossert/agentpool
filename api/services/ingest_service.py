@@ -125,6 +125,7 @@ async def ingest_document(
     *,
     raise_on_error: bool = False,
     tier: str = DEFAULT_UPLOAD_TIER,
+    collection: str | None = None,
 ) -> None:
     """Extract text, chunk, upsert to ChromaDB, then mark ingested=1 in SQLite.
 
@@ -138,6 +139,14 @@ async def ingest_document(
     passing a broader tier has already been checked for authority over that destination at
     its door; a caller passing nothing writes this project's own store and can write nothing
     else.
+
+    `collection` names the store directly and is how a **reingest** returns the chunks to
+    where they already are. It is not a widening lever: it is only ever passed a name this
+    same function recorded on the row at a previous successful ingest, and the door that
+    passes it has already checked the caller's authority for the row's tier. Without it a
+    reingest re-derives the name from the project's sector and organisation - both of which
+    move through ordinary doors - and a retry would write a second copy of the text into a
+    store nobody asked to put it in while the first copy stayed where it was.
     """
     path = Path(file_path)
 
@@ -175,12 +184,15 @@ async def ingest_document(
     # the organisation tier on a project belonging to no organisation - costs a recorded
     # failure and reaches no store at all, rather than being discovered halfway through an
     # upsert into somewhere.
-    try:
-        collection_name = await resolve_ingest_collection(slug, tier)
-    except ValueError as exc:
-        return await _fail(
-            f"cannot ingest {path.name} at the {tier!r} tier: {exc}", exc
-        )
+    if collection:
+        collection_name = collection
+    else:
+        try:
+            collection_name = await resolve_ingest_collection(slug, tier)
+        except ValueError as exc:
+            return await _fail(
+                f"cannot ingest {path.name} at the {tier!r} tier: {exc}", exc
+            )
 
     try:
         text = await asyncio.to_thread(_extract_text, path)
@@ -232,6 +244,10 @@ async def ingest_document(
 
     try:
         async with get_connection(slug) as conn:
-            await update_document_ingested(conn, doc_id=doc_id)
+            # The store goes on the row with the success, because this is the moment it
+            # stops being a calculation and becomes a fact about where the text is.
+            await update_document_ingested(
+                conn, doc_id=doc_id, collection=collection_name
+            )
     except Exception as exc:
         return await _fail(f"DB update failed for doc_id={doc_id}: {exc}", exc)

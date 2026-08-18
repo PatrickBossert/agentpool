@@ -39,6 +39,32 @@ def _tier_of(doc: dict) -> str:
     return doc.get("knowledge_tier") or DEFAULT_UPLOAD_TIER
 
 
+async def _collection_of(slug: str, doc: dict) -> str:
+    """The store this document's chunks are actually in.
+
+    Read off the row, because the tier is only one of the three inputs to a collection name
+    and the other two move: `sector` sits deliberately outside `_PLATFORM_TIER_SETTINGS`, so
+    a project_admin may change it through `PATCH /{slug}/settings`, and
+    `insert_project_registry` is an upsert whose purpose is reassigning an engagement to
+    another organisation. Re-deriving the name after either had moved addressed a store the
+    write never used - which purged nothing, answered 204, and removed the row and the file,
+    leaving the text retrievable in a shared store with nothing left that could name it.
+    That is Task 2's `documents.py:127` defect returning by a different route: the door was
+    made to fail closed, and the *address* was still being recomputed rather than remembered.
+    An address that is re-derived is an address that can move underneath the thing it points
+    at - the same reason `agent_outputs.is_current` is the authority on which output file is
+    current rather than the filenames on disk.
+
+    The fallback is for a row that predates the column and has not been re-ingested since.
+    Re-deriving is the old behaviour and the best that can be done for an address nothing
+    recorded; without it the fix would turn every legacy document into an undeletable one.
+    """
+    recorded = (doc.get("knowledge_collection") or "").strip()
+    if recorded:
+        return recorded
+    return await resolve_ingest_collection(slug, _tier_of(doc))
+
+
 @router.get("/{slug}/documents")
 async def list_documents(slug: str, payload: dict = Depends(require_any_auth)):
     await check_project_access(slug, payload)
@@ -137,8 +163,19 @@ async def reingest_document(
     # retry rather than a mistake - but "the sector store is sysadmin alone" is a statement
     # about who may put text in it, not about which verb they used.
     await require_writable_tier(slug, _tier_of(doc), payload, action=WRITE_REINDEX)
+    #
+    # The store comes off the row too, for the same reason and with a sharper consequence: a
+    # reingest *writes*, so a re-derived name after a sector change or a reassignment would
+    # put a second copy of the text in a store nobody asked for while the first copy stayed
+    # where it was. `None` for a row that never reached a store - a failed or pending ingest
+    # is deciding its address for the first time, not returning to one.
     background_tasks.add_task(
-        ingest_document, slug, doc_id, doc["file_path"], tier=_tier_of(doc)
+        ingest_document,
+        slug,
+        doc_id,
+        doc["file_path"],
+        tier=_tier_of(doc),
+        collection=(doc.get("knowledge_collection") or "").strip() or None,
     )
     return {"queued": True}
 
@@ -186,7 +223,7 @@ async def delete_document_endpoint(
     # 502 raised after the row was gone would leave chunks nobody can name, let alone remove -
     # trading a silent failure for an unrecoverable one.
     if doc["ingested"]:
-        collection_name = await resolve_ingest_collection(slug, _tier_of(doc))
+        collection_name = await _collection_of(slug, doc)
 
         def _purge() -> None:
             from api.services.chroma_client import get_chroma_client
