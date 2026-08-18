@@ -316,7 +316,21 @@ export default function Stakeholders() {
               {filtered.map((s) => (
                 <tr key={s.id} className="border-t border-gray-200 hover:bg-gray-50">
                   <td className="px-4 py-2.5">
-                    <p className="text-gray-900 font-medium">{s.name}</p>
+                    <p className="text-gray-900 font-medium flex items-center gap-1.5">
+                      {s.name}
+                      {/* This is the screen somebody audits before the real engagement, and
+                          on the test project sixty of the sixty-two rows are seeded. The
+                          marker is a column no ordinary edit can set or clear, so the badge
+                          says what the removal script will actually take. */}
+                      {s.is_synthetic && (
+                        <span
+                          className="text-[9px] uppercase tracking-wider text-amber-600 border border-amber-200 bg-amber-50 rounded px-1"
+                          title="Seeded test data - removed by the synthetic stakeholder script"
+                        >
+                          seeded
+                        </span>
+                      )}
+                    </p>
                     {s.job_title && <p className="text-gray-400 mt-0.5">{s.job_title}</p>}
                   </td>
                   <td className="px-3 py-2.5">

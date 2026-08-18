@@ -51,7 +51,11 @@ interface Sent {
  * Stands in for the network. GETs are served from the fixtures; every request is recorded,
  * so an assertion can read the POST body exactly as it left the browser.
  */
-function serveApi(options: { assignments?: { stakeholder_id: number; node_id: string }[]; runs?: unknown[] } = {}) {
+function serveApi(options: {
+  assignments?: { stakeholder_id: number; node_id: string }[]
+  runs?: unknown[]
+  registryFails?: boolean
+} = {}) {
   const sent: Sent[] = []
   apiClient.defaults.adapter = (config: AxiosRequestConfig) => {
     const url = new URL(apiClient.getUri(config), 'http://localhost')
@@ -61,6 +65,12 @@ function serveApi(options: { assignments?: { stakeholder_id: number; node_id: st
       method,
       body: typeof config.data === 'string' ? JSON.parse(config.data) : config.data,
     })
+
+    // The registry query is `retry: false`, so one refusal is the whole of what the
+    // component ever sees. That is the state finding 2 was driven in.
+    if (url.pathname === '/projects/acme/value-chain-registry' && options.registryFails) {
+      return Promise.reject(new Error('registry unavailable'))
+    }
 
     let data: unknown = {}
     if (url.pathname === '/projects/acme/assignment' && method === 'GET') {
@@ -281,6 +291,69 @@ describe('the activity tree the assignments are made against', () => {
     const flat = JSON.stringify(buildTree(ACTIVITIES))
     expect(flat).toContain('1.1.1')
     expect(flat).not.toContain('1.1.2')
+  })
+})
+
+describe('assignments that are not against a live activity', () => {
+  it('does not offer to remove the whole mapping when the registry did not load', async () => {
+    // The panel computed "off the registry" against an empty set of known ids, and the query
+    // that fills it is `retry: false`. So a single failed request rendered "No value chain
+    // registry yet" and, directly below, an invitation to remove every stored assignment -
+    // and POST is a whole-mapping replace, so acting on it deletes them for good.
+    serveApi({
+      registryFails: true,
+      assignments: [
+        { stakeholder_id: 7, node_id: '1.1.1' },
+        { stakeholder_id: 8, node_id: '1.1.2' },
+      ],
+    })
+    renderTab()
+
+    expect(await screen.findByText(/No value chain registry yet/)).toBeInTheDocument()
+    // Wait for the MAPPING, not for the registry message. The registry query fails first,
+    // so asserting on its message alone asserted against a component that had not yet been
+    // given any assignments to offer for removal - and passed with the guard taken out.
+    await waitFor(() =>
+      expect(screen.getByTestId('assignment-coverage')).toHaveTextContent('2 assignments'),
+    )
+
+    expect(screen.queryByTestId('assignments-retired')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assignments-unregistered')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Remove Rhona Baird from/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Remove Callum Innes from/)).not.toBeInTheDocument()
+  })
+
+  it('says a retired activity has retired, and unplaces the person on it', async () => {
+    // `1.1.2` is in the registry with active:false. An assignment to it is not an
+    // assignment: nobody is interviewed about it, so Callum counts as not placed.
+    serveApi({
+      assignments: [
+        { stakeholder_id: 7, node_id: '1.1.1' },
+        { stakeholder_id: 8, node_id: '1.1.2' },
+      ],
+    })
+    renderTab()
+
+    const panel = await screen.findByTestId('assignments-retired')
+    expect(panel).toHaveTextContent('Callum Innes')
+    expect(panel).toHaveTextContent('1.1.2')
+    expect(screen.queryByTestId('assignments-unregistered')).not.toBeInTheDocument()
+
+    expect(screen.getByTestId('assignment-coverage')).toHaveTextContent(
+      '2 of 3 people not yet placed',
+    )
+    const unplaced = screen.getByText(/Who is not placed yet/)
+    expect(unplaced).toHaveTextContent('(2)')
+  })
+
+  it('distinguishes an id the registry never held from one it retired', async () => {
+    serveApi({ assignments: [{ stakeholder_id: 9, node_id: '4.4.4' }] })
+    renderTab()
+
+    const panel = await screen.findByTestId('assignments-unregistered')
+    expect(panel).toHaveTextContent('Fiona Muir')
+    expect(panel).toHaveTextContent('4.4.4')
+    expect(screen.queryByTestId('assignments-retired')).not.toBeInTheDocument()
   })
 })
 

@@ -755,6 +755,28 @@ export interface PamReport {
   pending_reviews: number
   stakeholder_count: number
   doc_count: number
+  // Optional because the exporter and its fixtures build a report by hand, and a report
+  // predating this field is still a report. `build_pam_report` always returns it.
+  assignment_coverage?: PamReportAssignmentCoverage
+}
+
+/** What the mapping covers, and what it leaves out. Counts only - the mapping itself is
+ *  Jordan's engagement plan, not a project health report. */
+export interface PamReportAssignmentCoverage {
+  activities_total: number
+  activities_covered: number
+  activities_uncovered: number
+  uncovered_node_ids: string[]
+  uncovered_proportion: number
+  roster_total: number
+  stakeholders_assigned: number
+  stakeholders_unassigned: number
+  unassigned_stakeholders: { id: number; name: string; job_title: string }[]
+  unassigned_proportion: number
+  off_chain_total: number
+  threshold: number
+  uncovered_beyond_threshold: boolean
+  unassigned_beyond_threshold: boolean
 }
 
 export interface LineageOutput {

@@ -331,8 +331,18 @@ def _assert_nodes_exist(slug: str) -> None:
         raise SeedRefused(f"roster cites node ids {'; '.join(problems)}")
 
 
-def _backup_path(db_path: Path, on: date) -> Path:
-    return db_path.with_name(f"{db_path.stem}.pre-synthetic-{on.isoformat()}.db")
+def _backup_path(db_path: Path, on: date, *, remove: bool = False) -> Path:
+    """The copy taken before a run, named for what the copy actually holds.
+
+    `--remove` used to take its backup under `pre-synthetic-<today>`, which on any day but
+    the seeding day names a *post*-synthetic snapshot as a pre-synthetic one. Nothing was
+    lost - the file is a faithful copy of the state before the removal - but a reader
+    reaching for the pre-seed state would have opened a file holding sixty seeded rows.
+    Seeding keeps its name, so `data/sp-gs-am.pre-synthetic-2026-08-18.db` still means what
+    the ledger says it means.
+    """
+    stem = "pre-removal" if remove else "pre-synthetic"
+    return db_path.with_name(f"{db_path.stem}.{stem}-{on.isoformat()}.db")
 
 
 # ── The work ──────────────────────────────────────────────────────────────────
@@ -457,7 +467,7 @@ async def _run(slug: str, *, apply: bool, remove: bool, today: date) -> dict:
     if not remove:
         _assert_nodes_exist(slug)
 
-    backup = _backup_path(db_path, today)
+    backup = _backup_path(db_path, today, remove=remove)
     if apply and not backup.exists():
         shutil.copy2(db_path, backup)
 

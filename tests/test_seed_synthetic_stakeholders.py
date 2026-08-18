@@ -347,6 +347,41 @@ async def test_remove_takes_out_every_synthetic_row_and_leaves_the_rest(project)
 
 
 @pytest.mark.asyncio
+async def test_removal_names_its_backup_for_what_the_backup_holds(project):
+    """`--remove` took its copy under `pre-synthetic-<today>`, which on any day but the
+    seeding day names a post-synthetic snapshot as a pre-synthetic one. The file was a
+    faithful copy of the state before the removal; the name sent a reader after the pre-seed
+    state to a file holding sixty seeded rows."""
+    import sqlite3
+
+    await _seed()
+    await _run(SLUG, apply=True, remove=True, today=TODAY)
+
+    backup = project / f"{SLUG}.pre-removal-{TODAY.isoformat()}.db"
+    assert backup.exists()
+
+    conn = sqlite3.connect(backup)
+    try:
+        seeded = conn.execute(
+            "SELECT COUNT(*) FROM stakeholders WHERE is_synthetic=1"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert seeded == 60, "the copy holds the state before the removal, seeded rows and all"
+
+    # And the seeding backup still means what the ledger says it means: the state before the
+    # seed. Two runs on one day must not have one name between them.
+    pre_seed = project / f"{SLUG}.pre-synthetic-{TODAY.isoformat()}.db"
+    conn = sqlite3.connect(pre_seed)
+    try:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM stakeholders WHERE is_synthetic=1"
+        ).fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
 async def test_remove_still_finds_a_row_whose_every_editable_field_has_changed(project):
     """The constraint this whole design serves. A convention keyed on the name or the
     address would lose this row; the column does not."""

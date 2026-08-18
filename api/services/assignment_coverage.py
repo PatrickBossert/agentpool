@@ -27,9 +27,28 @@ computed from distinct node ids and distinct stakeholder ids, so doubling up on 
 ordinary shape for frontline work - moves neither one. Neither does 100% coverage being missing:
 the number is reported, and what an acceptable gap is remains a human's judgement.
 
-An assignment citing a node the registry does not hold counts towards nothing. It is neither
-coverage of an active activity nor evidence of one, and the stakeholder on it is still assigned,
-so it is left out of the first proportion and counted in the second.
+## An assignment that is not against an active activity
+
+`assignments` is the mapping **against active activities**, and it is what both crews are handed.
+Anything else - a node the registry has marked inactive, or an id it does not hold at all - goes
+to `off_chain_assignments` instead, where it is reported rather than counted or discarded.
+
+That split is the whole of the second proportion's honesty. Counting such a row as placement made
+whoever spoke *only* for a retired activity disappear from the people assigned to nothing, which
+is the one figure whose job is to say **these people will not be asked anything**; and handing it
+to the dispatch path had the Interview Coordinator plan a session against a node no longer in the
+chain. Both were reachable on the live project, whose registry already carries three retired
+nodes.
+
+Retired and unknown are treated alike because the consequence is identical - nobody is interviewed
+about either - and one rule cannot drift from itself. The distinction is still visible: an inactive
+node keeps the label the registry holds for it, an unknown id falls back to showing the id.
+
+**An absent registry is unknown, not empty.** `get_value_chain_node_index` answers `{}` both
+before the mapper has run and when the current output cannot be resolved, and reading that as
+"every node is retired" would unplace the whole roster and deliver no assignments at all on a
+project whose mapping is perfectly good. The split is made only when there is a registry to make
+it against, which is the same reasoning that keeps the uncovered proportion at 0.0 in that state.
 """
 from __future__ import annotations
 
@@ -74,7 +93,7 @@ async def build_assignment_coverage(
     nodes = get_value_chain_node_index(slug)
     active_ids = {node_id for node_id, node in nodes.items() if node["active"]}
 
-    assignments = [
+    enriched = [
         {
             "stakeholder_id": a["stakeholder_id"],
             "name": stakeholder_map.get(a["stakeholder_id"], {}).get("name", "Unknown"),
@@ -86,6 +105,27 @@ async def build_assignment_coverage(
         for a in raw_assignments
         if a["stakeholder_id"] in stakeholder_map
     ]
+
+    # An assignment to a node that is not an active activity is separated out rather than
+    # counted or discarded. Both halves of that matter, and the first was a real defect:
+    # counting it as placement made whoever spoke only for a retired activity vanish from
+    # "who is not placed" - the one number whose job is to say *these people will not be
+    # asked anything* - and handing it to the dispatch path had the Interview Coordinator
+    # plan a session against a node no longer in the chain. `sp-gs-am`'s registry already
+    # carries three retired nodes, so neither was hypothetical.
+    #
+    # An absent registry is unknown, not empty. `get_value_chain_node_index` answers `{}`
+    # both before the mapper has ever run and when the current output cannot be resolved,
+    # and treating that as "every node is retired" would unplace the whole roster and
+    # deliver no assignments at all on a project whose mapping is perfectly good. So the
+    # split is only made when there is a registry to make it against - the same reasoning
+    # that keeps the uncovered proportion at 0.0 rather than 1.0 in that state.
+    registry_known = bool(nodes)
+    assignments: list[dict] = []
+    off_chain: list[dict] = []
+    for a in enriched:
+        on_chain = not registry_known or a["node_id"] in active_ids
+        (assignments if on_chain else off_chain).append(a)
 
     covered_ids = {a["node_id"] for a in assignments} & active_ids
     uncovered_ids = sorted(active_ids - covered_ids)
@@ -103,6 +143,8 @@ async def build_assignment_coverage(
 
     return {
         "assignments": assignments,
+        "off_chain_assignments": off_chain,
+        "off_chain_total": len(off_chain),
         "activities_total": activities_total,
         "activities_covered": len(covered_ids),
         "activities_uncovered": len(uncovered_ids),

@@ -70,6 +70,29 @@ def _format_coverage(coverage: dict | None) -> str:
         named = ", ".join(f"[id:{s['id']}] {s['name']}" for s in unplaced)
         lines += ["", "Stakeholders assigned to nothing: " + named]
 
+    # Reported, not dropped. These rows are excluded from the mapping above and from both
+    # proportions - nobody is interviewed about a retired activity - but an assignment that
+    # silently disappeared would be worse than one that is named: somebody made it on
+    # purpose, and it is the clearest evidence available that the chain has moved under the
+    # mapping.
+    off_chain = coverage.get("off_chain_assignments") or []
+    if off_chain:
+        lines += [
+            "",
+            "ASSIGNED TO ACTIVITIES THAT ARE NOT IN THE ACTIVE CHAIN",
+            "",
+            "Retired nodes, or ids the registry no longer holds. They are excluded from the "
+            "mapping and from both figures above, because nobody is interviewed about them. "
+            "Report them as a finding: somebody assigned these deliberately, and the chain "
+            "has moved since.",
+            "",
+        ]
+        for a in off_chain:
+            lines.append(
+                f"- [id:{a['stakeholder_id']}] {a['name']} - {a['node_id']} "
+                f"({a['node_label']})"
+            )
+
     return "\n".join(lines) + "\n"
 
 

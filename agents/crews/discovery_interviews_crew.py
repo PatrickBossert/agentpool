@@ -22,7 +22,17 @@ from agents.discovery.synthesis_analyst import (
 
 
 def _format_assignments(stakeholder_assignments: list[dict]) -> str:
-    """Format a list of assignment dicts into a human-readable block."""
+    """Format a list of assignment dicts into a human-readable block.
+
+    The node id is rendered because the dispatch path carries it and this is the only place
+    the coordinator sees the activity at all. It used to render `level: label` alone, so a
+    row whose registry entry had no level - the `if level and node_label` guard - dropped the
+    activity **entirely**, leaving a person with no activity beside them rather than one that
+    could not be resolved. The id always exists, so it always shows.
+
+    This does not change how `_resolve_script_id` matches a script: that still keys on the
+    node label, and giving it the id is a separate task the plan puts out of scope.
+    """
     if not stakeholder_assignments:
         return "(No stakeholder assignments provided)"
     lines = []
@@ -31,12 +41,18 @@ def _format_assignments(stakeholder_assignments: list[dict]) -> str:
         name = a.get("name", "Unknown")
         job_title = a.get("job_title", "")
         level = a.get("level", "")
+        node_id = a.get("node_id", "")
         node_label = a.get("node_label", "")
         line = f"- [id:{stakeholder_id}] {name}"
         if job_title:
             line += f" ({job_title})"
-        if level and node_label:
-            line += f" → {level}: {node_label}"
+        described = ": ".join(part for part in (level, node_label) if part)
+        if node_id and described:
+            line += f" → {node_id} ({described})"
+        elif node_id:
+            line += f" → {node_id}"
+        elif described:
+            line += f" → {described}"
         lines.append(line)
     return "\n".join(lines)
 

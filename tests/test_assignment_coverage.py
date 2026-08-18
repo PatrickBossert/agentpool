@@ -24,8 +24,10 @@ from crewai import LLM
 from api.config import get_settings
 from api.database import (
     fetch_project,
+    fetch_stakeholder_assignments,
     get_connection,
     insert_crew_run,
+    insert_orchestration_run,
     insert_project,
     insert_stakeholder,
     replace_stakeholder_assignments,
@@ -121,6 +123,36 @@ async def _report_issues(project_id: int) -> list[dict]:
     return [i for i in report["issues"] if i["crew"] == "stakeholder_management"]
 
 
+async def _dispatch_interviews(project_id: int) -> list[dict]:
+    """Run the `discovery_interviews` dispatch and return what it fed the crew.
+
+    The second consumer of the same derivation, and the one where "who is assigned" becomes
+    "who gets a session". Asserted through the dispatch rather than off the coverage dict,
+    because that is the layer at which a person reaches an interview.
+    """
+    async with get_connection(SLUG) as conn:
+        orch_run_id = await insert_orchestration_run(conn, project_id=project_id)
+        crew_run_id = await insert_crew_run(
+            conn, project_id=project_id, crew_name="discovery_interviews",
+            status="running", orchestration_run_id=orch_run_id,
+        )
+
+    crew = MagicMock()
+    crew.kickoff_async = AsyncMock(return_value="done")
+
+    with patch(
+        "api.services.run_service.load_project_config",
+        return_value={"sector": "rail", "interview_method": "agent"},
+    ), patch(
+        "agents.crews.discovery_interviews_crew.create_discovery_interviews_crew",
+        return_value=crew,
+    ) as factory:
+        from api.services.run_service import build_and_run_crew
+        await build_and_run_crew(SLUG, "discovery_interviews", crew_run_id)
+
+    return factory.call_args.kwargs["stakeholder_assignments"]
+
+
 # ── The proportions, against rows rather than against a second computation ─────
 
 
@@ -161,6 +193,157 @@ async def test_a_retired_activity_is_not_a_gap(project):
     assert coverage["activities_total"] == 2
     assert coverage["uncovered_node_ids"] == []
     assert coverage["uncovered_proportion"] == 0.0
+
+
+# ── A retired activity is not somewhere a person can be placed ────────────────
+#
+# Three separate consequences of one rule, each asserted alone: the roster proportion, what
+# reaches the crew, and the fact that the row is still reported. The first was a live defect -
+# the activity denominator filtered on `active` and the roster one did not, so whoever spoke only
+# for a retired activity counted as placed and vanished from the only list that says who will not
+# be asked anything.
+
+
+@pytest.mark.asyncio
+async def test_retiring_an_activity_breaks_the_assignment_against_it(project):
+    """The transition, not the state.
+
+    A test that only sets up an already-retired node passes against a hard-coded filter and
+    proves nothing about the rule. This places somebody on a live activity, watches the
+    assignment work, then retires the activity underneath them - one registry rewrite, which
+    is what Alex does on every run - and asserts all three consequences at once: they become
+    unassigned, they appear in the unplaced list, and the crew is handed nothing for them.
+
+    Read at the point of use rather than caught at retirement. There is no retirement event
+    to catch - the mapper re-emits the whole chain every run - so the alternative would be
+    hunting every path that can flip `active`, and this one is right again by itself if a
+    node is ever brought back.
+    """
+    live = [
+        {"id": "1.1", "label": "Live", "level": "L2", "active": True},
+        {"id": "1.2", "label": "Doomed", "level": "L2", "active": True},
+    ]
+    _write_registry(project["projects_dir"], live)
+    people = await _people(project["id"], 2)
+    await _assign(project["id"], [(people[0], "1.1"), (people[1], "1.2")])
+
+    before = await _coverage(project["id"])
+    assert before["stakeholders_unassigned"] == 0
+    assert [a["node_id"] for a in await _dispatch_interviews(project["id"])] == ["1.1", "1.2"]
+
+    _write_registry(project["projects_dir"], [
+        live[0], {**live[1], "active": False},
+    ])
+
+    after = await _coverage(project["id"])
+    assert after["stakeholders_unassigned"] == 1
+    assert [s["id"] for s in after["unassigned_stakeholders"]] == [people[1]]
+    assert after["unassigned_proportion"] == 0.5
+    assert [a["node_id"] for a in after["off_chain_assignments"]] == ["1.2"]
+    assert [a["node_id"] for a in await _dispatch_interviews(project["id"])] == ["1.1"]
+
+    # And the row itself is still there. The ledger may grow and may retire, but may never
+    # forget: somebody placed that person deliberately, and erasing it would lose the fact.
+    async with get_connection(SLUG) as conn:
+        stored = await fetch_stakeholder_assignments(conn, project_id=project["id"])
+    assert sorted(a["node_id"] for a in stored) == ["1.1", "1.2"]
+
+
+@pytest.mark.asyncio
+async def test_a_person_assigned_only_to_a_retired_activity_is_not_placed(project):
+    _write_registry(project["projects_dir"], [
+        {"id": "1.1", "label": "Live", "level": "L2", "active": True},
+        {"id": "9.9", "label": "Retired", "level": "L2", "active": False},
+    ])
+    people = await _people(project["id"], 2)
+    await _assign(project["id"], [(people[0], "1.1"), (people[1], "9.9")])
+
+    coverage = await _coverage(project["id"])
+
+    assert coverage["stakeholders_unassigned"] == 1
+    assert [s["id"] for s in coverage["unassigned_stakeholders"]] == [people[1]]
+    assert coverage["unassigned_proportion"] == 0.5
+    assert coverage["stakeholders_assigned"] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_assignment_to_a_retired_activity_does_not_reach_the_interviews(project):
+    """The dispatch path handed the crew every row regardless, so the Interview Coordinator
+    planned a session against a node no longer in the chain."""
+    _write_registry(project["projects_dir"], [
+        {"id": "1.1", "label": "Live", "level": "L2", "active": True},
+        {"id": "9.9", "label": "Retired", "level": "L2", "active": False},
+    ])
+    people = await _people(project["id"], 2)
+    await _assign(project["id"], [(people[0], "1.1"), (people[1], "9.9")])
+
+    delivered = await _dispatch_interviews(project["id"])
+
+    assert [a["node_id"] for a in delivered] == ["1.1"]
+    assert [a["stakeholder_id"] for a in delivered] == [people[0]]
+
+
+@pytest.mark.asyncio
+async def test_a_retired_assignment_is_reported_to_the_agent_rather_than_dropped(project):
+    """Excluded from the mapping and from both figures, and still named. Somebody made it on
+    purpose, and it is the clearest evidence there is that the chain moved under the mapping."""
+    _write_registry(project["projects_dir"], [
+        {"id": "1.1", "label": "Live", "level": "L2", "active": True},
+        {"id": "9.9", "label": "Retired Billing", "level": "L2", "active": False},
+    ])
+    async with get_connection(SLUG) as conn:
+        placed = await insert_stakeholder(
+            conn, project_id=project["id"], name="Placed Person", job_title="Ops"
+        )
+        stranded = await insert_stakeholder(
+            conn, project_id=project["id"], name="Stranded Person", job_title="Billing"
+        )
+    await _assign(project["id"], [(placed, "1.1"), (stranded, "9.9")])
+
+    description = await _task_description(project["id"])
+
+    assert "ASSIGNED TO ACTIVITIES THAT ARE NOT IN THE ACTIVE CHAIN" in description
+    assert "Stranded Person - 9.9 (Retired Billing)" in description
+    assert "1 of 2 on the roster (50.0%)" in description
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_registry_does_not_unplace_the_whole_roster(project):
+    """An absent registry is unknown, not empty.
+
+    `get_value_chain_node_index` answers `{}` when the current output cannot be resolved as
+    well as before the mapper has ever run. Reading that as "every node is retired" would
+    strand every assignment, empty what the interviews are given, and raise a 100% issue
+    against a mapping that is perfectly good.
+    """
+    people = await _people(project["id"], 2)
+    await _assign(project["id"], [(people[0], "1.1"), (people[1], "1.2")])
+
+    coverage = await _coverage(project["id"])
+
+    assert coverage["off_chain_assignments"] == []
+    assert coverage["stakeholders_unassigned"] == 0
+    assert coverage["unassigned_proportion"] == 0.0
+    assert [a["node_id"] for a in await _dispatch_interviews(project["id"])] == ["1.1", "1.2"]
+    assert await _report_issues(project["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_an_id_the_registry_never_held_is_treated_as_off_chain_too(project):
+    """Retired and unknown are one rule, because the consequence is identical - nobody is
+    interviewed about either - and two rules would drift."""
+    _write_registry(project["projects_dir"], _nodes(2))
+    people = await _people(project["id"], 2)
+    await _assign(project["id"], [(people[0], "1.1"), (people[1], "7.7.7")])
+
+    coverage = await _coverage(project["id"])
+
+    assert [a["node_id"] for a in coverage["off_chain_assignments"]] == ["7.7.7"]
+    assert coverage["off_chain_total"] == 1
+    assert coverage["stakeholders_unassigned"] == 1
+    # The label falls back to the id, which is how an unknown id stays distinguishable from a
+    # retired one that still carries its registry label.
+    assert coverage["off_chain_assignments"][0]["node_label"] == "7.7.7"
 
 
 @pytest.mark.asyncio

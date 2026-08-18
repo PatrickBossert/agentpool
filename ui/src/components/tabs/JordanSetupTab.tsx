@@ -300,6 +300,61 @@ function NodeRow({
   )
 }
 
+// ── Assignments that are not against a live activity ──────────────────────────
+//
+// Two neighbouring cases, rendered by one component and worded apart: an id the chain has
+// retired, and an id no registry has ever held. Both mean nobody is interviewed and both
+// leave the person unplaced, but only the first is evidence that the chain moved under a
+// mapping somebody made deliberately.
+//
+// Neither panel renders unless the registry actually loaded. The query is `retry: false`,
+// and with an empty registry every stored assignment looks off-chain - so an operator was
+// being shown "no value chain registry yet" and, directly below, an invitation to remove
+// the whole mapping. POST is a whole-mapping replace, so acting on it deletes the rows.
+function OffChainPanel({
+  testId,
+  title,
+  explanation,
+  rows,
+  peopleById,
+  onRemove,
+}: {
+  testId: string
+  title: string
+  explanation: string
+  rows: Pair[]
+  peopleById: Map<number, Stakeholder>
+  onRemove: (stakeholderId: number, nodeId: string) => void
+}) {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2" data-testid={testId}>
+      <p className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 uppercase tracking-widest mb-1">
+        <AlertTriangle size={11} /> {title}
+      </p>
+      <p className="text-[11px] text-amber-700 mb-1.5">{explanation}</p>
+      <div className="flex flex-wrap gap-1">
+        {rows.map((a) => (
+          <span
+            key={key(a)}
+            className="flex items-center gap-1 text-[10px] bg-white border border-amber-200 text-amber-800 rounded-full px-2 py-0.5"
+          >
+            <span className="font-mono">{a.node_id}</span>
+            {peopleById.get(a.stakeholder_id)?.name ?? `Stakeholder ${a.stakeholder_id}`}
+            <button
+              type="button"
+              onClick={() => onRemove(a.stakeholder_id, a.node_id)}
+              aria-label={`Remove ${peopleById.get(a.stakeholder_id)?.name ?? a.stakeholder_id} from ${a.node_id}`}
+              className="text-amber-400 hover:text-red-500 transition-colors"
+            >
+              <X size={9} />
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── The section ───────────────────────────────────────────────────────────────
 
 export default function JordanSetupTab({ slug }: { slug: string }) {
@@ -449,10 +504,35 @@ export default function JordanSetupTab({ slug }: { slug: string }) {
     )
   }
 
+  // Every registered id, retired ones included - `buildTree` keeps only the active ones, so
+  // `knownIds` cannot tell "the chain retired this" from "no such id has ever existed", and
+  // the two need different words and different actions.
+  const registeredIds = useMemo(
+    () => new Set((registry?.activities ?? []).map((a: ValueChainRegistryActivity) => a.id)),
+    [registry],
+  )
+
+  // An absent registry is unknown, not empty - the same rule the backend derivation uses.
+  // The query is `retry: false`, so one failed request leaves `knownIds` empty, and without
+  // this every stored assignment reads as off-chain: the tab would say "no value chain
+  // registry yet" and, directly below, invite the operator to remove the entire mapping.
+  // POST is a whole-mapping replace, so accepting that invitation deletes the rows for good.
+  const registryLoaded = registeredIds.size > 0
+
   const coveredNodes = new Set(assignments.map((a) => a.node_id).filter((id) => knownIds.has(id))).size
-  const placedPeople = new Set(assignments.map((a) => a.stakeholder_id))
+
+  // An assignment to a retired activity is not an assignment: nobody is interviewed about a
+  // node that is not in the active chain, so the person on it is not placed. Read from
+  // `active` at the moment the mapping is used rather than caught when Alex retires a node -
+  // he rebuilds the whole chain on every run, so there is no single event to catch, and
+  // reading it here is right again by itself if a node ever comes back.
+  const onChain = registryLoaded ? assignments.filter((a) => knownIds.has(a.node_id)) : assignments
+  const placedPeople = new Set(onChain.map((a) => a.stakeholder_id))
   const unplaced = [...peopleById.values()].filter((s) => !placedPeople.has(s.id))
-  const offRegistry = assignments.filter((a) => !knownIds.has(a.node_id))
+
+  const offChain = registryLoaded ? assignments.filter((a) => !knownIds.has(a.node_id)) : []
+  const retired = offChain.filter((a) => registeredIds.has(a.node_id))
+  const unregistered = offChain.filter((a) => !registeredIds.has(a.node_id))
 
   return (
     <div className="space-y-4">
@@ -519,35 +599,36 @@ export default function JordanSetupTab({ slug }: { slug: string }) {
         {isLoading && <p className="text-[11px] text-gray-400 px-2 py-2">Loading…</p>}
       </div>
 
-      {offRegistry.length > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-          <p className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 uppercase tracking-widest mb-1">
-            <AlertTriangle size={11} /> Assigned to activities no longer in the registry
-          </p>
-          <p className="text-[11px] text-amber-700 mb-1.5">
-            The id is kept - ids are a permanent contract - but a retired activity is not
-            interviewed. Remove these, or wait for the node to come back.
-          </p>
-          <div className="flex flex-wrap gap-1">
-            {offRegistry.map((a) => (
-              <span
-                key={key(a)}
-                className="flex items-center gap-1 text-[10px] bg-white border border-amber-200 text-amber-800 rounded-full px-2 py-0.5"
-              >
-                <span className="font-mono">{a.node_id}</span>
-                {peopleById.get(a.stakeholder_id)?.name ?? `Stakeholder ${a.stakeholder_id}`}
-                <button
-                  type="button"
-                  onClick={() => remove(a.stakeholder_id, a.node_id)}
-                  aria-label={`Remove ${peopleById.get(a.stakeholder_id)?.name ?? a.stakeholder_id} from ${a.node_id}`}
-                  className="text-amber-400 hover:text-red-500 transition-colors"
-                >
-                  <X size={9} />
-                </button>
-              </span>
-            ))}
-          </div>
-        </div>
+      {retired.length > 0 && (
+        <OffChainPanel
+          testId="assignments-retired"
+          title="Assigned to activities the chain has retired"
+          explanation={
+            'These are broken assignments: the activity is still in the registry - ids are a ' +
+            'permanent contract - but it is no longer active, so nobody is interviewed about ' +
+            'it and the people below count as not placed. Move them to a live activity, or ' +
+            'remove them. The row is kept until you do, because somebody placed them there ' +
+            'on purpose.'
+          }
+          rows={retired}
+          peopleById={peopleById}
+          onRemove={remove}
+        />
+      )}
+
+      {unregistered.length > 0 && (
+        <OffChainPanel
+          testId="assignments-unregistered"
+          title="Assigned to ids the registry does not hold"
+          explanation={
+            'No activity has ever carried these ids, so nothing can be interviewed against ' +
+            'them and the people below count as not placed. This is a mapping made against a ' +
+            'chain that has since been rebuilt, or a hand-edited row.'
+          }
+          rows={unregistered}
+          peopleById={peopleById}
+          onRemove={remove}
+        />
       )}
 
       <p className="text-[11px] text-gray-400" data-testid="assignment-coverage">

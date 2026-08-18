@@ -156,7 +156,10 @@ async def build_pam_report(slug: str) -> dict:
 
         coverage = await build_assignment_coverage(
             conn, slug=slug, project_id=project['id'])
-        assignment_coverage = {k: v for k, v in coverage.items() if k != 'assignments'}
+        assignment_coverage = {
+            k: v for k, v in coverage.items()
+            if k not in ('assignments', 'off_chain_assignments')
+        }
 
     # ── Derive per-crew status ─────────────────────────────────────────────────
     crews = []
