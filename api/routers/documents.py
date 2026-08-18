@@ -6,7 +6,11 @@ from fastapi import (
     APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile,
 )
 from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
-from api.services.authority_service import require_writable_tier
+from api.services.authority_service import (
+    WRITE_REINDEX,
+    WRITE_REMOVE,
+    require_writable_tier,
+)
 from api.services.ingest_service import (
     chunk_filter_for,
     ingest_document,
@@ -132,7 +136,7 @@ async def reingest_document(
     # store by the plainest reading. The caller does not choose the tier, so this refuses a
     # retry rather than a mistake - but "the sector store is sysadmin alone" is a statement
     # about who may put text in it, not about which verb they used.
-    await require_writable_tier(slug, _tier_of(doc), payload)
+    await require_writable_tier(slug, _tier_of(doc), payload, action=WRITE_REINDEX)
     background_tasks.add_task(
         ingest_document, slug, doc_id, doc["file_path"], tier=_tier_of(doc)
     )
@@ -166,7 +170,7 @@ async def delete_document_endpoint(
     # The tier comes off the row, exactly as the collection name below does, so the
     # authority asked for and the store actually reached cannot disagree. Before the purge,
     # necessarily - a refusal raised afterwards would have already done the damage.
-    await require_writable_tier(slug, _tier_of(doc), payload)
+    await require_writable_tier(slug, _tier_of(doc), payload, action=WRITE_REMOVE)
 
     # The chunks go first, and a failure refuses the delete rather than reporting one.
     #

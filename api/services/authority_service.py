@@ -311,23 +311,45 @@ async def _caller_holds_platform_authority_on_project(slug: str, payload: dict) 
     return org_id is not None and may_access_org(org_id, payload)
 
 
-async def assert_may_write_tier_on_project(slug: str, tier: str, payload: dict) -> None:
+# What the door was trying to do, for the refusal *sentence* and nothing else.
+#
+# The rule does not branch on these and must not start to: adding to a store, removing from
+# it and re-indexing it are all writes to it, and the authority for a store is the same
+# whichever verb reaches it. What differs is only what an administrator should be told, and
+# it is not cosmetic - an operator refused a delete and told they "may not add material" will
+# read the product as broken rather than as refusing them, and the sector store is now a
+# sysadmin's alone to clear, so that refusal will be met.
+#
+# Constants rather than a dictionary of keys, so a typo at a call site is an ImportError
+# instead of a sentence with a hole in it or a fallback verb - the kind of quiet default this
+# whole branch exists to remove.
+WRITE_ADD = "add material"
+WRITE_REMOVE = "remove material"
+WRITE_REINDEX = "re-index material"
+
+
+async def assert_may_write_tier_on_project(
+    slug: str, tier: str, payload: dict, *, action: str = WRITE_ADD
+) -> None:
     """`may_write_tier_on_project` as a refusal. The rule, not its status code.
 
     The sentence names the tier it is refusing once, as `at the <tier> tier`, and the tiers
     it is *not* refusing only as stores - so a test asserting the refusal cannot be satisfied
     by a refusal of some other tier. CLAUDE.md records the shape: a refusal message that
     quotes the key it is refusing turns a substring assertion into a tautology.
+
+    `action` changes the verb and nothing else. It defaults to the upload doors' verb, so a
+    caller that says nothing gets the sentence this had before there was a second verb.
     """
     from api.services.knowledge_tiers import TierWriteRefused
 
     if not await may_write_tier_on_project(slug, tier, payload):
         permitted = await writable_tiers_on_project(slug, payload)
         raise TierWriteRefused(
-            f"You may not add material at the {tier} tier of '{slug}'. Material only ever "
-            f"moves narrower, so writing it needs authority for the destination: the sector "
-            f"store is sysadmin alone and the organisation store is org admin or above for "
-            f"that organisation. On this project you may write: "
+            f"You may not {action} at the {tier} tier of '{slug}'. Writing a knowledge store "
+            f"- adding to it, removing from it, or re-indexing it - needs authority for that "
+            f"store: the sector store is sysadmin alone and the organisation store is org "
+            f"admin or above for that organisation. On this project you may write: "
             f"{', '.join(permitted) or 'nothing'}."
         )
 
@@ -355,22 +377,27 @@ async def writable_tiers_on_project(slug: str, payload: dict) -> tuple[str, ...]
     return tuple(allowed)
 
 
-async def require_writable_tier(slug: str, tier: str, payload: dict) -> None:
-    """The tier rule as a status code, for the two upload doors.
+async def require_writable_tier(
+    slug: str, tier: str, payload: dict, *, action: str = WRITE_ADD
+) -> None:
+    """The tier rule as a status code, for the four doors that write a knowledge store.
 
     The rule is above and in `api/services/knowledge_tiers.py`; this is only the translation,
-    stated once so the two doors cannot answer the same refusal differently. Same shape as
+    stated once so the doors cannot answer the same refusal differently. Same shape as
     `require_project_administration`, and for the same reason.
 
     422 for a tier that does not exist - including one that does not exist *for this project*,
     which is the unregistered-project case - and 403 for one that does and is not the
     caller's. Folding them together would tell a reviewer who asked for the sector store that
     they had made a typo, and tell somebody who did make a typo that they lacked authority.
+
+    `action` is passed straight through and reaches only the sentence. Four doors, one rule,
+    three verbs: the door says what it was doing and the rule decides whether it may.
     """
     from api.services.knowledge_tiers import TierWriteRefused
 
     try:
-        await assert_may_write_tier_on_project(slug, tier, payload)
+        await assert_may_write_tier_on_project(slug, tier, payload, action=action)
     except TierWriteRefused as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:

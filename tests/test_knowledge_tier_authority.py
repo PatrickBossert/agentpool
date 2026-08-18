@@ -216,6 +216,12 @@ async def project_admin(project):
     the project tier; `is_approver` is the chat door's own gate, which sits in front of it.
     Without the second the caller never reaches the tier check and the test would be
     asserting the door's gate under another name.
+
+    **`is_approver` also satisfies the tier rule's own walk**, which is the conflation this
+    fixture cannot avoid and must therefore declare: every test using it passes through the
+    approver arm whether or not `project_admin` confers anything. The two arms are witnessed
+    separately, each alone, by the single-flag tests below - `is_approver` is a convenience
+    here and never the thing being proved.
     """
     await _seed_person(
         username="tier-padmin",
@@ -228,15 +234,79 @@ async def project_admin(project):
         yield c
 
 
+@pytest_asyncio.fixture
+async def project_admin_only(project):
+    """A per-project administrator holding `is_project_admin` and no other flag.
+
+    For every door that does not sit behind a content gate. Where one does, the fixture
+    above is the only caller that can reach the rule - see its docstring for what that
+    costs.
+    """
+    await _seed_person(
+        username="tier-padmin-alone",
+        email="padmin-alone@example.com",
+        is_project_admin=True,
+    )
+    token = create_access_token("tier-padmin-alone", "reviewer", "test-secret")
+    async with _client_with(token) as c:
+        yield c
+
+
 @pytest.mark.asyncio
 async def test_a_project_administrator_may_write_their_own_projects_store(
     client, chroma, project_admin
 ):
     """The permission half, and it is not decoration: without it every refusal below is
-    satisfied by a door that refuses this caller everything."""
+    satisfied by a door that refuses this caller everything.
+
+    Which *arm* of the walk carries this caller is deliberately not what this asserts - the
+    fixture holds two flags and either would do. The arms are separated below.
+    """
     resp = await _chat_upload(project_admin, tier="project")
     assert resp.status_code == 201
     assert _written_collections(chroma) == [f"{SLUG}_docs"]
+
+
+# ── The two arms of the project-tier walk, each witnessed alone ──────────────────────────
+#
+# The rule is `caller_roles(...) & {"project_admin", "approver"}` - a disjunction, and a
+# disjunction is only witnessed by a caller who satisfies exactly one side of it. Every test
+# above uses a fixture holding both flags, so all of them pass through whichever arm survives
+# and none of them can tell that the other was deleted. That is the defect CLAUDE.md opens
+# with, in its most ordinary costume: the fixture that names a role also carries the one that
+# covers for it.
+#
+# Asserted at the service rather than through a door, because the doors cannot reach these
+# callers: `POST /{slug}/documents/upload` is `require_org_admin_or_above` and the chat door
+# needs `caller_may_approve`, so a project administrator holding no other flag is refused by
+# a gate in front of the rule. The rule is where the property holds, so the rule is where it
+# is asserted.
+
+
+@pytest.mark.asyncio
+async def test_the_project_admin_arm_of_the_walk_carries_a_caller_on_its_own(project):
+    """`is_project_admin` and nothing else. Delete the arm and this is the test that says so."""
+    await _seed_person(
+        username="tier-padmin-only",
+        email="padmin-only@example.com",
+        is_project_admin=True,
+    )
+    payload = {"sub": "tier-padmin-only", "role": "reviewer"}
+    assert await may_write_tier_on_project(SLUG, "project", payload) is True
+    assert await writable_tiers_on_project(SLUG, payload) == ("project",)
+
+
+@pytest.mark.asyncio
+async def test_the_approver_arm_of_the_walk_carries_a_caller_on_its_own(project):
+    """`is_approver` and nothing else, so neither arm's coverage stands in for the other's."""
+    await _seed_person(
+        username="tier-approver-only",
+        email="approver-only@example.com",
+        is_approver=True,
+    )
+    payload = {"sub": "tier-approver-only", "role": "reviewer"}
+    assert await may_write_tier_on_project(SLUG, "project", payload) is True
+    assert await writable_tiers_on_project(SLUG, payload) == ("project",)
 
 
 @pytest.mark.asyncio
@@ -324,6 +394,9 @@ async def test_an_org_admin_is_refused_the_sector_tier(client, chroma, own_org_a
     resp = await _documents_upload(own_org_admin, tier="sector")
     assert resp.status_code == 403
     assert "at the sector tier" in resp.json()["detail"]
+    # The verb fits the door. An upload refused for saying "you may not remove material"
+    # would read as a bug in the product, and the two doors below prove the opposite case.
+    assert "may not add material" in resp.json()["detail"]
     # The derived half of the sentence, which is computed rather than echoed back from this
     # call - so this assertion fails when the rule is wrong, and not merely when the wording
     # changes. The half above quotes the tier the request named and could not tell a
@@ -519,6 +592,11 @@ async def test_an_org_admin_may_not_delete_a_sector_tier_document(
     resp = await own_org_admin.delete(f"/projects/{SLUG}/documents/{doc_id}")
     assert resp.status_code == 403
     assert "at the sector tier" in resp.json()["detail"]
+    # The verb, and it is not cosmetic. Patrick will meet this refusal operationally now that
+    # a misfiled sector document is a sysadmin's to remove, and being told he may not *add*
+    # something he asked to *remove* reads as a bug rather than a refusal.
+    assert "may not remove material" in resp.json()["detail"]
+    assert "add material" not in resp.json()["detail"]
     delete_chroma.get_or_create_collection.assert_not_called()
     assert [d["id"] for d in await _library(client)] == [doc_id]
 
@@ -563,6 +641,8 @@ async def test_an_org_admin_may_not_reingest_a_sector_tier_document(
         resp = await own_org_admin.post(f"/projects/{SLUG}/documents/{doc_id}/reingest")
     assert resp.status_code == 403
     assert "at the sector tier" in resp.json()["detail"]
+    assert "may not re-index material" in resp.json()["detail"]
+    assert "add material" not in resp.json()["detail"]
     ingest.assert_not_called()
 
 
@@ -589,9 +669,12 @@ async def test_my_permissions_reports_no_sector_to_an_org_admin(client, own_org_
 
 @pytest.mark.asyncio
 async def test_my_permissions_reports_only_the_project_tier_to_a_project_administrator(
-    client, project_admin
+    client, project_admin_only
 ):
-    assert await _reported_tiers(project_admin) == ["project"]
+    """The single-flag caller, not the two-flag one beside it. `/my-permissions` needs no
+    content gate to reach, so nothing forces the conflation here - and a test named for a
+    role should be carried by that role."""
+    assert await _reported_tiers(project_admin_only) == ["project"]
 
 
 @pytest.mark.asyncio
