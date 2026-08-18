@@ -46,10 +46,19 @@ def _resolve(stored: str, env_url: str) -> tuple[str, str]:
 
     A blank stored value is the unset state, not a chosen empty string - the column's own
     default, meaning nothing has been saved through the door yet.
+
+    Normalised here regardless of source. `save_platform_public_url` already normalises what
+    it stores, so `.rstrip('/')` on `stored` is redundant defence; `env_url` comes straight
+    from the `PUBLIC_URL` environment variable and has never been normalised anywhere - a
+    trailing slash there reached `admin_service.py`'s welcome-email link as a bare
+    `settings.public_url` with no `.rstrip('/')` of its own, producing a double slash before
+    `/dashboard/login`. Doing it once here, on the way out, means every reader gets the same
+    answer whichever source supplied it, and a sixth reader added later needs no rule of its
+    own to remember.
     """
     if stored:
-        return stored, "stored"
-    return env_url, "environment"
+        return stored.rstrip("/"), "stored"
+    return env_url.rstrip("/"), "environment"
 
 
 def forget_platform_settings() -> None:
@@ -91,6 +100,15 @@ def platform_public_url() -> str:
     Only a successful read is cached. A blank stored value (the column's own default,
     meaning nothing has been set yet) does not shadow the environment - "stored or env"
     is evaluated on every successful read, not "stored if a row exists".
+
+    Both early-return paths below go through `_resolve("", env_url)` rather than
+    answering `env_url` directly - passing a blank `stored` is exactly the "nothing to
+    fall back from" case `_resolve` already handles, and reusing it is what makes its
+    normalisation reach every path out of this function rather than only the one that
+    happens to read a row. A version that returned the raw environment value here once
+    passed every test in this file that stores a value and still left a trailing slash
+    on `PUBLIC_URL` reaching the welcome email whenever system.db had not been created
+    yet - exactly the deployment's first boot.
     """
     global _CACHED_URL
     if _CACHED_URL is not _UNSET:
@@ -99,7 +117,7 @@ def platform_public_url() -> str:
     env_url = get_settings().public_url
     db_path = Path(get_settings().database_dir) / "system.db"
     if not db_path.exists():
-        return env_url
+        return _resolve("", env_url)[0]
 
     try:
         uri = f"file:{db_path}?mode=ro"
@@ -112,7 +130,7 @@ def platform_public_url() -> str:
             "platform_public_url(): system.db exists but could not be read (%s) - "
             "falling back to the environment and not caching the result", exc,
         )
-        return env_url
+        return _resolve("", env_url)[0]
 
     resolved, _source = _resolve(row[0] if row else "", env_url)
     _CACHED_URL = resolved

@@ -14,6 +14,7 @@ from api.config import get_settings, load_project_config
 from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_agent_outputs
 from api.routers.ws import push_log
 from api.services.assignment_coverage import build_assignment_coverage
+from api.services.platform_settings import platform_public_url
 
 # Do not add a module-level `from agents…` import here. `agents/graph.py` imports
 # `_CREW_AGENT_NAMES` from this module and assembles at import time, and `agents/tools/_db.py`
@@ -475,7 +476,12 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         )
 
     elif crew_name == "stakeholder_management":
-        public_url = config.get("public_url", "")
+        # public_url was never `config.get("public_url", "")` - "public_url" is not a
+        # declared ProjectSettings field, so PATCH /{slug}/settings could never set it and
+        # this was always "". platform_public_url() is the deployment's own address (the
+        # sysadmin setting, falling back to PUBLIC_URL), which is what Jordan's invitation
+        # links need to build against.
+        public_url = platform_public_url()
         public_interview_url_base = f"{public_url}/dashboard/interview" if public_url else ""
 
         # The mapping reaches Jordan here, and only here.
@@ -766,7 +772,10 @@ async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
             create_stakeholder_manager,
             create_stakeholder_manager_task,
         )
-        public_url = config.get("public_url", "")
+        # See the matching comment in the stakeholder_management crew branch above:
+        # config.get("public_url", "") was always "" - not a declared ProjectSettings
+        # field - so this standalone-agent path has never sent Jordan a URL either.
+        public_url = platform_public_url()
         agent_obj = create_stakeholder_manager(slug=slug, llm=llm, tools=tools)
         task = create_stakeholder_manager_task(
             agent=agent_obj,

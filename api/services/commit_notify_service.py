@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import logging
 
-from api.config import get_settings
 from api.database import fetch_project, fetch_stakeholders, get_connection
 from api.services.outbound_mail import GOVERNANCE, send_project_mail
 from api.services.pam_report_job import resolve_recipients
+from api.services.platform_settings import platform_public_url
 
 log = logging.getLogger(__name__)
 
@@ -38,9 +38,10 @@ async def _notify(
     """Shared body for both crew notifications - only the audience, subject and
     intro line differ. Never raises - a failed notification must not fail a run or
     a submission that has already been recorded. Link construction lives inside
-    this try too: get_settings() is a call that can raise, and it must not escape
-    into the caller's own error handling (dispatch_crew/dispatch_agent would
-    otherwise overwrite a just-recorded status="completed" with status="failed").
+    this try too: platform_public_url() is a call that can raise (it reads
+    get_settings() itself), and it must not escape into the caller's own error
+    handling (dispatch_crew/dispatch_agent would otherwise overwrite a
+    just-recorded status="completed" with status="failed").
 
     fallback_flags: if the primary flags resolve to nobody, try this audience
     instead rather than notify nobody. Only the completion notification passes
@@ -58,9 +59,8 @@ async def _notify(
     The dev_mode read and the "would have gone to" footer both used to live here.
     They are send_project_mail's now - see api/services/outbound_mail.py."""
     try:
-        settings = get_settings()
         link = (
-            f"{settings.public_url.rstrip('/')}/dashboard/{slug}"
+            f"{platform_public_url()}/dashboard/{slug}"
             f"?crew={crew_name}&tab=output"
         )
 

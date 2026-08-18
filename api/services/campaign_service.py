@@ -10,6 +10,7 @@ from api.config import get_settings
 
 from api.services.interview_service import interview_url
 from api.services.outbound_mail import STAKEHOLDERS, correspondent_for, send_project_mail
+from api.services.platform_settings import platform_public_url
 from api.database import (
     get_connection,
     get_db_path,
@@ -389,7 +390,7 @@ async def generate_reminders_svc(slug: str, campaign_id: int) -> dict | None:
             else:
                 # No session yet - point at the SPA's interview landing rather than a
                 # per-session link that doesn't exist.
-                url = f"{get_settings().public_url.rstrip('/')}/dashboard/interview"
+                url = f"{platform_public_url()}/dashboard/interview"
             body = template["body"].format(
                 name=s["name"],
                 campaign_name=camp["campaign_name"] or camp["value_stream_name"],

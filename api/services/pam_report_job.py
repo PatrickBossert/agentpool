@@ -18,6 +18,7 @@ from api.database import (
 )
 from api.services.outbound_mail import GOVERNANCE, config_client_name, send_project_mail
 from api.services.pam_report_service import build_pam_report
+from api.services.platform_settings import platform_public_url
 from api.services.report_diff_service import diff_reports
 from api.services.scheduler_service import JOB_REGISTRY
 
@@ -108,8 +109,7 @@ def _report_header(slug: str, client_name: str) -> str:
 
 
 def _compose_body(slug: str, report: dict, change: dict, client_name: str = "") -> str:
-    settings = get_settings()
-    link = f"{settings.public_url.rstrip('/')}/dashboard/{slug}/pam-report"
+    link = f"{platform_public_url()}/dashboard/{slug}/pam-report"
     lines = [
         _report_header(slug, client_name),
         "",
