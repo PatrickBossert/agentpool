@@ -456,3 +456,70 @@ async def test_a_write_is_visible_to_the_next_read_in_the_same_process(sysadmin,
     assert second.status_code == 200
 
     assert ps.platform_public_url() == "https://changed.example"
+
+
+# ── The route back: DELETE /admin/platform-settings ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reverting_clears_the_cache_too(sysadmin, monkeypatch):
+    """The end-to-end property revert_platform_public_url exists for - I2's DELETE-door
+    sibling of test_a_write_is_visible_to_the_next_read_in_the_same_process above.
+
+    The middle platform_public_url() call is load-bearing, not a convenience: it populates
+    the module cache from the stored value, so there is something stale for the revert to
+    have to invalidate. Without it the cache would already be empty, the read afterwards
+    would go to the database whatever the handler did about the cache, and a revert that
+    cleared the row without ever calling forget_platform_settings() would still pass - the
+    exact "one layer away from where it holds" shape CLAUDE.md warns about, and precisely
+    the bug I2 named: a hand-cleared row leaving the process serving the old URL until
+    restart.
+    """
+    monkeypatch.setenv("PUBLIC_URL", "https://env.example")
+    get_settings.cache_clear()
+
+    stored = await sysadmin.patch(
+        "/admin/platform-settings", json={"public_url": "https://stored.example"}
+    )
+    assert stored.status_code == 200
+
+    assert ps.platform_public_url() == "https://stored.example"  # populates the cache
+
+    resp = await sysadmin.delete("/admin/platform-settings")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"public_url": "https://env.example", "source": "environment"}
+    assert ps.platform_public_url() == "https://env.example"  # not the stale cached value
+
+
+@pytest.mark.asyncio
+async def test_an_org_admin_may_not_revert_the_platform_url(sysadmin, org_admin):
+    """The same authority rule as the write it undoes - see
+    test_an_org_admin_may_not_change_the_platform_url's own docstring for why the caller
+    that matters is a real administrator one tier down, not an anonymous one.
+
+    Proved landed before the row was touched, not merely refused: the value a sysadmin
+    stored beforehand is still in force afterwards.
+    """
+    await sysadmin.patch(
+        "/admin/platform-settings", json={"public_url": "https://legitimate.example"}
+    )
+
+    resp = await org_admin.delete("/admin/platform-settings")
+
+    assert resp.status_code == 403
+    after = await sysadmin.get("/admin/platform-settings")
+    assert after.json()["public_url"] == "https://legitimate.example"
+
+
+@pytest.mark.asyncio
+async def test_reverting_with_nothing_stored_is_a_harmless_no_op(sysadmin, monkeypatch):
+    """DELETE is idempotent: reverting a deployment that never stored anything answers the
+    environment, the same as GET would, rather than erroring on an empty table."""
+    monkeypatch.setenv("PUBLIC_URL", "https://env.example")
+    get_settings.cache_clear()
+
+    resp = await sysadmin.delete("/admin/platform-settings")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"public_url": "https://env.example", "source": "environment"}

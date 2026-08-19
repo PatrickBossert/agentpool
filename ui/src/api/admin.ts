@@ -7,6 +7,7 @@ import type {
   ProjectRegistryEntry,
   ProjectMembership,
   ResetLinkResponse,
+  PlatformSettings,
 } from '../types'
 
 export const adminApi = {
@@ -90,4 +91,19 @@ export const adminApi = {
 
   revokeProjectAccess: (userId: number, slug: string): Promise<void> =>
     apiClient.delete(`/auth/users/${userId}/projects/${slug}`).then(() => undefined),
+
+  // Platform settings - sysadmin only, api/routers/platform_settings.py. The address this
+  // deployment answers on, which every interview invitation and welcome email points at.
+  getPlatformSettings: (): Promise<PlatformSettings> =>
+    apiClient.get<PlatformSettings>('/admin/platform-settings').then((r) => r.data),
+
+  setPlatformPublicUrl: (publicUrl: string): Promise<PlatformSettings> =>
+    apiClient
+      .patch<PlatformSettings>('/admin/platform-settings', { public_url: publicUrl })
+      .then((r) => r.data),
+
+  // Reverts to inheriting PUBLIC_URL from the environment - the DELETE door I2 added, not a
+  // PATCH carrying an empty string (the server's scheme rule refuses "" on purpose).
+  revertPlatformPublicUrl: (): Promise<PlatformSettings> =>
+    apiClient.delete<PlatformSettings>('/admin/platform-settings').then((r) => r.data),
 }

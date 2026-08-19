@@ -207,6 +207,29 @@ async def save_platform_public_url(conn: aiosqlite.Connection, raw: str) -> str:
     return normalised
 
 
+async def revert_platform_public_url(conn: aiosqlite.Connection) -> dict:
+    """Clear the stored public_url so the deployment reverts to inheriting PUBLIC_URL from
+    the environment, and report what is now in force.
+
+    The route back that I2 (Task 2's review) found missing: once a value is stored,
+    `normalise_public_url`'s scheme rule refuses `""` outright, so there was no way to ask
+    the door to un-set it short of editing the row by hand - and a hand edit never calls
+    `forget_platform_settings()`, so the process goes on serving the old cached URL until
+    somebody restarts it. Deliberately not "relax the scheme rule to admit an empty
+    string": that would make blank a *storable* URL rather than the column's own "nothing
+    saved yet" default `_resolve` already treats specially, and a validator with a hole for
+    one particular blank value is a validator two rules away from admitting others.
+
+    Same order `save_platform_public_url` uses, and for the same reason: clear the row
+    *then* forget the cache. Forgetting first leaves a window where a concurrent read could
+    repopulate the cache from the row this call is about to clear - reproducing the exact
+    staleness this action exists to close, for the life of the process.
+    """
+    await store_platform_public_url(conn, "")
+    forget_platform_settings()
+    return await read_platform_settings(conn)
+
+
 async def read_platform_settings(conn: aiosqlite.Connection) -> dict:
     """What the settings door reports: the URL the stored row resolves to, and where it
     came from.
@@ -216,11 +239,12 @@ async def read_platform_settings(conn: aiosqlite.Connection) -> dict:
     than `platform_public_url()`: the cached accessor answers from a moment that may predate
     this request, and a door whose job is to report the setting must report the setting.
 
-    One residual, and it is not this function's to close: a row edited by hand leaves the
-    module cache stale, so this door would report the new value while the link builders kept
-    serving the old one until the process restarts. The fix is an explicit action that
-    clears the row *and* calls `forget_platform_settings()`, which is Task 4's work - not a
-    second read here, which would only move the disagreement rather than remove it.
+    One residual, and it is not this function's to close: a row edited by hand outside the
+    door - not through `revert_platform_public_url` below - leaves the module cache stale,
+    so this door would report the new value while the link builders kept serving the old one
+    until the process restarts. A second read here would only move that disagreement, not
+    remove it; the actual fix is an action that clears the row *and* calls
+    `forget_platform_settings()` together, which is what `revert_platform_public_url` does.
     """
     public_url, source = _resolve(
         await fetch_platform_public_url(conn), get_settings().public_url

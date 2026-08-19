@@ -21,6 +21,7 @@ from api.database import get_system_db
 from api.services.platform_settings import (
     PublicUrlRefused,
     read_platform_settings,
+    revert_platform_public_url,
     save_platform_public_url,
 )
 
@@ -68,3 +69,25 @@ async def patch_platform_settings(
     except PublicUrlRefused as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return await read_platform_settings(conn)
+
+
+@router.delete("/platform-settings", dependencies=[Depends(require_sysadmin)])
+async def delete_platform_settings(conn=Depends(get_system_db)):
+    """Revert to inheriting the `PUBLIC_URL` environment variable.
+
+    A `DELETE` rather than a `PATCH` carrying `null` or `""`: this door's `PATCH` accepts
+    only a `public_url: str`, and `""` is refused by `normalise_public_url`'s scheme rule on
+    purpose (see that function's docstring) - admitting it as a special case would make the
+    validator's blank-string hole the mechanism for a completely different action. `DELETE`
+    names what is actually happening - removing the stored override - and matches the verb
+    this codebase already uses for "give this back to whatever it would otherwise be"
+    (`DELETE /auth/orgs/{id}`, `DELETE /auth/projects/{slug}`).
+
+    `require_sysadmin` for the same reason the write is: reverting to the environment
+    changes where every interview invitation and every welcome email points, exactly as
+    setting one does - see `patch_platform_settings` above.
+
+    `revert_platform_public_url` does both halves - clears the stored row and drops the
+    module cache - so this door does not restate either.
+    """
+    return await revert_platform_public_url(conn)
