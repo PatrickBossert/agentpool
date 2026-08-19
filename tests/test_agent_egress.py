@@ -20,7 +20,7 @@ from agents.egress import (
     tool_classes_on_disk,
 )
 from agents.graph import GraphInconsistent, build_graph
-from api.services.deployment_modes import Capability, granted_to
+from api.services.deployment_modes import EGRESS_GRANTS, Capability, granted_to
 
 _MODES = ("standard", "sensitive", "fallback")
 
@@ -286,6 +286,34 @@ def test_an_agent_whose_every_tool_stays_local_still_reaches_a_model():
     assert local_only, "every agent now holds a tool that reaches out - case no longer covered"
     for node in local_only:
         assert node.egress == (inference_destination(granted_to("standard")),), node.agent_id
+
+
+def test_build_graphs_default_over_reports_rather_than_under_reports():
+    """`build_graph()` called with no grants must answer at least what every declared mode does.
+
+    The test below states this property and cannot see it: it passes both graphs explicitly, so
+    the default is never exercised. Changing the default to `frozenset()` - the under-reporting
+    extreme, and the one wrong direction for an auditor's page - left the whole suite green.
+
+    The property is over-reporting **egress**, not destinations: a sensitive project reaches
+    the local model, which the fullest grant does not name, so a plain superset of labels is
+    the wrong assertion - my first draft made it and this test caught it. Asserted against
+    `EGRESS_GRANTS` rather than the two modes somebody thought of, so a mode added to the
+    table is covered without anybody remembering this test exists.
+    """
+    default = build_graph()
+    for mode in EGRESS_GRANTS:
+        declared = build_graph(granted_to(mode))
+        for agent_id, node in declared.agents.items():
+            leaving = {d.label for d in node.egress if d.leaves_deployment}
+            by_default = {
+                d.label for d in default.agents[agent_id].egress if d.leaves_deployment
+            }
+            assert leaving <= by_default, (
+                f"build_graph() omits {sorted(leaving - by_default)} for {agent_id}, which "
+                f"leaves the deployment on a {mode!r} project - the default under-reports "
+                f"where it must over-report"
+            )
 
 
 def test_a_sensitive_project_never_reaches_somewhere_a_standard_one_does_not():
