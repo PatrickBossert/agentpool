@@ -2595,6 +2595,35 @@ async def fetch_outputs_by_type(
         return [dict(r) async for r in cur]
 
 
+async def max_agent_output_id(conn: aiosqlite.Connection) -> int:
+    """The highest `agent_outputs` id, or 0 on an empty table.
+
+    Paired with `count_agent_outputs_after` so a dispatcher can tell whether a run wrote
+    anything. `agent_outputs` carries no `run_id`, and adding one would mean a migration
+    plus a write-path change for every producer; a high-water mark taken either side of the
+    run answers the same question without either. It is the *only* honest way to ask today,
+    and a caller that instead counted by timestamp would miss a run finishing inside the
+    same second - which the assessment_design run that prompted this took 50 of.
+    """
+    cur = await conn.execute("SELECT COALESCE(MAX(id), 0) FROM agent_outputs")
+    row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def count_agent_outputs_after(conn: aiosqlite.Connection, *, after_id: int) -> int:
+    """How many `agent_outputs` rows exist above `after_id`.
+
+    Not scoped to a project deliberately: one project database holds one project, and the
+    callers already hold the slug that chose the connection. Scoping it on `project_id`
+    would read as a guarantee this table cannot give.
+    """
+    cur = await conn.execute(
+        "SELECT COUNT(*) FROM agent_outputs WHERE id > ?", (after_id,)
+    )
+    row = await cur.fetchone()
+    return row[0] if row else 0
+
+
 async def count_outputs_by_type(
     conn: aiosqlite.Connection, *, project_id: int, output_types: list[str]
 ) -> dict:

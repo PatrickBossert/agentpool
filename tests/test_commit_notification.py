@@ -101,6 +101,133 @@ async def test_notification_goes_to_reviewers_and_approvers_only(client, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_a_run_that_wrote_nothing_is_not_announced_as_ready_to_commit(client):
+    """The subject and the body must not claim output that does not exist.
+
+    Run 36 of sp-gs-am finished in 50 seconds with coverage already complete and nothing
+    sent back to the agent, wrote no `agent_outputs` row at all, and this notifier still
+    said its output was "waiting to be committed". A reviewer who opens the dashboard and
+    finds nothing learns to discount the notification - and it is the one that matters
+    they will then ignore.
+    """
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder("notify-test", "Gov", "gov@example.com", approver=True)
+    await _set_dev_mode("notify-test", False)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+
+    with patch(
+        "api.services.commit_notify_service.send_project_mail", AsyncMock()
+    ) as send:
+        await notify_crew_awaiting_commit("notify-test", "assessment_design", outputs_written=0)
+
+    assert send.await_count == 1
+    subject = send.await_args.kwargs["subject"]
+    body = send.await_args.kwargs["body"]
+    assert "nothing to commit" in subject
+    assert "ready to commit" not in subject
+    # The body carries the claim the subject summarises; a fix to one and not the other
+    # leaves the notification contradicting itself.
+    assert "wrote no new output" in body
+    # The *positive* claim, not the bare phrase: the correct message says "so nothing is
+    # waiting to be committed", which contains the phrase while denying it. Asserting the
+    # fragment made this test fail against working code - the refusal-quotes-its-own-key
+    # shape CLAUDE.md records, committed here by the author of this test.
+    assert "its output is waiting to be committed" not in body
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_wrote_something_still_says_ready_to_commit(client):
+    """The control. Without it, refusing to announce anything would pass the test above."""
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder("notify-test", "Gov", "gov@example.com", approver=True)
+    await _set_dev_mode("notify-test", False)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+
+    with patch(
+        "api.services.commit_notify_service.send_project_mail", AsyncMock()
+    ) as send:
+        await notify_crew_awaiting_commit("notify-test", "assessment_design", outputs_written=3)
+
+    assert "is ready to commit" in send.await_args.kwargs["subject"]
+    assert "waiting to be committed" in send.await_args.kwargs["body"]
+
+
+@pytest.mark.asyncio
+async def test_a_caller_that_does_not_count_still_over_reports(client):
+    """`None` is "I did not count", and must keep the original sentence.
+
+    A new dispatcher that forgets the argument should over-report rather than fall silent -
+    an unnecessary trip to the dashboard costs less than a completion nobody hears about.
+    """
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder("notify-test", "Gov", "gov@example.com", approver=True)
+    await _set_dev_mode("notify-test", False)
+
+    from api.services.commit_notify_service import notify_crew_awaiting_commit
+
+    with patch(
+        "api.services.commit_notify_service.send_project_mail", AsyncMock()
+    ) as send:
+        await notify_crew_awaiting_commit("notify-test", "assessment_design")
+
+    assert "is ready to commit" in send.await_args.kwargs["subject"]
+
+
+@pytest.mark.asyncio
+async def test_the_dispatcher_counts_what_the_run_wrote_and_passes_it_on(client):
+    """The wiring, not the sentence.
+
+    The notifier tests above pass `outputs_written` by hand, so they hold with a dispatcher
+    that never counts - hard-coding it to 99 left the whole suite green at 2365 when this
+    test did not exist. What must be asserted is that the number reaching the notifier is
+    the number of rows the run actually wrote.
+
+    `build_and_run_crew` is stubbed rather than run: this asserts the bookkeeping around a
+    run, and a real crew would spend money to prove nothing extra.
+    """
+    from unittest.mock import ANY
+
+    await client.post("/projects", json=PROJECT)
+    await _add_stakeholder("notify-test", "Gov", "gov@example.com", approver=True)
+    await _set_dev_mode("notify-test", False)
+
+    from api.database import get_connection, fetch_project, insert_agent_output
+    from api.services import run_service
+
+    async with get_connection("notify-test") as conn:
+        project = await fetch_project(conn, slug="notify-test")
+        run_id = (await (await conn.execute(
+            "INSERT INTO crew_runs (project_id, crew_name, status) VALUES (?,?,?) RETURNING id",
+            (project["id"], "assessment_design", "running"),
+        )).fetchone())[0]
+        await conn.commit()
+
+    # A run that writes nothing.
+    with patch.object(run_service, "build_and_run_crew", AsyncMock(return_value=None)), \
+         patch("api.services.commit_notify_service.notify_crew_awaiting_commit",
+               AsyncMock()) as notify:
+        await run_service.dispatch_crew("notify-test", "assessment_design", run_id)
+    assert notify.await_args.kwargs["outputs_written"] == 0
+
+    # A run that writes two, counted from the same high-water mark.
+    async def _write_two(slug, crew_name, rid):
+        async with get_connection(slug) as conn:
+            for n in ("a", "b"):
+                await insert_agent_output(
+                    conn, project_id=project["id"], agent_name="interaction_designer",
+                    output_type=f"probe_{n}", file_path=f"/tmp/{n}.json", version=1,
+                )
+
+    with patch.object(run_service, "build_and_run_crew", AsyncMock(side_effect=_write_two)), \
+         patch("api.services.commit_notify_service.notify_crew_awaiting_commit",
+               AsyncMock()) as notify:
+        await run_service.dispatch_crew("notify-test", "assessment_design", run_id)
+    assert notify.await_args.kwargs["outputs_written"] == 2
+
+
+@pytest.mark.asyncio
 async def test_a_failing_send_does_not_raise(client):
     """The outputs are the durable record; the email is a notification.
 
