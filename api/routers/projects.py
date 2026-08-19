@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
 from api.config import get_settings
 from api.database import (
-    get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config,
+    get_db_path, get_connection, fetch_project, fetch_outputs_by_type, merge_project_config,
     get_system_connection, register_project_if_unregistered, resolve_home_org_id,
 )
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
@@ -427,21 +427,12 @@ async def upload_branding_image(
 
         file_path.write_bytes(data)
 
-        # Update brand_header_image_url in project config
-        raw = project.get("config_json") or "{}"
-        config = json.loads(raw)
+        # Update brand_header_image_url in project config. Through the narrow seam: a header
+        # image upload has an opinion about one config key and none about this project's
+        # mode, override or sector, so it does not name them.
         image_url = f"/api/projects/{slug}/branding/image"
-        config["brand_header_image_url"] = image_url
-        await update_project_config(
-            conn,
-            slug=slug,
-            project_id=project["id"],
-            llm_mode=project["llm_mode"],
-            # Carried through unchanged - a header image upload must not move this
-            # project's inference off or onto the premises.
-            force_local_inference=bool(project.get("force_local_inference") or 0),
-            sector=project["sector"],
-            config_json=json.dumps(config),
+        await merge_project_config(
+            conn, project=project, key="brand_header_image_url", value=image_url
         )
 
     return {"url": image_url}

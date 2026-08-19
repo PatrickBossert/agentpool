@@ -720,3 +720,113 @@ def test_nothing_writes_sql_naming_the_column_outside_the_two_modules_that_own_i
         "value. A second query reads a value forget_project_mode cannot invalidate; a second "
         "write leaves the cached one pinned for the life of the process."
     )
+
+
+# ── The wide writer keeps exactly one production caller ────────────────────────────────
+#
+# Task 2b's seam, `api.database.merge_project_config`, ends the carry-through by taking the
+# project *row* instead of the three columns. What the seam cannot do is stop a sixth door
+# reaching past it for `update_project_config` and restating them again - the shape recurs
+# because the signature invites it, and every instance of it was correct on the way in.
+#
+# This is the cheap half, and it is only worth writing now. Before the seam, "somebody added
+# a caller" was a nag with five legitimate exceptions; after it, "the wide writer has exactly
+# one production caller" is a precise invariant with a name attached to it.
+
+_WIDE_WRITER = "update_project_config"
+
+# Every production call site of the wide writer, as `path::qualname`, each with the reason it
+# is entitled to be one. Held by set equality rather than by a ceiling, so a caller that
+# disappears fails the test as loudly as one that arrives: `merge_project_config` losing this
+# call would mean a config merge had stopped clearing the mode cache.
+_DECLARED_WIDE_CALLERS = {
+    "api/database.py::merge_project_config":
+        "The narrow seam. Reads the three columns off the row it is given, so the doors that "
+        "merge a config key name none of them.",
+    "api/services/project_service.py::update_project_settings":
+        "PATCH /{slug}/settings - the door whose job *is* changing llm_mode, "
+        "force_local_inference and sector. The one caller that means all three.",
+}
+
+
+def _enclosing_qualnames(tree: ast.Module) -> dict[int, str]:
+    """Node id to the dotted name of the function or class chain enclosing it.
+
+    A file-level answer would be too coarse here: `api/database.py` is entitled to call the
+    wide writer from `merge_project_config` and from nowhere else, and a second helper added
+    beside the seam is exactly the defect this walk is for.
+    """
+    qualnames: dict[int, str] = {}
+
+    def visit(node: ast.AST, prefix: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = prefix
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                inner = prefix + [child.name]
+            qualnames[id(child)] = ".".join(inner) or "<module>"
+            visit(child, inner)
+
+    visit(tree, [])
+    return qualnames
+
+
+def test_the_wide_project_config_writer_has_exactly_one_production_caller():
+    """`update_project_config` writes `llm_mode`, `force_local_inference` and `sector` on
+    every call, and all three arguments are mandatory - so a door that cares about none of
+    them still has to get all three right.
+
+    Getting `llm_mode` wrong is the sharp one, and it was driven end to end rather than
+    argued: a wrong value there flips a sensitive project to `standard` **immediately**,
+    because the writer calls `forget_project_mode` on the way out and the cached mode is
+    dropped. `CLOUD_VECTOR_STORE` is then permitted and `get_chroma_client` builds a
+    `CloudClient`, so the engagement's corpus goes to Chroma Cloud with no error and no
+    warning - triggerable by a `project_admin` uploading a logo or an approver adding a link,
+    both of whom are 403'd from changing `llm_mode` through the front door.
+
+    So: anything that only wants to merge a config key calls `merge_project_config`, which
+    reads the three columns off the row. This walk holds the wide writer's caller set to the
+    two entries declared above.
+
+    **What the walk sees:** a call, anywhere under `api/`, `agents/` or `scripts/`, whose
+    callee is spelled `update_project_config` - as a bare name or as an attribute on a module
+    object - attributed to the function enclosing it. Set equality, so both a new caller and
+    a vanished one fail.
+
+    **What it cannot see, and why the seam is the real mechanism.** It cannot see a *wrong
+    value*: all six carry-throughs were correct when this shape was found, and five could be
+    mutated with the whole suite green, so no walk naming the doors would have caught any of
+    them. That is what `merge_project_config` is for, and this guard only keeps it from being
+    bypassed. Nor can it see a call through a variable (`writer = update_project_config`), a
+    `getattr` on the module, a name assembled at run time, or a second writer issuing its own
+    `UPDATE projects SET llm_mode=...` - the last is partly covered by
+    `test_nothing_writes_sql_naming_the_column_outside_the_two_modules_that_own_it` above, but
+    only for `force_local_inference`, and neither walk sees SQL built by concatenation. It
+    says nothing about `tests/`, which call the wide writer directly on purpose.
+    """
+    found: dict[str, str] = {}
+    for pattern in _PRODUCTION:
+        for path in sorted(_REPO_ROOT.glob(pattern)):
+            rel = path.relative_to(_REPO_ROOT).as_posix()
+            tree = ast.parse(path.read_text(), filename=str(path))
+            qualnames = _enclosing_qualnames(tree)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                callee = (
+                    node.func.attr if isinstance(node.func, ast.Attribute)
+                    else node.func.id if isinstance(node.func, ast.Name)
+                    else None
+                )
+                if callee == _WIDE_WRITER:
+                    found[f"{rel}::{qualnames[id(node)]}"] = f"{rel}:{node.lineno}"
+
+    assert set(found) == set(_DECLARED_WIDE_CALLERS), (
+        f"the production callers of {_WIDE_WRITER} are {sorted(found)}, not "
+        f"{sorted(_DECLARED_WIDE_CALLERS)}. A door that only wants to merge a config key "
+        "calls api.database.merge_project_config, which reads llm_mode, "
+        "force_local_inference and sector off the project row rather than making the caller "
+        "restate three columns it does not care about. Restating them is how a config merge "
+        "comes to flip a sensitive project to standard, permit CLOUD_VECTOR_STORE, and send "
+        "the corpus to Chroma Cloud with nothing said. If a new caller genuinely means all "
+        f"three columns, declare it in _DECLARED_WIDE_CALLERS with its reason. Sites: {found}"
+    )

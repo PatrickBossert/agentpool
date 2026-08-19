@@ -214,3 +214,73 @@ async def test_update_project_config(db):
     assert updated["force_local_inference"] == 1
     assert updated["sector"] == "energy"
     assert updated["config_json"] == '{"sector":"energy","llm_mode":"sensitive"}'
+
+
+@pytest.mark.asyncio
+async def test_merge_project_config_adds_a_key_and_keeps_the_ones_already_there(db):
+    """The seam's own property, asserted here rather than only through the two doors: the
+    named key lands, and nothing else in `config_json` moves.
+
+    The doors' tests (`tests/test_grantable_roles.py`) drive the columns over HTTP and say
+    nothing about the rest of the config, so a seam that replaced `config_json` wholesale
+    would pass every one of them.
+    """
+    import json
+    from api.database import insert_project, fetch_project, merge_project_config
+
+    await insert_project(
+        db, slug="merge-test", llm_mode="sensitive", sector="maritime-defence",
+        config_json=json.dumps({"client_slug": "merge-test", "brand_header_colour": "#004d4d"}),
+    )
+    project = await fetch_project(db, slug="merge-test")
+
+    await merge_project_config(
+        db, project=project, key="discovery_links", value=[{"url": "https://example.test"}]
+    )
+
+    merged = json.loads((await fetch_project(db, slug="merge-test"))["config_json"])
+    assert merged["discovery_links"] == [{"url": "https://example.test"}]
+    assert merged["client_slug"] == "merge-test", "the merge dropped a key it was not given"
+    assert merged["brand_header_colour"] == "#004d4d", "the merge dropped a key it was not given"
+
+
+@pytest.mark.asyncio
+async def test_merge_project_config_writes_the_three_columns_back_exactly_as_it_read_them(db):
+    """The carry-through, at the seam rather than at each door.
+
+    Two halves, and the second is the one Task 2b decided. The first: a project with the
+    override on and a mode of `sensitive` still has both after a config merge - the shape
+    whose failure sends the corpus to Chroma Cloud.
+
+    The second: **a NULL sector stays NULL.** The two call sites this seam replaced spelled
+    the same rule differently - `project["sector"]` and `project.get("sector") or ""` - and
+    those are not equivalent. `or ""` normalises, and a row with no sector is routine
+    (`INSERT INTO projects (slug) VALUES (?)` is how a dozen fixtures and every project
+    created before the column was populated look). A door merging one config key must not
+    collapse that; only `PATCH /{slug}/settings`, which owns the column, may. Asserted so the
+    spelling is a decision with a test on it rather than a preference that drifts again.
+    """
+    import json
+    from api.database import fetch_project, merge_project_config, update_project_config
+
+    await db.execute("INSERT INTO projects (slug, llm_mode) VALUES (?,?)",
+                     ("null-sector", "sensitive"))
+    await db.commit()
+    project = await fetch_project(db, slug="null-sector")
+    await update_project_config(
+        db, slug="null-sector", project_id=project["id"], llm_mode="sensitive",
+        force_local_inference=True, sector=project["sector"], config_json="{}",
+    )
+    project = await fetch_project(db, slug="null-sector")
+    assert project["sector"] is None, "precondition: this row has no sector"
+
+    await merge_project_config(db, project=project, key="brand_header_image_url", value="/img")
+
+    after = await fetch_project(db, slug="null-sector")
+    assert after["llm_mode"] == "sensitive", "a config merge moved the project's mode"
+    assert after["force_local_inference"] == 1, "a config merge cleared the override"
+    assert after["sector"] is None, (
+        "a config merge normalised a NULL sector into an empty string - it writes back what "
+        "it read, and collapsing the two is PATCH /{slug}/settings' decision, not this door's"
+    )
+    assert json.loads(after["config_json"])["brand_header_image_url"] == "/img"
