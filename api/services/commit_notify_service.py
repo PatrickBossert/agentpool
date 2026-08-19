@@ -113,7 +113,9 @@ async def notify_crew_ready_for_approval(slug: str, crew_name: str) -> None:
     )
 
 
-async def notify_crew_awaiting_commit(slug: str, crew_name: str) -> None:
+async def notify_crew_awaiting_commit(
+    slug: str, crew_name: str, *, outputs_written: int | None = None
+) -> None:
     """Tell reviewers that a crew has finished and is waiting to be committed.
 
     Called from dispatch_crew and dispatch_agent once a run completes. Never
@@ -129,6 +131,22 @@ async def notify_crew_awaiting_commit(slug: str, crew_name: str) -> None:
     there are no approvers, there is genuinely nobody who can approve, and mailing
     reviewers instead would not help.
     """
+    # `outputs_written` is what the dispatcher counted either side of the run. A run that
+    # wrote nothing must not be announced as having something to commit: run 36 of sp-gs-am
+    # finished in 50 seconds with full coverage and nothing sent back, wrote no output at
+    # all, and this said its output "is waiting to be committed". A reviewer who opens the
+    # dashboard and finds nothing learns to discount the notification, which costs more than
+    # the wasted trip - it is the one that matters that they will then ignore.
+    #
+    # The empty message says what was observed and **not why**. A run writes nothing when it
+    # is owed nothing, and also when it fails before doing anything - `result_json` is `{}`
+    # either way, which is the ambiguity run 32 is on record for. Naming a cause here would
+    # be inventing one.
+    #
+    # `None` means the caller did not count, and keeps the original sentence: a new caller
+    # that forgets the argument over-reports rather than falling silent, which is the safe
+    # direction for a notification.
+    nothing_written = outputs_written == 0
     await _notify(
         slug, crew_name,
         flags=("is_reviewer",),
@@ -136,8 +154,16 @@ async def notify_crew_awaiting_commit(slug: str, crew_name: str) -> None:
         # "ready for review" sent people to the HITL review queue, which has been empty
         # for these crews since crews stopped blocking for a typed approval - the output is
         # waiting to be committed, and the subject has to say the same thing the body does.
-        subject=f"{slug}: {crew_name} is ready to commit",
-        intro=f"{crew_name} has finished and its output is waiting to be committed.",
+        subject=(
+            f"{slug}: {crew_name} finished, nothing to commit" if nothing_written
+            else f"{slug}: {crew_name} is ready to commit"
+        ),
+        intro=(
+            f"{crew_name} has finished and wrote no new output, so nothing is waiting to "
+            f"be committed."
+            if nothing_written
+            else f"{crew_name} has finished and its output is waiting to be committed."
+        ),
         audience_label="reviewers",
     )
 

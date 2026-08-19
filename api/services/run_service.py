@@ -11,7 +11,15 @@ import logging
 from pathlib import Path
 from typing import Any
 from api.config import get_settings, load_project_config
-from api.database import get_connection, update_crew_run_status, fetch_project, fetch_documents, fetch_agent_outputs
+from api.database import (
+    count_agent_outputs_after,
+    fetch_agent_outputs,
+    fetch_documents,
+    fetch_project,
+    get_connection,
+    max_agent_output_id,
+    update_crew_run_status,
+)
 from api.routers.ws import push_log
 from api.services.assignment_coverage import build_assignment_coverage
 from api.services.platform_settings import platform_public_url
@@ -579,12 +587,20 @@ async def dispatch_crew(
     """Entry point called by asyncio.create_task. Runs the named crew and updates status."""
     try:
         await push_log(slug, json.dumps({"type": "crew_started", "crew": crew_name, "run_id": run_id}))
+
+        # Taken before the run and counted after, so the completion notice can say whether
+        # anything was actually produced. agent_outputs carries no run_id - see
+        # max_agent_output_id for why a high-water mark is the honest way to ask.
+        async with get_connection(slug) as conn:
+            outputs_before = await max_agent_output_id(conn)
+
         await build_and_run_crew(slug, crew_name, run_id)
         async with get_connection(slug) as conn:
             await update_crew_run_status(conn, run_id=run_id, status="completed")
+            outputs_written = await count_agent_outputs_after(conn, after_id=outputs_before)
 
         from api.services.commit_notify_service import notify_crew_awaiting_commit
-        await notify_crew_awaiting_commit(slug, crew_name)
+        await notify_crew_awaiting_commit(slug, crew_name, outputs_written=outputs_written)
 
         await push_log(slug, json.dumps({"type": "crew_completed", "crew": crew_name, "run_id": run_id}))
     except Exception as e:
@@ -796,12 +812,19 @@ async def dispatch_agent(slug: str, agent_key: str, run_id: int) -> None:
     crew_label = AGENT_CREW_NAME.get(agent_key, agent_key)
     try:
         await push_log(slug, json.dumps({"type": "crew_started", "crew": crew_label, "run_id": run_id}))
+
+        # Same high-water mark as dispatch_crew - the standalone agent path announces
+        # completion through the identical notifier and had the identical defect.
+        async with get_connection(slug) as conn:
+            outputs_before = await max_agent_output_id(conn)
+
         await build_and_run_agent(slug, agent_key, run_id)
         async with get_connection(slug) as conn:
             await update_crew_run_status(conn, run_id=run_id, status="completed")
+            outputs_written = await count_agent_outputs_after(conn, after_id=outputs_before)
 
         from api.services.commit_notify_service import notify_crew_awaiting_commit
-        await notify_crew_awaiting_commit(slug, crew_label)
+        await notify_crew_awaiting_commit(slug, crew_label, outputs_written=outputs_written)
 
         await push_log(slug, json.dumps({"type": "crew_completed", "crew": crew_label, "run_id": run_id}))
     except Exception as e:
