@@ -102,8 +102,16 @@ def reset_process_caches():
       campaign_service, pam_report_job, commit_notify_service and admin_service, so any
       test that creates a system.db under its own tmp_path and calls one of those now
       populates it - including on a *blank* stored row, which is a "successful read" by
-      platform_public_url()'s own rule. Reproduced without this fixture: revert it and
-      run the whole suite - tests/test_interview_url.py fails depending on run order.
+      platform_public_url()'s own rule. **Nothing in the suite currently fails without
+      this line, and that is worth saying rather than leaving to be rediscovered**: an
+      earlier version of this docstring named tests/test_interview_url.py as the
+      reproduction, and it is not one - that file clears the cache on both sides itself
+      (added in Task 3, before this fixture existed), so it passes either way. Neutering
+      the fixture and running the whole suite fails only tests/test_process_cache.py and
+      tests/test_process_cache_teardown.py - both about _MODE_CACHE, neither about this
+      cache. This entry is therefore prophylactic: the hazard is real and the callers
+      are real, but no test demonstrates it, so treat a green suite as saying nothing
+      about whether the URL cache leaks.
     - **chroma_client._MODE_CACHE**, which never had suite-wide isolation at all and is
       the consequential one: it answers "is this project sensitive", so a stale entry
       sends a sensitive project's documents to Chroma Cloud and its prompts to hosted

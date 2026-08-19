@@ -17,15 +17,16 @@ Two properties, and the reason they are asserted here rather than beside the dec
 `project_llm_mode` caches per slug for the life of the process, and this file used to clear it
 three times by hand - twice in the fixture below and once in `_payload` - because without that
 the second read returns the first's answer and the mode assertions pass for the wrong reason.
-All three are gone, and they were covered by two different things, which is worth knowing
-before adding a fourth:
+All three are gone, and **all three were already covered by `create_project` invalidating the
+mode cache on the way out**, which is worth knowing before adding a fourth. Every test here
+that reads a mode reaches it through `_payload` (a POST) or through `PATCH /{slug}/settings`,
+and both doors invalidate - so no clear of any kind is load-bearing in this file. Verified by
+neutering `conftest.reset_process_caches` and running the whole suite: this file passes.
 
-- The fixture's pair is now `conftest.reset_process_caches`, which empties every registered
-  process cache before and after every test in the suite rather than in the files whose author
-  noticed.
-- `_payload`'s was covered earlier, by `create_project` invalidating the mode cache on the way
-  out. No suite-wide fixture could have covered that one - it sits *inside* a test, between the
-  POST that sets the mode and the GET that reads it.
+That fixture is named here only so the next reader knows suite-wide isolation exists and need
+not re-add a local one. It is not what covers this file, and an earlier version of this
+docstring said it was - a mechanism that happens to be true of the suite is not the mechanism
+that makes a particular test pass, and only the second is worth writing down.
 """
 from __future__ import annotations
 
