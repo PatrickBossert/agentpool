@@ -20,8 +20,16 @@ from agents.egress import (
     tool_classes_on_disk,
 )
 from agents.graph import GraphInconsistent, build_graph
+from api.services.deployment_modes import Capability, granted_to
 
 _MODES = ("standard", "sensitive", "fallback")
+
+# The resolver is handed the capabilities a project holds, not the name of its mode - a mode is
+# not the last word once `force_local_inference` can narrow one. `granted_to(mode)` is the
+# translation of the mode names these tests are written in; every property below is the one it
+# was before. The one thing it is *not* is `project_grants(slug)`, which subtracts a project's
+# own narrowing as well - that is asserted where it belongs, against the page, in
+# `tests/test_data_architecture_page.py`.
 
 
 # --- Coverage: nothing an agent can hold is undeclared -----------------------------------------
@@ -78,7 +86,7 @@ def test_the_registry_hands_out_nothing_the_resolver_cannot_answer_for():
 
     for mode in _MODES:
         for tool_name in sorted(handed):
-            resolve_egress(tool_name, mode)
+            resolve_egress(tool_name, granted_to(mode))
 
 
 # --- Resolution: one declaration, the mode dependency in the resolver --------------------------
@@ -87,8 +95,8 @@ def test_the_registry_hands_out_nothing_the_resolver_cannot_answer_for():
 def test_a_vector_store_resolves_to_a_different_place_in_each_mode():
     """The case the whole two-layer shape exists for. `ChromaQueryTool` reaches a vector store
     either way; which vector store is a property of the project."""
-    standard = resolve_egress("ChromaQueryTool", "standard")
-    sensitive = resolve_egress("ChromaQueryTool", "sensitive")
+    standard = resolve_egress("ChromaQueryTool", granted_to("standard"))
+    sensitive = resolve_egress("ChromaQueryTool", granted_to("sensitive"))
 
     assert standard != sensitive
     assert standard.leaves_deployment
@@ -109,8 +117,9 @@ def test_a_tool_with_no_mode_check_resolves_to_the_same_place_in_both():
     ungated = {
         tool_name
         for tool_name in TOOL_EGRESS
-        if resolve_egress(tool_name, "standard") == resolve_egress(tool_name, "sensitive")
-        and resolve_egress(tool_name, "sensitive").leaves_deployment
+        if resolve_egress(tool_name, granted_to("standard"))
+        == resolve_egress(tool_name, granted_to("sensitive"))
+        and resolve_egress(tool_name, granted_to("sensitive")).leaves_deployment
     }
     assert "WebFetchTool" in ungated
     assert "TavilySearchTool" in ungated
@@ -118,16 +127,50 @@ def test_a_tool_with_no_mode_check_resolves_to_the_same_place_in_both():
         assert TOOL_EGRESS[tool_name].reaches is not Reach.NOTHING
 
 
-def test_whether_a_tool_is_gated_by_mode_is_read_from_the_resolver():
-    """`is_gated_by_mode` is what the privacy page will badge a row with, so the two findings it
-    has to get right are asserted directly: Chroma moves with the mode, the fetch tool does
-    not."""
-    from agents.egress import is_gated_by_mode
+def test_whether_a_tool_is_gated_by_a_grant_is_read_from_the_resolver():
+    """`is_gated_by_grant` is what the privacy page badges a row with, so the two findings it
+    has to get right are asserted directly: Chroma moves with what the project is granted, the
+    fetch tool does not.
 
-    assert is_gated_by_mode("ChromaQueryTool")
-    assert not is_gated_by_mode("WebFetchTool")
-    assert not is_gated_by_mode("TavilySearchTool")
-    assert not is_gated_by_mode("HumanInputTool")
+    It was `is_gated_by_mode`, comparing two mode names. Same four answers, and the rename is
+    the point rather than a tidy-up: on a `standard` project forcing local inference the *mode*
+    moves the model calls nowhere at all, so a badge derived from two mode names would have gone
+    on claiming it did - on the page where that sentence is read as a statement about where the
+    client's prompts go.
+    """
+    from agents.egress import is_gated_by_grant
+
+    assert is_gated_by_grant("ChromaQueryTool")
+    assert not is_gated_by_grant("WebFetchTool")
+    assert not is_gated_by_grant("TavilySearchTool")
+    assert not is_gated_by_grant("HumanInputTool")
+
+
+def test_a_project_forcing_local_inference_is_described_by_the_same_table(monkeypatch):
+    """The independence of the two badges, asserted at the table that decides them.
+
+    `_DESTINATION` is keyed on `(Reach, granted)` precisely so that a project holding one grant
+    and not the other is describable, and this branch builds one: `standard` minus
+    `HOSTED_INFERENCE` is local models over a cloud vector store. Driven through
+    `project_grants` rather than through a hand-built set, so what is asserted is that the
+    resolver and the narrowing agree - a set typed out here would pass while `project_grants`
+    subtracted the wrong capability.
+
+    The mirror shape - a cloud vector store withheld while hosted inference is kept - is the
+    deferred sovereign mode, and `tests/test_deployment_modes.py` drives it through a
+    hypothetical grants row. Between them both diagonals of the table are covered.
+    """
+    from api.services import chroma_client
+    from api.services.deployment_modes import project_grants
+
+    monkeypatch.setattr(chroma_client, "project_llm_mode", lambda slug: "standard")
+    monkeypatch.setattr(chroma_client, "project_forces_local_inference", lambda slug: True)
+    grants = project_grants("forced-probe")
+
+    assert grants == frozenset({Capability.CLOUD_VECTOR_STORE})
+    assert not inference_destination(grants).leaves_deployment
+    assert resolve_egress("ChromaQueryTool", grants).leaves_deployment
+    assert resolve_egress("DocumentIngestionTool", grants).leaves_deployment
 
 
 def test_a_tool_that_reaches_nothing_says_so_in_both_modes():
@@ -141,14 +184,14 @@ def test_a_tool_that_reaches_nothing_says_so_in_both_modes():
     assert local_only, "no tool reaches nothing - this test has stopped exercising the case"
     for tool_name in local_only:
         for mode in _MODES:
-            assert not resolve_egress(tool_name, mode).leaves_deployment
+            assert not resolve_egress(tool_name, granted_to(mode)).leaves_deployment
 
 
 def test_the_resolver_refuses_a_tool_it_has_no_declaration_for():
     """A default of "reaches nothing" would answer the auditor's question wrongly in the one
     direction nobody can notice."""
     with pytest.raises(KeyError):
-        resolve_egress("SomeToolWrittenNextTuesday", "standard")
+        resolve_egress("SomeToolWrittenNextTuesday", granted_to("standard"))
 
 
 def test_every_reach_resolves_whether_or_not_its_grant_is_held():
@@ -192,7 +235,7 @@ def test_the_inference_destination_agrees_with_the_llm_the_registry_builds(monke
     from api.services import chroma_client
 
     monkeypatch.setattr(chroma_client, "project_llm_mode", lambda slug: mode)
-    hosted = inference_destination(mode).leaves_deployment
+    hosted = inference_destination(granted_to(mode)).leaves_deployment
 
     for agent_id in model_registry.AGENT_TIER:
         llm = model_registry.get_llm_for_agent(agent_id, "egress-probe")
@@ -205,9 +248,11 @@ def test_the_inference_destination_agrees_with_the_llm_the_registry_builds(monke
 def test_the_two_inference_destinations_are_not_the_same_answer_twice():
     """Guard the guard above: if both modes resolved to the same destination, the parametrised
     test would pass for whichever branch happened to be taken."""
-    assert inference_destination("standard") != inference_destination("sensitive")
-    assert inference_destination("standard").leaves_deployment
-    assert not inference_destination("sensitive").leaves_deployment
+    assert inference_destination(granted_to("standard")) != (
+        inference_destination(granted_to("sensitive"))
+    )
+    assert inference_destination(granted_to("standard")).leaves_deployment
+    assert not inference_destination(granted_to("sensitive")).leaves_deployment
 
 
 # --- The graph carries the resolved set ------------------------------------------------------
@@ -217,10 +262,10 @@ def test_the_two_inference_destinations_are_not_the_same_answer_twice():
 def test_every_node_carries_what_the_resolver_gives_its_tools_in_that_mode(mode):
     """Recomputed from `resolve_egress` rather than from `agent_destinations`, so the assembly
     is held against the resolver rather than against the helper it happens to call."""
-    nowhere = resolve_egress("SQLiteStateTool", mode)
-    for node in build_graph(mode).agents.values():
-        expected = {resolve_egress(t, mode) for t in node.tools} | {
-            inference_destination(mode)
+    nowhere = resolve_egress("SQLiteStateTool", granted_to(mode))
+    for node in build_graph(granted_to(mode)).agents.values():
+        expected = {resolve_egress(t, granted_to(mode)) for t in node.tools} | {
+            inference_destination(granted_to(mode))
         }
         expected.discard(nowhere)
         assert set(node.egress) == expected, node.agent_id
@@ -232,7 +277,7 @@ def test_an_agent_whose_every_tool_stays_local_still_reaches_a_model():
     report that the Illustrator's work reaches nowhere, when in fact it is read by a model on
     every run - and the privacy page would have gone from naming Anthropic forty-four times to
     never."""
-    graph = build_graph("standard")
+    graph = build_graph(granted_to("standard"))
     local_only = [
         node
         for node in graph.agents.values()
@@ -240,13 +285,14 @@ def test_an_agent_whose_every_tool_stays_local_still_reaches_a_model():
     ]
     assert local_only, "every agent now holds a tool that reaches out - case no longer covered"
     for node in local_only:
-        assert node.egress == (inference_destination("standard"),), node.agent_id
+        assert node.egress == (inference_destination(granted_to("standard")),), node.agent_id
 
 
 def test_a_sensitive_project_never_reaches_somewhere_a_standard_one_does_not():
     """The property that makes `build_graph()`'s default safe: standard is the fuller answer, so
     a caller that forgets the mode over-reports rather than under-reports."""
-    standard, sensitive = build_graph("standard"), build_graph("sensitive")
+    standard = build_graph(granted_to("standard"))
+    sensitive = build_graph(granted_to("sensitive"))
     for agent_id, node in sensitive.agents.items():
         leaving = {d.label for d in node.egress if d.leaves_deployment}
         also_standard = {d.label for d in standard.agents[agent_id].egress if d.leaves_deployment}
@@ -269,7 +315,7 @@ def test_secure_mode_is_not_a_promise_that_nothing_leaves():
     """
     exposed = {
         agent_id: sorted(d.label for d in node.egress if d.leaves_deployment)
-        for agent_id, node in build_graph("sensitive").agents.items()
+        for agent_id, node in build_graph(granted_to("sensitive")).agents.items()
         if any(d.leaves_deployment for d in node.egress)
     }
     assert exposed, (
@@ -301,7 +347,9 @@ def test_an_undeclared_tool_makes_assembly_raise_rather_than_dropping_the_destin
 def test_the_resolved_set_is_shared_by_nothing_and_stable_to_compare():
     """`agent_destinations` is called once per agent per build; two builds must agree, or every
     equality assertion in this file and in `tests/test_agent_graph.py` is comparing addresses."""
-    assert build_graph("sensitive").agents == build_graph("sensitive").agents
-    assert agent_destinations(("WebFetchTool", "SQLiteStateTool"), "standard") == (
-        agent_destinations(("SQLiteStateTool", "WebFetchTool"), "standard")
+    assert build_graph(granted_to("sensitive")).agents == (
+        build_graph(granted_to("sensitive")).agents
+    )
+    assert agent_destinations(("WebFetchTool", "SQLiteStateTool"), granted_to("standard")) == (
+        agent_destinations(("SQLiteStateTool", "WebFetchTool"), granted_to("standard"))
     )

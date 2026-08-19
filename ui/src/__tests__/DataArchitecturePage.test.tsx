@@ -30,12 +30,15 @@ vi.mock('../api/endpoints', () => ({ projectsApi: { list: vi.fn().mockResolvedVa
 const PAYLOAD: Model = {
   slug: 'northern-water',
   llm_mode: 'sensitive',
+  // Nothing narrowed. The banner's caveat must not render on the engagements that are simply
+  // their mode, which is nearly all of them - asserted below rather than left to be noticed.
+  withheld_by_project: [],
   inference: {
     reaches: 'a language model',
     sends: 'every prompt the agent builds',
     destination: 'the local model on this host',
     leaves_deployment: false,
-    gated_by_mode: true,
+    gated_by_grant: true,
   },
   tools: [
     {
@@ -44,7 +47,7 @@ const PAYLOAD: Model = {
       sends: 'the search query the agent composed',
       destination: 'the Invented search API',
       leaves_deployment: true,
-      gated_by_mode: false,
+      gated_by_grant: false,
       held_by: ['Alex Chen'],
       held_by_ids: ['value_chain_mapper'],
     },
@@ -54,7 +57,7 @@ const PAYLOAD: Model = {
       sends: 'nothing - it writes to this project only',
       destination: 'nothing outside this deployment',
       leaves_deployment: false,
-      gated_by_mode: false,
+      gated_by_grant: false,
       held_by: ['Alex Chen'],
       held_by_ids: ['value_chain_mapper'],
     },
@@ -386,15 +389,53 @@ describe('the generated half of the privacy page', () => {
     get.mockResolvedValue({
       ...PAYLOAD,
       llm_mode: 'invented-split-mode',
-      inference: { ...PAYLOAD.inference, gated_by_mode: true, leaves_deployment: true },
+      inference: { ...PAYLOAD.inference, gated_by_grant: true, leaves_deployment: true },
       tools: [
-        { ...PAYLOAD.tools[1], tool: 'ChromaQueryTool', gated_by_mode: true, leaves_deployment: false },
+        { ...PAYLOAD.tools[1], tool: 'ChromaQueryTool', gated_by_grant: true, leaves_deployment: false },
         PAYLOAD.tools[0],
       ],
     })
     renderPage()
     expect(await screen.findByText(/Model inference: hosted/)).toBeInTheDocument()
     expect(screen.getByText(/ChromaQueryTool: local/)).toBeInTheDocument()
+  })
+
+  it('says a standard engagement holds less than its mode grants, and does not say it of one that does not', async () => {
+    // The shape this branch builds: `standard`, forcing local inference, so the model calls
+    // stay here while the documents go to Chroma Cloud. A reader sees the mode name and a
+    // local inference badge side by side, and the reconciling sentence is the only thing on
+    // the page that explains them - without it the badge reads as a rendering bug.
+    //
+    // The sentence is composed from mode_permits rather than from a condition on a flag name,
+    // so a second override is described here without this file changing.
+    get.mockResolvedValue({
+      ...PAYLOAD,
+      llm_mode: 'standard',
+      withheld_by_project: [
+        { capability: 'HOSTED_INFERENCE', mode_permits: 'may send prompts to a hosted model provider' },
+      ],
+      inference: { ...PAYLOAD.inference, gated_by_grant: true, leaves_deployment: false },
+      tools: [
+        { ...PAYLOAD.tools[1], tool: 'ChromaQueryTool', gated_by_grant: true, leaves_deployment: true },
+        PAYLOAD.tools[0],
+      ],
+    })
+    renderPage()
+    expect(await screen.findByText(/Narrowed for this engagement/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/may send prompts to a hosted model provider - this project does not/)
+    ).toBeInTheDocument()
+    // The two badges, still independent: local models over a cloud vector store.
+    expect(screen.getByText(/Model inference: local/)).toBeInTheDocument()
+    expect(screen.getByText(/ChromaQueryTool: hosted/)).toBeInTheDocument()
+  })
+
+  it('does not claim an engagement is narrowed when it holds everything its mode grants', async () => {
+    // Guard the guard: a caveat that always rendered would pass the test above.
+    renderPage()
+    await screen.findByText(/Processing mode/)
+    expect(screen.queryByText(/Narrowed for this engagement/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/holds less than its mode grants/)).not.toBeInTheDocument()
   })
 
   it('names a declared tool no agent holds, and says nobody holds it', async () => {

@@ -14,12 +14,26 @@ owns what a crew is for and what can start it; `agents/graph.py` assembles the t
 things this module adds are the joins the page needs - which agents hold a tool, which crews an
 agent runs in - and each of those is computed from the graph rather than typed.
 
-## The project's mode is read, never taken from the caller
+## The project's egress is read and resolved, never taken from the caller
 
-`build_graph(llm_mode)` resolves the two mode-dependent reaches, and the mode comes from
-`project_llm_mode(slug)`. CLAUDE.md is emphatic that nothing may hand a mode down a routing
-path, and while this is a reading rather than a route, taking a mode from a query parameter
-would let a page be shown a reassuring answer that no run would ever produce.
+`build_graph(grants)` resolves the two gated reaches, and `grants` comes from
+`project_grants(slug)`. CLAUDE.md is emphatic that nothing may hand a mode down a routing path,
+and while this is a reading rather than a route, taking one from a query parameter would let a
+page be shown a reassuring answer that no run would ever produce.
+
+**Resolved, not declared, and that distinction is this page's whole job.** `permits(mode,
+capability)` answers what a mode grants; `project_grants(slug)` answers what this engagement
+holds after its own narrowing, which is what a run actually does. A `standard` project with
+`force_local_inference` set runs every agent on a local model while its documents stay in
+Chroma Cloud, and the declared question answers "Anthropic" for it - so this page told an
+auditor that every prompt reached a hosted provider while none of them did. Harmless in
+direction and fatal in kind, on the one surface whose purpose is being right about this.
+
+`withheld_by_project` is that difference, derived rather than read: the capabilities the mode
+grants and the project does not. It is not `projects.force_local_inference` under another name
+and must not become it - the flag is an input to `project_grants` and nothing else may ask it
+(`tests/test_local_inference_override.py` walks the source for that), and stating the *effect*
+means the next override is described here without a line being added.
 
 ## Three things this page must not say, and how each is prevented here
 
@@ -55,8 +69,8 @@ approval door, and that authority lives in `api/auth.py`, not in this graph.
 ## The view is fed from this answer, not from a second one
 
 `clusters` and `crew_edges` are what the page's radial view is drawn from, and they come out of
-the same `build_graph(llm_mode)` call as everything else - resolved for the same project, in the
-same mode, at the same moment. A view fetching its own answer, or holding its own copy of the
+the same `build_graph(grants)` call as everything else - resolved for the same project, from the
+same grants, at the same moment. A view fetching its own answer, or holding its own copy of the
 pipeline, is the failure this whole module exists to end, one surface further out: two
 renderings of one graph, nothing comparing them, and the prettier one gradually becoming the one
 people trust.
@@ -72,12 +86,14 @@ from agents.egress import (
     INFERENCE_EGRESS,
     TOOL_EGRESS,
     inference_destination,
-    is_gated_by_mode,
+    inference_is_gated_by_grant,
+    is_gated_by_grant,
     resolve_egress,
 )
 from agents.graph import build_graph
 from agents.reads import CREW_DISPATCH_READS, Medium, Read, UNINSTRUCTED_READS, VIA_DISPATCH
 from api.services.chroma_client import project_llm_mode
+from api.services.deployment_modes import Capability, granted_to, project_grants
 from api.services.knowledge_tiers import TIER_SCOPE
 
 _RUN_SERVICE_SOURCE = Path(__file__).parent / "run_service.py"
@@ -297,8 +313,10 @@ def _shared_sources(graph) -> list[dict]:
     )
 
 
-def _tool_row(tool: str, llm_mode: str, held_by: list[str], name: dict[str, str]) -> dict:
-    destination = resolve_egress(tool, llm_mode)
+def _tool_row(
+    tool: str, grants: frozenset[Capability], held_by: list[str], name: dict[str, str]
+) -> dict:
+    destination = resolve_egress(tool, grants)
     ordered = sorted(held_by, key=lambda agent_id: name[agent_id])
     return {
         "tool": tool,
@@ -306,16 +324,17 @@ def _tool_row(tool: str, llm_mode: str, held_by: list[str], name: dict[str, str]
         "sends": TOOL_EGRESS[tool].sends,
         "destination": destination.label,
         "leaves_deployment": destination.leaves_deployment,
-        "gated_by_mode": is_gated_by_mode(tool),
+        "gated_by_grant": is_gated_by_grant(tool),
         "held_by": [name[agent_id] for agent_id in ordered],
         "held_by_ids": ordered,
     }
 
 
 def data_architecture(slug: str) -> dict:
-    """Everything the privacy page renders, resolved for this project's own mode."""
+    """Everything the privacy page renders, resolved for this project's own egress."""
     llm_mode = project_llm_mode(slug)
-    graph = build_graph(llm_mode)
+    grants = project_grants(slug)
+    graph = build_graph(grants)
 
     crews_of: dict[str, list[str]] = {agent_id: [] for agent_id in graph.agents}
     for crew in graph.crews.values():
@@ -325,28 +344,36 @@ def data_architecture(slug: str) -> dict:
     holders = _holders(graph)
     name = {agent_id: node.display_name for agent_id, node in graph.agents.items()}
 
-    inference = inference_destination(llm_mode)
+    inference = inference_destination(grants)
 
     return {
         "slug": slug,
         "llm_mode": llm_mode,
+        # What this engagement holds *less* of than its mode declares, as the effect rather
+        # than as the setting's name. The page needs it to reconcile the two facts an auditor
+        # reads side by side on a forced project - the mode says `standard` and the model calls
+        # stay here - and deriving it from the two grant sets means the next override needs no
+        # line of its own. Empty on a project that narrows nothing, which is nearly all of them.
+        "withheld_by_project": [
+            {"capability": capability.name, "mode_permits": capability.value}
+            for capability in sorted(granted_to(llm_mode) - grants, key=lambda c: c.name)
+        ],
         "inference": {
             "reaches": INFERENCE_EGRESS.reaches.value,
             "sends": INFERENCE_EGRESS.sends,
             "destination": inference.label,
             "leaves_deployment": inference.leaves_deployment,
-            # Every agent runs on a model, so this is gated on the project's mode by
-            # construction rather than by a lookup - `inference_destination` is the same
-            # `(reach, mode)` table `resolve_egress` reads, and the two entries differ.
-            "gated_by_mode": (
-                inference_destination("standard") != inference_destination("sensitive")
-            ),
+            # Every agent runs on a model, and whether a grant moves that is a property of the
+            # `(reach, granted)` table rather than of this project - so it is derived in
+            # `agents/egress.py`, beside the table, instead of being asked here with two calls
+            # naming two modes.
+            "gated_by_grant": inference_is_gated_by_grant(),
         },
         # What leaves the building first, then alphabetically: an auditor reads this table for
         # the egress, and a stable order keeps a re-read comparable.
         "tools": sorted(
             (
-                _tool_row(tool, llm_mode, held_by, name)
+                _tool_row(tool, grants, held_by, name)
                 for tool, held_by in holders.items()
             ),
             key=lambda row: (not row["leaves_deployment"], row["tool"]),
@@ -368,7 +395,7 @@ def data_architecture(slug: str) -> dict:
                     "tool": tool,
                     "reaches": TOOL_EGRESS[tool].reaches.value,
                     "sends": TOOL_EGRESS[tool].sends,
-                    "destination": resolve_egress(tool, llm_mode).label,
+                    "destination": resolve_egress(tool, grants).label,
                 }
                 for tool in set(TOOL_EGRESS) - set(holders)
             ),

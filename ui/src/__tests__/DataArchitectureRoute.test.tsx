@@ -22,12 +22,13 @@ vi.mock('../api/dataArchitecture', () => ({
     get: vi.fn().mockResolvedValue({
       slug: 'northern-water',
       llm_mode: 'standard',
+      withheld_by_project: [],
       inference: {
         reaches: 'a language model',
         sends: 'every prompt',
         destination: 'a destination for the test',
         leaves_deployment: true,
-        gated_by_mode: true,
+        gated_by_grant: true,
       },
       tools: [],
       declared_not_held: [],

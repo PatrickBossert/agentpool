@@ -161,13 +161,6 @@ _MODE_LITERALS: dict[str, tuple[int, str]] = {
     "api/services/llm_client.py::resolve_model": (
         2, "indexes _TIER_SETTINGS, having asked project_permits()"
     ),
-    "agents/egress.py::is_gated_by_mode": (
-        2, "asks the resolver the same question in two modes - a question, not a rule"
-    ),
-    "api/services/data_architecture_service.py::data_architecture": (
-        2, "the same two-mode question, for the page's 'gated_by_mode' badge"
-    ),
-    "agents/graph.py::build_graph": (1, "a default argument, documented in place"),
 }
 
 
@@ -479,14 +472,15 @@ def test_the_privacy_view_does_not_collapse_an_undeclared_mode_into_standard():
     """
     from agents.egress import inference_destination, resolve_egress
 
-    assert not inference_destination(UNDECLARED_MODE).leaves_deployment
-    assert not resolve_egress("ChromaQueryTool", UNDECLARED_MODE).leaves_deployment
-    assert not resolve_egress("DocumentIngestionTool", UNDECLARED_MODE).leaves_deployment
+    undeclared = granted_to(UNDECLARED_MODE)
+    assert not inference_destination(undeclared).leaves_deployment
+    assert not resolve_egress("ChromaQueryTool", undeclared).leaves_deployment
+    assert not resolve_egress("DocumentIngestionTool", undeclared).leaves_deployment
 
     # The ungated reaches are unmoved, because no mode gates them - that is the finding the
     # module exists to state honestly, and an undeclared mode must not appear to fix it.
-    assert resolve_egress("TavilySearchTool", UNDECLARED_MODE).leaves_deployment
-    assert resolve_egress("WebFetchTool", UNDECLARED_MODE).leaves_deployment
+    assert resolve_egress("TavilySearchTool", undeclared).leaves_deployment
+    assert resolve_egress("WebFetchTool", undeclared).leaves_deployment
 
 
 def test_the_privacy_view_reads_the_grants_rather_than_a_second_copy_of_them(monkeypatch):
@@ -507,5 +501,5 @@ def test_the_privacy_view_reads_the_grants_rather_than_a_second_copy_of_them(mon
     monkeypatch.setitem(
         _EGRESS_GRANTS, "half-granted", frozenset({Capability.CLOUD_VECTOR_STORE})
     )
-    assert resolve_egress("ChromaQueryTool", "half-granted").leaves_deployment
-    assert not inference_destination("half-granted").leaves_deployment
+    assert resolve_egress("ChromaQueryTool", granted_to("half-granted")).leaves_deployment
+    assert not inference_destination(granted_to("half-granted")).leaves_deployment

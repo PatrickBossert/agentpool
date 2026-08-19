@@ -50,7 +50,7 @@ from agents.charter import DISPATCH_PATHS as _DISPATCH_PATHS
 from agents.charter import Trigger
 from agents.clusters import CLUSTERS as _CLUSTERS
 from agents.egress import TOOL_EGRESS as _TOOL_EGRESS
-from agents.egress import Destination, agent_destinations
+from agents.egress import ALL_GRANTS, Destination, agent_destinations
 from agents.identity import AGENT_IDENTITY as _AGENT_IDENTITY
 from agents.reads import AGENT_READS as _AGENT_READS
 from agents.reads import Medium, Read
@@ -58,6 +58,7 @@ from agents.identity import CREW_LABEL as _CREW_LABEL
 from agents.model_registry import AGENT_TIER as _AGENT_TIER
 from agents.tools.ownership import OUTPUT_OWNERS as _OUTPUT_OWNERS
 from api.services.crew_graph import CREW_DEPENDENCIES as _CREW_DEPENDENCIES
+from api.services.deployment_modes import Capability
 from api.services.run_service import _CREW_AGENT_NAMES
 
 # Every source in the table above is bound to a module-level name so that this is the single place
@@ -85,7 +86,7 @@ class AgentNode:
     `agent_outputs.agent_name` holds it on every row. `display_name` and `image` are the mutable
     half, resolved through `AGENT_IDENTITY`, and neither is derivable from the id.
 
-    `egress` is everywhere this agent's work can reach in the mode the graph was built for -
+    `egress` is everywhere this agent's work can reach on the project the graph was built for -
     its tools' destinations resolved through `agents/egress.py`, plus the model it runs on,
     which is the largest thing that leaves the building and is held by no tool. It is a
     property of the graph rather than of the agent because the same agent reaches Chroma Cloud
@@ -352,7 +353,7 @@ def _tool_class_name(entry: ast.expr, agent_id: str) -> str:
     )
 
 
-def _build_agents(llm_mode: str) -> dict[str, AgentNode]:
+def _build_agents(grants: frozenset[Capability]) -> dict[str, AgentNode]:
     """Every agent `AGENT_TIER` declares, with its tools, the outputs it owns, and its identity.
 
     `AGENT_TIER` is the roll: `test_every_dispatched_agent_has_a_tier` already holds it equal to
@@ -425,7 +426,7 @@ def _build_agents(llm_mode: str) -> dict[str, AgentNode]:
             writes=tuple(writes[agent_id]),
             display_name=_AGENT_IDENTITY[agent_id].display_name,
             image=_AGENT_IDENTITY[agent_id].image,
-            egress=agent_destinations(tools[agent_id], llm_mode),
+            egress=agent_destinations(tools[agent_id], grants),
             sources=tuple(_AGENT_READS[agent_id]),
         )
         for agent_id, tier in _AGENT_TIER.items()
@@ -717,24 +718,26 @@ def _runnable_order() -> tuple[str, ...]:
     return tuple(crew_id for band in _runnable_bands() for crew_id in band)
 
 
-def build_graph(llm_mode: str = "standard") -> Graph:
+def build_graph(grants: frozenset[Capability] = ALL_GRANTS) -> Graph:
     """Assemble the graph, raising `GraphInconsistent` on any edge that does not resolve.
 
     Fresh containers each call, so a caller that mutates what it is given cannot corrupt the
     next reader. Assembly is cheap - the only file read is cached.
 
-    `llm_mode` decides only where each agent's egress resolves to; everything else in the graph
-    is the same in either mode. It is a plain argument rather than a slug, because this is a
-    reading of a declaration and not a route: `project_llm_mode(slug)` is what anything actually
-    dispatching work must consult, and CLAUDE.md is emphatic that no caller may hand a mode to
-    that path.
+    `grants` decides only where each agent's egress resolves to; everything else in the graph is
+    the same for every project. It is the resolved capability set rather than a mode name or a
+    slug, for the reason `agents/egress.py` gives at length: a mode is not the last word once a
+    project can narrow what its mode grants, and a slug would put a database read inside a
+    declaration. Resolve it with `api.services.deployment_modes.project_grants(slug)`.
 
-    It defaults to `"standard"` deliberately, and the direction matters. Standard resolves the
-    two mode-dependent reaches to their hosted destinations, so a caller that forgets the
+    It defaults to `ALL_GRANTS` deliberately, and the direction matters. Every grant held
+    resolves both gated reaches to their off-premises destinations, so a caller that forgets the
     argument over-reports what leaves the building and never under-reports it - the safe way
-    round for a page an auditor reads. Enforcement should still pass the project's real mode.
+    round for a page an auditor reads. It used to default to `"standard"`, which was the same
+    answer only for as long as `standard` remained the fullest mode; the fullest set is now the
+    default by construction. Enforcement should still pass the project's real grants.
     """
-    agents = _build_agents(llm_mode)
+    agents = _build_agents(grants)
     crews = _build_crews(agents)
     graph = Graph(
         agents=agents,

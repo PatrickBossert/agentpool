@@ -229,30 +229,50 @@ function ContainmentPill({ label, leaves }: { label: string; leaves: boolean }) 
   )
 }
 
+// The mode is what the project is set to; the destinations are what it resolves to, and on a
+// project that narrows its mode those are two different answers. The banner has to carry both,
+// because an auditor reading `standard` beside "Model inference: local" is owed the sentence
+// that reconciles them - and the sentence comes off the payload rather than out of a condition
+// written here, so the next override needs no change to this file.
 function ModeBanner({ data }: { data: DataArchitectureModel }) {
-  const movedTools = data.tools.filter((t) => t.gated_by_mode)
+  const movedTools = data.tools.filter((t) => t.gated_by_grant)
   const moved = [
     ...movedTools.map((t) => t.tool),
-    ...(data.inference.gated_by_mode ? ["the agents' own model calls"] : []),
+    ...(data.inference.gated_by_grant ? ["the agents' own model calls"] : []),
   ]
-  const unmoved = data.tools.filter((t) => !t.gated_by_mode && t.leaves_deployment)
+  const unmoved = data.tools.filter((t) => !t.gated_by_grant && t.leaves_deployment)
+  const withheld = data.withheld_by_project
   return (
     <Card>
       <div className="flex items-center gap-2 mb-2 flex-wrap">
         <p className="text-sm font-semibold text-primary">Processing mode</p>
         <Pill tone="neutral">{data.llm_mode}</Pill>
-        {data.inference.gated_by_mode && (
+        {withheld.length > 0 && (
+          <Pill tone="stays">
+            <Lock size={10} />
+            Narrowed for this engagement
+          </Pill>
+        )}
+        {data.inference.gated_by_grant && (
           <ContainmentPill label="Model inference" leaves={data.inference.leaves_deployment} />
         )}
         {movedTools.map((t) => (
           <ContainmentPill key={t.tool} label={t.tool} leaves={t.leaves_deployment} />
         ))}
       </div>
+      {withheld.length > 0 && (
+        <p className="text-xs text-secondary leading-relaxed mb-2">
+          This engagement holds less than its mode grants. The {data.llm_mode} mode{' '}
+          {withheld.map((w) => w.mode_permits).join(', and ')} - this project does not, so the
+          destinations below are the contained ones whatever the mode is set to.
+        </p>
+      )}
       <p className="text-xs text-muted leading-relaxed">
-        The mode moves {moved.length} of the destinations below: {moved.join(', ')}. It moves
-        nothing else. {unmoved.length} of the tools this project's agents hold reach outside this
-        deployment in either mode - {unmoved.map((t) => t.tool).join(', ')} - so a sensitive
-        project reaches those the same way a standard one does.
+        This project's settings move {moved.length} of the destinations below: {moved.join(', ')}
+        . They move nothing else. {unmoved.length} of the tools this project's agents hold reach
+        outside this deployment whatever those settings say -{' '}
+        {unmoved.map((t) => t.tool).join(', ')} - so a sensitive project reaches those the same
+        way a standard one does.
       </p>
     </Card>
   )
@@ -293,9 +313,9 @@ function EgressTable({ data }: { data: DataArchitectureModel }) {
             <tr key={row.tool} id={`tool-${row.tool}`} className={`border-t border-surface-border ${LANDING}`}>
               <td className="px-4 py-2.5 font-medium text-primary">
                 {row.tool}
-                {row.gated_by_mode && (
+                {row.gated_by_grant && (
                   <div className="mt-1">
-                    <Pill tone="neutral">Moves with the mode</Pill>
+                    <Pill tone="neutral">Moves with this project's settings</Pill>
                   </div>
                 )}
               </td>

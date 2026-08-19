@@ -1,5 +1,5 @@
 # agents/egress.py
-"""What each tool reaches, and - for this project's mode - where that actually is.
+"""What each tool reaches, and - for what this project is granted - where that actually is.
 
 The question this exists to answer is an auditor's: **on this engagement, what leaves the
 building?** Nothing in the codebase declared it before, so the only way to answer was to read
@@ -14,18 +14,33 @@ Two layers, because "what it reaches" and "where that is" are different facts:
   service, any address the agent names, or nothing. One entry per tool
   class, keyed on the class name, because that is the only identity the graph can read out of
   `tool_map` without importing sixteen modules.
-- `resolve_egress(tool_name, llm_mode)` answers **where that is for this project**.
-  `ChromaQueryTool` reaches a vector store either way; on a standard project that store is
-  Chroma Cloud and on a sensitive one it is the Chroma on this host. One declaration, with the
-  mode dependency in the resolver.
+- `resolve_egress(tool_name, grants)` answers **where that is for this project**.
+  `ChromaQueryTool` reaches a vector store either way; on a project granted
+  `CLOUD_VECTOR_STORE` that store is Chroma Cloud and on one that is not it is the Chroma on
+  this host. One declaration, with the project dependency in the resolver.
 
   **The resolver derives that dependency; it does not restate it.** `_mode_key` used to answer
   `"sensitive" if llm_mode == "sensitive" else "standard"` - the equality test the routing code
   was making, typed out a second time by hand, with a docstring saying as much. So a mode added
   to `api/models.py` and wired into the routing would have been collapsed to "standard" here,
   and the auditor's page would have reported egress that was not happening or, worse, missed
-  egress that was. The resolver now asks `api/services/deployment_modes.py` which capabilities
-  the mode holds, per reach, exactly as the four routing sites do.
+  egress that was. The resolver reads the capabilities the project holds, per reach, exactly as
+  the routing sites do.
+
+  **It is handed the resolved capabilities, not a mode name and not a slug.** A mode is not the
+  last word on this codebase: `projects.force_local_inference` removes `HOSTED_INFERENCE` from
+  whatever the mode grants, so a `standard` engagement can run on local models while its
+  documents stay in Chroma Cloud, and `permits(mode, capability)` - the *declared* question -
+  answers "Anthropic" for exactly that project. Asking it here reported an egress that was not
+  happening, on the one page whose job is being right about where client material goes.
+
+  A `frozenset[Capability]` rather than the slug, deliberately, and this module's purity is the
+  argument: it opens no database and knows no project, which is why it can be asserted as a
+  table. A slug would put a synchronous, fail-closed, cached database read inside the
+  declaration - a second one, beside `api/services/chroma_client.py`'s - and would leave the
+  declared question reachable, since a caller holding a slug can always resolve it to a mode by
+  the short path. A set that has already been narrowed cannot be un-narrowed. Resolve it with
+  `api.services.deployment_modes.project_grants(slug)` at the caller.
 
 **What this module does not do is gate anything.** It declares. A declaration whose honest
 content is "reaches the public internet, on a sensitive engagement, with no mode check" is
@@ -64,9 +79,20 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from api.services.deployment_modes import Capability, permits
+from api.services.deployment_modes import Capability
 
 _TOOLS_DIR = Path(__file__).parent / "tools"
+
+# The two extremes of what a project can be granted, and the only two sets this module names
+# for itself. Neither is a mode: `frozenset(Capability)` is every capability there is, so a
+# caller that forgets to resolve a project over-reports rather than under-reports **by
+# construction** rather than because `standard` happens to be the fullest mode today.
+#
+# They exist so the "does anything move this?" derivation below can ask the question without
+# naming a mode. `is_gated_by_grant` used to compare `"standard"` against `"sensitive"`, which
+# read as a question about modes and answered one about grants.
+ALL_GRANTS: frozenset[Capability] = frozenset(Capability)
+NO_GRANTS: frozenset[Capability] = frozenset()
 
 
 class Reach(Enum):
@@ -231,9 +257,9 @@ _NOWHERE = Destination(label="nothing outside this deployment", leaves_deploymen
 _TAVILY = Destination(label="Tavily's search API", leaves_deployment=True)
 _ANY_ADDRESS = Destination(label="any address the agent names", leaves_deployment=True)
 
-# Which egress grant moves each reach. A reach absent from this table is not moved by the
-# project's mode at all, and that is the finding rather than an omission: Tavily and the open
-# web are reached in every mode, by tools that ask nothing before reaching them.
+# Which egress grant moves each reach. A reach absent from this table is not moved by anything
+# the project is granted, and that is the finding rather than an omission: Tavily and the open
+# web are reached on every project, by tools that ask nothing before reaching them.
 #
 # This is not a second copy of `EGRESS_GRANTS`. That table says what a *mode* is permitted to
 # do; this one says which permission a *reach* depends on. The mode-to-capability mapping
@@ -247,18 +273,23 @@ _REACH_GRANT: dict[Reach, Capability] = {
 }
 
 
-# `(reach, granted)` to a concrete destination, where `granted` is whether the project's mode
-# holds the capability `_REACH_GRANT` names for that reach. Both answers are written out for
-# every reach, including the three whose two entries are the same object - an implicit "and
-# otherwise the same" would make an ungated path look like an omission, and it is the opposite:
-# it is the finding.
+# `(reach, granted)` to a concrete destination, where `granted` is whether the project holds the
+# capability `_REACH_GRANT` names for that reach. Both answers are written out for every reach,
+# including the three whose two entries are the same object - an implicit "and otherwise the
+# same" would make an ungated path look like an omission, and it is the opposite: it is the
+# finding.
+#
+# **Keyed on the grant and not on the project**, which is what lets the two badges on the privacy
+# page be independent. A per-project boolean could not express a project running local models
+# over a cloud vector store - the shape `force_local_inference` produces today, and the mirror of
+# the deferred sovereign mode. Do not collapse it back.
 #
 # The same object, not two with differently-worded labels. A destination is a place, and whether
-# `llm_mode` moves it is derivable - `resolve_egress(t, "standard") == resolve_egress(t,
-# "sensitive")` is precisely "no mode check stands between this tool and that place". Wording the
-# ungated rows differently would have hidden that behind a string comparison, and it did: the
-# first draft of this table appended " - not gated on mode" to those labels and broke both the
-# derivation and the guarantee that standard is always the fuller answer.
+# a grant moves it is derivable - `_is_gated` compares the two columns, which is precisely "no
+# grant stands between this tool and that place". Wording the ungated rows differently would have
+# hidden that behind a string comparison, and it did: the first draft of this table appended
+# " - not gated on mode" to those labels and broke both the derivation and the guarantee that the
+# granted column is always the fuller answer.
 _DESTINATION: dict[tuple[Reach, bool], Destination] = {
     (Reach.NOTHING, True): _NOWHERE,
     (Reach.NOTHING, False): _NOWHERE,
@@ -282,14 +313,15 @@ _DESTINATION: dict[tuple[Reach, bool], Destination] = {
 }
 
 
-def _destination(reach: Reach, llm_mode: str) -> Destination:
-    """Where `reach` actually goes for a project in this mode.
+def _destination(reach: Reach, grants: frozenset[Capability]) -> Destination:
+    """Where `reach` actually goes for a project holding these grants.
 
     Per reach, not per project: a single "is this project the strict one" answer could not
-    express a mode that keeps its vector store on the premises while running hosted models,
-    which is exactly the shape the deferred sovereign mode has. Asking each reach for its own
-    grant means such a mode is described correctly on the privacy page by adding it to
-    `EGRESS_GRANTS` and nowhere else.
+    express a project that keeps its vector store on the premises while running hosted models,
+    which is exactly the shape the deferred sovereign mode has - and its mirror, a project
+    forcing local inference over Chroma Cloud, is a shape that exists today. Asking each reach
+    for its own grant means both are described correctly on the privacy page by resolving the
+    project's capabilities and nowhere else.
 
     A reach with no entry in `_REACH_GRANT` is treated as ungranted. That is the containing
     direction - the ungranted column is never the wider destination - and for the three reaches
@@ -297,47 +329,72 @@ def _destination(reach: Reach, llm_mode: str) -> Destination:
     while a new gated reach is being wired up.
     """
     grant = _REACH_GRANT.get(reach)
-    return _DESTINATION[(reach, grant is not None and permits(llm_mode, grant))]
+    return _DESTINATION[(reach, grant is not None and grant in grants)]
 
 
-def resolve_egress(tool_name: str, llm_mode: str) -> Destination:
-    """Where this tool reaches for a project in this mode.
+def resolve_egress(tool_name: str, grants: frozenset[Capability]) -> Destination:
+    """Where this tool reaches for a project holding these grants.
 
     Raises `KeyError` for a tool with no declaration rather than assuming it reaches nothing.
     `get_llm_for_agent` raises for an unregistered agent for the same reason: a default here
     would answer "nothing leaves" for a tool nobody has read yet, which is the one wrong answer
     that cannot be noticed.
 
-    An unrecognised *mode*, by contrast, does not raise - it resolves to the on-premises column
-    everywhere, which is what the routing code does with it too. The declaration must agree with
-    the routing even when the routing is refusing something.
+    An empty grant set, by contrast, does not raise - it resolves to the on-premises column
+    everywhere, which is what the routing code does with an undeclared mode too. The declaration
+    must agree with the routing even when the routing is refusing something.
     """
-    return _destination(TOOL_EGRESS[tool_name].reaches, llm_mode)
+    return _destination(TOOL_EGRESS[tool_name].reaches, grants)
 
 
-def is_gated_by_mode(tool_name: str) -> bool:
-    """Whether `llm_mode` moves where this tool reaches.
+def _is_gated(reach: Reach) -> bool:
+    """Whether what a project is granted moves where `reach` goes.
+
+    The two extremes, so the answer is "a grant decides this" rather than "these two particular
+    modes disagree about it". The distinction stopped being academic when
+    `force_local_inference` landed: on a `standard` project holding it, the *mode* moves the
+    model calls nowhere at all, and a badge derived from two mode names would have gone on
+    saying it did.
+    """
+    return _destination(reach, ALL_GRANTS) != _destination(reach, NO_GRANTS)
+
+
+def is_gated_by_grant(tool_name: str) -> bool:
+    """Whether what this project is granted moves where this tool reaches.
 
     Derived from the resolver rather than declared beside the tool, so a tool that is gated
     later cannot keep a stale `False` next to it. False for a tool that reaches nothing, which is
-    the honest answer - there is nothing there for a mode to move.
+    the honest answer - there is nothing there for a grant to move.
     """
-    return resolve_egress(tool_name, "standard") != resolve_egress(tool_name, "sensitive")
+    return _is_gated(TOOL_EGRESS[tool_name].reaches)
 
 
-def inference_destination(llm_mode: str) -> Destination:
+def inference_is_gated_by_grant() -> bool:
+    """The same question for the reach no tool carries, so the page need not ask it by hand.
+
+    It was two `inference_destination` calls in `api/services/data_architecture_service.py`,
+    naming two modes - the second copy of a derivation that belongs here beside the table it
+    reads.
+    """
+    return _is_gated(Reach.INFERENCE)
+
+
+def inference_destination(grants: frozenset[Capability]) -> Destination:
     """Where the agent's own model calls go. Not a tool, and held by every agent.
 
     Cross-checked against `get_llm_for_agent` in `tests/test_agent_egress.py`. It is no longer a
-    second statement of that module's rule - both now read `HOSTED_INFERENCE` out of
-    `EGRESS_GRANTS` - but the cross-check stays, because "the page and the router consult the
-    same table" and "the page says what the router does" are still two different claims.
+    second statement of that module's rule - both now resolve `HOSTED_INFERENCE` for the project
+    rather than for its mode - but the cross-check stays, because "the page and the router
+    consult the same table" and "the page says what the router does" are still two different
+    claims.
     """
-    return _destination(Reach.INFERENCE, llm_mode)
+    return _destination(Reach.INFERENCE, grants)
 
 
-def agent_destinations(tool_names: tuple[str, ...], llm_mode: str) -> tuple[Destination, ...]:
-    """Everywhere one agent's work can reach in this mode: its tools' destinations, plus its own.
+def agent_destinations(
+    tool_names: tuple[str, ...], grants: frozenset[Capability]
+) -> tuple[Destination, ...]:
+    """Everywhere one agent's work can reach on this project: its tools' destinations, plus its own.
 
     Sorted by label so the tuple is stable to compare and to display, and de-duplicated because
     four tools reaching the same place is one destination for an auditor.
@@ -347,9 +404,9 @@ def agent_destinations(tool_names: tuple[str, ...], llm_mode: str) -> tuple[Dest
     alone, and that is the honest set. Enforcement, when it comes, wants `resolve_egress` per
     tool rather than this union - a set cannot say which tool put a member in it.
     """
-    destinations = {inference_destination(llm_mode)}
+    destinations = {inference_destination(grants)}
     for tool_name in tool_names:
-        destination = resolve_egress(tool_name, llm_mode)
+        destination = resolve_egress(tool_name, grants)
         if destination != _NOWHERE:
             destinations.add(destination)
     return tuple(sorted(destinations, key=lambda d: d.label))
