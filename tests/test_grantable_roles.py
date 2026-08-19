@@ -1348,6 +1348,214 @@ async def test_the_platform_tier_may_still_change_the_mode(roles, sensitive_proj
     assert await _stored_llm_mode(SLUG) == "standard"
 
 
+# ── force_local_inference: the ninth protected field, and the only asymmetric one ──
+#
+# It **removes** HOSTED_INFERENCE from whatever the project's mode grants, so setting it can
+# only ever narrow. Clearing it widens - it moves an engagement's prompts back onto hosted
+# inference - and that is why it is platform-tier rather than a project_admin's to change.
+# The guard compares transitions, so both directions are refused; the widening one is the
+# reason, and the refusal says so.
+#
+# Every assertion below reads `projects.force_local_inference` rather than the response. A
+# 403 says the request was refused; it does not say nothing was written.
+
+
+async def _stored_force_local(slug: str) -> bool:
+    async with get_connection(slug) as conn:
+        return bool((await fetch_project(conn, slug=slug))["force_local_inference"])
+
+
+@pytest_asyncio.fixture
+async def forced_project(roles, client):
+    """Force this project's inference local, using the platform tier that is allowed to.
+
+    Returns the settings body as the *platform tier* sees it, which is what a project_admin
+    would then round-trip - so the tests below submit a real body rather than a hand-built
+    one.
+    """
+    settings = (await client.get(f"/projects/{SLUG}/settings")).json()
+    r = await client.patch(
+        f"/projects/{SLUG}/settings", json={**settings, "force_local_inference": True}
+    )
+    assert r.status_code == 200, r.text
+    assert await _stored_force_local(SLUG) is True, "precondition"
+    return (await client.get(f"/projects/{SLUG}/settings")).json()
+
+
+@pytest.mark.asyncio
+async def test_a_project_admin_cannot_move_their_engagement_back_onto_hosted_inference(
+    roles, forced_project
+):
+    """The direction that matters, and the reason the field is on the platform tier at all.
+
+    A `standard` engagement measured against local models is a decision somebody took about
+    where its prompts go; clearing the flag undoes that silently and the next crew run reaches
+    Anthropic. The refusal names the direction, because "may only be changed by an org admin"
+    alone does not tell a project_admin why the narrower-looking of the two settings is the
+    one they cannot touch.
+    """
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings",
+        json={**forced_project, "force_local_inference": False},
+    )
+
+    status, detail = _refusal(r)
+    assert status == 403, r.text
+    assert "force_local_inference" in detail, detail
+    assert "widens where this project's prompts may go" in detail, detail
+    assert await _stored_force_local(SLUG) is True, (
+        "the override was cleared anyway - the refusal is decoration"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_project_admin_cannot_set_the_override_either(roles):
+    """The narrowing direction, refused too, and deliberately so.
+
+    Setting the flag cannot widen anything - `project_grants` subtracts and never unions - so
+    a rule permitting it would not be unsafe. It is refused because `_PLATFORM_TIER_SETTINGS`
+    compares transitions and this field is a member: one rule, no direction branch, and a
+    project_admin who wants local inference asks for it. Asserted rather than left implicit,
+    because a later reader looking only at the test above would reasonably conclude the guard
+    was one-directional and "fix" it.
+    """
+    settings = (await roles["padmin"].get(f"/projects/{SLUG}/settings")).json()
+    assert settings["force_local_inference"] is False, "precondition"
+
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings", json={**settings, "force_local_inference": True}
+    )
+
+    status, detail = _refusal(r)
+    assert status == 403, r.text
+    assert "force_local_inference" in detail, detail
+    assert await _stored_force_local(SLUG) is False
+
+
+@pytest.mark.asyncio
+async def test_omitting_force_local_inference_does_not_silently_clear_the_override(
+    roles, forced_project
+):
+    """The defaults trap, which for this field is the likely way it would actually happen.
+
+    `ProjectSettings.force_local_inference` defaults to `False`, so a body that simply leaves
+    the key out asks for the widening change without ever naming one - and until this task
+    added the field, *every* body left it out. Refused as the change it is.
+    """
+    body = {k: v for k, v in forced_project.items() if k != "force_local_inference"}
+
+    r = await roles["padmin"].patch(f"/projects/{SLUG}/settings", json=body)
+
+    status, detail = _refusal(r)
+    assert status == 403, r.text
+    assert "force_local_inference" in detail, detail
+    assert await _stored_force_local(SLUG) is True
+
+
+@pytest.mark.asyncio
+async def test_the_guard_reads_the_force_local_inference_column_not_the_config_copy(roles):
+    """`projects.force_local_inference` is the authority; `config_json` carries a copy so the
+    Settings tab can round-trip it. The two really can drift - nothing wrote the copy before
+    this task, so *every* project whose column was set by hand has a config_json that does not
+    mention it - and a guard comparing against the copy would see no change and wave the
+    widening straight through.
+
+    Constructed rather than hoped for: the column says forced, the copy says nothing at all.
+    A caller submitting `false` is asking for the widening change.
+
+    This is also the test that holds up the one-place resolution. The guard carries no
+    override of its own; `get_project_settings` resolves the field from the column for both
+    the read door and the guard, so deleting that resolution fails here.
+    """
+    import json
+
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        config = json.loads(project["config_json"] or "{}")
+        assert "force_local_inference" not in config, (
+            "a fresh project's config_json now carries the flag - see this docstring"
+        )
+        await conn.execute(
+            "UPDATE projects SET force_local_inference=1 WHERE slug=?", (SLUG,)
+        )
+        await conn.commit()
+    assert await _stored_force_local(SLUG) is True
+
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings",
+        json={**config, "sector": "rail", "force_local_inference": False},
+    )
+
+    status, detail = _refusal(r)
+    assert status == 403, r.text
+    # Attributed, not merely counted: this body carries every other platform-tier field at
+    # its stored value, so a 403 naming something else would be a different refusal standing
+    # in for the one under test.
+    assert "force_local_inference" in detail, detail
+    assert await _stored_force_local(SLUG) is True, (
+        "a forced project was put back on hosted inference because the guard trusted a copy"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_read_door_answers_the_column_so_a_save_sends_the_truth_back(roles):
+    """What `GET /settings` answers is what the Settings tab sends back, so the read is half
+    of the door. Before this task the column was settable only by direct SQL, which is exactly
+    the state constructed here: column set, config_json silent.
+
+    If the read answered the model default, a project_admin's next save of an unrelated field
+    would be refused for a change nobody asked to make, and a platform-tier caller's would
+    clear the override without a word - the shape `StakeholderForm` carries a comment about.
+    """
+    async with get_connection(SLUG) as conn:
+        await conn.execute(
+            "UPDATE projects SET force_local_inference=1 WHERE slug=?", (SLUG,)
+        )
+        await conn.commit()
+
+    settings = (await roles["padmin"].get(f"/projects/{SLUG}/settings")).json()
+    assert settings["force_local_inference"] is True, (
+        "the read answered a copy that does not mention the flag, so the tab would send "
+        "false back and clear it"
+    )
+
+    r = await roles["padmin"].patch(f"/projects/{SLUG}/settings", json=settings)
+    assert r.status_code == 200, r.text
+    assert await _stored_force_local(SLUG) is True
+
+
+@pytest.mark.asyncio
+async def test_a_project_admin_may_still_configure_everything_else_on_a_forced_project(
+    roles, forced_project
+):
+    """The success side, confirming the transition comparison still holds with the new field
+    rather than assuming it: the tab round-trips the whole body, so every real save a
+    project_admin makes now carries `force_local_inference` at its current value. If this
+    refused, adding the field would have closed the door rather than narrowed it."""
+    r = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings",
+        json={**forced_project, "sector": "utilities"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sector"] == "utilities"
+    assert await _stored_force_local(SLUG) is True, "an allowed save cleared the override"
+
+
+@pytest.mark.asyncio
+async def test_the_platform_tier_may_still_clear_the_override(roles, forced_project, client):
+    """Without this the tests above are satisfied by a guard that refuses everybody, and the
+    flag would be unsettable rather than protected. Asserted on the column both ways, so a
+    door that accepted the request and wrote nothing is not a witness either."""
+    r = await client.patch(
+        f"/projects/{SLUG}/settings",
+        json={**forced_project, "force_local_inference": False},
+    )
+
+    assert r.status_code == 200, r.text
+    assert await _stored_force_local(SLUG) is False
+
+
 # ── The role flags are booleans, and anything else is refused ─────────────────
 
 

@@ -2097,17 +2097,28 @@ async def update_project_config(
     slug: str,
     project_id: int,
     llm_mode: str,
+    force_local_inference: bool,
     sector: str,
     config_json: str,
 ) -> None:
-    """The one write path for a project's llm_mode - every caller that can change it goes
-    through here, which is why the cache invalidation lives here rather than at any one
-    of them. Called with an unchanged llm_mode (e.g. a branding or config-key patch) still
-    clears the cache; that costs one extra read on the next resolution and is cheaper than
-    a caller forgetting to invalidate on the one call that actually flips the mode."""
+    """The one write path for a project's egress inputs - every caller that can change
+    `llm_mode` or `force_local_inference` goes through here, which is why the cache
+    invalidation lives here rather than at any one of them. Called with an unchanged
+    llm_mode (e.g. a branding or config-key patch) still clears the cache; that costs one
+    extra read on the next resolution and is cheaper than a caller forgetting to invalidate
+    on the one call that actually flips the mode.
+
+    `force_local_inference` is **required and not defaulted**, and the two callers that only
+    want to merge a config key must pass the project's current value. A default here would
+    be fail-open in the widening direction: a branding upload or an Agent Chat config patch
+    would quietly clear an override an administrator set, and put the engagement's prompts
+    back on hosted inference with nothing said. The same argument the LLM and mail seams
+    make for never defaulting a slug - a caller that lost the value is not a value of
+    `False`."""
     await conn.execute(
-        "UPDATE projects SET llm_mode=?, sector=?, config_json=? WHERE id=?",
-        (llm_mode, sector, config_json, project_id),
+        "UPDATE projects SET llm_mode=?, force_local_inference=?, sector=?, config_json=? "
+        "WHERE id=?",
+        (llm_mode, 1 if force_local_inference else 0, sector, config_json, project_id),
     )
     await conn.commit()
     from api.services.chroma_client import forget_project_mode

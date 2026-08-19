@@ -179,8 +179,17 @@ async def get_settings_endpoint(slug: str, payload: dict = Depends(require_any_a
 #                   `outbound_mail.send_project_mail`, where the mode is read. It covered
 #                   two of five paths when this line was written, and the three it missed
 #                   were the ones reaching participants rather than the operator.
+#   force_local_inference - the same reach as llm_mode, in one direction. Setting it only
+#                   *removes* HOSTED_INFERENCE from what the project's mode grants, so it can
+#                   never widen anything; clearing it puts the engagement's prompts back on
+#                   hosted inference, which is the platform tier's decision and not a
+#                   client-side project_admin's. The guard is symmetric because it compares
+#                   transitions, so the narrowing direction is refused too - a project_admin
+#                   who wants local inference asks for it, which costs a message and cannot
+#                   go wrong quietly.
 _PLATFORM_TIER_SETTINGS = (
     "llm_mode",
+    "force_local_inference",
     "dev_mode",
     "anthropic_fast_model",
     "anthropic_deep_model",
@@ -210,7 +219,13 @@ async def _refuse_platform_tier_setting_changes(slug: str, incoming: ProjectSett
     authority for it - `update_project_settings` says so, and deliberately keeps it out of
     config.yaml for the same reason. `config_json` carries a copy for the Settings tab to
     round-trip, and comparing a guard against a copy is how the copy's drift becomes a
-    bypass.
+    bypass. `force_local_inference` needs no second override *here* only because
+    `get_project_settings` already resolves it from `projects.force_local_inference` on the
+    way out - it has to, or `GET /settings` would answer `false` for a project whose column
+    is 1 and the tab would send that answer straight back. One resolution, serving the read
+    and the guard, rather than a copy of it here that no mutation could distinguish from a
+    working one. `test_the_guard_reads_the_force_local_inference_column_not_the_config_copy`
+    is what holds that dependency up; do not "tidy" the resolution out of the read.
 
     Loud, not silent. Dropping the field and returning 200 would leave the caller believing
     the project is in a mode it is not, which on `llm_mode` is the worst possible failure of
@@ -231,13 +246,22 @@ async def _refuse_platform_tier_setting_changes(slug: str, incoming: ProjectSett
     submitted = incoming.model_dump()
     changed = [f for f in _PLATFORM_TIER_SETTINGS if submitted.get(f) != current.get(f)]
     if changed:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"{', '.join(changed)} may only be changed by an org admin or above - "
-                "a project_admin configures the engagement, not how it is run"
-            ),
+        detail = (
+            f"{', '.join(changed)} may only be changed by an org admin or above - "
+            "a project_admin configures the engagement, not how it is run"
         )
+        if "force_local_inference" in changed:
+            # The field is already named by the join above, so this sentence gives the
+            # direction rather than repeating it - which also keeps the column name out of a
+            # prose literal, where the source walk in
+            # tests/test_local_inference_override.py cannot tell it from a hand-written
+            # query.
+            detail += (
+                ". Clearing the local-inference override widens where this project's prompts "
+                "may go - a project_admin may not move their own engagement back onto hosted "
+                "inference"
+            )
+        raise HTTPException(status_code=403, detail=detail)
 
 
 @router.patch("/{slug}/settings", response_model=ProjectSettings)
@@ -413,6 +437,9 @@ async def upload_branding_image(
             slug=slug,
             project_id=project["id"],
             llm_mode=project["llm_mode"],
+            # Carried through unchanged - a header image upload must not move this
+            # project's inference off or onto the premises.
+            force_local_inference=bool(project.get("force_local_inference") or 0),
             sector=project["sector"],
             config_json=json.dumps(config),
         )

@@ -17,6 +17,7 @@ Chroma client - and a shared resolver is exactly what lets one site's test cover
 CLAUDE.md records biting this project twice. So every site is asserted on what it *builds*: the
 Chroma client class, the `LLM` object's `base_url`, and the URL a real local server would receive.
 """
+import ast
 import json
 import sqlite3
 from pathlib import Path
@@ -524,3 +525,179 @@ def test_forgetting_a_project_drops_the_flag_as_well_as_the_mode(projects, tmp_p
     assert get_llm_for_agent("synthesis_analyst", "plain-standard").base_url == (
         "http://localhost:11999/v1"
     ), "forget_project_mode dropped the mode and left the flag stale"
+
+
+# --- Nothing reads the flag behind the resolver's back -----------------------------------------
+#
+# Every test above pins one site, and every one of them would go on passing while a new site
+# read the flag straight - deciding egress from a boolean rather than from a grant, and missing
+# the cache on the way. The two walks below are the mechanism; `project_forces_local_inference`'s
+# own docstring promises them by name.
+#
+# Same technique and same form as `tests/test_process_cache.py` and
+# `tests/test_platform_public_url_readers.py`, including the rule those learned the hard way:
+# **the exemption names what is allowed, not what is not.**
+
+_REPO_ROOT = Path(__file__).parent.parent
+_PRODUCTION = ("api/**/*.py", "agents/**/*.py", "scripts/**/*.py")
+
+# Defines the reader. It owns both the query and the cache.
+_READER = "api/services/chroma_client.py"
+
+# Owns the column: the CREATE TABLE, the migration, and the single UPDATE that writes it.
+_COLUMN_OWNER = "api/database.py"
+
+# Holds the one legitimate caller of the reader - not as a file, but as one function inside it.
+_RESOLVER_MODULE = "api/services/deployment_modes.py"
+_RESOLVER = "project_grants"
+
+_FLAG = "force_local_inference"
+_READER_NAME = "project_forces_local_inference"
+
+
+def _named_nodes(tree: ast.Module, name: str) -> list[ast.AST]:
+    """Every node naming `name`, however it is spelled - an import, a bare call, or an
+    attribute on a module object. Matched over the AST rather than the text so a docstring or
+    a comment may discuss the reader while code may not."""
+    found = []
+    for node in ast.walk(tree):
+        named = (
+            node.attr if isinstance(node, ast.Attribute)
+            else node.id if isinstance(node, ast.Name)
+            else node.name if isinstance(node, ast.alias)
+            else None
+        )
+        if named == name:
+            found.append(node)
+    return found
+
+
+def test_nothing_calls_the_flag_reader_outside_the_resolver():
+    """`project_forces_local_inference` is an input to `project_grants`, not a question a
+    routing site may ask.
+
+    A site calling it directly would decide egress from the flag alone - hosted or local
+    without ever consulting the mode - which is precisely the shape `deployment_modes` exists
+    to end, and it is the direction that fails *open*: a `sensitive` project whose flag is off
+    reads as "not forced" and would be routed hosted. The resolver's set difference is what
+    makes "no override can widen a mode" true by construction, and it is bypassed by any
+    caller that does not go through it.
+
+    **What the walk sees:** the name `project_forces_local_inference` used anywhere under
+    `api/`, `agents/` or `scripts/` - as an import, a call, or an attribute on a module - in
+    any file except the module that defines it, and in `deployment_modes.py` anywhere outside
+    the body of `project_grants`.
+
+    **What it cannot see**, which matters more than the list above. A call assembled at run
+    time (`getattr(chroma_client, "project_forces_" + suffix)`) is invisible to it. So is a
+    second implementation: nothing here stops a new site opening its own `sqlite3` connection
+    and issuing `SELECT force_local_inference` - that is the *other* walk below, and neither
+    catches a query built by string concatenation. And it says nothing about `tests/`, which
+    drive the reader directly on purpose. It catches the copy-paste, which is how a second
+    caller would actually arrive.
+
+    The exemption inside `deployment_modes.py` is one function rather than the whole file,
+    deliberately: a second resolver added beside `project_grants` - one that read the flag
+    without subtracting - is exactly the defect, and a file-level exemption would welcome it.
+    """
+    offenders: list[str] = []
+    for pattern in _PRODUCTION:
+        for path in sorted(_REPO_ROOT.glob(pattern)):
+            rel = path.relative_to(_REPO_ROOT).as_posix()
+            if rel == _READER:
+                continue
+            tree = ast.parse(path.read_text(), filename=str(path))
+            allowed: set[int] = set()
+            if rel == _RESOLVER_MODULE:
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and \
+                            node.name == _RESOLVER:
+                        allowed |= {id(n) for n in _named_nodes(node, _READER_NAME)}
+            for node in _named_nodes(tree, _READER_NAME):
+                if id(node) not in allowed:
+                    offenders.append(f"{rel}:{node.lineno}")
+
+    assert not offenders, (
+        f"{_READER_NAME} is named outside {_RESOLVER_MODULE}::{_RESOLVER} at {offenders}. A "
+        "site deciding where material goes asks "
+        "api.services.deployment_modes.project_permits(slug, capability), which resolves the "
+        "project's mode and this override together. Reading the flag on its own decides egress "
+        "from a boolean: a sensitive project with the flag off reads as 'not forced' and goes "
+        "hosted."
+    )
+
+
+def _docstring_constants(tree: ast.Module) -> set[int]:
+    """Node ids of every docstring in this module - module, class and function.
+
+    Derived rather than pattern-matched, so the walk below may forbid the column name in code
+    while this file, `deployment_modes.py` and `llm_client.py` go on explaining it in prose.
+    """
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, "body", [])
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            ids.add(id(body[0].value))
+    return ids
+
+
+def test_nothing_writes_sql_naming_the_column_outside_the_two_modules_that_own_it():
+    """The second way round the resolver, and the one the first walk cannot see: a site that
+    never calls the reader at all and simply selects the column itself.
+
+    That misses the cache as well as the narrowing - `project_forces_local_inference` is the
+    only thing `forget_project_mode` can invalidate, so a second query would read a value
+    nothing drops and a second *write* would leave the cached one pinned for the life of the
+    process. `api/database.py` owns the column (`CREATE TABLE`, the migration, and the single
+    `UPDATE` in `update_project_config`); `api/services/chroma_client.py` owns the read.
+
+    **What the walk sees:** a string constant, anywhere under `api/`, `agents/` or `scripts/`,
+    that contains `force_local_inference` alongside anything else - which every SQL statement
+    naming it does. The bare literal on its own is *allowed*, because that is the field name
+    as a dict key or a member of `_PLATFORM_TIER_SETTINGS`, and those read the row somebody
+    already fetched rather than issuing a query. Naming what is allowed rather than guessing
+    at what is not is the correction sp58's public_url walk needed: its first draft matched
+    substrings of rendered source and let `cfg = get_settings(); cfg.public_url` through.
+
+    **It caught a refusal sentence on the way in, and that was the right answer.** The 403
+    from `_refuse_platform_tier_setting_changes` names its fields by joining
+    `_PLATFORM_TIER_SETTINGS` - bare literals, allowed - so an operator still reads the column
+    name; what the sentence around it may not do is embed the name in prose, where nothing
+    distinguishes it from a hand-written query. Rewording cost one clause. Exempting the
+    router would have cost the walk its only view of the file that reads project rows.
+
+    **What it cannot see.** A statement assembled from parts - an f-string, a `" ".join`, a
+    name held in a constant - is invisible, and so is `getattr`/`row[3]` positional access to
+    a row selected with `SELECT *`. It also cannot see a *write* through a legitimately-shaped
+    call: `update_project_config` is the only writer by argument, not by mechanism, and the
+    thing that makes a second writer safe is the `forget_project_mode` call inside it rather
+    than anything asserted here. Docstrings are excluded structurally, so prose about the
+    column stays free.
+    """
+    offenders: list[str] = []
+    for pattern in _PRODUCTION:
+        for path in sorted(_REPO_ROOT.glob(pattern)):
+            rel = path.relative_to(_REPO_ROOT).as_posix()
+            if rel in (_READER, _COLUMN_OWNER):
+                continue
+            tree = ast.parse(path.read_text(), filename=str(path))
+            docstrings = _docstring_constants(tree)
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                    continue
+                if id(node) in docstrings or node.value == _FLAG:
+                    continue
+                if _FLAG in node.value:
+                    offenders.append(f"{rel}:{node.lineno}")
+
+    assert not offenders, (
+        f"{_FLAG} appears inside a longer string - almost certainly SQL - at {offenders}, "
+        f"outside {_COLUMN_OWNER} and {_READER}. Read it through "
+        "api.services.deployment_modes.project_permits(slug, capability) and write it through "
+        "api.database.update_project_config, which is the only writer that drops the cached "
+        "value. A second query reads a value forget_project_mode cannot invalidate; a second "
+        "write leaves the cached one pinned for the life of the process."
+    )

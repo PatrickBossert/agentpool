@@ -117,6 +117,10 @@ async def _patch_config(conn, project: dict, key: str, value) -> None:
         slug=project["slug"],
         project_id=project["id"],
         llm_mode=project["llm_mode"],
+        # Carried through unchanged: this merges one config key and must not touch the
+        # project's egress. `.get` because a projects table predating the migration has no
+        # such column, which is a table where the override cannot have been set.
+        force_local_inference=bool(project.get("force_local_inference") or 0),
         sector=project.get("sector") or "",
         config_json=json.dumps(config),
     )

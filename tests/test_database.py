@@ -205,10 +205,12 @@ async def test_update_project_config(db):
         slug="cfg-test",
         project_id=project["id"],
         llm_mode="sensitive",
+        force_local_inference=True,
         sector="energy",
         config_json='{"sector":"energy","llm_mode":"sensitive"}',
     )
     updated = await fetch_project(db, slug="cfg-test")
     assert updated["llm_mode"] == "sensitive"
+    assert updated["force_local_inference"] == 1
     assert updated["sector"] == "energy"
     assert updated["config_json"] == '{"sector":"energy","llm_mode":"sensitive"}'
