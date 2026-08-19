@@ -1173,6 +1173,36 @@ async def _stored_llm_mode(slug: str) -> str:
         return (await fetch_project(conn, slug=slug))["llm_mode"]
 
 
+def test_every_platform_tier_setting_names_a_field_that_exists():
+    """A member of `_PLATFORM_TIER_SETTINGS` that names no field on `ProjectSettings` is a
+    **silent no-op**, and it protects nothing.
+
+    The guard compares `submitted.get(f)` against `current.get(f)`. Both sides are
+    `ProjectSettings.model_dump()`, so for a name the model does not declare both answer
+    `None`, they compare equal, and the field is never in `changed` - no error, no warning, a
+    tuple member that reads as a protection and is not one. A rename or a typo on either side
+    disarms an entry with the whole suite green.
+
+    Confirmed behaviourally for the newest member - mis-spelling `force_local_inference` in
+    the tuple fails four tests - but that is one member's worth of coverage bought by one
+    member's worth of tests, and the other eight have no equivalent. This closes all nine at
+    once, and any tenth for free, which is the point: the per-member tests below say a
+    *particular* field is protected, and this says the list cannot silently stop naming
+    fields at all.
+
+    Pre-existing rather than introduced by this branch; found while adding the ninth member.
+    """
+    from api.models import ProjectSettings
+    from api.routers.projects import _PLATFORM_TIER_SETTINGS
+
+    unknown = [f for f in _PLATFORM_TIER_SETTINGS if f not in ProjectSettings.model_fields]
+    assert not unknown, (
+        f"{unknown} appear in _PLATFORM_TIER_SETTINGS but are not fields on ProjectSettings, "
+        "so the guard compares None against None and protects nothing. Either the field was "
+        "renamed on the model and not here, or the name is a typo - both are silent."
+    )
+
+
 @pytest_asyncio.fixture
 async def sensitive_project(roles, client):
     """Turn the test project sensitive, using the platform tier that is allowed to."""
@@ -1282,10 +1312,16 @@ async def test_a_field_missing_from_a_projects_stored_config_is_still_protected(
 
     A `field in current` guard skips any protected field the project's stored `config_json`
     does not carry. `create_project` writes `ProjectCreate.model_dump()`, and `ProjectCreate`
-    declares nine fields: of the eight in `_PLATFORM_TIER_SETTINGS`, only `llm_mode` is among
-    them. So on a project nobody has done a full settings save on yet - which is every project
-    up to its first save - such a guard would have protected the mode and nothing else, and a
-    project_admin could have repointed both model tiers and cleared `dev_mode` freely.
+    declares nine fields: of the **nine** in `_PLATFORM_TIER_SETTINGS`, only `llm_mode` is
+    among them. So on a project nobody has done a full settings save on yet - which is every
+    project up to its first save - such a guard would have protected the mode and nothing
+    else, and a project_admin could have repointed both model tiers, cleared `dev_mode`, and
+    (since sp59) cleared the local-inference override freely.
+
+    The two nines are a coincidence and not a relationship - `ProjectCreate`'s nine fields and
+    the tier list's nine members overlap in exactly one name. The count was eight until sp59
+    added `force_local_inference`, which is the sort of drift a sentence like this one
+    accumulates; the argument survives it, only the arithmetic moved.
 
     `ProjectSettings` defaults are applied to both sides instead, which is also what the
     caller sees: `GET /settings` returns through the same model, so the value being compared
@@ -1503,9 +1539,14 @@ async def test_the_read_door_answers_the_column_so_a_save_sends_the_truth_back(r
     of the door. Before this task the column was settable only by direct SQL, which is exactly
     the state constructed here: column set, config_json silent.
 
-    If the read answered the model default, a project_admin's next save of an unrelated field
-    would be refused for a change nobody asked to make, and a platform-tier caller's would
-    clear the override without a word - the shape `StakeholderForm` carries a comment about.
+    Both arms are driven, because they fail differently and the *platform-tier* one is the
+    worse of the two. Under the pre-fix read a `project_admin` posting the copy back sees no
+    transition either - `current` comes from the same copy - so the door answers **200 and
+    clears the column**, and a caller below the platform tier has silently widened their own
+    project's egress by saving something else. The platform-tier caller reaches the same
+    write with no guard in front of it at all. Driving only the padmin arm would leave the
+    consequence this test exists to state one caller away from the assertion, which is the
+    shape CLAUDE.md opens with.
     """
     async with get_connection(SLUG) as conn:
         await conn.execute(
@@ -1522,6 +1563,44 @@ async def test_the_read_door_answers_the_column_so_a_save_sends_the_truth_back(r
     r = await roles["padmin"].patch(f"/projects/{SLUG}/settings", json=settings)
     assert r.status_code == 200, r.text
     assert await _stored_force_local(SLUG) is True
+
+
+@pytest.mark.asyncio
+async def test_a_platform_tier_save_of_an_unrelated_field_keeps_the_override(roles):
+    """The other arm of the same consequence, and the worse one.
+
+    A `project_admin` reaching the pre-fix read is at least *refused* on some bodies. A
+    platform-tier caller has no guard in front of the write at all, so the copy going back is
+    the only thing standing between an unrelated save and a cleared column - which is the
+    sentence the report calls this branch's sharpest find, and it was pinned only by the
+    padmin arm above.
+
+    Same construction: column set by SQL, `config_json` silent - the state Task 1 left every
+    project in. `sector` is the change; the override must survive it.
+    """
+    import json
+
+    async with get_connection(SLUG) as conn:
+        project = await fetch_project(conn, slug=SLUG)
+        config = json.loads(project["config_json"] or "{}")
+        assert "force_local_inference" not in config, (
+            "a fresh project's config_json now carries the flag - see this docstring"
+        )
+        await conn.execute(
+            "UPDATE projects SET force_local_inference=1 WHERE slug=?", (SLUG,)
+        )
+        await conn.commit()
+
+    settings = (await roles["org_admin_a"].get(f"/projects/{SLUG}/settings")).json()
+    r = await roles["org_admin_a"].patch(
+        f"/projects/{SLUG}/settings", json={**settings, "sector": "offshore-wind"}
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sector"] == "offshore-wind", "the unrelated change was not applied"
+    assert await _stored_force_local(SLUG) is True, (
+        "a platform-tier save of an unrelated field cleared the override"
+    )
 
 
 @pytest.mark.asyncio
@@ -1542,21 +1621,73 @@ async def test_a_project_admin_may_still_configure_everything_else_on_a_forced_p
     assert await _stored_force_local(SLUG) is True, "an allowed save cleared the override"
 
 
+# ── A door that merges one config key carries three columns it does not change ──
+#
+# `update_project_config` takes `llm_mode`, `force_local_inference` and `sector` as arguments
+# and writes all three on every call, so its two *config-merging* callers - the branding
+# upload and Agent Chat's `_patch_config` - have to restate every one of them correctly while
+# caring about none of them. Six carry-throughs, and a sweep found five of the six unpinned:
+# mutating any of `llm_mode` or `sector` at either door, or `force_local_inference` at the
+# agent-chat door, left the whole backend suite green.
+#
+# `llm_mode` is the sharpest of the three. It is the secure-mode guarantee itself, so a
+# config-merging write that reset it would flip a sensitive project to standard - and the two
+# mutations that looked caught were caught by
+# `test_deployment_modes.py::test_every_mode_name_written_into_the_code_is_one_somebody_declared`
+# reacting to the literal `"standard"` the mutation planted, not by any test of the
+# carry-through. Re-run as `llm_mode=project["status"]`, which plants no mode name, both went
+# green.
+#
+# One test per door, each asserting all three columns, because the doors are reached by
+# different callers and a shared assertion helper is what lets one door's test answer for the
+# other's.
+
+
+async def _carried_columns(slug: str) -> tuple[str, bool, str]:
+    """The three columns `update_project_config` writes whether or not a caller meant to."""
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+    return (
+        project["llm_mode"],
+        bool(project["force_local_inference"]),
+        project["sector"],
+    )
+
+
+_CARRIED = ("sensitive", True, "maritime-defence")
+
+
+@pytest_asyncio.fixture
+async def three_column_project(roles, client):
+    """All three carried columns set to distinctive, non-default values.
+
+    Distinctive on purpose: `llm_mode` defaults to `"standard"` and the flag to `False`, so a
+    mutation writing either default would be indistinguishable from a correct carry-through on
+    a project left at its defaults - the test would pass whether the code was right or wrong.
+    `sector` gets a value no other test in this file uses for the same reason.
+    """
+    settings = (await client.get(f"/projects/{SLUG}/settings")).json()
+    r = await client.patch(f"/projects/{SLUG}/settings", json={
+        **settings,
+        "llm_mode": "sensitive",
+        "force_local_inference": True,
+        "sector": "maritime-defence",
+    })
+    assert r.status_code == 200, r.text
+    assert await _carried_columns(SLUG) == _CARRIED, "precondition"
+
+
 @pytest.mark.asyncio
-async def test_a_write_that_only_merges_a_config_key_carries_the_override_through(
-    roles, forced_project
+async def test_the_branding_upload_carries_every_column_it_does_not_change(
+    roles, three_column_project
 ):
-    """`update_project_config` is the one writer of the column, and two of its three callers
-    do not care about it at all: the branding upload and Agent Chat's `_patch_config` both
-    merge a single config key and pass the project's current egress inputs straight back.
+    """A header image upload merges one config key. It must move none of the three.
 
-    That argument is why `force_local_inference` is a **required** keyword argument there
-    rather than a defaulted one - a default would let either of those quietly write `0`, and
-    the failure would be an engagement's prompts moving to Anthropic on the strength of
-    somebody uploading a header image. Required means a caller that forgets does not compile;
-    this is the test that a caller which remembers passes the right thing.
-
-    Driven over HTTP through the branding door, which is the reachable one of the two.
+    This is also the argument for `force_local_inference` being a **required** keyword
+    argument on `update_project_config` rather than a defaulted one: a default would let this
+    door quietly write `0`, and an engagement's prompts would move to Anthropic on the
+    strength of somebody uploading a logo. Required means a caller that forgets does not
+    run; this is the test that a caller which remembers passes the right thing.
     """
     uploaded = await roles["padmin"].post(
         f"/projects/{SLUG}/branding/image",
@@ -1564,8 +1695,56 @@ async def test_a_write_that_only_merges_a_config_key_carries_the_override_throug
     )
     assert uploaded.status_code == 200, uploaded.text
 
-    assert await _stored_force_local(SLUG) is True, (
-        "a header image upload cleared the local-inference override"
+    assert await _carried_columns(SLUG) == _CARRIED, (
+        "a header image upload moved this project's mode, override or sector"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_agent_chat_link_door_carries_every_column_it_does_not_change(
+    roles, three_column_project
+):
+    """The twin, and it matters more than the branding one rather than less.
+
+    `_patch_config` is reached from `POST /{slug}/agent-chat/link` and `.../upload`, both
+    gated on `caller_may_approve` - so the caller who would trip it is an **approver**, a
+    client-side content role *below* the platform tier, doing something entirely routine.
+
+    Driven with a loopback URL. `chat_add_link` writes the config **before** it fetches the
+    page, so the write lands and `_assert_public_url` then refuses the preview on the
+    loopback check - 422, and no socket is ever opened. That ordering is load-bearing for
+    this test, which is why the link is asserted present below: if the fetch ever moved
+    ahead of the write, the 422 would arrive first, nothing would be written, and the three
+    assertions would pass vacuously. The write is confirmed to have happened before anything
+    is concluded from the columns surviving it.
+    """
+    r = await roles["approver"].post(
+        f"/projects/{SLUG}/agent-chat/link",
+        json={
+            "agent_name": "alex",
+            "url": "http://127.0.0.1/carry-through",
+            "label": "loopback",
+        },
+    )
+    # 422 twice over on this door - FastAPI's own request validation and the SSRF guard - and
+    # only the second one runs the handler. Attributed to the guard by its sentence, because a
+    # bare `== 422` passed here for the wrong reason on the first run: `agent_name` was
+    # missing from the body, the handler never ran, and the vacuity check below is the only
+    # thing that noticed.
+    assert r.status_code == 422, r.text
+    assert "private/internal" in str(r.json()["detail"]), r.text
+
+    import json
+
+    async with get_connection(SLUG) as conn:
+        config = json.loads((await fetch_project(conn, slug=SLUG))["config_json"] or "{}")
+    assert any(
+        lnk.get("url") == "http://127.0.0.1/carry-through"
+        for lnk in config.get("discovery_links", [])
+    ), "the config write never happened, so the columns below survived nothing"
+
+    assert await _carried_columns(SLUG) == _CARRIED, (
+        "an agent-chat link moved this project's mode, override or sector"
     )
 
 

@@ -556,15 +556,26 @@ _READER_NAME = "project_forces_local_inference"
 
 
 def _named_nodes(tree: ast.Module, name: str) -> list[ast.AST]:
-    """Every node naming `name`, however it is spelled - an import, a bare call, or an
-    attribute on a module object. Matched over the AST rather than the text so a docstring or
-    a comment may discuss the reader while code may not."""
+    """Every node naming `name`, however it is spelled - an import, a bare call, an attribute
+    on a module object, or a **string constant equal to it**.
+
+    Matched over the AST rather than the text so a docstring or a comment may discuss the
+    reader while code may not - except that a docstring saying the name *exactly*, and nothing
+    else, is not a thing anybody writes, so the constant arm costs no prose.
+
+    The constant arm is what closes `getattr(chroma_client, "project_forces_local_inference")`
+    in its plain-literal form, which is the more plausible copy-paste of the two `getattr`
+    spellings and which the other walk cannot see either: the reader's name contains
+    `forces_`, so `"force_local_inference"` is not a substring of it. Concatenated and
+    run-time-assembled forms remain invisible, and the test's docstring says so.
+    """
     found = []
     for node in ast.walk(tree):
         named = (
             node.attr if isinstance(node, ast.Attribute)
             else node.id if isinstance(node, ast.Name)
             else node.name if isinstance(node, ast.alias)
+            else node.value if isinstance(node, ast.Constant) and isinstance(node.value, str)
             else None
         )
         if named == name:
@@ -584,17 +595,25 @@ def test_nothing_calls_the_flag_reader_outside_the_resolver():
     caller that does not go through it.
 
     **What the walk sees:** the name `project_forces_local_inference` used anywhere under
-    `api/`, `agents/` or `scripts/` - as an import, a call, or an attribute on a module - in
-    any file except the module that defines it, and in `deployment_modes.py` anywhere outside
-    the body of `project_grants`.
+    `api/`, `agents/` or `scripts/` - as an import, a call, an attribute on a module, an
+    aliased import, or a **plain string literal equal to it** - in any file except the module
+    that defines it, and in `deployment_modes.py` anywhere outside the body of
+    `project_grants`.
+
+    The literal arm exists for `getattr(chroma_client, "project_forces_local_inference")`,
+    which walked through both walks before it was added: this one saw no `Name`, `Attribute`
+    or `alias`, and the SQL walk below could not see it either, because the reader's name
+    contains `forces_` and so does not contain `force_local_inference` as a substring. It is
+    the more plausible of the two `getattr` spellings, being a straight copy of the name.
 
     **What it cannot see**, which matters more than the list above. A call assembled at run
-    time (`getattr(chroma_client, "project_forces_" + suffix)`) is invisible to it. So is a
-    second implementation: nothing here stops a new site opening its own `sqlite3` connection
-    and issuing `SELECT force_local_inference` - that is the *other* walk below, and neither
-    catches a query built by string concatenation. And it says nothing about `tests/`, which
-    drive the reader directly on purpose. It catches the copy-paste, which is how a second
-    caller would actually arrive.
+    time - `getattr(chroma_client, "project_forces_" + suffix)`, or a name held in a variable
+    - is invisible to it, and adding the literal arm narrowed that gap without closing it. So
+    is a second implementation: nothing here stops a new site opening its own `sqlite3`
+    connection and issuing `SELECT force_local_inference` - that is the *other* walk below,
+    and neither catches a query built by string concatenation. And it says nothing about
+    `tests/`, which drive the reader directly on purpose. It catches the copy-paste, which is
+    how a second caller would actually arrive.
 
     The exemption inside `deployment_modes.py` is one function rather than the whole file,
     deliberately: a second resolver added beside `project_grants` - one that read the flag
