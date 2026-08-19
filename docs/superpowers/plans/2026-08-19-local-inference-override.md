@@ -102,6 +102,38 @@ def test_the_flag_can_never_grant_a_sensitive_project_hosted_inference():
 
 ---
 
+### Task 5: the documentation, added after Task 1's review
+
+**Files:** Modify `CLAUDE.md`, `.env.example` if the flag warrants a line; Test: none - documentation only, but the suites must not move.
+
+Added because Task 1's review found stale documentation with nowhere to land: the plan had no
+documentation step, which is a planning gap rather than an implementer's. It comes last because
+Task 3 rewrites the same paragraph from the other side.
+
+- [ ] **Step 1: `CLAUDE.md`'s "Egress is granted, never assumed" is now wrong in its detail.** It
+  says a site asks `permits(mode, capability)`. Three of the four ask `project_permits(slug, ...)`;
+  the fourth reports rather than routes. Amend in place rather than appending a contradiction.
+
+- [ ] **Step 2: State the flag and what it is not.** It narrows inference and **does not move the
+  vector store** - the whole reason it exists rather than a fourth mode. Say that a sensitive
+  project cannot be forced hosted, that this holds by set difference rather than by rule, and name
+  the test that pins it.
+
+- [ ] **Step 3: Record the trap the design turned on.** Reading the flag in the same query as
+  `llm_mode` looks obviously better and is wrong: a `projects` table without the column raises,
+  `project_llm_mode`'s fail-closed `except` catches it, and every such project reports
+  **sensitive** - a missing column indistinguishable from a security posture. Two reads whose
+  *failures mean different things* must not share a query.
+
+- [ ] **Step 4: The three-plus-one site count, and how it was established.** Two sweeps, not one:
+  `permits(`/`granted_to(` finds the sites that ask, and a second sweep for direct construction
+  (`CloudClient`, `HttpClient`, `AsyncAnthropic`, `LLM(`) finds a site that decides egress
+  **without** asking - which the first sweep cannot see. That technique is the reusable part.
+
+- [ ] **Step 5: Suites unchanged, both counts stated. Commit.**
+
+---
+
 ## Self-Review
 
 **Spec coverage:** narrowing-only flag (1), storage as a project column with the bump (1), synchronous cached resolver registered with `process_cache` (1), both routers moved (1), the impossible case asserted (1), platform-tier authority (2), source-walk guard (2), privacy page resolves rather than declares (3), the toggle (4).
