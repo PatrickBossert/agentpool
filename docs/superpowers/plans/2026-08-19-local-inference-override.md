@@ -70,6 +70,46 @@ def test_the_flag_can_never_grant_a_sensitive_project_hosted_inference():
 
 ---
 
+### Task 2b: A door that only wants to merge a config key should not restate the egress columns
+
+**Files:** Modify `api/database.py`, `api/routers/projects.py`, `api/routers/agent_chat.py`; Test: extend
+
+Added after Task 2's re-review. Not a refactor for tidiness - `update_project_config` writes
+`llm_mode`, `force_local_inference` and `sector` on every call, so a door that only wants to
+merge a config key must restate three values it does not care about. **Six carry-throughs
+existed and five could be mutated with the whole suite green**, and the sharpest was `llm_mode`:
+driven end to end, a wrong value there flips a sensitive project to `standard`, permits
+`CLOUD_VECTOR_STORE`, and builds a **CloudClient** - the corpus goes to Chroma Cloud with no
+error, triggerable by a `project_admin` uploading a logo or an approver adding a link, both of
+whom are 403'd from changing `llm_mode` through the front door.
+
+All six are correct and pinned by tests today. The signature is what makes the shape recur.
+
+- [ ] **Step 1: Add the narrow seam.** `merge_project_config(conn, *, project, key, value)` in
+  `api/database.py`, reading the three columns off the row it is given rather than taking them
+  from a caller. Both config-merging doors use it - the branding upload, which merges inline
+  today, and `_patch_config` in `agent_chat.py`, which already serves two doors.
+
+- [ ] **Step 2: The wide writer keeps exactly one production caller** - `PATCH /{slug}/settings`,
+  the door whose job *is* changing these columns. **Now** the cheap guard is worth writing,
+  because "exactly one production caller of the wide writer" is a precise invariant, where
+  "somebody added a caller" is a nag. Follow the form of the branch's existing source-walk
+  guards and state in the docstring what the walk cannot see.
+
+- [ ] **Step 3: The drift has already started - fix it rather than preserving it.** The two
+  carry-throughs spell `sector` differently (`project["sector"]` versus
+  `project.get("sector") or ""`), which is the first divergence of a rule expressed twice. The
+  seam ends the question.
+
+- [ ] **Step 4: Keep every test Task 2 added.** Six carry-through tests pin the current
+  behaviour; after the seam they should still pass, because the property they assert - a config
+  merge does not disturb the egress columns - is exactly what the seam guarantees structurally.
+  **If any needs changing to pass, that is a finding, not a chore**: say which and why.
+
+- [ ] **Step 5: Suites twice. Power-check the seam and the guard separately. Commit.**
+
+---
+
 ### Task 3: The privacy page reports what is resolved, not what is declared
 
 **Files:** Modify `api/services/data_architecture_service.py`, `agents/egress.py` if needed, `ui/src/pages/DataArchitecture.tsx`; Test: both suites
