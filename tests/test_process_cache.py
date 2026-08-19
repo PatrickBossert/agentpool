@@ -278,6 +278,12 @@ _MODULE_LEVEL_STATE = {
         REGISTERED, "the egress cache - proved by probe below and by the two tests at the "
         "top of this file, which drive it through get_chroma_client"
     ),
+    "api/services/chroma_client.py::_FORCE_LOCAL_CACHE": (
+        REGISTERED, "the other half of a project's egress inputs - proved by probe below. "
+        "Registered separately from _MODE_CACHE because it is a separate dict; both are "
+        "dropped together by forget_project_mode, which is the production invalidator and "
+        "is asserted in tests/test_local_inference_override.py"
+    ),
     "api/services/platform_settings.py::_CACHED_URL": (
         REGISTERED, "the platform public_url singleton - proved by probe below"
     ),
@@ -347,6 +353,15 @@ def _mode_cache_probe():
     )
 
 
+def _force_local_cache_probe():
+    from api.services import chroma_client
+    key = "process-cache-probe"
+    return (
+        lambda: chroma_client._FORCE_LOCAL_CACHE.__setitem__(key, True),
+        lambda: key in chroma_client._FORCE_LOCAL_CACHE,
+    )
+
+
 def _platform_url_probe():
     from api.services import platform_settings as ps
     def fill():
@@ -365,6 +380,7 @@ def _transcript_log_probe():
 
 _REGISTERED_PROBES = {
     "api/services/chroma_client.py::_MODE_CACHE": _mode_cache_probe,
+    "api/services/chroma_client.py::_FORCE_LOCAL_CACHE": _force_local_cache_probe,
     "api/services/platform_settings.py::_CACHED_URL": _platform_url_probe,
     "api/routers/interviews.py::_transcript_email_log": _transcript_log_probe,
 }
@@ -645,7 +661,7 @@ def test_no_other_test_file_reaches_into_a_private_cache():
     may not - `conftest.reset_process_caches` explains itself by naming both, and that is
     prose about a mechanism rather than a reach into it.
     """
-    private = {"_MODE_CACHE", "_CACHED_URL", "_transcript_email_log"}
+    private = {"_MODE_CACHE", "_FORCE_LOCAL_CACHE", "_CACHED_URL", "_transcript_email_log"}
     exempt = {"test_process_cache.py", "test_process_cache_teardown.py"}
     offenders: list[str] = []
     for path in sorted((_REPO_ROOT / "tests").rglob("*.py")):

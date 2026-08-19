@@ -19,7 +19,7 @@ from crewai import LLM
 from api.config import get_settings
 from api.models import ProjectSettings
 from api.services.chroma_client import project_llm_mode
-from api.services.deployment_modes import Capability, permits
+from api.services.deployment_modes import Capability, project_permits
 from agents.anthropic_compat import ensure_conversation_ends_with_user
 
 ensure_conversation_ends_with_user()
@@ -139,12 +139,18 @@ def _local_model_unavailable(
     path, and the two sentences were identical copies. They both said "is sensitive", which
     stopped being true the moment the branch was taken by *any* mode that is not granted
     hosted inference - so the sentence names the mode it actually read.
+
+    It no longer says the mode is the *reason*, because it need not be: a `standard` project
+    set to force local inference takes this branch with a mode that grants hosted inference
+    outright. The mode is still named, since it is the first thing an operator will check, and
+    the second cause is named beside it rather than left for them to discover.
     """
     return LocalModelUnavailable(
-        f"Project '{slug}' is in '{mode}' mode, which is not permitted to send prompts to a "
-        f"hosted model, and it has no local model for the '{tier}' tier. "
+        f"Project '{slug}' is not permitted to send prompts to a hosted model, and it has no "
+        f"local model for the '{tier}' tier. Its mode is '{mode}', and a project may also be "
+        f"set to force local inference. "
         f"Set {model_key} and {url_key} in the project's settings. "
-        f"A hosted model is never substituted for a project whose mode does not grant one."
+        f"A hosted model is never substituted for a project that is not permitted one."
     )
 
 
@@ -156,17 +162,24 @@ def get_llm_for_agent(agent_name: str, slug: str) -> LLM:
     visual_illustrator's missing entry.
     """
     tier = AGENT_TIER[agent_name]
-    mode = project_llm_mode(slug)
     settings = get_settings()
 
     # A grant, not an equality test: a mode nobody has declared gets the local branch, so a
-    # forgotten mode cannot quietly put a client's prompts on a hosted provider.
-    if not permits(mode, Capability.HOSTED_INFERENCE):
+    # forgotten mode cannot quietly put a client's prompts on a hosted provider. Asked of the
+    # *project* rather than of its mode, so that a project narrowing what its mode grants -
+    # today `force_local_inference` - is honoured here and not only in the mode table.
+    #
+    # This is the one thing that decides where an agent's prompts go. `project_llm_mode` is
+    # still imported, but it is read inside the refusal below and only to word it: two seams
+    # that both look like the routing decision is how a stub lands on the wrong one.
+    if not project_permits(slug, Capability.HOSTED_INFERENCE):
         model_key, url_key = _TIER_SETTINGS[(tier, "sensitive")]
         model = _project_setting(slug, model_key, _setting_default(model_key))
         base_url = _project_setting(slug, url_key, _setting_default(url_key))
         if not model or not base_url:
-            raise _local_model_unavailable(slug, mode, tier, model_key, url_key)
+            raise _local_model_unavailable(
+                slug, project_llm_mode(slug), tier, model_key, url_key
+            )
         return LLM(
             model=f"openai/{model}",
             base_url=base_url,

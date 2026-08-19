@@ -75,6 +75,11 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             slug        TEXT UNIQUE NOT NULL,
             llm_mode    TEXT NOT NULL DEFAULT 'standard',
+            -- Removes HOSTED_INFERENCE from whatever llm_mode grants; it can never add a
+            -- capability. A column beside llm_mode rather than a config_json key, for the
+            -- reason _refuse_platform_tier_setting_changes reads projects.llm_mode rather
+            -- than its config_json copy: a fact that decides egress is not kept in a copy.
+            force_local_inference INTEGER NOT NULL DEFAULT 0,
             sector      TEXT,
             config_json TEXT,
             status      TEXT NOT NULL DEFAULT 'created',
@@ -211,6 +216,26 @@ async def init_db(conn: aiosqlite.Connection) -> None:
     """)
     # executescript issues an implicit COMMIT before running; the call below
     # is a safety flush but the schema is already committed.
+    await conn.commit()
+
+
+async def _migrate_projects_force_local_inference(conn: aiosqlite.Connection) -> None:
+    """Add the per-project override that forces local inference.
+
+    Every existing project resolves exactly as it did before, because 0 is not a default
+    standing in for "unknown": until this branch there was no way to ask for the override, so
+    "nobody asked for it" is a statement of fact about every row that predates the column.
+
+    The flag *removes* HOSTED_INFERENCE from what the project's mode grants and can never add
+    a capability, so the safe direction and the truthful one are the same here - but they
+    would not be for a reversed flag, which is why the design refused one.
+    """
+    async with conn.execute("PRAGMA table_info(projects)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "force_local_inference" not in cols:
+        await conn.execute(
+            "ALTER TABLE projects ADD COLUMN force_local_inference INTEGER NOT NULL DEFAULT 0"
+        )
     await conn.commit()
 
 
@@ -1674,8 +1699,10 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_knowledge_tier_ingestion.py::test_a_database_at_the_previous_version_gains_the_
 # knowledge_tier_column, which fails on 11 and passes on 12; and
 # tests/test_knowledge_collection_is_recorded.py::test_a_database_at_the_previous_version_
-# gains_the_collection_column, which fails on 12 and passes on 13.
-_SCHEMA_VERSION = 13
+# gains_the_collection_column, which fails on 12 and passes on 13; and
+# tests/test_local_inference_override.py::test_a_database_at_the_previous_version_gains_the_
+# force_local_inference_column, which fails on 13 and passes on 14.
+_SCHEMA_VERSION = 14
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1758,6 +1785,7 @@ async def get_connection(slug: str):
         current_version = (await cur.fetchone())[0]
         if current_version < _SCHEMA_VERSION:
             await init_db(conn)
+            await _migrate_projects_force_local_inference(conn)
             await _migrate_orchestration_runs_error(conn)
             await _migrate_agent_outputs_is_current(conn)
             await _migrate_agent_outputs_revision_notes(conn)

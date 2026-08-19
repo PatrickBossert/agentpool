@@ -180,10 +180,18 @@ def test_the_inference_destination_agrees_with_the_llm_the_registry_builds(monke
     `"fallback"` is in the parametrisation on purpose. `ProjectSettings` accepts it as a third
     `llm_mode` and neither `get_llm_for_agent` nor `get_chroma_client` mentions it, so it routes
     hosted - and this asserts that against the routing rather than against my reading of it.
+
+    The mode is stubbed **on `api.services.chroma_client`**, which is where the routing decision
+    looks it up: `get_llm_for_agent` asks `deployment_modes.project_permits(slug, ...)`, and that
+    resolver reads the project's mode and its `force_local_inference` override from
+    `chroma_client`. Stubbed on `agents.model_registry` instead - as it was until the override
+    landed - the stub reached only the wording of a refusal, and every mode routed hosted while
+    this test went on asserting against a name that no longer decided anything.
     """
     import agents.model_registry as model_registry
+    from api.services import chroma_client
 
-    monkeypatch.setattr(model_registry, "project_llm_mode", lambda slug: mode)
+    monkeypatch.setattr(chroma_client, "project_llm_mode", lambda slug: mode)
     hosted = inference_destination(mode).leaves_deployment
 
     for agent_id in model_registry.AGENT_TIER:

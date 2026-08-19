@@ -26,7 +26,7 @@ import logging
 import httpx
 
 from api.services.chroma_client import project_llm_mode
-from api.services.deployment_modes import Capability, permits
+from api.services.deployment_modes import Capability, project_permits
 from api.services.http_clients import get_anthropic_client, get_local_llm_client
 
 _log = logging.getLogger(__name__)
@@ -82,14 +82,21 @@ def resolve_model(slug: str, tier: str) -> tuple[str, str | None]:
         _TIER_SETTINGS,
     )
 
-    mode = project_llm_mode(slug)
     # The same grant the crew path asks, so the two cannot answer differently for one project.
-    if not permits(mode, Capability.HOSTED_INFERENCE):
+    # That sentence is why this site moved to `project_permits` alongside the crew path rather
+    # than being left on `permits`: a project forcing local inference would otherwise send its
+    # crew prompts to Ollama and its elaboration press and Agent Chat to Anthropic, which is
+    # both a false measurement and the two answering differently for one project.
+    # `project_llm_mode` is read inside the refusal and only to word it - see the note beside
+    # the same branch in agents/model_registry.py.
+    if not project_permits(slug, Capability.HOSTED_INFERENCE):
         model_key, url_key = _TIER_SETTINGS[(tier, "sensitive")]
         model = _project_setting(slug, model_key, _setting_default(model_key))
         base_url = _project_setting(slug, url_key, _setting_default(url_key))
         if not model or not base_url:
-            raise _local_model_unavailable(slug, mode, tier, model_key, url_key)
+            raise _local_model_unavailable(
+                slug, project_llm_mode(slug), tier, model_key, url_key
+            )
         return model, base_url
 
     model_key, _ = _TIER_SETTINGS[(tier, "standard")]
