@@ -42,7 +42,13 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from api.config import get_settings
+# `python scripts/backfill_project_registry.py` puts `scripts/` on `sys.path`, not the
+# repository root, so `api` is not importable and the script dies on its first import. Every
+# script in here is a one-off an operator runs by path, from the root, on a live deployment -
+# and one that fails on invocation is one an operator works around rather than runs.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from api.config import get_settings  # noqa: E402 - must follow the bootstrap above
 
 
 class BackfillRefused(Exception):
