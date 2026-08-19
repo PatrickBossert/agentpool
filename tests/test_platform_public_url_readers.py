@@ -20,8 +20,14 @@ isolation tests/test_platform_settings.py's fixture applies. `system.db` is shar
 persists between test runs (CLAUDE.md's own warning about `/tmp/agentpool_test`), so a
 test that stored a real value into it would poison every later test in the session and
 every run after this one.
+
+**The five tests are worth nothing as a guarantee about the seam**, which is what the
+source walk at the foot of this file is for: every one of them keeps passing while a sixth
+builder reads `get_settings().public_url` straight.
 """
+import ast
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -32,6 +38,7 @@ from api.config import get_settings
 from api.services import platform_settings as ps
 
 STORED_URL = "https://reader-test.example"
+_REPO_ROOT = Path(__file__).parent.parent
 
 
 @pytest.fixture(autouse=True)
@@ -305,3 +312,98 @@ async def test_a_trailing_slash_from_the_environment_does_not_double_up(
     text = body_text(sent[0])
     assert "https://env-with-slash.example/dashboard/login" in text
     assert "https://env-with-slash.example//dashboard/login" not in text
+
+
+# ── The sixth reader, which the five tests above cannot see ──────────────────
+
+# The accessor owns the only two legitimate reads (`_resolve`'s environment argument, once
+# for the accessor and once for the door's report). Exempt as a file rather than as two
+# line numbers, which would rot on the next edit to it.
+_ACCESSOR = "api/services/platform_settings.py"
+
+# The settings door, where `req.public_url` is the PATCH body's own field and not the
+# settings singleton at all. Narrowed rather than exempted - see the test's docstring.
+_DOOR = "api/routers/platform_settings.py"
+
+
+def _request_body_params(tree: ast.Module) -> set[str]:
+    """Parameter names in this module annotated with one of its own Pydantic models.
+
+    Derived rather than listed, so the exemption survives a rename of `req` or of
+    `PlatformSettingsPatch` and still refuses to widen: an *unannotated* base, or one
+    annotated with anything else, is not a request body and is not excused. A first draft
+    asked instead whether the base "looked like settings" by rendering it and matching
+    substrings, and `cfg = get_settings()` walked straight through it - the exemption has to
+    name what is allowed, not guess at what is not.
+    """
+    models = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+        and any(ast.unparse(base) == "BaseModel" for base in node.bases)
+    }
+    params: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        args = node.args
+        for arg in args.posonlyargs + args.args + args.kwonlyargs:
+            if arg.annotation is not None and ast.unparse(arg.annotation) in models:
+                params.add(arg.arg)
+    return params
+
+
+def test_nothing_reads_public_url_off_settings_outside_the_accessor():
+    """A sixth link builder must not be able to reach `get_settings().public_url` directly.
+
+    The five readers above are pinned one by one, and every one of them would go on passing
+    while a new sixth read the environment variable straight past the whole feature. Worse
+    than a missed opportunity, because a direct reader now collects two defects rather than
+    one: Task 3 *deleted* the four original readers' own `.rstrip('/')` calls, on the correct
+    reasoning that the accessor owns normalisation, so a fresh `get_settings().public_url`
+    both ignores the stored setting and re-opens the trailing-slash bug that put
+    `https://host//dashboard/login` in the welcome email - the bug the last test above pins.
+
+    Same technique as `tests/test_process_cache.py`'s two source walks and
+    `test_only_the_seam_posts_to_resend`, and for the same reason: a docstring saying "use
+    the accessor" is prose, not a mechanism.
+
+    **What the walk sees:** an attribute named `public_url` on any base, anywhere under
+    `api/`, `agents/` and `scripts/` - so `get_settings().public_url`, `settings.public_url`
+    and `s = get_settings(); s.public_url` are all caught wherever a link is built.
+
+    **What it cannot see**, and this matters more than the list of what it can. A read
+    spelled some other way - `getattr(get_settings(), "public_url")`, or a lookup into
+    `get_settings().model_dump()` - is invisible to it, as is a host hard-coded into an
+    f-string or assembled from parts, and as is anything added inside the two modules
+    exempted below. It is the same class of limit `outbound_mail.py`'s `api.resend.com`
+    guard carries and documents: it catches the copy-paste, which is how all five original
+    readers came to exist, and not a determined rewrite.
+
+    The door is narrowed rather than exempted. Skipping the file wholesale would leave the
+    one router whose subject *is* this setting as the single place a direct read could be
+    added unseen, so exactly one base is excused there - a parameter annotated with one of
+    the module's own Pydantic models, which `req.public_url` is and
+    `get_settings().public_url` is not.
+    """
+    offenders: list[str] = []
+    for pattern in ("api/**/*.py", "agents/**/*.py", "scripts/**/*.py"):
+        for path in sorted(_REPO_ROOT.glob(pattern)):
+            rel = path.relative_to(_REPO_ROOT).as_posix()
+            if rel == _ACCESSOR:
+                continue
+            tree = ast.parse(path.read_text(), filename=str(path))
+            bodies = _request_body_params(tree) if rel == _DOOR else set()
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Attribute) and node.attr == "public_url"):
+                    continue
+                if isinstance(node.value, ast.Name) and node.value.id in bodies:
+                    continue
+                offenders.append(f"{rel}:{node.lineno}")
+    assert not offenders, (
+        f"public_url is read off settings outside the accessor at {offenders}. Call "
+        "api.services.platform_settings.platform_public_url() instead: reading the setting "
+        "directly ignores whatever a sysadmin stored through /admin/platform-settings, and "
+        "the accessor is also the only place the trailing slash is stripped, so a direct "
+        "read puts a double slash back into every link this deployment sends."
+    )
