@@ -152,10 +152,17 @@ def project_grants(slug: str) -> frozenset[Capability]:
     impossible - so "a sensitive project can never be forced hosted" holds by construction
     rather than by a check, whatever overrides are added later.
 
-    Synchronous, because both routing sites are. `chroma_client` is imported inside the
+    Synchronous, because every routing site is. `chroma_client` is imported inside the
     function, not at module scope: it imports this module for `Capability`, so a module-level
     import here is a cycle. This module stays the declaration and gains no import-time
     dependency on a module that opens databases.
+
+    **That import is load-bearing for a second reason**, so do not hoist it for tidiness: being
+    inside the function is what makes the lookup happen on the `chroma_client` *module object*
+    at call time, and therefore what lets a test stub the mode where the decision reads it.
+    `tests/test_agent_egress.py` stubs exactly there, having previously stubbed
+    `agents.model_registry`'s own binding - which this change turned into the wording of a
+    refusal rather than a route. Hoisting would move the seam back under the stub's feet.
     """
     from api.services.chroma_client import project_forces_local_inference, project_llm_mode
 

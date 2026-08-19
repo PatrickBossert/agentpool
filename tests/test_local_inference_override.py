@@ -23,6 +23,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from anthropic import AsyncAnthropic
 
 from api.config import get_settings
 from api.services.deployment_modes import (
@@ -34,8 +35,10 @@ from api.services.deployment_modes import (
 )
 
 # The shape `init_db` creates, written out here because these tests need to set the flag before
-# any door for setting it exists (that door is Task 2's). Kept in step with api/database.py by
-# test_a_fresh_database_carries_the_column_with_the_override_off below, which builds a real one.
+# any door for setting it exists (that door is Task 2's). Held in step with api/database.py by
+# test_the_hand_built_projects_fixture_matches_the_table_init_db_creates below, which builds
+# both and compares them - the earlier claim pointed at a test that opened a database through
+# `get_connection` and so could not have seen the two disagree at all.
 _PROJECTS_TABLE = (
     "CREATE TABLE projects ("
     " id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -150,9 +153,17 @@ def test_no_project_ever_resolves_to_more_than_its_mode_declares(projects, tmp_p
 def test_a_forced_project_still_gets_the_cloud_chroma_client(projects, monkeypatch):
     """Asserted on which client class was constructed, because that is this site's whole output.
 
-    This is the failing test before the change in the direction that matters least and hurts
-    most: the flag must not reach `CLOUD_VECTOR_STORE`. A resolver that narrowed both
-    capabilities would leave an operator's documents unreachable with nothing said.
+    **This was never red.** Before the change `get_chroma_client` asked
+    `permits(project_llm_mode(slug), CLOUD_VECTOR_STORE)`, which answers `CloudClient` for a
+    `standard` project whatever the flag says - and reverting the site to that today fails
+    nothing. Site 1's move to `project_permits` is uniformity, not a live guarantee, exactly as
+    `get_chroma_client`'s own docstring says.
+
+    What the test guards is the *property*, which is worth guarding whether or not any current
+    line implements it: the flag must not reach `CLOUD_VECTOR_STORE`. Make an override that
+    removes it and this fails - which is the next override's mistake, not this one's. A
+    resolver that narrowed both capabilities would leave an operator's documents unreachable
+    with nothing said.
     """
     import chromadb
     built = []
@@ -217,10 +228,17 @@ def test_a_forced_project_with_no_local_model_is_refused_rather_than_sent_hosted
     with pytest.raises(LocalModelUnavailable) as excinfo:
         get_llm_for_agent("synthesis_analyst", "forced-bare")
     message = str(excinfo.value)
-    assert "standard" in message, message
-    assert "is in 'standard' mode, which is not permitted" not in message, (
-        f"the refusal blames the mode for a decision the mode did not make: {message}"
+
+    # The sentence's own distinguishing clauses, not the absence of the old one: `not in` is
+    # satisfied by any rewording at all, including a wrong one, so it asserts nothing about
+    # what an operator is actually told.
+    assert "is not permitted to send prompts to a hosted model" in message, message
+    assert "no local model for the 'deep' tier" in message, message
+    assert "a project may also be set to force local inference" in message, (
+        f"the refusal names only the mode, which for this project is 'standard' and grants "
+        f"hosted inference outright - so an operator is left with no cause that fits: {message}"
     )
+    assert "Its mode is 'standard'" in message, message
 
 
 # --- Site 3: the non-crew completion --------------------------------------------------------------
@@ -240,6 +258,13 @@ async def test_a_forced_project_sends_a_non_crew_completion_to_the_local_model(
     A fake transport rather than a fake client class, for the reason CLAUDE.md gives: swapping
     the client cannot see that the Anthropic SDK POSTs `/v1/messages` while every local server
     here serves `/chat/completions`.
+
+    **Both** clients get a transport, and the hosted one is not decoration. With only the local
+    client faked, a regression here does not fail an assertion - it makes a real request to
+    `api.anthropic.com` (401 on the suite's `"test-key"`, with the body transmitted), so a red
+    suite talks to a provider and the failure says "AuthenticationError" rather than naming
+    where the prompt went. One recording handler serves both, so the assertion below fails
+    with the wrong URL in its message.
     """
     from api.services import http_clients
     from api.services.llm_client import project_completion
@@ -248,22 +273,36 @@ async def test_a_forced_project_sends_a_non_crew_completion_to_the_local_model(
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(
-            200, json={"choices": [{"message": {"role": "assistant", "content": "local"}}]}
-        )
+        if request.url.path.endswith("/chat/completions"):
+            return httpx.Response(
+                200, json={"choices": [{"message": {"role": "assistant", "content": "local"}}]}
+            )
+        return httpx.Response(200, json={
+            "id": "msg_probe", "type": "message", "role": "assistant",
+            "model": "claude-haiku-4-5-20251001",
+            "content": [{"type": "text", "text": "hosted"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        })
 
+    transport = httpx.MockTransport(handler)
     monkeypatch.setattr(
-        http_clients, "_local_llm_client",
-        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_clients, "_local_llm_client", httpx.AsyncClient(transport=transport),
+    )
+    monkeypatch.setattr(
+        http_clients, "_anthropic_client",
+        AsyncAnthropic(api_key="not-a-real-key", http_client=httpx.AsyncClient(transport=transport)),
     )
 
     reply = await project_completion(
         "forced-standard", "fast", [{"role": "user", "content": "who sees this?"}]
     )
 
+    assert len(requests) == 1, "the completion never reached a model at all"
+    assert str(requests[0].url) == "http://localhost:11999/v1/chat/completions", (
+        f"a forced project's non-crew completion went to {requests[0].url}"
+    )
     assert reply == "local"
-    assert len(requests) == 1, "the completion never reached the local model"
-    assert str(requests[0].url) == "http://localhost:11999/v1/chat/completions"
     assert json.loads(requests[0].content)["model"] == "gemma4:fast"
 
 
@@ -279,10 +318,82 @@ def test_the_hosted_completion_branch_is_still_reachable(projects):
 # --- The column, and the migration that adds it ---------------------------------------------------
 
 
+async def _projects_columns_from_init_db(path) -> dict:
+    """The `projects` table `init_db` alone builds, with no migration having run.
+
+    `init_db` takes a bare connection and is called that way by `tests/test_database.py`, so
+    this is the code's own path and not a shape invented for the test.
+    """
+    import aiosqlite
+    from api.database import init_db
+
+    async with aiosqlite.connect(path) as conn:
+        conn.row_factory = aiosqlite.Row
+        await init_db(conn)
+        async with conn.execute("PRAGMA table_info(projects)") as cur:
+            return {row["name"]: dict(row) async for row in cur}
+
+
+@pytest.mark.asyncio
+async def test_init_db_alone_creates_the_column_with_the_override_off(tmp_path):
+    """`CREATE TABLE` must carry the column, asserted **with the migration block never run**.
+
+    CLAUDE.md's step 2 for adding a column - "add the column to the `CREATE TABLE` statement so
+    fresh DBs include it" - has no assertion anywhere if it is checked through
+    `get_connection`, because `init_db` runs at index 0 of that block and the migration at
+    index 1: the migration supplies the column on a fresh database too, so deleting it from
+    `CREATE TABLE` leaves the whole suite green. This test's predecessor did exactly that and
+    claimed in its docstring to be checking the opposite. `init_db` is therefore driven on its
+    own, which is the only shape in which the two can disagree.
+
+    They must not, and the reason is not tidiness: `CREATE TABLE` is what a database created
+    *after* a future squash of the migration block would carry, and it is the shape
+    `_PROJECTS_TABLE` above is written against.
+    """
+    columns = await _projects_columns_from_init_db(tmp_path / "init-db-only.db")
+    assert "force_local_inference" in columns, (
+        "init_db's CREATE TABLE has lost the column. Nothing else would notice - the migration "
+        "supplies it on every database opened through get_connection - so this is the only "
+        "place the two can be held to agreeing"
+    )
+    assert columns["force_local_inference"]["dflt_value"] == "0"
+    assert columns["force_local_inference"]["notnull"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_hand_built_projects_fixture_matches_the_table_init_db_creates(tmp_path):
+    """`_PROJECTS_TABLE` claims to be the shape `init_db` creates - held to it, not trusted.
+
+    These tests set the flag by direct SQL because its door is Task 2's, so the fixture is a
+    second declaration of a table that already has one. A second declaration free to drift is
+    the defect `tests/test_deployment_modes.py` guards against across the language boundary and
+    that `agents/identity.py` is held to against its TypeScript copy; the same rule applies to
+    a copy one file away in the same language.
+
+    Column *names* rather than full definitions, deliberately: a differing default or collation
+    on `created_at` would fail this for no reason a reader could act on, while a missing or
+    extra column is exactly the drift that would make a fixture stop resembling production.
+    """
+    real = await _projects_columns_from_init_db(tmp_path / "init-db-only.db")
+
+    conn = sqlite3.connect(tmp_path / "fixture-shape.db")
+    conn.execute(_PROJECTS_TABLE)
+    fixture = {row[1] for row in conn.execute("PRAGMA table_info(projects)")}
+    conn.close()
+
+    assert fixture == set(real), (
+        f"_PROJECTS_TABLE and api/database.py's projects table disagree: {fixture ^ set(real)}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_a_fresh_database_carries_the_column_with_the_override_off(tmp_path, monkeypatch):
-    """`CREATE TABLE` and the migration must agree, or a fresh deployment and an upgraded one
-    disagree about a column that decides where prompts go."""
+    """The end-to-end fresh path, which is what a new deployment actually gets.
+
+    It cannot distinguish `CREATE TABLE` from the migration - the test above is what does that -
+    but it is still worth its line: it says the two together produce the column, which is the
+    fact `create_project` depends on.
+    """
     import api.database as db
 
     get_settings.cache_clear()

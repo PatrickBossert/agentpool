@@ -46,12 +46,19 @@ class LocalModelError(RuntimeError):
     """
 
 
-class UnsupportedForSensitiveProject(RuntimeError):
-    """The call carries content the local path cannot express.
+class UnsupportedByLocalModelPath(RuntimeError):
+    """The call carries content the local chat-completions path cannot express.
 
     Refused rather than downgraded. Dropping the unsupported part and sending the rest would
-    silently answer a different question; sending it hosted would be the leak this whole
-    branch exists to prevent.
+    silently answer a different question; sending it hosted would be the egress the project's
+    resolved grants refuse.
+
+    **Renamed from `UnsupportedForSensitiveProject`**, which became a misnomer the moment a
+    project could be narrowed without being sensitive: a `standard` project with
+    `force_local_inference` set reaches this by the same branch. The name says what is true in
+    every case - the local path cannot carry this block - rather than naming one of the reasons
+    a project might be on it. Six references across two files, no test and no UI naming it, so
+    the rename was cheaper than leaving a name that has to be explained.
     """
 
 
@@ -115,7 +122,7 @@ def _to_openai_messages(
     """Anthropic-shaped messages -> OpenAI chat messages.
 
     Text-only. A content block this cannot carry raises rather than being dropped: see
-    UnsupportedForSensitiveProject.
+    UnsupportedByLocalModelPath.
     """
     out: list[dict] = []
     if system:
@@ -128,11 +135,13 @@ def _to_openai_messages(
         text_parts = []
         for block in content:
             if block.get("type") != "text":
-                raise UnsupportedForSensitiveProject(
+                raise UnsupportedByLocalModelPath(
                     f"This message carries a '{block.get('type')}' content block, which the "
-                    f"local model path cannot send. A sensitive project never falls back to "
-                    f"a hosted model, so this request is refused rather than sent. Remove the "
-                    f"attachment, or run this on a standard project."
+                    f"local model path cannot send. This project is not permitted to send "
+                    f"prompts to a hosted model, so the request is refused rather than sent "
+                    f"there or silently stripped of the attachment. Remove the attachment, or "
+                    f"ask an administrator to change the project setting that keeps its "
+                    f"inference local."
                 )
             text_parts.append(block["text"])
         out.append({"role": message["role"], "content": "\n\n".join(text_parts)})
@@ -153,7 +162,7 @@ async def project_completion(
     translated for the local path. Returns the reply text.
 
     Raises LocalModelUnavailable (nothing configured), LocalModelError (configured but the
-    call failed), or UnsupportedForSensitiveProject (content the local path cannot carry).
+    call failed), or UnsupportedByLocalModelPath (content the local path cannot carry).
     Callers on a request path are expected to turn these into a clear refusal; nothing here
     ever answers a sensitive project from a hosted model.
     """

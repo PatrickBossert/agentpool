@@ -26,7 +26,7 @@ from api.services.agent_chat_service import AGENT_PERSONAS, run_agent_chat
 from api.services.authority_service import caller_may_approve, require_writable_tier
 from api.services.ingest_service import SUPPORTED_SUFFIXES, IngestError, ingest_document
 from api.services.knowledge_tiers import DEFAULT_UPLOAD_TIER
-from api.services.llm_client import LocalModelError, UnsupportedForSensitiveProject
+from api.services.llm_client import LocalModelError, UnsupportedByLocalModelPath
 
 router = APIRouter(prefix="/projects", tags=["agent-chat"])
 
@@ -197,7 +197,7 @@ async def agent_chat(
             injected_links=[lnk.model_dump() for lnk in body.injected_links],
             crew_agents=body.crew_agents or None,
         )
-    except (LocalModelUnavailable, LocalModelError, UnsupportedForSensitiveProject) as exc:
+    except (LocalModelUnavailable, LocalModelError, UnsupportedByLocalModelPath) as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     if outcome is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")

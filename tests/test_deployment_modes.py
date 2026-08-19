@@ -155,8 +155,12 @@ _MODE_LITERALS: dict[str, tuple[int, str]] = {
     "agents/model_registry.py::<module>": (
         4, "_TIER_SETTINGS' second key, which means local/hosted rather than a mode - see M2"
     ),
-    "agents/model_registry.py::get_llm_for_agent": (2, "indexes _TIER_SETTINGS, having asked permits()"),
-    "api/services/llm_client.py::resolve_model": (2, "indexes _TIER_SETTINGS, having asked permits()"),
+    "agents/model_registry.py::get_llm_for_agent": (
+        2, "indexes _TIER_SETTINGS, having asked project_permits()"
+    ),
+    "api/services/llm_client.py::resolve_model": (
+        2, "indexes _TIER_SETTINGS, having asked project_permits()"
+    ),
     "agents/egress.py::is_gated_by_mode": (
         2, "asks the resolver the same question in two modes - a question, not a rule"
     ),
@@ -235,9 +239,11 @@ def test_every_mode_name_written_into_the_code_is_one_somebody_declared():
     new = {k: v for k, v in found.items() if k not in expected}
     assert not new, (
         "a mode name is written into code that has not declared why: "
-        f"{new}. Egress is decided by asking api.services.deployment_modes.permits() for a "
-        "capability, never by testing a mode's name. If this literal genuinely decides no "
-        "egress, add it to _MODE_LITERALS with its reason."
+        f"{new}. Egress is decided by asking api.services.deployment_modes for a capability, "
+        "never by testing a mode's name: project_permits(slug, capability) if the site routes "
+        "material - which resolves the project's own narrowing as well as its mode - or "
+        "permits(mode, capability) if it genuinely asks only what the mode declares. If this "
+        "literal decides no egress at all, add it to _MODE_LITERALS with its reason."
     )
     gone = {k: v for k, v in expected.items() if k not in found}
     assert not gone, (
