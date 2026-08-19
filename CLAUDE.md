@@ -137,6 +137,11 @@ incorrect:
 - An approval guard tested for one of its two conditions.
 - `_fetch_change_requests` tested; the injection using it not.
 - A radio tested as *rendered*; not as *sent*.
+- The "why is this greyed out" note asserted per `<section>`, so any section already holding
+  one satisfied every control in it and a newly gated field shipped with no explanation and a
+  green suite. **An assertion scoped to a container is not an assertion about its contents** -
+  the note now carries `data-explains` naming its fields, so the association is something the
+  DOM holds rather than something proximity implies.
 - `check_write` refused an undeclared key; the test asserted `"test_state" in write_result`,
   and the *refusal message quotes the key it is refusing*. The write half of a round-trip
   test could not fail. Assert the success prefix, not a substring drawn from your own call.
@@ -199,6 +204,28 @@ fails unsafe, not loudly: `get_connection` only re-runs the migration block when
 `PRAGMA user_version < _SCHEMA_VERSION`, so a new migration added without bumping the version
 silently never runs on any database that has already been opened once at the current version -
 no error, no warning, just rows that stay unmigrated forever on every existing deployment.
+
+**A writer that requires columns its callers do not care about will be got wrong by one of
+them.** `update_project_config` wrote `llm_mode`, `force_local_inference` and `sector` on every
+call, all three mandatory, so a door that only wanted to merge one `config_json` key still had
+to restate three columns it had no opinion about. Six such carry-through lines existed, every
+one correct on the way in, and **five could be mutated with the whole backend suite green** -
+so no test named the defect and no reviewer would have. Driven end to end, a wrong `llm_mode`
+there flips a `sensitive` project to `standard` *immediately* (the writer drops the mode cache
+on its way out), which permits `CLOUD_VECTOR_STORE`, which builds a `CloudClient`: the
+engagement's corpus to Chroma Cloud, no error, no warning, triggerable by a `project_admin`
+uploading a **logo** or an approver adding a link - both of whom are 403'd from changing
+`llm_mode` through the front door.
+
+The fix is a seam, not a walk. `merge_project_config` takes the **row** and reads the three
+columns off it, so there is nothing for a caller to get wrong and nothing for two callers to
+spell differently - which had already begun, two sites reading `sector` as `project["sector"]`
+and `project.get("sector") or ""`. A source walk can only ever see a *new* caller, never a
+wrong value; it is kept alongside purely to stop the seam being bypassed
+(`test_the_wide_project_config_writer_has_exactly_one_production_caller`, set equality over the
+two declared callers, so a vanished caller fails as loudly as a new one). Generally: when
+a signature obliges every caller to restate state it does not own, the signature is the defect.
+Give the writer the row, or narrow it.
 
 ---
 
@@ -388,10 +415,10 @@ They now split across the two administration rows:
 tier of necessity: there is no slug yet to scope a per-project role by.
 
 **`PATCH /{slug}/settings` is on the widened list but is not uniformly widened.** Its body
-carries `llm_mode`, `dev_mode` and the six per-agent model ids alongside the sector and the
-stakeholder groups, and those eight decide *where this engagement's data is sent* rather than
-how it is configured. `_PLATFORM_TIER_SETTINGS` in `projects.py` holds them, and a
-`project_admin` who changes any of them is refused with a 403 naming the fields. Flipping a
+carries `llm_mode`, `force_local_inference`, `dev_mode` and the six per-agent model ids
+alongside the sector and the stakeholder groups, and those nine decide *where this
+engagement's data is sent* rather than how it is configured. `_PLATFORM_TIER_SETTINGS` in
+`projects.py` holds them, and a `project_admin` who changes any of them is refused with a 403 naming the fields. Flipping a
 sensitive project to `standard` would send every crew agent including PAM, the elaboration
 press and Agent Chat to hosted Anthropic and stop keeping documents off Chroma Cloud - the
 guarantee this file states as absolute - and repointing `local_deep_url` reaches the same
@@ -403,9 +430,10 @@ and refusing the key would refuse every save a project_admin makes. It reads `ll
 `projects.llm_mode` rather than the `config_json` copy, because a guard compared against a
 copy is bypassed the moment the copy drifts. And it normalises both sides through
 `ProjectSettings` rather than skipping fields absent from the stored config: `create_project`
-writes only `ProjectCreate`'s nine fields, so on every project before its first full settings
-save, seven of the eight protected fields are simply not in `config_json` and a
-`field in current` test would have protected the mode alone.
+writes only `ProjectCreate`'s eight fields, of which `llm_mode` is the sole overlap, so on
+every project before its first full settings save, eight of the nine protected fields are
+simply not in `config_json` and a `field in current` test would have protected the mode alone.
+Both counts move independently - recount rather than adjusting one to match the other.
 
 The second group is not a judgement that those seventeen should stay - sp44 widened exactly
 what its brief named, which is the set the design calls "configures the project and its
@@ -808,6 +836,18 @@ whole state, so without that an org_admin editing a job title on somebody who al
 to make - and sending `false` instead would silently revoke it. Neither flag is declared on
 `StakeholderIn`/`StakeholderPatch`, so a write that does not mention them does not touch them.
 
+**Every control on `Settings.tsx` spreads `fieldProps(field)`**, which sets `disabled` from
+`/my-permissions`' `platform_tier_settings` *and* sets `id` to the field name. The two arrive
+together deliberately: `tests/test_settings_platform_tier_wiring.py` walks the page for any
+control that renders without asking, and the whole-set test finds controls by
+`getElementById(field)`, so a tenth field whose control used some other id would gate correctly
+and pass **vacuously**. A field rendered as several controls passes a `variant` - the gate is
+still the field's. Two consequences when writing tests here: a locked control needs a
+`PlatformTierNote` whose `data-explains` names it, and a test that *edits* one of these fields
+must `await waitFor(() => expect(control).toBeEnabled())` first - `fireEvent.change` on a
+disabled input is silently ignored, which had already made one existing test racy rather than
+failing.
+
 `describeError` lives in `ui/src/utils/describeError.ts` and is imported, not copied. Four
 identical copies had grown before sp44 moved it - `StakeholderForm`, `ScriptReviewPanel`,
 `MayaOutputExtra` and `InterviewTemplateEditor`. It exists because several of this API's
@@ -846,8 +886,12 @@ PAM has no exemption. It is `deep` and routes to the local model for a sensitive
 every other agent, because it holds `SQLiteStateTool` and can read project outputs - an
 always-hosted orchestrator was a hole in the secure-mode guarantee rather than a quality choice.
 
-A sensitive project with no local model configured for a tier raises `LocalModelUnavailable`
-rather than falling back. There is no hosted fallback and no borrowing of the other tier.
+A project not granted `HOSTED_INFERENCE` - `sensitive`, or any mode with
+`force_local_inference` set - and with no local model configured for a tier raises
+`LocalModelUnavailable` rather than falling back. There is no hosted fallback and no borrowing
+of the other tier. `get_llm_for_agent` asks `project_permits`, never a mode name; the mode is
+read only to word that refusal, and two seams that both look like the routing decision is how a
+test stub lands on the wrong one.
 
 Maya owes one interview script per active value chain activity. Coverage is checked on every
 `interview_scripts` write by `api/services/coverage_validation.py` and reported as
@@ -940,6 +984,10 @@ two - a later tidy-up that flattens them re-opens whichever one it merges away.
 
 **What is covered, precisely:**
 
+Read the column as "routed by what the *project* resolves to" - `llm_mode` narrowed by
+`force_local_inference`, which is the same answer wherever the two agree and the only one any
+of these paths asks for.
+
 | Path | Routed by `llm_mode`? |
 |------|----------------------|
 | Every crew agent, including PAM | Yes - `get_llm_for_agent` |
@@ -958,12 +1006,16 @@ the fix if that ever stops being acceptable - not a default slug.
 ### Egress is granted, never assumed
 
 `api/services/deployment_modes.py` declares, per mode, what it may do with a project's
-material - `CLOUD_VECTOR_STORE`, `HOSTED_INFERENCE` - and a site asks `permits(mode,
-capability)` rather than comparing a mode name. Four sites used to ask `mode == "sensitive"`
-and hand everything else the off-premises branch: the Chroma client, the crew LLM, the
-non-crew completion, and the auditor-facing privacy view. That shape is safe for exactly as
-long as nobody adds a mode, `api/models.py` already declared three, and a fourth - sovereign:
-hosted models, a local vector store - is planned. **A mode absent from the table is granted
+material - `CLOUD_VECTOR_STORE`, `HOSTED_INFERENCE` - and a site asks whether the capability is
+granted rather than comparing a mode name. **Two questions, not one:** `permits(mode,
+capability)` is what the mode *declares*; `project_permits(slug, capability)` is what the
+project *resolves to*, and a site about to move material asks the second. Three routing sites
+ask it - the Chroma client, the crew LLM, the non-crew completion - and the fourth, the
+auditor-facing privacy view, reports rather than routes, so it asks `project_grants(slug)` and
+shows the difference from `granted_to(mode)` as what the project has narrowed. All four used to
+ask `mode == "sensitive"` and hand everything else the off-premises branch. That shape is safe
+for exactly as long as nobody adds a mode, `api/models.py` already declared three, and a
+fourth - sovereign: hosted models, a local vector store - is planned. **A mode absent from the table is granted
 nothing**, warned about rather than raised (matching `project_llm_mode`'s neighbouring
 fail-closed-and-warn), so the cost of forgetting is a project that will not run rather than a
 project that leaks. The miss falls towards containment; the fallback this branch deleted -
@@ -977,6 +1029,33 @@ declaration is held equal to those and to five frontend option lists - including
 extracted structurally rather than by searching for the three known names, because a
 name-keyed search catches a *missing* mode and is blind to an *extra* one, which is the
 dangerous direction: selectable by a user, unknown to the server.
+
+**A mode is not the last word.** `projects.force_local_inference` removes `HOSTED_INFERENCE`
+from whatever the mode grants, so a `standard` engagement can measure local model performance
+while its documents stay in Chroma Cloud. **It does not move the vector store** - that is the
+whole reason it exists rather than a fourth mode, since `sensitive` moves inference and vectors
+together and only one of them was wanted. Narrowing is **set difference**, and there is
+deliberately no table anywhere of capabilities an override *adds*, so "a sensitive project can
+never be forced hosted" holds by construction rather than by a rule, whatever overrides land
+later. Asserted rather than trusted, over every declared mode against both states of the flag:
+`tests/test_local_inference_override.py::test_no_project_ever_resolves_to_more_than_its_mode_declares`.
+A union in `project_grants` is the single line a reviewer should refuse.
+
+**Two reads whose failures mean different things must not share a query.** Reading the flag in
+the same `SELECT` as `llm_mode` looks obviously better and is wrong: on a `projects` table
+without the column the statement raises, `project_llm_mode`'s fail-closed `except` catches it,
+and every such project reports **sensitive** - a missing column indistinguishable from a
+security posture. Both reads fail closed and they fail closed in *different directions* (the
+mode to `sensitive`, the flag to `True`, each the narrowing answer for its own question); only
+separate queries can say so. The flag asks `PRAGMA table_info` rather than matching sqlite's
+"no such column" message, so the absent-column branch is structural.
+
+**Enumerating the egress sites takes two sweeps, not one.** `permits(` / `project_permits(` /
+`granted_to(` finds every site that *asks*, and is blind by construction to a site that decides
+egress **without** asking. A second sweep for direct construction - `CloudClient`, `HttpClient`,
+`AsyncAnthropic`, `LLM(` - is what finds those, and it is why `skills_service.py` is *known* to
+be the one remaining hosted inference path rather than assumed to be. Sweep for the question and
+for the mechanism, or the answer only ever describes the sites already doing it properly.
 
 **The boundary, stated honestly.** For those two declared capabilities, nothing leaves a
 `sensitive` deployment. Five paths still send material off-premises with **no mode question
@@ -1000,6 +1079,15 @@ evidence about the guard. What the inventory still cannot see is a name assemble
 and **a mode name written before it is declared**, since it keys on the table's own values -
 so it is weakest during exactly the change it protects. **When sovereign lands, add it to
 `EGRESS_GRANTS` first, then wire the routing.**
+
+**A guard's reach must be established, not described** - three times now a guard's own account
+of its coverage has been wrong. The inventory above, sp58's `public_url` walk, and sp59's
+Settings-page walk, whose opener list omitted `<button` so neither `role="switch"` toggle was
+examined - **including the control that task had just added** - while the comment beside the
+list said they were. The repair is the same each time: make the walk a **pure function over
+given text**, and drive one of each kind through it *both gated and ungated*, since a one-sided
+test passes against a walk that reports everything and against one that reports nothing. A walk
+that can only run against the real source is a walk that cannot be asked what it saw.
 
 ---
 
@@ -1318,8 +1406,10 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   than the rest of the block.
 - `agents/model_registry.py`'s `_TIER_SETTINGS` has a second key spelled `"standard"` /
   `"sensitive"` but **meaning** hosted / local, and any non-granted mode now reads its
-  `"sensitive"` row. Rename it to local/hosted **before** sovereign lands, or a
-  hosted-inference-with-local-vectors mode will read `("deep", "standard")` and the key becomes
+  `"sensitive"` row - as, since sp59, does a `standard` project with `force_local_inference`
+  set, so the key is already lying about a live case. Rename it to local/hosted **before**
+  sovereign lands, or a hosted-inference-with-local-vectors mode will read
+  `("deep", "standard")` and the key becomes
   actively misleading rather than merely dated. Not renamed already because `llm_client.py`
   imports the table.
 

@@ -1448,16 +1448,18 @@ async def test_a_field_missing_from_a_projects_stored_config_is_still_protected(
 
     A `field in current` guard skips any protected field the project's stored `config_json`
     does not carry. `create_project` writes `ProjectCreate.model_dump()`, and `ProjectCreate`
-    declares nine fields: of the **nine** in `_PLATFORM_TIER_SETTINGS`, only `llm_mode` is
+    declares eight fields: of the **nine** in `_PLATFORM_TIER_SETTINGS`, only `llm_mode` is
     among them. So on a project nobody has done a full settings save on yet - which is every
     project up to its first save - such a guard would have protected the mode and nothing
     else, and a project_admin could have repointed both model tiers, cleared `dev_mode`, and
     (since sp59) cleared the local-inference override freely.
 
-    The two nines are a coincidence and not a relationship - `ProjectCreate`'s nine fields and
-    the tier list's nine members overlap in exactly one name. The count was eight until sp59
-    added `force_local_inference`, which is the sort of drift a sentence like this one
-    accumulates; the argument survives it, only the arithmetic moved.
+    The two counts are unrelated and both drift: `ProjectCreate` declares eight fields, the
+    tier list holds nine (eight until sp59 added `force_local_inference`), and they overlap in
+    exactly one name. Recount both rather than adjusting one to match the other - this
+    sentence was CLAUDE.md's, copied here, and both said "nine fields" of a model that has
+    never had nine. `len(ProjectCreate.model_fields)` settles it. The argument survives any
+    arithmetic; only the numbers move.
 
     `ProjectSettings` defaults are applied to both sides instead, which is also what the
     caller sees: `GET /settings` returns through the same model, so the value being compared

@@ -167,7 +167,18 @@ async def get_settings_endpoint(slug: str, payload: dict = Depends(require_any_a
 
 # Fields on ProjectSettings that a `project_admin` may not change, however freely they may
 # change the rest of the engagement's configuration. Not a tidiness list - each one hands a
-# client-side actor something the platform tier is meant to hold:
+# client-side actor something the platform tier is meant to hold.
+#
+# **It keeps its underscore and is imported anyway.** `api/routers/permissions.py` serves it to
+# the Settings page, and `tests/test_settings_platform_tier_wiring.py` holds the frontend
+# fixture equal to it, so it is consumed outside this module by design; the underscore says
+# only that this router owns it, not that a reader should keep their distance. Import it rather
+# than restating the names. The one thing that must never happen
+# is a *second* definition appearing because the underscore made somebody hesitate - the page
+# would then gate a list nothing serves, which is the exact drift the wiring test exists to
+# catch and could no longer see.
+#
+# Why each field is here:
 #
 #   llm_mode      - the secure-mode guarantee itself. CLAUDE.md states it as absolute: every
 #                   crew agent including PAM routes locally on a sensitive project, a missing
