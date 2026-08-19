@@ -24,6 +24,14 @@ import type { AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } fr
 import { apiClient } from '../api/client'
 import Settings from '../pages/Settings'
 import type { MyPermissions, ProjectSettings } from '../types'
+// The nine names live in one file and are held equal to the server's tuple by
+// tests/test_settings_platform_tier_fixture.py - see that fixture's header for why they
+// are no longer typed out here.
+import {
+  PLATFORM_TIER_FIELDS_WITH_A_CONTROL,
+  PLATFORM_TIER_FIELDS_WITH_NO_CONTROL,
+  PLATFORM_TIER_SETTINGS,
+} from './fixtures/platformTierSettings'
 
 const SLUG = 'acme-rail'
 
@@ -40,6 +48,7 @@ const BASE_SETTINGS: ProjectSettings = {
   discovery_brief: '',
   discovery_links: [],
   discovery_document_ids: [],
+  dev_mode: true,
   interview_method: 'none',
   // Deliberately not DEFAULTS' 8. This is the load barrier every test below waits on,
   // and a barrier whose value the form already holds is satisfied before the query
@@ -53,23 +62,6 @@ const BASE_SETTINGS: ProjectSettings = {
   local_deep_model: 'qwen27b:reasoning',
   local_deep_url: 'http://localhost:11434/v1',
 }
-
-// What GET /my-permissions answers for `platform_tier_settings` - the server's own
-// _PLATFORM_TIER_SETTINGS, which api/routers/permissions.py serves rather than restates.
-// A fixture standing in for the server's answer, not a second copy of the rule: the
-// endpoint is held equal to the real tuple in
-// tests/test_grantable_roles.py::test_my_permissions_serves_the_servers_own_platform_tier_list,
-// so the two cannot drift without that failing.
-//
-// `dev_mode` is in the list and has no control on this page. That is deliberate and
-// asserted below rather than filtered out here - the page must answer honestly about
-// fields it does not render, and a fixture trimmed to what happens to be on screen could
-// not tell a missing control from a correctly absent one.
-const PLATFORM_TIER_SETTINGS = [
-  'llm_mode', 'force_local_inference', 'dev_mode',
-  'anthropic_fast_model', 'anthropic_deep_model',
-  'local_fast_model', 'local_fast_url', 'local_deep_model', 'local_deep_url',
-]
 
 const PLATFORM_TIER: MyPermissions = {
   can_review: true,
@@ -328,49 +320,85 @@ describe('Settings - every platform-tier field the page renders is gated togethe
    *  page renders no control for that field at all. */
   const controlFor = (field: string) => document.getElementById(field)
 
-  it('renders a control for every platform-tier field but dev_mode', async () => {
-    // The split is asserted, not assumed. Without this, the disabled-check below would pass
-    // vacuously for any field whose control silently disappeared - and "no control" and
-    // "control that ignores the tier" look identical to a test that only asks about the
-    // controls it finds.
+  it('renders a control for every platform-tier field but the ones with none', async () => {
+    // The split is asserted, not assumed. Without it the loops below could pass while a
+    // control had silently vanished - "no control" and "control that ignores the tier" look
+    // identical to a test that only asks about the controls it happens to find.
     serve(BASE_SETTINGS, PLATFORM_TIER)
     renderSettings()
     await settingsHaveLoaded()
 
     const rendered = PLATFORM_TIER_SETTINGS.filter((f) => controlFor(f) !== null)
-    expect(rendered.sort()).toEqual(
-      PLATFORM_TIER_SETTINGS.filter((f) => f !== 'dev_mode').sort(),
-    )
-    expect(controlFor('dev_mode')).toBeNull()
+    expect(rendered.sort()).toEqual([...PLATFORM_TIER_FIELDS_WITH_A_CONTROL].sort())
+    for (const field of PLATFORM_TIER_FIELDS_WITH_NO_CONTROL) {
+      expect(controlFor(field)).toBeNull()
+    }
   })
 
   it('disables every one of them for a project_admin', async () => {
+    // No `continue`. The earlier version skipped any field whose control it could not find,
+    // so stripping `id={key}` from the six model inputs made both loops pass over all six in
+    // silence - a suite that reported coverage it did not have. A missing control now fails
+    // here, on the field's own name.
     serve(BASE_SETTINGS, PROJECT_ADMIN)
     renderSettings()
     await waitFor(() => expect(controlFor('llm_mode')).toBeDisabled())
 
-    for (const field of PLATFORM_TIER_SETTINGS) {
-      const control = controlFor(field)
-      if (control === null) continue  // dev_mode - asserted absent by the test above
-      expect(control, `${field} is refused by the server and offered by the page`)
+    for (const field of PLATFORM_TIER_FIELDS_WITH_A_CONTROL) {
+      expect(controlFor(field), `no control found for ${field}`).not.toBeNull()
+      expect(controlFor(field), `${field} is refused by the server and offered by the page`)
         .toBeDisabled()
     }
   })
 
   it('enables every one of them for an org admin', async () => {
-    // The control, and the half that matters most: a test asserting only that things are
+    // The control, and the half that matters most: a suite asserting only that things are
     // disabled passes just as happily against a page that disables them for everybody, which
     // would be a broken Settings tab rather than a gated one.
     serve(BASE_SETTINGS, PLATFORM_TIER)
     renderSettings()
     await settingsHaveLoaded()
 
-    for (const field of PLATFORM_TIER_SETTINGS) {
-      const control = controlFor(field)
-      if (control === null) continue
-      expect(control, `${field} is permitted by the server and refused by the page`)
+    for (const field of PLATFORM_TIER_FIELDS_WITH_A_CONTROL) {
+      expect(controlFor(field), `no control found for ${field}`).not.toBeNull()
+      expect(controlFor(field), `${field} is permitted by the server and refused by the page`)
         .toBeEnabled()
     }
+  })
+
+  it('locks a field the server names that this task never anticipated', async () => {
+    // The property the report claimed and the review disproved: the page must obey whatever
+    // list it is served, not a set of controls somebody remembered to wire.
+    //
+    // `sector` is the reviewer's own probe. It is an ordinary project-configuration field
+    // that a project_admin may change today, deliberately outside the tuple - so a page that
+    // locks it *here*, given a server that says to, is a page deriving its gating rather
+    // than hand-threading it. Nothing in Settings.tsx mentions `sector` in connection with
+    // the tier, and nothing needs to.
+    serve(BASE_SETTINGS, {
+      ...PROJECT_ADMIN,
+      platform_tier_settings: [...PLATFORM_TIER_SETTINGS, 'sector'],
+    })
+    renderSettings()
+
+    // Wait on a control that must end up *enabled*. Waiting on `sector` being disabled is
+    // satisfied instantly by the pre-answer state, where everything is locked - the same
+    // barrier mistake this file has now made three times, in three disguises.
+    await waitFor(() => expect(controlFor('slack_channel')).toBeEnabled())
+    expect(controlFor('sector'), 'the page ignored a field the server named').toBeDisabled()
+  })
+
+  it('leaves a field the server stops naming editable', async () => {
+    // The other direction. A page that hard-coded the nine would keep refusing a field the
+    // server had released, which is the same defect wearing the opposite sign.
+    serve(BASE_SETTINGS, {
+      ...PROJECT_ADMIN,
+      platform_tier_settings: PLATFORM_TIER_SETTINGS.filter((f) => f !== 'llm_mode'),
+    })
+    renderSettings()
+
+    await waitFor(() => expect(controlFor('llm_mode')).toBeEnabled())
+    expect(controlFor('local_deep_model')).toBeDisabled()
   })
 
   it('says why the controls are greyed out, wherever they are greyed out', async () => {
@@ -379,8 +407,11 @@ describe('Settings - every platform-tier field the page renders is gated togethe
     // the mode, the models, the override - rather than one per field.
     serve(BASE_SETTINGS, PROJECT_ADMIN)
     renderSettings()
+    // Settled first: before /my-permissions answers every control is locked, so every note
+    // renders and the count is of the loading state rather than of the answer.
+    await waitFor(() => expect(controlFor('slack_channel')).toBeEnabled())
 
-    const notes = await screen.findAllByText(/only an org admin or above may change/i)
+    const notes = screen.getAllByText(/only an org admin or above may change/i)
     expect(notes).toHaveLength(3)
   })
 
@@ -413,5 +444,127 @@ describe('Settings - every platform-tier field the page renders is gated togethe
 
     releasePermissions!()
     await waitFor(() => expect(controlFor('llm_mode')).toBeEnabled())
+  })
+})
+
+// ── The form cannot be saved before it has been loaded ───────────────────────────────────
+//
+// This task's whole hazard analysis is "a value that goes missing means `false` on the
+// server, and `false` widens". It stopped at refactors and never asked what the *unloaded
+// form* sends. Until `GET /settings` answers, `form` holds DEFAULTS, and the body is a whole
+// settings model - so an early Save does not save nothing, it saves standard mode, no
+// override, a blank sector and stock model ids over whatever the project really is. A
+// platform-tier caller's is accepted, because they genuinely may change all of it.
+describe('Settings - an unloaded form cannot be saved over a loaded project', () => {
+  const realAdapter = apiClient.defaults.adapter
+
+  afterEach(() => {
+    apiClient.defaults.adapter = realAdapter
+  })
+
+  const STORED: ProjectSettings = {
+    ...BASE_SETTINGS,
+    llm_mode: 'sensitive',
+    force_local_inference: true,
+    dev_mode: false,
+    sector: 'defence',
+    local_deep_model: 'a-model-somebody-chose',
+  }
+
+  it('refuses the click, rather than sending the defaults', async () => {
+    const patched: ProjectSettings[] = []
+    let releaseSettings: (() => void) | null = null
+    const held = new Promise<void>((resolve) => { releaseSettings = resolve })
+    apiClient.defaults.adapter = async (config: AxiosRequestConfig) => {
+      const url = apiClient.getUri(config)
+      if (config.method?.toLowerCase() === 'patch') {
+        patched.push(JSON.parse(config.data as string) as ProjectSettings)
+        return ok(config, STORED)
+      }
+      if (url.endsWith('/my-permissions')) return ok(config, PLATFORM_TIER)
+      await held
+      return ok(config, STORED)
+    }
+    renderSettings()
+
+    // Platform tier, so nothing refuses this caller downstream - the button is the control.
+    await waitFor(() => expect(save()).toBeDisabled())
+    fireEvent.click(save())
+    expect(patched, 'a Save before the settings arrived reached the server').toHaveLength(0)
+
+    releaseSettings!()
+    await waitFor(() => expect(save()).toBeEnabled())
+  })
+
+  it('sends what the project actually holds once it has loaded', async () => {
+    // The control: the button is not simply dead. Asserted field by field, because the
+    // failure this guards is precisely a body that is *well-formed and wrong*.
+    const wire = serve(STORED, PLATFORM_TIER)
+    renderSettings()
+    await settingsHaveLoaded()
+
+    fireEvent.click(save())
+
+    await waitFor(() => expect(wire.patched).toHaveLength(1))
+    expect(wire.patched[0]).toMatchObject({
+      llm_mode: 'sensitive',
+      force_local_inference: true,
+      dev_mode: false,
+      sector: 'defence',
+      local_deep_model: 'a-model-somebody-chose',
+    })
+  })
+})
+
+// ── dev_mode: declared, and carried ──────────────────────────────────────────────────────
+describe('Settings - dev_mode survives a save it has no control for', () => {
+  const realAdapter = apiClient.defaults.adapter
+
+  afterEach(() => {
+    apiClient.defaults.adapter = realAdapter
+  })
+
+  it('carries a stored dev_mode: false through an unrelated save', async () => {
+    // The same hazard as force_local_inference, one field over, and it was still open after
+    // that one was closed: dev_mode is platform-tier, travels on this body, and had no
+    // declaration and no test. Dropping it means `true` on the server - the outbound-mail
+    // hold silently switches back on, which is the failure that looks exactly like the
+    // setting working.
+    const wire = serve({ ...BASE_SETTINGS, dev_mode: false }, PLATFORM_TIER)
+    renderSettings()
+    await settingsHaveLoaded()
+
+    fireEvent.change(budget(), { target: { value: '15' } })
+    fireEvent.click(save())
+
+    await waitFor(() => expect(wire.patched).toHaveLength(1))
+    expect(wire.patched[0].dev_mode).toBe(false)
+    expect(Object.keys(wire.patched[0])).toContain('dev_mode')
+  })
+})
+
+// ── The declarations themselves ──────────────────────────────────────────────────────────
+//
+// `tsc --noEmit` is the only thing that can see a type, and it had nothing to say about these
+// two: deleting the field is caught loudly, but *optionalising* it - `force_local_inference?:
+// boolean` - left tsc clean and the suite green, because vitest strips types. The comment on
+// the field was the entire guard.
+//
+// These are compile-time assertions and carry no runtime behaviour. Making either field
+// optional resolves MustBeRequired to `never`, and `const x: never = true` is an error - so
+// the check fires in `npx tsc --noEmit`, not in this suite's output.
+type MustBeRequired<T, K extends keyof T> = undefined extends T[K] ? never : true
+
+const _forceLocalInferenceStaysRequired: MustBeRequired<
+  ProjectSettings, 'force_local_inference'
+> = true
+const _devModeStaysRequired: MustBeRequired<ProjectSettings, 'dev_mode'> = true
+
+describe('Settings - the fields that must not become optional', () => {
+  it('holds force_local_inference and dev_mode as required on ProjectSettings', () => {
+    // The assertions are the two consts above, checked by tsc rather than here. This test
+    // exists so the mechanism is visible in the suite rather than being two unreferenced
+    // declarations a tidy-up would delete as dead code.
+    expect(_forceLocalInferenceStaysRequired && _devModeStaysRequired).toBe(true)
   })
 })

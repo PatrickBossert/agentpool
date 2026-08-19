@@ -104,6 +104,22 @@ export interface ProjectSettings {
    * Never make it optional - `force_local_inference?: boolean` reopens exactly that.
    */
   force_local_inference: boolean
+  /**
+   * Holds all outbound email for this project, sending it to the operator instead. Declared
+   * for exactly the reason `force_local_inference` above is, and it was found still
+   * undeclared one field over: it travelled on every save carried only by the untyped
+   * `{ ...DEFAULTS, ...settings }` spread, so a typed body would have dropped it.
+   *
+   * The consequence differs from its neighbour's and is no smaller. The Pydantic default is
+   * `true`, so a dropped key on a project stored `dev_mode: false` re-enables the hold - the
+   * project stops emailing real stakeholders and nothing says so, which is the failure that
+   * looks exactly like the setting working. Platform-tier, so on a `project_admin`'s save
+   * the same drop is a 403 naming a field they never touched.
+   *
+   * There is no control for it on the Settings page. It is declared here so it round-trips
+   * intact, not because anything renders it.
+   */
+  dev_mode: boolean
   sector: string
   stakeholder_groups: string[]
   value_stream_labels: string[]

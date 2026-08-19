@@ -14,6 +14,10 @@ const DEFAULT_TEXT_COLOR = '#1f2937'
 const DEFAULTS: ProjectSettings = {
   llm_mode: 'standard',
   force_local_inference: false,
+  // Matches api/models.py's default. It has no control on this page - it is here so the
+  // form carries it, which is the only thing standing between a save and a silently
+  // re-enabled mail hold.
+  dev_mode: true,
   locale: 'GB',
   sector: '',
   stakeholder_groups: [],
@@ -37,9 +41,15 @@ const DEFAULTS: ProjectSettings = {
 function TagInput({
   value,
   onChange,
+  id,
+  disabled,
 }: {
   value: string[]
   onChange: (v: string[]) => void
+  // Taken from fieldProps at the call site like every other control on this page, so a tag
+  // field is gated by the same rule as an input rather than by being forgotten.
+  id: string
+  disabled: boolean
 }) {
   const [input, setInput] = useState('')
 
@@ -63,19 +73,25 @@ function TagInput({
           {tag}
           <button
             type="button"
+            disabled={disabled}
             onClick={() => onChange(value.filter((t) => t !== tag))}
-            className="text-teal-600 hover:text-gray-900 leading-none"
+            className="text-teal-600 hover:text-gray-900 leading-none disabled:opacity-50 disabled:cursor-not-allowed"
           >
             ×
           </button>
         </span>
       ))}
+      {/* fieldProps: taken from the call site rather than called here - this input edits
+          the pending tag, not a settings field, and the id and disabled it wears belong to
+          the field the parent named. */}
       <input
+        id={id}
+        disabled={disabled}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKey}
         placeholder="Add…"
-        className="bg-transparent text-sm text-gray-700 outline-none min-w-[80px] flex-1"
+        className="bg-transparent text-sm text-gray-700 outline-none min-w-[80px] flex-1 disabled:cursor-not-allowed"
       />
     </div>
   )
@@ -144,6 +160,30 @@ export default function Settings() {
     platformTierFields === null
     || (!mayChangePlatformTierSettings && platformTierFields.has(field))
 
+  /**
+   * The two attributes every control on this page wears, derived from the field it edits.
+   *
+   * This exists because threading `disabled={locked(field)}` onto controls **by hand** is
+   * not the same property as gating them, and the difference was caught by review: with
+   * `locked()` applied only to the three controls somebody remembered, adding a tenth field
+   * to the server's tuple left its control fully editable while every test stayed green.
+   * The claim "a new platform-tier field locks its control with no frontend change" was
+   * false, and it was false in the direction that matters - the page offered a control the
+   * server would refuse.
+   *
+   * So the asking is not optional here: a control gets its `id` from the same call that
+   * decides its `disabled`, and a control with no id is a control nobody can find. The two
+   * arrive together or not at all. `tests/test_settings_platform_tier_wiring.py` walks
+   * this file and fails on any control that renders without calling this.
+   *
+   * `variant` exists for a field rendered as several controls - a radio group - where one
+   * shared id would be a duplicate. The gate is still the field's.
+   */
+  const fieldProps = (field: keyof ProjectSettings, variant?: string) => ({
+    id: variant ? `${field}-${variant}` : field,
+    disabled: locked(field),
+  })
+
   useEffect(() => {
     if (settings) setForm({ ...DEFAULTS, ...settings })
   }, [settings])
@@ -192,19 +232,20 @@ export default function Settings() {
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">General</h3>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-xs text-gray-600 block mb-1">Sector</label>
+            <label htmlFor="sector" className="text-xs text-gray-600 block mb-1">Sector</label>
             <input
+              {...fieldProps('sector')}
               value={form.sector}
               onChange={(e) => setForm({ ...form, sector: e.target.value })}
-              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             />
+            {locked('sector') && <PlatformTierNote />}
           </div>
           <div>
             <label htmlFor="llm_mode" className="text-xs text-gray-600 block mb-1">LLM Mode</label>
             <select
-              id="llm_mode"
+              {...fieldProps('llm_mode')}
               value={form.llm_mode}
-              disabled={locked('llm_mode')}
               onChange={(e) =>
                 setForm({ ...form, llm_mode: e.target.value as ProjectSettings['llm_mode'] })
               }
@@ -217,11 +258,12 @@ export default function Settings() {
             {locked('llm_mode') && <PlatformTierNote />}
           </div>
           <div>
-            <label className="text-xs text-gray-600 block mb-1">Project locale</label>
+            <label htmlFor="locale" className="text-xs text-gray-600 block mb-1">Project locale</label>
             <select
+              {...fieldProps('locale')}
               value={form.locale ?? 'GB'}
               onChange={(e) => setForm({ ...form, locale: e.target.value })}
-              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             >
               {SUPPORTED_LOCALES.map(l => (
                 <option key={l.code} value={l.code}>{l.label}</option>
@@ -229,8 +271,9 @@ export default function Settings() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-600 block mb-1">Roadmap Time Axis</label>
+            <label htmlFor="roadmap_time_axis" className="text-xs text-gray-600 block mb-1">Roadmap Time Axis</label>
             <select
+              {...fieldProps('roadmap_time_axis')}
               value={form.roadmap_time_axis}
               onChange={(e) =>
                 setForm({
@@ -238,7 +281,7 @@ export default function Settings() {
                   roadmap_time_axis: e.target.value as ProjectSettings['roadmap_time_axis'],
                 })
               }
-              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             >
               <option value="quarters">quarters</option>
               <option value="years">years</option>
@@ -246,11 +289,12 @@ export default function Settings() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-600 block mb-1">Slack Channel</label>
+            <label htmlFor="slack_channel" className="text-xs text-gray-600 block mb-1">Slack Channel</label>
             <input
+              {...fieldProps('slack_channel')}
               value={form.slack_channel}
               onChange={(e) => setForm({ ...form, slack_channel: e.target.value })}
-              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             />
           </div>
         </div>
@@ -278,10 +322,9 @@ export default function Settings() {
         <button
           type="button"
           role="switch"
-          id="force_local_inference"
+          {...fieldProps('force_local_inference')}
           aria-label="Force local inference"
           aria-checked={form.force_local_inference}
-          disabled={locked('force_local_inference')}
           onClick={() =>
             setForm({ ...form, force_local_inference: !form.force_local_inference })
           }
@@ -300,15 +343,17 @@ export default function Settings() {
       {/* Tag fields */}
       <section className="grid grid-cols-2 gap-4">
         <div>
-          <label className="text-xs text-gray-600 block mb-1">Stakeholder Groups</label>
+          <label htmlFor="stakeholder_groups" className="text-xs text-gray-600 block mb-1">Stakeholder Groups</label>
           <TagInput
+            {...fieldProps('stakeholder_groups')}
             value={form.stakeholder_groups}
             onChange={(v) => setForm({ ...form, stakeholder_groups: v })}
           />
         </div>
         <div>
-          <label className="text-xs text-gray-600 block mb-1">Value Stream Labels</label>
+          <label htmlFor="value_stream_labels" className="text-xs text-gray-600 block mb-1">Value Stream Labels</label>
           <TagInput
+            {...fieldProps('value_stream_labels')}
             value={form.value_stream_labels}
             onChange={(v) => setForm({ ...form, value_stream_labels: v })}
           />
@@ -323,8 +368,12 @@ export default function Settings() {
         </div>
         <button
           type="button"
+          role="switch"
+          {...fieldProps('review_gates')}
+          aria-label="Review Gates"
+          aria-checked={form.review_gates}
           onClick={() => setForm({ ...form, review_gates: !form.review_gates })}
-          className={`relative inline-flex h-5 w-9 rounded-full transition-colors ${
+          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
             form.review_gates ? 'bg-brand' : 'bg-gray-300'
           }`}
         >
@@ -350,6 +399,7 @@ export default function Settings() {
             ).map(([value, label]) => (
               <label key={value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                 <input
+                  {...fieldProps('interview_method', value)}
                   type="radio"
                   name="interview_method"
                   value={value}
@@ -363,11 +413,14 @@ export default function Settings() {
         </div>
 
         <div>
-          <label htmlFor="press-budget" className="text-xs text-gray-600 block mb-2">
+          <label
+            htmlFor="elaboration_press_timeout_seconds"
+            className="text-xs text-gray-600 block mb-2"
+          >
             Follow-up time limit (seconds)
           </label>
           <input
-            id="press-budget"
+            {...fieldProps('elaboration_press_timeout_seconds')}
             type="number"
             min={1}
             max={60}
@@ -378,7 +431,7 @@ export default function Settings() {
                 elaboration_press_timeout_seconds: Number(e.target.value),
               })
             }
-            className="w-24 bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+            className="w-24 bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
           />
           <p className="text-xs text-muted mt-1">
             How long Avery waits for a follow-up question before moving on. A local model in
@@ -399,10 +452,9 @@ export default function Settings() {
           <div key={key} className="mb-3">
             <label htmlFor={key} className="text-xs text-gray-600 block mb-1">{label}</label>
             <input
-              id={key}
+              {...fieldProps(key)}
               type="text"
               value={String(form[key] ?? '')}
-              disabled={locked(key)}
               onChange={(e) => setForm({ ...form, [key]: e.target.value })}
               className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             />
@@ -431,6 +483,7 @@ export default function Settings() {
           )}
           <div className="flex items-center gap-2">
             <input
+              {...fieldProps('brand_header_image_url')}
               ref={fileInputRef}
               type="file"
               accept="image/*"
@@ -459,10 +512,11 @@ export default function Settings() {
             <label className="text-xs text-gray-600 block mb-1">Primary Colour</label>
             <div className="flex items-center gap-2">
               <input
+                {...fieldProps('brand_primary_color')}
                 type="color"
                 value={form.brand_primary_color ?? DEFAULT_PRIMARY_COLOR}
                 onChange={(e) => setForm({ ...form, brand_primary_color: e.target.value })}
-                className="h-8 w-10 rounded border border-gray-200 bg-white cursor-pointer p-0.5"
+                className="h-8 w-10 rounded border border-gray-200 bg-white cursor-pointer p-0.5 disabled:cursor-not-allowed"
               />
               <span className="text-xs text-gray-400 font-mono">{form.brand_primary_color ?? DEFAULT_PRIMARY_COLOR}</span>
             </div>
@@ -471,10 +525,11 @@ export default function Settings() {
             <label className="text-xs text-gray-600 block mb-1">Text Colour</label>
             <div className="flex items-center gap-2">
               <input
+                {...fieldProps('brand_text_color')}
                 type="color"
                 value={form.brand_text_color ?? DEFAULT_TEXT_COLOR}
                 onChange={(e) => setForm({ ...form, brand_text_color: e.target.value })}
-                className="h-8 w-10 rounded border border-gray-200 bg-white cursor-pointer p-0.5"
+                className="h-8 w-10 rounded border border-gray-200 bg-white cursor-pointer p-0.5 disabled:cursor-not-allowed"
               />
               <span className="text-xs text-gray-400 font-mono">{form.brand_text_color ?? DEFAULT_TEXT_COLOR}</span>
             </div>
@@ -485,10 +540,18 @@ export default function Settings() {
       {/* Footer */}
       <div className="border-t border-gray-200 pt-4 flex items-center justify-between">
         {error ? <p className="text-sm text-red-400">{error}</p> : <span />}
+        {/* `!settings` is the whole of this task's own lesson applied one layer up, and the
+            page had it on the permissions query and not on this one. Until `GET /settings`
+            answers, `form` holds DEFAULTS - standard mode, no override, a blank sector,
+            stock model ids and no dev_mode - and the body is a *whole* settings model, so an
+            early click does not save nothing, it saves all of that over whatever the project
+            really is. A platform-tier caller's is accepted: one click and a sensitive,
+            forced engagement is standard and hosted, with nothing refused and nothing said.
+            An unanswered question locks here too. */}
         <button
           onClick={() => mutation.mutate(form)}
-          disabled={mutation.isPending}
-          className="px-4 py-1.5 bg-brand hover:bg-brand-dark disabled:opacity-50 text-white text-sm rounded"
+          disabled={mutation.isPending || !settings}
+          className="px-4 py-1.5 bg-brand hover:bg-brand-dark disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded"
         >
           {saved ? 'Saved!' : mutation.isPending ? 'Saving…' : 'Save Settings'}
         </button>

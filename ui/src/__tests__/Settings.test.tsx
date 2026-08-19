@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import Settings from '../pages/Settings'
 import type { ProjectSettings } from '../types'
+import { PLATFORM_TIER_SETTINGS } from './fixtures/platformTierSettings'
 
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
@@ -13,15 +14,6 @@ vi.mock('../api/endpoints', () => ({
     getMyPermissions: vi.fn(),
   },
 }))
-
-// What `GET /my-permissions` answers for `platform_tier_settings` - the server's
-// `_PLATFORM_TIER_SETTINGS`. A fixture, not a rule: the endpoint is held equal to the real
-// tuple by tests/test_grantable_roles.py, so if the two ever disagree that is where it fails.
-const PLATFORM_TIER_SETTINGS = [
-  'llm_mode', 'force_local_inference', 'dev_mode',
-  'anthropic_fast_model', 'anthropic_deep_model',
-  'local_fast_model', 'local_fast_url', 'local_deep_model', 'local_deep_url',
-]
 
 const BASE_SETTINGS: ProjectSettings = {
   llm_mode: 'standard',
@@ -36,6 +28,7 @@ const BASE_SETTINGS: ProjectSettings = {
   discovery_brief: '',
   discovery_links: [],
   discovery_document_ids: [],
+  dev_mode: true,
   interview_method: 'none',
   elaboration_press_timeout_seconds: 8,
   anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
