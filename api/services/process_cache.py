@@ -7,9 +7,16 @@ Some values are resolved once per process and then held: a project's `llm_mode`
 production callers - `forget_project_mode(slug)` on a settings write, and
 `forget_platform_settings()` on a platform write - and those stay exactly as they are.
 
+A third registrant, `interviews._transcript_email_log`, is not a cache of a resolved value
+at all - it is a rate-limit ledger that *accumulates* for the life of the process. It
+belongs here for the same reason and with the same consequence: three transcript sends for
+a session token in one test leave any later test using that token answering 429 for a limit
+it never reached. Read "cache" throughout this module as "state resolved or accumulated once
+per process", which is the property that matters; `register_cache` keeps the shorter name.
+
 What was missing is the other operation: **forget everything**. It has one caller, the
-autouse fixture in `tests/conftest.py`, and one job - stop a cache populated by one test
-from answering a question asked by the next. That was not an abstract tidiness worry.
+autouse fixture in `tests/conftest.py`, and one job - stop state populated by one test from
+answering a question asked by the next. That was not an abstract tidiness worry.
 Task 3 hit it on `_CACHED_URL`, where `tests/test_interview_url.py` failed *by run order*;
 and nine test files clear `_MODE_CACHE` by hand, each covering only itself. `_MODE_CACHE`
 is the one that matters, because it answers "is this project sensitive" - a stale entry

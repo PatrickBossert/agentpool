@@ -36,6 +36,7 @@ from api.services.interview_service import (
     speak,
 )
 from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
+from api.services.process_cache import register_cache
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
@@ -354,6 +355,12 @@ async def complete_interview(session_token: str, body: CompleteRequest):
 
 # Rate limit: session_token → list of send timestamps (in-memory, per-process)
 _transcript_email_log: dict[str, list[float]] = defaultdict(list)
+# Registered so the suite's one fixture empties it between tests. Not a cache of a resolved
+# value like the other two registrants, but the same trap: it accumulates for the life of the
+# process, so a test that sends three transcripts for a session token leaves any later test
+# using that token answering 429 for a limit it never reached. Production never calls the
+# clear-everything half - see api/services/process_cache.py.
+register_cache(_transcript_email_log.clear)
 _EMAIL_RATE_LIMIT = 3
 _EMAIL_RATE_WINDOW = 3600  # seconds
 _EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{1,63}$")

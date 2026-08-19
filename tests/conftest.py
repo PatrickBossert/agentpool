@@ -93,8 +93,8 @@ def reset_process_caches():
     be cached is answered to the next - CLAUDE.md's "passes alone, fails in the suite"
     shape, reached through a cache rather than a database row.
 
-    Two are registered today (see api/services/process_cache.py), and they arrived here
-    from opposite directions:
+    Three are registered today (see api/services/process_cache.py), and they arrived here
+    from different directions:
 
     - **platform_settings._CACHED_URL.** Before sp58 Task 3, platform_public_url() had
       exactly one caller and only tests/test_platform_settings.py touched it, so a local
@@ -107,21 +107,29 @@ def reset_process_caches():
     - **chroma_client._MODE_CACHE**, which never had suite-wide isolation at all and is
       the consequential one: it answers "is this project sensitive", so a stale entry
       sends a sensitive project's documents to Chroma Cloud and its prompts to hosted
-      Anthropic. Nine test files clear it by hand, each covering only itself.
-      tests/test_process_cache.py demonstrates the leak rather than describing it.
+      Anthropic. Eight test files used to clear it by hand at 32 sites, each covering
+      only itself; all 32 are gone, and
+      tests/test_process_cache.py::test_no_other_test_file_reaches_into_a_private_cache
+      keeps them gone. That file also demonstrates the leak rather than describing it.
+    - **interviews._transcript_email_log**, which is not a cache of a resolved value at
+      all but a per-process rate-limit ledger. It accumulates, so one test's three
+      transcript sends leave a later test on the same session token answering 429 for a
+      limit it never reached.
 
     Nothing is imported here for its registration side effect, and it would be dead
     weight if it were: a clearer registers when its module is imported, and a cache
     cannot be populated by a module that has not been imported - so registration can
     never lag the thing it protects against, whatever order the suite collects in.
 
-    Cleared on both sides for the same reason reset_settings_cache is. Be aware of what
-    that second call does and does not buy, since no test distinguishes it: within a
-    session the before-clear already covers every test, so the after-clear is reaching
-    only what runs *outside* a test body - a session- or module-scoped teardown, an
-    early exit under -x - and the habit itself. Clearing only beforehand is the shape
-    that protects the test being written and leaves the next one to inherit whatever
-    this one left, which is how the caches got here.
+    Cleared on both sides for the same reason reset_settings_cache is. Within a session
+    the before-clear already covers every test, so the after-clear is reaching what runs
+    *outside* a test body - a session- or module-scoped teardown, an early exit under -x.
+    That window is not merely arguable, it is asserted:
+    tests/test_process_cache_teardown.py leaves a slug in the cache and lets a
+    module-scoped fixture's teardown be the assertion, which errors if this second call
+    is removed. Clearing only beforehand is the shape that protects the test being
+    written and leaves the next one to inherit whatever this one left, which is how the
+    caches got here.
     """
     from api.services.process_cache import forget_all_process_caches
 

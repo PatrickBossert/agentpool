@@ -32,13 +32,7 @@ def two_projects(tmp_path, monkeypatch):
         conn.execute("INSERT INTO projects (slug, llm_mode, sector, config_json) VALUES (?,?,?,?)",
                      (slug, mode, "test", json.dumps({})))
         conn.commit(); conn.close()
-    from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     yield
-    # Cleared on the way out as well as in: the cache is process-global and keyed by slug, so
-    # clearing only on entry leaves this fixture's slugs resolved for the rest of the session,
-    # pointing at a tmp_path that no longer exists.
-    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 

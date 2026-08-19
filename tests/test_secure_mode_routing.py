@@ -27,13 +27,7 @@ def two_projects(tmp_path, monkeypatch):
                      (slug, mode, "test"))
         conn.commit()
         conn.close()
-    from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     yield
-    # Cleared on the way out as well as in: the cache is process-global and keyed by slug,
-    # so clearing only on entry leaves this fixture's slugs resolved for the rest of the
-    # session, pointing at a tmp_path that no longer exists.
-    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 
@@ -75,10 +69,7 @@ async def standard_project(tmp_path, monkeypatch):
         await insert_project(
             conn, slug="switch-proj", llm_mode="standard", sector="rail", config_json="{}"
         )
-    from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     yield
-    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 
@@ -136,7 +127,6 @@ async def test_creating_a_project_as_sensitive_is_not_pinned_to_standard(tmp_pat
     monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
     monkeypatch.setenv("CHROMA_API_KEY", "cloud-key-is-set")
     get_settings.cache_clear()
-    chroma_client._MODE_CACHE.clear()
     try:
         assert chroma_client.project_llm_mode("fresh-proj") == "standard"
 
@@ -154,7 +144,6 @@ async def test_creating_a_project_as_sensitive_is_not_pinned_to_standard(tmp_pat
             "a project created as sensitive is still routed to Chroma Cloud"
         )
     finally:
-        chroma_client._MODE_CACHE.clear()
         get_settings.cache_clear()
 
 
@@ -169,11 +158,9 @@ def test_a_read_error_against_an_existing_database_fails_closed(tmp_path, monkey
     get_settings.cache_clear()
     (tmp_path / "broken-proj.db").touch()  # exists as a file; has no projects table
     from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     try:
         assert chroma_client.project_llm_mode("broken-proj") == "sensitive"
     finally:
-        chroma_client._MODE_CACHE.clear()
         get_settings.cache_clear()
 
 
@@ -194,7 +181,6 @@ def test_a_slug_that_was_never_passed_is_refused_rather_than_answered(tmp_path, 
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     get_settings.cache_clear()
     from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     try:
         for lost in ("", "   "):
             with pytest.raises(ValueError, match="slug"):
@@ -203,7 +189,6 @@ def test_a_slug_that_was_never_passed_is_refused_rather_than_answered(tmp_path, 
             "a refused slug must not have materialised a database file"
         )
     finally:
-        chroma_client._MODE_CACHE.clear()
         get_settings.cache_clear()
 
 
@@ -217,11 +202,9 @@ def test_refusing_the_blank_slug_leaves_the_absent_project_default_alone(tmp_pat
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     get_settings.cache_clear()
     from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     try:
         assert chroma_client.project_llm_mode("no-such-project") == "standard"
     finally:
-        chroma_client._MODE_CACHE.clear()
         get_settings.cache_clear()
 
 
@@ -235,7 +218,6 @@ def test_a_failed_read_is_not_cached(tmp_path, monkeypatch):
     db_path = tmp_path / "recovers-proj.db"
     db_path.touch()  # exists, but has no projects table yet: the first read fails
     from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     try:
         assert chroma_client.project_llm_mode("recovers-proj") == "sensitive"
 
@@ -249,7 +231,6 @@ def test_a_failed_read_is_not_cached(tmp_path, monkeypatch):
 
         assert chroma_client.project_llm_mode("recovers-proj") == "standard"
     finally:
-        chroma_client._MODE_CACHE.clear()
         get_settings.cache_clear()
 
 
