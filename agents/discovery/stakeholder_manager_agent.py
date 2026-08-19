@@ -43,11 +43,29 @@ def create_stakeholder_manager_task(
     Step 2 below says where the mapping is in both cases, and in neither case does it send him
     back to `SQLiteStateTool`: that read was never once served, and an instruction to retry it
     would be an instruction to read an error message.
+
+    `url_block` names the base only, deliberately not a per-participant link. Jordan has no
+    route to any stakeholder's session token: step 3 sends him to SQLiteStateTool for
+    `interview_sessions`, which is a database table rather than an output artefact and so
+    always answers "no state found" (agents/reads.py records the same read as unresolvable),
+    and his only other tool, InterviewSessionTool, returns an existing session's token from
+    none of its four operations - `create` only for rows it inserts in that same call. An
+    earlier version of this instruction told him to complete a personal link himself
+    (`{url_base}/{session_token}`), which he could only have satisfied by fabricating a
+    token: a well-formed dead link on the deployment's own domain, for exactly the messages
+    (reminders, re-engagement) that are about stakeholders who already have a real one. The
+    real per-participant link is minted by InterviewSessionTool.create and delivered down the
+    campaign path (campaign_service.interview_url) - not drafted here.
     """
     url_block = (
         f"Interview URL base: {public_interview_url_base}\n"
-        "When drafting invitation or reminder messages, include the stakeholder's personal "
-        "interview link: {url_base}/{session_token}\n\n"
+        "This is the base the platform's interview links are served from - not something "
+        "you can complete into a working link yourself. You do not know any stakeholder's "
+        "session token, so never construct a full interview link (base plus token) in a "
+        "draft message: an invented token produces a link that looks real but goes "
+        "nowhere. If a draft needs to mention the interview link, refer to it in words "
+        "(e.g. \"your personal interview link\") without writing out a URL - the actual "
+        "link is attached separately when the message is sent.\n\n"
         if public_interview_url_base
         else ""
     )

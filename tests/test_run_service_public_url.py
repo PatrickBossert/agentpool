@@ -146,4 +146,8 @@ async def test_nothing_stored_still_falls_back_to_the_environment_not_to_blank()
 
     base = mock_factory.call_args.kwargs["public_interview_url_base"]
     assert base, "must not be blank - that was the defect"
-    assert base == f"{get_settings().public_url}/dashboard/interview"
+    # .rstrip('/'), not the raw settings value: platform_public_url() normalises its
+    # environment fallback (Step 2), so this would fail on a *correct* implementation
+    # the day a deployment's .env carries a trailing slash on PUBLIC_URL - the wrong
+    # direction for a test to be wrong in.
+    assert base == f"{get_settings().public_url.rstrip('/')}/dashboard/interview"

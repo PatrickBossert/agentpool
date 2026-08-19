@@ -59,6 +59,25 @@ def _write_system_db(tmp_path, public_url=None, *, with_table=True):
     return db_path
 
 
+def test_resolve_normalises_a_trailing_slash_on_either_side():
+    """_resolve is the one place both branches of the precedence rule are stated, so its
+    own stripping is asserted directly rather than only through platform_public_url()'s
+    successful-row path, where a stored value already arrives normalised by
+    normalise_public_url and so never exercises this line in practice.
+
+    read_platform_settings's own docstring names the case where it stops being
+    redundant: "a row edited by hand" bypasses normalise_public_url entirely, and this is
+    the only line standing between that row and a double slash in the settings door's own
+    GET response.
+    """
+    assert ps._resolve("https://stored.example/", "https://env.example") == (
+        "https://stored.example", "stored",
+    )
+    assert ps._resolve("", "https://env.example/") == (
+        "https://env.example", "environment",
+    )
+
+
 def test_the_stored_value_wins_over_the_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("PUBLIC_URL", "https://env.example")
     get_settings.cache_clear()
@@ -111,6 +130,21 @@ def test_a_read_failure_is_not_cached(tmp_path, monkeypatch):
     _write_system_db(tmp_path, "https://stored.example")
 
     assert ps.platform_public_url() == "https://stored.example"
+
+
+def test_a_read_failure_still_normalises_the_environment_fallback(tmp_path, monkeypatch):
+    """The same branch as test_a_read_failure_is_not_cached, but with a trailing slash on
+    PUBLIC_URL - the shape that combines with a database predating this change to
+    reproduce the exact double-slash welcome-email bug this task closed. Without its own
+    assertion this branch is indistinguishable from a version that returns env_url
+    unstripped: the sibling test above uses "https://env.example" (no trailing slash),
+    which the two forms answer identically.
+    """
+    monkeypatch.setenv("PUBLIC_URL", "https://env.example/")
+    get_settings.cache_clear()
+    _write_system_db(tmp_path, "unused", with_table=False)
+
+    assert ps.platform_public_url() == "https://env.example"
 
 
 def test_a_successful_read_is_cached(tmp_path, monkeypatch):

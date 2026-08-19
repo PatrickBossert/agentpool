@@ -84,6 +84,35 @@ def reset_settings_cache():
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_platform_public_url_cache():
+    """Drop platform_settings._CACHED_URL for every test, the same reason as
+    reset_settings_cache above but for a second, independent module-level cache.
+
+    Before sp58 Task 3, platform_public_url() had exactly one caller
+    (interview_service.interview_url) and only tests/test_platform_settings.py ever
+    touched it, so its own local autouse fixture was isolation enough. Task 3 gave it
+    four more callers spread across campaign_service, pam_report_job,
+    commit_notify_service and admin_service - any test anywhere in the suite that
+    creates a system.db under its own tmp_path and then calls one of those now
+    populates this cache, including on a *blank* stored row (a "successful read" by
+    platform_public_url()'s own rule), and nothing clears it again until this fixture
+    runs. A later test elsewhere in the suite - one that never mentions public_url -
+    then reads whatever the first test's environment happened to be: CLAUDE.md's
+    "passes alone, fails in the suite" shape, reached here through a cache rather than
+    a database row. Reproduced without this fixture: revert it and run the whole
+    suite - tests/test_interview_url.py fails depending on run order.
+
+    Cleared on both sides for the same reason reset_settings_cache is: a test that
+    populates the cache and does not explicitly forget it must not leak into whatever
+    runs next.
+    """
+    from api.services.platform_settings import forget_platform_settings
+    forget_platform_settings()
+    yield
+    forget_platform_settings()
+
+
 @pytest.fixture
 def seeded_project(tmp_path, monkeypatch):
     """A project whose value_chain_registry already holds 1.2 and 2.7 as active L2 activities.
