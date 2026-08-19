@@ -67,6 +67,12 @@ async def test_it_reports_what_the_shared_authority_check_says(client, seeded_pr
     assert r.json() == {
         "can_review": True, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
+        # The platform tier off the token again, and reported under its own name rather
+        # than sharing can_issue_invite_links' key: the two ask the same predicate today
+        # and report on different doors, so a shared key would make the settings toggle
+        # follow the resend door's tier if that ever moved.
+        # tests/test_grantable_roles.py drives it against the settings door itself.
+        "can_change_platform_tier_settings": True,
         "writable_knowledge_tiers": ["sector", "project"],
     }
     # The roles the response is built from are the rule; the booleans are only its shadow.
@@ -96,6 +102,7 @@ async def test_a_caller_with_no_content_roles_is_told_so(client, seeded_project_
     assert r.json() == {
         "can_review": False, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
+        "can_change_platform_tier_settings": True,
         # Unmoved by the patch above, for the reason given in the test before this one.
         "writable_knowledge_tiers": ["sector", "project"],
     }

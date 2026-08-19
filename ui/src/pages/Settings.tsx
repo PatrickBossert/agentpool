@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Lock } from 'lucide-react'
 import { projectsApi } from '../api/endpoints'
 import type { ProjectSettings } from '../types'
+import { describeError } from '../utils/describeError'
 import { SUPPORTED_LOCALES } from '../utils/holidays'
 
 const DEFAULT_PRIMARY_COLOR = '#0d9488'  // must match api/models.py default
@@ -11,6 +13,7 @@ const DEFAULT_TEXT_COLOR = '#1f2937'
 
 const DEFAULTS: ProjectSettings = {
   llm_mode: 'standard',
+  force_local_inference: false,
   locale: 'GB',
   sector: '',
   stakeholder_groups: [],
@@ -95,6 +98,18 @@ export default function Settings() {
     enabled: !!slug,
   })
 
+  // What the server would accept, asked rather than inferred. The platform-tier fields on
+  // this body - llm_mode, force_local_inference, the model ids - are refused to a
+  // project_admin, so the toggle below is read-only for one rather than an action that
+  // always 403s. The rule is the server's (`is_org_admin_or_above`, the same predicate
+  // patch_settings_endpoint decides with) and is never restated here.
+  const { data: permissions } = useQuery({
+    queryKey: ['my-permissions', slug],
+    queryFn: () => projectsApi.getMyPermissions(slug!),
+    enabled: !!slug,
+  })
+  const mayChangePlatformTierSettings = permissions?.can_change_platform_tier_settings ?? false
+
   useEffect(() => {
     if (settings) setForm({ ...DEFAULTS, ...settings })
   }, [settings])
@@ -107,7 +122,11 @@ export default function Settings() {
       setError(null)
       setTimeout(() => setSaved(false), 2000)
     },
-    onError: () => setError('Save failed. Please try again.'),
+    // The server's own sentence. A project_admin who changes a platform-tier field is
+    // refused with a 403 that *names the fields* - "force_local_inference may only be
+    // changed by an org admin or above" - and "Save failed. Please try again." both hides
+    // which field and reads as a transient fault the operator should retry.
+    onError: (err) => setError(describeError(err, 'Save failed. Please try again.')),
   })
 
   if (!slug) return null
@@ -198,6 +217,51 @@ export default function Settings() {
             />
           </div>
         </div>
+      </section>
+
+      {/* Local inference override. Platform tier, beside the mode it narrows.
+          The label says what the flag does and, just as deliberately, what it does not:
+          it moves the model calls and nothing else. An operator who reads "local" as
+          "on-premises everything" would expect their Chroma Cloud documents to have
+          moved, which is the misreading this whole setting exists to avoid - it is a
+          narrowing of one capability, not a fourth deployment mode. The second sentence
+          names the control that *does* move them, because the honest answer to "how do I
+          keep the documents here too" is a different setting, not this one. */}
+      <section className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-gray-900">Force local inference</p>
+          <p className="text-xs text-muted leading-relaxed max-w-lg">
+            Every agent on this project runs on the local models set under Models below,
+            whatever the LLM mode says. It moves the model calls only - documents stay
+            wherever the mode puts them, so a standard project keeps its documents in Chroma
+            Cloud. Switching the mode to sensitive is what moves those.
+          </p>
+          {!mayChangePlatformTierSettings && (
+            <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+              <Lock size={12} />
+              Only an org admin or above may change where this engagement's prompts go.
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-label="Force local inference"
+          aria-checked={form.force_local_inference}
+          disabled={!mayChangePlatformTierSettings}
+          onClick={() =>
+            setForm({ ...form, force_local_inference: !form.force_local_inference })
+          }
+          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            form.force_local_inference ? 'bg-brand' : 'bg-gray-300'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 mt-0.5 rounded-full bg-white shadow transition-transform ${
+              form.force_local_inference ? 'translate-x-4' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
       </section>
 
       {/* Tag fields */}

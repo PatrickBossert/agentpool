@@ -44,6 +44,7 @@ vi.mock('../api/endpoints', () => ({
       can_approve: false,
       can_grant_roles: false,
       can_issue_invite_links: false,
+      can_change_platform_tier_settings: false,
       writable_knowledge_tiers: [],
     }),
   },
@@ -307,6 +308,7 @@ describe('AgentDetailPanel - Chat attach control', () => {
       can_approve: false,
       can_grant_roles: false,
       can_issue_invite_links: false,
+      can_change_platform_tier_settings: false,
       writable_knowledge_tiers: [],
       ...overrides,
     }

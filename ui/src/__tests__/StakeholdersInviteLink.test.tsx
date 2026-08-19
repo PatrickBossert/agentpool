@@ -113,6 +113,7 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      can_change_platform_tier_settings: true,
       // Not what these tests are about - the invite-link action does not read it.
       writable_knowledge_tiers: ['project'],
     })
@@ -137,6 +138,7 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      can_change_platform_tier_settings: true,
       // Not what these tests are about - the invite-link action does not read it.
       writable_knowledge_tiers: ['project'],
     })
@@ -155,6 +157,7 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      can_change_platform_tier_settings: true,
       // Not what these tests are about - the invite-link action does not read it.
       writable_knowledge_tiers: ['project'],
     })
@@ -174,6 +177,7 @@ describe('Stakeholders: invite state and the invite link', () => {
       // A project_admin: administers this engagement, and is refused this door.
       can_review: true, can_approve: true, can_grant_roles: true,
       can_issue_invite_links: false,
+      can_change_platform_tier_settings: false,
       // Not what these tests are about - the invite-link action does not read it.
       writable_knowledge_tiers: ['project'],
     })
@@ -190,6 +194,7 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      can_change_platform_tier_settings: true,
       // Not what these tests are about - the invite-link action does not read it.
       writable_knowledge_tiers: ['project'],
     })
@@ -218,6 +223,7 @@ describe('Stakeholders: invite state and the invite link', () => {
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: true,
+      can_change_platform_tier_settings: true,
       // Not what these tests are about - the invite-link action does not read it.
       writable_knowledge_tiers: ['project'],
     })

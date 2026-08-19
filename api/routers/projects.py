@@ -4,7 +4,12 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
+from api.auth import (
+    check_project_access,
+    is_org_admin_or_above,
+    require_any_auth,
+    require_org_admin_or_above,
+)
 from api.config import get_settings
 from api.database import (
     get_db_path, get_connection, fetch_project, fetch_outputs_by_type, merge_project_config,
@@ -272,10 +277,16 @@ async def patch_settings_endpoint(slug: str, req: ProjectSettings, payload: dict
     is not uniformly project configuration though: it also carries `llm_mode`, `dev_mode` and
     the per-agent model ids, which decide where this engagement's data is sent. Those stay on
     the platform tier - see `_PLATFORM_TIER_SETTINGS`.
+
+    The tier question is asked through `is_org_admin_or_above` rather than by restating the
+    tuple it compares. `GET /my-permissions` reports the same predicate as
+    `can_change_platform_tier_settings`, which is what the Settings tab asks before offering
+    the local-inference toggle - one rule observed from two sides, so a button cannot be put
+    in front of somebody this door refuses.
     """
     await check_project_access(slug, payload)
     await require_project_administration(slug, payload)
-    if payload.get("role") not in ("sysadmin", "org_admin"):
+    if not is_org_admin_or_above(payload):
         await _refuse_platform_tier_setting_changes(slug, req)
     result = await update_project_settings(slug, req)
     if result is None:

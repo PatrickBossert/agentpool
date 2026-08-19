@@ -10,11 +10,13 @@ vi.mock('../api/endpoints', () => ({
   projectsApi: {
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
+    getMyPermissions: vi.fn(),
   },
 }))
 
 const BASE_SETTINGS: ProjectSettings = {
   llm_mode: 'standard',
+  force_local_inference: false,
   locale: 'GB',
   sector: '',
   stakeholder_groups: [],
@@ -51,6 +53,14 @@ function Wrapper() {
 describe('Settings - press budget', () => {
   beforeEach(() => {
     vi.mocked(projectsApi.getSettings).mockResolvedValue(BASE_SETTINGS)
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
+      can_review: true,
+      can_approve: true,
+      can_grant_roles: false,
+      can_issue_invite_links: true,
+      can_change_platform_tier_settings: true,
+      writable_knowledge_tiers: ['project'],
+    })
   })
 
   it('sends the press budget when the form is saved', async () => {

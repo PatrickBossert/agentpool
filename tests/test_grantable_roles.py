@@ -873,6 +873,102 @@ async def test_my_permissions_reports_the_invite_link_right_the_door_enforces(ro
             )
 
 
+PLATFORM_TIER_SETTING_REFUSED = (
+    "force_local_inference may only be changed by an org admin or above - "
+    "a project_admin configures the engagement, not how it is run"
+    ". Clearing the local-inference override widens where this project's prompts "
+    "may go - a project_admin may not move their own engagement back onto hosted "
+    "inference"
+)
+
+
+async def _force_local_inference_column() -> int:
+    """The authority, not the config_json copy - `_refuse_platform_tier_setting_changes`
+    reads the column deliberately, so a test that read the copy could not tell a refused
+    change from an applied one that only reached config."""
+    async with get_connection(SLUG) as conn:
+        return (await fetch_project(conn, slug=SLUG))["force_local_inference"]
+
+
+async def _settings_body(caller, **overrides) -> dict:
+    """The whole body, read back and resent with fields changed - which is what the Settings
+    tab does. The guard compares *transitions*, so a save that mentions a platform-tier field
+    without changing it must pass; a test that sent a partial body would prove the opposite
+    door."""
+    current = (await caller.get(f"/projects/{SLUG}/settings")).json()
+    return {**current, **overrides}
+
+
+@pytest.mark.asyncio
+async def test_my_permissions_reports_the_settings_tier_right_the_door_enforces(roles):
+    """What Settings.tsx asks before offering the local-inference toggle.
+
+    Report and door driven together per caller, the same shape as the invite-link test
+    above and for the same reason: a control offered to somebody the door 403s is worse
+    than no control, and a report that quietly widened while the door held would be
+    invisible to a test asking only one of them. Both read `is_org_admin_or_above` -
+    `patch_settings_endpoint` calls the predicate rather than restating its tuple - so this
+    is one rule observed from two sides.
+
+    Reported under its own key rather than reusing `can_issue_invite_links`, which asks the
+    identical predicate today. That reuse would be right by predicate and wrong by referent:
+    that key is pinned by the test above to the resend-invite door, so if *that* door ever
+    changed tier this control would silently follow it with every test still green.
+
+    `approver`, `reviewer` and `plain` are reported on but not driven against the door: the
+    administration gate refuses them a step earlier, so the call would witness the floor
+    rather than this rule. Their refusal is attributed by sentence to prove exactly that.
+    """
+    for caller, may in (
+        ("padmin", False),
+        ("approver", False),
+        ("reviewer", False),
+        ("plain", False),
+        ("org_admin_a", True),
+    ):
+        reported = (await roles[caller].get(f"/projects/{SLUG}/my-permissions")).json()
+        assert reported["can_change_platform_tier_settings"] is may, (
+            f"/my-permissions tells {caller} the wrong thing about the settings door"
+        )
+
+    # The control first: it is a working door, not a dead one, and the flag really moves.
+    assert await _force_local_inference_column() == 0
+    turned_on = await roles["org_admin_a"].patch(
+        f"/projects/{SLUG}/settings",
+        json=await _settings_body(roles["org_admin_a"], force_local_inference=True),
+    )
+    assert turned_on.status_code == 200, turned_on.text
+    assert await _force_local_inference_column() == 1, (
+        "reported as permitted, and the column never changed"
+    )
+
+    # The refusal, in the widening direction - the one that would put an engagement back
+    # onto hosted inference. `padmin` administers everything else here and is refused this,
+    # with the sentence that *names the field*, which is what says the platform-tier carve-out
+    # refused it rather than some other guard.
+    cleared = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings",
+        json=await _settings_body(roles["padmin"], force_local_inference=False),
+    )
+    assert _refusal(cleared) == (403, PLATFORM_TIER_SETTING_REFUSED)
+    assert await _force_local_inference_column() == 1, "refused, and cleared anyway"
+
+    # And the half the toggle depends on: a project_admin's *ordinary* save still carries the
+    # flag, unchanged, and is accepted. The guard compares transitions, so the Settings tab
+    # sending the whole body is not an attempt to change anything - which is why the UI must
+    # send the stored value rather than omitting the key. Omit it and this call becomes the
+    # refused one above, silently, from a caller who touched nothing.
+    unrelated = await roles["padmin"].patch(
+        f"/projects/{SLUG}/settings",
+        json=await _settings_body(roles["padmin"], slack_channel="#delivery"),
+    )
+    assert unrelated.status_code == 200, unrelated.text
+    assert unrelated.json()["slack_channel"] == "#delivery"
+    assert await _force_local_inference_column() == 1, (
+        "an unrelated save by a project_admin moved the engagement back onto hosted inference"
+    )
+
+
 @pytest.mark.asyncio
 async def test_chain_a_a_project_admin_cannot_mint_a_login_it_controls(roles):
     """Chain A: create a stakeholder for an address you own, resend, redeem, hold a session.
@@ -1071,6 +1167,10 @@ async def test_the_logins_a_project_admin_can_cause_are_confined_to_this_project
             # Nor may the account a redeemed invite minted go on to mint another: the
             # resend door is platform tier, and this login is not.
             "can_issue_invite_links": False,
+            # Nor may it change where this engagement's prompts and documents go. The
+            # platform-tier fields on PATCH /settings are refused to everything below an
+            # org_admin, and a redeemed invite mints a reviewer.
+            "can_change_platform_tier_settings": False,
             # Nor may it add material to any knowledge store, at any width. Membership is
             # read access by design; writing the project's own store takes administration
             # of this project or approval on it, and this login has neither.

@@ -61,5 +61,6 @@ async def test_permissions_reports_the_same_roles_the_gates_read(client, seeded_
     assert r.json() == {
         "can_review": True, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
+        "can_change_platform_tier_settings": True,
         "writable_knowledge_tiers": ["sector", "project"],
     }

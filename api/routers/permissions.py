@@ -41,6 +41,17 @@ async def get_my_permissions(slug: str, payload: dict = Depends(require_any_auth
         # engagement. `is_org_admin_or_above` is the same predicate the door refuses with
         # rather than a restatement of it.
         "can_issue_invite_links": is_org_admin_or_above(payload),
+        # What Settings.tsx asks before offering the local-inference toggle. The same
+        # predicate `patch_settings_endpoint` decides `_PLATFORM_TIER_SETTINGS` with - it
+        # calls `is_org_admin_or_above` rather than restating the tuple, so this is that door
+        # observed from the reporting side rather than a second copy of its rule.
+        #
+        # Reported under its own name rather than by reusing `can_issue_invite_links`, which
+        # is the identical predicate today. That reuse would be right by predicate and wrong
+        # by referent: `can_issue_invite_links` is pinned by test to the resend-invite door,
+        # so if that door ever changed tier the settings toggle would silently follow a door
+        # it has nothing to do with, every test still green. Two names, two doors, two tests.
+        "can_change_platform_tier_settings": is_org_admin_or_above(payload),
         # What the upload dialog's tier picker offers, broadest first. Answered here rather
         # than restated in TypeScript for the reason this whole endpoint exists: a second
         # copy of an authority rule drifts, and the copy the UI trusts is the wrong one -
