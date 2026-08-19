@@ -179,7 +179,7 @@ export default function AdminDashboard() {
 
           <div className="px-4 py-3 space-y-3">
             <p className="text-xs text-gray-600 leading-relaxed">
-              The address this deployment answers on. Every interview invitation, reminder
+              The address this deployment answers on. Every interview invitation, reminder,
               and welcome email links back here, so an administrator needs to know whether
               the value below is a saved setting or the environment's fallback - the two
               behave differently the next time the environment changes.
