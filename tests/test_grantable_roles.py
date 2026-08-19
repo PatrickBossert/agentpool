@@ -970,6 +970,38 @@ async def test_my_permissions_reports_the_settings_tier_right_the_door_enforces(
 
 
 @pytest.mark.asyncio
+async def test_my_permissions_serves_the_servers_own_platform_tier_list(roles):
+    """`platform_tier_settings` is `_PLATFORM_TIER_SETTINGS`, not a list that resembles it.
+
+    The Settings tab disables a control by asking whether its field is in this list, so the
+    nine names have to live in exactly one place. A hand-copied list in TypeScript would be
+    the same rule twice, and the copy the UI trusts is the one that drifts - which on this
+    page means a field the server refuses rendered as though it were editable, the precise
+    failure `/my-permissions` exists to prevent.
+
+    Held equal in **order** as well as membership, because the endpoint returns `list(...)`
+    of the tuple: a set comparison would pass against an implementation that rebuilt the list
+    by hand and happened to name the same nine.
+
+    Reported to every caller, not only to the ones who may change them - a caller who may not
+    still has to be told which controls are locked, or the page greys them out with nothing to
+    say about why.
+    """
+    from api.routers.projects import _PLATFORM_TIER_SETTINGS
+
+    for caller in ("padmin", "approver", "reviewer", "plain", "org_admin_a"):
+        reported = (await roles[caller].get(f"/projects/{SLUG}/my-permissions")).json()
+        assert reported["platform_tier_settings"] == list(_PLATFORM_TIER_SETTINGS), (
+            f"/my-permissions serves {caller} a platform-tier list that is not the one the "
+            "door refuses with"
+        )
+
+    # And it is not empty, which is the way a served-rather-than-restated list fails
+    # harmlessly-looking: an empty list locks nothing and every control renders editable.
+    assert reported["platform_tier_settings"], "an empty list gates nothing"
+
+
+@pytest.mark.asyncio
 async def test_chain_a_a_project_admin_cannot_mint_a_login_it_controls(roles):
     """Chain A: create a stakeholder for an address you own, resend, redeem, hold a session.
 
@@ -978,6 +1010,7 @@ async def test_chain_a_a_project_admin_cannot_mint_a_login_it_controls(roles):
     credential, so it is the only step that has to refuse. Asserted on the `users` row, not
     on the status code: the question is whether an account they control comes into being.
     """
+
     created = await roles["padmin"].post(
         f"/projects/{SLUG}/stakeholders",
         json={"name": "Ghost", "email": "ghost@evil.test", "is_reviewer": True},
@@ -1132,6 +1165,8 @@ async def test_the_logins_a_project_admin_can_cause_are_confined_to_this_project
     comment, because `check_project_access` only attempts the membership lookup for that
     value - and the membership it writes names this project alone.
     """
+    from api.routers.projects import _PLATFORM_TIER_SETTINGS
+
     created = await roles["padmin"].post(
         f"/projects/{SLUG}/stakeholders",
         json={"name": "Invitee", "email": "invitee@example.com", "is_reviewer": True},
@@ -1171,6 +1206,7 @@ async def test_the_logins_a_project_admin_can_cause_are_confined_to_this_project
             # platform-tier fields on PATCH /settings are refused to everything below an
             # org_admin, and a redeemed invite mints a reviewer.
             "can_change_platform_tier_settings": False,
+            "platform_tier_settings": list(_PLATFORM_TIER_SETTINGS),
             # Nor may it add material to any knowledge store, at any width. Membership is
             # read access by design; writing the project's own store takes administration
             # of this project or approval on it, and this login has neither.

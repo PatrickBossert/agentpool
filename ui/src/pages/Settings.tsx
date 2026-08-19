@@ -81,6 +81,32 @@ function TagInput({
   )
 }
 
+// The Models section's fields, hoisted so the inputs and the "why is this greyed out" note
+// are driven from one array. Which of them are platform-tier is not decided here - the
+// server answers that per field, and this is only the order they render in.
+const MODEL_FIELDS: [keyof ProjectSettings, string][] = [
+  ['anthropic_fast_model', 'Hosted fast model'],
+  ['anthropic_deep_model', 'Hosted deep model'],
+  ['local_fast_model', 'Local fast model'],
+  ['local_fast_url', 'Local fast URL'],
+  ['local_deep_model', 'Local deep model'],
+  ['local_deep_url', 'Local deep URL'],
+]
+
+/** Why a platform-tier control is greyed out. One sentence in one place, rendered beside
+ *  every field the server locks - a disabled control with no reason beside it reads as a
+ *  bug, and the operator's next move is to report the page rather than to ask somebody. It
+ *  says what the fields have in common rather than naming them, because which fields they
+ *  are is the server's answer and changes without this file. */
+function PlatformTierNote() {
+  return (
+    <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+      <Lock size={12} />
+      Only an org admin or above may change where this engagement's data is sent.
+    </p>
+  )
+}
+
 export default function Settings() {
   const { slug } = useParams<{ slug: string }>()
   const qc = useQueryClient()
@@ -109,6 +135,14 @@ export default function Settings() {
     enabled: !!slug,
   })
   const mayChangePlatformTierSettings = permissions?.can_change_platform_tier_settings ?? false
+  // Which fields that covers is the server's answer too, never a list written here - see
+  // MyPermissions.platform_tier_settings. `null` until it arrives, and an unanswered
+  // question locks: a control enabled for the moment the answer takes is a control that can
+  // be changed and then refused, which is the thing this gating exists to prevent.
+  const platformTierFields = permissions ? new Set(permissions.platform_tier_settings) : null
+  const locked = (field: keyof ProjectSettings) =>
+    platformTierFields === null
+    || (!mayChangePlatformTierSettings && platformTierFields.has(field))
 
   useEffect(() => {
     if (settings) setForm({ ...DEFAULTS, ...settings })
@@ -166,18 +200,21 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className="text-xs text-gray-600 block mb-1">LLM Mode</label>
+            <label htmlFor="llm_mode" className="text-xs text-gray-600 block mb-1">LLM Mode</label>
             <select
+              id="llm_mode"
               value={form.llm_mode}
+              disabled={locked('llm_mode')}
               onChange={(e) =>
                 setForm({ ...form, llm_mode: e.target.value as ProjectSettings['llm_mode'] })
               }
-              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand"
+              className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             >
               <option value="standard">standard</option>
               <option value="sensitive">sensitive</option>
               <option value="fallback">fallback</option>
             </select>
+            {locked('llm_mode') && <PlatformTierNote />}
           </div>
           <div>
             <label className="text-xs text-gray-600 block mb-1">Project locale</label>
@@ -236,19 +273,15 @@ export default function Settings() {
             wherever the mode puts them, so a standard project keeps its documents in Chroma
             Cloud. Switching the mode to sensitive is what moves those.
           </p>
-          {!mayChangePlatformTierSettings && (
-            <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
-              <Lock size={12} />
-              Only an org admin or above may change where this engagement's prompts go.
-            </p>
-          )}
+          {locked('force_local_inference') && <PlatformTierNote />}
         </div>
         <button
           type="button"
           role="switch"
+          id="force_local_inference"
           aria-label="Force local inference"
           aria-checked={form.force_local_inference}
-          disabled={!mayChangePlatformTierSettings}
+          disabled={locked('force_local_inference')}
           onClick={() =>
             setForm({ ...form, force_local_inference: !form.force_local_inference })
           }
@@ -362,27 +395,24 @@ export default function Settings() {
           across a whole campaign. Sensitive projects use the local pair and never the hosted
           ones.
         </p>
-        {(
-          [
-            ['anthropic_fast_model', 'Hosted fast model'],
-            ['anthropic_deep_model', 'Hosted deep model'],
-            ['local_fast_model', 'Local fast model'],
-            ['local_fast_url', 'Local fast URL'],
-            ['local_deep_model', 'Local deep model'],
-            ['local_deep_url', 'Local deep URL'],
-          ] as [keyof ProjectSettings, string][]
-        ).map(([key, label]) => (
+        {MODEL_FIELDS.map(([key, label]) => (
           <div key={key} className="mb-3">
             <label htmlFor={key} className="text-xs text-gray-600 block mb-1">{label}</label>
             <input
               id={key}
               type="text"
               value={String(form[key] ?? '')}
+              disabled={locked(key)}
               onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-              className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-brand"
+              className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             />
           </div>
         ))}
+        {/* Once for the section rather than once per input: six identical notes under six
+            adjacent fields is noise, and they are locked by one rule for one reason. Asked
+            of the same array the inputs are rendered from, so it cannot answer for a
+            different set of fields than the ones on screen. */}
+        {MODEL_FIELDS.some(([key]) => locked(key)) && <PlatformTierNote />}
       </div>
 
       {/* Interview Branding */}

@@ -16,7 +16,7 @@
 // configuration would have moved a project back onto hosted inference with nothing said.
 // `test_a_save_that_changes_something_else_carries_the_override_through` is the assertion
 // that fails if anybody ever builds this body from a narrower type again.
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AxiosError, AxiosHeaders } from 'axios'
@@ -54,12 +54,30 @@ const BASE_SETTINGS: ProjectSettings = {
   local_deep_url: 'http://localhost:11434/v1',
 }
 
+// What GET /my-permissions answers for `platform_tier_settings` - the server's own
+// _PLATFORM_TIER_SETTINGS, which api/routers/permissions.py serves rather than restates.
+// A fixture standing in for the server's answer, not a second copy of the rule: the
+// endpoint is held equal to the real tuple in
+// tests/test_grantable_roles.py::test_my_permissions_serves_the_servers_own_platform_tier_list,
+// so the two cannot drift without that failing.
+//
+// `dev_mode` is in the list and has no control on this page. That is deliberate and
+// asserted below rather than filtered out here - the page must answer honestly about
+// fields it does not render, and a fixture trimmed to what happens to be on screen could
+// not tell a missing control from a correctly absent one.
+const PLATFORM_TIER_SETTINGS = [
+  'llm_mode', 'force_local_inference', 'dev_mode',
+  'anthropic_fast_model', 'anthropic_deep_model',
+  'local_fast_model', 'local_fast_url', 'local_deep_model', 'local_deep_url',
+]
+
 const PLATFORM_TIER: MyPermissions = {
   can_review: true,
   can_approve: true,
   can_grant_roles: false,
   can_issue_invite_links: true,
   can_change_platform_tier_settings: true,
+  platform_tier_settings: PLATFORM_TIER_SETTINGS,
   writable_knowledge_tiers: ['project'],
 }
 
@@ -210,7 +228,12 @@ describe('Settings - a caller who may not change where the prompts go', () => {
       // administrator needs to be able to read, even where they may not change it.
       expect(toggle()).toHaveAttribute('aria-checked', 'true')
     })
-    expect(screen.getByText(/only an org admin or above may change/i)).toBeInTheDocument()
+    // Scoped to the toggle's own section, not the page: the same note now renders beside
+    // every locked group, and a page-wide query would be satisfied by a note explaining
+    // some other control.
+    const section = toggle().closest('section')!
+    expect(within(section).getByText(/only an org admin or above may change/i))
+      .toBeInTheDocument()
   })
 
   it('still carries the stored override on that caller\'s own save', async () => {
@@ -284,5 +307,111 @@ describe('Settings - the toggle says what it does not do', () => {
     expect(blurb).toHaveTextContent(/chroma cloud/i)
     // And names the control that *does* move them, so the honest next question has an answer.
     expect(blurb).toHaveTextContent(/sensitive/i)
+  })
+})
+
+// ── Every platform-tier field, not just the one this task added ──────────────────────────
+//
+// Gating exactly one of nine platform-tier fields was worse than gating none: it reads as
+// though the other eight are permitted. These drive the whole set, and they are written
+// against the *server's* list rather than a list of controls chosen here - so a tenth member
+// added to `_PLATFORM_TIER_SETTINGS` is covered the moment its control follows the same
+// `id={field}` pattern, with no change to this file.
+describe('Settings - every platform-tier field the page renders is gated together', () => {
+  const realAdapter = apiClient.defaults.adapter
+
+  afterEach(() => {
+    apiClient.defaults.adapter = realAdapter
+  })
+
+  /** The control for a settings field, found by the id the page gives it, or null when the
+   *  page renders no control for that field at all. */
+  const controlFor = (field: string) => document.getElementById(field)
+
+  it('renders a control for every platform-tier field but dev_mode', async () => {
+    // The split is asserted, not assumed. Without this, the disabled-check below would pass
+    // vacuously for any field whose control silently disappeared - and "no control" and
+    // "control that ignores the tier" look identical to a test that only asks about the
+    // controls it finds.
+    serve(BASE_SETTINGS, PLATFORM_TIER)
+    renderSettings()
+    await settingsHaveLoaded()
+
+    const rendered = PLATFORM_TIER_SETTINGS.filter((f) => controlFor(f) !== null)
+    expect(rendered.sort()).toEqual(
+      PLATFORM_TIER_SETTINGS.filter((f) => f !== 'dev_mode').sort(),
+    )
+    expect(controlFor('dev_mode')).toBeNull()
+  })
+
+  it('disables every one of them for a project_admin', async () => {
+    serve(BASE_SETTINGS, PROJECT_ADMIN)
+    renderSettings()
+    await waitFor(() => expect(controlFor('llm_mode')).toBeDisabled())
+
+    for (const field of PLATFORM_TIER_SETTINGS) {
+      const control = controlFor(field)
+      if (control === null) continue  // dev_mode - asserted absent by the test above
+      expect(control, `${field} is refused by the server and offered by the page`)
+        .toBeDisabled()
+    }
+  })
+
+  it('enables every one of them for an org admin', async () => {
+    // The control, and the half that matters most: a test asserting only that things are
+    // disabled passes just as happily against a page that disables them for everybody, which
+    // would be a broken Settings tab rather than a gated one.
+    serve(BASE_SETTINGS, PLATFORM_TIER)
+    renderSettings()
+    await settingsHaveLoaded()
+
+    for (const field of PLATFORM_TIER_SETTINGS) {
+      const control = controlFor(field)
+      if (control === null) continue
+      expect(control, `${field} is permitted by the server and refused by the page`)
+        .toBeEnabled()
+    }
+  })
+
+  it('says why the controls are greyed out, wherever they are greyed out', async () => {
+    // A disabled control with no reason beside it reads as a bug, and the operator's next
+    // move is to report the page rather than to ask somebody. One note per locked group -
+    // the mode, the models, the override - rather than one per field.
+    serve(BASE_SETTINGS, PROJECT_ADMIN)
+    renderSettings()
+
+    const notes = await screen.findAllByText(/only an org admin or above may change/i)
+    expect(notes).toHaveLength(3)
+  })
+
+  it('shows no such note to a caller who may change them', async () => {
+    serve(BASE_SETTINGS, PLATFORM_TIER)
+    renderSettings()
+    await settingsHaveLoaded()
+
+    expect(screen.queryByText(/only an org admin or above may change/i)).not.toBeInTheDocument()
+  })
+
+  it('locks the controls until the answer arrives, rather than after', async () => {
+    // An unanswered question locks. A control enabled for the moment /my-permissions takes
+    // to answer is a control a project_admin can change and then be refused for - the exact
+    // failure the gating exists to prevent, just narrower in time. Asserted before either
+    // query is allowed to resolve.
+    let releasePermissions: (() => void) | null = null
+    const held = new Promise<void>((resolve) => { releasePermissions = resolve })
+    apiClient.defaults.adapter = async (config: AxiosRequestConfig) => {
+      if (apiClient.getUri(config).endsWith('/my-permissions')) {
+        await held
+        return ok(config, PLATFORM_TIER)
+      }
+      return ok(config, BASE_SETTINGS)
+    }
+    renderSettings()
+
+    await waitFor(() => expect(controlFor('llm_mode')).toBeDisabled())
+    expect(controlFor('force_local_inference')).toBeDisabled()
+
+    releasePermissions!()
+    await waitFor(() => expect(controlFor('llm_mode')).toBeEnabled())
   })
 })

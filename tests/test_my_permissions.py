@@ -21,6 +21,9 @@ import pytest_asyncio
 
 from api.config import get_settings
 from api.database import get_connection
+# The tier list the endpoint serves, imported rather than re-typed here: a literal copy in
+# the expected dict would pass against an endpoint that had drifted from the door.
+from api.routers.projects import _PLATFORM_TIER_SETTINGS
 
 SLUG = "my-permissions-test"
 
@@ -73,6 +76,10 @@ async def test_it_reports_what_the_shared_authority_check_says(client, seeded_pr
         # follow the resend door's tier if that ever moved.
         # tests/test_grantable_roles.py drives it against the settings door itself.
         "can_change_platform_tier_settings": True,
+        # The nine field names the permission above covers, served from the router's own
+        # _PLATFORM_TIER_SETTINGS so the Settings tab need not restate them.
+        # test_my_permissions_serves_the_servers_own_platform_tier_list holds the two equal.
+        "platform_tier_settings": list(_PLATFORM_TIER_SETTINGS),
         "writable_knowledge_tiers": ["sector", "project"],
     }
     # The roles the response is built from are the rule; the booleans are only its shadow.
@@ -103,6 +110,10 @@ async def test_a_caller_with_no_content_roles_is_told_so(client, seeded_project_
         "can_review": False, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
         "can_change_platform_tier_settings": True,
+        # The nine field names the permission above covers, served from the router's own
+        # _PLATFORM_TIER_SETTINGS so the Settings tab need not restate them.
+        # test_my_permissions_serves_the_servers_own_platform_tier_list holds the two equal.
+        "platform_tier_settings": list(_PLATFORM_TIER_SETTINGS),
         # Unmoved by the patch above, for the reason given in the test before this one.
         "writable_knowledge_tiers": ["sector", "project"],
     }

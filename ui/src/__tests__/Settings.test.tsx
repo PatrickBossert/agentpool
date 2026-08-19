@@ -14,6 +14,15 @@ vi.mock('../api/endpoints', () => ({
   },
 }))
 
+// What `GET /my-permissions` answers for `platform_tier_settings` - the server's
+// `_PLATFORM_TIER_SETTINGS`. A fixture, not a rule: the endpoint is held equal to the real
+// tuple by tests/test_grantable_roles.py, so if the two ever disagree that is where it fails.
+const PLATFORM_TIER_SETTINGS = [
+  'llm_mode', 'force_local_inference', 'dev_mode',
+  'anthropic_fast_model', 'anthropic_deep_model',
+  'local_fast_model', 'local_fast_url', 'local_deep_model', 'local_deep_url',
+]
+
 const BASE_SETTINGS: ProjectSettings = {
   llm_mode: 'standard',
   force_local_inference: false,
@@ -59,6 +68,10 @@ describe('Settings - press budget', () => {
       can_grant_roles: false,
       can_issue_invite_links: true,
       can_change_platform_tier_settings: true,
+      // The server's real list. This caller may change them all, so nothing locks - but the
+      // page now disables a control by asking this list, and a fixture that shipped an empty
+      // one would exercise a page that never locks anything.
+      platform_tier_settings: PLATFORM_TIER_SETTINGS,
       writable_knowledge_tiers: ['project'],
     })
   })
@@ -98,6 +111,12 @@ describe('Settings - press budget', () => {
     vi.mocked(projectsApi.updateSettings).mockImplementation(saved)
     render(<Wrapper />)
     const input = await screen.findByLabelText(/local deep model/i)
+    // This is a platform-tier field, so it renders disabled until /my-permissions says who
+    // the caller is - an unanswered question locks. `fireEvent.change` on a disabled input
+    // is silently ignored, so without this wait the edit would race the answer and the test
+    // would assert against an unedited form. Same shape as the load barrier in
+    // SettingsLocalInference.test.tsx.
+    await waitFor(() => expect(input).toBeEnabled())
     fireEvent.change(input, { target: { value: 'qwen27b:reasoning' } })
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() =>

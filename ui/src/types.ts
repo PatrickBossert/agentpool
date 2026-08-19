@@ -897,6 +897,13 @@ export interface MyPermissions {
   // predicate today: they report on different doors, and a shared key would make one follow
   // the other's tier change silently.
   can_change_platform_tier_settings: boolean
+  // Which fields the permission above covers - the server's own _PLATFORM_TIER_SETTINGS.
+  // Served rather than restated for the reason writable_knowledge_tiers is: a hand-copied
+  // list of field names in TypeScript is the same rule in two places, and the copy the UI
+  // trusts is the one that drifts. Settings.tsx disables a control by asking whether its
+  // field is in here, so a tenth member added on the server disables its control with no
+  // change to this file. Never narrow this to the fields one page happens to render.
+  platform_tier_settings: string[]
   // The knowledge tiers this caller may add material at on this project, broadest first -
   // some subset of 'sector', 'organisation', 'project'. What an upload tier picker offers,
   // and the whole of what it may offer: the rule is the server's
