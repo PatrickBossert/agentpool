@@ -1543,6 +1543,33 @@ async def test_a_project_admin_may_still_configure_everything_else_on_a_forced_p
 
 
 @pytest.mark.asyncio
+async def test_a_write_that_only_merges_a_config_key_carries_the_override_through(
+    roles, forced_project
+):
+    """`update_project_config` is the one writer of the column, and two of its three callers
+    do not care about it at all: the branding upload and Agent Chat's `_patch_config` both
+    merge a single config key and pass the project's current egress inputs straight back.
+
+    That argument is why `force_local_inference` is a **required** keyword argument there
+    rather than a defaulted one - a default would let either of those quietly write `0`, and
+    the failure would be an engagement's prompts moving to Anthropic on the strength of
+    somebody uploading a header image. Required means a caller that forgets does not compile;
+    this is the test that a caller which remembers passes the right thing.
+
+    Driven over HTTP through the branding door, which is the reachable one of the two.
+    """
+    uploaded = await roles["padmin"].post(
+        f"/projects/{SLUG}/branding/image",
+        files={"file": ("header.png", PNG, "image/png")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    assert await _stored_force_local(SLUG) is True, (
+        "a header image upload cleared the local-inference override"
+    )
+
+
+@pytest.mark.asyncio
 async def test_the_platform_tier_may_still_clear_the_override(roles, forced_project, client):
     """Without this the tests above are satisfied by a guard that refuses everybody, and the
     flag would be unsettable rather than protected. Asserted on the column both ways, so a

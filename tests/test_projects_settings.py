@@ -86,13 +86,22 @@ async def test_patch_settings_rewrites_yaml(client):
         "review_gates": True,
         "slack_channel": "",
     }
-    await client.patch("/projects/settings-test/settings", json=patch_body)
+    await client.patch(
+        "/projects/settings-test/settings",
+        json={**patch_body, "force_local_inference": True},
+    )
     settings = get_settings()
     yaml_path = Path(settings.projects_dir) / "settings-test" / "config.yaml"
     with yaml_path.open() as f:
         config = yaml.safe_load(f)
     assert config["sector"] == "energy"
     assert config["client_slug"] == "settings-test"
+    # The two egress inputs are kept out of config.yaml, which is read with a fail-open
+    # default: `projects.llm_mode` and `projects.force_local_inference` are the authorities,
+    # and a third copy in a file nothing invalidates is a copy that will eventually be read.
+    # Written to `true` above, so this asserts an exclusion rather than an absent value.
+    assert "llm_mode" not in config
+    assert "force_local_inference" not in config
 
 
 @pytest.mark.asyncio
