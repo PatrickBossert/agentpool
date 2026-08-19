@@ -85,32 +85,49 @@ def reset_settings_cache():
 
 
 @pytest.fixture(autouse=True)
-def reset_platform_public_url_cache():
-    """Drop platform_settings._CACHED_URL for every test, the same reason as
-    reset_settings_cache above but for a second, independent module-level cache.
+def reset_process_caches():
+    """Empty every registered process-local cache for every test.
 
-    Before sp58 Task 3, platform_public_url() had exactly one caller
-    (interview_service.interview_url) and only tests/test_platform_settings.py ever
-    touched it, so its own local autouse fixture was isolation enough. Task 3 gave it
-    four more callers spread across campaign_service, pam_report_job,
-    commit_notify_service and admin_service - any test anywhere in the suite that
-    creates a system.db under its own tmp_path and then calls one of those now
-    populates this cache, including on a *blank* stored row (a "successful read" by
-    platform_public_url()'s own rule), and nothing clears it again until this fixture
-    runs. A later test elsewhere in the suite - one that never mentions public_url -
-    then reads whatever the first test's environment happened to be: CLAUDE.md's
-    "passes alone, fails in the suite" shape, reached here through a cache rather than
-    a database row. Reproduced without this fixture: revert it and run the whole
-    suite - tests/test_interview_url.py fails depending on run order.
+    The same reason as reset_settings_cache above, for the module-level caches that are
+    not get_settings: they are resolved once per process, so a value one test causes to
+    be cached is answered to the next - CLAUDE.md's "passes alone, fails in the suite"
+    shape, reached through a cache rather than a database row.
 
-    Cleared on both sides for the same reason reset_settings_cache is: a test that
-    populates the cache and does not explicitly forget it must not leak into whatever
-    runs next.
+    Two are registered today (see api/services/process_cache.py), and they arrived here
+    from opposite directions:
+
+    - **platform_settings._CACHED_URL.** Before sp58 Task 3, platform_public_url() had
+      exactly one caller and only tests/test_platform_settings.py touched it, so a local
+      autouse fixture was isolation enough. Task 3 gave it four more callers across
+      campaign_service, pam_report_job, commit_notify_service and admin_service, so any
+      test that creates a system.db under its own tmp_path and calls one of those now
+      populates it - including on a *blank* stored row, which is a "successful read" by
+      platform_public_url()'s own rule. Reproduced without this fixture: revert it and
+      run the whole suite - tests/test_interview_url.py fails depending on run order.
+    - **chroma_client._MODE_CACHE**, which never had suite-wide isolation at all and is
+      the consequential one: it answers "is this project sensitive", so a stale entry
+      sends a sensitive project's documents to Chroma Cloud and its prompts to hosted
+      Anthropic. Nine test files clear it by hand, each covering only itself.
+      tests/test_process_cache.py demonstrates the leak rather than describing it.
+
+    Nothing is imported here for its registration side effect, and it would be dead
+    weight if it were: a clearer registers when its module is imported, and a cache
+    cannot be populated by a module that has not been imported - so registration can
+    never lag the thing it protects against, whatever order the suite collects in.
+
+    Cleared on both sides for the same reason reset_settings_cache is. Be aware of what
+    that second call does and does not buy, since no test distinguishes it: within a
+    session the before-clear already covers every test, so the after-clear is reaching
+    only what runs *outside* a test body - a session- or module-scoped teardown, an
+    early exit under -x - and the habit itself. Clearing only beforehand is the shape
+    that protects the test being written and leaves the next one to inherit whatever
+    this one left, which is how the caches got here.
     """
-    from api.services.platform_settings import forget_platform_settings
-    forget_platform_settings()
+    from api.services.process_cache import forget_all_process_caches
+
+    forget_all_process_caches()
     yield
-    forget_platform_settings()
+    forget_all_process_caches()
 
 
 @pytest.fixture

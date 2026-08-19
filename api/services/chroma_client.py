@@ -17,6 +17,7 @@ import chromadb
 
 from api.config import get_settings
 from api.services.deployment_modes import Capability, permits
+from api.services.process_cache import register_cache
 
 _log = logging.getLogger(__name__)
 
@@ -25,6 +26,13 @@ _log = logging.getLogger(__name__)
 # switch only between the write and the next resolution - it is not stale by design, it is
 # stale until someone tells it otherwise.
 _MODE_CACHE: dict[str, str] = {}
+
+# The clear-*everything* half, declared to api.services.process_cache so the suite has one
+# fixture rather than nine files' worth of hand-rolled `_MODE_CACHE.clear()`. Deliberately
+# `_MODE_CACHE.clear` and not `forget_project_mode`: the registry has no slug to give, and
+# the targeted invalidator below answers a different question - it stays, because its two
+# production callers in api/database.py must drop exactly one project.
+register_cache(_MODE_CACHE.clear)
 
 
 def forget_project_mode(slug: str) -> None:

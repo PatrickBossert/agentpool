@@ -14,9 +14,18 @@ Two properties, and the reason they are asserted here rather than beside the dec
   omission rather than end it, so the endpoint refuses the same callers, and both halves are
   asserted - the front end's half in `ui/src/__tests__/DataArchitectureRoute.test.tsx`.
 
-`project_llm_mode` caches per slug for the life of the process, so every test that changes a
-project's mode calls `forget_project_mode` - without it the second read in a test returns the
-first's answer and the mode assertions pass for the wrong reason.
+`project_llm_mode` caches per slug for the life of the process, and this file used to clear it
+three times by hand - twice in the fixture below and once in `_payload` - because without that
+the second read returns the first's answer and the mode assertions pass for the wrong reason.
+All three are gone, and they were covered by two different things, which is worth knowing
+before adding a fourth:
+
+- The fixture's pair is now `conftest.reset_process_caches`, which empties every registered
+  process cache before and after every test in the suite rather than in the files whose author
+  noticed.
+- `_payload`'s was covered earlier, by `create_project` invalidating the mode cache on the way
+  out. No suite-wide fixture could have covered that one - it sits *inside* a test, between the
+  POST that sets the mode and the GET that reads it.
 """
 from __future__ import annotations
 
@@ -31,7 +40,6 @@ from agents.egress import TOOL_EGRESS, Egress, Reach, is_gated_by_mode
 from agents.graph import build_graph
 from agents.reads import AGENT_READS, CREW_DISPATCH_READS, Medium
 from api.config import get_settings
-from api.services.chroma_client import forget_project_mode
 from api.services.data_architecture_service import (
     data_architecture,
     dispatch_wrapper_reaches_build_and_run_crew,
@@ -52,9 +60,7 @@ def clean():
     db_path.unlink(missing_ok=True)
     if proj_dir.exists():
         shutil.rmtree(proj_dir)
-    forget_project_mode(SLUG)
     yield
-    forget_project_mode(SLUG)
     get_settings.cache_clear()
     db_path.unlink(missing_ok=True)
     if proj_dir.exists():
@@ -63,7 +69,6 @@ def clean():
 
 async def _payload(client, mode: str = "standard") -> dict:
     await client.post("/projects", json={**PROJECT, "llm_mode": mode})
-    forget_project_mode(SLUG)
     resp = await client.get(URL)
     assert resp.status_code == 200, resp.text
     return resp.json()

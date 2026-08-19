@@ -17,6 +17,7 @@ import aiosqlite
 
 from api.config import get_settings
 from api.database import fetch_platform_public_url, store_platform_public_url
+from api.services.process_cache import register_cache
 
 _log = logging.getLogger(__name__)
 
@@ -71,6 +72,12 @@ def forget_platform_settings() -> None:
     """
     global _CACHED_URL
     _CACHED_URL = _UNSET
+
+
+# Here the targeted invalidator and the clear-everything one are the same function, because
+# the cache holds one value - so unlike chroma_client, which registers `_MODE_CACHE.clear`
+# and keeps `forget_project_mode(slug)` beside it, there is nothing to distinguish.
+register_cache(forget_platform_settings)
 
 
 def platform_public_url() -> str:
