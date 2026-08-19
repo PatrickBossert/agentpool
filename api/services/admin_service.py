@@ -17,6 +17,7 @@ from api.database import (
 )
 from api.services.invite_service import deliver_reset
 from api.services.outbound_mail import send_platform_mail
+from api.services.platform_settings import platform_public_url
 from api.services.user_identity import person_block, project_identities
 
 
@@ -73,7 +74,7 @@ async def _send_welcome_email(email: str, username: str, password: str) -> None:
     settings = get_settings()
     if not settings.resend_api_key or not email:
         return
-    login_url = f"{settings.public_url}/dashboard/login"
+    login_url = f"{platform_public_url()}/dashboard/login"
     body = (
         f"Hello,\n\n"
         f"Your TaskReimagination.ai account has been created.\n\n"

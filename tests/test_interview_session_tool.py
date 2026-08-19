@@ -205,7 +205,8 @@ def seeded_tool_project(tmp_path):
 def test_interview_session_tool_create(seeded_tool_project):
     """The tool builds its printed URLs via interview_service.interview_url(), imported
     inside _create() to dodge a circular import - so the setting that matters is
-    public_url on interview_service's own get_settings, not the tool module's, and the
+    platform_public_url() as interview_service looks it up (its own module-level
+    `from ... import platform_public_url` binding), not the tool module's, and the
     expected string carries the /dashboard basename the SPA is served under.
 
     The session_token is minted in code (uuid.uuid4()) rather than supplied by the caller,
@@ -214,8 +215,10 @@ def test_interview_session_tool_create(seeded_tool_project):
     """
     slug, run_id = seeded_tool_project
     from agents.tools.interview_session_tool import InterviewSessionTool, _db_path
-    with patch("api.services.interview_service.get_settings") as ms:
-        ms.return_value.public_url = "https://app.example.com"
+    with patch(
+        "api.services.interview_service.platform_public_url",
+        return_value="https://app.example.com",
+    ):
         tool = InterviewSessionTool(slug=slug, orchestration_run_id=run_id)
         result = tool._run(
             operation="create",

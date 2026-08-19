@@ -42,9 +42,7 @@ async def two_chat_projects(tmp_path, monkeypatch):
     async with get_connection("open-chat") as conn:
         await insert_project(conn, slug="open-chat", llm_mode="standard", sector="rail",
                              config_json=json.dumps({}))
-    chroma_client._MODE_CACHE.clear()
     yield tmp_path
-    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 

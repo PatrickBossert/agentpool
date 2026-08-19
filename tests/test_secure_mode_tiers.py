@@ -150,10 +150,7 @@ def tiered_projects(tmp_path, monkeypatch):
     system.commit()
     system.close()
 
-    from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     yield tmp_path
-    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 

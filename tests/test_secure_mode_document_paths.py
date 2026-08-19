@@ -102,12 +102,8 @@ def ingest_projects(tmp_path, monkeypatch):
         docs = proj_dir / slug / "docs"
         docs.mkdir(parents=True)
         (docs / "corporate-strategy.md").write_text("Confidential internal strategy.")
-    from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
     yield
     get_settings.cache_clear()
-    from api.services import chroma_client as cc
-    cc._MODE_CACHE.clear()
 
 
 def test_alex_ingests_a_sensitive_project_into_the_local_chroma(ingest_projects, built):
@@ -156,8 +152,6 @@ async def uploaded_document(tmp_path, monkeypatch, client):
     monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
     monkeypatch.setenv("CHROMA_API_KEY", "cloud-key-is-set")
     get_settings.cache_clear()
-    from api.services import chroma_client
-    chroma_client._MODE_CACHE.clear()
 
     r = await client.post(
         "/projects",
@@ -181,7 +175,6 @@ async def uploaded_document(tmp_path, monkeypatch, client):
 
     yield doc_id
     get_settings.cache_clear()
-    chroma_client._MODE_CACHE.clear()
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ from api.config import get_settings
 from api.services.http_clients import get_tts_client
 from api.services.llm_client import LocalModelError, project_completion
 from api.services.interview_answer_service import record_answers, script_for_session
+from api.services.platform_settings import platform_public_url
 from api.database import (
     complete_interview_session,
     fetch_interview_session,
@@ -35,8 +36,12 @@ def interview_url(session_token: str) -> str:
     localhost. And /dashboard, because that is the SPA's vite base and router basename - a
     link without it 404s. Two of the three hand-built versions of this string got one or
     both wrong, and only the reminder email produced a working link.
+
+    platform_public_url() - the sysadmin-set setting, falling back to PUBLIC_URL - rather
+    than get_settings().public_url directly, and no .rstrip('/') here: the accessor already
+    normalises whichever source answered.
     """
-    return f"{get_settings().public_url.rstrip('/')}/dashboard/interview/{session_token}"
+    return f"{platform_public_url()}/dashboard/interview/{session_token}"
 
 
 async def _find_session_db(session_token: str) -> str | None:

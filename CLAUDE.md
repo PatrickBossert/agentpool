@@ -107,6 +107,15 @@ the next test's freshly created project silently inherits the owner. This is the
 poisoned-database trap that no `.db` unlink reaches, and it applies to every module using the
 sibling pattern: clear the registry row and the organisation too.
 
+**Pass the clock, never read it.** A test written against "today" passes on the day it is
+written and fails every day afterwards, and when it goes it does not announce itself as a clock
+problem. Three tests in `ui/src/__tests__/milestoneVariance.test.ts` let `today` default to
+`new Date()`; one detonated on 19 Aug 2026 and two more were dated to follow within the week -
+while the block *below* them in the same file already carried a comment saying `today` is
+passed explicitly "so these are deterministic". The lesson had been learned, written down, and
+applied only to the tests being added at the time. Pass it everywhere, including where it
+cannot currently matter, so the rule can be followed without deriving which arm a fixture hits.
+
 Two things that look like evidence during forensics on `data/` and are not:
 
 - **An AUTOINCREMENT high-water mark is not evidence of row churn here.** `init_system_db`
@@ -148,6 +157,18 @@ lands beside the property rather than on it. When reviewing, ask: **"what calls 
 *that* tested?"** and **"would this test fail if the code were wrong?"** The second question is
 different from "does this test pass", and far more productive here.
 
+The same question asked of an agent is: **does anything one of its declared tools returns
+actually fill the placeholder its description asks for?** Jordan's task told him to emit
+`{url_base}/{session_token}`, and he has no route to a session token - his `SQLiteStateTool`
+read of `interview_sessions` always answers "no state found", and none of
+`InterviewSessionTool`'s four operations returns an existing one. `agents/reads.py` already
+records which reads are unresolvable, so the answer is usually there to be looked up. The block
+had never fired only because `public_interview_url_base` was `""` and falsy, so giving that
+read a real value - a correct repair in itself - would have armed it, and the output would have
+been a fabricated UUID forming a well-formed dead link on the deployment's own domain, written
+into `draft_message`. **"This code has never run" is not "this code works"**, and repairing
+whatever kept it from running is precisely when the difference arrives.
+
 ---
 
 ## Database conventions
@@ -163,6 +184,14 @@ When adding a new column to an existing table:
 1. Add `ALTER TABLE ... ADD COLUMN` to the appropriate `ensure_*_table` function in `database.py`
 2. Add the column to the `CREATE TABLE` statement so fresh DBs include it
 3. Add the column to test fixtures that create that table manually
+
+**Ask which database you are touching before reaching for `_SCHEMA_VERSION`, because the rule
+is inverted between the two.** A *project* table needs the bump, for the reason below. A
+`system.db` table needs none and must not have one: `init_system_db` is idempotent, has no
+version gate, and runs on every system connection, so a `CREATE TABLE IF NOT EXISTS` there is
+already enough - and bumping the constant would re-run every project migration on every
+deployment for a table in a database it does not govern. Both halves are stated here; the
+mistake is applying the correct rule to the wrong target, which neither half alone prevents.
 
 When adding a new `_migrate_*` function, bump `_SCHEMA_VERSION` in `api/database.py` in the
 same change and add the new function to the migration block `get_connection` runs. Forgetting
@@ -1073,6 +1102,44 @@ is the only path where the recipient triggered the action and is told it worked.
 
 ---
 
+## The deployment's public URL: a setting, not an environment variable
+
+`PUBLIC_URL` is the address this deployment answers on, and it is in front of a person every
+time it is used - the interview link a participant clicks, the reminder, the welcome email's
+login link, the report and commit notices. It is now a setting a sysadmin changes in the
+browser, and `PUBLIC_URL` is the **bootstrap**: the value in force until one is stored, so a
+fresh deployment mails correct links before anybody opens the admin page. Precedence is
+**stored → `PUBLIC_URL` → the `api/config.py` default**, first non-empty wins, stated once in
+`_resolve`. The consequence to expect rather than diagnose: on a deployment that has ever
+saved one, editing `.env` and restarting changes nothing.
+
+**Read it with `platform_public_url()` (`api/services/platform_settings.py`), never
+`get_settings().public_url`.** A direct read collects two defects at once, because the four
+original readers' own `.rstrip('/')` calls were deleted once the accessor owned normalisation:
+it ignores the stored setting *and* re-opens the trailing-slash bug that put
+`https://host//dashboard/login` in the welcome email.
+`test_nothing_reads_public_url_off_settings_outside_the_accessor` walks the source so this is a
+mechanism rather than a paragraph; its docstring says what the walk cannot see.
+
+The accessor is **synchronous** because `interview_service.interview_url` is a plain `def`, and
+it opens `system.db` **read-only** so asking the question can never materialise the database -
+the rule `caller_roles` and `_stakeholder_matches_invite` already follow. **A failed read falls
+back to the environment rather than raising, deliberately unlike the `llm_mode` seam**: a wrong
+`llm_mode` sends client material to the wrong country, while this falls back to a correct link
+built the old way, and a link builder that raised would take interview invitations down for a
+transient lock. Only a successful read is cached, and every write must call
+`forget_platform_settings()` or the process serves the old URL until restart - which is why
+reverting is an explicit `DELETE /admin/platform-settings` rather than a hand edit of the row.
+
+**`sysadmin` alone may set it**, a tier tighter than `_PLATFORM_TIER_SETTINGS`. Not seniority:
+whoever sets it decides where every interview invitation and welcome email points, and a
+participant clicks that link and signs in, so it is a credential-phishing vector rather than a
+misconfiguration. `platform_settings` is a **singleton row** in `system.db` - declared columns
+under `CHECK (id = 1)`, not a key/value store, so a new platform setting is a column and not a
+drawer of undeclared strings.
+
+---
+
 ## Anchoring: themes and requirements sit where the insight lives
 
 Themes and requirements must anchor at the level where the insight lives - L0 for
@@ -1264,4 +1331,6 @@ All env vars are documented in `.env.example`. Never commit `.env`. Key vars:
 
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD` — **required**, no defaults
 - `JWT_SECRET` — generate with `openssl rand -hex 32`
-- `PUBLIC_URL` — full public URL used in interview email links
+- `PUBLIC_URL` - full public URL used in every emailed link. The **bootstrap only**: a URL
+  stored through `/admin/platform-settings` wins over it, so editing this and restarting is a
+  no-op on a deployment that has ever saved one. See the public-URL section above.

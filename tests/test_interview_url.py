@@ -8,15 +8,28 @@ regression is caught even if a new call site is added later.
 """
 import pytest
 from api.config import get_settings
+from api.services import platform_settings as ps
 
 
-def test_the_url_carries_the_dashboard_basename(monkeypatch):
+def test_the_url_carries_the_dashboard_basename(tmp_path, monkeypatch):
     """The SPA is served under /dashboard (vite base, router basename). A link without it
-    404s, and the emailed link is the whole mechanism for the dispatch campaign."""
+    404s, and the emailed link is the whole mechanism for the dispatch campaign.
+
+    interview_url() now goes through platform_public_url(), which carries its own
+    module-level cache independent of get_settings.cache_clear() - so this test also
+    points DATABASE_DIR at an empty tmp_path (no system.db to read a stored value from)
+    and forgets that cache on both sides, the same isolation
+    tests/test_platform_settings.py's autouse fixture applies to every test in that file.
+    Without it, whichever test in the suite happens to populate the cache first pins the
+    answer for every test after it, including this one.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     monkeypatch.setenv("PUBLIC_URL", "https://example.test")
     get_settings.cache_clear()
+    ps.forget_platform_settings()
     from api.services.interview_service import interview_url
     assert interview_url("abc123") == "https://example.test/dashboard/interview/abc123"
+    ps.forget_platform_settings()
     get_settings.cache_clear()
 
 

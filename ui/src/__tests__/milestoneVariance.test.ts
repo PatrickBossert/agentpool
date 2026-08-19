@@ -12,6 +12,19 @@ import { describe, it, expect } from 'vitest'
 import { milestoneVariance } from '../utils/milestones'
 
 // Fri 14 Aug 2026 is the promise and the plan. Nothing has moved.
+//
+// `today` is passed explicitly everywhere below, never left to default. `milestoneVariance`
+// defaults it to `new Date()`, so an outstanding milestone's variance is measured against the
+// wall clock - and three tests here were written against the day they were written on. One
+// detonated on 19 Aug 2026, and two more were dated to follow it. A test that passes on the
+// day it is written and fails every day afterwards is worse than one that never passed, and
+// it does not announce itself as a clock problem when it goes.
+//
+// Completed milestones are untouched by `today` by design, so those cases are safe either
+// way - but they pass it too, so the rule is "always" rather than "when it matters", which is
+// a rule the next person can follow without deriving it.
+const FRI_14 = '2026-08-14'
+
 const base = {
   status: 'pending',
   baseline_date: '2026-08-14',
@@ -24,7 +37,7 @@ describe('milestoneVariance', () => {
     // A project that adds five milestones and delivers them against no baseline has not
     // delivered its plan. Treating an absent baseline as no variance reports scope growth
     // as success.
-    const v = milestoneVariance({ ...base, baseline_date: null })
+    const v = milestoneVariance({ ...base, baseline_date: null }, undefined, FRI_14)
     expect(v.state).toBe('added_scope')
     expect(v.slip).toBeNull()
     expect(v.replan).toBeNull()
@@ -33,13 +46,13 @@ describe('milestoneVariance', () => {
   it('reports an outstanding milestone already past its baseline as at risk', () => {
     // The state the previous view could not express: not yet due, so it rendered green,
     // while its current plan had already moved past what was promised.
-    const v = milestoneVariance({ ...base, due_date: '2026-08-21' })
+    const v = milestoneVariance({ ...base, due_date: '2026-08-21' }, undefined, FRI_14)
     expect(v.state).toBe('at_risk')
     expect(v.slip).toBe(5)
   })
 
   it('measures slip against the actual date once complete', () => {
-    const v = milestoneVariance({ ...base, status: 'complete', completed_at: '2026-08-19' })
+    const v = milestoneVariance({ ...base, status: 'complete', completed_at: '2026-08-19' }, undefined, FRI_14)
     expect(v.state).toBe('late')
     expect(v.slip).toBe(3)
   })
@@ -47,7 +60,7 @@ describe('milestoneVariance', () => {
   it('measures slip against the current plan while outstanding', () => {
     // A fixture of only completed milestones cannot tell the two apart, and the
     // outstanding case is the one that gives warning while there is still time.
-    expect(milestoneVariance({ ...base, due_date: '2026-08-19' }).slip).toBe(3)
+    expect(milestoneVariance({ ...base, due_date: '2026-08-19' }, undefined, FRI_14).slip).toBe(3)
   })
 
   it('separates re-planning from delivery', () => {
@@ -55,7 +68,7 @@ describe('milestoneVariance', () => {
     // against what was promised. One number cannot carry both answers.
     const v = milestoneVariance({
       ...base, due_date: '2026-08-19', status: 'complete', completed_at: '2026-08-19',
-    })
+    }, undefined, FRI_14)
     expect(v.replan).toBe(3)
     expect(v.slip).toBe(3)
   })
@@ -63,35 +76,43 @@ describe('milestoneVariance', () => {
   it('reports a milestone re-planned late but delivered on the promise as recovered', () => {
     const v = milestoneVariance({
       ...base, due_date: '2026-08-21', status: 'complete', completed_at: '2026-08-14',
-    })
+    }, undefined, FRI_14)
     expect(v.state).toBe('recovered')
     expect(v.slip).toBeNull()
     expect(v.replan).toBe(5)
   })
 
   it('is on plan when nothing moved', () => {
-    const v = milestoneVariance({ ...base, status: 'complete', completed_at: '2026-08-14' })
+    const v = milestoneVariance({ ...base, status: 'complete', completed_at: '2026-08-14' }, undefined, FRI_14)
     expect(v.state).toBe('on_plan')
     expect(v.slip).toBeNull()
     expect(v.replan).toBeNull()
   })
 
   it('is on plan when delivered early', () => {
-    const v = milestoneVariance({ ...base, status: 'complete', completed_at: '2026-08-11' })
+    const v = milestoneVariance({ ...base, status: 'complete', completed_at: '2026-08-11' }, undefined, FRI_14)
     expect(v.state).toBe('on_plan')
     expect(v.slip).toBeNull()
   })
 
   it("honours the project's excluded dates", () => {
     // Mon 17 Aug excluded: Fri 14 to Tue 18 is one working day, not two.
-    const v = milestoneVariance({ ...base, due_date: '2026-08-18' }, new Set(['2026-08-17']))
+    //
+    // `today` is passed rather than left to default, as the block below already does. It
+    // defaults to the real clock, so this measured the plan against the wall - and from
+    // 19 Aug 2026 onwards the overdue arm took over and made the answer 2. A test that
+    // passes on the day it is written and fails every day after is worse than one that
+    // never passed.
+    const v = milestoneVariance(
+      { ...base, due_date: '2026-08-18' }, new Set(['2026-08-17']), '2026-08-18',
+    )
     expect(v.slip).toBe(1)
   })
 
   it('is on plan when it has no dates at all to compare', () => {
     // A baselined milestone whose plan was later cleared. Nothing can be said, and
     // saying "late" would be an invention.
-    const v = milestoneVariance({ ...base, due_date: null })
+    const v = milestoneVariance({ ...base, due_date: null }, undefined, FRI_14)
     expect(v.slip).toBeNull()
     expect(v.state).toBe('on_plan')
   })

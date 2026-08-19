@@ -153,7 +153,6 @@ def test_a_sensitive_project_gets_no_hosted_model_in_this_crew(monkeypatch, tmp_
 
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     get_settings.cache_clear()
-    chroma_client._MODE_CACHE.clear()
     _write_project_row(tmp_path, "sec-crew", "sensitive")
 
     crew = _build_crew_for_project("sec-crew")
@@ -166,10 +165,6 @@ def test_a_sensitive_project_gets_no_hosted_model_in_this_crew(monkeypatch, tmp_
             f"{agent.role} is on {agent.llm.model} - a sensitive project's interview answers "
             "must never reach a hosted model"
         )
-    # Cleared on the way out as well as in: the mode cache is process-global and keyed by
-    # slug, so leaving this test's slug resolved points later tests at a tmp_path that no
-    # longer exists.
-    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 
@@ -184,7 +179,6 @@ def test_a_standard_project_asks_the_registry_per_agent(monkeypatch, tmp_path):
 
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     get_settings.cache_clear()
-    chroma_client._MODE_CACHE.clear()
     _write_project_row(tmp_path, "std-crew", "standard")
 
     crew = _build_crew_for_project("std-crew")
@@ -197,7 +191,6 @@ def test_a_standard_project_asks_the_registry_per_agent(monkeypatch, tmp_path):
     assert by_role["Synthesis Analyst"].model != by_role["Interview Coordinator"].model, (
         "the deep-tier Analyst and the fast-tier Coordinator resolved to the same model"
     )
-    chroma_client._MODE_CACHE.clear()
     get_settings.cache_clear()
 
 

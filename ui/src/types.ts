@@ -184,6 +184,16 @@ export interface InviteLinkResponse {
   invite_token: string
 }
 
+// GET/PATCH/DELETE /admin/platform-settings. `source` is what tells an administrator
+// whether `public_url` is a saved setting or the PUBLIC_URL the deployment booted with -
+// the two behave differently the next time the environment changes, and a resolved value
+// with no `source` beside it gives an administrator nothing to diagnose "the page looks
+// right but the links are wrong" with.
+export interface PlatformSettings {
+  public_url: string
+  source: 'stored' | 'environment'
+}
+
 export interface UserPayload {
   sub: string
   role: 'sysadmin' | 'org_admin' | 'reviewer'

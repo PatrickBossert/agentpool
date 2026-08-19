@@ -190,7 +190,7 @@ async def test_a_submission_notification_failure_does_not_raise(client):
 async def test_a_broken_settings_lookup_does_not_raise_either(client):
     """The "never raises" guarantee has to cover more than _send_email failing.
 
-    Link construction (get_settings().public_url) happens before any DB work, and
+    Link construction (platform_public_url()) happens before any DB work, and
     a failure there must be caught by the same try as everything else - not
     escape into dispatch_crew/dispatch_agent's own except block, where it would
     overwrite a just-recorded status="completed" with status="failed"."""
@@ -203,7 +203,7 @@ async def test_a_broken_settings_lookup_does_not_raise_either(client):
         notify_crew_awaiting_commit, notify_crew_ready_for_approval,
     )
     with patch(
-        "api.services.commit_notify_service.get_settings",
+        "api.services.commit_notify_service.platform_public_url",
         side_effect=RuntimeError("settings unavailable"),
     ):
         await notify_crew_awaiting_commit(SLUG, "discovery_mapping")

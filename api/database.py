@@ -3184,6 +3184,18 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             last_tick_at TEXT NOT NULL
         );
 
+        -- The address this deployment answers on, settable by a sysadmin rather than
+        -- only by editing .env and restarting. Singleton, like scheduler_heartbeat
+        -- above: CHECK (id = 1) makes a second row impossible rather than merely
+        -- unwritten. A blank public_url is the unset state, not a chosen empty string -
+        -- api.services.platform_settings.platform_public_url() falls back to the
+        -- PUBLIC_URL environment variable whenever this is blank or the row is absent.
+        CREATE TABLE IF NOT EXISTS platform_settings (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            public_url TEXT NOT NULL DEFAULT '',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS auth_tokens (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             token_hash     TEXT    NOT NULL UNIQUE,
@@ -4322,6 +4334,38 @@ async def fetch_due_jobs(conn: aiosqlite.Connection, *, now_iso: str) -> list[di
         (now_iso,),
     ) as cur:
         return [dict(row) for row in await cur.fetchall()]
+
+
+async def fetch_platform_public_url(conn: aiosqlite.Connection) -> str:
+    """The stored public_url, raw - `''` when nothing has been saved through the door yet.
+
+    Deliberately *not* the resolved value: the fallback to the PUBLIC_URL environment
+    variable is stated once, in api.services.platform_settings.platform_public_url(), and a
+    second helper that folded it in here would be a second place for the precedence rule to
+    drift. This one answers only "what is in the table".
+    """
+    async with conn.execute(
+        "SELECT public_url FROM platform_settings WHERE id = 1"
+    ) as cur:
+        row = await cur.fetchone()
+    return row["public_url"] if row else ""
+
+
+async def store_platform_public_url(conn: aiosqlite.Connection, public_url: str) -> None:
+    """Save the platform's public_url. Singleton upsert, like the heartbeat below.
+
+    Takes the value already normalised - api.services.platform_settings.normalise_public_url
+    owns the rules about what a public URL may be, and this helper must not become a second
+    opinion on them.
+    """
+    await conn.execute(
+        "INSERT INTO platform_settings (id, public_url, updated_at) "
+        "VALUES (1, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(id) DO UPDATE SET public_url=excluded.public_url, "
+        "updated_at=excluded.updated_at",
+        (public_url,),
+    )
+    await conn.commit()
 
 
 async def record_scheduler_heartbeat(conn: aiosqlite.Connection, *, now_iso: str) -> None:

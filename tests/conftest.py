@@ -84,6 +84,68 @@ def reset_settings_cache():
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_process_caches():
+    """Empty every registered process-local cache for every test.
+
+    The same reason as reset_settings_cache above, for the module-level caches that are
+    not get_settings: they are resolved once per process, so a value one test causes to
+    be cached is answered to the next - CLAUDE.md's "passes alone, fails in the suite"
+    shape, reached through a cache rather than a database row.
+
+    Three are registered today (see api/services/process_cache.py), and they arrived here
+    from different directions:
+
+    - **platform_settings._CACHED_URL.** Before sp58 Task 3, platform_public_url() had
+      exactly one caller and only tests/test_platform_settings.py touched it, so a local
+      autouse fixture was isolation enough. Task 3 gave it four more callers across
+      campaign_service, pam_report_job, commit_notify_service and admin_service, so any
+      test that creates a system.db under its own tmp_path and calls one of those now
+      populates it - including on a *blank* stored row, which is a "successful read" by
+      platform_public_url()'s own rule. **Nothing in the suite currently fails without
+      this line, and that is worth saying rather than leaving to be rediscovered**: an
+      earlier version of this docstring named tests/test_interview_url.py as the
+      reproduction, and it is not one - that file clears the cache on both sides itself
+      (added in Task 3, before this fixture existed), so it passes either way. Neutering
+      the fixture and running the whole suite fails only tests/test_process_cache.py and
+      tests/test_process_cache_teardown.py - both about _MODE_CACHE, neither about this
+      cache. This entry is therefore prophylactic: the hazard is real and the callers
+      are real, but no test demonstrates it, so treat a green suite as saying nothing
+      about whether the URL cache leaks.
+    - **chroma_client._MODE_CACHE**, which never had suite-wide isolation at all and is
+      the consequential one: it answers "is this project sensitive", so a stale entry
+      sends a sensitive project's documents to Chroma Cloud and its prompts to hosted
+      Anthropic. Eight test files used to clear it by hand at 32 sites, each covering
+      only itself; all 32 are gone, and
+      tests/test_process_cache.py::test_no_other_test_file_reaches_into_a_private_cache
+      keeps them gone. That file also demonstrates the leak rather than describing it.
+    - **interviews._transcript_email_log**, which is not a cache of a resolved value at
+      all but a per-process rate-limit ledger. It accumulates, so one test's three
+      transcript sends leave a later test on the same session token answering 429 for a
+      limit it never reached.
+
+    Nothing is imported here for its registration side effect, and it would be dead
+    weight if it were: a clearer registers when its module is imported, and a cache
+    cannot be populated by a module that has not been imported - so registration can
+    never lag the thing it protects against, whatever order the suite collects in.
+
+    Cleared on both sides for the same reason reset_settings_cache is. Within a session
+    the before-clear already covers every test, so the after-clear is reaching what runs
+    *outside* a test body - a session- or module-scoped teardown, an early exit under -x.
+    That window is not merely arguable, it is asserted:
+    tests/test_process_cache_teardown.py leaves a slug in the cache and lets a
+    module-scoped fixture's teardown be the assertion, which errors if this second call
+    is removed. Clearing only beforehand is the shape that protects the test being
+    written and leaves the next one to inherit whatever this one left, which is how the
+    caches got here.
+    """
+    from api.services.process_cache import forget_all_process_caches
+
+    forget_all_process_caches()
+    yield
+    forget_all_process_caches()
+
+
 @pytest.fixture
 def seeded_project(tmp_path, monkeypatch):
     """A project whose value_chain_registry already holds 1.2 and 2.7 as active L2 activities.
