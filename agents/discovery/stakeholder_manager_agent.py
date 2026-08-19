@@ -64,8 +64,9 @@ def create_stakeholder_manager_task(
         "session token, so never construct a full interview link (base plus token) in a "
         "draft message: an invented token produces a link that looks real but goes "
         "nowhere. If a draft needs to mention the interview link, refer to it in words "
-        "(e.g. \"your personal interview link\") without writing out a URL - the actual "
-        "link is attached separately when the message is sent.\n\n"
+        "(e.g. \"your personal interview link\") without writing out a URL - whoever "
+        "sends the message supplies the real one, which the platform mints per "
+        "participant.\n\n"
         if public_interview_url_base
         else ""
     )
