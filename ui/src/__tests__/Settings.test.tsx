@@ -5,16 +5,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { projectsApi } from '../api/endpoints'
 import Settings from '../pages/Settings'
 import type { ProjectSettings } from '../types'
+import { PLATFORM_TIER_SETTINGS } from './fixtures/platformTierSettings'
 
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
+    getMyPermissions: vi.fn(),
   },
 }))
 
 const BASE_SETTINGS: ProjectSettings = {
   llm_mode: 'standard',
+  force_local_inference: false,
   locale: 'GB',
   sector: '',
   stakeholder_groups: [],
@@ -25,6 +28,7 @@ const BASE_SETTINGS: ProjectSettings = {
   discovery_brief: '',
   discovery_links: [],
   discovery_document_ids: [],
+  dev_mode: true,
   interview_method: 'none',
   elaboration_press_timeout_seconds: 8,
   anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
@@ -51,6 +55,18 @@ function Wrapper() {
 describe('Settings - press budget', () => {
   beforeEach(() => {
     vi.mocked(projectsApi.getSettings).mockResolvedValue(BASE_SETTINGS)
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
+      can_review: true,
+      can_approve: true,
+      can_grant_roles: false,
+      can_issue_invite_links: true,
+      can_change_platform_tier_settings: true,
+      // The server's real list. This caller may change them all, so nothing locks - but the
+      // page now disables a control by asking this list, and a fixture that shipped an empty
+      // one would exercise a page that never locks anything.
+      platform_tier_settings: PLATFORM_TIER_SETTINGS,
+      writable_knowledge_tiers: ['project'],
+    })
   })
 
   it('sends the press budget when the form is saved', async () => {
@@ -88,6 +104,12 @@ describe('Settings - press budget', () => {
     vi.mocked(projectsApi.updateSettings).mockImplementation(saved)
     render(<Wrapper />)
     const input = await screen.findByLabelText(/local deep model/i)
+    // This is a platform-tier field, so it renders disabled until /my-permissions says who
+    // the caller is - an unanswered question locks. `fireEvent.change` on a disabled input
+    // is silently ignored, so without this wait the edit would race the answer and the test
+    // would assert against an unedited form. Same shape as the load barrier in
+    // SettingsLocalInference.test.tsx.
+    await waitFor(() => expect(input).toBeEnabled())
     fireEvent.change(input, { target: { value: 'qwen27b:reasoning' } })
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() =>

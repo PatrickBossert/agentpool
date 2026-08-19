@@ -155,15 +155,12 @@ _MODE_LITERALS: dict[str, tuple[int, str]] = {
     "agents/model_registry.py::<module>": (
         4, "_TIER_SETTINGS' second key, which means local/hosted rather than a mode - see M2"
     ),
-    "agents/model_registry.py::get_llm_for_agent": (2, "indexes _TIER_SETTINGS, having asked permits()"),
-    "api/services/llm_client.py::resolve_model": (2, "indexes _TIER_SETTINGS, having asked permits()"),
-    "agents/egress.py::is_gated_by_mode": (
-        2, "asks the resolver the same question in two modes - a question, not a rule"
+    "agents/model_registry.py::get_llm_for_agent": (
+        2, "indexes _TIER_SETTINGS, having asked project_permits()"
     ),
-    "api/services/data_architecture_service.py::data_architecture": (
-        2, "the same two-mode question, for the page's 'gated_by_mode' badge"
+    "api/services/llm_client.py::resolve_model": (
+        2, "indexes _TIER_SETTINGS, having asked project_permits()"
     ),
-    "agents/graph.py::build_graph": (1, "a default argument, documented in place"),
 }
 
 
@@ -235,9 +232,11 @@ def test_every_mode_name_written_into_the_code_is_one_somebody_declared():
     new = {k: v for k, v in found.items() if k not in expected}
     assert not new, (
         "a mode name is written into code that has not declared why: "
-        f"{new}. Egress is decided by asking api.services.deployment_modes.permits() for a "
-        "capability, never by testing a mode's name. If this literal genuinely decides no "
-        "egress, add it to _MODE_LITERALS with its reason."
+        f"{new}. Egress is decided by asking api.services.deployment_modes for a capability, "
+        "never by testing a mode's name: project_permits(slug, capability) if the site routes "
+        "material - which resolves the project's own narrowing as well as its mode - or "
+        "permits(mode, capability) if it genuinely asks only what the mode declares. If this "
+        "literal decides no egress at all, add it to _MODE_LITERALS with its reason."
     )
     gone = {k: v for k, v in expected.items() if k not in found}
     assert not gone, (
@@ -473,14 +472,15 @@ def test_the_privacy_view_does_not_collapse_an_undeclared_mode_into_standard():
     """
     from agents.egress import inference_destination, resolve_egress
 
-    assert not inference_destination(UNDECLARED_MODE).leaves_deployment
-    assert not resolve_egress("ChromaQueryTool", UNDECLARED_MODE).leaves_deployment
-    assert not resolve_egress("DocumentIngestionTool", UNDECLARED_MODE).leaves_deployment
+    undeclared = granted_to(UNDECLARED_MODE)
+    assert not inference_destination(undeclared).leaves_deployment
+    assert not resolve_egress("ChromaQueryTool", undeclared).leaves_deployment
+    assert not resolve_egress("DocumentIngestionTool", undeclared).leaves_deployment
 
     # The ungated reaches are unmoved, because no mode gates them - that is the finding the
     # module exists to state honestly, and an undeclared mode must not appear to fix it.
-    assert resolve_egress("TavilySearchTool", UNDECLARED_MODE).leaves_deployment
-    assert resolve_egress("WebFetchTool", UNDECLARED_MODE).leaves_deployment
+    assert resolve_egress("TavilySearchTool", undeclared).leaves_deployment
+    assert resolve_egress("WebFetchTool", undeclared).leaves_deployment
 
 
 def test_the_privacy_view_reads_the_grants_rather_than_a_second_copy_of_them(monkeypatch):
@@ -501,5 +501,5 @@ def test_the_privacy_view_reads_the_grants_rather_than_a_second_copy_of_them(mon
     monkeypatch.setitem(
         _EGRESS_GRANTS, "half-granted", frozenset({Capability.CLOUD_VECTOR_STORE})
     )
-    assert resolve_egress("ChromaQueryTool", "half-granted").leaves_deployment
-    assert not inference_destination("half-granted").leaves_deployment
+    assert resolve_egress("ChromaQueryTool", granted_to("half-granted")).leaves_deployment
+    assert not inference_destination(granted_to("half-granted")).leaves_deployment

@@ -37,7 +37,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agents.charter import CREW_CHARTER, DISPATCH_PATHS
-from agents.egress import TOOL_EGRESS, Egress, Reach, is_gated_by_mode
+from agents.egress import TOOL_EGRESS, Egress, Reach, is_gated_by_grant
 from agents.graph import build_graph
 from agents.reads import AGENT_READS, CREW_DISPATCH_READS, Medium
 from api.config import get_settings
@@ -169,16 +169,17 @@ async def test_every_row_carries_the_declared_reach_sentence_and_resolved_destin
     here rather than producing a table that merely looks complete.
     """
     from agents.egress import resolve_egress
+    from api.services.deployment_modes import granted_to
 
     payload = await _payload(client)
     for row in payload["tools"]:
         declared = TOOL_EGRESS[row["tool"]]
-        destination = resolve_egress(row["tool"], "standard")
+        destination = resolve_egress(row["tool"], granted_to("standard"))
         assert row["reaches"] == declared.reaches.value
         assert row["sends"] == declared.sends
         assert row["destination"] == destination.label
         assert row["leaves_deployment"] is destination.leaves_deployment
-        assert row["gated_by_mode"] is is_gated_by_mode(row["tool"])
+        assert row["gated_by_grant"] is is_gated_by_grant(row["tool"])
 
 
 @pytest.mark.asyncio
@@ -201,7 +202,7 @@ async def test_inference_is_in_the_table_although_no_tool_carries_it(client):
     payload = await _payload(client)
     assert payload["inference"]["destination"] == "Anthropic's API"
     assert payload["inference"]["leaves_deployment"] is True
-    assert payload["inference"]["gated_by_mode"] is True
+    assert payload["inference"]["gated_by_grant"] is True
 
 
 @pytest.mark.asyncio
@@ -262,6 +263,81 @@ async def test_a_sensitive_project_moves_the_vector_store_and_inference_and_noth
     assert "the local model on this host" in labels
     assert "Anthropic's API" not in labels
     assert "Chroma Cloud" not in " | ".join(labels)
+
+
+@pytest.mark.asyncio
+async def test_a_project_forcing_local_inference_reports_local_models_and_cloud_vectors(client):
+    """The page reports what the project **resolves to**, not what its mode declares.
+
+    `standard` with `force_local_inference` set is the shape this branch exists for: the
+    prompts go to Ollama and the documents stay in Chroma Cloud. The page derived both from
+    `permits(mode, capability)` - the declared question - so it told an auditor that every
+    prompt reached Anthropic while none of them did. Wrong in a harmless direction, on the one
+    surface whose entire job is being right about where client material goes.
+
+    The two halves are asserted apart, because they are the two independent badges: a single
+    "is this project the contained one" answer cannot express local models over a cloud vector
+    store, and this project *is* that shape - the mirror of the deferred sovereign mode.
+
+    Three layers, and each would fail on its own. The `inference` block is resolved directly by
+    the service; the tool rows come through `resolve_egress`; and the per-agent destination
+    lists come off `build_graph`, which is assembled separately and which the sensitive test
+    above already records a power-check finding about.
+    """
+    from api.services.deployment_modes import Capability
+
+    standard = await _payload(client, "standard")
+    assert standard["inference"]["leaves_deployment"] is True
+
+    # Through the real door, for the reason the sensitive test gives: it is what drops the
+    # cached answer. Writing the column directly leaves the resolver reporting the old one.
+    patched = await client.patch(
+        f"/projects/{SLUG}/settings",
+        json={
+            "llm_mode": "standard",
+            "force_local_inference": True,
+            "sector": "rail",
+            "review_gates": True,
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    forced = (await client.get(URL)).json()
+
+    assert forced["llm_mode"] == "standard", "the mode itself is unchanged - only what it grants"
+    assert forced["inference"]["destination"] == "the local model on this host"
+    assert forced["inference"]["leaves_deployment"] is False
+
+    chroma = next(row for row in forced["tools"] if row["tool"] == "ChromaQueryTool")
+    assert chroma["leaves_deployment"] is True, (
+        "forcing local inference took the documents out of Chroma Cloud as well - the two "
+        "badges have been collapsed back into one project-wide answer"
+    )
+    assert chroma["destination"] == standard_row(standard, "ChromaQueryTool")["destination"]
+
+    labels = {d["label"] for agent in forced["agents"] for d in agent["destinations"]}
+    assert "the local model on this host" in labels
+    assert "Anthropic's API" not in labels, (
+        "the per-agent summary still reports hosted inference - the graph is assembled from "
+        "the mode rather than from what this project resolves to"
+    )
+    assert "Chroma Cloud" in " | ".join(labels)
+
+    # What the page says *why* with. The mode is `standard` and the model calls are local, and
+    # an auditor reading those two facts side by side needs the sentence that reconciles them.
+    assert forced["withheld_by_project"] == [
+        {
+            "capability": "HOSTED_INFERENCE",
+            "mode_permits": Capability.HOSTED_INFERENCE.value,
+        }
+    ]
+    assert standard["withheld_by_project"] == [], (
+        "a project that narrows nothing must say so with an empty list rather than with the "
+        "sentence, or the page renders the caveat on every engagement"
+    )
+
+
+def standard_row(payload: dict, tool: str) -> dict:
+    return next(row for row in payload["tools"] if row["tool"] == tool)
 
 
 @pytest.mark.asyncio

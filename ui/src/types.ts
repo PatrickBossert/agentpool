@@ -89,6 +89,37 @@ export interface NonWorkingRange {
 
 export interface ProjectSettings {
   llm_mode: 'standard' | 'sensitive' | 'fallback'
+  /**
+   * Removes hosted inference from whatever this project's mode grants, so every agent runs
+   * on the local models while the documents stay where the mode puts them. It narrows only;
+   * it does not move the vector store.
+   *
+   * Declared here, and that declaration is load-bearing rather than tidy. Before it, the
+   * field survived a save purely as an untyped extra key that `setForm({ ...DEFAULTS,
+   * ...settings })` happened to copy - so any refactor that built the request body from this
+   * type (a pick, a typed constructor, a stricter lint rule) would have dropped it silently.
+   * A dropped key is `false` on the server, and clearing this flag is the one transition
+   * here that *widens* where an engagement's prompts may go: an org_admin saving an
+   * unrelated field would have put a project back onto hosted inference with nothing said.
+   * Never make it optional - `force_local_inference?: boolean` reopens exactly that.
+   */
+  force_local_inference: boolean
+  /**
+   * Holds all outbound email for this project, sending it to the operator instead. Declared
+   * for exactly the reason `force_local_inference` above is, and it was found still
+   * undeclared one field over: it travelled on every save carried only by the untyped
+   * `{ ...DEFAULTS, ...settings }` spread, so a typed body would have dropped it.
+   *
+   * The consequence differs from its neighbour's and is no smaller. The Pydantic default is
+   * `true`, so a dropped key on a project stored `dev_mode: false` re-enables the hold - the
+   * project stops emailing real stakeholders and nothing says so, which is the failure that
+   * looks exactly like the setting working. Platform-tier, so on a `project_admin`'s save
+   * the same drop is a 403 naming a field they never touched.
+   *
+   * There is no control for it on the Settings page. It is declared here so it round-trips
+   * intact, not because anything renders it.
+   */
+  dev_mode: boolean
   sector: string
   stakeholder_groups: string[]
   value_stream_labels: string[]
@@ -875,6 +906,20 @@ export interface MyPermissions {
   // response body of the door it reports on is a redeemable credential, so it asks the
   // platform tier (org_admin or sysadmin) and a project_admin is refused.
   can_issue_invite_links: boolean
+  // Whether this caller may change the platform-tier fields on PATCH /{slug}/settings -
+  // llm_mode, force_local_inference, dev_mode, and the six model ids, which decide where
+  // this engagement's data is sent. Narrower than administering the project, like
+  // can_issue_invite_links, and reported separately from it despite the two asking the same
+  // predicate today: they report on different doors, and a shared key would make one follow
+  // the other's tier change silently.
+  can_change_platform_tier_settings: boolean
+  // Which fields the permission above covers - the server's own _PLATFORM_TIER_SETTINGS.
+  // Served rather than restated for the reason writable_knowledge_tiers is: a hand-copied
+  // list of field names in TypeScript is the same rule in two places, and the copy the UI
+  // trusts is the one that drifts. Settings.tsx disables a control by asking whether its
+  // field is in here, so a tenth member added on the server disables its control with no
+  // change to this file. Never narrow this to the fields one page happens to render.
+  platform_tier_settings: string[]
   // The knowledge tiers this caller may add material at on this project, broadest first -
   // some subset of 'sector', 'organisation', 'project'. What an upload tier picker offers,
   // and the whole of what it may offer: the rule is the server's

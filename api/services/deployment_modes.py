@@ -23,6 +23,14 @@ that will not run rather than a project that leaks.
 | `sensitive` | no | no |
 | anything else | no | no |
 
+**A mode is not the last word.** A project may narrow what its mode grants - today by
+`projects.force_local_inference`, which removes `HOSTED_INFERENCE` so local model performance
+can be measured on a project whose documents stay in Chroma Cloud. So there are two questions
+and they are not the same one: `permits(mode, capability)` is what the mode *declares*, and
+`project_permits(slug, capability)` is what the project *resolves to*. A site that is about to
+move material asks the second. Narrowing is expressed as set difference and there is no table
+of things an override adds, so no project can ever hold more than its mode declares.
+
 **On the miss.** `granted_to` resolves an undeclared mode to `_NOTHING`, and this branch has
 just spent a task deleting a lookup that resolved a miss the other way - `ChromaQueryTool`'s
 `.get(collection, f"sector_{self.sector}")`, which made the store shared across every
@@ -112,7 +120,62 @@ def granted_to(mode: str) -> frozenset[Capability]:
 def permits(mode: str, capability: Capability) -> bool:
     """Whether a project in this mode may do `capability`.
 
-    The one question the four egress sites ask. Never phrase it as a comparison against a mode
-    name at the call site - that is the shape this module exists to end.
+    The **declared** question: what does this mode grant, before any project narrows it. It is
+    what the mode-name inventory in `tests/test_deployment_modes.py` guards, and it is what the
+    resolver below is built from - but a routing site wants `project_permits`, because a
+    project may hold less than its mode declares. Never phrase either as a comparison against a
+    mode name at the call site; that is the shape this module exists to end.
     """
     return capability in granted_to(mode)
+
+
+# What a project-level override takes away. A mapping from an override to the capabilities it
+# **removes**, and there is deliberately no table anywhere of capabilities an override adds:
+# the guarantee that no setting of a flag can create an egress its mode does not carry is
+# delivered by there being nothing to write into. A reverse flag was considered and refused -
+# see the design note - and adding one means adding a union to `project_grants`, which is the
+# single line a reviewer should refuse.
+_FORCE_LOCAL_INFERENCE_REMOVES: frozenset[Capability] = frozenset({Capability.HOSTED_INFERENCE})
+
+
+def project_grants(slug: str) -> frozenset[Capability]:
+    """What *this project* may do: its mode's grants, minus anything the project narrows.
+
+    The resolved answer, and the one every routing site wants. `permits(mode, ...)` answers
+    what the mode declares, which is a real question but not the one a site about to move
+    material is asking - `sp-gs-am` is a `standard` project measuring local model performance,
+    so its documents belong in Chroma Cloud and its prompts do not belong at Anthropic, and no
+    mode name expresses that.
+
+    **Set difference and nothing else.** A union here would make a project able to grant itself
+    an egress its mode does not carry, which is the one thing this shape exists to make
+    impossible - so "a sensitive project can never be forced hosted" holds by construction
+    rather than by a check, whatever overrides are added later.
+
+    Synchronous, because every routing site is. `chroma_client` is imported inside the
+    function, not at module scope: it imports this module for `Capability`, so a module-level
+    import here is a cycle. This module stays the declaration and gains no import-time
+    dependency on a module that opens databases.
+
+    **That import is load-bearing for a second reason**, so do not hoist it for tidiness: being
+    inside the function is what makes the lookup happen on the `chroma_client` *module object*
+    at call time, and therefore what lets a test stub the mode where the decision reads it.
+    `tests/test_agent_egress.py` stubs exactly there, having previously stubbed
+    `agents.model_registry`'s own binding - which this change turned into the wording of a
+    refusal rather than a route. Hoisting would move the seam back under the stub's feet.
+    """
+    from api.services.chroma_client import project_forces_local_inference, project_llm_mode
+
+    grants = granted_to(project_llm_mode(slug))
+    if project_forces_local_inference(slug):
+        grants -= _FORCE_LOCAL_INFERENCE_REMOVES
+    return grants
+
+
+def project_permits(slug: str, capability: Capability) -> bool:
+    """Whether this project may do `capability`, after its own narrowing.
+
+    The one question a routing site asks. `permits(mode, ...)` is the declaration; this is the
+    resolution, and a site that routes material wants this one.
+    """
+    return capability in project_grants(slug)

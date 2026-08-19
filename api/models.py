@@ -17,6 +17,15 @@ class ProjectCreate(BaseModel):
 
 class ProjectSettings(BaseModel):
     llm_mode: Literal["standard", "sensitive", "fallback"] = "standard"
+    # Removes HOSTED_INFERENCE from whatever this project's mode grants, so a `standard`
+    # engagement can be measured against local models while its documents stay in Chroma
+    # Cloud. It only ever narrows - see api/services/deployment_modes.py::project_grants.
+    # Platform-tier (`_PLATFORM_TIER_SETTINGS` in api/routers/projects.py) because clearing
+    # it *widens*: it moves an engagement's prompts back onto hosted inference.
+    # `projects.force_local_inference` is the authority; the copy here is what the Settings
+    # tab round-trips, and `get_project_settings` overwrites it from the column on the way
+    # out so the copy can never be the thing a save sends back.
+    force_local_inference: bool = False
     sector: str
     stakeholder_groups: list[str] = []
     value_stream_labels: list[str] = []

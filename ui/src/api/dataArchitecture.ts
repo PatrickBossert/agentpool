@@ -1,7 +1,12 @@
 // ui/src/api/dataArchitecture.ts
 //
 // The declarations behind the Data Architecture & Privacy page, resolved for one project's
-// own llm_mode by api/services/data_architecture_service.py.
+// own egress grants by api/services/data_architecture_service.py.
+//
+// Resolved, not declared: a project may hold less than its mode grants - a standard engagement
+// forcing local inference runs on local models while its documents stay in Chroma Cloud - so
+// llm_mode below is what the project is *set* to and every destination is what it resolves to.
+// withheld_by_project is the difference, and it is what reconciles the two for a reader.
 //
 // The types below describe what that endpoint returns and nothing more. The page renders them
 // and adds no facts of its own - the copy it used to carry was hand-typed, named Anthropic
@@ -31,7 +36,11 @@ export interface DataArchitectureToolRow {
   sends: string
   destination: string
   leaves_deployment: boolean
-  gated_by_mode: boolean
+  // Whether what this project is granted moves this destination at all. It was gated_by_mode,
+  // and the rename is not cosmetic: on a project forcing local inference the mode moves the
+  // model calls nowhere, so a badge keyed on the mode would claim something untrue on the one
+  // page whose job is being right about where material goes.
+  gated_by_grant: boolean
   held_by: string[]
   held_by_ids: string[]
 }
@@ -48,7 +57,15 @@ export interface DataArchitectureInference {
   sends: string
   destination: string
   leaves_deployment: boolean
-  gated_by_mode: boolean
+  gated_by_grant: boolean
+}
+
+// One capability this engagement's mode grants and this engagement does not hold. The effect,
+// never the setting's name: `mode_permits` is the sentence the mode would allow, and the page
+// says the project does not do it.
+export interface DataArchitectureWithheld {
+  capability: string
+  mode_permits: string
 }
 
 export interface DataArchitectureAgent {
@@ -148,6 +165,7 @@ export interface DataArchitectureSharedSource {
 export interface DataArchitecture {
   slug: string
   llm_mode: string
+  withheld_by_project: DataArchitectureWithheld[]
   inference: DataArchitectureInference
   tools: DataArchitectureToolRow[]
   declared_not_held: DataArchitectureUnheldTool[]

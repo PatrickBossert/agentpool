@@ -127,7 +127,15 @@ async def test_a_sensitive_project_refuses_an_image_rather_than_sending_it(
     )
 
     assert response.status_code == 503, response.text
-    assert "sensitive" in response.json()["detail"].lower()
+    detail = response.json()["detail"]
+    # Asserted on what the operator is told they may do about it, not on the word "sensitive".
+    # That word used to appear because the sentence named the mode as the reason, which stopped
+    # being true when a `standard` project could reach this branch through
+    # `force_local_inference` - and the old assertion would have gone on passing while the
+    # sentence told such a project to "run this on a standard project", which it already is.
+    assert "'image' content block" in detail, detail
+    assert "not permitted to send prompts to a hosted model" in detail, detail
+    assert "Remove the attachment" in detail, detail
     assert requests == [], "the refusal must happen before anything is sent anywhere"
 
 

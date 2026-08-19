@@ -20,13 +20,13 @@ from api.database import (
     get_connection,
     get_db_path,
     insert_document,
-    update_project_config,
+    merge_project_config,
 )
 from api.services.agent_chat_service import AGENT_PERSONAS, run_agent_chat
 from api.services.authority_service import caller_may_approve, require_writable_tier
 from api.services.ingest_service import SUPPORTED_SUFFIXES, IngestError, ingest_document
 from api.services.knowledge_tiers import DEFAULT_UPLOAD_TIER
-from api.services.llm_client import LocalModelError, UnsupportedForSensitiveProject
+from api.services.llm_client import LocalModelError, UnsupportedByLocalModelPath
 
 router = APIRouter(prefix="/projects", tags=["agent-chat"])
 
@@ -108,20 +108,6 @@ async def _assert_public_url(url: str) -> None:
             raise ValueError("URL resolves to a disallowed (private/internal) address")
 
 
-async def _patch_config(conn, project: dict, key: str, value) -> None:
-    """Merge a single key into the project's config_json and persist."""
-    config = json.loads(project.get("config_json") or "{}")
-    config[key] = value
-    await update_project_config(
-        conn,
-        slug=project["slug"],
-        project_id=project["id"],
-        llm_mode=project["llm_mode"],
-        sector=project.get("sector") or "",
-        config_json=json.dumps(config),
-    )
-
-
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.get("/{slug}/agent-chat/history")
@@ -197,7 +183,7 @@ async def agent_chat(
             injected_links=[lnk.model_dump() for lnk in body.injected_links],
             crew_agents=body.crew_agents or None,
         )
-    except (LocalModelUnavailable, LocalModelError, UnsupportedForSensitiveProject) as exc:
+    except (LocalModelUnavailable, LocalModelError, UnsupportedByLocalModelPath) as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     if outcome is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
@@ -311,7 +297,9 @@ async def chat_upload(
             doc_ids: list[int] = config.get("discovery_document_ids", [])
             if doc_id not in doc_ids:
                 doc_ids.append(doc_id)
-                await _patch_config(conn, project, "discovery_document_ids", doc_ids)
+                await merge_project_config(
+                    conn, project=project, key="discovery_document_ids", value=doc_ids
+                )
 
     is_image = suffix in _IMAGE_SUFFIXES
 
@@ -370,7 +358,9 @@ async def chat_add_link(
         existing_urls = {lnk.get("url") for lnk in links}
         if body.url not in existing_urls:
             links.append({"url": body.url, "label": label})
-            await _patch_config(conn, project, "discovery_links", links)
+            await merge_project_config(
+                conn, project=project, key="discovery_links", value=links
+            )
 
     content_preview = ""
     try:

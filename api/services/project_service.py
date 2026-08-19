@@ -178,6 +178,16 @@ async def get_project_settings(slug: str) -> dict | None:
         raw = project.get("config_json") or "{}"
         config = json.loads(raw)
         config.pop("client_slug", None)
+        # `projects.force_local_inference` is the authority; config_json holds a copy so the
+        # Settings tab can round-trip it. Answer from the column, because what this returns
+        # is what the tab sends back: a project whose column was set before config_json ever
+        # carried the key would otherwise be handed `false`, and the next save of an
+        # unrelated field would clear the override without anybody asking. The same "read the
+        # authority, never the copy" rule `_refuse_platform_tier_setting_changes` follows one
+        # router over, applied to the read half - and that guard *depends* on this line
+        # rather than carrying a copy of it, because two overrides would mean one of them
+        # could be deleted with nothing failing. Removing this widens the door.
+        config["force_local_inference"] = bool(project.get("force_local_inference") or 0)
         return config
 
 
@@ -195,17 +205,21 @@ async def update_project_settings(slug: str, settings: ProjectSettings) -> dict 
             slug=slug,
             project_id=project["id"],
             llm_mode=settings.llm_mode,
+            force_local_inference=settings.force_local_inference,
             sector=settings.sector,
             config_json=json.dumps(full_config),
         )
-    # llm_mode is excluded from config.yaml for the same reason as project creation: the
-    # database column (written above via update_project_config) is the sole authority for
-    # it, and config.yaml is read with a fail-open default. full_config keeps it for
-    # config_json, which is what the Settings tab round-trips.
+    # llm_mode and force_local_inference are excluded from config.yaml for the same reason
+    # as project creation: the database columns (written above via update_project_config)
+    # are the sole authority for them, and config.yaml is read with a fail-open default.
+    # full_config keeps both for config_json, which is what the Settings tab round-trips.
     project_dir = Path(get_settings().projects_dir) / slug
     config_path = project_dir / "config.yaml"
     project_dir.mkdir(parents=True, exist_ok=True)
-    yaml_config = {k: v for k, v in full_config.items() if k != "llm_mode"}
+    yaml_config = {
+        k: v for k, v in full_config.items()
+        if k not in ("llm_mode", "force_local_inference")
+    }
     fd, tmp_path = tempfile.mkstemp(dir=project_dir, suffix=".yaml.tmp")
     try:
         with os.fdopen(fd, "w") as f:

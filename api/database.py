@@ -75,6 +75,11 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             slug        TEXT UNIQUE NOT NULL,
             llm_mode    TEXT NOT NULL DEFAULT 'standard',
+            -- Removes HOSTED_INFERENCE from whatever llm_mode grants; it can never add a
+            -- capability. A column beside llm_mode rather than a config_json key, for the
+            -- reason _refuse_platform_tier_setting_changes reads projects.llm_mode rather
+            -- than its config_json copy: a fact that decides egress is not kept in a copy.
+            force_local_inference INTEGER NOT NULL DEFAULT 0,
             sector      TEXT,
             config_json TEXT,
             status      TEXT NOT NULL DEFAULT 'created',
@@ -211,6 +216,26 @@ async def init_db(conn: aiosqlite.Connection) -> None:
     """)
     # executescript issues an implicit COMMIT before running; the call below
     # is a safety flush but the schema is already committed.
+    await conn.commit()
+
+
+async def _migrate_projects_force_local_inference(conn: aiosqlite.Connection) -> None:
+    """Add the per-project override that forces local inference.
+
+    Every existing project resolves exactly as it did before, because 0 is not a default
+    standing in for "unknown": until this branch there was no way to ask for the override, so
+    "nobody asked for it" is a statement of fact about every row that predates the column.
+
+    The flag *removes* HOSTED_INFERENCE from what the project's mode grants and can never add
+    a capability, so the safe direction and the truthful one are the same here - but they
+    would not be for a reversed flag, which is why the design refused one.
+    """
+    async with conn.execute("PRAGMA table_info(projects)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "force_local_inference" not in cols:
+        await conn.execute(
+            "ALTER TABLE projects ADD COLUMN force_local_inference INTEGER NOT NULL DEFAULT 0"
+        )
     await conn.commit()
 
 
@@ -1674,8 +1699,10 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_knowledge_tier_ingestion.py::test_a_database_at_the_previous_version_gains_the_
 # knowledge_tier_column, which fails on 11 and passes on 12; and
 # tests/test_knowledge_collection_is_recorded.py::test_a_database_at_the_previous_version_
-# gains_the_collection_column, which fails on 12 and passes on 13.
-_SCHEMA_VERSION = 13
+# gains_the_collection_column, which fails on 12 and passes on 13; and
+# tests/test_local_inference_override.py::test_a_database_at_the_previous_version_gains_the_
+# force_local_inference_column, which fails on 13 and passes on 14.
+_SCHEMA_VERSION = 14
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1758,6 +1785,7 @@ async def get_connection(slug: str):
         current_version = (await cur.fetchone())[0]
         if current_version < _SCHEMA_VERSION:
             await init_db(conn)
+            await _migrate_projects_force_local_inference(conn)
             await _migrate_orchestration_runs_error(conn)
             await _migrate_agent_outputs_is_current(conn)
             await _migrate_agent_outputs_revision_notes(conn)
@@ -2069,21 +2097,85 @@ async def update_project_config(
     slug: str,
     project_id: int,
     llm_mode: str,
+    force_local_inference: bool,
     sector: str,
     config_json: str,
 ) -> None:
-    """The one write path for a project's llm_mode - every caller that can change it goes
-    through here, which is why the cache invalidation lives here rather than at any one
-    of them. Called with an unchanged llm_mode (e.g. a branding or config-key patch) still
-    clears the cache; that costs one extra read on the next resolution and is cheaper than
-    a caller forgetting to invalidate on the one call that actually flips the mode."""
+    """The one write path for a project's egress inputs - every caller that can change
+    `llm_mode` or `force_local_inference` goes through here, which is why the cache
+    invalidation lives here rather than at any one of them. Called with an unchanged
+    llm_mode (e.g. a config-key merge through `merge_project_config` below) still clears
+    the cache; that costs one extra read on the next resolution and is cheaper than a
+    caller forgetting to invalidate on the one call that actually flips the mode.
+
+    **This is the wide writer, and it has exactly one production caller** -
+    `update_project_settings`, behind `PATCH /{slug}/settings`, the door whose job *is*
+    changing these columns. Anything that only wants to merge a config key calls
+    `merge_project_config`, which reads the three columns off the row rather than restating
+    them. That is not tidiness: the three arguments below are mandatory, so a door that
+    cares about none of them still has to get all three right, and a wrong `llm_mode` there
+    flips a sensitive project to `standard` immediately - `forget_project_mode` drops the
+    cache on the way out - which permits `CLOUD_VECTOR_STORE` and sends the corpus to Chroma
+    Cloud with no error and no warning. `tests/test_local_inference_override.py::
+    test_the_wide_project_config_writer_has_exactly_one_production_caller` holds the caller
+    set to what this paragraph claims.
+
+    `force_local_inference` is **required and not defaulted**. A default here would be
+    fail-open in the widening direction: a caller that lost the value would quietly clear an
+    override an administrator set and put the engagement's prompts back on hosted inference
+    with nothing said. The same argument the LLM and mail seams make for never defaulting a
+    slug - a caller that lost the value is not a value of `False`."""
     await conn.execute(
-        "UPDATE projects SET llm_mode=?, sector=?, config_json=? WHERE id=?",
-        (llm_mode, sector, config_json, project_id),
+        "UPDATE projects SET llm_mode=?, force_local_inference=?, sector=?, config_json=? "
+        "WHERE id=?",
+        (llm_mode, 1 if force_local_inference else 0, sector, config_json, project_id),
     )
     await conn.commit()
     from api.services.chroma_client import forget_project_mode
     forget_project_mode(slug)
+
+
+async def merge_project_config(
+    conn: aiosqlite.Connection, *, project: dict, key: str, value
+) -> None:
+    """Merge one key into a project's `config_json`, disturbing nothing else.
+
+    The seam for every door that wants a config key and nothing more - the branding header
+    upload, and Agent Chat's document and link doors. It exists because `update_project_config`
+    writes `llm_mode`, `force_local_inference` and `sector` on every call, so before this each
+    such door had to restate three columns it did not care about. Six carry-throughs across
+    two files, all correct, and five of the six could be mutated with the whole backend suite
+    green - so the shape was one edit away from a silent egress change reachable by a
+    `project_admin` uploading a logo or an approver adding a link, both of whom are 403'd from
+    changing `llm_mode` through the front door.
+
+    The seam takes the **row**, not the values. There is nothing for a caller to get wrong,
+    and nothing for two callers to spell differently - which had already begun, the two sites
+    reading `sector` as `project["sector"]` and `project.get("sector") or ""`. That is the
+    established answer on this codebase to a positive obligation over a closed set: a seam,
+    as `collection_for`, `chunk_filter_for`, `deliver_reset`, `outbound_mail` and
+    `project_completion` are, rather than a source walk that can only ever see a *new* caller.
+
+    All three columns are read as `project[...]`, subscript and unnormalised, deliberately.
+    A carry-through writes back what it read; `or ""` is a normalisation, and a door merging
+    a config key has no business collapsing a NULL sector into an empty string - only
+    `PATCH /{slug}/settings`, which owns the column, may decide that. `.get` bought no safety
+    either: the `UPDATE` below names all three columns, so a row that genuinely lacked one
+    could not be written at all, and the default would only have substituted a value for a
+    column that *does* exist. That is the fail-open direction the required keyword arguments
+    above were introduced to close.
+    """
+    config = _json.loads(project.get("config_json") or "{}")
+    config[key] = value
+    await update_project_config(
+        conn,
+        slug=project["slug"],
+        project_id=project["id"],
+        llm_mode=project["llm_mode"],
+        force_local_inference=bool(project["force_local_inference"]),
+        sector=project["sector"],
+        config_json=_json.dumps(config),
+    )
 
 
 async def _set_document_ingest_state(

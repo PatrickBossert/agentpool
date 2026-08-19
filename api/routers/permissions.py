@@ -10,6 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import check_project_access, is_org_admin_or_above, require_any_auth
 from api.database import fetch_project, get_connection
+# The carve-out on PATCH /{slug}/settings, imported rather than re-listed. It is the same
+# tuple the door refuses with, so the page cannot be told a field is changeable that the
+# door then refuses - the failure this endpoint exists to prevent. tests/test_grantable_
+# roles.py already imports it under this name for the same reason.
+from api.routers.projects import _PLATFORM_TIER_SETTINGS
 from api.services.authority_service import (
     caller_may_grant_project_roles,
     caller_roles,
@@ -41,6 +46,29 @@ async def get_my_permissions(slug: str, payload: dict = Depends(require_any_auth
         # engagement. `is_org_admin_or_above` is the same predicate the door refuses with
         # rather than a restatement of it.
         "can_issue_invite_links": is_org_admin_or_above(payload),
+        # What Settings.tsx asks before offering the local-inference toggle. The same
+        # predicate `patch_settings_endpoint` decides `_PLATFORM_TIER_SETTINGS` with - it
+        # calls `is_org_admin_or_above` rather than restating the tuple, so this is that door
+        # observed from the reporting side rather than a second copy of its rule.
+        #
+        # Reported under its own name rather than by reusing `can_issue_invite_links`, which
+        # is the identical predicate today. That reuse would be right by predicate and wrong
+        # by referent: `can_issue_invite_links` is pinned by test to the resend-invite door,
+        # so if that door ever changed tier the settings toggle would silently follow a door
+        # it has nothing to do with, every test still green. Two names, two doors, two tests.
+        "can_change_platform_tier_settings": is_org_admin_or_above(payload),
+        # *Which* fields that permission covers - the server's own `_PLATFORM_TIER_SETTINGS`,
+        # served rather than restated. The Settings tab disables a control by asking whether
+        # its field is in this list, so the nine names live in exactly one place: a
+        # hand-copied list in TypeScript is a rule in two places, and the copy the UI trusts
+        # is the one that drifts. Adding a tenth member to the tuple disables its control
+        # with no frontend change.
+        #
+        # Not a secret, and not gated on the boolean above: it is the field list of a model
+        # every member of the project can already GET, and a caller who may not change them
+        # still has to be told which ones those are - a greyed control with no reason reads
+        # as a bug.
+        "platform_tier_settings": list(_PLATFORM_TIER_SETTINGS),
         # What the upload dialog's tier picker offers, broadest first. Answered here rather
         # than restated in TypeScript for the reason this whole endpoint exists: a second
         # copy of an authority rule drifts, and the copy the UI trusts is the wrong one -

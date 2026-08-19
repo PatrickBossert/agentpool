@@ -4,10 +4,15 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from api.auth import require_any_auth, require_org_admin_or_above, check_project_access
+from api.auth import (
+    check_project_access,
+    is_org_admin_or_above,
+    require_any_auth,
+    require_org_admin_or_above,
+)
 from api.config import get_settings
 from api.database import (
-    get_db_path, get_connection, fetch_project, fetch_outputs_by_type, update_project_config,
+    get_db_path, get_connection, fetch_project, fetch_outputs_by_type, merge_project_config,
     get_system_connection, register_project_if_unregistered, resolve_home_org_id,
 )
 from api.models import ProjectCreate, ProjectSettings, OutputContent, StatusResponse, ProjectResponse
@@ -162,7 +167,18 @@ async def get_settings_endpoint(slug: str, payload: dict = Depends(require_any_a
 
 # Fields on ProjectSettings that a `project_admin` may not change, however freely they may
 # change the rest of the engagement's configuration. Not a tidiness list - each one hands a
-# client-side actor something the platform tier is meant to hold:
+# client-side actor something the platform tier is meant to hold.
+#
+# **It keeps its underscore and is imported anyway.** `api/routers/permissions.py` serves it to
+# the Settings page, and `tests/test_settings_platform_tier_wiring.py` holds the frontend
+# fixture equal to it, so it is consumed outside this module by design; the underscore says
+# only that this router owns it, not that a reader should keep their distance. Import it rather
+# than restating the names. The one thing that must never happen
+# is a *second* definition appearing because the underscore made somebody hesitate - the page
+# would then gate a list nothing serves, which is the exact drift the wiring test exists to
+# catch and could no longer see.
+#
+# Why each field is here:
 #
 #   llm_mode      - the secure-mode guarantee itself. CLAUDE.md states it as absolute: every
 #                   crew agent including PAM routes locally on a sensitive project, a missing
@@ -179,8 +195,17 @@ async def get_settings_endpoint(slug: str, payload: dict = Depends(require_any_a
 #                   `outbound_mail.send_project_mail`, where the mode is read. It covered
 #                   two of five paths when this line was written, and the three it missed
 #                   were the ones reaching participants rather than the operator.
+#   force_local_inference - the same reach as llm_mode, in one direction. Setting it only
+#                   *removes* HOSTED_INFERENCE from what the project's mode grants, so it can
+#                   never widen anything; clearing it puts the engagement's prompts back on
+#                   hosted inference, which is the platform tier's decision and not a
+#                   client-side project_admin's. The guard is symmetric because it compares
+#                   transitions, so the narrowing direction is refused too - a project_admin
+#                   who wants local inference asks for it, which costs a message and cannot
+#                   go wrong quietly.
 _PLATFORM_TIER_SETTINGS = (
     "llm_mode",
+    "force_local_inference",
     "dev_mode",
     "anthropic_fast_model",
     "anthropic_deep_model",
@@ -210,7 +235,13 @@ async def _refuse_platform_tier_setting_changes(slug: str, incoming: ProjectSett
     authority for it - `update_project_settings` says so, and deliberately keeps it out of
     config.yaml for the same reason. `config_json` carries a copy for the Settings tab to
     round-trip, and comparing a guard against a copy is how the copy's drift becomes a
-    bypass.
+    bypass. `force_local_inference` needs no second override *here* only because
+    `get_project_settings` already resolves it from `projects.force_local_inference` on the
+    way out - it has to, or `GET /settings` would answer `false` for a project whose column
+    is 1 and the tab would send that answer straight back. One resolution, serving the read
+    and the guard, rather than a copy of it here that no mutation could distinguish from a
+    working one. `test_the_guard_reads_the_force_local_inference_column_not_the_config_copy`
+    is what holds that dependency up; do not "tidy" the resolution out of the read.
 
     Loud, not silent. Dropping the field and returning 200 would leave the caller believing
     the project is in a mode it is not, which on `llm_mode` is the worst possible failure of
@@ -231,13 +262,22 @@ async def _refuse_platform_tier_setting_changes(slug: str, incoming: ProjectSett
     submitted = incoming.model_dump()
     changed = [f for f in _PLATFORM_TIER_SETTINGS if submitted.get(f) != current.get(f)]
     if changed:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"{', '.join(changed)} may only be changed by an org admin or above - "
-                "a project_admin configures the engagement, not how it is run"
-            ),
+        detail = (
+            f"{', '.join(changed)} may only be changed by an org admin or above - "
+            "a project_admin configures the engagement, not how it is run"
         )
+        if "force_local_inference" in changed:
+            # The field is already named by the join above, so this sentence gives the
+            # direction rather than repeating it - which also keeps the column name out of a
+            # prose literal, where the source walk in
+            # tests/test_local_inference_override.py cannot tell it from a hand-written
+            # query.
+            detail += (
+                ". Clearing the local-inference override widens where this project's prompts "
+                "may go - a project_admin may not move their own engagement back onto hosted "
+                "inference"
+            )
+        raise HTTPException(status_code=403, detail=detail)
 
 
 @router.patch("/{slug}/settings", response_model=ProjectSettings)
@@ -248,10 +288,16 @@ async def patch_settings_endpoint(slug: str, req: ProjectSettings, payload: dict
     is not uniformly project configuration though: it also carries `llm_mode`, `dev_mode` and
     the per-agent model ids, which decide where this engagement's data is sent. Those stay on
     the platform tier - see `_PLATFORM_TIER_SETTINGS`.
+
+    The tier question is asked through `is_org_admin_or_above` rather than by restating the
+    tuple it compares. `GET /my-permissions` reports the same predicate as
+    `can_change_platform_tier_settings`, which is what the Settings tab asks before offering
+    the local-inference toggle - one rule observed from two sides, so a button cannot be put
+    in front of somebody this door refuses.
     """
     await check_project_access(slug, payload)
     await require_project_administration(slug, payload)
-    if payload.get("role") not in ("sysadmin", "org_admin"):
+    if not is_org_admin_or_above(payload):
         await _refuse_platform_tier_setting_changes(slug, req)
     result = await update_project_settings(slug, req)
     if result is None:
@@ -403,18 +449,12 @@ async def upload_branding_image(
 
         file_path.write_bytes(data)
 
-        # Update brand_header_image_url in project config
-        raw = project.get("config_json") or "{}"
-        config = json.loads(raw)
+        # Update brand_header_image_url in project config. Through the narrow seam: a header
+        # image upload has an opinion about one config key and none about this project's
+        # mode, override or sector, so it does not name them.
         image_url = f"/api/projects/{slug}/branding/image"
-        config["brand_header_image_url"] = image_url
-        await update_project_config(
-            conn,
-            slug=slug,
-            project_id=project["id"],
-            llm_mode=project["llm_mode"],
-            sector=project["sector"],
-            config_json=json.dumps(config),
+        await merge_project_config(
+            conn, project=project, key="brand_header_image_url", value=image_url
         )
 
     return {"url": image_url}

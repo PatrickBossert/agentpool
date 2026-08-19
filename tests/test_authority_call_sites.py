@@ -49,6 +49,10 @@ async def test_editing_a_script_demands_a_review_role(client, seeded_scripts):
 @pytest.mark.asyncio
 async def test_permissions_reports_the_same_roles_the_gates_read(client, seeded_ledger_script):
     slug, _ = seeded_ledger_script
+    # Imported, not re-typed: a literal copy here would pass against an endpoint that had
+    # drifted from the door it reports on.
+    from api.routers.projects import _PLATFORM_TIER_SETTINGS
+
     with patch("api.routers.permissions.caller_roles",
                new=AsyncMock(return_value={"reviewer"})):
         r = await client.get(f"/projects/{slug}/my-permissions")
@@ -61,5 +65,7 @@ async def test_permissions_reports_the_same_roles_the_gates_read(client, seeded_
     assert r.json() == {
         "can_review": True, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
+        "can_change_platform_tier_settings": True,
+        "platform_tier_settings": list(_PLATFORM_TIER_SETTINGS),
         "writable_knowledge_tiers": ["sector", "project"],
     }
