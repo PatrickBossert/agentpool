@@ -71,6 +71,9 @@ function TagInput({
           className="flex items-center gap-1 bg-brand/10 text-teal-700 text-xs px-2 py-0.5 rounded-full"
         >
           {tag}
+          {/* not-a-settings-control: removes one tag from the list its parent owns. It is
+              still gated - `disabled` is the caller's fieldProps, threaded in as a prop -
+              but the field is the parent's, not this button's. */}
           <button
             type="button"
             disabled={disabled}
@@ -81,9 +84,8 @@ function TagInput({
           </button>
         </span>
       ))}
-      {/* fieldProps: taken from the call site rather than called here - this input edits
-          the pending tag, not a settings field, and the id and disabled it wears belong to
-          the field the parent named. */}
+      {/* not-a-settings-control: edits the pending tag, not a settings field. The id and
+          disabled it wears are the caller's fieldProps, threaded in as props. */}
       <input
         id={id}
         disabled={disabled}
@@ -109,14 +111,27 @@ const MODEL_FIELDS: [keyof ProjectSettings, string][] = [
   ['local_deep_url', 'Local deep URL'],
 ]
 
-/** Why a platform-tier control is greyed out. One sentence in one place, rendered beside
- *  every field the server locks - a disabled control with no reason beside it reads as a
- *  bug, and the operator's next move is to report the page rather than to ask somebody. It
- *  says what the fields have in common rather than naming them, because which fields they
- *  are is the server's answer and changes without this file. */
-function PlatformTierNote() {
+/** Why a platform-tier control is greyed out. One sentence in one place - a disabled control
+ *  with no reason beside it reads as a bug, and the operator's next move is to report the
+ *  page rather than to ask somebody.
+ *
+ *  `explains` names the fields this particular note accounts for, and it is not decoration.
+ *  The first version of the test asserted a note existed somewhere in the control's enclosing
+ *  `<section>`, which is a weaker property than it reads as: the General section already held
+ *  notes for `sector` and `llm_mode`, so a newly locked `locale` was covered by a note that
+ *  had nothing to do with it and the assertion passed with no explanation beside the greyed
+ *  control. Naming the fields makes the association something the DOM carries rather than
+ *  something proximity implies, and `every locked control has a note that names it` then
+ *  fails for the field nobody accounted for.
+ *
+ *  The sentence still says what the fields have in common rather than listing them - which
+ *  fields they are is the server's answer and changes without this file. */
+function PlatformTierNote({ explains }: { explains: (keyof ProjectSettings)[] }) {
   return (
-    <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+    <p
+      data-explains={explains.join(' ')}
+      className="text-xs text-gray-400 mt-1 flex items-center gap-1"
+    >
       <Lock size={12} />
       Only an org admin or above may change where this engagement's data is sent.
     </p>
@@ -134,7 +149,7 @@ export default function Settings() {
   const [imageUploading, setImageUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const { data: settings } = useQuery({
+  const { data: settings, isError: settingsFailed, error: settingsError } = useQuery({
     queryKey: ['settings', slug],
     queryFn: () => projectsApi.getSettings(slug!),
     enabled: !!slug,
@@ -239,7 +254,7 @@ export default function Settings() {
               onChange={(e) => setForm({ ...form, sector: e.target.value })}
               className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             />
-            {locked('sector') && <PlatformTierNote />}
+            {locked('sector') && <PlatformTierNote explains={['sector']} />}
           </div>
           <div>
             <label htmlFor="llm_mode" className="text-xs text-gray-600 block mb-1">LLM Mode</label>
@@ -255,7 +270,7 @@ export default function Settings() {
               <option value="sensitive">sensitive</option>
               <option value="fallback">fallback</option>
             </select>
-            {locked('llm_mode') && <PlatformTierNote />}
+            {locked('llm_mode') && <PlatformTierNote explains={['llm_mode']} />}
           </div>
           <div>
             <label htmlFor="locale" className="text-xs text-gray-600 block mb-1">Project locale</label>
@@ -317,7 +332,7 @@ export default function Settings() {
             wherever the mode puts them, so a standard project keeps its documents in Chroma
             Cloud. Switching the mode to sensitive is what moves those.
           </p>
-          {locked('force_local_inference') && <PlatformTierNote />}
+          {locked('force_local_inference') && <PlatformTierNote explains={['force_local_inference']} />}
         </div>
         <button
           type="button"
@@ -464,7 +479,8 @@ export default function Settings() {
             adjacent fields is noise, and they are locked by one rule for one reason. Asked
             of the same array the inputs are rendered from, so it cannot answer for a
             different set of fields than the ones on screen. */}
-        {MODEL_FIELDS.some(([key]) => locked(key)) && <PlatformTierNote />}
+        {MODEL_FIELDS.some(([key]) => locked(key))
+          && <PlatformTierNote explains={MODEL_FIELDS.map(([key]) => key)} />}
       </section>
 
       {/* Interview Branding */}
@@ -490,6 +506,8 @@ export default function Settings() {
               onChange={() => { setImageStatus(''); setImageError(false) }}
               className="text-sm text-gray-600 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200"
             />
+            {/* not-a-settings-control: uploads the file the input beside it holds. It acts
+                rather than edits - the field is the file input's. */}
             <button
               type="button"
               onClick={handleImageUpload}
@@ -539,7 +557,19 @@ export default function Settings() {
 
       {/* Footer */}
       <div className="border-t border-gray-200 pt-4 flex items-center justify-between">
-        {error ? <p className="text-sm text-red-400">{error}</p> : <span />}
+        {/* Save stays disabled until the settings arrive, so a load that *fails* disables it
+            for good - correct, and mute. An operator looking at a permanently dead Save with
+            no message has no way to tell a permission problem from a dropped connection, and
+            the server's own sentence is the only thing that can say which: "Access denied to
+            this project" and a network error are the same greyed button otherwise. */}
+        {settingsFailed
+          ? (
+            <p className="text-sm text-red-400">
+              {describeError(settingsError, 'Could not load these settings.')}
+              {' '}Saving is disabled until they load - reload the page to try again.
+            </p>
+          )
+          : error ? <p className="text-sm text-red-400">{error}</p> : <span />}
         {/* `!settings` is the whole of this task's own lesson applied one layer up, and the
             page had it on the permissions query and not on this one. Until `GET /settings`
             answers, `form` holds DEFAULTS - standard mode, no override, a blank sector,
@@ -548,6 +578,8 @@ export default function Settings() {
             really is. A platform-tier caller's is accepted: one click and a sensitive,
             forced engagement is standard and hosted, with nothing refused and nothing said.
             An unanswered question locks here too. */}
+        {/* not-a-settings-control: submits the whole body. It edits no field, and its own
+            disabled condition is about the form's readiness rather than about authority. */}
         <button
           onClick={() => mutation.mutate(form)}
           disabled={mutation.isPending || !settings}

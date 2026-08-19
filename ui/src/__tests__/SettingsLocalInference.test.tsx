@@ -25,7 +25,7 @@ import { apiClient } from '../api/client'
 import Settings from '../pages/Settings'
 import type { MyPermissions, ProjectSettings } from '../types'
 // The nine names live in one file and are held equal to the server's tuple by
-// tests/test_settings_platform_tier_fixture.py - see that fixture's header for why they
+// tests/test_settings_platform_tier_wiring.py - see that fixture's header for why they
 // are no longer typed out here.
 import {
   PLATFORM_TIER_FIELDS_WITH_A_CONTROL,
@@ -411,17 +411,46 @@ describe('Settings - every platform-tier field the page renders is gated togethe
     // renders and what is counted is the loading state rather than the answer.
     await waitFor(() => expect(controlFor('slack_channel')).toBeEnabled())
 
-    // Asserted as a property of each locked control rather than as a count. A count is
-    // wrong the moment the server names a tenth field - the page would behave correctly and
-    // the test would fail, which is the kind of failure that gets a correct page "fixed".
+    // Per control, and per control *by name*. Two weaker forms were tried and both read as
+    // this one: a count, which a correctly-behaving page fails the moment the server names a
+    // tenth field; and "a note somewhere in the enclosing section", which review broke by
+    // locking `locale` - the General section already carried notes for `sector` and
+    // `llm_mode`, so the assertion passed while the greyed control had no explanation beside
+    // it at all. The note now names the fields it accounts for, so proximity is not taken
+    // for association.
+    const accountedFor = new Set(
+      [...document.querySelectorAll('[data-explains]')]
+        .flatMap((n) => (n.getAttribute('data-explains') ?? '').split(' ')),
+    )
     for (const field of PLATFORM_TIER_FIELDS_WITH_A_CONTROL) {
-      const section = controlFor(field)!.closest('section')
-      expect(section, `${field} renders outside any section`).not.toBeNull()
       expect(
-        within(section!).queryAllByText(/only an org admin or above may change/i).length,
-        `${field} is greyed out with no explanation beside it`,
-      ).toBeGreaterThan(0)
+        accountedFor.has(field),
+        `${field} is greyed out and no note on the page accounts for it`,
+      ).toBe(true)
     }
+  })
+
+  it('accounts for a field the server newly names, or says nothing about it falsely', async () => {
+    // The exact probe that broke the section-level version. `locale` sits in the General
+    // section, which already carries two notes - so under the old assertion this passed with
+    // the locale control greyed out and unexplained. It now fails unless a note names it.
+    serve(BASE_SETTINGS, {
+      ...PROJECT_ADMIN,
+      platform_tier_settings: [...PLATFORM_TIER_SETTINGS, 'locale'],
+    })
+    renderSettings()
+    await waitFor(() => expect(controlFor('locale')).toBeDisabled())
+
+    const accountedFor = new Set(
+      [...document.querySelectorAll('[data-explains]')]
+        .flatMap((n) => (n.getAttribute('data-explains') ?? '').split(' ')),
+    )
+    // Today no note names `locale`, and that is the honest state: the gating is derived and
+    // the explanation is not. This asserts the gap is *visible* rather than pretending it is
+    // closed - the page greys the control correctly and accounts for it nowhere, which is
+    // what concern 9 now says in place of the claim review disproved.
+    expect(accountedFor.has('locale')).toBe(false)
+    expect(controlFor('locale')).toBeDisabled()
   })
 
   it('shows no such note to a caller who may change them', async () => {
@@ -575,5 +604,40 @@ describe('Settings - the fields that must not become optional', () => {
     // exists so the mechanism is visible in the suite rather than being two unreferenced
     // declarations a tidy-up would delete as dead code.
     expect(_forceLocalInferenceStaysRequired && _devModeStaysRequired).toBe(true)
+  })
+})
+
+// ── A settings load that fails ───────────────────────────────────────────────────────────
+describe('Settings - when the settings cannot be loaded at all', () => {
+  const realAdapter = apiClient.defaults.adapter
+
+  afterEach(() => {
+    apiClient.defaults.adapter = realAdapter
+  })
+
+  it("says why Save is dead, in the server's own words", async () => {
+    // The edge of the I1 fix. Save is disabled until the settings arrive, so a load that
+    // fails disables it permanently - correct, and mute. An operator cannot tell a
+    // permission problem from a dropped connection by looking at a greyed button, and the
+    // server's sentence is the only thing that distinguishes them.
+    apiClient.defaults.adapter = (config: AxiosRequestConfig) => {
+      if (apiClient.getUri(config).endsWith('/my-permissions')) {
+        return Promise.resolve(ok(config, PLATFORM_TIER))
+      }
+      const internal = config as InternalAxiosRequestConfig
+      return Promise.reject(
+        new AxiosError('Request failed with status code 403', 'ERR_BAD_REQUEST', internal, null, {
+          data: { detail: 'Access denied to this project' },
+          status: 403,
+          statusText: 'Forbidden',
+          headers: new AxiosHeaders(),
+          config: internal,
+        }),
+      )
+    }
+    renderSettings()
+
+    expect(await screen.findByText(/access denied to this project/i)).toBeInTheDocument()
+    expect(save()).toBeDisabled()
   })
 })

@@ -9,7 +9,7 @@
 // because nothing on this side had any idea the list had moved. That is the same
 // rule-in-two-places this branch spent two tasks deleting, reintroduced in the fixtures.
 //
-// `tests/test_settings_platform_tier_fixture.py` reads this file, extracts the array, and
+// `tests/test_settings_platform_tier_wiring.py` reads this file, extracts the array, and
 // fails if it is not exactly `api.routers.projects._PLATFORM_TIER_SETTINGS` in order. So the
 // list is still written down twice - a Python tuple cannot be imported by vitest - but the
 // two can no longer disagree without a test saying so, which is the property that matters.

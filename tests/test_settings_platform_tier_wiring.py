@@ -68,22 +68,41 @@ def test_the_fields_with_no_control_are_all_platform_tier_fields():
     assert not unknown, f"{unknown} are excused from having a control and are not platform-tier"
 
 
-# Anything that takes a value from the operator. `role="switch"` is here because this page's
+# Anything on this page that takes a value from the operator. `<button` is here because the
 # toggles are buttons, and a button that sets a settings field is a control whatever element
-# it is built from - the review's probe (stripping an id) had to be caught on the toggle as
-# readily as on an input.
-_CONTROL_OPENERS = ("<input", "<select", "<textarea", "<TagInput")
+# it is built from - **which the first version of this list did not say and did not do.** It
+# named the four tag-like openers, while the comment beside it claimed the switches were
+# covered, so `force_local_inference` - the control this whole task exists to add - was never
+# examined: stripping `fieldProps` from a toggle left this walk green, the frontend suite
+# green at 660 and tsc clean.
+#
+# The reach is therefore no longer described in prose. `test_the_walk_sees_every_kind_of
+# _control_this_page_builds` drives one of each kind through the walk, so the claim is
+# established rather than asserted.
+_CONTROL_OPENERS = ("<input", "<select", "<textarea", "<TagInput", "<button")
 
-# The one control that legitimately does not call fieldProps: TagInput's internal input edits
-# the pending tag rather than a settings field, and wears the id and disabled its *caller*
-# derived. Named rather than pattern-matched, so adding a second exemption is a visible edit.
-_EXEMPT_MARKER = "fieldProps: taken from the call site"
+# A control that legitimately takes no field: a button that acts rather than edits, or an
+# input whose value is not a settings field. Written immediately above the control as
+# `{/* not-a-settings-control: why */}`, so an exemption is a visible edit with a reason
+# attached rather than an absence.
+_EXEMPT = "not-a-settings-control:"
+
+# How far back to look for that marker. One JSX comment plus the attributes of the tag it
+# precedes; big enough to survive reformatting, small enough that a marker on one control
+# cannot excuse the next one.
+_MARKER_WINDOW = 300
 
 
-def _control_blocks(source: str) -> list[tuple[int, str]]:
-    """Every control tag in the file, as (line number, text up to the end of its attributes)."""
-    blocks: list[tuple[int, str]] = []
-    for match in re.finditer("|".join(re.escape(o) for o in _CONTROL_OPENERS), source):
+def settings_control_offenders(source: str) -> list[str]:
+    """Controls in `source` that render without asking whether their field is locked.
+
+    A pure function over source text so the coverage test below can drive synthetic controls
+    through it. The walk that only ever ran against the real page was the walk that could not
+    be asked what it saw.
+    """
+    offenders: list[str] = []
+    pattern = "|".join(re.escape(o) for o in _CONTROL_OPENERS)
+    for match in re.finditer(pattern, source):
         start = match.start()
         depth, i = 0, start
         while i < len(source):
@@ -94,8 +113,14 @@ def _control_blocks(source: str) -> list[tuple[int, str]]:
             elif source[i] == ">" and depth == 0:
                 break
             i += 1
-        blocks.append((source.count("\n", 0, start) + 1, source[start:i]))
-    return blocks
+        block = source[start:i]
+        if "{...fieldProps(" in block:
+            continue
+        if _EXEMPT in source[max(0, start - _MARKER_WINDOW):start]:
+            continue
+        line = source.count("\n", 0, start) + 1
+        offenders.append(f"{SETTINGS_PAGE.name}:{line}  {block.splitlines()[0].strip()}")
+    return offenders
 
 
 def test_every_settings_control_asks_the_server_whether_its_field_is_locked():
@@ -108,15 +133,59 @@ def test_every_settings_control_asks_the_server_whether_its_field_is_locked():
     forgotten silently now: a control that skips it has no id either, so it is invisible to
     the page's own tests, and this walk names the line.
     """
-    source = SETTINGS_PAGE.read_text()
-    offenders = [
-        f"{SETTINGS_PAGE.name}:{line}  {block.splitlines()[0].strip()}"
-        for line, block in _control_blocks(source)
-        if "{...fieldProps(" not in block and _EXEMPT_MARKER not in source[:source.index(block)][-400:]
-    ]
+    offenders = settings_control_offenders(SETTINGS_PAGE.read_text())
     assert not offenders, (
         "these controls render without asking whether their field is platform-tier, so a "
         "field the server refuses would be offered as editable:\n  " + "\n  ".join(offenders)
+    )
+
+
+# One of each kind the page actually builds. Parametrised over the kinds rather than written
+# for the shapes I thought of - the same correction the declaration test below needed, and
+# the one this walk failed: `<button` was missing while the comment said otherwise.
+_KINDS = {
+    "input": '<input {...fieldProps(\'sector\')} value={x} />',
+    "select": '<select {...fieldProps(\'llm_mode\')}>\n<option value="a">a</option>\n</select>',
+    "textarea": '<textarea {...fieldProps(\'discovery_brief\')} value={x} />',
+    "TagInput": '<TagInput {...fieldProps(\'stakeholder_groups\')} value={x} onChange={f} />',
+    "button-as-switch": (
+        '<button type="button" role="switch" {...fieldProps(\'review_gates\')}\n'
+        '  aria-checked={x} onClick={() => f()}>\n<span />\n</button>'
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_KINDS))
+def test_the_walk_sees_every_kind_of_control_this_page_builds(kind):
+    """Each kind, gated and ungated, driven through the walk itself.
+
+    The gated form must produce no offender and the ungated form must produce exactly one -
+    both halves, because a walk that reported everything would also pass the first assertion
+    of a one-sided test, and a walk that reported nothing would pass the second.
+    """
+    gated = _KINDS[kind]
+    assert settings_control_offenders(gated) == [], (
+        f"the walk reports a correctly gated {kind} as an offender"
+    )
+
+    ungated = gated.replace("{...fieldProps(", "{...notFieldProps(", 1)
+    assert len(settings_control_offenders(ungated)) == 1, (
+        f"the walk cannot see an ungated {kind} - it is invisible to this guard, which is "
+        "how the force_local_inference toggle went unexamined"
+    )
+
+
+def test_an_exemption_marker_excuses_only_the_control_it_precedes():
+    """The marker is scoped, so one exemption cannot shelter the control after it."""
+    source = (
+        "{/* not-a-settings-control: acts rather than edits */}\n"
+        "<button type=\"button\" onClick={go}>Go</button>\n"
+        + "\n" * (_MARKER_WINDOW + 50) +
+        "<input value={x} />"
+    )
+    offenders = settings_control_offenders(source)
+    assert len(offenders) == 1 and "<input" in offenders[0], (
+        f"expected only the distant input to be reported, got {offenders}"
     )
 
 
@@ -142,4 +211,86 @@ def test_every_platform_tier_field_is_declared_on_the_frontend_settings_type(fie
         f"{field} is declared optional. Optional is how it goes missing: tsc has nothing to "
         "say about an omitted optional key, and an omitted key is the model default on the "
         "server rather than the value the project holds."
+    )
+
+
+def _typescript_defaults() -> dict[str, object]:
+    """`DEFAULTS` in Settings.tsx, as a dict of the literal values it holds.
+
+    Only the literal scalars and empty arrays are read - anything else raises rather than
+    being guessed at, because a default this walk silently skipped would be a default nothing
+    holds equal to anything.
+    """
+    source = SETTINGS_PAGE.read_text()
+    block = source[source.index("const DEFAULTS: ProjectSettings = {"):]
+    block = block[block.index("{") + 1:block.index("\n}")]
+
+    values: dict[str, object] = {}
+    for line in block.splitlines():
+        line = line.strip()
+        if not line or line.startswith("//") or line.startswith("*") or line.startswith("/*"):
+            continue
+        name, _, raw = line.partition(":")
+        raw = raw.strip().rstrip(",").strip()
+        if raw in ("true", "false"):
+            values[name.strip()] = raw == "true"
+        elif raw == "[]":
+            values[name.strip()] = []
+        elif raw.startswith("'") and raw.endswith("'"):
+            values[name.strip()] = raw[1:-1]
+        elif re.fullmatch(r"-?\d+", raw):
+            values[name.strip()] = int(raw)
+        else:
+            raise AssertionError(
+                f"DEFAULTS.{name.strip()} is {raw!r}, which this walk cannot read. Either "
+                "write it as a literal or teach this function the shape - do not leave a "
+                "default that nothing compares."
+            )
+    return values
+
+
+def test_the_frontend_defaults_are_the_models_defaults():
+    """`DEFAULTS` in Settings.tsx equals `ProjectSettings`'s own defaults, field by field.
+
+    Load-bearing, and this branch made it more so. `get_project_settings` returns the raw
+    `config_json`, so a field absent from a project's stored config is filled in from
+    `DEFAULTS` and sent on the next save - while `_refuse_platform_tier_setting_changes`
+    compares the submitted body against the **Pydantic** default. The two agree today and
+    nothing held them there.
+
+    If they drift, the failure is asymmetric and neither half is loud. A `project_admin`'s
+    save of a field they never touched becomes a 403 naming a field they have never heard of.
+    An `org_admin`'s is accepted, and silently rewrites that field to the frontend's idea of
+    its default - which for `dev_mode` means the outbound-mail hold, and for
+    `force_local_inference` means where this engagement's prompts go.
+
+    Compared only over the fields `DEFAULTS` actually declares: it is not required to carry
+    every settings field (the branding fields are absent by design, and the page renders them
+    with their own `??` fallbacks). What it may not do is declare one and disagree.
+    """
+    from api.models import ProjectSettings
+
+    model = ProjectSettings(sector="").model_dump()
+    disagreements = {
+        name: (value, model[name])
+        for name, value in _typescript_defaults().items()
+        if name in model and model[name] != value
+    }
+    assert not disagreements, (
+        "ui/src/pages/Settings.tsx's DEFAULTS disagree with api/models.py's ProjectSettings "
+        f"defaults - {{field: (typescript, python)}} {disagreements}. An unloaded or "
+        "partially-stored field is sent from the first and judged against the second."
+    )
+
+
+def test_every_platform_tier_field_has_a_frontend_default():
+    """A platform-tier field missing from `DEFAULTS` is sent as `undefined` and dropped from
+    the JSON body entirely - which is the dropped-key hazard this whole task is about,
+    arriving through the defaults rather than through the type."""
+    defaults = _typescript_defaults()
+    missing = [f for f in _PLATFORM_TIER_SETTINGS if f not in defaults]
+    assert not missing, (
+        f"{missing} are platform-tier and absent from Settings.tsx's DEFAULTS, so a save made "
+        "before the settings load - or of a project whose config never stored them - omits "
+        "them, and an omitted key is the server's default rather than the project's value"
     )
