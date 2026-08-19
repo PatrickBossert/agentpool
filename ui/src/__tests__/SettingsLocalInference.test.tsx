@@ -408,11 +408,20 @@ describe('Settings - every platform-tier field the page renders is gated togethe
     serve(BASE_SETTINGS, PROJECT_ADMIN)
     renderSettings()
     // Settled first: before /my-permissions answers every control is locked, so every note
-    // renders and the count is of the loading state rather than of the answer.
+    // renders and what is counted is the loading state rather than the answer.
     await waitFor(() => expect(controlFor('slack_channel')).toBeEnabled())
 
-    const notes = screen.getAllByText(/only an org admin or above may change/i)
-    expect(notes).toHaveLength(3)
+    // Asserted as a property of each locked control rather than as a count. A count is
+    // wrong the moment the server names a tenth field - the page would behave correctly and
+    // the test would fail, which is the kind of failure that gets a correct page "fixed".
+    for (const field of PLATFORM_TIER_FIELDS_WITH_A_CONTROL) {
+      const section = controlFor(field)!.closest('section')
+      expect(section, `${field} renders outside any section`).not.toBeNull()
+      expect(
+        within(section!).queryAllByText(/only an org admin or above may change/i).length,
+        `${field} is greyed out with no explanation beside it`,
+      ).toBeGreaterThan(0)
+    }
   })
 
   it('shows no such note to a caller who may change them', async () => {

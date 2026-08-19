@@ -441,7 +441,7 @@ export default function Settings() {
       </section>
 
       {/* Models */}
-      <div className="mt-6">
+      <section className="mt-6">
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Models</h3>
         <p className="text-xs text-muted mt-1 mb-3">
           Fast models handle coordination and live follow-ups. Deep models handle analysis
@@ -465,7 +465,7 @@ export default function Settings() {
             of the same array the inputs are rendered from, so it cannot answer for a
             different set of fields than the ones on screen. */}
         {MODEL_FIELDS.some(([key]) => locked(key)) && <PlatformTierNote />}
-      </div>
+      </section>
 
       {/* Interview Branding */}
       <section className="space-y-4">
