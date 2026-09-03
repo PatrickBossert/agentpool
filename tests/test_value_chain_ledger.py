@@ -241,19 +241,36 @@ def test_an_empty_label_is_filled_but_a_real_one_is_never_overwritten(node_proje
 
 def test_active_is_the_one_field_a_later_write_may_move(node_project):
     """Retiring an id and un-retiring it are neither redefining it nor dropping it - the one
-    exception the succession rule carves out. An entry that does not name active leaves the
-    held value alone, which is a different thing from naming it false."""
+    exception the succession rule carves out."""
     slug = node_project
     register_nodes_sync(slug, [_node("6.1", "Retire me")], 1, "alex")
     register_nodes_sync(slug, [_node("6.1", "Retire me", active=False)], 2, "alex")
     assert current_node_ledger_sync(slug)["6.1"]["active"] is False
 
-    register_nodes_sync(slug, [{"id": "6.1", "label": "Retire me"}], 3, "alex")
-    assert current_node_ledger_sync(slug)["6.1"]["active"] is False, \
-        "an entry that does not name active moved it"
-
-    register_nodes_sync(slug, [_node("6.1", "Retire me", active=True)], 4, "alex")
+    register_nodes_sync(slug, [_node("6.1", "Retire me", active=True)], 3, "alex")
     assert current_node_ledger_sync(slug)["6.1"]["active"] is True
+
+
+def test_an_entry_that_does_not_name_active_leaves_it_alone(node_project):
+    """Not naming active is a different thing from naming it false, and the difference is
+    only visible on a row whose held value is the one the mutation would move it away from.
+
+    Both directions, deliberately. The first version of this asserted only that a retired row
+    stayed retired - and a mutation applying `1 if active_value else 0` unconditionally
+    (which turns an unnamed active into a retirement) passed it, because the row was already
+    retired and the wrong write produced the right answer. An assertion whose subject already
+    holds the expected value cannot fail, whatever the code does.
+    """
+    slug = node_project
+    register_nodes_sync(slug, [_node("6.2", "Live", active=True)], 1, "alex")
+    register_nodes_sync(slug, [{"id": "6.2", "label": "Live"}], 2, "alex")
+    assert current_node_ledger_sync(slug)["6.2"]["active"] is True, \
+        "an entry that does not name active retired the row"
+
+    register_nodes_sync(slug, [_node("6.3", "Retired", active=False)], 1, "alex")
+    register_nodes_sync(slug, [{"id": "6.3", "label": "Retired"}], 2, "alex")
+    assert current_node_ledger_sync(slug)["6.3"]["active"] is False, \
+        "an entry that does not name active un-retired the row"
 
 
 def test_the_version_and_author_of_the_last_write_are_recorded(node_project):
