@@ -139,7 +139,15 @@ async def test_alex_is_not_handed_morgans_lever_notes():
 
 - [ ] **Step 2: Assert the byte-identical property *within the registry*.** A single-node send-back must leave the other 88 ledger rows untouched. **The tree and summary are derived and will legitimately move** - say so in the test's docstring, or the first reviewer will read a correct run as a leak.
 
-- [ ] **Step 3: Document in `CLAUDE.md`**, beside the interview-script ledger material it parallels: the two new ledgers, why the registry artefact stopped being the authority, that lever ids are permanent and their titles are not, and that one crew holding two agents is why the injection is per-agent.
+- [ ] **Step 3: Document the RULE in `CLAUDE.md`, not the three instances.** This step was originally written as "document the two new ledgers", which is the mistake the branch exists to correct one level up: three ledgers described as three facts leaves the fourth agent to rediscover the pattern.
+
+State it as a requirement a new output type is measured against:
+
+> **An agent output that is a collection of items needs per-item review state before it needs a review surface.** The unit of review must be the unit of regeneration. A reviewer who can only send back the whole artefact makes the agent rewrite everything, and the reviewer cannot tell what changed - which is why the whole-artefact loop was built, worked, and went unused.
+
+Then the specifics beneath it: the three ledgers, why an artefact the agent must remember to write is a guarantee that holds only when the agent finishes (run 32), that an id is permanent and its label is not, and that one crew holding two agents is why the injection is per-agent.
+
+- [ ] **Step 3b: Record which output types do not yet have this, and say so plainly.** Twenty output types are declared in `agents/tools/ownership.py`; seven are collections on `sp-gs-am` today and most of the unbuilt ones are registers by name - `architecture_register`, `initiative_register`, `portfolio_register`, `captured_requirements`, `strategic_requirements`, `themes`, `activity_insights`, `propositions`, `illustration_briefs`. **Do not build ledgers for them here.** Name them in the tech-debt list as owing one, so the next agent to be built is measured against the rule rather than discovering it.
 
 - [ ] **Step 4: Suites unchanged by the documentation commit. Both counts stated. Commit.**
 
