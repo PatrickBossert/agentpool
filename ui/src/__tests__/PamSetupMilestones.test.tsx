@@ -14,6 +14,20 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import PamSetupTab from '../components/tabs/PamSetupTab'
 import type { Milestone } from '../types'
 
+// `milestoneVariance` defaults `today` to the real clock, and these tests exercise components
+// that legitimately read it - PamReportView and PamSetupTab render a live view, so threading a
+// date through them would be wrong. The clock is faked instead.
+//
+// Fixed once already in milestoneVariance.test.ts on 19 Aug 2026, where every call was given an
+// explicit `today`. That fix was applied to the file that failed and not to the *callers* of the
+// same function, so the same defect detonated here a fortnight later. Pin the clock in any test
+// that reaches milestoneVariance, however indirectly.
+const FIXED_TODAY = new Date('2026-08-14T09:00:00Z')
+
+beforeAll(() => { vi.useFakeTimers({ shouldAdvanceTime: true }); vi.setSystemTime(FIXED_TODAY) })
+afterAll(() => { vi.useRealTimers() })
+
+
 const { milestones, update } = vi.hoisted(() => {
   const base = {
     slug: 'acme', description: '', notes: '', created_at: '2026-07-01',

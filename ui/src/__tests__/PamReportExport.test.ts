@@ -5,10 +5,24 @@
 // render callback, reachable from the timeline and not from the print path, so the export
 // counted weekends only and reported a slip spanning a holiday as a day longer than the
 // app showed it.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 
 import { buildPrintHtml } from '../components/PamReportView'
 import type { PamReport, PamReportMilestone } from '../types'
+
+// `milestoneVariance` defaults `today` to the real clock, and these tests exercise components
+// that legitimately read it - PamReportView and PamSetupTab render a live view, so threading a
+// date through them would be wrong. The clock is faked instead.
+//
+// Fixed once already in milestoneVariance.test.ts on 19 Aug 2026, where every call was given an
+// explicit `today`. That fix was applied to the file that failed and not to the *callers* of the
+// same function, so the same defect detonated here a fortnight later. Pin the clock in any test
+// that reaches milestoneVariance, however indirectly.
+const FIXED_TODAY = new Date('2026-08-14T09:00:00Z')
+
+beforeAll(() => { vi.useFakeTimers({ shouldAdvanceTime: true }); vi.setSystemTime(FIXED_TODAY) })
+afterAll(() => { vi.useRealTimers() })
+
 
 function milestone(over: Partial<PamReportMilestone> = {}): PamReportMilestone {
   return {
