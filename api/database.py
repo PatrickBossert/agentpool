@@ -1092,6 +1092,62 @@ async def _migrate_script_reviews(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_value_chain_ledger(conn: aiosqlite.Connection) -> None:
+    """Create the value chain node ledger if it does not exist.
+
+    The same table interview_script_ledger is, for the same reason, and the columns are
+    named the same where they mean the same thing so a reader who knows one does not have
+    to learn the other. Alex's value chain is a single artefact holding 89 activities, so
+    a reviewer who disagrees with node 3.3.3 has nothing to send back but the whole tree.
+    A node is a row here, with its own review state, exactly as a script is.
+
+    node_id is the PRIMARY KEY rather than an indexed column: "one id means one activity
+    for the life of the project" becomes a constraint the database enforces instead of a
+    rule an agent must honour. Rows are retired with active = 0 and never deleted - the
+    registry artefact already carries retired ids as active=false and every theme,
+    requirement and interview script anchored to one resolves through the id.
+
+    label is NOT NULL with no default, deliberately unlike interview_script_ledger's
+    node_label. A script's label is display text the ledger backfilled empty and fills in
+    later; a node's label IS the thing the id means, and register_nodes_sync binds it
+    straight through so a null one raises rather than being coerced to ''. See that
+    function for why a raise is the wanted outcome.
+
+    last_author is not in the design's DDL. It is here because register_nodes_sync's
+    signature takes an author, and a parameter with nowhere to land is a parameter that
+    silently does nothing.
+
+    PRAGMA table_info first, and an early return rather than a raise: a migration that
+    raises takes every later migration in the block down with it, and several test
+    fixtures build projects and its siblings by hand. There is nothing here that can
+    raise on a hand-built database - CREATE TABLE names no other table's columns and a
+    foreign key is not resolved at create time - but the check makes "skip myself" the
+    shape of this function rather than a property of its current body, and it says out
+    loud that a table already present in some other shape is left alone rather than
+    half-altered.
+    """
+    async with conn.execute("PRAGMA table_info(value_chain_ledger)") as cur:
+        existing = [row async for row in cur]
+    if existing:
+        return
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS value_chain_ledger (
+            node_id           TEXT PRIMARY KEY,
+            project_id        INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            label             TEXT NOT NULL,
+            level             TEXT,
+            active            INTEGER NOT NULL DEFAULT 1,
+            review_status     TEXT NOT NULL DEFAULT 'pending',
+            review_return_to  TEXT,
+            last_version      INTEGER,
+            last_author       TEXT NOT NULL DEFAULT '',
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
 async def _migrate_blocked_writes(conn: aiosqlite.Connection) -> None:
     """Writes an agent attempted and was not permitted to make.
 
@@ -1701,8 +1757,10 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_knowledge_collection_is_recorded.py::test_a_database_at_the_previous_version_
 # gains_the_collection_column, which fails on 12 and passes on 13; and
 # tests/test_local_inference_override.py::test_a_database_at_the_previous_version_gains_the_
-# force_local_inference_column, which fails on 13 and passes on 14.
-_SCHEMA_VERSION = 14
+# force_local_inference_column, which fails on 13 and passes on 14; and
+# tests/test_value_chain_ledger.py::test_a_database_at_the_previous_version_gains_the_
+# value_chain_ledger, which fails on 14 and passes on 15.
+_SCHEMA_VERSION = 15
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1810,6 +1868,7 @@ async def get_connection(slug: str):
             await _migrate_agent_chat_history(conn)
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
+            await _migrate_value_chain_ledger(conn)
             await _migrate_interview_sessions_script_id(conn)
             await _migrate_stakeholder_roles(conn)
             await _migrate_blocked_writes(conn)

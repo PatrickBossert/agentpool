@@ -610,6 +610,146 @@ def register_scripts_sync(slug: str, scripts: dict, version: int, author: str) -
     return added
 
 
+def current_node_ledger_sync(slug: str) -> dict:
+    """The node ledger in force, keyed by node id.
+
+    Shaped as a mapping rather than a list because every consumer of it asks "what does
+    the ledger hold for this id" - the succession question - and a list makes each of
+    them build the same index.
+    """
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        rows = conn.execute(
+            "SELECT node_id, label, level, active, review_status, review_return_to,"
+            "       last_version, last_author"
+            "  FROM value_chain_ledger"
+        ).fetchall()
+    return {
+        r[0]: {
+            "id": r[0],
+            "label": r[1],
+            "level": r[2],
+            "active": bool(r[3]),
+            "review_status": r[4],
+            "review_return_to": r[5],
+            "last_version": r[6],
+            "last_author": r[7],
+        }
+        for r in rows
+    }
+
+
+def register_nodes_sync(
+    slug: str, activities: list, version: int, author: str
+) -> int:
+    """Register any value chain node id not already held. Returns how many were added.
+
+    register_scripts_sync above is the model, and the reasoning transfers whole: the
+    ledger may grow and may retire, but may never redefine or forget. A script became a
+    row because a reviewer sends back SC-014 alone and the next run regenerates that one
+    script; a node becomes a row for exactly the same reason, and 3.3.3 is the id it is
+    sent back under.
+
+    ON CONFLICT(node_id) DO NOTHING, never UPDATE of the anchor, and never INSERT OR
+    IGNORE. The clause matters for the reason register_scripts_sync sets out at length:
+    INSERT OR IGNORE swallows EVERY constraint violation on the row rather than only the
+    key conflict it is reached for, so an entry whose label is null, or is a dict, or is
+    anything else sqlite3 will not bind to TEXT, hits label's NOT NULL or fails to bind
+    and is dropped from the whole batch with no error, no row, and no signal to the
+    caller. The next write then finds the id unregistered and is free to hand it to a
+    different activity - which is the exact failure the script ledger was carrying when
+    SC-001 was published at 1.2 and silently re-anchored to 2.7. ON CONFLICT(node_id) DO
+    NOTHING suppresses only the conflict it names; everything else still raises.
+
+    That raise is the wanted outcome here rather than a last resort, which is why label
+    is bound straight through instead of being coalesced to ''. A node's label is what
+    its id MEANS - it is the text a reviewer reads when deciding whether 3.3.3 is right -
+    so an entry that names no label is a defect in the artefact, not a row worth storing
+    empty. Coalescing would make the NOT NULL unreachable and quietly reduce this
+    function's whole conflict discipline to the primary key.
+
+    One commit for the whole call, exactly as register_scripts_sync commits once: a batch
+    where one entry cannot bind registers none of the others either, because nothing
+    before the failing row was ever committed. Both callers are responsible for making
+    that loss visible rather than silent - neither swallows the exception without saying
+    so to the agent that caused it.
+
+    A label is not an anchor, and the rules differ accordingly. An id already held keeps
+    its node identity absolutely, and keeps the label it already carries: Alex rebuilds
+    the whole chain and re-emits every label on every run - one run produced 59 label
+    changes and not one was a redefinition - so taking the batch's wording here would let
+    a rebuild rewrite the ledger as a side effect. That is the same preservation
+    DeriveRegistryTool and _preserve_registered_labels already apply to the artefact; it
+    is repeated here because this function is reached by both doors and must not depend
+    on either of them having done it. An empty held label is filled rather than left
+    empty, matching the script ledger's CASE.
+
+    active is the one field the succession rule carves an exception for: retiring an id
+    and un-retiring it are neither redefining it nor dropping it. An entry that names
+    active has that value applied, on a fresh row and on one already held; an entry that
+    does not name it leaves the held value alone and relies on the column default for a
+    fresh row. The registry artefact names active on every entry, so in practice a
+    derivation that drops a node from the tree retires its row here as well.
+
+    last_version and last_author are touched on every id the call names, fresh or held -
+    the staleness signal Tasks 3 and 4 read to tell "the reviewer has seen this version"
+    from "the agent has written since".
+
+    A slug with no database file is refused before the connection is opened, not after.
+    sqlite3.connect creates the file it is pointed at, so the projects-row check alone
+    answers "Project not found" having just materialised an empty database for the slug it
+    is denying - the same trap caller_roles and _stakeholder_matches_invite each carry an
+    explicit guard against. This function has one caller per door and both are bound to a
+    real project, so the guard is defence rather than a live path; it costs one stat.
+    """
+    if not Path(_db_path(slug)).exists():
+        raise ValueError(f"Project not found: {slug}")
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        row = conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            raise ValueError(f"Project not found: {slug}")
+        project_id = row[0]
+        added = 0
+        for activity in activities or []:
+            if not isinstance(activity, dict):
+                continue
+            node_id = activity.get("id")
+            # An id that is absent, empty, or not text is not an id. Skipped rather than
+            # raised on: the artefact's own validators refuse those at the door, and a
+            # ledger write is not the place to re-adjudicate the shape of the artefact.
+            if not isinstance(node_id, str) or not node_id:
+                continue
+            label = activity.get("label")
+            level = activity.get("level")
+            # None when the entry does not name active at all, which is distinct from
+            # naming it false - the first leaves the held value alone, the second retires
+            # the row.
+            active_value = activity.get("active")
+            cur = conn.execute(
+                "INSERT INTO value_chain_ledger"
+                " (node_id, project_id, label, level, last_version, last_author)"
+                " VALUES (?,?,?,?,?,?)"
+                " ON CONFLICT(node_id) DO NOTHING",
+                (node_id, project_id, label, level, version, author),
+            )
+            added += cur.rowcount
+            conn.execute(
+                "UPDATE value_chain_ledger"
+                "   SET label=CASE WHEN COALESCE(label,'')='' THEN ? ELSE label END,"
+                "       level=CASE WHEN COALESCE(level,'')='' THEN ? ELSE level END,"
+                "       last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
+                " WHERE node_id=?",
+                (label or "", level or "", version, author, node_id),
+            )
+            if active_value is not None:
+                conn.execute(
+                    "UPDATE value_chain_ledger"
+                    "   SET active=?, updated_at=CURRENT_TIMESTAMP WHERE node_id=?",
+                    (1 if active_value else 0, node_id),
+                )
+        conn.commit()
+    return added
+
+
 def _output_version_sync(slug: str, output_id: int) -> int:
     """The version of one agent_outputs row, or 0 if it has gone."""
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:

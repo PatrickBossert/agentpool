@@ -13,6 +13,7 @@ from agents.tools._db import (
     record_blocked_write_sync,
     record_run_input_sync,
     record_validation_warnings_sync,
+    register_nodes_sync,
     register_scripts_sync,
     _output_version_sync,
 )
@@ -461,6 +462,30 @@ class SQLiteStateTool(BaseTool):
             except (OSError, ValueError) as e:
                 return f"Error: write failed — {e}"
 
+            registration_note = ""
+            if key == "value_chain_registry" and isinstance(parsed, dict):
+                # The registry's other door, DeriveRegistryTool, registers too. Both do,
+                # so neither depends on the other having run - this is Alex's own key and
+                # he can write it without deriving.
+                try:
+                    register_nodes_sync(
+                        self.slug,
+                        parsed.get("activities") or [],
+                        _output_version_sync(self.slug, new_output_id),
+                        identity,
+                    )
+                except Exception as e:
+                    # Never fail a durable write over the ledger, and never lose it
+                    # silently either. register_nodes_sync commits once for the whole
+                    # call, so one entry it cannot bind discards its batchmates'
+                    # registrations too - the note therefore says the whole write is
+                    # unregistered rather than naming one id.
+                    registration_note = (
+                        f" — WARNING: the node ledger was not updated ({e}). Every id in "
+                        "this registry is unregistered, so a later write could re-anchor "
+                        "one unrefused. Write it again."
+                    )
+
             if key == "interview_scripts" and isinstance(parsed, dict):
                 # Registration is a side effect of the write, exactly as
                 # insert_agent_output_sync maintains is_current, and for the same reason:
@@ -513,7 +538,7 @@ class SQLiteStateTool(BaseTool):
                 # failed when it didn't, and it would write again, versioning a duplicate.
                 # A missing lineage edge is a smaller loss than that.
                 pass
-            return f"Written to {file_path}"
+            return f"Written to {file_path}{registration_note}"
 
         if operation == "read":
             # Resolve through the ledger: the write above is renamed to a _vN suffix by
