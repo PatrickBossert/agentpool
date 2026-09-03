@@ -3269,19 +3269,35 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- `occurrences`, `proposed_by_agent`, `source_project` and `source_ref` are the
+        -- provenance an agent's proposal arrives with. A proposal is written `pending` and
+        -- `_fetch_skill_notes` (api/services/run_service.py) reads `status='approved'`, so
+        -- nothing an agent proposes reaches a prompt until a human approves it - that filter
+        -- is the whole safety argument for letting agents propose freely.
+        --
+        -- `occurrences` counts how many times the same rule has been proposed, so a queue
+        -- can sort evidence above guesswork. It defaults to 1 because every existing row
+        -- was proposed by a person exactly once.
+        --
+        -- `source_project` and `source_ref` are the **first** occurrence's provenance, not
+        -- an accumulating list. Accumulating provenance across later occurrences needs a
+        -- shape of its own and is deliberately not decided here.
         CREATE TABLE IF NOT EXISTS skills (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            name            TEXT NOT NULL,
-            description     TEXT NOT NULL,
-            source          TEXT NOT NULL DEFAULT 'manual',
-            source_project  TEXT,
-            status          TEXT NOT NULL DEFAULT 'pending'
-                                CHECK(status IN ('pending', 'approved', 'rejected')),
-            flag_reason     TEXT,
-            flag_suggestion TEXT,
-            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-            reviewed_at     DATETIME,
-            reviewed_by     TEXT
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            name              TEXT NOT NULL,
+            description       TEXT NOT NULL,
+            source            TEXT NOT NULL DEFAULT 'manual',
+            source_project    TEXT,
+            source_ref        TEXT,
+            proposed_by_agent TEXT,
+            occurrences       INTEGER NOT NULL DEFAULT 1,
+            status            TEXT NOT NULL DEFAULT 'pending'
+                                  CHECK(status IN ('pending', 'approved', 'rejected')),
+            flag_reason       TEXT,
+            flag_suggestion   TEXT,
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at       DATETIME,
+            reviewed_by       TEXT
         );
 
         CREATE TABLE IF NOT EXISTS agent_skill_assignments (
@@ -3407,9 +3423,17 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
 
     # Column upgrades for existing system databases: CREATE TABLE IF NOT EXISTS above does
     # nothing once the table already exists, so new columns need an explicit ALTER TABLE.
+    #
+    # skills gains four here rather than through a _migrate_* function and a _SCHEMA_VERSION
+    # bump: that constant gates *project* databases, and bumping it would re-run every project
+    # migration for a table in a database it does not govern. init_system_db is idempotent and
+    # runs on every system connection, so this loop is the whole mechanism.
     for table, column, decl in (
         ("users", "is_sys_admin", "INTEGER NOT NULL DEFAULT 0"),
         ("project_memberships", "stakeholder_id", "INTEGER"),
+        ("skills", "source_ref", "TEXT"),
+        ("skills", "proposed_by_agent", "TEXT"),
+        ("skills", "occurrences", "INTEGER NOT NULL DEFAULT 1"),
     ):
         cur = await conn.execute(f"PRAGMA table_info({table})")
         if column not in {row[1] for row in await cur.fetchall()}:
@@ -3492,14 +3516,23 @@ async def insert_skill(
     description: str,
     source: str = "manual",
     source_project: str | None = None,
+    source_ref: str | None = None,
+    proposed_by_agent: str | None = None,
+    status: str = "pending",
     agents: list[str] | None = None,
     flag_reason: str | None = None,
     flag_suggestion: str | None = None,
 ) -> int:
+    """Insert one skill. `status` is written explicitly rather than left to the column
+    default, so the value a caller intends is visible at the call site - a skill proposed by
+    an agent must be `pending`, and that is the property `_fetch_skill_notes` rests on.
+    """
     cur = await conn.execute(
-        """INSERT INTO skills (name, description, source, source_project, flag_reason, flag_suggestion)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (name, description, source, source_project, flag_reason, flag_suggestion),
+        """INSERT INTO skills (name, description, source, source_project, source_ref,
+                               proposed_by_agent, status, flag_reason, flag_suggestion)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (name, description, source, source_project, source_ref,
+         proposed_by_agent, status, flag_reason, flag_suggestion),
     )
     skill_id = cur.lastrowid
     if agents:

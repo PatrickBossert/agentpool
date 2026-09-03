@@ -8,6 +8,11 @@ reviewer feedback about an agent's behaviour rather than client material, but it
 feedback typed during a sensitive engagement: if that stops being acceptable, the fix is a
 project-scoped skills library, not a default slug. Everything else goes through
 api/services/llm_client.py.
+
+`propose_skill` is the exception in this file and reaches no model at all: it is the write
+door onto the skills queue, used by an agent that has just revised its work and wants the
+general rule behind the correction remembered. It is deliberately deterministic, so a
+proposal cannot fail the run it is attached to for want of a model.
 """
 from __future__ import annotations
 
@@ -16,6 +21,91 @@ from anthropic import AsyncAnthropic
 from api.config import get_settings
 
 _MODEL = "claude-haiku-4-5-20251001"
+
+
+async def propose_skill(
+    agent_name: str,
+    description: str,
+    source_project: str | None,
+    source_ref: str | None,
+    *,
+    name: str | None = None,
+) -> dict:
+    """Record a skill an agent proposes, and return what happened.
+
+    The queue an agent writes into. The proposal is stored `status='pending'`, and
+    `_fetch_skill_notes` in `api/services/run_service.py` injects `status='approved'` skills
+    alone - so nothing proposed here reaches any prompt until a human approves it. That is
+    the whole safety argument for letting an agent propose freely, and it is asserted against
+    what reaches the prompt rather than against what the table holds
+    (`tests/test_skill_proposal.py`).
+
+    `agent_name` is the snake id the crews dispatch by - `interaction_designer`. It is
+    resolved to the role name `agent_skill_assignments` is keyed by before the assignment is
+    written, because that is the name `_fetch_skill_notes` looks the skill up under; storing
+    the snake id would file a proposal that no approval could ever inject.
+
+    Returns `{"action", "skill_id", "status", "occurrences", "name", "agent"}`. `action` is
+    `"created"` here; recognising a near-duplicate of an existing skill and incrementing
+    `occurrences` instead is Task 2's, and is why this returns what happened rather than an id.
+    """
+    from api.database import get_system_connection, insert_skill, fetch_skills
+
+    role = _role_name_for(agent_name)
+    skill_name = (name or "").strip() or _derive_skill_name(description)
+    async with get_system_connection() as conn:
+        skill_id = await insert_skill(
+            conn,
+            name=skill_name,
+            description=description,
+            source="revision",
+            source_project=source_project,
+            source_ref=source_ref,
+            proposed_by_agent=agent_name,
+            # Never anything else. An approved proposal is injected into every future run of
+            # this agent, on every engagement.
+            status="pending",
+            agents=[role],
+        )
+        rows = await fetch_skills(conn, agent_name=role, status="pending")
+    row = next((r for r in rows if r["id"] == skill_id), None)
+    return {
+        "action": "created",
+        "skill_id": skill_id,
+        "status": "pending",
+        "occurrences": (row or {}).get("occurrences", 1),
+        "name": skill_name,
+        "agent": role,
+    }
+
+
+def _role_name_for(agent_name: str) -> str:
+    """Map a snake agent id to the role name `agent_skill_assignments` is keyed by.
+
+    Imported from `run_service` rather than restated, because that map is what
+    `_fetch_skill_notes` reads with - a second copy here would be free to drift, and a
+    proposal filed under a name the injection does not look up is invisible rather than
+    wrong. The import is function-local for the reason `run_service`'s own imports are:
+    everything downstream of the crew graph is import-order sensitive.
+
+    An unknown name is passed through unchanged, so a caller that already holds the role
+    name (the admin door's vocabulary) is not mangled into a name nothing matches.
+    """
+    from api.services.run_service import _SNAKE_TO_DISPLAY
+
+    return _SNAKE_TO_DISPLAY.get(agent_name, agent_name)
+
+
+def _derive_skill_name(description: str) -> str:
+    """A title for a proposal that arrived with a rule and no name.
+
+    Deterministic on purpose: naming is not worth a model call on a path that must not fail
+    the run it is attached to. A caller with a better title passes `name`.
+    """
+    first_line = description.strip().split("\n")[0]
+    words = first_line.split()[:5]
+    derived = " ".join(words).rstrip(".,;:-").strip()
+    return derived or "Proposed Agent Skill"
 
 
 async def check_specificity(description: str) -> dict:
