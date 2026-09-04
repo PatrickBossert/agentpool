@@ -147,6 +147,38 @@ The row must say so rather than leaving the table stale.
 "Alba Mac - Animated Scottish", female, conversational - so the picker has something real to
 show without touching the library.
 
+## Default voices by accent - verified in the account, 4 September
+
+Patrick's choices, all four already present, all four `calm` in register so a project swapping
+between them changes the accent and not the character of the interview:
+
+| Accent | Gender | Voice | `voice_id` |
+|---|---|---|---|
+| British | male | Daniel | `onwK4e9ZLuTAKqWW03F9` |
+| British | female | Alice - Clear, Engaging Educator | `Xb7hH8MSUJpSbSDYk0k2` |
+| Scottish | male | **Mark - Warm Scottish Narrator** | `pp4ihOlfDr2MgdTALvoR` |
+| New Zealand | female | **Belinda - Calm & Soothing Kiwi** | `bPkjmCb0W1xUBvyH2Afs` |
+
+### An open question this raises, which changes Tasks 3 and 4
+
+**Is the voice chosen per project, or per stakeholder?** The two readings need different builds
+and the brief supports both:
+
+- *"Avery, or the female interviewer, conducts the interview using the assigned voice for the
+  project"* - one voice per interviewer per project. These four are then **seed values for the
+  picker**: what a project gets when it chooses a Scottish male interviewer.
+- `AverySetupTab` says the accent is *"matched to the interviewee's country (set on each
+  stakeholder profile)"*, and `stakeholders` carries `country_code` and `preferred_language` -
+  so the voice would follow the interviewee, and these four become **an accent-to-voice map**.
+
+**This is not a contradiction of removing `VOICE_LOCALE_TABLE`.** What made that wrong was being
+prose inside Taylor's prompt, duplicated by a dead TypeScript twin, the two disagreeing on four
+of eight locales. A single accent-to-voice default table, held as data in one place and resolved
+through `resolve_agent_config`, is a legitimate thing; four copies, one of them prose, is not.
+
+**Deferred to Patrick.** Task 3 stamps whatever is resolved either way, so the stamping design
+holds under both - which is why this can be answered after Task 2 rather than before.
+
 ## Testing
 
 - A project with no configuration resolves every default, and the interview runs exactly as it
