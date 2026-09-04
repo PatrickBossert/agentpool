@@ -100,7 +100,6 @@ def create_stakeholder_management_crew(
     slug: str,
     run_id: int,
     sector: str,
-    public_interview_url_base: str = "",
     coverage: dict | None = None,
     llm: LLM | None = None,
 ) -> Crew:
@@ -111,7 +110,6 @@ def create_stakeholder_management_crew(
     task = create_stakeholder_manager_task(
         agent=agent,
         project_slug=slug,
-        public_interview_url_base=public_interview_url_base,
         coverage_block=_format_coverage(coverage),
     )
 

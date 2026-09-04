@@ -24,10 +24,10 @@ duplication the graph exists to end. The two modules meet at `DocumentIngestionT
 draws on is a read, where it sends it is egress.
 
 `via` names the route, because the same source reaches different agents by different routes and
-the route is what breaks. `interview_sessions` is a real read for the Stakeholder Interviewer,
-who reaches it through `InterviewSessionTool`, and an unresolvable one for the Stakeholder
-Manager, who is told to reach it through `SQLiteStateTool`. A declaration naming only the source
-would record those as the same fact.
+the route is what breaks. `stakeholders` reaches the Stakeholder Manager down the dispatch path,
+which folds the roster into his task before the crew starts, and reaches the Stakeholder
+Interviewer through `InterviewSessionTool`, which joins names onto transcripts as it collects
+them. A declaration naming only the source would record those as the same fact.
 
 ## Media
 
@@ -404,17 +404,12 @@ UNRESOLVABLE_READS: tuple[UnresolvableRead, ...] = (
     # route by which they already reached the Interview Coordinator, and his step 2 no longer
     # sends him to `SQLiteStateTool` for them. Recorded here rather than deleted silently,
     # because the entry is the reason the injection exists.
-    UnresolvableRead(
-        agent_id="stakeholder_manager",
-        source="interview_sessions",
-        instructed_via="SQLiteStateTool",
-        finding=(
-            "A database table, unreadable through `SQLiteStateTool` for the same reason - but "
-            "this agent already holds `InterviewSessionTool`, whose `get_status` operation "
-            "returns exactly the pending/active/completed/abandoned counts step 3 asks for. A "
-            "one-line correction to the task description, not a new door."
-        ),
-    ),
+    # `stakeholder_manager` / `interview_sessions` was here. The finding proposed correcting the
+    # instruction to use `InterviewSessionTool.get_status`; what happened instead is that the
+    # whole of the interview process was returned to the Interview Coordinator, so there is no
+    # instruction left to correct and Jordan no longer holds the tool. Recorded rather than
+    # deleted silently: an unresolvable read is sometimes evidence that the brief is wrong
+    # rather than that the door is missing, and this is the case that showed it.
 )
 
 

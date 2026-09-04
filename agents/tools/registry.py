@@ -150,9 +150,11 @@ def get_tools_for_agent(
             ChromaQueryTool(slug=slug, sector=sector, run_id=run_id, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
+        # No InterviewSessionTool: the interview process is the Interview Coordinator's, and a
+        # tool an agent holds is a tool it can decide to call. Jordan owns the roster and its
+        # coverage of the value chain; sessions, invitations and reminders are not his.
         "stakeholder_manager": [
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
-            InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
         ],
     }
 

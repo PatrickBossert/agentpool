@@ -1,5 +1,5 @@
 # agents/discovery/stakeholder_manager_agent.py
-"""Stakeholder Manager — actively manages stakeholder engagement, communications, and coverage."""
+"""Stakeholder Manager - the stakeholder roster and its coverage of the value chain."""
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
@@ -8,20 +8,22 @@ def create_stakeholder_manager(slug: str, llm: LLM, tools: list[BaseTool]) -> Ag
     return Agent(
         role="Stakeholder Manager",
         goal=(
-            "Ensure every value chain node has adequate stakeholder coverage by actively "
-            "tracking engagement status, identifying gaps, prioritising outreach, and drafting "
-            "targeted communications for stakeholders who have not yet responded."
+            "Report how well the stakeholder roster covers the value chain: which activities "
+            "have somebody who can speak for them, which have nobody, and which people on the "
+            "roster are assigned to nothing."
         ),
         backstory=(
             "You are an experienced stakeholder engagement manager who combines analytical "
-            "rigour with interpersonal intelligence. You know that interview coverage is only "
-            "as good as the people who actually complete it, and you treat the engagement process "
-            "as a project within the project. You monitor who has been invited, who has started "
-            "but not finished, who has not been contacted at all, and which nodes remain "
-            "uncovered or under-represented. You draft communications that are always respectful "
-            "and professional — starting gentle and becoming progressively more direct without "
-            "ever being discourteous. You also flag structural gaps where no suitable stakeholder "
-            "has been identified for a node, so the project team can decide what to do."
+            "rigour with interpersonal intelligence. You own the stakeholder roster and its "
+            "assignment to the value chain, and you know that a chain is only as well "
+            "understood as the people speaking for its activities. You read the coverage as "
+            "it stands, name the activities nobody has been assigned to, and name the people "
+            "who have been assigned to nothing, so the engagement lead can decide what to do "
+            "about either. You report the figures you are given rather than working them out "
+            "again, and you leave the judgement about whether a gap matters to the person "
+            "reading your report. The interview process itself - who is invited, who has "
+            "started, who has finished, and what they are sent - belongs to the Interview "
+            "Coordinator, not to you."
         ),
         llm=llm,
         tools=tools,
@@ -33,7 +35,6 @@ def create_stakeholder_manager(slug: str, llm: LLM, tools: list[BaseTool]) -> Ag
 def create_stakeholder_manager_task(
     agent: Agent,
     project_slug: str = "",
-    public_interview_url_base: str = "",
     coverage_block: str = "",
 ) -> Task:
     """His task, with the mapping and its coverage prepended when the dispatch path supplies them.
@@ -44,39 +45,22 @@ def create_stakeholder_manager_task(
     back to `SQLiteStateTool`: that read was never once served, and an instruction to retry it
     would be an instruction to read an error message.
 
-    `url_block` names the base only, deliberately not a per-participant link. Jordan has no
-    route to any stakeholder's session token: step 3 sends him to SQLiteStateTool for
-    `interview_sessions`, which is a database table rather than an output artefact and so
-    always answers "no state found" (agents/reads.py records the same read as unresolvable),
-    and his only other tool, InterviewSessionTool, returns an existing session's token from
-    none of its four operations - `create` only for rows it inserts in that same call. An
-    earlier version of this instruction told him to complete a personal link himself
-    (`{url_base}/{session_token}`), which he could only have satisfied by fabricating a
-    token: a well-formed dead link on the deployment's own domain, for exactly the messages
-    (reminders, re-engagement) that are about stakeholders who already have a real one. The
-    real per-participant link is minted by InterviewSessionTool.create and delivered down the
-    campaign path (campaign_service.interview_url) - not drafted here.
+    The interview process is not his, and nothing here mentions it. He used to read
+    `interview_sessions`, derive four session-state findings from it, and draft invitations,
+    reminders and re-engagement messages; all of that belongs to the Interview Coordinator,
+    who holds the tools for it. The breadth was legacy and it had already produced one live
+    defect: the drafting step told him to emit `{url_base}/{session_token}` when he has no
+    route to any stakeholder's session token, so the only way to satisfy it was to fabricate
+    one - a well-formed dead link on the deployment's own domain. It had never fired only
+    because the URL base was empty and falsy, which made repairing the base the moment the
+    instruction would have armed. The `public_interview_url_base` parameter went with the
+    step rather than being kept for a future consumer, for the same reason.
     """
-    url_block = (
-        f"Interview URL base: {public_interview_url_base}\n"
-        "This is the base the platform's interview links are served from - not something "
-        "you can complete into a working link yourself. You do not know any stakeholder's "
-        "session token, so never construct a full interview link (base plus token) in a "
-        "draft message: an invented token produces a link that looks real but goes "
-        "nowhere. If a draft needs to mention the interview link, refer to it in words "
-        "(e.g. \"your personal interview link\") without writing out a URL - whoever "
-        "sends the message supplies the real one, which the platform mints per "
-        "participant.\n\n"
-        if public_interview_url_base
-        else ""
-    )
-
     return Task(
         description=(
             f"{coverage_block}"
-            "Review the current state of stakeholder engagement and produce a complete "
-            "engagement status report and action plan.\n\n"
-            f"{url_block}"
+            "Report how well the stakeholder roster covers the value chain, and name the "
+            "gaps on both sides of it.\n\n"
             "Steps:\n"
             "1. Use SQLiteStateTool with operation='read', key='value_chain_registry', "
             "agent_name='stakeholder_manager' to load all active nodes at every level, "
@@ -88,40 +72,18 @@ def create_stakeholder_manager_task(
             "handed to you above instead. If no such block is present, the mapping was not "
             "supplied to this run: say so in your report and treat the assignments as "
             "unknown rather than as empty.\n"
-            "3. Use SQLiteStateTool with operation='read', key='interview_sessions', "
-            "agent_name='stakeholder_manager' to check the status of each interview session: "
-            "pending (invited, not started), active (in progress), completed, or abandoned.\n"
-            "4. Analyse coverage:\n"
-            "   a) Identify nodes with NO stakeholder assigned at all (coverage gap). The "
+            "3. Identify the nodes with NO stakeholder assigned at all (coverage gap). The "
             "COVERAGE block above already gives you both proportions and the node ids: carry "
             "those figures through unchanged rather than working them out again.\n"
-            "   b) Identify nodes with stakeholders assigned but NO sessions created (not yet invited).\n"
-            "   c) Identify stakeholders with a 'pending' session older than 5 days (needs chasing).\n"
-            "   d) Identify stakeholders with an 'abandoned' session (needs re-engagement).\n"
-            "   e) Identify nodes with only one stakeholder completing (may need more perspectives).\n"
-            "5. Draft stakeholder communications:\n"
-            "   For each stakeholder who needs action, draft an appropriate message:\n"
-            "   - NOT YET INVITED: A warm, professional invitation explaining the purpose of "
-            "the interview, what to expect, and how long it will take (10–15 minutes).\n"
-            "   - PENDING > 5 DAYS: A gentle first reminder that assumes busyness and offers "
-            "a simple one-click link.\n"
-            "   - PENDING > 10 DAYS: A firmer second reminder that emphasises the importance "
-            "of their perspective and the upcoming deadline.\n"
-            "   - ABANDONED: A brief re-engagement message acknowledging they started and "
-            "inviting them to complete when ready.\n"
-            "   All messages must be professional, concise (3–5 sentences), and personalised "
-            "with the stakeholder's name and node context.\n"
-            "6. Use SQLiteStateTool with operation='write', key='stakeholder_engagement_plan', "
-            "agent_name='stakeholder_manager' to save the complete engagement status and "
-            "action plan as structured JSON:\n"
+            "4. Use SQLiteStateTool with operation='write', key='stakeholder_engagement_plan', "
+            "agent_name='stakeholder_manager' to save the coverage report as structured "
+            "JSON:\n"
             "   {\n"
             "     \"summary\": {\n"
             "       \"total_nodes\": N,\n"
             "       \"nodes_fully_covered\": N,\n"
             "       \"nodes_at_risk\": N,\n"
-            "       \"nodes_uncovered\": N,\n"
-            "       \"stakeholders_pending\": N,\n"
-            "       \"stakeholders_completed\": N\n"
+            "       \"nodes_uncovered\": N\n"
             "     },\n"
             "     \"assignment_coverage\": {\n"
             "       \"assignments\": [ { \"stakeholder_id\": N, \"name\": \"...\", "
@@ -134,25 +96,23 @@ def create_stakeholder_manager_task(
             "       \"unassigned_proportion\": 0.0\n"
             "     },\n"
             "     \"coverage_gaps\": [ { \"node_id\": \"...\", \"node_label\": \"...\", "
-            "\"level\": \"L2\", \"issue\": \"No stakeholder assigned\" } ],\n"
-            "     \"outreach_actions\": [\n"
-            "       { \"stakeholder_id\": N, \"name\": \"...\", \"node_label\": \"...\",\n"
-            "         \"action_type\": \"invite|remind_1|remind_2|re_engage\",\n"
-            "         \"draft_message\": \"...\" }\n"
-            "     ]\n"
+            "\"level\": \"L2\", \"issue\": \"No stakeholder assigned\" } ]\n"
             "   }\n\n"
             "   Every figure in `assignment_coverage`, and the mapping itself, is copied from "
             "the block at the top of this task exactly as given. Report them; do not judge "
             "them. Whether a gap is acceptable is the engagement lead's call to make from the "
             "numbers, and several stakeholders on one activity is normal rather than a "
-            "mismatch.\n"
+            "mismatch.\n\n"
+            "   The interview process - who has been invited, who has started, who has "
+            "finished, and what any of them are sent - is the Interview Coordinator's, not "
+            "yours. Do not report on it, and do not draft any message to a stakeholder.\n"
         ),
         expected_output=(
-            "A structured JSON engagement plan saved to outputs/stakeholder_engagement_plan.json "
-            "covering all nodes, reporting the stakeholder-to-activity mapping with the "
-            "proportion of activities that have nobody and the proportion of the roster assigned "
-            "to nothing, identifying coverage gaps, and providing a prioritised list of outreach "
-            "actions with drafted communications for each stakeholder who needs contact."
+            "A structured JSON coverage report saved to "
+            "outputs/stakeholder_engagement_plan.json covering all nodes, reporting the "
+            "stakeholder-to-activity mapping with the proportion of activities that have "
+            "nobody and the proportion of the roster assigned to nothing, and identifying "
+            "every node with no stakeholder assigned to it."
         ),
         agent=agent,
     )
