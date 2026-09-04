@@ -29,8 +29,9 @@ field, and nothing populates it.
 overriding a default rather than replacing it. The defaults are what runs today: the display
 names in `agents/identity.py`, and the voice currently used for Avery.
 
-**Voices are chosen from the available ElevenLabs voices**, with regional variants, and a
-**preview** button that speaks a sample line in the selected voice.
+**Voices are chosen from the available ElevenLabs voices**, filtered by regional accent -
+Scottish and Irish among them - showing each voice's rate and availability, with a **preview**
+played from the API's own `preview_url` rather than synthesised.
 
 **Only interviewer voices are used for now.** Every agent gets the settings because the shape is
 the same and the alternative is a special case; nothing but the interviewers reads the voice yet.
@@ -97,15 +98,54 @@ interviewer on `discovery_interviews`. She needs a tier in `agents/model_registr
 Her default voice is a female ElevenLabs voice; Avery's default should be corrected to a male
 one at the same time, because it currently is not.
 
-## The voices list
+## The voices list - two endpoints, not one
 
-Listing available voices needs `GET https://api.elevenlabs.io/v1/voices`, which the codebase
-does not call today - only text-to-speech. It goes behind a project-scoped door and returns id,
-name, labels and preview URL.
+Established by calling the API on 4 September rather than assumed. **There are two listings and
+they answer different questions.**
 
-**This is a new outbound path**, and CLAUDE.md's egress table must gain a row: ElevenLabs is
-already listed as an ungated reach, so this widens what is sent there from interview text to a
-voice listing request, which carries no client material.
+| | `GET /v1/voices` | `GET /v1/shared-voices` |
+|---|---|---|
+| What it holds | the 32 voices **in this account** | the whole Voice Library |
+| Accents present | british, american, australian, new zealand, scottish | those plus **irish** and the rest |
+| Rate | `available_for_tiers`, **empty on every voice** | **`rate`** and `fiat_rate` |
+| Filtering | none | `accent`, `gender`, `language`, `use_case` |
+| Preview | `preview_url` | `preview_url` |
+
+**The premium-rate information is only on `shared-voices`.** The account listing carries
+`available_for_tiers`, and it is `[]` on all 32, so a picker built on `/v1/voices` alone can
+show availability and accent but cannot show what a voice costs.
+
+So the door proxies **both**: the account list for what is ready to use, and the library for
+finding something new. They are not interchangeable, and a picker offering only one of them is
+either missing Irish or missing the rate.
+
+**Adding a library voice copies it into the account.** That is a write, not a read, and it
+belongs behind the same authority as any other project configuration change - not on the
+preview path.
+
+### Three things this makes free
+
+**`labels.gender` is `male`/`female`/`neutral` on the API's own metadata.** Taylor's
+always-male/always-female selection is therefore a filter, **not a hand-maintained list of which
+voice is which sex.** A curated list would be a fifth declaration of voice facts, which is
+exactly what this branch exists to stop.
+
+**`accent` is a first-class filter**, so Scottish and Irish are a query parameter rather than
+curation.
+
+**`preview_url` is a static audio URL on both endpoints**, so preview needs no synthesis call.
+The earlier plan to speak a sample line through `synthesise` was more expensive, slower, and
+spent characters for something the API already hosts.
+
+### Egress
+
+This is a new outbound path. CLAUDE.md lists ElevenLabs as an ungated reach; this widens what is
+sent there from interview text to a voice listing request, which carries **no client material**.
+The row must say so rather than leaving the table stale.
+
+*Verified on the live account, 4 September:* it already holds a professional Scottish voice -
+"Alba Mac - Animated Scottish", female, conversational - so the picker has something real to
+show without touching the library.
 
 ## Testing
 
@@ -118,7 +158,13 @@ voice listing request, which carries no client material.
   session's voice.
 - `random` is stamped once: reading the session twice returns the same interviewer.
 - `always_female` never yields Avery, and `always_male` never yields Laura.
-- A voice preview reaches ElevenLabs with the selected id and does not touch the session.
+- A voice preview plays the API's `preview_url` and **makes no synthesis call at all** - assert
+  that nothing reaches text-to-speech, since the cheap implementation and the expensive one look
+  identical to a participant.
+- The picker's male/female filter is applied to the API's `labels.gender`, not to a list in this
+  codebase. A curated list would be a fifth declaration of voice facts.
+- Adding a library voice to the account is a write and takes the configuration door's authority,
+  not the preview path's.
 
 ## Out of scope
 
