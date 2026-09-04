@@ -437,14 +437,21 @@ async def test_a_comparison_the_model_cannot_answer_creates_a_row_rather_than_fa
 
 @pytest.mark.asyncio
 async def test_an_id_the_model_was_never_offered_is_refused(monkeypatch):
-    """The one failure of this comparison that is silent at every later layer: an id that is
-    not a candidate would increment an unrelated skill, and nothing downstream could tell.
+    """The one failure of this comparison that is silent at every later layer: an id that was
+    not a candidate increments an unrelated agent's skill, and nothing downstream can tell.
+
+    The stranger has to be a **real** id belonging to another agent, which is the shape a
+    hallucination actually takes - candidate ids are small integers and most of them exist. An
+    id of nothing at all proves nothing about this guard: the write would find no row, report
+    nothing counted, and the proposal would be created anyway for a reason that has nothing to
+    do with refusing it. That is what the first version of this test asserted, and it passed
+    with the guard deleted.
     """
+    stranger = await propose_skill(OTHER_AGENT, DIFFERENT_RULE, "p0", "SC-001")
     first = await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
-    stranger = first["skill_id"] + 4321
 
     async def _hallucinate(**_):
-        body = json.dumps({"match_id": stranger, "reason": "stub"})
+        body = json.dumps({"match_id": stranger["skill_id"], "reason": "stub"})
         return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
 
     monkeypatch.setattr(
@@ -454,4 +461,27 @@ async def test_an_id_the_model_was_never_offered_is_refused(monkeypatch):
     second = await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
 
     assert second["action"] == "created"
+    assert await _occurrences_of(stranger["skill_id"]) == 1
     assert await _occurrences_of(first["skill_id"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_recording_an_occurrence_against_a_skill_that_has_gone_counts_nothing():
+    """The helper's contract, which `propose_skill` relies on to tell "counted" from "there
+    was nothing to count against" and fall through to creating a row.
+
+    Asserted here rather than through `propose_skill`, because the guard above makes a match
+    on a missing skill unreachable from the service: the only way to reach it is another
+    process deleting the row between the read and the write. The branch that handles it is two
+    lines and this is the property it rests on.
+    """
+    from api.database import get_system_connection, record_skill_occurrence
+
+    async with get_system_connection() as conn:
+        counted = await record_skill_occurrence(
+            conn, skill_id=987654, description="A rule for a skill that is not there."
+        )
+        async with conn.execute("SELECT COUNT(*) AS n FROM skill_occurrences") as cur:
+            orphans = (await cur.fetchone())["n"]
+    assert counted == 0
+    assert orphans == 0
