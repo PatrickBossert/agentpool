@@ -115,12 +115,14 @@ async def propose_skill(
                     "name": held["name"],
                     "agent": role,
                 }
-            # The row went between the read and the write - a delete from another process,
-            # now genuinely reachable since the comparison no longer runs inside the read's
-            # connection. Fall through and create.
+            # Either the row went between the read and the write - a delete from another
+            # process, genuinely reachable now the comparison no longer runs inside the
+            # read's connection - or the match was not among the candidates that were read,
+            # which the guard in `find_duplicate_skill` should already have refused. Both are
+            # worth a line: the second means that guard has been bypassed.
             log.warning(
-                "skills: matched skill %s was gone by the time the occurrence was recorded; "
-                "creating a proposal for %s instead", match_id, role,
+                "skills: matched skill %s could not be counted (row gone, or not among the "
+                "candidates read); creating a proposal for %s instead", match_id, role,
             )
 
         skill_id = await insert_skill(
