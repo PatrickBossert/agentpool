@@ -39,7 +39,11 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
     "assessment_design":      ["interaction_designer"],
     "requirements":           ["requirements_capture", "requirements_analyst"],
     "stakeholder_management": ["stakeholder_manager"],
-    "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer", "synthesis_analyst"],
+    # Two interviewers, one interviewing task. Laura is a second voice rather than a second
+    # brief, so which of them takes the task is a project setting - not a reason to run the
+    # interviews twice.
+    "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer",
+                               "second_interviewer", "synthesis_analyst"],
     "value_design":           ["value_proposition_generator", "portfolio_manager"],
     "capabilities":           ["enterprise_architect", "initiative_identifier"],
     "delivery":               ["roadmap_generator"],
@@ -50,6 +54,14 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
 }
 
 # Maps snake_case agent names (used in DB crew runs) to display names (used in agent_skills).
+#
+# Every agent `_CREW_AGENT_NAMES` dispatches must appear here, and absence is silent in **both**
+# directions: `_fetch_skill_notes` skips an agent with no display name, so the agent receives no
+# library skills however many are approved for it, and a skill proposal about it can be approved
+# and still reach no prompt. `visual_illustrator` was absent from here for as long as he had
+# been dispatched, which is the second time that one agent has been missing from a map nothing
+# held against the roll. `test_every_dispatched_crew_agent_resolves_to_a_skills_name` in
+# tests/test_crew_agent_registration.py is what now makes an absence loud.
 _SNAKE_TO_DISPLAY: dict[str, str] = {
     "value_chain_mapper":          "Value Chain Mapper",
     "interaction_designer":        "Interaction Designer",
@@ -59,12 +71,14 @@ _SNAKE_TO_DISPLAY: dict[str, str] = {
     "stakeholder_manager":         "Stakeholder Manager",
     "interview_coordinator":       "Interview Coordinator",
     "stakeholder_interviewer":     "Stakeholder Interviewer",
+    "second_interviewer":          "Second Interviewer",
     "synthesis_analyst":           "Synthesis Analyst",
     "value_proposition_generator": "Value Proposition Generator",
     "portfolio_manager":           "Portfolio Manager",
     "enterprise_architect":        "Enterprise Architect",
     "initiative_identifier":       "Initiative Identifier",
     "roadmap_generator":           "Roadmap Generator",
+    "visual_illustrator":          "Visual Illustrator",
     "business_plan_generator":     "Business Plan Generator",
 }
 

@@ -50,3 +50,30 @@ def test_every_dispatched_agent_resolves_in_the_registry():
         "that crew now raises ValueError before running - add the tools, do not add the "
         "name to KNOWN_UNREGISTERED unless you also write down what makes it leave."
     )
+
+
+def test_every_dispatched_crew_agent_resolves_to_a_skills_name():
+    """The same question asked of the other registry an agent has to be in.
+
+    `_fetch_skill_notes` looks each dispatched agent up in `_SNAKE_TO_DISPLAY` to find the
+    name `agent_skills` is keyed by, and skips it when there is none. Absence is silent in
+    **both** directions: the agent receives no library skills however many are approved for
+    it, and a proposal about that agent can be reviewed, approved, and still reach no prompt.
+
+    `visual_illustrator` was missing from that map for as long as he had been dispatched -
+    the second registry he was absent from, after the tool map the test above exists for -
+    and nothing here or anywhere else was comparing the two. `second_interviewer` was the
+    first agent added since, and this is the check that would have caught either.
+
+    Asserted as an inclusion rather than an equality, because the two maps genuinely differ:
+    `_SNAKE_TO_DISPLAY` may name an agent no crew currently dispatches without anything
+    breaking, while a dispatched agent absent from it silently loses its skills.
+    """
+    from api.services.run_service import _SNAKE_TO_DISPLAY
+
+    dispatched = {a for agents in _CREW_AGENT_NAMES.values() for a in agents}
+    missing = sorted(dispatched - set(_SNAKE_TO_DISPLAY))
+    assert not missing, (
+        f"{missing} are dispatched by a crew and have no entry in _SNAKE_TO_DISPLAY, so no "
+        f"approved skill or note can ever reach them - and nothing says so at run time."
+    )

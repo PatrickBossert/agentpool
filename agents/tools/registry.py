@@ -138,6 +138,16 @@ def get_tools_for_agent(
             HumanInputTool(slug=slug, run_id=run_id),
             InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
         ],
+        # Laura's list is Avery's, class for class, because the job is his: she is a second
+        # voice, not a second brief. Written out rather than aliased to his entry, because
+        # `agents/graph.py` reads this literal with an AST walk and a reference to another key
+        # is not a list it can read - and the guard that holds this reading against what the
+        # function actually returns would then be checking nothing for her.
+        "second_interviewer": [
+            SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
+            HumanInputTool(slug=slug, run_id=run_id),
+            InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
+        ],
         "synthesis_analyst": [
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
             # The interview corpus is too large to read whole, and a transcript blob cannot

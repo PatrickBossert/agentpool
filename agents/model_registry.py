@@ -52,6 +52,7 @@ class LocalModelUnavailable(RuntimeError):
 AGENT_TIER: dict[str, str] = {
     "interview_coordinator":       "fast",   # Taylor - builds the plan, creates sessions
     "stakeholder_interviewer":     "fast",   # Avery - creates sessions, waits, collects
+    "second_interviewer":          "fast",   # Laura - the same job as Avery, so the same tier
     "stakeholder_manager":         "fast",   # Jordan - drafts outreach
     "portfolio_manager":           "fast",   # already deliberately on Haiku today
     "roadmap_generator":           "fast",   # sequences an existing register

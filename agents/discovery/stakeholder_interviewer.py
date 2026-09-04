@@ -1,26 +1,51 @@
 # agents/discovery/stakeholder_interviewer.py
+"""The interviewing brief, and the two people who can run it.
+
+There are two interviewers on `discovery_interviews` - Avery Singh and Laura Nelson - and
+exactly one brief between them, declared here. A second interviewing prompt would make the
+transcripts incomparable, and it is Casey who would pay for that: he reasons across every
+answer in a campaign, so two interviewers instructed differently would leave him comparing
+the instruments rather than the organisations.
+
+`build_interviewer` is what makes that structural rather than a convention. Laura's module
+calls it with her own role name and passes nothing else, so there is no second goal and no
+second backstory to drift from these.
+"""
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
+INTERVIEWER_GOAL = (
+    "Orchestrate self-serve voice interview sessions, monitor completion, "
+    "and collect transcripts from all participating stakeholders."
+)
 
-def create_stakeholder_interviewer(slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
+INTERVIEWER_BACKSTORY = (
+    "You are an experienced discovery interviewer who coordinates asynchronous "
+    "voice interviews. You create sessions in the portal, share links with the "
+    "consultant, wait for stakeholder responses, then harvest transcripts for "
+    "synthesis."
+)
+
+
+def build_interviewer(role: str, slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
+    """One interviewer, under the one brief. `role` is the only thing that differs between them.
+
+    The role is what a reader and the log parser tell the two apart by, so it cannot be shared;
+    everything that shapes the work is.
+    """
     return Agent(
-        role="Stakeholder Interviewer",
-        goal=(
-            "Orchestrate self-serve voice interview sessions, monitor completion, "
-            "and collect transcripts from all participating stakeholders."
-        ),
-        backstory=(
-            "You are an experienced discovery interviewer who coordinates asynchronous "
-            "voice interviews. You create sessions in the portal, share links with the "
-            "consultant, wait for stakeholder responses, then harvest transcripts for "
-            "synthesis."
-        ),
+        role=role,
+        goal=INTERVIEWER_GOAL,
+        backstory=INTERVIEWER_BACKSTORY,
         llm=llm,
         tools=tools,
         verbose=True,
         allow_delegation=False,
     )
+
+
+def create_stakeholder_interviewer(slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
+    return build_interviewer("Stakeholder Interviewer", slug, llm, tools)
 
 
 def create_stakeholder_interviewer_task(

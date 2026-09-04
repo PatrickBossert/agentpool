@@ -49,11 +49,19 @@ def _frontend_faces() -> set[tuple[str, str]]:
     The role key never leaves this function - it is how the *TypeScript* relates its own two
     maps, not a bridge to the Python side, so pairing here buys the mispairing check without
     introducing any relationship between an agent id and a name.
+
+    Every role with a headshot must be a role with a name; the converse is not required, and
+    Laura Nelson is the agent that makes the difference real. `Identity.image` has always been
+    nullable and always said an agent without a headshot is a legitimate state - she is the
+    first one actually in it, so the assertion is the direction that has to hold rather than
+    the equality that happened to hold while every agent had a portrait.
     """
     names = dict(re.findall(r"'([^']+)':\s+'([^']+)'", _block("AGENT_HUMAN_NAME")))
     images = dict(re.findall(r"'([^']+)':\s+_img\('([^']+)'\)", _block("AGENT_AVATAR_IMAGE")))
-    assert set(names) == set(images), "the two front-end maps cover different roles"
-    return {(names[role], images[role]) for role in names}
+    assert set(images) <= set(names), (
+        f"{sorted(set(images) - set(names))} have a headshot and no name in the front end"
+    )
+    return {(names[role], images[role]) for role in images}
 
 
 def _python_faces() -> set[tuple[str, str]]:
@@ -74,12 +82,17 @@ def _python_images() -> set[str]:
 
 def test_the_parser_reads_both_maps():
     """Guard the guard. Two empty sets are equal, and a regex that stopped matching would
-    make every assertion below pass while the files diverged freely."""
-    assert len(_frontend_names()) == 17, sorted(_frontend_names())
+    make every assertion below pass while the files diverged freely.
+
+    Eighteen names and seventeen faces: Laura Nelson has no headshot yet. The two numbers are
+    written separately rather than as one because they are now separate facts, and a single
+    count would go back to hiding whichever of them moved.
+    """
+    assert len(_frontend_names()) == 18, sorted(_frontend_names())
     assert len(_frontend_images()) == 17, sorted(_frontend_images())
 
 
-def test_the_two_files_name_the_same_seventeen_people():
+def test_the_two_files_name_the_same_people():
     python_names = {identity.display_name for identity in AGENT_IDENTITY.values()}
     assert python_names == _frontend_names(), (
         "agents/identity.py and ui/src/components/agentStatus.ts disagree about who the "
@@ -88,7 +101,7 @@ def test_the_two_files_name_the_same_seventeen_people():
     )
 
 
-def test_the_two_files_show_the_same_seventeen_faces():
+def test_the_two_files_show_the_same_faces():
     assert _python_images() == _frontend_images(), (
         "agents/identity.py and ui/src/components/agentStatus.ts disagree about which "
         "headshot belongs to the roll."

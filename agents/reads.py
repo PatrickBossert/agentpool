@@ -240,6 +240,26 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
             "the name each transcript belongs to, joined on when transcripts are collected",
         ),
     ),
+    # Laura draws on exactly what Avery draws on, because it is his job she does. Written out
+    # rather than referenced, for the reason the page this feeds exists: an auditor asking
+    # "what does this agent see?" is owed her own row, and a row that says "the same as his"
+    # is an answer they have to go and resolve themselves.
+    "second_interviewer": (
+        _artefact("interview_plan", "the approved plan, one entry per stakeholder"),
+        Read(
+            "interview_sessions",
+            Medium.DATABASE_TABLE,
+            "InterviewSessionTool",
+            "session status counts, and every completed session's transcript in the "
+            "interviewee's own words",
+        ),
+        Read(
+            "stakeholders",
+            Medium.DATABASE_TABLE,
+            "InterviewSessionTool",
+            "the name each transcript belongs to, joined on when transcripts are collected",
+        ),
+    ),
     "synthesis_analyst": (
         _artefact("value_chain_tree", "the node labels she anchors insights and themes to"),
         Read(

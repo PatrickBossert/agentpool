@@ -34,7 +34,7 @@ export const CREW_AGENT_NAMES: Record<string, string[]> = {
   assessment_design:      ['interaction_designer'],
   requirements:              ['requirements_capture', 'requirements_analyst'],
   stakeholder_management: ['stakeholder_manager'],
-  discovery_interviews:   ['interview_coordinator', 'stakeholder_interviewer', 'synthesis_analyst'],
+  discovery_interviews:   ['interview_coordinator', 'stakeholder_interviewer', 'second_interviewer', 'synthesis_analyst'],
   value_design:           ['value_proposition_generator', 'portfolio_manager'],
   capabilities:           ['enterprise_architect', 'initiative_identifier'],
   delivery:               ['roadmap_generator'],
@@ -79,6 +79,7 @@ export const CREW_AGENTS: Record<string, string[]> = {
   discovery_interviews: [
     'Interview Coordinator',
     'Stakeholder Interviewer',
+    'Second Interviewer',
     'Synthesis Analyst',
   ],
   value_design:  ['Value Proposition Generator', 'Portfolio Manager'],
@@ -92,6 +93,21 @@ export interface AgentSkill {
   description: string
   icon: LucideIcon
 }
+
+// The interviewers' capabilities, held once and shown for both of them.
+//
+// Avery and Laura run one brief between them - agents/discovery/stakeholder_interviewer.py is
+// the single declaration of it - so a second list here would be a second description of the
+// same job, free to drift from the first with nothing comparing them.
+const INTERVIEWER_SKILLS: AgentSkill[] = [
+  { name: 'Live Interview Facilitation', description: 'Follow the interview script in sequence. If a response is ambiguous, ask one clarifying question before moving on. Mark a section complete only when a substantive answer has been recorded — never mark a section complete with a blank, single-word, or off-topic response.', icon: Mic },
+  { name: 'State Management', description: 'Read the interview script for the relevant value chain node and write captured responses, ratings, and qualitative notes as a structured transcript. A transcript with blank fields is incomplete and must not be submitted.', icon: Database },
+  { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
+]
+
+// What the two interviewers do, held once for the same reason as the skills above.
+const INTERVIEWER_ROLE =
+  'Conducts voice and text interviews with assigned stakeholders using the pre-designed interview scripts for their value chain node. Manages session state throughout the lifecycle - launching, recording, tracking progress through script sections, and marking completion. Produces a complete, structured transcript for each session that the Synthesis Analyst can work from directly.'
 
 export const AGENT_SKILLS: Record<string, AgentSkill[]> = {
   'PAM': [
@@ -155,11 +171,8 @@ export const AGENT_SKILLS: Record<string, AgentSkill[]> = {
     { name: 'State Management', description: 'Read stakeholder assignments and interview scripts. Write the session plan and tracking data back to the project state before ending the run — downstream agents depend on this data.', icon: Database },
     { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
   ],
-  'Stakeholder Interviewer': [
-    { name: 'Live Interview Facilitation', description: 'Follow the interview script in sequence. If a response is ambiguous, ask one clarifying question before moving on. Mark a section complete only when a substantive answer has been recorded — never mark a section complete with a blank, single-word, or off-topic response.', icon: Mic },
-    { name: 'State Management', description: 'Read the interview script for the relevant value chain node and write captured responses, ratings, and qualitative notes as a structured transcript. A transcript with blank fields is incomplete and must not be submitted.', icon: Database },
-    { name: 'Human Review Gate', description: 'At the end of every work phase, pause and request human review. Write a clear summary of what was produced and what the reviewer needs to validate. Do not allow downstream crews to proceed until review is confirmed.', icon: UserCheck },
-  ],
+  'Stakeholder Interviewer': INTERVIEWER_SKILLS,
+  'Second Interviewer': INTERVIEWER_SKILLS,
   'Synthesis Analyst': [
     { name: 'Theme Extraction', description: 'Read all completed transcripts before identifying any theme. Only flag a theme if it appears across multiple transcripts — single-respondent observations belong in an "individual perspectives" section, not in the cross-cutting themes. Never extrapolate a theme from one voice.', icon: Puzzle },
     { name: 'Horizontal and Vertical Separation', description: 'Classify every theme as horizontal - running across the value chain, where digital transformation could improve efficiency or effectiveness - or vertical, running within a discipline such as governance, data, or a support service, where maturity could be raised. Never leave a theme unclassified.', icon: Route },
@@ -243,7 +256,8 @@ export const AGENT_ROLE: Record<string, string> = {
   'Requirements Analyst': 'Analyses the captured requirement set for completeness, consistency, priority, and hidden conflicts. Reads client documents to surface implicit requirements that the direct session may have missed, and queries the knowledge base for related precedents. Produces a structured, prioritised requirement analysis that forms the foundation for value lever identification.',
   'Value Lever Analyst': 'Reads the client\'s own strategy, performance, and governance material to surface the value levers and KPIs the organisation already talks about, and names the value chain activities each one bears on. Runs first, alongside value chain mapping and before the interview instruments are designed, so Maya can design against the measures the organisation itself uses rather than asking cold. Every lever is stated as a hypothesis for the interviews to test, never as an established finding - a lever presented as settled removes the interviews\' ability to contradict it.',
   'Interview Coordinator': 'Plans and activates the stakeholder interview programme. Reads node template assignments and stakeholder lists, creates interview sessions with unique links, and sequences interviews efficiently across the programme timeline. Produces a scheduling plan that coordinates L1 strategic interviews and L2 operational interviews without resource conflicts.',
-  'Stakeholder Interviewer': 'Conducts voice and text interviews with assigned stakeholders using the pre-designed interview scripts for their value chain node. Manages session state throughout the lifecycle - launching, recording, tracking progress through script sections, and marking completion. Produces a complete, structured transcript for each session that the Synthesis Analyst can work from directly.',
+  'Stakeholder Interviewer': INTERVIEWER_ROLE,
+  'Second Interviewer': INTERVIEWER_ROLE,
   'Synthesis Analyst': 'Synthesises all completed interview transcripts into activity-level insights and the themes the evidence supports. Separates horizontal themes - running across the value chain, where digital transformation could improve efficiency or effectiveness - from vertical themes running within a discipline such as governance, data, or a support service, where maturity could be raised. Every theme names the stakeholders whose words evidence it, which is what lets a value proposition be traced back to something a person actually said.',
   'Value Proposition Generator': 'Translates synthesised interview findings and identified value levers into a structured set of value propositions, each with a clear problem statement, proposed intervention, expected benefit, and mapping to the relevant value chain activities and beneficiary groups. Propositions feed directly into the portfolio scoring and architecture design phases.',
   'Portfolio Manager': 'Scores and prioritises the initiative portfolio using the IIRC Integrated Reporting Six Capitals framework. Applies configured weights across eight dimensions to produce a defensible, evidence-based ranking of initiatives. Generates an Excel portfolio register for stakeholder distribution and ensures the investment case is grounded in a transparent, repeatable scoring methodology.',
@@ -264,6 +278,7 @@ export const AGENT_AVATAR: Record<string, { emoji: string; gradient: string }> =
   'Value Lever Analyst':         { emoji: '⚖️', gradient: 'from-amber-400 to-orange-500' },
   'Interview Coordinator':       { emoji: '📅', gradient: 'from-sky-400 to-blue-600' },
   'Stakeholder Interviewer':     { emoji: '🎙️', gradient: 'from-cyan-400 to-indigo-600' },
+  'Second Interviewer':          { emoji: '🎙️', gradient: 'from-violet-400 to-indigo-600' },
   'Synthesis Analyst':           { emoji: '🧩', gradient: 'from-purple-400 to-indigo-600' },
   'Value Proposition Generator': { emoji: '💡', gradient: 'from-yellow-400 to-amber-500' },
   'Portfolio Manager':           { emoji: '📊', gradient: 'from-green-400 to-emerald-600' },
@@ -301,6 +316,7 @@ export const AGENT_HUMAN_NAME: Record<string, string> = {
   'Value Lever Analyst':         'Morgan Davis',
   'Interview Coordinator':       'Taylor Brooks',
   'Stakeholder Interviewer':     'Avery Singh',
+  'Second Interviewer':          'Laura Nelson',
   'Synthesis Analyst':           'Casey Liu',
   'Value Proposition Generator': 'Quinn Harper',
   'Portfolio Manager':           'Blake Anderson',
@@ -315,6 +331,11 @@ export const AGENT_HUMAN_NAME: Record<string, string> = {
 const _base = import.meta.env.BASE_URL.replace(/\/$/, '')
 const _img  = (f: string) => `${_base}/agents/${f}`
 
+// Seventeen of the eighteen. 'Second Interviewer' is deliberately absent: Laura Nelson has no
+// headshot yet, `AgentFace` falls back to her initials on a gradient, and a stand-in borrowed
+// from somebody else would put one person's face on two names. `agents/identity.py` records the
+// same absence as `image=None`, and the two are held equal by
+// tests/test_persona_transcription.py - so this is one line to add when a portrait exists.
 export const AGENT_AVATAR_IMAGE: Record<string, string> = {
   'PAM':                         _img('pam.jpg'),
   'Value Chain Mapper':          _img('alex-chen.jpg'),
@@ -355,6 +376,8 @@ export const AGENT_BACKSTORY: Record<string, string> = {
     "The person who makes complex logistics invisible. Taylor has coordinated stakeholder programmes across five continents and can schedule around any timezone, cultural calendar, or organisational politics.",
   'Stakeholder Interviewer':
     "A trained mediator and active listener who puts even defensive stakeholders at ease. Avery's interviews rarely feel like interviews - they feel like conversations that happen to be incredibly productive.",
+  'Second Interviewer':
+    "Fifteen years in qualitative research, most of them in rooms where the interesting answer came after the polite one. Laura reads a pause the way other people read a sentence, and has a talent for making a stakeholder feel that the half-formed thought they nearly kept to themselves was the most useful thing they said all day.",
   'Synthesis Analyst':
     "Pattern recognition is Casey's superpower. After years in market research, they learned that the real insight is rarely in the data that was collected - it's in the shape of what was left unsaid.",
   'Value Proposition Generator':
