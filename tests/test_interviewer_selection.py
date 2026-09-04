@@ -945,6 +945,15 @@ def _local_voices_server():
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
+        # HTTP/1.1, and this line is the whole test. `BaseHTTPRequestHandler` defaults to
+        # HTTP/1.0, which closes the connection after every response - so httpx pools nothing,
+        # and the cross-loop hazard cannot arise. Written without it, this test **passed under
+        # the exact defect it was built for**, in isolation and in the suite. A negative result
+        # is only evidence if the mutation could have been observed, and here the fixture was
+        # quietly preventing it - the same shape as the `DATA_DIR` demonstration Task 1's third
+        # round recorded, arriving in the fixture rather than in the assertion.
+        protocol_version = "HTTP/1.1"
+
         def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler's interface
             body = _json.dumps({"labels": {"gender": "female"}}).encode()
             self.send_response(200)
@@ -1362,13 +1371,23 @@ def test_averys_compile_instruction_names_every_field_the_tool_returns(project_d
     returned = json.loads(tool._run("get_transcripts", [], []))[0]
 
     task = create_stakeholder_interviewer_task(agent=_avery(), context_tasks=[])
-    # `name` and `transcript_json` are the two the compile step deliberately reshapes -
-    # `transcript_json` becomes `qa_pairs`, and `name` is already named. Everything else the
-    # tool hands over must be named in the instruction, or it cannot reach the artefact.
+
+    # **The element block, not the whole description**, and the difference is not pedantry: the
+    # first version of this assertion searched the description and passed while the field was
+    # missing from the shape, because the sentence *below* the shape happens to name it. That
+    # is the same trap CLAUDE.md records as "the refusal message quotes the key it is refusing"
+    # - an assertion satisfied by text the author of the test put there. Found by power-check.
+    opening = 'each element is:\n'
+    start = task.description.index(opening) + len(opening)
+    element = task.description[start:task.description.index("   }\n", start)]
+
+    # `transcript_json` is the one field the compile step deliberately reshapes - it becomes
+    # `qa_pairs`. Everything else the tool hands over must appear in the shape itself, or it
+    # cannot reach the interview_transcripts artefact however faithfully the tool returns it.
     for field in set(returned) - {"transcript_json"}:
-        assert field in task.description, (
-            f"get_transcripts returns {field!r} and Avery's compile instruction never names it, "
-            f"so it cannot reach the interview_transcripts artefact"
+        assert field in element, (
+            f"get_transcripts returns {field!r} and Avery's compile instruction does not name "
+            f"it in the element shape, so it cannot reach the interview_transcripts artefact"
         )
 
 

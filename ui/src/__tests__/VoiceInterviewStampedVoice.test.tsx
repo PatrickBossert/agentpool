@@ -209,16 +209,38 @@ describe('the interviewer a participant reads', () => {
   beforeEach(() => { vi.restoreAllMocks() })
   afterEach(() => { vi.unstubAllGlobals() })
 
-  it("names whoever the server says is speaking, and never a name of its own", async () => {
+  it("names whoever the server says is speaking, on both screens that name anybody", async () => {
     // The portal declared "Avery Singh" twice and his photograph once, and `interviewer_selection`
     // defaults to `random` over a roster of two - so roughly half of every project's participants
     // would have heard Laura and read Avery. The name is the server's answer now, resolved from
     // the session's stamp, and this asserts what is *rendered* rather than what is declared.
-    await startInterview(
-      { elevenlabs_voice_id: 'V', language: 'en', country_code: 'GB', model_id: 'm' },
+    //
+    // **Both phases, because they are two separate renders of the name.** The first version of
+    // this test clicked Start before asserting, so it only ever saw the interviewing header -
+    // and a power-check that hardcoded "Avery Singh" back into the *ready* screen's persona
+    // block passed it. One of the two literals was invisible to the test written to forbid it.
+    vi.stubGlobal('fetch', installFetch(
+      sessionWith({ elevenlabs_voice_id: 'V', language: 'en', country_code: 'GB', model_id: 'm' }),
       LAURA,
+    ))
+    installSpeechRecognition('A clear answer about picking.')
+    installAudioAndMic()
+
+    render(
+      <MemoryRouter initialEntries={['/interview/tok']}>
+        <Routes>
+          <Route path="/interview/:sessionToken" element={<VoiceInterview />} />
+        </Routes>
+      </MemoryRouter>,
     )
 
+    // The ready screen.
+    const start = await screen.findByRole('button', { name: /start interview/i })
+    expect(screen.getByText('Laura Nelson')).toBeTruthy()
+    expect(screen.queryByText('Avery Singh')).toBeNull()
+
+    // And the interviewing screen.
+    await userEvent.click(start)
     expect(await screen.findByText('Laura Nelson')).toBeTruthy()
     expect(screen.queryByText('Avery Singh')).toBeNull()
     expect(document.body.innerHTML).not.toContain('avery-singh')
@@ -233,7 +255,9 @@ describe('the interviewer a participant reads', () => {
       LAURA,
     )
 
-    expect(await screen.findByText('LN')).toBeTruthy()
+    // Two of them - the ready screen's 24px circle and the interviewing panel's 160px one -
+    // and neither may be somebody else's photograph.
+    expect((await screen.findAllByText('LN')).length).toBeGreaterThan(0)
     expect(document.querySelector('img[src*="avery"]')).toBeNull()
   })
 })
