@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Pause, Play, Pencil, Check, X } from 'lucide-react'
+import { Check, Pause, Pencil, Play, Undo2, X } from 'lucide-react'
 import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
 
 // webkit speech recognition types (Chrome/Safari vendor prefix)
@@ -73,6 +73,10 @@ export default function VoiceInterview() {
   const [interimText, setInterimText] = useState('')
   const recognitionRef = useRef<any>(null)
   const restartAnswerRef = useRef(false)
+  // Set by "Finish my last answer". Read inside listenWithRestart, the same way
+  // restartAnswerRef is - a flag rather than a callback, because the listen loop owns the
+  // recognition object and nothing outside it may drive the microphone.
+  const appendToPreviousRef = useRef(false)
   const qaRef = useRef<CapturedPair[]>([])
   const sectionRatingsRef = useRef<SectionMaturityRating[]>([])
   const ratingResolveRef = useRef<((rating: number) => void) | null>(null)
@@ -397,6 +401,29 @@ export default function VoiceInterview() {
     submitAnswer()
   }
 
+  /**
+   * "Finish my last answer" - continuation, not navigation.
+   *
+   * Twice in the first completed interview a participant paused mid-reply, the three-second
+   * gap elapsed, and the interview moved on with the thought unfinished and no way back.
+   *
+   * This does not go back. The interview is an await loop over sections and questions, so
+   * going back means unwinding an await, which needs the whole engine restructured into an
+   * index-driven state machine - a large change to a working thing, for a capability nobody
+   * asked for. True back navigation also has to decide what happens to the answer already
+   * given (overwrite, keep both, discard), and every choice loses something.
+   *
+   * What was actually wanted was to finish a sentence. So the next thing said is appended to
+   * the previous answer, and the current question is then re-asked. The transcript ends up
+   * with one complete answer per question rather than a fragment and an orphan - which
+   * matters downstream, where a truncated answer can also read as evasive and provoke a
+   * press the participant never warranted.
+   */
+  function finishLastAnswer() {
+    appendToPreviousRef.current = true
+    submitAnswer()
+  }
+
   function handlePause() {
     if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
     if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
@@ -429,22 +456,56 @@ export default function VoiceInterview() {
     reprompt?: { text: string; voiceId: string },
   ): Promise<string> {
     restartAnswerRef.current = false
+    appendToPreviousRef.current = false
     let silentAttempts = 0
+    // Anything already said for THIS question before "Finish my last answer" was tapped.
+    // Carried rather than discarded: the participant is correcting the previous answer, not
+    // retracting this one, and losing words they have already spoken is the same failure the
+    // button exists to fix.
+    let carried = ''
     // eslint-disable-next-line no-constant-condition
     while (true) {
       setInterimText('')
-      const answer = await listenForAnswer(lang)
+      const heard = await listenForAnswer(lang)
 
       if (restartAnswerRef.current) {
         restartAnswerRef.current = false
+        carried = ''
         setStatusMessage('Restarting…')
         await new Promise(r => setTimeout(r, 300))
         setStatusMessage('')
         continue
       }
 
+      if (appendToPreviousRef.current) {
+        appendToPreviousRef.current = false
+        carried = [carried, heard].filter(Boolean).join(' ').trim()
+        const previous = qaRef.current[qaRef.current.length - 1]
+        if (!previous) {
+          // Nothing has been committed yet, so there is nothing to finish. Say so rather
+          // than silently doing nothing, and carry on with the current question.
+          setStatusMessage('There is no earlier answer to add to yet.')
+          await new Promise(r => setTimeout(r, 1500))
+          setStatusMessage('')
+          continue
+        }
+        setStatusMessage('Go ahead — finish your last answer.')
+        if (reprompt) await speakText('Of course — go on.', reprompt.voiceId)
+        const extra = await listenForAnswer(lang)
+        setStatusMessage('')
+        if (extra.trim()) previous.answer = `${previous.answer} ${extra}`.trim()
+        // Back to where we were.
+        if (reprompt) {
+          setCurrentQuestion(reprompt.text)
+          await speakText(reprompt.text, reprompt.voiceId)
+        }
+        continue
+      }
+
+      const answer = [carried, heard].filter(Boolean).join(' ').trim()
+
       // Nothing heard. Ask once more before giving up on this question.
-      if (answer.trim().length === 0 && reprompt && silentAttempts === 0) {
+      if (answer.length === 0 && reprompt && silentAttempts === 0) {
         silentAttempts++
         setStatusMessage('')
         await speakText("Sorry — I didn't catch that. Let me ask again.", reprompt.voiceId)
@@ -1052,6 +1113,7 @@ export default function VoiceInterview() {
                 'Once you have answered, a pause of a few seconds - or tapping “✓ Done” - moves on.',
                 'Need a moment to think? Tap “Hold — I\'m thinking” to pause the timer.',
                 'Tap “Restart answer” at any time to re-record your response.',
+                'Cut off mid-thought? “Finish my last answer” adds to your previous reply.',
                 'Take your time — there are no right or wrong answers.',
               ].map((tip, i) => (
                 <li key={i} className="flex items-start gap-2.5 text-sm text-gray-600">
@@ -1216,6 +1278,16 @@ export default function VoiceInterview() {
                   >
                     Restart answer
                   </button>
+                  {/* Only offered once there is an earlier answer to add to. */}
+                  {qaRef.current.length > 0 && (
+                    <button
+                      onClick={finishLastAnswer}
+                      className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors"
+                      aria-label="Finish my last answer"
+                    >
+                      <Undo2 size={14} />Finish my last answer
+                    </button>
+                  )}
                 </div>
                 {/* Pause / Resume thinking time */}
                 {isPaused ? (
