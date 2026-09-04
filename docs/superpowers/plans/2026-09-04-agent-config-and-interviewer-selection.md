@@ -104,19 +104,50 @@ The second is the one that matters. **A random choice that is re-rolled on every
 
 ---
 
-### Task 4: The voices list and preview
+### Task 4: The voices list, the accent filter, and the rate
 
-**Files:** Create the voices endpoint; Modify `api/services/interview_service.py`; Test: new
+**Files:** Create the voices endpoint; Modify `api/services/interview_service.py`, `agents/discovery/interview_coordinator.py`; Test: new
 
-- [ ] **Step 1: Add a project-scoped door listing available voices** from `GET https://api.elevenlabs.io/v1/voices`. The codebase calls only text-to-speech today, so this is a **new outbound path**. Return id, name, labels and preview URL.
+The API was called on 4 September and the findings are in the spec. **Read that section before
+starting** - it changes what this task builds, and it was established rather than assumed.
 
-- [ ] **Step 2: Preview speaks a fixed sample line** in the selected voice, through the existing `synthesise`. It must not touch any session.
+- [ ] **Step 1: Proxy BOTH listings behind one project-scoped door.** `GET /v1/voices` is the 32
+  voices in the account; `GET /v1/shared-voices` is the library. They answer different
+  questions and are not interchangeable: `available_for_tiers` is `[]` on every account voice,
+  so **the rate lives only on `shared-voices`**, and Irish exists only there. A picker offered
+  one of them is missing either the cost or half the accents.
 
-- [ ] **Step 3: Tests make no real calls.** Stub the transport and assert the request that would go out - the existing interview tests show the pattern.
+- [ ] **Step 2: Expose `rate`, `free_users_allowed`, `accent`, `gender` and `preview_url`.**
+  Filtering by `accent` and `gender` is done by the API - pass the parameters through rather
+  than filtering after, and **never restate the voice facts in this codebase.**
 
-- [ ] **Step 4: Record the egress.** CLAUDE.md lists ElevenLabs as an ungated reach; this widens what is sent from interview text to a voice listing, which carries no client material. Say so rather than leaving the table stale.
+- [ ] **Step 3: Preview plays `preview_url`. It makes no synthesis call.** The API hosts a
+  sample for every voice. Speaking a line through `synthesise` costs characters for something
+  already served, and is slower. **Assert that nothing reaches text-to-speech** - the cheap
+  implementation and the expensive one sound identical to a listener, so only a test can tell
+  them apart.
 
-- [ ] **Step 5: Suites twice. Commit.**
+- [ ] **Step 4: Adding a library voice to the account is a write.** It copies the voice in, so
+  it takes the configuration door's authority, not the preview path's. Say which door you put
+  it behind.
+
+- [ ] **Step 5: `VOICE_LOCALE_TABLE` stops being a table.** `agents/discovery/interview_coordinator.py`
+  holds a locale-to-voice map **in prose inside Taylor's prompt**, naming Rachel for `en/GB` and
+  `en/US`. A dead TypeScript twin at `ui/src/utils/voiceLocale.ts` has no importers and
+  **disagrees with it on four of eight locales** - `de_DE`, `en_US`, `es_ES`, `fr_FR` - so "the
+  voice for a French interview" already has two answers depending on who resolves it.
+
+  **Do not correct the numbers.** That leaves a fifth declaration that happens to be right
+  today. Taylor resolves a voice through `resolve_agent_config` like everything else; the prose
+  table and the dead file both go.
+
+- [ ] **Step 6: Tests make no real ElevenLabs calls.** Stub the transport and assert the request
+  that would go out - the existing interview tests show the pattern.
+
+- [ ] **Step 7: Record the egress.** CLAUDE.md lists ElevenLabs as an ungated reach; this widens
+  what is sent from interview text to a voice listing, which carries no client material.
+
+- [ ] **Step 8: Suites twice. Power-check each separately. Commit.**
 
 ---
 
@@ -128,7 +159,7 @@ The second is the one that matters. **A random choice that is re-rolled on every
 
 - [ ] **Step 2: One shared section, not seven copies.** Name, image, voice - rendered for every agent from its `agent_id`. A per-agent copy is a rule in seven places.
 
-- [ ] **Step 3: The voice picker offers what the server lists**, with regional variants and a preview button. **Never restate the list in TypeScript.**
+- [ ] **Step 3: The voice picker offers what the server lists** - filterable by accent (Scottish and Irish among them) and by gender, showing each voice's rate and whether it is available on this plan, with preview played from `preview_url`. **Never restate the list, the accents, or which voice is which sex in TypeScript** - all three are API metadata, and a copy here would be the fifth declaration of voice facts this branch exists to end.
 
 - [ ] **Step 4: Show the default when nothing is set**, and make clear it is a default rather than a saved value - an administrator needs to know whether they are looking at a choice or an inheritance. sp58's platform-URL panel is the precedent.
 
