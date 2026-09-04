@@ -17,6 +17,7 @@ The two arms are asserted separately throughout, and per field: resolution is pe
 "a project may set a voice without setting a name" is a property to drive rather than a sentence
 to trust.
 """
+import ast
 import sqlite3
 
 import httpx
@@ -843,3 +844,46 @@ async def test_both_test_interview_doors_refuse_the_same_stranger_in_the_same_vo
 
     assert speak.status_code == press.status_code == 403
     assert speak.json()["detail"] == press.json()["detail"] == "Access denied to this project"
+
+
+def test_the_rehearsal_door_is_still_the_only_production_caller_of_the_resolver():
+    """The docstring's central claim, held by a mechanism rather than by prose.
+
+    `test_speak_text`'s docstring says it is the only production caller, and therefore that
+    configuring a voice changes what *it* speaks in and nothing else - the live portal reads
+    `session.voice_config` and nothing stamps that column yet. An earlier version claimed the
+    portal and the session stamp already resolved through here, which would have told the next
+    reader the chain was joined up when it is not. That is the shape that produced Jordan's
+    fabricated link: a docstring asserting a mechanism that does not exist.
+
+    **This test is meant to fail when Task 3 lands**, and that is its whole point. Stamping the
+    session adds a second caller, at which time the docstring stops being true and must be
+    rewritten - so the sentence cannot rot quietly into a lie. Update both together.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    callers = set()
+    for directory in ("api", "agents", "scripts"):
+        for path in (root / directory).rglob("*.py"):
+            if path.name == "agent_config_service.py":
+                continue  # the definition, not a caller
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                # A *call*, not a mention. Four modules name the function in prose - two
+                # docstrings in `database.py`, one in `interview_service.py`, one in
+                # `identity.py` - and a substring search counts every one of them as a
+                # caller. The first version of this test did exactly that and reported four
+                # callers where there is one, which is the same "enumerate by behaviour, not
+                # by name" mistake this codebase has now made in three different sweeps.
+                called = isinstance(node, ast.Call) and (
+                    getattr(node.func, "id", None) == "resolve_agent_config"
+                    or getattr(node.func, "attr", None) == "resolve_agent_config"
+                )
+                if called:
+                    callers.add(str(path.relative_to(root)))
+
+    assert callers == {"api/routers/interviews.py"}, (
+        "resolve_agent_config gained or lost a production caller - if Task 3's session stamp "
+        "has landed, test_speak_text's docstring must stop claiming to be the only one"
+    )
