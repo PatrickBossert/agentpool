@@ -202,10 +202,20 @@ export default function VoiceInterview() {
       const res = await fetch(`${BASE}/interviews/${sessionToken}`)
       if (!res.ok) throw new Error(`Failed to load interview (${res.status})`)
       const data = await res.json()
+      // Peer referral and the closing message are steps the participant still has to sit
+      // through, so they count. Without them the bar read 100% on the last scripted
+      // question while follow-ups, the referral and the closing were all still to come -
+      // which is the moment a participant decides how much longer this will take.
+      //
+      // Follow-ups are deliberately NOT in the denominator: there are nought to two per
+      // question, decided live, so any fixed guess is wrong in both directions. The bar
+      // therefore advances a little slower than the work remaining, and never overstates
+      // completion, which is the failure that matters.
+      const TRAILING_STEPS = 2
       const total = data.script.sections.reduce(
         (acc: number, s: { questions: unknown[] }) => acc + s.questions.length,
         0
-      )
+      ) + TRAILING_STEPS
       setProgress({ current: 0, total })
       setSessionData(data)
       setBranding(data.branding ?? null)
@@ -401,17 +411,49 @@ export default function VoiceInterview() {
     resetSilenceTimerRef.current?.()
   }
 
-  async function listenWithRestart(lang: string = 'en-GB'): Promise<string> {
+  /**
+   * Listen for an answer, re-prompting once if nothing was said.
+   *
+   * `listenForAnswer` resolves `''` after ten seconds of no speech, and the flow used to
+   * take that as an answer and advance. A participant who paused to think, or whose
+   * microphone picked up only room noise, lost the question without being told - which is
+   * what happened in the first completed interview.
+   *
+   * One re-prompt, then move on. Not unlimited: a participant who has walked away must not
+   * trap the interview in a loop, and repeating a third time reads as nagging rather than
+   * patience. `reprompt` is spoken only when the caller supplies it, so a caller with
+   * nothing sensible to repeat simply gets the old behaviour.
+   */
+  async function listenWithRestart(
+    lang: string = 'en-GB',
+    reprompt?: { text: string; voiceId: string },
+  ): Promise<string> {
     restartAnswerRef.current = false
+    let silentAttempts = 0
     // eslint-disable-next-line no-constant-condition
     while (true) {
       setInterimText('')
       const answer = await listenForAnswer(lang)
-      if (!restartAnswerRef.current) return answer
-      restartAnswerRef.current = false
-      setStatusMessage('Restarting…')
-      await new Promise(r => setTimeout(r, 300))
-      setStatusMessage('')
+
+      if (restartAnswerRef.current) {
+        restartAnswerRef.current = false
+        setStatusMessage('Restarting…')
+        await new Promise(r => setTimeout(r, 300))
+        setStatusMessage('')
+        continue
+      }
+
+      // Nothing heard. Ask once more before giving up on this question.
+      if (answer.trim().length === 0 && reprompt && silentAttempts === 0) {
+        silentAttempts++
+        setStatusMessage('')
+        await speakText("Sorry — I didn't catch that. Let me ask again.", reprompt.voiceId)
+        setCurrentQuestion(reprompt.text)
+        await speakText(reprompt.text, reprompt.voiceId)
+        continue
+      }
+
+      return answer
     }
   }
 
@@ -487,14 +529,12 @@ export default function VoiceInterview() {
     // Framing block (L2 only) — spoken after welcome, before first question
     if (script.framing_block) {
       const fb = script.framing_block
-      const framingText = [
-        fb.positioning,
-        ...fb.context_setting,
-        fb.dual_lenses.efficiency,
-        fb.dual_lenses.effectiveness,
-      ].join(' ')
+      // Positioning only. The block previously spoke positioning, every context_setting
+      // bullet and both dual_lenses joined into one utterance - around a minute of
+      // preamble after a welcome that had already covered purpose and confidentiality.
+      // The rest stays in the script for the reader and the analyst; it is not read aloud.
       setCurrentQuestion(fb.positioning)
-      await speakText(framingText, voiceId)
+      await speakText(fb.positioning, voiceId)
     }
 
     let questionNumber = 0
@@ -517,7 +557,7 @@ export default function VoiceInterview() {
         await speakText(question.text, voiceId)
 
         // Record primary answer
-        let answer = await listenWithRestart(lang)
+        let answer = await listenWithRestart(lang, { text: question.text, voiceId })
 
         const needsElaboration =
           answer.trim().length > 0 &&
@@ -598,6 +638,7 @@ export default function VoiceInterview() {
       // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 1, sc.synthesis_prompt, synthesisResponse))
 
       // Peer referral - retained. It asks who else to speak to; it asserts nothing.
+      setProgress(p => ({ ...p, current: p.current + 1 }))
       setCurrentQuestion(sc.peer_referral)
       await speakText(sc.peer_referral, voiceId)
       const referralResponse = await listenWithRestart(lang)
@@ -617,7 +658,8 @@ export default function VoiceInterview() {
       // if (sc.sponsorship_check) { ... }
     }
 
-    // Closing
+    // Closing. The bar reaches 100% here and nowhere earlier.
+    setProgress(p => ({ ...p, current: p.total }))
     setCurrentQuestion(script.closing_message)
     await speakText(script.closing_message, voiceId)
 
@@ -1007,7 +1049,7 @@ export default function VoiceInterview() {
             <ul className="space-y-2.5">
               {[
                 'This is a verbal interview — speak naturally and in your own words.',
-                'A pause of a few seconds, or tapping “✓ Done”, will move to the next question.',
+                'Once you have answered, a pause of a few seconds - or tapping “✓ Done” - moves on.',
                 'Need a moment to think? Tap “Hold — I\'m thinking” to pause the timer.',
                 'Tap “Restart answer” at any time to re-record your response.',
                 'Take your time — there are no right or wrong answers.',
