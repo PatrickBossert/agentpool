@@ -565,38 +565,56 @@ export default function VoiceInterview() {
       }
     }
 
-    // Synthesis check (L2 only) — spoken after all sections, before closing
+    // SYNTHESIS WITHDRAWN — 4 September 2026, until further notice.
+    //
+    // Everything below except peer referral is commented out rather than deleted, on
+    // Patrick's instruction, after the first completed interview.
+    //
+    // Two findings, and the second is the sharper one:
+    //
+    //  - `synthesis_prompt` is written by Maya at design time, so the interviewer read a
+    //    summary of the conversation composed before anybody had said anything. A synthesis
+    //    check has to be a check of what was actually said.
+    //
+    //  - `portfolio_options` did the same for the recommendation. It offered three sequencing
+    //    options - sequential, parallel, phased - to a participant who had already said the
+    //    projects must run in parallel. It was assumed at the time to be dynamic synthesis
+    //    going wrong; it is not. Nothing here generates anything. The script pre-supposed the
+    //    answer, which is worse, because it is repeatable.
+    //
+    // The general rule this leaves: anything an agent says TO a participant in real time has
+    // no reviewer between it and them, so it is either scripted and true, or absent.
+    //
+    // Peer referral survives because it asks a question rather than asserting a conclusion.
+    //
+    // Restoring any of this needs the Maya-side change too: the fields stay in the script
+    // schema for now, and are dropped from questionnaire design later.
     if (script.synthesis_check) {
       const sc = script.synthesis_check
-      setCurrentQuestion(sc.synthesis_prompt)
-      await speakText(sc.synthesis_prompt, voiceId)
-      // Listen for the interviewee's confirmation or correction
-      const synthesisResponse = await listenWithRestart(lang)
-      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 1, sc.synthesis_prompt, synthesisResponse))
-      // Peer referral
+      // WITHDRAWN: scripted synthesis check.
+      // setCurrentQuestion(sc.synthesis_prompt)
+      // await speakText(sc.synthesis_prompt, voiceId)
+      // const synthesisResponse = await listenWithRestart(lang)
+      // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 1, sc.synthesis_prompt, synthesisResponse))
+
+      // Peer referral - retained. It asks who else to speak to; it asserts nothing.
       setCurrentQuestion(sc.peer_referral)
       await speakText(sc.peer_referral, voiceId)
       const referralResponse = await listenWithRestart(lang)
       qaRef.current.push(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
-      // Forward roadmap
-      setCurrentQuestion(sc.forward_roadmap)
-      await speakText(sc.forward_roadmap, voiceId)
-      const roadmapResponse = await listenWithRestart(lang)
-      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 3, sc.forward_roadmap, roadmapResponse))
-      // L0 only — portfolio sequencing options validation
-      if (sc.portfolio_options) {
-        setCurrentQuestion(sc.portfolio_options)
-        await speakText(sc.portfolio_options, voiceId)
-        const portfolioResponse = await listenWithRestart(lang)
-        qaRef.current.push(capturedPair(scriptId, 'SYNTH', 4, sc.portfolio_options, portfolioResponse))
-      }
-      // L0 only — executive sponsorship commitment check
-      if (sc.sponsorship_check) {
-        setCurrentQuestion(sc.sponsorship_check)
-        await speakText(sc.sponsorship_check, voiceId)
-        const sponsorshipResponse = await listenWithRestart(lang)
-        qaRef.current.push(capturedPair(scriptId, 'SYNTH', 5, sc.sponsorship_check, sponsorshipResponse))
-      }
+
+      // WITHDRAWN: forward roadmap.
+      // setCurrentQuestion(sc.forward_roadmap)
+      // await speakText(sc.forward_roadmap, voiceId)
+      // const roadmapResponse = await listenWithRestart(lang)
+      // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 3, sc.forward_roadmap, roadmapResponse))
+
+      // WITHDRAWN: portfolio sequencing options - the field that offered a participant
+      // options they had already ruled out.
+      // if (sc.portfolio_options) { ... }
+
+      // WITHDRAWN: sponsorship commitment check.
+      // if (sc.sponsorship_check) { ... }
     }
 
     // Closing
