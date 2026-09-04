@@ -526,6 +526,7 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
             session_token         TEXT NOT NULL UNIQUE,
             status                TEXT NOT NULL DEFAULT 'pending',
             voice_config          TEXT,
+            interviewer_agent_id  TEXT,
             script_id             TEXT,
             transcript_json       TEXT,
             ratings_json          TEXT,
@@ -571,6 +572,34 @@ async def _migrate_interview_sessions_script_id(conn: aiosqlite.Connection) -> N
     cols = {row[1] for row in await cur.fetchall()}
     if "script_id" not in cols:
         await conn.execute("ALTER TABLE interview_sessions ADD COLUMN script_id TEXT")
+    await conn.commit()
+
+
+async def _migrate_interview_sessions_interviewer(conn: aiosqlite.Connection) -> None:
+    """Record which interviewer a session was issued to, beside the voice it was issued with.
+
+    The selection is per session and the setting that drives it is per project, so the two
+    disagree the moment the setting is changed - which it may be at any point between an
+    invite being sent and the interview being taken. Re-reading `interviewer_selection` at
+    interview time would answer "who would be chosen now", and under `random` it would answer
+    a different person on every open of the same link. The row is the only thing that can say
+    who actually conducted it, which is the same argument `client_documents.
+    knowledge_collection` settled in sp57: an address that is re-derived is an address that
+    can move underneath the thing it points at.
+
+    Nullable, because every session created before this migration genuinely has no answer.
+    A NULL here means "issued before the interviewer was recorded", never "unknown now".
+
+    Guarded with `PRAGMA table_info` so it skips *itself* rather than raising on a database
+    that already has the column - a migration that raises takes every later migration in the
+    block down with it, and this one runs after twenty-odd others.
+    """
+    cur = await conn.execute("PRAGMA table_info(interview_sessions)")
+    cols = {row[1] for row in await cur.fetchall()}
+    if "interviewer_agent_id" not in cols:
+        await conn.execute(
+            "ALTER TABLE interview_sessions ADD COLUMN interviewer_agent_id TEXT"
+        )
     await conn.commit()
 
 
@@ -1849,13 +1878,15 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_agent_config.py::test_a_database_at_the_previous_version_gains_the_project_agent_
 # config_table, which fails on 14 and passes on 15; and
 # tests/test_agent_config.py::test_a_database_at_version_15_gains_the_model_id_column, which
-# fails on 15 and passes on 16.
+# fails on 15 and passes on 16; and
+# tests/test_interviewer_selection.py::test_a_database_at_version_16_gains_the_interviewer_
+# column, which fails on 16 and passes on 17.
 #
 # Note that 15 → 16 adds a column to an *existing* migration rather than a new function, which
 # the comment above already covers and which is the easier bump to forget: the migration is
 # already in the block, already runs on a fresh database, and only the databases that have
 # already been opened at 15 are left behind.
-_SCHEMA_VERSION = 16
+_SCHEMA_VERSION = 17
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1964,6 +1995,7 @@ async def get_connection(slug: str):
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
             await _migrate_interview_sessions_script_id(conn)
+            await _migrate_interview_sessions_interviewer(conn)
             await _migrate_stakeholder_roles(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)

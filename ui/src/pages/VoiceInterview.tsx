@@ -14,19 +14,18 @@ type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'test
 
 const BASE = '/api'
 
-// The voice used when a session carries no stamped `voice_config` of its own.
+// There is deliberately no default voice in this file, and there must never be one again.
 //
-// This is a **mirror, not a decision**. The authority is `AGENT_IDENTITY['stakeholder_interviewer']`
-// in `agents/identity.py`, and `test_the_interview_portals_fallback_is_averys_default_voice`
-// fails if the two ever disagree - so the id below cannot drift, and cannot be changed here
-// alone. It used to be a decision, declared inside the component: `21m00Tcm4TlvDq8ikWAM`, which
-// is ElevenLabs' stock *Rachel*, a female voice, for an interviewer described as male
-// everywhere he is described at all. The first completed interview was conducted in it.
+// `DEFAULT_VOICE_CONFIG` lived here and was a *decision*: `21m00Tcm4TlvDq8ikWAM`, ElevenLabs'
+// stock Rachel, a female voice, for an interviewer described as male everywhere he is
+// described at all. The first completed interview was conducted in it. It was corrected to a
+// mirror of the server's answer, and then deleted, because a session now carries the voice it
+// was issued with - so a session arriving without one is a bug, and a fallback here would hide
+// it by putting a stranger in front of a participant.
 //
-// It remains here at all only until sessions are stamped with their resolved configuration at
-// creation, after which a session with no `voice_config` is a bug rather than a state to have
-// a fallback for.
-const DEFAULT_VOICE_CONFIG = { elevenlabs_voice_id: 'onwK4e9ZLuTAKqWW03F9', language: 'en', country_code: 'GB' }
+// The portal does not send a voice at all now. `POST /interviews/{token}/speak` reads the
+// stamp off the session; the only thing this file still takes from `voice_config` is the
+// locale it hands the browser's speech recogniser.
 
 export interface CapturedPair {
   question_id: string
@@ -247,12 +246,12 @@ export default function VoiceInterview() {
     }
   }
 
-  async function speakText(text: string, voiceId: string): Promise<void> {
+  async function speakText(text: string): Promise<void> {
     setStatusMessage('Speaking…')
     const res = await fetch(`${BASE}/interviews/${sessionToken}/speak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice_id: voiceId }),
+      body: JSON.stringify({ text }),
     })
     if (!res.ok) {
       // Non-fatal: skip audio, continue
@@ -467,7 +466,7 @@ export default function VoiceInterview() {
    */
   async function listenWithRestart(
     lang: string = 'en-GB',
-    reprompt?: { text: string; voiceId: string },
+    reprompt?: { text: string },
   ): Promise<string> {
     restartAnswerRef.current = false
     appendToPreviousRef.current = false
@@ -504,14 +503,14 @@ export default function VoiceInterview() {
           continue
         }
         setStatusMessage('Go ahead — finish your last answer.')
-        if (reprompt) await speakText('Of course — go on.', reprompt.voiceId)
+        if (reprompt) await speakText('Of course — go on.')
         const extra = await listenForAnswer(lang)
         setStatusMessage('')
         if (extra.trim()) previous.answer = `${previous.answer} ${extra}`.trim()
         // Back to where we were.
         if (reprompt) {
           setCurrentQuestion(reprompt.text)
-          await speakText(reprompt.text, reprompt.voiceId)
+          await speakText(reprompt.text)
         }
         continue
       }
@@ -522,9 +521,9 @@ export default function VoiceInterview() {
       if (answer.length === 0 && reprompt && silentAttempts === 0) {
         silentAttempts++
         setStatusMessage('')
-        await speakText("Sorry — I didn't catch that. Let me ask again.", reprompt.voiceId)
+        await speakText("Sorry — I didn't catch that. Let me ask again.")
         setCurrentQuestion(reprompt.text)
-        await speakText(reprompt.text, reprompt.voiceId)
+        await speakText(reprompt.text)
         continue
       }
 
@@ -581,8 +580,19 @@ export default function VoiceInterview() {
   async function runInterview() {
     if (!sessionData) return
     const { session, script } = sessionData
-    const voiceConfig = session.voice_config ?? DEFAULT_VOICE_CONFIG
-    const voiceId = voiceConfig.elevenlabs_voice_id
+    // The session is stamped with its interviewer's resolved configuration when it is created.
+    // A session without one cannot be conducted, and saying so is the point: the alternative -
+    // a default declared here - is what conducted the first completed interview in a voice
+    // nobody had chosen. The speak door refuses the same case for the same reason.
+    const voiceConfig = session.voice_config
+    if (!voiceConfig?.elevenlabs_voice_id) {
+      setErrorMessage(
+        'This interview session was created without a voice, so it cannot be conducted. ' +
+        'Please contact the person who invited you.',
+      )
+      setPhase('error')
+      return
+    }
     const lang = `${voiceConfig.language}-${voiceConfig.country_code}`
     interviewLangRef.current = lang
 
@@ -597,7 +607,7 @@ export default function VoiceInterview() {
 
     // Welcome
     setCurrentQuestion(script.welcome_message)
-    await speakText(script.welcome_message, voiceId)
+    await speakText(script.welcome_message)
 
     // Framing block (L2 only) — spoken after welcome, before first question
     if (script.framing_block) {
@@ -607,7 +617,7 @@ export default function VoiceInterview() {
       // preamble after a welcome that had already covered purpose and confidentiality.
       // The rest stays in the script for the reader and the analyst; it is not read aloud.
       setCurrentQuestion(fb.positioning)
-      await speakText(fb.positioning, voiceId)
+      await speakText(fb.positioning)
     }
 
     let questionNumber = 0
@@ -627,10 +637,10 @@ export default function VoiceInterview() {
         setCurrentQuestion(question.text)
 
         // Ask the question
-        await speakText(question.text, voiceId)
+        await speakText(question.text)
 
         // Record primary answer
-        let answer = await listenWithRestart(lang, { text: question.text, voiceId })
+        let answer = await listenWithRestart(lang, { text: question.text })
 
         const needsElaboration =
           answer.trim().length > 0 &&
@@ -646,7 +656,7 @@ export default function VoiceInterview() {
           const pressText = await getElaborationPress(question.text, answer, question.probing_instructions)
           if (pressText) {
             setCurrentQuestion(pressText)
-            await speakText(pressText, voiceId)
+            await speakText(pressText)
             const followUpAnswer = await listenWithRestart(lang)
             qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, pressText, followUpAnswer, { kind: 'F', index: followUpCount + 1 }))
             answer = `${answer} ${followUpAnswer}`.trim()
@@ -661,7 +671,7 @@ export default function VoiceInterview() {
         while (followUpCount < question.follow_up_count && question.follow_up_branches[followUpCount]) {
           const branch = question.follow_up_branches[followUpCount]
           setCurrentQuestion(branch)
-          await speakText(branch, voiceId)
+          await speakText(branch)
           const branchAnswer = await listenWithRestart(lang)
           qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: followUpCount + 1 }))
           followUpCount++
@@ -671,7 +681,7 @@ export default function VoiceInterview() {
       // After all questions in a section, capture inline maturity rating if present (L1/L2 only)
       if (section.maturity_rating) {
         const mr = section.maturity_rating
-        await speakText(mr.prompt, voiceId)
+        await speakText(mr.prompt)
         const rating = await collectInlineRating(mr)
         sectionRatingsRef.current.push({ section_title: section.title, dimension: mr.dimension, rating })
         setPhase('interviewing')
@@ -706,20 +716,20 @@ export default function VoiceInterview() {
       const sc = script.synthesis_check
       // WITHDRAWN: scripted synthesis check.
       // setCurrentQuestion(sc.synthesis_prompt)
-      // await speakText(sc.synthesis_prompt, voiceId)
+      // await speakText(sc.synthesis_prompt)
       // const synthesisResponse = await listenWithRestart(lang)
       // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 1, sc.synthesis_prompt, synthesisResponse))
 
       // Peer referral - retained. It asks who else to speak to; it asserts nothing.
       setProgress(p => ({ ...p, current: p.current + 1 }))
       setCurrentQuestion(sc.peer_referral)
-      await speakText(sc.peer_referral, voiceId)
+      await speakText(sc.peer_referral)
       const referralResponse = await listenWithRestart(lang)
       qaRef.current.push(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
 
       // WITHDRAWN: forward roadmap.
       // setCurrentQuestion(sc.forward_roadmap)
-      // await speakText(sc.forward_roadmap, voiceId)
+      // await speakText(sc.forward_roadmap)
       // const roadmapResponse = await listenWithRestart(lang)
       // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 3, sc.forward_roadmap, roadmapResponse))
 
@@ -734,7 +744,7 @@ export default function VoiceInterview() {
     // Closing. The bar reaches 100% here and nowhere earlier.
     setProgress(p => ({ ...p, current: p.total }))
     setCurrentQuestion(script.closing_message)
-    await speakText(script.closing_message, voiceId)
+    await speakText(script.closing_message)
 
     await submitResponses(sectionRatingsRef.current)
   }

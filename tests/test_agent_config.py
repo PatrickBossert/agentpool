@@ -433,17 +433,24 @@ def test_averys_default_voice_is_not_the_female_stock_voice_the_first_interview_
     assert AVERY_VOICE_ID != RACHEL
 
 
-def test_the_interview_portals_fallback_is_averys_default_voice():
-    """The front-end constant is a mirror, not a second decision.
+def test_the_interview_portal_declares_no_voice_of_its_own():
+    """The fallback is gone, and this guard is what stops it coming back.
 
-    `DEFAULT_VOICE_CONFIG` in `VoiceInterview.tsx` still exists - until sessions are stamped at
-    creation there is something for it to be a fallback *for* - but it may no longer disagree
-    with the server. This is what a default living in a component costs: the only way to hold
-    the two in step is to read one language's source from the other's test suite.
+    It used to assert that `DEFAULT_VOICE_CONFIG` in `VoiceInterview.tsx` *mirrored* Avery's
+    default, because until sessions were stamped there was something for a fallback to be a
+    fallback for. There is not any more: the session carries the voice it was issued with, and
+    a session arriving without one is a bug that a fallback would hide by conducting the
+    interview in a stranger's voice - which is precisely what happened for as long as the
+    constant was a decision rather than a mirror.
 
-    Comment lines are stripped before the "Rachel is absent" half, and the distinction is real
-    rather than a convenience: prose naming the wrong id is the *record* of the defect and is
-    why the comment above the constant is worth reading, while code naming it is the defect.
+    So the assertion inverts. The portal must name **no** voice id at all, and must not send
+    one: `POST /{token}/speak` reads the stamp. Comment lines are stripped, and the
+    distinction is real rather than a convenience - prose naming a wrong id is the *record* of
+    the defect and is why the comments in that file are worth reading, while code naming one
+    is the defect.
+
+    A source guard cannot say the portal *behaves* this way. `VoiceInterviewStampedVoice.
+    test.tsx` asserts what is sent, and neither claim is worth much without the other.
     """
     from pathlib import Path
 
@@ -454,16 +461,18 @@ def test_the_interview_portals_fallback_is_averys_default_voice():
     )
 
     assert RACHEL not in code, "the stock female voice is back in the interview portal"
-    assert f"elevenlabs_voice_id: '{AVERY_VOICE_ID}'" in code
-    # And that the constant is what the fallback *is*, not merely what it is declared as. The
-    # first version of this guard asserted only the two lines above, so repointing the use -
-    # `?? { ...DEFAULT_VOICE_CONFIG, elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb' }` - left the
-    # backend suite, the frontend suite and tsc all green while the portal spoke as George.
-    # The behavioural half of this is asserted in
-    # ui/src/__tests__/VoiceInterviewDefaultVoice.test.tsx, which reads the voice off the
-    # request; this half is what ties that id to the server's.
-    assert "session.voice_config ?? DEFAULT_VOICE_CONFIG" in code
-    assert GEORGE not in code
+    assert GEORGE not in code, "the rehearsal dialog's voice is back in the interview portal"
+    assert AVERY_VOICE_ID not in code, (
+        "the portal declares Avery's voice again - even the right id is a second declaration, "
+        "and the last two were also right when they were written"
+    )
+    assert "DEFAULT_VOICE_CONFIG" not in code
+    # `elevenlabs_voice_id` still appears once, as a *read* of the session's stamp - the portal
+    # checks it is present before starting and refuses the interview if it is not. So the
+    # assertion is about declared ids, not about the string "voice_id", which the read
+    # contains. What the portal *sends* is asserted in the vitest file named above, where the
+    # request body is inspected; a source guard cannot make that claim and should not pretend
+    # to by matching a substring that happens to be adjacent to it.
 
 
 def test_the_rehearsal_door_lets_no_caller_name_a_voice():
@@ -846,19 +855,22 @@ async def test_both_test_interview_doors_refuse_the_same_stranger_in_the_same_vo
     assert speak.json()["detail"] == press.json()["detail"] == "Access denied to this project"
 
 
-def test_the_rehearsal_door_is_still_the_only_production_caller_of_the_resolver():
+def test_the_resolver_is_reached_by_the_rehearsal_door_and_the_session_stamp():
     """The docstring's central claim, held by a mechanism rather than by prose.
 
-    `test_speak_text`'s docstring says it is the only production caller, and therefore that
-    configuring a voice changes what *it* speaks in and nothing else - the live portal reads
-    `session.voice_config` and nothing stamps that column yet. An earlier version claimed the
-    portal and the session stamp already resolved through here, which would have told the next
-    reader the chain was joined up when it is not. That is the shape that produced Jordan's
-    fabricated link: a docstring asserting a mechanism that does not exist.
+    This test used to be named `..._is_still_the_only_production_caller_of_the_resolver` and
+    asserted the set was `{"api/routers/interviews.py"}` alone, because it was: configuring a
+    voice changed what the rehearsal button spoke in and nothing else. Its own docstring said
+    it was **meant to fail when Task 3 landed**, and it did.
 
-    **This test is meant to fail when Task 3 lands**, and that is its whole point. Stamping the
-    session adds a second caller, at which time the docstring stops being true and must be
-    rewritten - so the sentence cannot rot quietly into a lie. Update both together.
+    It is restated rather than widened, and the difference matters. Widening would have meant
+    adding the new caller and leaving `test_speak_text` claiming to be the only one - which is
+    the exact defect the guard was built for, with nothing left to catch it. So the claim
+    below is the new one, still an equality over an exact set, and the handler docstring was
+    rewritten in the same change to say that the loop is now joined at the session stamp.
+    An equality is what makes both directions fail: a caller lost is as much a change as a
+    caller gained, and the loss is the one that would put the wrong voice back into interviews
+    without anybody noticing.
     """
     from pathlib import Path
 
@@ -883,7 +895,11 @@ def test_the_rehearsal_door_is_still_the_only_production_caller_of_the_resolver(
                 if called:
                     callers.add(str(path.relative_to(root)))
 
-    assert callers == {"api/routers/interviews.py"}, (
-        "resolve_agent_config gained or lost a production caller - if Task 3's session stamp "
-        "has landed, test_speak_text's docstring must stop claiming to be the only one"
+    assert callers == {
+        "api/routers/interviews.py",
+        "api/services/interviewer_selection.py",
+    }, (
+        "resolve_agent_config gained or lost a production caller - update test_speak_text's "
+        "docstring in the same change rather than widening this set, or the sentence there "
+        "goes back to describing a mechanism that does not exist"
     )

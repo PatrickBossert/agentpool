@@ -1,20 +1,23 @@
-// ui/src/__tests__/VoiceInterviewDefaultVoice.test.tsx
+// ui/src/__tests__/VoiceInterviewStampedVoice.test.tsx
 //
-// The interview portal's fallback voice, asserted as *sent* rather than as *declared*.
+// The interview portal no longer decides, or even names, the voice - asserted as *sent*.
 //
-// The first guard on this property read the TSX source from the Python suite and checked two
-// things: that Rachel's id was absent, and that the literal `elevenlabs_voice_id:
-// 'onwK4e9ZLuTAKqWW03F9'` was present. Neither says the component *uses* DEFAULT_VOICE_CONFIG.
-// Repointing the use - `session.voice_config ?? { ...DEFAULT_VOICE_CONFIG, elevenlabs_voice_id:
-// 'JBFqnCBsd6RMkjVDRZzb' }` - left the backend suite, the frontend suite and tsc all green
-// while the portal spoke as George. That is CLAUDE.md's recurring failure mode exactly: "a
-// radio tested as rendered; not as sent", landing on the one test relied on to justify letting
-// a second declaration of the voice stand.
+// This file was `VoiceInterviewDefaultVoice.test.tsx` and asserted the opposite property: that
+// a session carrying no `voice_config` fell back to Avery's default. That fallback is deleted.
+// A session is stamped with its interviewer's resolved voice and model at creation, so a
+// session without one is a bug, and a fallback would hide it by putting a stranger in front of
+// a participant - which is exactly what it did for the whole life of `DEFAULT_VOICE_CONFIG`,
+// whose value was ElevenLabs' stock Rachel for an interviewer described as male everywhere.
 //
-// So this reads the voice id off the body of the POST /speak request, which is the only place
-// the answer is unambiguous. Two cases, and the pair is the point: a session that carries no
-// voice_config falls back to Avery's default, and a session that carries one is spoken in that
-// instead. Without the second, a portal that ignored the session entirely would pass the first.
+// The history is worth keeping because it is why this reads the *request* rather than the
+// source. The first guard on this property read the TSX from the Python suite and checked that
+// Rachel's id was absent and Avery's present. Neither says what the component uses: repointing
+// the use left the backend suite, the frontend suite and tsc all green while the portal spoke
+// as George. "A radio tested as rendered; not as sent."
+//
+// Two cases, and the pair is the point. A stamped session is conducted and sends no voice at
+// all - the server reads the stamp. An unstamped session is refused before a single word is
+// spoken, rather than being spoken in something invented here.
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -22,17 +25,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import VoiceInterview from '../pages/VoiceInterview'
 
-// Avery's default, and the one value in this file that must equal the server's. The Python
-// guard `test_the_interview_portals_fallback_is_averys_default_voice` holds it equal to
-// `AGENT_IDENTITY['stakeholder_interviewer'].voice_id`; this file holds it equal to what is
-// actually spoken. Neither claim is worth much without the other.
-const AVERY_DEFAULT_VOICE = 'onwK4e9ZLuTAKqWW03F9'
-
 // ElevenLabs' stock Rachel - the female voice the first completed interview was conducted in -
-// and George, the voice the rehearsal dialog declared under Avery's name. Named so the
-// assertions can say "not these" without reading either from the source they are checking.
+// George, the voice the rehearsal dialog declared under Avery's name, and Avery's own default.
+// All three are named so the assertions can say "none of these" without reading any of them
+// from the source they are checking. Avery's is in the list deliberately: the portal must not
+// name the *right* voice either, because the last two were also right when they were written.
 const RACHEL = '21m00Tcm4TlvDq8ikWAM'
 const GEORGE = 'JBFqnCBsd6RMkjVDRZzb'
+const AVERY_DEFAULT_VOICE = 'onwK4e9ZLuTAKqWW03F9'
 
 const SCRIPT = {
   script_id: 'SC-014',
@@ -71,8 +71,8 @@ function sessionWith(voiceConfig: unknown) {
   }
 }
 
-/** Every voice id that reached POST /speak, in order. */
-let voicesUsed: string[] = []
+/** Every body that reached POST /speak, parsed, in order. */
+let speakBodies: Record<string, unknown>[] = []
 /** Whether the interview reached its end, so a test cannot pass on an interview that never ran. */
 let completed = false
 
@@ -82,7 +82,7 @@ function installFetch(session: unknown) {
       return new Response(JSON.stringify({ session, script: SCRIPT }), { status: 200 })
     }
     if (url.endsWith('/speak')) {
-      voicesUsed.push(JSON.parse(String(init?.body)).voice_id)
+      speakBodies.push(JSON.parse(String(init?.body)))
       return new Response(new Blob([new Uint8Array([1, 2, 3])]), { status: 200 })
     }
     if (url.endsWith('/complete')) {
@@ -144,8 +144,8 @@ function installAudioAndMic() {
   })
 }
 
-async function runInterview(voiceConfig: unknown) {
-  voicesUsed = []
+async function startInterview(voiceConfig: unknown) {
+  speakBodies = []
   completed = false
   vi.stubGlobal('fetch', installFetch(sessionWith(voiceConfig)))
   installSpeechRecognition('A clear answer about picking.')
@@ -161,28 +161,42 @@ async function runInterview(voiceConfig: unknown) {
 
   const start = await screen.findByRole('button', { name: /start interview/i })
   await userEvent.click(start)
-  await waitFor(() => expect(completed).toBe(true), { timeout: 5000 })
 }
 
-describe('the voice the interview portal actually speaks in', () => {
+describe('the voice the interview portal speaks in', () => {
   beforeEach(() => { vi.restoreAllMocks() })
   afterEach(() => { vi.unstubAllGlobals() })
 
-  it("falls back to Avery's default when the session carries no voice_config", async () => {
-    await runInterview(null)
+  it('names no voice at all when the session carries a stamp', async () => {
+    await startInterview({
+      elevenlabs_voice_id: 'STAMPED-ON-THE-SESSION',
+      language: 'en',
+      country_code: 'GB',
+      model_id: 'eleven_multilingual_v2',
+    })
+    await waitFor(() => expect(completed).toBe(true), { timeout: 5000 })
 
-    expect(voicesUsed.length).toBeGreaterThan(0)
-    expect(new Set(voicesUsed)).toEqual(new Set([AVERY_DEFAULT_VOICE]))
-    expect(voicesUsed).not.toContain(RACHEL)
-    expect(voicesUsed).not.toContain(GEORGE)
+    // It spoke, so the assertions below are about a real interview rather than about silence.
+    expect(speakBodies.length).toBeGreaterThan(0)
+    // And it spoke without saying who in. The whole request body is inspected rather than one
+    // key, because a portal that renamed the field would pass a `voice_id` check while still
+    // deciding the voice.
+    const keys = new Set(speakBodies.flatMap(b => Object.keys(b)))
+    expect(keys).toEqual(new Set(['text']))
+    const serialised = JSON.stringify(speakBodies)
+    for (const id of [RACHEL, GEORGE, AVERY_DEFAULT_VOICE, 'STAMPED-ON-THE-SESSION']) {
+      expect(serialised).not.toContain(id)
+    }
   })
 
-  it('speaks in the session\'s own voice when it carries one', async () => {
-    // The control for the test above. A portal that ignored the session and always used the
-    // fallback would pass that one and be broken for every real interview, which is the same
-    // shape as an implementation that resolves only defaults passing every override test.
-    await runInterview({ elevenlabs_voice_id: 'STAMPED-ON-THE-SESSION', language: 'en', country_code: 'GB' })
+  it('refuses to conduct a session that carries no stamp, rather than inventing a voice', async () => {
+    // The control for the test above, and the case the deleted fallback used to swallow. A
+    // portal that simply ignored `voice_config` would pass the first test and fail this one,
+    // which is why "sends no voice" is not enough on its own.
+    await startInterview(null)
 
-    expect(new Set(voicesUsed)).toEqual(new Set(['STAMPED-ON-THE-SESSION']))
+    await waitFor(() => expect(screen.getByText(/cannot be conducted/i)).toBeTruthy())
+    expect(speakBodies).toEqual([])
+    expect(completed).toBe(false)
   })
 })

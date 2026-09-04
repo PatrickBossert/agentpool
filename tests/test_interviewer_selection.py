@@ -1,0 +1,920 @@
+# tests/test_interviewer_selection.py
+"""Which interviewer takes a stakeholder, and why the answer is written down.
+
+Two interviewers exist as of Task 2 and a project chooses between them with
+`interviewer_selection`: `always_male`, `always_female`, or `random`. The choice is resolved
+**once, at session creation**, and stamped on the row together with the resolved voice and
+synthesis model.
+
+**The stamp is the whole design, not an optimisation.** A project's configuration can change
+between an invite going out and the participant clicking it, and under `random` a lookup would
+answer a different person every time the same link is opened - so somebody who paused halfway
+would come back to a stranger, and the transcript could never say who conducted the interview.
+sp57 settled the identical question for `client_documents.knowledge_collection`: an address
+that is re-derived is an address that can move underneath the thing it points at.
+
+**Sex is asked of ElevenLabs, never declared here.** `always_female` is answered from the
+resolved voice's own `labels.gender`, so a project that gives Avery a female voice gets Avery -
+which is what `test_the_sex_follows_the_configured_voice_and_not_the_agent` drives. A table in
+this repository mapping agents to sexes would be the sixth declaration of voice facts on a
+branch that exists to end the first five, and it would be wrong the first time a project
+exercised the configuration the branch added.
+
+No test here makes a real ElevenLabs call. Both the metadata lookup and the synthesis call are
+driven through `httpx.MockTransport` and asserted on the **request**, following the rule this
+branch learned twice: a test that mocks at the function boundary cannot see what went on the
+wire, and "the value reached the call" is a weaker claim than "the value reached the request".
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import random
+import sqlite3
+
+import httpx
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from agents.identity import AGENT_IDENTITY, AVERY_VOICE_ID, DEFAULT_TTS_MODEL_ID, LAURA_VOICE_ID
+from agents.tools.interview_session_tool import InterviewSessionTool
+from api.config import get_settings
+from api.database import get_connection, insert_project
+from api.services.interviewer_selection import (
+    NoInterviewerAvailable,
+    interviewer_agent_ids,
+    resolve_interviewer_selection,
+)
+from api.services.voice_metadata import forget_voice_metadata
+
+AVERY = "stakeholder_interviewer"
+LAURA = "second_interviewer"
+
+# ElevenLabs' stock Rachel - the female voice the first completed interview was conducted in,
+# and the value Taylor's `VOICE_LOCALE_TABLE` still hands out in his prompt. Named here so the
+# tests can say "not this" without reading it from the source they are checking.
+RACHEL = "21m00Tcm4TlvDq8ikWAM"
+
+
+@pytest.fixture
+def project_dir(tmp_path, monkeypatch):
+    """An isolated DATABASE_DIR, per CLAUDE.md's poisoned-database rule.
+
+    `get_settings.cache_clear()` on both sides, and `forget_voice_metadata()` too: the gender
+    cache is a module-level dict, so a test that resolved Alice as female would otherwise
+    answer for the next test's differently-labelled Alice and the second test would pass
+    because of the first.
+    """
+    get_settings.cache_clear()
+    forget_voice_metadata()
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "tts"))
+    yield tmp_path
+    forget_voice_metadata()
+    get_settings.cache_clear()
+
+
+async def _build_project(slug: str, config: dict | None = None, stakeholders: int = 1) -> None:
+    """A real project database through the real path, with a run and some people on it."""
+    async with get_connection(slug) as conn:
+        await insert_project(
+            conn,
+            slug=slug,
+            llm_mode="standard",
+            sector="test",
+            config_json=json.dumps(config or {}),
+        )
+        async with conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
+            project_id = (await cur.fetchone())["id"]
+        await conn.execute(
+            "INSERT INTO orchestration_runs (project_id, status) VALUES (?, 'running')",
+            (project_id,),
+        )
+        for n in range(stakeholders):
+            await conn.execute(
+                "INSERT INTO stakeholders (project_id, name) VALUES (?, ?)",
+                (project_id, f"Person {n + 1}"),
+            )
+        await conn.commit()
+
+
+def _make_project(slug: str, config: dict | None = None, stakeholders: int = 1) -> None:
+    asyncio.run(_build_project(slug, config, stakeholders))
+
+
+def _mock_voice_metadata(monkeypatch, genders: dict[str, str | None]) -> list[str]:
+    """Answer `GET /v1/voices/{id}` from a table, and record every id actually asked about.
+
+    The recorded list is what proves `random` asks nothing - a claim about the *absence* of a
+    request, which no assertion about the answer could make.
+    """
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        voice_id = str(request.url).rsplit("/", 1)[-1]
+        asked.append(voice_id)
+        if voice_id not in genders:
+            return httpx.Response(404, json={"detail": "not found"})
+        gender = genders[voice_id]
+        labels = {"accent": "british"}
+        if gender is not None:
+            labels["gender"] = gender
+        return httpx.Response(200, json={"voice_id": voice_id, "labels": labels})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("api.services.voice_metadata.get_tts_client", lambda: client)
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
+    monkeypatch.setattr("api.services.voice_metadata.get_settings", lambda: settings)
+    return asked
+
+
+def _create_sessions(slug: str, sessions: list[dict], run_id: int = 1) -> str:
+    """Drive the tool exactly as the crew does - synchronously, from no event loop."""
+    tool = InterviewSessionTool(slug=slug, orchestration_run_id=run_id)
+    return tool._run("create", sessions, [])
+
+
+def _rows(slug: str, project_dir) -> list[sqlite3.Row]:
+    con = sqlite3.connect(str(project_dir / f"{slug}.db"))
+    con.row_factory = sqlite3.Row
+    try:
+        return con.execute(
+            "SELECT session_token, interviewer_agent_id, voice_config "
+            "FROM interview_sessions ORDER BY id"
+        ).fetchall()
+    finally:
+        con.close()
+
+
+def _plan(n: int = 1, **extra) -> list[dict]:
+    return [
+        {"stakeholder_id": i + 1, "name": f"Person {i + 1}", "node_label": "Goods-in", **extra}
+        for i in range(n)
+    ]
+
+
+# --- The schema -----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_database_at_version_16_gains_the_interviewer_column(project_dir):
+    """Fails on `_SCHEMA_VERSION` 16 and passes on 17.
+
+    `get_connection` only re-runs the migration block when `PRAGMA user_version <
+    _SCHEMA_VERSION`, so a migration added without the bump never runs on any database that
+    has already been opened once - no error, no warning, and every existing deployment stamps
+    NULL into a column it does not have. Driven against a database actually stamped at 16
+    rather than asserted from the source.
+    """
+    import api.database as db
+
+    slug = "legacy-interviewer-db"
+    async with db.get_connection(slug):
+        pass
+    con = sqlite3.connect(str(project_dir / f"{slug}.db"))
+    con.execute("ALTER TABLE interview_sessions DROP COLUMN interviewer_agent_id")
+    con.execute("PRAGMA user_version = 16")
+    con.commit()
+    con.close()
+    db._MIGRATED.discard(slug)
+
+    async with db.get_connection(slug) as conn:
+        async with conn.execute("PRAGMA table_info(interview_sessions)") as cur:
+            cols = {row["name"] async for row in cur}
+    assert "interviewer_agent_id" in cols
+
+
+@pytest.mark.asyncio
+async def test_the_migration_skips_itself_rather_than_raising(project_dir):
+    """Guarded with `PRAGMA table_info`, driven rather than read.
+
+    A migration that raises takes every later migration in the block down with it, and the
+    later ones are the ones nobody is looking at.
+    """
+    import api.database as db
+
+    slug = "twice-migrated"
+    async with db.get_connection(slug):
+        pass
+    db._MIGRATED.discard(slug)
+    async with db.get_connection(slug) as conn:
+        await db._migrate_interview_sessions_interviewer(conn)
+        async with conn.execute("PRAGMA table_info(interview_sessions)") as cur:
+            names = [row["name"] async for row in cur]
+    assert names.count("interviewer_agent_id") == 1
+
+
+# --- The roster -----------------------------------------------------------------------------
+
+
+def test_the_roster_is_the_interviewers_the_crew_builds():
+    """Derived from who has a voice, held against who the crew actually builds.
+
+    `interviewer_agent_ids` reads `AGENT_IDENTITY` for agents carrying a `voice_id`, on the
+    rule `agents/identity.py` states: `voice_id` is None for every agent that does not speak.
+    That is a derivation from an existing declaration rather than a new list beside it - but a
+    derivation is a guess until something independent agrees with it, so this holds it against
+    `discovery_interviews`, which declares its interviewers by building them.
+
+    If an agent is ever given a voice for some other purpose, this fails and somebody decides,
+    rather than that agent quietly joining the interviewing roster.
+    """
+    from api.services.run_service import _CREW_AGENT_NAMES
+
+    crew_interviewers = {
+        agent_id
+        for agent_id in _CREW_AGENT_NAMES["discovery_interviews"]
+        if agent_id.endswith("interviewer")
+    }
+    assert set(interviewer_agent_ids()) == crew_interviewers == {AVERY, LAURA}
+
+
+def test_no_module_maps_an_agent_to_a_sex():
+    """The prohibition, as a mechanism rather than a paragraph.
+
+    The obvious implementation of `always_female` is two lines mapping `second_interviewer` to
+    female. It would be the sixth declaration of voice facts on a branch that exists to end the
+    first five, and it would be **wrong** the first time a project used `project_agent_config`
+    to give an interviewer a different voice - which is the whole point of the table Task 1
+    added. Task 2 named Laura `second_interviewer` rather than `female_interviewer` for the
+    same reason, and asserted it about her id; this asserts it about the code that reads it.
+
+    An AST walk over string *constants*, not a substring search over the text, and the
+    difference is the one CLAUDE.md records three sweeps making: prose naming an agent is the
+    explanation of why the rule exists - both modules' docstrings do exactly that - while a
+    literal `"second_interviewer"` is the rule being broken. A substring search cannot tell
+    them apart, and would have had to be weakened until it saw nothing at all.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for module in ("api/services/interviewer_selection.py", "api/services/voice_metadata.py"):
+        tree = ast.parse((root / module).read_text())
+        literals = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        for agent_id in (AVERY, LAURA):
+            assert agent_id not in literals, (
+                f"{module} names {agent_id} as a literal - the selection must read the voices' "
+                f"own metadata, never a roster of who is which sex"
+            )
+
+
+# --- The selection --------------------------------------------------------------------------
+
+
+def test_always_female_never_yields_the_male_interviewer(project_dir, monkeypatch):
+    """The brief's first named test, driven over thirty sessions rather than one.
+
+    One session would pass by luck one time in two under a broken implementation that ignored
+    the setting entirely, so the batch size is load-bearing: thirty sessions is
+    one-in-a-billion by chance. Every row is checked, not the batch's first.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "always-female"
+    _make_project(slug, {"interviewer_selection": "always_female"}, stakeholders=30)
+
+    out = _create_sessions(slug, _plan(30))
+    assert not out.startswith("Error"), out
+
+    rows = _rows(slug, project_dir)
+    assert len(rows) == 30
+    assert {r["interviewer_agent_id"] for r in rows} == {LAURA}
+    for row in rows:
+        assert json.loads(row["voice_config"])["elevenlabs_voice_id"] == LAURA_VOICE_ID
+
+
+def test_always_male_never_yields_the_female_interviewer(project_dir, monkeypatch):
+    """The mirror, and it is not redundant.
+
+    Without it, an implementation that always chose Laura - ignoring the setting and simply
+    preferring the newer agent - would pass the test above on every run. This is the same
+    control-and-override pairing Task 1's resolver tests are built on: an arm asserted alone is
+    an arm that cannot be distinguished from a constant.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "always-male"
+    _make_project(slug, {"interviewer_selection": "always_male"}, stakeholders=30)
+
+    _create_sessions(slug, _plan(30))
+
+    rows = _rows(slug, project_dir)
+    assert {r["interviewer_agent_id"] for r in rows} == {AVERY}
+
+
+def test_the_sex_follows_the_configured_voice_and_not_the_agent(project_dir, monkeypatch):
+    """Give Avery a female voice, and `always_female` gives you Avery.
+
+    This is what "the API's metadata is the authority" means in practice, and it is the case a
+    hardcoded agent-to-sex map gets wrong while looking entirely correct. The project's
+    override is a real `project_agent_config` row, resolved through `resolve_agent_config` -
+    the same path everything else on this branch resolves through.
+    """
+    from api.database import upsert_agent_config
+    from api.services.agent_config_service import CONFIG_FIELDS
+
+    slug = "avery-resung"
+    _make_project(slug, {"interviewer_selection": "always_female"}, stakeholders=5)
+
+    async def _configure() -> None:
+        async with get_connection(slug) as conn:
+            async with conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
+                project_id = (await cur.fetchone())["id"]
+            fields = dict.fromkeys(CONFIG_FIELDS, None)
+            fields["voice_id"] = "A-FEMALE-VOICE-FOR-AVERY"
+            await upsert_agent_config(conn, project_id=project_id, agent_id=AVERY, **fields)
+
+    asyncio.run(_configure())
+    # Laura's own voice is male on this project's account, so the only female voice in play is
+    # the one Avery was given. An implementation reading a table would answer Laura.
+    _mock_voice_metadata(
+        monkeypatch,
+        {"A-FEMALE-VOICE-FOR-AVERY": "female", LAURA_VOICE_ID: "male"},
+    )
+
+    _create_sessions(slug, _plan(5))
+
+    rows = _rows(slug, project_dir)
+    assert {r["interviewer_agent_id"] for r in rows} == {AVERY}
+    assert {
+        json.loads(r["voice_config"])["elevenlabs_voice_id"] for r in rows
+    } == {"A-FEMALE-VOICE-FOR-AVERY"}
+
+
+def test_random_is_stamped_once_and_does_not_change_on_re_read(project_dir, monkeypatch):
+    """The brief's second named test, and the one that matters.
+
+    A random choice re-rolled on every read gives a participant a different interviewer each
+    time they open their link - and one who paused halfway comes back to a stranger. So this
+    reads each session **five times** and requires the same answer every time, and it reads
+    through `get_session_with_script`, the function the portal actually calls, rather than
+    through the table directly.
+
+    The setting is then changed to `always_male` and the sessions re-read: the stamp must not
+    move. That half is the sp57 property proper - a configuration edited between an invite and
+    an interview must not rewrite an interview that has already been issued.
+    """
+    from api.services.interview_service import get_session_with_script
+
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "random-stamped"
+    _make_project(slug, {"interviewer_selection": "random"}, stakeholders=20)
+
+    _create_sessions(slug, _plan(20))
+    stamped = {
+        r["session_token"]: (r["interviewer_agent_id"], r["voice_config"])
+        for r in _rows(slug, project_dir)
+    }
+    assert len(stamped) == 20
+
+    async def _read_all() -> dict[str, tuple[str, str]]:
+        seen = {}
+        for token in stamped:
+            result = await get_session_with_script(token)
+            assert result is not None
+            session = result["session"]
+            seen[token] = (
+                session["interviewer_agent_id"],
+                json.dumps(session["voice_config"], sort_keys=True),
+            )
+        return seen
+
+    first = asyncio.run(_read_all())
+    for _ in range(4):
+        assert asyncio.run(_read_all()) == first
+
+    # Now change the project's mind. The stamp is what conducted the interview; the setting is
+    # only what would be chosen for a session created from now on.
+    async def _switch() -> None:
+        async with get_connection(slug) as conn:
+            await conn.execute(
+                "UPDATE projects SET config_json=? WHERE slug=?",
+                (json.dumps({"interviewer_selection": "always_male"}), slug),
+            )
+            await conn.commit()
+
+    asyncio.run(_switch())
+    after = {
+        r["session_token"]: (r["interviewer_agent_id"], r["voice_config"])
+        for r in _rows(slug, project_dir)
+    }
+    assert after == stamped
+
+
+def test_random_actually_varies_across_a_batch(project_dir, monkeypatch):
+    """The control for the test above, and it is not the same claim.
+
+    "Stable on re-read" is satisfied by an implementation that always picks Avery, which is
+    also what a broken `random` looks like. Twenty sessions from two interviewers give a
+    one-in-half-a-million chance of a genuine sweep, so a single-valued result here is a
+    finding rather than luck.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "random-varies"
+    _make_project(slug, {"interviewer_selection": "random"}, stakeholders=20)
+
+    _create_sessions(slug, _plan(20))
+
+    chosen = {r["interviewer_agent_id"] for r in _rows(slug, project_dir)}
+    assert chosen == {AVERY, LAURA}
+
+
+def test_random_asks_elevenlabs_nothing(project_dir, monkeypatch):
+    """The shipped default makes no network call, and that is asserted rather than reasoned.
+
+    `random` is the default for every project that has never touched the setting, so if it
+    needed voice metadata then every interview programme on every deployment would depend on
+    ElevenLabs being reachable at session-creation time to answer a question nobody asked.
+    """
+    asked = _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "random-offline"
+    _make_project(slug, {"interviewer_selection": "random"}, stakeholders=3)
+
+    _create_sessions(slug, _plan(3))
+
+    assert asked == []
+
+
+def test_a_project_that_has_never_set_the_setting_gets_random(project_dir, monkeypatch):
+    """No key in `config_json` is not a missing project - it is a project that predates the
+    setting, and there was one interviewer then. `random` over the roster is the honest
+    reading, and it is the value `ProjectSettings` declares as the default."""
+    asked = _mock_voice_metadata(monkeypatch, {})
+    slug = "unset-selection"
+    _make_project(slug, {}, stakeholders=4)
+
+    _create_sessions(slug, _plan(4))
+
+    assert asked == []
+    assert {r["interviewer_agent_id"] for r in _rows(slug, project_dir)} <= {AVERY, LAURA}
+
+
+def test_a_sex_no_voice_carries_creates_no_sessions_at_all(project_dir, monkeypatch):
+    """Refused, loudly, with nothing written - because the choice is permanent.
+
+    If ElevenLabs cannot show that any interviewer's voice is female, the alternatives are to
+    stamp a man on every session in the programme or to create none. The first cannot be undone
+    by fixing the cause afterwards: the sessions are already issued and the stamp is not
+    re-derived. So it refuses, before the first INSERT, and the message names what to change.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "male"})
+    slug = "no-female-voice"
+    _make_project(slug, {"interviewer_selection": "always_female"}, stakeholders=3)
+
+    out = _create_sessions(slug, _plan(3))
+
+    assert out.startswith("Error")
+    assert "female" in out
+    assert _rows(slug, project_dir) == []
+
+
+def test_an_unreachable_provider_refuses_rather_than_shuffling(project_dir, monkeypatch):
+    """A transport failure is "I could not establish that" and not "not female".
+
+    The two are different, and only one of them is a reason to pick somebody. Answering the
+    other way would turn `always_female` into `random` on any deployment having a bad minute -
+    silently, and permanently, because the answer is stamped.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("elevenlabs unreachable")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("api.services.voice_metadata.get_tts_client", lambda: client)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
+    monkeypatch.setattr("api.services.voice_metadata.get_settings", lambda: settings)
+
+    slug = "provider-down"
+    _make_project(slug, {"interviewer_selection": "always_female"}, stakeholders=2)
+
+    out = _create_sessions(slug, _plan(2))
+
+    assert out.startswith("Error")
+    assert _rows(slug, project_dir) == []
+
+
+def test_a_missing_api_key_is_not_a_fact_about_a_voice(project_dir, monkeypatch):
+    """`voice_gender_or_unknown` swallows transport failures and must not swallow this one.
+
+    A missing key is a deployment fault an operator can fix, not a property of a voice, and it
+    is the case that would otherwise be true on every deployment that has not configured
+    ElevenLabs at all - turning the setting into a coin toss everywhere at once.
+    """
+    from api.services.voice_metadata import voice_gender_or_unknown
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "", raising=False)
+    monkeypatch.setattr("api.services.voice_metadata.get_settings", lambda: settings)
+
+    with pytest.raises(ValueError, match="ELEVENLABS_API_KEY"):
+        asyncio.run(voice_gender_or_unknown(AVERY_VOICE_ID))
+
+
+def test_a_voice_with_no_gender_label_is_unknown_rather_than_a_match(project_dir, monkeypatch):
+    """ElevenLabs answering 200 with no `gender` in `labels` is the provider saying nothing.
+
+    Treating "no label" as a match would make `always_female` select a voice whose sex nobody
+    has established, which is the failure the setting exists to prevent.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: None, LAURA_VOICE_ID: None})
+    slug = "unlabelled-voices"
+    _make_project(slug, {"interviewer_selection": "always_female"}, stakeholders=2)
+
+    out = _create_sessions(slug, _plan(2))
+
+    assert out.startswith("Error")
+    assert _rows(slug, project_dir) == []
+
+
+def test_the_gender_of_one_voice_is_asked_once_per_batch(project_dir, monkeypatch):
+    """Thirty sessions, two questions. Resolution happens once for the batch, before the first
+    INSERT - so a thirty-person programme does not ask ElevenLabs the same question thirty
+    times, and does not open a second connection to this database mid-write-transaction."""
+    asked = _mock_voice_metadata(
+        monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"}
+    )
+    slug = "asked-once"
+    _make_project(slug, {"interviewer_selection": "always_male"}, stakeholders=30)
+
+    _create_sessions(slug, _plan(30))
+
+    assert sorted(asked) == sorted({AVERY_VOICE_ID, LAURA_VOICE_ID})
+
+
+# --- The stamp ------------------------------------------------------------------------------
+
+
+def test_the_stamp_carries_the_voice_the_model_and_the_locale(project_dir, monkeypatch):
+    """All four, because the model is the field this branch nearly shipped without.
+
+    Task 1 made `model_id` a column, a resolved field and a required argument to `synthesise`
+    and `speak` - and the live session `/speak` door still passed the default, because it holds
+    a session token rather than a slug. Configured, stored, and reaching nothing. The session
+    is the only place that door can learn it, so it is stamped here.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "stamp-shape"
+    _make_project(slug, {"interviewer_selection": "always_male"}, stakeholders=1)
+
+    _create_sessions(slug, _plan(1))
+
+    stamp = json.loads(_rows(slug, project_dir)[0]["voice_config"])
+    assert stamp == {
+        "elevenlabs_voice_id": AVERY_VOICE_ID,
+        "language": "en",
+        "country_code": "GB",
+        "model_id": DEFAULT_TTS_MODEL_ID,
+    }
+
+
+def test_the_stamp_is_the_projects_configuration_and_not_the_plans(project_dir, monkeypatch):
+    """A `voice_config` in the plan is ignored, and this is the assertion that says so.
+
+    It used to be stored as given, which meant the voice a participant heard was whatever a
+    language model copied out of `VOICE_LOCALE_TABLE` in its own prompt - a prose table naming
+    ElevenLabs' stock Rachel, a female voice, for the male interviewer. **A stamped value beats
+    everything**, so as long as the plan supplied it, no amount of correcting defaults
+    elsewhere could reach a real interview.
+
+    The table itself is still in Taylor's prompt and its retirement is Task 4's. What changed
+    here is that it no longer reaches a session.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "plan-ignored"
+    _make_project(slug, {"interviewer_selection": "always_male"}, stakeholders=1)
+
+    _create_sessions(
+        slug,
+        _plan(
+            1,
+            voice_config={
+                "language": "en",
+                "country_code": "GB",
+                "elevenlabs_voice_id": RACHEL,
+            },
+        ),
+    )
+
+    stamp = json.loads(_rows(slug, project_dir)[0]["voice_config"])
+    assert stamp["elevenlabs_voice_id"] == AVERY_VOICE_ID
+    assert RACHEL not in json.dumps(stamp)
+
+
+def test_the_transcripts_say_who_conducted_them(project_dir, monkeypatch):
+    """`get_transcripts` carries the interviewer out with each transcript.
+
+    `interview_transcripts` is a per-*run* artefact and the interviewer is a per-*session*
+    choice, so a programme conducted by two people produces one artefact recording both - and
+    it can only do that if the identity travels with the transcript. Read off the row, never
+    re-derived from the project's current setting.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "transcripts-say"
+    _make_project(slug, {"interviewer_selection": "always_female"}, stakeholders=1)
+    _create_sessions(slug, _plan(1))
+
+    con = sqlite3.connect(str(project_dir / f"{slug}.db"))
+    con.execute(
+        "UPDATE interview_sessions SET status='completed', transcript_json=?",
+        (json.dumps([{"question": "q", "answer": "a"}]),),
+    )
+    con.commit()
+    con.close()
+
+    tool = InterviewSessionTool(slug=slug, orchestration_run_id=1)
+    transcripts = json.loads(tool._run("get_transcripts", [], []))
+
+    assert len(transcripts) == 1
+    assert transcripts[0]["interviewer_agent_id"] == LAURA
+    assert transcripts[0]["voice_config"]["elevenlabs_voice_id"] == LAURA_VOICE_ID
+
+
+def test_the_transcript_artefact_is_still_averys_alone(project_dir):
+    """The ownership decision this task had to make, recorded as an assertion.
+
+    `OUTPUT_OWNERS` gives `interview_transcripts` to `stakeholder_interviewer` and `check_write`
+    compares by equality, so Laura cannot write it. That is **left exactly as it was**, and the
+    reasoning is that the two roles are different sizes: the interviewer a participant meets is
+    chosen per session, while `interview_transcripts` is one artefact per crew run covering the
+    whole programme. No single agent could own a per-run artefact under a per-session choice, so
+    widening ownership to a set would not have made Laura the owner of anything - it would have
+    weakened the refusal for a case that cannot arise, since the crew gives the interviewing
+    task to one agent and `test_the_crew_builds_both_interviewers_and_gives_the_task_to_one`
+    holds it there.
+
+    What the per-session fact needed was somewhere to go, not somewhere else to be owned, and
+    `test_the_transcripts_say_who_conducted_them` above is where it goes.
+
+    So `tests/test_second_interviewer.py::test_handing_her_averys_task_verbatim_would_be_
+    refused_twice` still passes, and both refusals are still live. This test states that this is
+    a decision rather than an oversight, and it fails if somebody widens ownership without
+    revisiting the argument.
+    """
+    from agents.tools.ownership import OUTPUT_OWNERS, check_write
+
+    assert OUTPUT_OWNERS["interview_transcripts"] == AVERY
+    assert check_write("interview_transcripts", LAURA) is not None
+    assert check_write("interview_transcripts", AVERY) is None
+
+
+# --- What reaches the synthesis call ---------------------------------------------------------
+
+
+def _capture_tts(monkeypatch) -> list[dict]:
+    """Point `synthesise`'s client at a `MockTransport` and record every request.
+
+    The wire, not the call. Moving a security gate to *after* synthesis still answered 403 on
+    this branch, and only a wire assertion caught that the private voice had already been
+    spoken; a stamped value nothing sends is the same defect one layer along.
+    """
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({"url": str(request.url), "json": json.loads(request.content)})
+        return httpx.Response(200, content=b"AUDIO-BYTES")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("api.services.interview_service.get_tts_client", lambda: client)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
+    monkeypatch.setattr("api.services.interview_service.get_settings", lambda: settings)
+    return seen
+
+
+async def _speak(token: str, text: str) -> httpx.Response:
+    from api.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        return await client.post(f"/api/interviews/{token}/speak", json={"text": text})
+
+
+def test_the_stamped_voice_and_model_are_what_reach_elevenlabs(project_dir, monkeypatch):
+    """Step 4 of the brief: assert what reaches the synthesis call, not what the table holds.
+
+    The session is stamped with a voice and a model no default would produce, and both are read
+    off the **request** ElevenLabs would have received. A test asserting the row would pass for
+    a door that read the row and then sent the default, which is what that door did until this
+    change.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "wire-stamp"
+    _make_project(slug, {"interviewer_selection": "always_female"}, stakeholders=1)
+
+    async def _configure() -> None:
+        from api.database import upsert_agent_config
+        from api.services.agent_config_service import CONFIG_FIELDS
+
+        async with get_connection(slug) as conn:
+            async with conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
+                project_id = (await cur.fetchone())["id"]
+            fields = dict.fromkeys(CONFIG_FIELDS, None)
+            fields["voice_id"] = LAURA_VOICE_ID
+            fields["model_id"] = "eleven_multilingual_v2"
+            await upsert_agent_config(conn, project_id=project_id, agent_id=LAURA, **fields)
+
+    asyncio.run(_configure())
+    _create_sessions(slug, _plan(1))
+    token = _rows(slug, project_dir)[0]["session_token"]
+
+    seen = _capture_tts(monkeypatch)
+    resp = asyncio.run(_speak(token, "Tell me about goods-in."))
+
+    assert resp.status_code == 200
+    assert len(seen) == 1
+    assert seen[0]["url"].endswith(f"/text-to-speech/{LAURA_VOICE_ID}")
+    assert seen[0]["json"]["model_id"] == "eleven_multilingual_v2"
+
+
+def test_the_speak_door_takes_no_voice_from_its_caller(project_dir, monkeypatch):
+    """A field the client fills is a field the client decides.
+
+    The portal used to send `voice_id`, read from the session with a hardcoded fallback in the
+    component, so the voice a participant heard was decided in a browser from a constant no
+    server could read. `TestSpeakRequest` lost the same field for the same reason one door up.
+    A caller naming a voice must not be able to be spoken in it.
+    """
+    from api.routers.interviews import SpeakRequest
+
+    assert "voice_id" not in SpeakRequest.model_fields
+    assert "model_id" not in SpeakRequest.model_fields
+
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "no-caller-voice"
+    _make_project(slug, {"interviewer_selection": "always_male"}, stakeholders=1)
+    _create_sessions(slug, _plan(1))
+    token = _rows(slug, project_dir)[0]["session_token"]
+
+    seen = _capture_tts(monkeypatch)
+
+    async def _post() -> httpx.Response:
+        from api.main import app
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            return await client.post(
+                f"/api/interviews/{token}/speak",
+                json={"text": "Hello.", "voice_id": RACHEL},
+            )
+
+    resp = asyncio.run(_post())
+
+    assert resp.status_code == 200
+    assert seen[0]["url"].endswith(f"/text-to-speech/{AVERY_VOICE_ID}")
+    assert RACHEL not in seen[0]["url"]
+
+
+def test_an_unstamped_session_is_refused_rather_than_spoken(project_dir, monkeypatch):
+    """The deleted fallback's case, refused at the server as well as in the portal.
+
+    Every session created before this change carries whatever the plan gave it, which may be
+    nothing. A fallback would hide the only bug it could be covering - a session created with
+    no resolved configuration - by conducting the interview in a voice nobody chose, which is
+    exactly what happened for the whole life of `DEFAULT_VOICE_CONFIG`.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "unstamped-session"
+    _make_project(slug, {"interviewer_selection": "always_male"}, stakeholders=1)
+    _create_sessions(slug, _plan(1))
+
+    con = sqlite3.connect(str(project_dir / f"{slug}.db"))
+    con.execute("UPDATE interview_sessions SET voice_config=NULL")
+    con.commit()
+    con.close()
+    token = _rows(slug, project_dir)[0]["session_token"]
+
+    seen = _capture_tts(monkeypatch)
+    resp = asyncio.run(_speak(token, "Hello."))
+
+    assert resp.status_code == 422
+    assert seen == [], "the door synthesised before refusing"
+
+
+def test_a_stamp_predating_the_model_keeps_the_model_it_was_spoken_with(project_dir, monkeypatch):
+    """A legacy stamp is not a bug, and is not treated as one.
+
+    Sessions created before `model_id` joined the stamp carry a voice and no model. They were
+    spoken through `DEFAULT_TTS_MODEL_ID` on every utterance, so that is what they keep - a
+    re-derivation would be wrong here in the other direction, and refusing them would take a
+    running interview programme down for a field that did not exist when it started.
+    """
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "legacy-stamp"
+    _make_project(slug, {"interviewer_selection": "always_male"}, stakeholders=1)
+    _create_sessions(slug, _plan(1))
+
+    con = sqlite3.connect(str(project_dir / f"{slug}.db"))
+    con.execute(
+        "UPDATE interview_sessions SET voice_config=?",
+        (json.dumps({
+            "elevenlabs_voice_id": "AN-OLD-VOICE",
+            "language": "en",
+            "country_code": "GB",
+        }),),
+    )
+    con.commit()
+    con.close()
+    token = _rows(slug, project_dir)[0]["session_token"]
+
+    seen = _capture_tts(monkeypatch)
+    resp = asyncio.run(_speak(token, "Hello."))
+
+    assert resp.status_code == 200
+    assert seen[0]["url"].endswith("/text-to-speech/AN-OLD-VOICE")
+    assert seen[0]["json"]["model_id"] == DEFAULT_TTS_MODEL_ID
+
+
+# --- The setting ----------------------------------------------------------------------------
+
+
+def test_the_setting_is_declared_and_is_not_platform_tier():
+    """It decides tone, not where a project's material is sent.
+
+    `_PLATFORM_TIER_SETTINGS` holds the eight fields a `project_admin` may not change because
+    they move data across a boundary - the mode, the local URLs, the six model ids. Which
+    interviewer a participant meets is not one of them, and putting it there would refuse the
+    people sp44 widened those fifteen doors *for*.
+    """
+    from api.models import ProjectSettings
+    from api.routers.projects import _PLATFORM_TIER_SETTINGS
+
+    field = ProjectSettings.model_fields["interviewer_selection"]
+    assert field.default == "random"
+    assert "interviewer_selection" not in _PLATFORM_TIER_SETTINGS
+
+
+def test_an_unrecognised_setting_value_is_read_as_random(project_dir):
+    """`config_json` is a stored JSON blob, so a hand-edited or older row may hold anything.
+
+    `random` is the safe reading: it selects somebody from the declared roster, which is what
+    every project did before the setting existed. The alternative - refusing - would take an
+    interview programme down over a typo in a field that has a sensible default.
+    """
+    from api.services.interviewer_selection import project_interviewer_selection
+
+    slug = "odd-value"
+    _make_project(slug, {"interviewer_selection": "always_nonbinary"})
+
+    assert asyncio.run(project_interviewer_selection(slug)) == "random"
+
+
+def test_a_blank_slug_is_refused_rather_than_answered():
+    """The rule `project_llm_mode` and `resolve_agent_config` both follow, and for the reason
+    the first of them learned expensively: a forgotten slug must not become a quiet default.
+    Two seams disagreeing about what a blank slug means is worse than either rule."""
+    from api.services.interviewer_selection import project_interviewer_selection
+
+    for slug in ("", "   ", "\t"):
+        with pytest.raises(ValueError, match="requires a slug"):
+            asyncio.run(project_interviewer_selection(slug))
+
+
+def test_resolving_a_selection_creates_no_database(project_dir):
+    """Probing a slug must not materialise one file per guess - the rule `caller_roles` and
+    `_stakeholder_matches_invite` already follow, reaching here because the selection resolves
+    on a path a public interview link can start."""
+    selection = asyncio.run(resolve_interviewer_selection("no-such-engagement"))
+
+    assert selection.mode == "random"
+    assert set(selection.eligible) == {AVERY, LAURA}
+    assert not (project_dir / "no-such-engagement.db").exists()
+
+
+def test_a_seeded_rng_makes_the_choice_reproducible(project_dir, monkeypatch):
+    """`pick()` takes its randomness from an injected `Random`, so the selection is testable
+    without patching the module. Passing the clock, or in this case the dice, rather than
+    reading it - the rule CLAUDE.md states for `today` and which applies identically here."""
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+    slug = "seeded"
+    _make_project(slug, {"interviewer_selection": "random"})
+
+    first = asyncio.run(resolve_interviewer_selection(slug, rng=random.Random(7)))
+    second = asyncio.run(resolve_interviewer_selection(slug, rng=random.Random(7)))
+
+    assert [first.pick() for _ in range(10)] == [second.pick() for _ in range(10)]
+
+
+def test_every_agent_identity_that_speaks_is_resolvable(project_dir):
+    """The roster is read out of `AGENT_IDENTITY`, so every member must resolve.
+
+    An id in the roster that `resolve_agent_config` rejects would raise `UnknownAgent` at
+    session creation - in a crew run, at the point an interview programme starts.
+    """
+    for agent_id in interviewer_agent_ids():
+        assert agent_id in AGENT_IDENTITY
+        assert AGENT_IDENTITY[agent_id].voice_id
+
+
+def test_no_interviewer_available_is_its_own_error_type():
+    """A refusal a caller can distinguish from a bug. `InterviewSessionTool._create` catches
+    exactly this and turns it into the agent-readable error string; catching `RuntimeError`
+    broadly there would have swallowed real faults into "no sessions created"."""
+    assert issubclass(NoInterviewerAvailable, RuntimeError)

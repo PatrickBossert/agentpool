@@ -498,10 +498,18 @@ export interface AssignmentData {
   stakeholders: Stakeholder[]
 }
 
+// What a session was stamped with at creation. The front end reads the locale off it and
+// nothing else - the voice and the synthesis model are the speak door's business, and are
+// declared here only because they are part of the row that comes back.
+//
+// `model_id` is optional because sessions created before it was stamped genuinely do not have
+// one; those were spoken through the server's default model every time, which is what they
+// keep. It is not optional in the sense of "the server may forget it".
 export interface VoiceConfig {
   language: string
   country_code: string
   elevenlabs_voice_id: string
+  model_id?: string
 }
 
 export interface InterviewQuestion {

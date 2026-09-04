@@ -62,6 +62,21 @@ class ProjectSettings(BaseModel):
     brand_interviewer_image_url: str = ""
     brand_interviewer_name: str = "Avery Singh"
     brand_interviewer_tagline: str = "I'll be guiding our conversation today"
+    # Which interviewer a participant meets. Resolved once per session, at creation, and
+    # stamped on the row - never re-read at interview time, so a project that changes this
+    # setting does not change who conducted an interview that has already been issued.
+    #
+    # Deliberately **not** platform-tier (`_PLATFORM_TIER_SETTINGS` in api/routers/projects.py).
+    # It decides the tone of a conversation, not where a project's material is sent, and the
+    # eight fields on that list are there because they move data across a boundary. A
+    # project_admin configuring their own engagement's interview programme is exactly the
+    # authority sp44 widened those fifteen doors for.
+    #
+    # `always_male` and `always_female` are answered from the *voices'* own ElevenLabs
+    # metadata rather than from any list in this codebase - see
+    # api/services/interviewer_selection.py. `random` is the default and needs no metadata at
+    # all, so the shipped path makes no call to ask.
+    interviewer_selection: Literal["always_male", "always_female", "random"] = "random"
     # Project context - set on Alex's setup tab to ground Maya's interview instruments, and
     # since sp56 also the participant-facing name of the engagement: `outbound_mail` heads
     # stakeholder mail with it, so a participant reads "GS Asset Management - Your interview

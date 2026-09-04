@@ -292,6 +292,13 @@ _MODULE_LEVEL_STATE = {
         "trap: it accumulates, so one test's three sends leave a later test on the same "
         "session token answering 429"
     ),
+    "api/services/voice_metadata.py::_GENDER_CACHE": (
+        REGISTERED, "a voice's sex as ElevenLabs reports it, held because it does not change "
+        "- proved by probe below. Stale entries are the ordinary test-order trap and one that "
+        "would be hard to read: a test establishing a voice as female makes the next test's "
+        "differently-labelled voice pass because of the first, and the interviewer selection "
+        "is exactly what reads it"
+    ),
     "api/config.py::get_settings": (
         ISOLATED_ELSEWHERE, "conftest.reset_settings_cache, which predates the registry and "
         "clears it on both sides. Deliberately not also registered: api/config.py is the "
@@ -378,7 +385,17 @@ def _transcript_log_probe():
     )
 
 
+def _voice_gender_probe():
+    from api.services import voice_metadata
+    key = "process-cache-probe-voice"
+    return (
+        lambda: voice_metadata._GENDER_CACHE.__setitem__(key, "female"),
+        lambda: key in voice_metadata._GENDER_CACHE,
+    )
+
+
 _REGISTERED_PROBES = {
+    "api/services/voice_metadata.py::_GENDER_CACHE": _voice_gender_probe,
     "api/services/chroma_client.py::_MODE_CACHE": _mode_cache_probe,
     "api/services/chroma_client.py::_FORCE_LOCAL_CACHE": _force_local_cache_probe,
     "api/services/platform_settings.py::_CACHED_URL": _platform_url_probe,

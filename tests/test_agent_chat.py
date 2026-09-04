@@ -78,6 +78,7 @@ async def chat_project():
                 session_token TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL DEFAULT 'pending',
                 voice_config TEXT,
+                interviewer_agent_id TEXT,
                 transcript_json TEXT,
                 ratings_json TEXT,
                 started_at TEXT,
