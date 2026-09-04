@@ -58,15 +58,26 @@ def _code_lines(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("//"))
 
 
-def _capture_tts(monkeypatch) -> list[dict]:
+def _capture_tts(monkeypatch, tmp_path) -> list[dict]:
     """Point `synthesise`'s HTTP client at an `httpx.MockTransport` and record every request.
 
     Reading the real request rather than swapping the client class, following the rule
     CLAUDE.md records for the LLM seam: a test that mocks at the function boundary cannot see
     what actually goes on the wire, and "the value reached the call" is a weaker claim than
     "the value reached the request". No ElevenLabs call is made.
+
+    `DATA_DIR` is repointed at `tmp_path` because `speak` caches, keyed on voice, model, and
+    text - and a cache hit makes **no request at all**, so a caller whose audio is already
+    warm records nothing here and the assertion reads as "the voice never reached the wire".
+    This is not hypothetical: it fired during this task's own power-check, where a mutation
+    that made two tests resolve the same voice put them on one key and the second one saw an
+    empty list. A test whose isolation depends on the code under test being correct is not
+    isolated.
     """
     import json as _json
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
 
     seen: list[dict] = []
 
@@ -487,7 +498,7 @@ def test_the_rehearsal_dialog_declares_no_voice_of_its_own():
 
 @pytest.mark.asyncio
 async def test_the_rehearsal_door_speaks_in_the_projects_configured_voice_and_model(
-    project_dir, client, monkeypatch
+    project_dir, client, monkeypatch, tmp_path
 ):
     """The whole chain, asserted at the wire.
 
@@ -498,6 +509,9 @@ async def test_the_rehearsal_door_speaks_in_the_projects_configured_voice_and_mo
     """
     slug = "rehearsal-project"
     project_id = await _make_project(slug)
+    # Distinct from the control's text as well as from its voice, so the two cannot share a
+    # cache entry even when a mutation makes them resolve the same configuration.
+    text = "Shall we begin, on the configured voice?"
     async with get_connection(slug) as conn:
         await upsert_agent_config(
             conn,
@@ -506,32 +520,31 @@ async def test_the_rehearsal_door_speaks_in_the_projects_configured_voice_and_mo
             **_only(voice_id="CONFIGURED-VOICE", model_id="CONFIGURED-MODEL"),
         )
 
-    seen = _capture_tts(monkeypatch)
-    res = await client.post(
-        "/api/interviews/test/speak", json={"text": "Shall we begin?", "slug": slug}
-    )
+    seen = _capture_tts(monkeypatch, tmp_path)
+    res = await client.post("/api/interviews/test/speak", json={"text": text, "slug": slug})
 
     assert res.status_code == 200
     assert len(seen) == 1
     assert seen[0]["url"].endswith("/text-to-speech/CONFIGURED-VOICE")
     assert seen[0]["json"]["model_id"] == "CONFIGURED-MODEL"
+    assert seen[0]["json"]["text"] == text
 
 
 @pytest.mark.asyncio
 async def test_an_unconfigured_project_rehearses_in_averys_default_voice_and_model(
-    project_dir, client, monkeypatch
+    project_dir, client, monkeypatch, tmp_path
 ):
     """The control, at the wire. Without it, the test above passes for a door that resolves
     only overrides and speaks in nothing at all when a project has none."""
     slug = "rehearsal-default-project"
     await _make_project(slug)
+    text = "Shall we begin, on no configuration at all?"
 
-    seen = _capture_tts(monkeypatch)
-    res = await client.post(
-        "/api/interviews/test/speak", json={"text": "Shall we begin?", "slug": slug}
-    )
+    seen = _capture_tts(monkeypatch, tmp_path)
+    res = await client.post("/api/interviews/test/speak", json={"text": text, "slug": slug})
 
     assert res.status_code == 200
+    assert len(seen) == 1
     assert seen[0]["url"].endswith(f"/text-to-speech/{AVERY_VOICE_ID}")
     assert seen[0]["json"]["model_id"] == DEFAULT_TTS_MODEL_ID
     assert GEORGE not in seen[0]["url"]
