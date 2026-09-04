@@ -18,7 +18,7 @@
 // Two cases, and the pair is the point. A stamped session is conducted and sends no voice at
 // all - the server reads the stamp. An unstamped session is refused before a single word is
 // spoken, rather than being spoken in something invented here.
-import { render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -168,7 +168,24 @@ async function startInterview(voiceConfig: unknown, branding?: unknown) {
 
 describe('the voice the interview portal speaks in', () => {
   beforeEach(() => { vi.restoreAllMocks() })
-  afterEach(() => { vi.unstubAllGlobals() })
+  afterEach(() => {
+    // Unmount BEFORE unstubbing. The interview is an async loop that outlives the assertion -
+    // it speaks the next question whether or not a test is still watching - so unstubbing
+    // first let a late `speakText` reach the real `fetch`, which cannot parse a relative URL
+    // in Node. That surfaced as `Errors 1 error` beside `671 passed`, and vitest's own warning
+    // for it is "this might cause false positive tests" - on the file asserting what the
+    // portal sends.
+    cleanup()
+    // A benign stub rather than `vi.unstubAllGlobals()`. Unmounting does not cancel a fetch
+    // already in flight: the interview is an async loop that speaks the next question whether
+    // or not a test is still watching, so restoring the real `fetch` let a late `speakText`
+    // reach it - and Node cannot parse a relative URL, so it rejected unhandled. That surfaced
+    // as `Errors 1 error` beside `671 passed`, with vitest's own warning "this might cause
+    // false positive tests", on the file asserting what the portal sends.
+    //
+    // Vitest isolates test files, so leaving a stub here reaches nothing else.
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 200 }))
+  })
 
   it('names no voice at all when the session carries a stamp', async () => {
     await startInterview({
@@ -207,7 +224,24 @@ describe('the voice the interview portal speaks in', () => {
 
 describe('the interviewer a participant reads', () => {
   beforeEach(() => { vi.restoreAllMocks() })
-  afterEach(() => { vi.unstubAllGlobals() })
+  afterEach(() => {
+    // Unmount BEFORE unstubbing. The interview is an async loop that outlives the assertion -
+    // it speaks the next question whether or not a test is still watching - so unstubbing
+    // first let a late `speakText` reach the real `fetch`, which cannot parse a relative URL
+    // in Node. That surfaced as `Errors 1 error` beside `671 passed`, and vitest's own warning
+    // for it is "this might cause false positive tests" - on the file asserting what the
+    // portal sends.
+    cleanup()
+    // A benign stub rather than `vi.unstubAllGlobals()`. Unmounting does not cancel a fetch
+    // already in flight: the interview is an async loop that speaks the next question whether
+    // or not a test is still watching, so restoring the real `fetch` let a late `speakText`
+    // reach it - and Node cannot parse a relative URL, so it rejected unhandled. That surfaced
+    // as `Errors 1 error` beside `671 passed`, with vitest's own warning "this might cause
+    // false positive tests", on the file asserting what the portal sends.
+    //
+    // Vitest isolates test files, so leaving a stub here reaches nothing else.
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 200 }))
+  })
 
   it("names whoever the server says is speaking, on both screens that name anybody", async () => {
     // The portal declared "Avery Singh" twice and his photograph once, and `interviewer_selection`
