@@ -1223,6 +1223,20 @@ async def _migrate_inbound_replies(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+# The overridable columns of `project_agent_config`, in the order the design names them.
+# Stated once so the table, its repair loop, the SELECT, the upsert and the resolver's
+# `CONFIG_FIELDS` cannot drift apart on which fields exist - the drift that let `updated_at`
+# fall out of the repair loop while everything else agreed.
+AGENT_CONFIG_COLUMNS = (
+    "display_name",
+    "image_url",
+    "voice_id",
+    "language",
+    "country_code",
+    "model_id",
+)
+
+
 async def _migrate_project_agent_config(conn: aiosqlite.Connection) -> None:
     """What this project calls an agent, what it shows for it, and how it sounds.
 
@@ -1245,10 +1259,18 @@ async def _migrate_project_agent_config(conn: aiosqlite.Connection) -> None:
     voice choice lives today - a setting that never reaches the server cannot reach an
     interview, which is exactly the first broken link in the wrong-voice defect.
 
+    `model_id` sits beside `voice_id` because voice and language are separate axes - a voice's
+    `verified_languages` names a model per language - so a project that chooses a French voice
+    and keeps an English synthesis model has configured half of what it meant. Every project is
+    English today and the resolved answer never varies; the column exists so that stops being
+    true without a second migration.
+
     Written as create-then-fill rather than a bare CREATE TABLE so it is defensive about the
     shape it finds: `PRAGMA table_info` decides which columns are missing, and the migration
     skips *itself* on a database that already has them rather than raising and taking every
-    later migration in the block down with it.
+    later migration in the block down with it. `updated_at` is repaired by the same loop and
+    with its own type - it was left out of the first version, so a table missing *that* column
+    was diagnosed as repaired and still broke `upsert_agent_config`, which writes it.
     """
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS project_agent_config (
@@ -1259,15 +1281,20 @@ async def _migrate_project_agent_config(conn: aiosqlite.Connection) -> None:
             voice_id      TEXT,
             language      TEXT,
             country_code  TEXT,
+            model_id      TEXT,
             updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (project_id, agent_id)
         )
     """)
     async with conn.execute("PRAGMA table_info(project_agent_config)") as cur:
         cols = {row["name"] async for row in cur}
-    for column in ("display_name", "image_url", "voice_id", "language", "country_code"):
+    repairs = [(name, "TEXT") for name in AGENT_CONFIG_COLUMNS]
+    repairs.append(("updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"))
+    for column, declaration in repairs:
         if column not in cols:
-            await conn.execute(f"ALTER TABLE project_agent_config ADD COLUMN {column} TEXT")
+            await conn.execute(
+                f"ALTER TABLE project_agent_config ADD COLUMN {column} {declaration}"
+            )
     await conn.commit()
 
 
@@ -1280,9 +1307,9 @@ async def fetch_agent_config(
     NULL" is deliberate even though `resolve_agent_config` resolves both to the defaults: the
     settings door needs to know whether the project has ever been configured.
     """
+    selected = ", ".join(AGENT_CONFIG_COLUMNS)
     async with conn.execute(
-        "SELECT project_id, agent_id, display_name, image_url, voice_id, language,"
-        " country_code, updated_at FROM project_agent_config"
+        f"SELECT project_id, agent_id, {selected}, updated_at FROM project_agent_config"
         " WHERE project_id=? AND agent_id=?",
         (project_id, agent_id),
     ) as cur:
@@ -1295,11 +1322,12 @@ async def upsert_agent_config(
     *,
     project_id: int,
     agent_id: str,
-    display_name: str | None = None,
-    image_url: str | None = None,
-    voice_id: str | None = None,
-    language: str | None = None,
-    country_code: str | None = None,
+    display_name: str | None,
+    image_url: str | None,
+    voice_id: str | None,
+    language: str | None,
+    country_code: str | None,
+    model_id: str | None,
 ) -> None:
     """Record this project's overrides for one agent, replacing whatever it held before.
 
@@ -1309,21 +1337,32 @@ async def upsert_agent_config(
     form that posts its whole state gets the behaviour it expects. A caller wanting to change
     one field of several reads the row first.
 
+    **None of the six has a Python default, deliberately.** With defaults,
+    `upsert_agent_config(conn, project_id=1, agent_id="x")` type-checks, reads at the call site
+    as a no-op, and wipes the row - so the shape most likely to be written by mistake is the
+    most destructive one available. Requiring all six puts the cost on the caller who means it
+    and makes a clear visible in the diff that performs it.
+
     An empty string is stored as an empty string and is *not* a clear.
     """
+    columns = ", ".join(AGENT_CONFIG_COLUMNS)
+    placeholders = ",".join("?" for _ in AGENT_CONFIG_COLUMNS)
+    assignments = ",".join(f" {name}=excluded.{name}" for name in AGENT_CONFIG_COLUMNS)
     await conn.execute(
-        "INSERT INTO project_agent_config"
-        " (project_id, agent_id, display_name, image_url, voice_id, language, country_code,"
-        "  updated_at)"
-        " VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)"
-        " ON CONFLICT(project_id, agent_id) DO UPDATE SET"
-        "  display_name=excluded.display_name,"
-        "  image_url=excluded.image_url,"
-        "  voice_id=excluded.voice_id,"
-        "  language=excluded.language,"
-        "  country_code=excluded.country_code,"
+        f"INSERT INTO project_agent_config (project_id, agent_id, {columns}, updated_at)"
+        f" VALUES (?,?,{placeholders},CURRENT_TIMESTAMP)"
+        f" ON CONFLICT(project_id, agent_id) DO UPDATE SET{assignments},"
         "  updated_at=CURRENT_TIMESTAMP",
-        (project_id, agent_id, display_name, image_url, voice_id, language, country_code),
+        (
+            project_id,
+            agent_id,
+            display_name,
+            image_url,
+            voice_id,
+            language,
+            country_code,
+            model_id,
+        ),
     )
     await conn.commit()
 
@@ -1808,8 +1847,15 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_local_inference_override.py::test_a_database_at_the_previous_version_gains_the_
 # force_local_inference_column, which fails on 13 and passes on 14; and
 # tests/test_agent_config.py::test_a_database_at_the_previous_version_gains_the_project_agent_
-# config_table, which fails on 14 and passes on 15.
-_SCHEMA_VERSION = 15
+# config_table, which fails on 14 and passes on 15; and
+# tests/test_agent_config.py::test_a_database_at_version_15_gains_the_model_id_column, which
+# fails on 15 and passes on 16.
+#
+# Note that 15 → 16 adds a column to an *existing* migration rather than a new function, which
+# the comment above already covers and which is the easier bump to forget: the migration is
+# already in the block, already runs on a fresh database, and only the databases that have
+# already been opened at 15 are left behind.
+_SCHEMA_VERSION = 16
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the

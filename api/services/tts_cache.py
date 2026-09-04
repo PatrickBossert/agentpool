@@ -27,13 +27,20 @@ def _cache_dir() -> Path:
     return d
 
 
-def cache_key(voice_id: str, text: str) -> str:
-    """A key over both the voice and the words.
+def cache_key(voice_id: str, model_id: str, text: str) -> str:
+    """A key over the voice, the synthesis model, and the words.
 
     The null byte is a separator, not decoration: without it, voice 'ab' with text 'c' and
     voice 'a' with text 'bc' hash identically and one interviewee hears another's voice.
+
+    `model_id` joins the key for the same class of reason rather than for tidiness. The same
+    words in the same voice through two different models are two different recordings, so a
+    key that omitted it would serve a project on `eleven_multilingual_v2` the audio a project
+    on `eleven_turbo_v2` had already stored - and the cache never expires, so the wrong
+    rendering would be permanent. It is a required argument, not an appended optional one:
+    a default would let a caller silently key on the wrong model.
     """
-    digest = hashlib.sha256(f"{voice_id}\x00{text}".encode()).hexdigest()
+    digest = hashlib.sha256(f"{voice_id}\x00{model_id}\x00{text}".encode()).hexdigest()
     return digest
 
 
@@ -85,7 +92,9 @@ def store_audio(key: str, audio: bytes) -> None:
             tmp.unlink(missing_ok=True)
 
 
-async def prewarm_script_audio(slug: str, script_id: str, voice_id: str) -> int:
+async def prewarm_script_audio(
+    slug: str, script_id: str, voice_id: str, model_id: str
+) -> int:
     """Synthesise a script's questions ahead of time. Returns how many were newly stored.
 
     Sub-project A calls this when it releases an invite, minutes to days before the
@@ -111,11 +120,11 @@ async def prewarm_script_audio(slug: str, script_id: str, voice_id: str) -> int:
             text = question.get("text") or question.get("question") or ""
             if not text:
                 continue
-            key = cache_key(voice_id, text)
+            key = cache_key(voice_id, model_id, text)
             if cached_audio(key) is not None:
                 continue
             try:
-                store_audio(key, await synthesise(text, voice_id))
+                store_audio(key, await synthesise(text, voice_id, model_id))
                 stored += 1
             except Exception:
                 # A pre-warm failure costs a cache miss later, never the invite.

@@ -180,7 +180,7 @@ async def test_speak_raises_without_key():
         from api.services.interview_service import speak
 
         with pytest.raises(ValueError, match="ELEVENLABS_API_KEY"):
-            await speak("Hello", "voice-xyz")
+            await speak("Hello", "voice-xyz", "model-xyz")
 
 
 # ---------------------------------------------------------------------------

@@ -17,8 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 from pydantic import BaseModel, Field
 
-from agents.identity import AVERY_VOICE_ID
+from agents.identity import DEFAULT_TTS_MODEL_ID
 from api.auth import check_project_access, require_any_auth
+from api.services.agent_config_service import UnknownAgent, resolve_agent_config
 from api.config import get_settings
 from api.database import (
     fetch_interview_sessions_for_run,
@@ -148,18 +149,45 @@ async def get_test_interview_script(payload: dict = Depends(require_any_auth)):
 
 class TestSpeakRequest(BaseModel):
     text: str
-    # The same defect as the interview portal's fallback, in the other language: this default
-    # was `21m00Tcm4TlvDq8ikWAM` - ElevenLabs' stock *Rachel*, a female voice - so a consultant
-    # rehearsing Avery in the test dialog heard somebody else. It names the identity registry
-    # rather than a literal so a rename or a re-voicing reaches both doors at once.
-    voice_id: str = AVERY_VOICE_ID
+    # Required, min_length=1, and exactly the rule the sibling elaboration-press door already
+    # carries. The rehearsal dialog is opened from a real project's setup tab and holds the
+    # slug in its props, so there is no honest caller without one - and `resolve_agent_config`
+    # refuses a blank slug rather than quietly answering the defaults for it.
+    slug: str = Field(min_length=1)
+    # The permanent snake key, never a display name. It defaults to the interviewer because
+    # that is whose rehearsal button exists today; Laura's setup tab passes her own id rather
+    # than needing a second door.
+    agent_id: str = "stakeholder_interviewer"
+
+    # There is deliberately **no `voice_id`**. It had one, with a default corrected from
+    # ElevenLabs' stock Rachel to Avery's - and the correction reached nobody, because the only
+    # caller passed `voice_id` explicitly from a *second* constant also called `AVERY_VOICE_ID`
+    # (`TestInterviewDialog.tsx`), holding George. Avery rehearsed as one man and interviewed
+    # as another, under one variable name, and every gate was green. A field the client fills
+    # is a field the client decides; the voice is the project's, so the server resolves it.
 
 
 @router.post("/test/speak")
 async def test_speak_text(body: TestSpeakRequest, payload: dict = Depends(require_any_auth)):
-    """TTS for the built-in test interview — no session token required."""
+    """TTS for the built-in test interview — no session token required.
+
+    The voice and the synthesis model are resolved from the project, through the same
+    `resolve_agent_config` the interview portal and the session stamp use. A consultant
+    rehearsing an agent hears what that agent is configured to sound like, or there is no
+    point rehearsing.
+    """
     try:
-        audio_bytes = await speak(body.text, body.voice_id)
+        config = await resolve_agent_config(body.slug, body.agent_id)
+    except UnknownAgent:
+        raise HTTPException(status_code=404, detail=f"Unknown agent: {body.agent_id}")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not config["voice_id"]:
+        raise HTTPException(
+            status_code=422, detail=f"{body.agent_id} has no voice configured"
+        )
+    try:
+        audio_bytes = await speak(body.text, config["voice_id"], config["model_id"])
         return Response(content=audio_bytes, media_type="audio/mpeg")
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -238,11 +266,21 @@ class SpeakRequest(BaseModel):
 
 @router.post("/{session_token}/speak")
 async def speak_text(session_token: str, body: SpeakRequest):
+    """TTS for a live interview, in the voice the session was issued with.
+
+    The model is `DEFAULT_TTS_MODEL_ID` and not yet the project's, deliberately: this door has
+    a session token rather than a slug, and the session is where the answer belongs. Stamping
+    the resolved configuration onto `interview_sessions` at creation is Task 3's, and the model
+    is stamped beside the voice when it lands - the same argument the design gives for the
+    voice itself, that an address re-derived at read time can move underneath the thing it
+    points at. Naming the constant rather than repeating its literal is what keeps this a
+    reference to the one place model defaults live rather than a sixth declaration.
+    """
     result = await get_session_with_script(session_token)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
-        audio_bytes = await speak(body.text, body.voice_id)
+        audio_bytes = await speak(body.text, body.voice_id, DEFAULT_TTS_MODEL_ID)
         return Response(content=audio_bytes, media_type="audio/mpeg")
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))

@@ -161,8 +161,15 @@ async def generate_deepgram_token() -> str:
         return resp.json()["key"]
 
 
-async def synthesise(text: str, voice_id: str) -> bytes:
-    """Call ElevenLabs and return raw audio. No caching - the cache wraps this."""
+async def synthesise(text: str, voice_id: str, model_id: str) -> bytes:
+    """Call ElevenLabs and return raw audio. No caching - the cache wraps this.
+
+    `model_id` is a parameter and not a constant here because voice and language are separate
+    axes: a voice's `verified_languages` names a model per language, so a project that picks a
+    French voice and keeps `eleven_turbo_v2` has configured half of what it meant. It is
+    resolved per project through `resolve_agent_config`, and it is **required** - a default
+    here would be a second place the answer lives, which is the defect this whole task is about.
+    """
     settings = get_settings()
     if not settings.elevenlabs_api_key:
         raise ValueError("ELEVENLABS_API_KEY not configured")
@@ -175,7 +182,7 @@ async def synthesise(text: str, voice_id: str) -> bytes:
         },
         json={
             "text": text,
-            "model_id": "eleven_turbo_v2",
+            "model_id": model_id,
             "voice_settings": {
                 "stability": 0.40,
                 "similarity_boost": 0.75,
@@ -189,14 +196,20 @@ async def synthesise(text: str, voice_id: str) -> bytes:
     return resp.content
 
 
-async def speak(text: str, voice_id: str) -> bytes:
-    """Cached speech. Scripted questions are identical across every interviewee."""
+async def speak(text: str, voice_id: str, model_id: str) -> bytes:
+    """Cached speech. Scripted questions are identical across every interviewee.
+
+    `model_id` reaches the cache key as well as the request. Two models render the same words
+    in the same voice differently, so a key over voice and text alone would serve one project's
+    audio to another the moment the models diverge - the same collision the key's null-byte
+    separator exists to prevent, one field along.
+    """
     from api.services.tts_cache import cache_key, cached_audio, store_audio
-    key = cache_key(voice_id, text)
+    key = cache_key(voice_id, model_id, text)
     hit = cached_audio(key)
     if hit is not None:
         return hit
-    audio = await synthesise(text, voice_id)
+    audio = await synthesise(text, voice_id, model_id)
     store_audio(key, audio)
     return audio
 

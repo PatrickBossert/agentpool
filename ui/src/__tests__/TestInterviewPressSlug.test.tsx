@@ -39,6 +39,7 @@ const SCRIPT = {
 const EVASIVE_ANSWER = 'I am not sure really'
 
 let pressBodies: Record<string, unknown>[] = []
+let speakBodies: Record<string, unknown>[] = []
 
 function installFetch() {
   return vi.fn(async (url: string, init?: RequestInit) => {
@@ -46,6 +47,7 @@ function installFetch() {
       return new Response(JSON.stringify(SCRIPT), { status: 200 })
     }
     if (url.endsWith('/speak')) {
+      speakBodies.push(JSON.parse(String(init?.body)))
       return new Response(new Blob([new Uint8Array([1, 2, 3])]), { status: 200 })
     }
     if (url.endsWith('/elaboration-press')) {
@@ -135,6 +137,7 @@ describe('the smoke-test dialog and the project it was opened from', () => {
 
   it('sends that project slug with every elaboration press', async () => {
     pressBodies = []
+    speakBodies = []
     vi.stubGlobal('fetch', installFetch())
     installSpeechRecognition(EVASIVE_ANSWER)
     installAudioAndMic()
@@ -150,6 +153,37 @@ describe('the smoke-test dialog and the project it was opened from', () => {
 
     expect(pressBodies.length).toBeGreaterThan(0)
     for (const body of pressBodies) {
+      expect(body.slug).toBe('secure-proj')
+    }
+  })
+
+  it('names no voice of its own, and sends the slug so the server resolves one', async () => {
+    // The dialog used to declare `const AVERY_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'` - George -
+    // and pass it on all three /speak calls. The server's own corrected default was therefore
+    // unreachable from the only caller there is, so Avery rehearsed as one man and interviewed
+    // as another, under the same variable name in two files, with every gate green.
+    //
+    // Asserted on the request body for the reason this file's header already gives about the
+    // slug: a constant being absent from the source is not the same claim as a voice being
+    // absent from the request, and it was the weaker of the two that let this survive.
+    pressBodies = []
+    speakBodies = []
+    vi.stubGlobal('fetch', installFetch())
+    installSpeechRecognition(EVASIVE_ANSWER)
+    installAudioAndMic()
+
+    render(<TestInterviewDialog slug="secure-proj" onClose={() => {}} />)
+
+    const toBriefing = await screen.findByRole('button', { name: /continue|start|begin/i })
+    await userEvent.click(toBriefing)
+    const start = await screen.findByRole('button', { name: /start test interview/i })
+    await userEvent.click(start)
+
+    await screen.findByText(/test interview complete/i, undefined, { timeout: 5000 })
+
+    expect(speakBodies.length).toBeGreaterThan(0)
+    for (const body of speakBodies) {
+      expect(body.voice_id).toBeUndefined()
       expect(body.slug).toBe('secure-proj')
     }
   })

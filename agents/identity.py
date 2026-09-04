@@ -53,6 +53,15 @@ never a fallback for his; it was a hardcoded stranger. It is corrected below, in
 are synthesised today; the others carry the field because the shape is the same and a special
 case would be the expensive half. `language` and `country_code` are not nullable - a voice always
 has a locale, and `en`/`GB` is the pair the interview portal has always sent.
+
+`model_id` is the synthesis model, and it is here rather than hardcoded in `synthesise` because
+**voice and language are separate axes and the ElevenLabs API says so**: a voice's
+`verified_languages` is a list of `{language, model_id, accent, locale, preview_url}`, and Daniel
+already carries `eleven_multilingual_v2` among his base models. A British voice is not a voice
+that can only speak English. `eleven_turbo_v2` is what every call has always sent, so it is the
+default and nothing changes audibly today - which is the point of carrying the field ahead of
+need: a French voice synthesising through an English model is the defect it forecloses, and it
+costs one field now rather than a second seam later.
 """
 from __future__ import annotations
 
@@ -70,6 +79,11 @@ AVERY_VOICE_ID = "onwK4e9ZLuTAKqWW03F9"
 # board-level interview. A default, not a decision - a project changes it through the picker.
 LAURA_VOICE_ID = "Xb7hH8MSUJpSbSDYk0k2"
 
+# The synthesis model every ElevenLabs call has always sent, lifted out of `synthesise` so it is
+# a default rather than a constant nobody can override. One place, named, so a door that has no
+# project to resolve against can still say which model it means without minting its own literal.
+DEFAULT_TTS_MODEL_ID = "eleven_turbo_v2"
+
 
 @dataclass(frozen=True)
 class Identity:
@@ -80,6 +94,7 @@ class Identity:
     voice_id: str | None = None
     language: str = "en"
     country_code: str = "GB"
+    model_id: str = DEFAULT_TTS_MODEL_ID
 
 
 AGENT_IDENTITY: dict[str, Identity] = {
