@@ -179,6 +179,55 @@ through `resolve_agent_config`, is a legitimate thing; four copies, one of them 
 **Deferred to Patrick.** Task 3 stamps whatever is resolved either way, so the stamping design
 holds under both - which is why this can be answered after Task 2 rather than before.
 
+## Project locale, and the multilingual future
+
+**Decided 4 September.** The voice is chosen **per project** - one male and one female
+interviewer voice each, not varying by interviewee. Four engagements are planned - Scottish,
+Irish, New Zealand and Australian - and **British English is the default for a new project.**
+
+So a project has a **locale**, and the voice pair follows from it. Mark and Belinda are the
+Scottish-male and New Zealand-female defaults; Daniel and Alice are the British pair.
+
+### What the design must not foreclose
+
+French, German and other native-language engagements are wanted later, which means **translating
+scripts and conducting the interview in that language**. Not now - but the shape must admit it.
+
+**Voice and language are separate axes, and the API says so.** A voice's `verified_languages` is
+a *list* of `{language, model_id, accent, locale, preview_url}`, and Daniel's
+`high_quality_base_model_ids` includes `eleven_multilingual_v2`. So "a British voice" is not a
+voice that can only speak English - it is a voice with a verified English accent that can also
+speak other languages, given the right model. A design that treats voice as a synonym for
+language cannot express that.
+
+### The one line that currently forecloses it
+
+`api/services/interview_service.py:178` hardcodes `"model_id": "eleven_turbo_v2"`. The voice id
+is configurable and the model is not, so selecting a French voice today would still synthesise
+through an English model. **`model_id` belongs beside `voice_id` in the configuration**, resolved
+the same way, even while every project is English and the answer never varies.
+
+*It costs one field now and a migration later.*
+
+### What already works, and should not be broken
+
+The **recognition** side is already locale-aware: `VoiceInterview.tsx:586` builds
+`${voiceConfig.language}-${voiceConfig.country_code}` and hands it to `recognition.lang`. So
+`en-GB` versus `en-NZ` already reaches speech-to-text correctly, and the same plumbing carries
+`fr-FR` when a project needs it. **The gap is on the speaking side, not the listening side.**
+
+### What else will need a language marker, and does not have one
+
+Recorded so it is a known cost rather than a surprise:
+
+- **Scripts.** Maya writes English and nothing records that. A translated script needs to say
+  which language it is in, or the same `script_id` means two different instruments.
+- **Transcripts.** Casey collates them into themes. A French transcript reaching an English
+  synthesis is a silent failure - fluent, plausible, and wrong.
+
+Neither is built here. Both are cheaper to allow for than to retrofit, and neither is a reason
+to delay this branch.
+
 ## Testing
 
 - A project with no configuration resolves every default, and the interview runs exactly as it
