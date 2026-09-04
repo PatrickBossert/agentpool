@@ -9,10 +9,15 @@ feedback typed during a sensitive engagement: if that stops being acceptable, th
 project-scoped skills library, not a default slug. Everything else goes through
 api/services/llm_client.py.
 
-`propose_skill` is the exception in this file and reaches no model at all: it is the write
-door onto the skills queue, used by an agent that has just revised its work and wants the
-general rule behind the correction remembered. It is deliberately deterministic, so a
-proposal cannot fail the run it is attached to for want of a model.
+`propose_skill` is the write door onto the skills queue, used by an agent that has just
+revised its work and wants the general rule behind the correction remembered. It asks Haiku
+one question - "is this the same rule as one we already hold?" - and **everything else about
+it is deterministic**: the naming, the insert, the increment. The model is asked for a
+judgement, never for a side effect, and a model that is unreachable, slow, or incoherent
+degrades to "not a duplicate" rather than failing the run the proposal is attached to.
+
+The proposal's text therefore reaches hosted Haiku, on the same deliberate exception this
+file's other helpers run on.
 """
 from __future__ import annotations
 
@@ -45,15 +50,49 @@ async def propose_skill(
     written, because that is the name `_fetch_skill_notes` looks the skill up under; storing
     the snake id would file a proposal that no approval could ever inject.
 
-    Returns `{"action", "skill_id", "status", "occurrences", "name", "agent"}`. `action` is
-    `"created"` here; recognising a near-duplicate of an existing skill and incrementing
-    `occurrences` instead is Task 2's, and is why this returns what happened rather than an id.
+    A near-duplicate of a rule this agent already holds is **not** a second row. A match is the
+    second occurrence of the same rule, which is the evidence a reviewer approves from, so it
+    increments `occurrences` on the row already there and records the new provenance beside it.
+    Both the approved skills and the pending suggestions are candidates: the second occurrence
+    of a rule nobody has approved yet is exactly what the queue needs to sort on.
+
+    Returns `{"action", "skill_id", "status", "occurrences", "name", "agent"}`, where `action`
+    is `"created"` or `"incremented"` - which is why this returns what happened rather than an
+    id.
     """
-    from api.database import get_system_connection, insert_skill, fetch_skills
+    from api.database import get_system_connection, insert_skill, record_skill_occurrence
 
     role = _role_name_for(agent_name)
     skill_name = (name or "").strip() or _derive_skill_name(description)
+    # One connection across the read, the comparison and the write. The comparison is a
+    # network call and SQLite holds no lock between statements, so the cost is an idle
+    # connection; splitting it would open a window in which two proposals of the same rule
+    # each find no duplicate and each create a row.
     async with get_system_connection() as conn:
+        candidates = await _rules_already_held(conn, role)
+        match_id = await find_duplicate_skill(description, candidates)
+        if match_id is not None:
+            occurrences = await record_skill_occurrence(
+                conn,
+                skill_id=match_id,
+                description=description,
+                source_project=source_project,
+                source_ref=source_ref,
+                proposed_by_agent=agent_name,
+                bump=True,
+            )
+            if occurrences:
+                held = next(c for c in candidates if c["id"] == match_id)
+                return {
+                    "action": "incremented",
+                    "skill_id": match_id,
+                    "status": held["status"],
+                    "occurrences": occurrences,
+                    "name": held["name"],
+                    "agent": role,
+                }
+            # The row went between the read and the write. Fall through and create.
+
         skill_id = await insert_skill(
             conn,
             name=skill_name,
@@ -67,16 +106,114 @@ async def propose_skill(
             status="pending",
             agents=[role],
         )
-        rows = await fetch_skills(conn, agent_name=role, status="pending")
-    row = next((r for r in rows if r["id"] == skill_id), None)
+        occurrences = await record_skill_occurrence(
+            conn,
+            skill_id=skill_id,
+            description=description,
+            source_project=source_project,
+            source_ref=source_ref,
+            proposed_by_agent=agent_name,
+            # The `skills` row already counts this one - `occurrences` defaults to 1.
+            bump=False,
+        )
     return {
         "action": "created",
         "skill_id": skill_id,
         "status": "pending",
-        "occurrences": (row or {}).get("occurrences", 1),
+        "occurrences": occurrences or 1,
         "name": skill_name,
         "agent": role,
     }
+
+
+# The statuses a proposal is compared against. `rejected` is deliberately absent: a human has
+# already refused that rule, and incrementing a rejected row would file the evidence where the
+# queue does not look - the recurrence would be recorded and invisible. A re-proposal of a
+# refused rule becomes a fresh pending row, which is the only place a reviewer will see it.
+_DEDUP_STATUSES = ("pending", "approved")
+
+
+async def _rules_already_held(conn, role: str) -> list[dict]:
+    """The candidate rules a proposal is compared against, for one agent.
+
+    Keyed on the **role name** (`Interaction Designer`), never the snake id, because that is
+    what `agent_skill_assignments` holds - a lookup by snake id would find no candidates
+    ever, and the recurrence signal would silently never fire while proposals kept
+    accumulating and the feature kept appearing to work.
+    """
+    from api.database import fetch_skills
+
+    held: list[dict] = []
+    for status in _DEDUP_STATUSES:
+        held.extend(await fetch_skills(conn, agent_name=role, status=status))
+    return held
+
+
+async def find_duplicate_skill(description: str, candidates: list[dict]) -> int | None:
+    """Return the id of the candidate stating the same rule as `description`, or None.
+
+    By meaning, not by text. The two ways of saying "the welcome carries privacy, the framing
+    carries purpose" share barely a word, and a string comparison would call them distinct -
+    at which point the second occurrence is filed as a fresh guess and the evidence the queue
+    sorts on never accumulates.
+
+    Both directions of error are guarded, and they are not symmetric. Calling two distinct
+    rules the same **loses a rule**, which is worse than a duplicate row a reviewer can see and
+    reject, so the prompt insists on same *behaviour* rather than same subject, and every
+    failure - no key, a refusal, unparseable JSON, an id that was never offered - resolves to
+    None and a new row.
+    """
+    if not candidates:
+        return None
+    offered = {int(c["id"]): c for c in candidates}
+    try:
+        client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
+        resp = await client.messages.create(
+            model=_MODEL,
+            max_tokens=256,
+            system=(
+                "You compare a proposed behaviour rule for an AI agent against the rules that "
+                "agent is already held to, and decide whether the proposal states one of them "
+                "again in different words.\n\n"
+                "Two rules are the same when following either one produces the same behaviour. "
+                "Wording, length, and word choice are irrelevant - a rule restated with no "
+                "shared vocabulary is still the same rule.\n\n"
+                "Two rules about the same subject are NOT the same rule unless they instruct "
+                "the same behaviour. 'The welcome carries privacy' and 'the welcome names the "
+                "interviewer' are both about the welcome and are different rules. When in "
+                "doubt, answer null: a duplicate a reviewer can see costs less than two "
+                "distinct rules merged into one.\n\n"
+                "The input is JSON: `proposed` is the new rule, `held` is the list of rules "
+                "already held, each with an `id`.\n\n"
+                "Respond with valid JSON only, no other text:\n"
+                '{"match_id": <the id of the rule the proposal restates, or null>, '
+                '"reason": "one sentence"}'
+            ),
+            messages=[{
+                "role": "user",
+                "content": json.dumps({
+                    "proposed": description,
+                    "held": [
+                        {"id": int(c["id"]), "name": c.get("name"),
+                         "description": c.get("description")}
+                        for c in candidates
+                    ],
+                }, indent=2),
+            }],
+        )
+        answer = json.loads(resp.content[0].text.strip())
+        match_id = answer.get("match_id")
+    except Exception:
+        return None
+    if match_id is None:
+        return None
+    try:
+        match_id = int(match_id)
+    except (TypeError, ValueError):
+        return None
+    # Never an id that was not offered. A hallucinated one would increment an unrelated
+    # skill - the one failure of this comparison that is silent at every later layer.
+    return match_id if match_id in offered else None
 
 
 def _role_name_for(agent_name: str) -> str:

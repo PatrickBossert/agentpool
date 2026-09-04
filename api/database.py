@@ -3306,6 +3306,39 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             PRIMARY KEY (skill_id, agent_name)
         );
 
+        -- One row per time an agent proposed a rule, including the first, so on a proposal
+        -- `skills.occurrences` is a denormalised COUNT(*) over this table - kept in step by
+        -- `record_skill_occurrence`, which writes both halves in one call for that reason.
+        --
+        -- Only proposals appear here. A `baseline` or `manual` skill has `occurrences` 1 and
+        -- no rows at all, which is honest rather than missing: nobody recorded where those
+        -- came from, and inventing an occurrence to make the count total would assert a
+        -- provenance the table has never held.
+        --
+        -- A table rather than a second `source_project` column, and rather than a JSON blob,
+        -- because of the question a reviewer actually asks at the queue: not "which project
+        -- first said this" but "how many, and where". A rule seen three times on one project
+        -- is weaker evidence than one seen once each on three, and only rows answer that -
+        -- COUNT(DISTINCT source_project) is a query here and is nothing a blob or a second
+        -- column can express. `skills.source_project`/`source_ref` stay the **first**
+        -- occurrence's, which is the row's own origin.
+        --
+        -- `description` is kept per occurrence because a near-duplicate is worded
+        -- differently by construction: how the rule was said the second and third time is
+        -- the evidence that the match was a fair one, and it is unrecoverable afterwards.
+        CREATE TABLE IF NOT EXISTS skill_occurrences (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            skill_id          INTEGER NOT NULL,
+            description       TEXT    NOT NULL,
+            source_project    TEXT,
+            source_ref        TEXT,
+            proposed_by_agent TEXT,
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_occurrences_skill
+            ON skill_occurrences(skill_id);
+
         CREATE TABLE IF NOT EXISTS scheduled_jobs (
             job_name     TEXT NOT NULL,
             slug         TEXT NOT NULL,
@@ -3615,8 +3648,64 @@ async def update_skill(
     return changed
 
 
+async def record_skill_occurrence(
+    conn: aiosqlite.Connection,
+    *,
+    skill_id: int,
+    description: str,
+    source_project: str | None = None,
+    source_ref: str | None = None,
+    proposed_by_agent: str | None = None,
+    bump: bool = False,
+) -> int:
+    """Record one occurrence of a skill's rule, and return the skill's occurrence count.
+
+    Both halves in one call deliberately. On a proposed skill `skills.occurrences` is a
+    denormalised count of the rows this writes, and the queue sorts by it - so a caller that
+    wrote the provenance row and forgot the increment would leave the ordering saying
+    something the evidence does not. `bump` is False for the first occurrence, whose count the
+    `skills` row already carries as the column default.
+
+    Returns 0 when the skill row has gone, so a caller can tell "counted" from "nothing to
+    count against" rather than reading a silent no-op as success.
+    """
+    async with conn.execute("SELECT occurrences FROM skills WHERE id = ?", (skill_id,)) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return 0
+    await conn.execute(
+        """INSERT INTO skill_occurrences
+               (skill_id, description, source_project, source_ref, proposed_by_agent)
+           VALUES (?, ?, ?, ?, ?)""",
+        (skill_id, description, source_project, source_ref, proposed_by_agent),
+    )
+    count = int(row["occurrences"])
+    if bump:
+        count += 1
+        await conn.execute(
+            "UPDATE skills SET occurrences = occurrences + 1 WHERE id = ?", (skill_id,)
+        )
+    await conn.commit()
+    return count
+
+
+async def fetch_skill_occurrences(conn: aiosqlite.Connection, *, skill_id: int) -> list[dict]:
+    """Every recorded occurrence of one skill's rule, oldest first.
+
+    Oldest first because the first row is the origin `skills.source_project` also carries,
+    and a reviewer reads the provenance as a history.
+    """
+    async with conn.execute(
+        "SELECT * FROM skill_occurrences WHERE skill_id = ? ORDER BY id", (skill_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
 async def delete_skill(conn: aiosqlite.Connection, *, skill_id: int) -> bool:
     await conn.execute("DELETE FROM agent_skill_assignments WHERE skill_id = ?", (skill_id,))
+    # Explicitly, not by cascade: nothing turns foreign keys on for this connection, so a
+    # declared ON DELETE CASCADE would be decoration. Its sibling above is deleted the same way.
+    await conn.execute("DELETE FROM skill_occurrences WHERE skill_id = ?", (skill_id,))
     cur = await conn.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
     await conn.commit()
     return cur.rowcount > 0
