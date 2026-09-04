@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from api.config import get_settings
-from api.database import get_connection, insert_interview_session
+from api.database import get_connection
+from tests.support_interview_sessions import insert_interview_session
 
 
 # The session carries a stamp because a real one does: `InterviewSessionTool._create` writes

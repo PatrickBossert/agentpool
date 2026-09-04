@@ -60,6 +60,9 @@ const SCRIPT = {
   closing_message: 'Thank you.',
 }
 
+/** The server's answer for who is speaking. Resolved from the session's stamp, never here. */
+const LAURA = { interviewer_name: 'Laura Nelson', interviewer_image_url: '', interviewer_tagline: '' }
+
 function sessionWith(voiceConfig: unknown) {
   return {
     id: 1,
@@ -76,10 +79,10 @@ let speakBodies: Record<string, unknown>[] = []
 /** Whether the interview reached its end, so a test cannot pass on an interview that never ran. */
 let completed = false
 
-function installFetch(session: unknown) {
+function installFetch(session: unknown, branding?: unknown) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/interviews/tok')) {
-      return new Response(JSON.stringify({ session, script: SCRIPT }), { status: 200 })
+      return new Response(JSON.stringify({ session, script: SCRIPT, branding }), { status: 200 })
     }
     if (url.endsWith('/speak')) {
       speakBodies.push(JSON.parse(String(init?.body)))
@@ -144,10 +147,10 @@ function installAudioAndMic() {
   })
 }
 
-async function startInterview(voiceConfig: unknown) {
+async function startInterview(voiceConfig: unknown, branding?: unknown) {
   speakBodies = []
   completed = false
-  vi.stubGlobal('fetch', installFetch(sessionWith(voiceConfig)))
+  vi.stubGlobal('fetch', installFetch(sessionWith(voiceConfig), branding))
   installSpeechRecognition('A clear answer about picking.')
   installAudioAndMic()
 
@@ -198,5 +201,39 @@ describe('the voice the interview portal speaks in', () => {
     await waitFor(() => expect(screen.getByText(/cannot be conducted/i)).toBeTruthy())
     expect(speakBodies).toEqual([])
     expect(completed).toBe(false)
+  })
+})
+
+
+describe('the interviewer a participant reads', () => {
+  beforeEach(() => { vi.restoreAllMocks() })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it("names whoever the server says is speaking, and never a name of its own", async () => {
+    // The portal declared "Avery Singh" twice and his photograph once, and `interviewer_selection`
+    // defaults to `random` over a roster of two - so roughly half of every project's participants
+    // would have heard Laura and read Avery. The name is the server's answer now, resolved from
+    // the session's stamp, and this asserts what is *rendered* rather than what is declared.
+    await startInterview(
+      { elevenlabs_voice_id: 'V', language: 'en', country_code: 'GB', model_id: 'm' },
+      LAURA,
+    )
+
+    expect(await screen.findByText('Laura Nelson')).toBeTruthy()
+    expect(screen.queryByText('Avery Singh')).toBeNull()
+    expect(document.body.innerHTML).not.toContain('avery-singh')
+  })
+
+  it('shows initials rather than somebody else\'s photograph when there is no headshot', async () => {
+    // Laura is the first agent with `image: None`, which agents/identity.py has always said is a
+    // legitimate state. The portal used to fall back to `/agents/avery-singh-hires.jpg`, which put
+    // one person's face on another person's name.
+    await startInterview(
+      { elevenlabs_voice_id: 'V', language: 'en', country_code: 'GB', model_id: 'm' },
+      LAURA,
+    )
+
+    expect(await screen.findByText('LN')).toBeTruthy()
+    expect(document.querySelector('img[src*="avery"]')).toBeNull()
   })
 })

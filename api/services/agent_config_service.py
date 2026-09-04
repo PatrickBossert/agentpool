@@ -102,13 +102,48 @@ async def resolve_agent_config(slug: str, agent_id: str) -> dict[str, Any]:
     outside the roll. See the module docstring for why a blank slug is refused while an
     unrecognised one is answered.
     """
-    defaults = agent_defaults(agent_id)
-    row = await _fetch_overrides(slug, agent_id)
+    return _merge(agent_defaults(agent_id), await _fetch_overrides(slug, agent_id))
+
+
+def _merge(defaults: dict[str, Any], row: dict[str, Any] | None) -> dict[str, Any]:
+    """Override where present, default otherwise, per field - the rule, in one place.
+
+    Extracted when a second entry point appeared (`resolve_agent_config_with`, below). The
+    fetch differs between them; the rule must not, and a second copy of "NULL means use the
+    default, an empty string does not" is precisely the drift this module exists to end.
+    """
     resolved: dict[str, Any] = {}
     for field in CONFIG_FIELDS:
         override = _override(row, field)
         resolved[field] = defaults[field] if override is None else override
     return resolved
+
+
+async def resolve_agent_config_with(conn: Any, *, slug: str, agent_id: str) -> dict[str, Any]:
+    """`resolve_agent_config`, for a caller that already holds this project's connection.
+
+    It exists for exactly one caller and one constraint. `get_session_with_script` serves the
+    **public interview path** and deliberately opens its database with `interview_db_connection`
+    rather than `get_connection`, because "a public interview request is not the place to
+    discover a schema change" - `get_connection` runs the migration block. Calling
+    `resolve_agent_config` from there would have run migrations on a participant's request, so
+    the resolution is handed the connection that is already open instead.
+
+    Same rule, same defaults, same blank-slug refusal: only the fetch differs. Anything that
+    diverges beyond the fetch belongs in `_merge`, which both call.
+    """
+    if not slug or not slug.strip():
+        raise ValueError(
+            "resolve_agent_config_with requires a slug; a blank one is a caller that lost it, "
+            "not a project that does not exist"
+        )
+    defaults = agent_defaults(agent_id)
+    async with conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
+        project = await cur.fetchone()
+    if project is None:
+        return _merge(defaults, None)
+    row = await fetch_agent_config(conn, project_id=project["id"], agent_id=agent_id)
+    return _merge(defaults, row)
 
 
 async def _fetch_overrides(slug: str, agent_id: str) -> dict[str, Any] | None:

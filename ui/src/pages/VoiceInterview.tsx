@@ -9,6 +9,16 @@ declare const webkitSpeechRecognition: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const SpeechRecognitionEvent: any
 
+/** Initials for an interviewer with no headshot - a state agents/identity.py declares legitimate. */
+function initialsOf(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]!.toUpperCase())
+    .join('')
+}
+
 type Phase = 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'rating' | 'complete' | 'error'
 type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'testing' | 'ready'
 
@@ -1105,16 +1115,28 @@ export default function VoiceInterview() {
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
           )}
 
-          {/* Interviewer persona */}
-          {branding?.interviewer_image_url && (
+          {/* Interviewer persona. Keyed on the NAME, not the photograph: the server resolves
+              both from the session's stamp, and an interviewer without a headshot is a
+              legitimate state that agents/identity.py has always allowed. Keying this block on
+              the image hid the name of the only interviewer who is actually in that state. */}
+          {branding?.interviewer_name && (
             <div className="flex flex-col items-center mb-6">
-              <img
-                src={branding.interviewer_image_url}
-                alt={branding.interviewer_name ?? 'Your interviewer'}
-                className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
-              />
+              {branding.interviewer_image_url ? (
+                <img
+                  src={branding.interviewer_image_url}
+                  alt={branding.interviewer_name}
+                  className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
+                />
+              ) : (
+                <div
+                  className="w-24 h-24 rounded-full mb-3 ring-4 ring-white shadow-md flex items-center justify-center text-2xl font-semibold text-white bg-gradient-to-br from-slate-500 to-slate-700"
+                  aria-hidden="true"
+                >
+                  {initialsOf(branding.interviewer_name)}
+                </div>
+              )}
               <p className="font-semibold text-gray-800" style={{ color: branding.text_color }}>
-                {branding.interviewer_name ?? 'Avery Singh'}
+                {branding.interviewer_name}
               </p>
               {branding.interviewer_tagline && (
                 <p className="text-sm text-gray-500 mt-0.5">{branding.interviewer_tagline}</p>
@@ -1200,9 +1222,14 @@ export default function VoiceInterview() {
     )
   }
 
-  // interviewing
-  const interviewerImg = branding?.interviewer_image_url ?? '/agents/avery-singh-hires.jpg'
-  const interviewerName = branding?.interviewer_name ?? 'Avery Singh'
+  // interviewing.
+  //
+  // No literal name and no literal photograph. Both used to be declared here - "Avery Singh"
+  // and /agents/avery-singh-hires.jpg - which were the third and fourth declarations of the
+  // interviewer's identity in the product, and they were what a participant read while Laura
+  // was speaking to them. The server resolves both from the session's stamp.
+  const interviewerImg = branding?.interviewer_image_url ?? ''
+  const interviewerName = branding?.interviewer_name ?? ''
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
@@ -1230,11 +1257,20 @@ export default function VoiceInterview() {
         {/* Interviewer panel */}
         <div className="w-56 flex-shrink-0 bg-slate-900 flex flex-col items-center justify-center gap-5 p-6 border-r border-slate-800">
           <div className="relative">
-            <img
-              src={interviewerImg}
-              alt={interviewerName}
-              className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
-            />
+            {interviewerImg ? (
+              <img
+                src={interviewerImg}
+                alt={interviewerName}
+                className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
+              />
+            ) : (
+              <div
+                className="w-40 h-40 rounded-full ring-4 ring-teal-400 shadow-2xl flex items-center justify-center text-4xl font-semibold text-white bg-gradient-to-br from-slate-600 to-slate-800"
+                aria-hidden="true"
+              >
+                {initialsOf(interviewerName)}
+              </div>
+            )}
             {(statusMessage || isListening) && (
               <span
                 className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 animate-pulse"

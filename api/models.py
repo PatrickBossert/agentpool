@@ -59,8 +59,16 @@ class ProjectSettings(BaseModel):
     brand_header_image_url: str = ""
     brand_primary_color: str = Field(default="#0d9488", pattern=r"^#[0-9a-fA-F]{3,8}$")
     brand_text_color: str = Field(default="#1f2937", pattern=r"^#[0-9a-fA-F]{3,8}$")
+    # Retained so a stored config keeps round-tripping, and **no longer read by the interview
+    # portal**: the interviewer's name and face come from the session's stamp through
+    # `resolve_agent_config`, which is keyed on the permanent `agent_id` and overridable per
+    # project in `project_agent_config`. The default here was the literal "Avery Singh", which
+    # meant every project that had ever saved settings held it and the server could not tell a
+    # brand decision from an inheritance - so with two interviewers on the roster, half of
+    # every project's participants would have heard Laura and read Avery. No UI has ever
+    # offered either field. Task 5 decides whether they are retired outright.
     brand_interviewer_image_url: str = ""
-    brand_interviewer_name: str = "Avery Singh"
+    brand_interviewer_name: str = ""
     brand_interviewer_tagline: str = "I'll be guiding our conversation today"
     # Which interviewer a participant meets. Resolved once per session, at creation, and
     # stamped on the row - never re-read at interview time, so a project that changes this

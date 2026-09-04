@@ -24,25 +24,77 @@ and caching it would make one bad minute permanent for the life of the process.
 **Nothing here reaches ElevenLabs unless a project has asked for a sex.** `random` is the
 shipped default and needs no metadata, so an ordinary deployment makes no call from this module.
 
-The client is `get_tts_client()`, the same shared `httpx.AsyncClient` `synthesise` uses - one
-client, one place a test installs a `MockTransport`, and one place a timeout is configured.
-Building a second client here is how a request ends up with a different timeout, a different
-header set, or (as `llm_client` learned expensively) a different wire protocol entirely.
+**The client is deliberately not the shared one**, and `_client` below says why at length: this
+module is called from a CrewAI worker thread running its own short-lived event loop, and an
+httpx connection pool is bound to the loop that created it. It was `get_tts_client()` when this
+landed, and that would have failed a live participant's `POST /speak` with "Event loop is
+closed" - invisibly to every test, because a `MockTransport` has no pool.
 """
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 import httpx
 
 from api.config import get_settings
-from api.services.http_clients import get_tts_client
 from api.services.process_cache import register_cache
 
 _VOICES_URL = "https://api.elevenlabs.io/v1/voices"
 
-# voice_id -> the gender label ElevenLabs answered with, or None where it carries none.
+# voice_id -> what the provider answered about it, cached only when it answered.
 _GENDER_CACHE: dict[str, str | None] = {}
+
+
+def _client() -> httpx.AsyncClient:
+    """A short-lived client for this one lookup, deliberately **not** `get_tts_client()`.
+
+    The shared client is a process-global keep-alive `httpx.AsyncClient`, and an httpx
+    connection pool holds anyio primitives bound to the event loop that created them. This
+    module is called from `InterviewSessionTool._create`, which runs on a CrewAI worker thread
+    under its own `asyncio.run` - a *different, short-lived* loop from the one serving
+    requests. Borrowing the shared pool there poisons it in both directions: the lookup itself
+    fails with "bound to a different event loop" if a request pooled a connection first, and
+    the next participant's `POST /speak` fails with "Event loop is closed" if the crew went
+    first. That second one is a **500 to a participant**, and the portal treats a failed
+    `/speak` as "skip the audio and continue", so the question is displayed and never spoken.
+
+    A once-per-batch metadata call has nothing to gain from a shared pool - the whole reason
+    `http_clients` exists is the per-utterance TLS handshake on the interview request path, and
+    this is two requests per interview *programme*. So it opens its own, and closes it.
+
+    No test could have caught the original defect, which is the part worth remembering: every
+    test installs a `MockTransport`, and a `MockTransport` has no connection pool. The mock was
+    one layer away from the thing that breaks.
+    """
+    return httpx.AsyncClient(timeout=15.0)
+
+
+@dataclass(frozen=True)
+class VoiceSexAnswer:
+    """What the provider said about one voice's sex, and whether it said anything at all.
+
+    Three states, and the third is the one a single `str | None` cannot express:
+
+    | `answered` | `label` | Means |
+    |---|---|---|
+    | True | `"female"` | the provider says this voice is female |
+    | True | None | the provider answered, and carries no `gender` label for it |
+    | False | None | we could not ask - unreachable, refused, 404, unparseable |
+
+    Collapsing the last two is what let a refusal claim "no interviewer's voice is female
+    **according to ElevenLabs**" when ElevenLabs had not been asked. That sentence sends an
+    operator to change a correctly-configured voice, and it arrives inside a tool result to a
+    language model mid-run, so it may be the only thing anybody ever reads about the failure.
+    """
+
+    label: str | None
+    answered: bool
+
+    @property
+    def established(self) -> bool:
+        """True when the provider gave a sex for this voice."""
+        return self.answered and self.label is not None
 
 
 def forget_voice_metadata() -> None:
@@ -66,7 +118,9 @@ async def voice_gender(voice_id: str) -> str | None:
 
     Raises `ValueError` when no API key is configured, matching `synthesise` - a deployment
     that cannot reach ElevenLabs cannot conduct a voice interview either, so answering a
-    confident default here would only move the failure to a worse place.
+    confident default here would only move the failure to a worse place. Every other failure -
+    transport, status, body - propagates, and `ask_voice_sex` is where it becomes "we could not
+    ask" rather than "the answer is no".
     """
     if voice_id in _GENDER_CACHE:
         return _GENDER_CACHE[voice_id]
@@ -75,35 +129,35 @@ async def voice_gender(voice_id: str) -> str | None:
     if not settings.elevenlabs_api_key:
         raise ValueError("ELEVENLABS_API_KEY not configured")
 
-    client = get_tts_client()
-    resp = await client.get(
-        f"{_VOICES_URL}/{voice_id}",
-        headers={"xi-api-key": settings.elevenlabs_api_key},
-        timeout=15.0,
-    )
-    resp.raise_for_status()
-    labels = resp.json().get("labels") or {}
+    async with _client() as client:
+        resp = await client.get(
+            f"{_VOICES_URL}/{voice_id}",
+            headers={"xi-api-key": settings.elevenlabs_api_key},
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    labels = body.get("labels") or {}
     gender = labels.get("gender") if isinstance(labels, dict) else None
     answer = gender.strip().lower() if isinstance(gender, str) and gender.strip() else None
     _GENDER_CACHE[voice_id] = answer
     return answer
 
 
-async def voice_gender_or_unknown(voice_id: str | None) -> str | None:
-    """`voice_gender`, but a transport failure is None rather than an exception.
-
-    The distinction a caller needs is "this voice is female" against "I could not establish
-    that this voice is female", and an unreachable API, an unparseable body and a voice with
-    no `gender` label all land in the second.
+async def ask_voice_sex(voice_id: str | None) -> VoiceSexAnswer:
+    """Ask the provider about one voice, and report *whether it answered* as well as what.
 
     A **missing key is not swallowed**. That is a deployment fault rather than a fact about a
     voice, it is the one an operator can fix, and it is the one that would otherwise turn
     "always female" into "whoever the shuffle produces" on every deployment that has not
     configured ElevenLabs - silently, and permanently, because the choice is stamped.
+
+    A voice id that is absent is not a failed lookup - there is nothing to ask about - so it
+    answers `answered=True, label=None`: an agent with no voice has no sex, which is a fact
+    rather than an outage.
     """
     if not voice_id:
-        return None
+        return VoiceSexAnswer(label=None, answered=True)
     try:
-        return await voice_gender(voice_id)
+        return VoiceSexAnswer(label=await voice_gender(voice_id), answered=True)
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError):
-        return None
+        return VoiceSexAnswer(label=None, answered=False)

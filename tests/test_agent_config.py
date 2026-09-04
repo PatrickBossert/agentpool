@@ -467,6 +467,13 @@ def test_the_interview_portal_declares_no_voice_of_its_own():
         "and the last two were also right when they were written"
     )
     assert "DEFAULT_VOICE_CONFIG" not in code
+    # And no persona literal either. "Avery Singh" and `/agents/avery-singh-hires.jpg` were
+    # declared here twice and once respectively, and with two interviewers on the roster they
+    # were what roughly half of all participants read while somebody else spoke to them. The
+    # server resolves both from the session's stamp; the rendered half is asserted in
+    # `VoiceInterviewStampedVoice.test.tsx`.
+    assert "Avery Singh" not in code
+    assert "avery-singh" not in code
     # `elevenlabs_voice_id` still appears once, as a *read* of the session's stamp - the portal
     # checks it is present before starting and refuses the interview if it is not. So the
     # assertion is about declared ids, not about the string "voice_id", which the read
@@ -855,7 +862,7 @@ async def test_both_test_interview_doors_refuse_the_same_stranger_in_the_same_vo
     assert speak.json()["detail"] == press.json()["detail"] == "Access denied to this project"
 
 
-def test_the_resolver_is_reached_by_the_rehearsal_door_and_the_session_stamp():
+def test_the_resolver_is_reached_by_the_three_doors_that_may_reach_it():
     """The docstring's central claim, held by a mechanism rather than by prose.
 
     This test used to be named `..._is_still_the_only_production_caller_of_the_resolver` and
@@ -888,16 +895,25 @@ def test_the_resolver_is_reached_by_the_rehearsal_door_and_the_session_stamp():
                 # caller. The first version of this test did exactly that and reported four
                 # callers where there is one, which is the same "enumerate by behaviour, not
                 # by name" mistake this codebase has now made in three different sweeps.
-                called = isinstance(node, ast.Call) and (
-                    getattr(node.func, "id", None) == "resolve_agent_config"
-                    or getattr(node.func, "attr", None) == "resolve_agent_config"
-                )
+                func = getattr(node, "func", None)
+                name = getattr(func, "id", None) or getattr(func, "attr", None)
+                # **Both** entry points, or the guard is blind to the one added last. The
+                # resolver gained `resolve_agent_config_with` for the public interview path,
+                # which must not run migrations and so hands over its own connection; a walk
+                # keyed on the original name alone would have counted two callers while three
+                # existed - the exact "enumerate by behaviour, not by name" mistake this test's
+                # first version already made once, in the other direction.
+                called = isinstance(node, ast.Call) and name in {
+                    "resolve_agent_config",
+                    "resolve_agent_config_with",
+                }
                 if called:
                     callers.add(str(path.relative_to(root)))
 
     assert callers == {
         "api/routers/interviews.py",
         "api/services/interviewer_selection.py",
+        "api/services/interview_service.py",
     }, (
         "resolve_agent_config gained or lost a production caller - update test_speak_text's "
         "docstring in the same change rather than widening this set, or the sentence there "

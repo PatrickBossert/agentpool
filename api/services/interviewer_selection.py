@@ -46,7 +46,7 @@ from typing import Any
 from agents.identity import AGENT_IDENTITY
 from api.database import fetch_project, get_connection, get_db_path, is_contained_slug
 from api.services.agent_config_service import resolve_agent_config
-from api.services.voice_metadata import voice_gender_or_unknown
+from api.services.voice_metadata import VoiceSexAnswer, ask_voice_sex
 
 # The sex each non-random mode asks for, in the vocabulary ElevenLabs answers in.
 _WANTED_GENDER = {"always_male": "male", "always_female": "female"}
@@ -145,6 +145,60 @@ async def project_interviewer_selection(slug: str) -> str:
     return choice if choice in _WANTED_GENDER or choice == "random" else DEFAULT_SELECTION
 
 
+def _why_nobody(
+    mode: str, wanted: str, roster: list[str], answers: dict[str, VoiceSexAnswer]
+) -> str:
+    """The refusal, saying only what was actually established.
+
+    Three sentences rather than one, because the three states end in three different repairs
+    and the earlier single sentence asserted the provider's answer in all of them:
+
+    - **Nobody could be asked** - the endpoint is unreachable, or does not answer for these
+      voices, or answers in a shape this code does not read. Telling an operator to configure a
+      different voice here is the *wrong repair applied to a correct configuration*, and it is
+      the one they would try first. This is exactly the failure the two unconfirmed ElevenLabs
+      assumptions produce, so it must not be worded as a fact about the voices.
+    - **Asked, and no `gender` label came back** - the provider answered and simply does not
+      classify these voices. Labelling them is the repair.
+    - **Asked, answered, and the answer is not what was wanted** - the only case where "no
+      configured voice is {wanted}" is a thing this code knows.
+
+    The common half is the same in all three, and it is the part that matters most: nothing was
+    written. The interviewer is stamped at creation, so a session issued with the wrong one
+    stays wrong after the cause is fixed.
+    """
+    unreachable = [a for a in roster if not answers[a].answered]
+    unlabelled = [a for a in roster if answers[a].answered and answers[a].label is None]
+    consequence = (
+        "No sessions were created: the interviewer is stamped on the session at creation, so "
+        "issuing them now would record the wrong one permanently."
+    )
+    ending = ("Set interviewer_selection to 'random' to proceed without asking for a sex.")
+
+    if len(unreachable) == len(roster):
+        return (
+            f"interviewer_selection is '{mode}', and ElevenLabs could not be asked what sex "
+            f"any interviewer's voice is - the voices lookup failed for "
+            f"{', '.join(unreachable)}. This says nothing about the voices themselves, so do "
+            f"not reconfigure them: check ELEVENLABS_API_KEY, the account's access to those "
+            f"voice ids, and that the service is reachable. {consequence} {ending}"
+        )
+    if unreachable or unlabelled:
+        could_not = ", ".join(unreachable + unlabelled) or "none"
+        return (
+            f"interviewer_selection is '{mode}' and no interviewer could be shown to have a "
+            f"{wanted} voice. ElevenLabs gave no sex for {could_not}"
+            + (f" and could not be asked about {', '.join(unreachable)}" if unreachable else "")
+            + f". {consequence} Either label those voices in ElevenLabs, configure a {wanted} "
+            f"voice for one of {', '.join(roster)}, or set interviewer_selection to 'random'."
+        )
+    return (
+        f"interviewer_selection is '{mode}' and ElevenLabs reports no interviewer's configured "
+        f"voice as {wanted}. {consequence} Configure a {wanted} voice for one of "
+        f"{', '.join(roster)}, or set interviewer_selection to 'random'."
+    )
+
+
 async def resolve_interviewer_selection(
     slug: str, *, rng: _random.Random | None = None
 ) -> InterviewerSelection:
@@ -162,20 +216,13 @@ async def resolve_interviewer_selection(
     if wanted is None:
         eligible: tuple[str, ...] = tuple(roster)
     else:
-        matching = []
-        for agent_id in roster:
-            if await voice_gender_or_unknown(configs[agent_id]["voice_id"]) == wanted:
-                matching.append(agent_id)
-        eligible = tuple(matching)
-
-    if not eligible:
-        raise NoInterviewerAvailable(
-            f"interviewer_selection is '{mode}' and no interviewer's configured voice is "
-            f"{wanted} according to ElevenLabs. No sessions were created: the interviewer is "
-            f"stamped on the session at creation, so issuing them now would record the wrong "
-            f"one permanently. Configure a {wanted} voice for one of {', '.join(roster)}, or "
-            f"set interviewer_selection to 'random'."
-        )
+        answers = {
+            agent_id: await ask_voice_sex(configs[agent_id]["voice_id"])
+            for agent_id in roster
+        }
+        eligible = tuple(a for a in roster if answers[a].label == wanted)
+        if not eligible:
+            raise NoInterviewerAvailable(_why_nobody(mode, wanted, roster, answers))
 
     return InterviewerSelection(
         mode=mode,

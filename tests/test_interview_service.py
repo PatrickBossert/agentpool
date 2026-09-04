@@ -12,6 +12,57 @@ from pathlib import Path
 from api.config import get_settings
 
 
+class _StubCursor:
+    """A cursor that answers "no rows", usable as `async with conn.execute(...) as cur`.
+
+    The tests below patch away every database call `get_session_with_script` makes *by name*
+    and left the connection itself a bare mock, which worked only for as long as nothing used
+    it as an async context manager. It does now: the interviewer's name and face are resolved
+    from the session's stamp on that connection. Answering "no rows" is the honest stub - it is
+    a project with no per-agent overrides, so the resolution falls to the agent's defaults,
+    which is exactly what these fixtures describe.
+    """
+
+    async def fetchone(self):
+        return None
+
+    async def fetchall(self):
+        return []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _StubConnection:
+    """Enough of an aiosqlite connection for a fixture that mocks every query by name."""
+
+    row_factory = None
+
+    def execute(self, *args, **kwargs):
+        return _StubCursor()
+
+    async def commit(self):
+        return None
+
+    async def close(self):
+        return None
+
+
+def _stub_interview_db_connection():
+    """An `interview_db_connection` replacement yielding `_StubConnection`."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _cm(db_path, **kwargs):
+        yield _StubConnection()
+
+    return _cm
+
+
+
 # ---------------------------------------------------------------------------
 # 1. get_session_with_script — session not found
 # ---------------------------------------------------------------------------
@@ -72,7 +123,10 @@ async def test_get_session_with_script_returns_session_and_script(tmp_path):
             new_callable=AsyncMock,
         ) as mock_script,
         patch("api.services.interview_service.get_settings") as mock_settings,
-        patch("aiosqlite.connect"),
+        patch(
+            "api.services.interview_service.interview_db_connection",
+            _stub_interview_db_connection(),
+        ),
     ):
         mock_find.return_value = str(fake_db)
         mock_fetch.return_value = fake_session
@@ -131,7 +185,10 @@ async def test_get_session_with_script_keeps_the_questionnaire_key(tmp_path):
             new_callable=AsyncMock,
         ) as mock_script,
         patch("api.services.interview_service.get_settings") as mock_settings,
-        patch("aiosqlite.connect"),
+        patch(
+            "api.services.interview_service.interview_db_connection",
+            _stub_interview_db_connection(),
+        ),
     ):
         mock_find.return_value = str(fake_db)
         mock_fetch.return_value = fake_session

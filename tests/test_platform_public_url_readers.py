@@ -152,8 +152,9 @@ async def _add_stakeholder(
 @pytest.mark.asyncio
 async def test_interview_url_reaches_a_reminder_with_a_session(sysadmin, sent):
     from api.database import (
-        fetch_project, get_connection, insert_campaign, insert_interview_session,
+        fetch_project, get_connection, insert_campaign,
     )
+    from tests.support_interview_sessions import insert_interview_session
 
     slug = "reader-interview-url"
     await _store_url(sysadmin)

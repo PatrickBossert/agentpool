@@ -169,7 +169,8 @@ INTERVIEWEE = "interviewee@example.test"
 
 
 async def _completed_session(slug: str, token: str) -> None:
-    from api.database import fetch_project, get_connection, insert_interview_session
+    from api.database import fetch_project, get_connection
+    from tests.support_interview_sessions import insert_interview_session
     stakeholder_id = await _add_stakeholder(slug, "Interviewee", INTERVIEWEE)
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)

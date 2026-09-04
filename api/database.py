@@ -3863,27 +3863,12 @@ async def replace_stakeholder_assignments(
 
 # ── Interview Sessions ────────────────────────────────────────────────────────
 
-async def insert_interview_session(
-    conn: aiosqlite.Connection,
-    *,
-    project_id: int,
-    orchestration_run_id: int | None,
-    stakeholder_id: int,
-    node_label: str,
-    session_token: str,
-    voice_config: str | None = None,
-    script_id: str | None = None,
-) -> int:
-    cur = await conn.execute(
-        "INSERT INTO interview_sessions "
-        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token,"
-        " voice_config, script_id) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token,
-         voice_config, script_id),
-    )
-    await conn.commit()
-    return cur.lastrowid
+# `insert_interview_session` used to live here and is now
+# `tests/support_interview_sessions.py`. It had no production caller - `InterviewSessionTool.
+# _create` is the only thing that creates a session - and it had drifted two columns behind it,
+# to the point where the sessions it wrote were refused by the speak door for carrying no
+# stamped voice. CLAUDE.md's rule is "delete it, or make it the producer"; it cannot be the
+# producer, because the producer is a synchronous tool on `sqlite3`.
 
 
 async def fetch_session_token_for_stakeholder(

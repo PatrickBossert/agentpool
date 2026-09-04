@@ -3,8 +3,8 @@
 import pytest
 import pytest_asyncio
 import aiosqlite
+from tests.support_interview_sessions import insert_interview_session
 from api.database import (
-    insert_interview_session,
     fetch_interview_session,
     fetch_interview_sessions_status,
     fetch_interview_transcripts,

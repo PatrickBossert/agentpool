@@ -85,6 +85,50 @@ async def _find_session_db(session_token: str) -> str | None:
     return None
 
 
+async def _interviewer_identity(conn, slug: str, session: dict) -> dict:
+    """The name and face of whoever this session was issued to.
+
+    Read from `interview_sessions.interviewer_agent_id` - the stamp - and resolved through the
+    same `resolve_agent_config` that produced the voice, on the connection already open, so a
+    participant's request does not run the migration block.
+
+    Two arms, and neither is a guess:
+
+    - **No stamp** means the session was created before the interviewer was recorded, and
+      before this commit there was exactly one interviewer. `stakeholder_interviewer` is
+      therefore a statement about history rather than a default, the same shape as the legacy
+      `model_id` rule at the speak door.
+    - **A stamp naming an id the roll no longer holds** answers empty. `agent_id` is a
+      permanent contract so this should not happen, and if it ever does, showing a participant
+      nobody is honest while showing them the wrong person is not.
+
+    A database error answers the agent's **defaults**, and that arm is not defensive padding:
+    `interview_db_connection` deliberately runs no migrations, so a project database that has
+    not been opened through `get_connection` since `project_agent_config` was added does not
+    have the table. "No overrides table" means "no overrides", which is precisely what the
+    defaults are - and the alternative is a 500 on a participant's first request. The branding
+    read a few lines below has always degraded the same way for the same reason.
+    """
+    import aiosqlite
+
+    from api.services.agent_config_service import (
+        UnknownAgent,
+        agent_defaults,
+        resolve_agent_config_with,
+    )
+
+    agent_id = session.get("interviewer_agent_id") or "stakeholder_interviewer"
+    try:
+        return await resolve_agent_config_with(conn, slug=slug, agent_id=agent_id)
+    except UnknownAgent:
+        return {"display_name": "", "image_url": ""}
+    except (aiosqlite.Error, ValueError):
+        try:
+            return agent_defaults(agent_id)
+        except UnknownAgent:
+            return {"display_name": "", "image_url": ""}
+
+
 async def get_session_with_script(session_token: str) -> dict | None:
     """Fetch interview session row plus its script from the state store.
 
@@ -120,12 +164,23 @@ async def get_session_with_script(session_token: str) -> dict | None:
         # wrong node, discipline and level, and nothing reports the mismatch.
         script = await script_for_session(conn, slug, dict(session_row))
 
+        interviewer = await _interviewer_identity(conn, slug, dict(session_row))
+
     branding = {
         "header_image_url": config.get("brand_header_image_url", ""),
         "primary_color": config.get("brand_primary_color", "#0d9488"),
         "text_color": config.get("brand_text_color", "#1f2937"),
-        "interviewer_image_url": config.get("brand_interviewer_image_url", ""),
-        "interviewer_name": config.get("brand_interviewer_name", "Avery Singh"),
+        # The person, resolved from the session's stamp - **not** from `brand_interviewer_*`.
+        # Those two settings were written when there was one interviewer and their default was
+        # that interviewer's name, so a project could not distinguish "we branded this" from
+        # "this is what shipped": every stored config holds the literal "Avery Singh", no UI
+        # has ever offered the field, and with two interviewers on the roster roughly half of
+        # every project's participants would have heard Laura and read Avery. The answer
+        # belongs to the agent and `project_agent_config` is where a project overrides it.
+        "interviewer_image_url": interviewer["image_url"] or "",
+        "interviewer_name": interviewer["display_name"],
+        # The tagline stays project branding: it describes the engagement's tone rather than
+        # naming a person, and it is the same sentence whoever is speaking.
         "interviewer_tagline": config.get("brand_interviewer_tagline", "I'll be guiding our conversation today"),
     }
 

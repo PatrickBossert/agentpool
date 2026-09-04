@@ -68,8 +68,9 @@ async def _seed_project_with_sessions(slug: str, statuses: list[str]) -> None:
     """Insert a project, one stakeholder, and one interview session per status given."""
     from api.database import (
         get_connection, insert_project, fetch_project, insert_stakeholder,
-        insert_interview_session, update_interview_session_status,
+        update_interview_session_status,
     )
+    from tests.support_interview_sessions import insert_interview_session
     async with get_connection(slug) as conn:
         await insert_project(
             conn, slug=slug, llm_mode="standard", sector="rail", config_json="{}"
