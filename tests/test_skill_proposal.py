@@ -87,24 +87,26 @@ def _fake_haiku(monkeypatch):
     It reads the ids and descriptions out of the request the production code actually built,
     so a comparison that stopped sending the candidates would stop matching here too.
 
-    Yields the list of requests made, for the test that asserts what was asked.
+    Yields the list of requests made, for the test that asserts what was asked. Each recorded
+    request carries the client's own construction arguments under `_client_kwargs`, so the
+    budget the call is made under is assertable alongside its content.
     """
     calls: list[dict] = []
 
-    async def _create(**kwargs):
-        calls.append(kwargs)
-        payload = json.loads(kwargs["messages"][0]["content"])
-        wanted = _meaning(payload["proposed"])
-        match = next(
-            (h["id"] for h in payload["held"] if _meaning(h["description"]) == wanted), None
-        )
-        body = json.dumps({"match_id": match, "reason": "stub"})
-        return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
+    def _client(**client_kwargs):
+        async def _create(**kwargs):
+            calls.append({**kwargs, "_client_kwargs": client_kwargs})
+            payload = json.loads(kwargs["messages"][0]["content"])
+            wanted = _meaning(payload["proposed"])
+            match = next(
+                (h["id"] for h in payload["held"] if _meaning(h["description"]) == wanted), None
+            )
+            body = json.dumps({"match_id": match, "reason": "stub"})
+            return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
 
-    monkeypatch.setattr(
-        "api.services.skills_service.AsyncAnthropic",
-        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_create)),
-    )
+        return types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
+
+    monkeypatch.setattr("api.services.skills_service.AsyncAnthropic", _client)
     return calls
 
 
@@ -463,6 +465,217 @@ async def test_an_id_the_model_was_never_offered_is_refused(monkeypatch):
     assert second["action"] == "created"
     assert await _occurrences_of(stranger["skill_id"]) == 1
     assert await _occurrences_of(first["skill_id"]) == 1
+
+
+# ── the agent id has to resolve, or nobody can ever action the proposal ────────
+
+def test_every_dispatched_crew_agent_resolves_to_a_skills_name():
+    """The structural guard, and the one that would have caught `visual_illustrator`.
+
+    Absence from `_SNAKE_TO_DISPLAY` is silent in both directions and looks like working: the
+    agent is injected with no skills however many are assigned to it, and a proposal it makes
+    is filed under a name no approval can reach. Enumerated from `_CREW_AGENT_NAMES` rather
+    than listed here, so the next agent added is measured against this rather than joining the
+    gap.
+    """
+    from api.services.run_service import _CREW_AGENT_NAMES
+
+    dispatched = {a for agents in _CREW_AGENT_NAMES.values() for a in agents}
+    assert sorted(dispatched - set(_SNAKE_TO_DISPLAY)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_proposal_from_the_illustrator_is_filed_where_an_approval_can_reach_it():
+    """The end-to-end the passthrough used to fail, driven the whole way.
+
+    `visual_illustrator` is dispatched by the `business_plan` crew. Under the old passthrough
+    its proposal was filed under the snake id, reported `created` with an id, approved by a
+    human - and reached no prompt, which is the design's own description of the trap. Asserted
+    at the injection, because that is the only layer where the difference shows.
+    """
+    result = await propose_skill(
+        "visual_illustrator", "Render every chart in the client's own palette.", "p1", "VI-001"
+    )
+    await _approve(result["skill_id"])
+    assert "client's own palette" in await _fetch_skill_notes("business_plan")
+
+
+@pytest.mark.asyncio
+async def test_a_proposal_naming_an_unresolvable_agent_is_refused_and_writes_nothing():
+    """Refuse, never guess. An id in neither vocabulary is one whose proposal nobody could
+    ever action, and a row filed under it is indistinguishable from a working one.
+    """
+    from api.database import fetch_skills, get_system_connection
+    from api.services.skills_service import UnknownProposingAgent
+
+    with pytest.raises(UnknownProposingAgent, match="knowledge_curator"):
+        await propose_skill("knowledge_curator", RULE, "p1", "SC-014")
+
+    async with get_system_connection() as conn:
+        assert await fetch_skills(conn) == []
+
+
+@pytest.mark.asyncio
+async def test_a_caller_holding_the_role_name_already_is_not_mangled():
+    """The admin door's vocabulary. `agent_skill_assignments` is keyed by these, so a name
+    that is already one must pass through unchanged rather than be refused with the ids.
+    """
+    result = await propose_skill(_SNAKE_TO_DISPLAY[AGENT], RULE, "p1", "SC-014")
+    assert result["agent"] == _SNAKE_TO_DISPLAY[AGENT]
+    await _approve(result["skill_id"])
+    assert RULE in await _fetch_skill_notes(CREW)
+
+
+# ── the comparator's failures are loud, and its budget is its own ──────────────
+
+@pytest.mark.asyncio
+async def test_a_reply_wrapped_in_a_code_fence_is_still_understood(monkeypatch):
+    """The sibling in this module has stripped fences since it was written, because this model
+    does it. The comparator asks for bare JSON in the same way, so one fenced reply would turn
+    recurrence off permanently while the queue kept filling with rows that look like new rules.
+    """
+    first = await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
+
+    async def _fenced(**_):
+        body = '```json\n' + json.dumps({"match_id": first["skill_id"]}) + '\n```'
+        return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
+
+    monkeypatch.setattr(
+        "api.services.skills_service.AsyncAnthropic",
+        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_fenced)),
+    )
+    second = await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
+
+    assert second["action"] == "incremented"
+    assert second["occurrences"] == 2
+
+
+@pytest.mark.asyncio
+async def test_an_id_the_model_wrote_as_a_string_is_understood(monkeypatch):
+    """JSON from a model is not typed. A quoted id is the same answer and must not be read as
+    a failure, which would count as a fresh rule.
+    """
+    first = await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
+
+    async def _quoted(**_):
+        body = json.dumps({"match_id": str(first["skill_id"])})
+        return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
+
+    monkeypatch.setattr(
+        "api.services.skills_service.AsyncAnthropic",
+        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_quoted)),
+    )
+    assert (await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031"))["action"] == "incremented"
+
+
+@pytest.mark.asyncio
+async def test_a_comparison_that_fails_says_so_in_the_log(monkeypatch, caplog):
+    """A dead comparator and a healthy queue with no duplicates in it are the same thing at
+    every later layer - `occurrences` stays 1 either way. The log line is the only thing that
+    tells them apart, so it is asserted rather than assumed.
+
+    The reply here is a well-formed response object with no content block, which is a shape
+    the stub normalises away everywhere else in this file.
+    """
+    await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
+
+    async def _empty(**_):
+        return types.SimpleNamespace(content=[])
+
+    monkeypatch.setattr(
+        "api.services.skills_service.AsyncAnthropic",
+        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_empty)),
+    )
+    with caplog.at_level("WARNING", logger="api.services.skills_service"):
+        second = await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
+
+    assert second["action"] == "created"
+    assert any(
+        r.levelname == "WARNING" and "duplicate comparison failed" in r.message
+        for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_comparison_carries_its_own_time_budget(_fake_haiku):
+    """The SDK's defaults are sized for an interactive caller: anthropic 0.120.0 waits 600
+    seconds and retries twice, which is half an hour inside a crew run for a nice-to-have
+    attached to a revision that is already finished. Asserted as *sent*, on the request and on
+    the client that made it.
+    """
+    from api.services.skills_service import _COMPARISON_RETRIES, _COMPARISON_TIMEOUT_SECONDS
+
+    await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
+    await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
+
+    assert len(_fake_haiku) == 1
+    assert _fake_haiku[0]["timeout"] == _COMPARISON_TIMEOUT_SECONDS
+    assert _fake_haiku[0]["_client_kwargs"]["max_retries"] == _COMPARISON_RETRIES
+    # A budget, not a formality: the worst case has to be a fraction of the SDK's 600s x 3.
+    assert _COMPARISON_TIMEOUT_SECONDS * (_COMPARISON_RETRIES + 1) <= 60
+
+
+@pytest.mark.asyncio
+async def test_no_database_connection_is_held_across_the_comparison(monkeypatch):
+    """The comparison is a network call, and a connection open across it is a thread held for
+    as long as the model takes.
+
+    An earlier version held one and justified it as closing the window in which two concurrent
+    proposals of the same rule each create a row. That justification was false -
+    `get_system_connection` opens a fresh connection per call, so two overlapping proposals
+    hold two of them and no transaction spans the read and the write either way. The window is
+    accepted; paying for it was not. Asserted structurally, because the cost is invisible in
+    every result the function returns.
+    """
+    import contextlib
+
+    import api.database as db
+
+    real = db.get_system_connection
+    open_now = {"count": 0}
+    depth_at_comparison: list[int] = []
+
+    @contextlib.asynccontextmanager
+    async def _counting():
+        open_now["count"] += 1
+        try:
+            async with real() as conn:
+                yield conn
+        finally:
+            open_now["count"] -= 1
+
+    async def _watching(**_):
+        depth_at_comparison.append(open_now["count"])
+        return types.SimpleNamespace(
+            content=[types.SimpleNamespace(text=json.dumps({"match_id": None}))]
+        )
+
+    await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
+    monkeypatch.setattr(db, "get_system_connection", _counting)
+    monkeypatch.setattr(
+        "api.services.skills_service.AsyncAnthropic",
+        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_watching)),
+    )
+    await propose_skill(AGENT, DIFFERENT_RULE, "p2", "SC-031")
+
+    assert depth_at_comparison == [0]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_skill_takes_its_occurrences_with_it():
+    """Nothing turns foreign keys on for this connection, so the cleanup in `delete_skill` is
+    the whole mechanism - and deleting the line moved no test until this one existed.
+    """
+    from api.database import delete_skill, get_system_connection
+
+    first = await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
+    await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
+    assert len(await _provenance_of(first["skill_id"])) == 2
+
+    async with get_system_connection() as conn:
+        assert await delete_skill(conn, skill_id=first["skill_id"])
+        async with conn.execute("SELECT COUNT(*) AS n FROM skill_occurrences") as cur:
+            assert (await cur.fetchone())["n"] == 0
 
 
 @pytest.mark.asyncio

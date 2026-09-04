@@ -51,6 +51,14 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
 }
 
 # Maps snake_case agent names (used in DB crew runs) to display names (used in agent_skills).
+#
+# **Every agent in `_CREW_AGENT_NAMES` must appear here**, and
+# `tests/test_skill_proposal.py::test_every_dispatched_crew_agent_resolves_to_a_skills_name`
+# fails when one does not. Absence is silent in both directions and looks like working: this
+# map is what `_fetch_skill_notes` below resolves with, so a missing agent is injected with no
+# skills however many are assigned to it, and it is what `skills_service._role_name_for`
+# resolves with, so a proposal from a missing agent could be approved and still reach no
+# prompt. `visual_illustrator` was absent from the day it was registered.
 _SNAKE_TO_DISPLAY: dict[str, str] = {
     "value_chain_mapper":          "Value Chain Mapper",
     "interaction_designer":        "Interaction Designer",
@@ -67,6 +75,11 @@ _SNAKE_TO_DISPLAY: dict[str, str] = {
     "initiative_identifier":       "Initiative Identifier",
     "roadmap_generator":           "Roadmap Generator",
     "business_plan_generator":     "Business Plan Generator",
+    "visual_illustrator":          "Visual Illustrator",
+    # PAM is dispatched by orchestration_service rather than by a crew, so it is in no entry
+    # of _CREW_AGENT_NAMES and nothing injects its skills - but it holds eight of them in the
+    # table under this name, and it can propose. The two names had to agree somewhere.
+    "pam":                         "PAM",
 }
 
 

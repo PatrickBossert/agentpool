@@ -22,10 +22,20 @@ file's other helpers run on.
 from __future__ import annotations
 
 import json
+import logging
+
 from anthropic import AsyncAnthropic
 from api.config import get_settings
 
+log = logging.getLogger(__name__)
+
 _MODEL = "claude-haiku-4-5-20251001"
+
+# The comparison's own budget, in place of the SDK's interactive defaults. See
+# `find_duplicate_skill`; worst case is two attempts of twenty seconds rather than three of
+# ten minutes, on a path that runs inside a crew run.
+_COMPARISON_TIMEOUT_SECONDS = 20.0
+_COMPARISON_RETRIES = 1
 
 
 async def propose_skill(
@@ -64,13 +74,21 @@ async def propose_skill(
 
     role = _role_name_for(agent_name)
     skill_name = (name or "").strip() or _derive_skill_name(description)
-    # One connection across the read, the comparison and the write. The comparison is a
-    # network call and SQLite holds no lock between statements, so the cost is an idle
-    # connection; splitting it would open a window in which two proposals of the same rule
-    # each find no duplicate and each create a row.
+    # Read, compare, write - and **no connection is held across the comparison**, which is a
+    # network call. An earlier version held one and justified it as closing the window in
+    # which two proposals of the same rule each find no duplicate and each create a row.
+    # That justification was false: `get_system_connection` opens a fresh connection per
+    # call, so two overlapping proposals hold two of them and no transaction spans the read
+    # and the write either way. The window is real, it is open, and it is accepted - the
+    # failure is a second pending row a reviewer can see and merge, and closing it properly
+    # would mean re-reading the candidates under `BEGIN IMMEDIATE` and re-running the model
+    # call when they have changed, which is a second network call to avoid a benign row.
     async with get_system_connection() as conn:
         candidates = await _rules_already_held(conn, role)
-        match_id = await find_duplicate_skill(description, candidates)
+
+    match_id = await find_duplicate_skill(description, candidates)
+
+    async with get_system_connection() as conn:
         if match_id is not None:
             occurrences = await record_skill_occurrence(
                 conn,
@@ -81,8 +99,14 @@ async def propose_skill(
                 proposed_by_agent=agent_name,
                 bump=True,
             )
-            if occurrences:
-                held = next(c for c in candidates if c["id"] == match_id)
+            # `next(..., None)`, never a bare `next`. A generator that finds nothing raises
+            # StopIteration, which inside an async function surfaces as `RuntimeError:
+            # coroutine raised StopIteration` - **after** the row above has already been
+            # incremented, so the run dies having half-done the write. A proposal must never
+            # be able to fail the revision it is attached to, and that includes the paths
+            # nothing can currently reach.
+            held = next((c for c in candidates if int(c["id"]) == match_id), None)
+            if occurrences and held is not None:
                 return {
                     "action": "incremented",
                     "skill_id": match_id,
@@ -91,7 +115,13 @@ async def propose_skill(
                     "name": held["name"],
                     "agent": role,
                 }
-            # The row went between the read and the write. Fall through and create.
+            # The row went between the read and the write - a delete from another process,
+            # now genuinely reachable since the comparison no longer runs inside the read's
+            # connection. Fall through and create.
+            log.warning(
+                "skills: matched skill %s was gone by the time the occurrence was recorded; "
+                "creating a proposal for %s instead", match_id, role,
+            )
 
         skill_id = await insert_skill(
             conn,
@@ -167,10 +197,19 @@ async def find_duplicate_skill(description: str, candidates: list[dict]) -> int 
         return None
     offered = {int(c["id"]): c for c in candidates}
     try:
-        client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
+        # `max_retries` and `timeout` both named, because the SDK's defaults are sized for an
+        # interactive caller and this one is inside a crew run: anthropic 0.120.0 defaults to
+        # a 600s timeout and 2 retries, which is half an hour added to a run for a
+        # nice-to-have attached to a revision that is already finished. The comparison is a
+        # few hundred tokens to Haiku; if it has not answered in twenty seconds it is not
+        # going to, and "not a duplicate" is a defined answer this path is built to take.
+        client = AsyncAnthropic(
+            api_key=get_settings().anthropic_api_key, max_retries=_COMPARISON_RETRIES
+        )
         resp = await client.messages.create(
             model=_MODEL,
             max_tokens=256,
+            timeout=_COMPARISON_TIMEOUT_SECONDS,
             system=(
                 "You compare a proposed behaviour rule for an AI agent against the rules that "
                 "agent is already held to, and decide whether the proposal states one of them "
@@ -201,19 +240,58 @@ async def find_duplicate_skill(description: str, candidates: list[dict]) -> int 
                 }, indent=2),
             }],
         )
-        answer = json.loads(resp.content[0].text.strip())
+        answer = json.loads(_strip_code_fences(resp.content[0].text.strip()))
         match_id = answer.get("match_id")
     except Exception:
+        # Loud, and still "not a duplicate". The direction is right - a comparison must never
+        # fail the revision it is attached to - but silence is not, because a comparator that
+        # is failing on every call is indistinguishable at every later layer from one that is
+        # working and finding nothing: `occurrences` stays 1 either way, which is also what a
+        # healthy new queue looks like. This line is the only thing that can tell them apart.
+        log.warning("skills: duplicate comparison failed, treating as new", exc_info=True)
         return None
     if match_id is None:
         return None
     try:
         match_id = int(match_id)
     except (TypeError, ValueError):
+        log.warning("skills: duplicate comparison answered a non-numeric id %r", match_id)
         return None
     # Never an id that was not offered. A hallucinated one would increment an unrelated
     # skill - the one failure of this comparison that is silent at every later layer.
-    return match_id if match_id in offered else None
+    if match_id not in offered:
+        log.warning(
+            "skills: duplicate comparison answered id %s, which was not among the %d offered",
+            match_id, len(offered),
+        )
+        return None
+    return match_id
+
+
+def _strip_code_fences(raw_text: str) -> str:
+    """Unwrap ```` ```json ```` fencing, if the model wrapped its JSON in it.
+
+    One copy, two callers. `extract_skills_many` has defended against this since it was
+    written, because this model does it; `find_duplicate_skill` asks for bare JSON in exactly
+    the same way and needs exactly the same defence. A second copy would be free to drift, and
+    the drift is invisible: a fenced reply the comparator cannot parse turns recurrence - the
+    whole point of the duplicate check - off permanently, and looks like a queue with no
+    duplicates in it.
+    """
+    if not raw_text.startswith("```"):
+        return raw_text
+    inner = raw_text.split("```")[1]
+    if inner.startswith("json"):
+        inner = inner[4:]
+    return inner.strip()
+
+
+class UnknownProposingAgent(ValueError):
+    """A proposal named an agent that resolves to no skills-table name.
+
+    Raised rather than guessed, and a caller that must not fail - `SkillProposalTool` - is the
+    right place to swallow it. See `_role_name_for`.
+    """
 
 
 def _role_name_for(agent_name: str) -> str:
@@ -225,12 +303,29 @@ def _role_name_for(agent_name: str) -> str:
     wrong. The import is function-local for the reason `run_service`'s own imports are:
     everything downstream of the crew graph is import-order sensitive.
 
-    An unknown name is passed through unchanged, so a caller that already holds the role
-    name (the admin door's vocabulary) is not mangled into a name nothing matches.
+    **Three cases, and the third refuses.** A known snake id resolves; a name that is already
+    a role name is returned unchanged, which is the admin door's vocabulary and must not be
+    mangled; anything else raises `UnknownProposingAgent`.
+
+    The passthrough used to cover the third case too, and it re-opened the exact trap this
+    design devotes a section to. `visual_illustrator` is dispatched by the `business_plan`
+    crew and was in no map, so its proposal was filed under the snake id, reported `created`
+    with an id, approvable in the queue, approved - and injected into nothing, for ever. An id
+    that cannot be resolved is one whose proposal nobody can ever action, and inventing a name
+    for it produces a row that looks exactly like a working one. Refusing is loud; guessing is
+    not.
     """
     from api.services.run_service import _SNAKE_TO_DISPLAY
 
-    return _SNAKE_TO_DISPLAY.get(agent_name, agent_name)
+    if agent_name in _SNAKE_TO_DISPLAY:
+        return _SNAKE_TO_DISPLAY[agent_name]
+    if agent_name in set(_SNAKE_TO_DISPLAY.values()):
+        return agent_name
+    raise UnknownProposingAgent(
+        f"{agent_name!r} is neither an agent id nor a skills-library role name, so a proposal "
+        f"filed under it could never be injected into any prompt. Add it to _SNAKE_TO_DISPLAY "
+        f"in api/services/run_service.py."
+    )
 
 
 def _derive_skill_name(description: str) -> str:
@@ -297,13 +392,9 @@ async def extract_skills_many(raw_input: str) -> list[dict]:
         ),
         messages=[{"role": "user", "content": f"Extract skills from this input:\n\n{raw_input}"}],
     )
-    raw_text = resp.content[0].text.strip()
-    # Strip markdown code fences if the model wraps the JSON
-    if raw_text.startswith("```"):
-        raw_text = raw_text.split("```")[1]
-        if raw_text.startswith("json"):
-            raw_text = raw_text[4:]
-        raw_text = raw_text.strip()
+    # Strip markdown code fences if the model wraps the JSON. `find_duplicate_skill` calls the
+    # same helper - this defence was written here first and belongs to both.
+    raw_text = _strip_code_fences(resp.content[0].text.strip())
     try:
         result = json.loads(raw_text)
         if isinstance(result, list):
