@@ -61,6 +61,16 @@ async def test_a_project_with_no_configuration_resolves_every_default():
 
 - [ ] **Step 5: Correct Avery's default voice** to a male ElevenLabs voice, and move it out of the component into the same place the other defaults live. A default that contradicts the persona is the defect that produced this whole task.
 
+- [ ] **Step 5b: `model_id` is configured beside `voice_id`.** Added 4 September, deliberately ahead of need.
+
+`api/services/interview_service.py:178` hardcodes `"model_id": "eleven_turbo_v2"`. The voice is configurable and the model is not, so a French voice would still synthesise through an English model - which forecloses the native-language engagements the design must admit later.
+
+**Voice and language are separate axes and the API says so:** a voice's `verified_languages` is a *list* of `{language, model_id, accent, locale, preview_url}`, and Daniel already carries `eleven_multilingual_v2` in `high_quality_base_model_ids`. A British voice is not a voice that can only speak English.
+
+Carry `model_id` as a configured field with the current value as its default, and have `synthesise` take it rather than hold it. **Every project is English today and the resolved answer never varies**, so nothing changes audibly - which is the point: it costs one field now and a migration later.
+
+**Assert the model that reaches the request**, not the value in the table. A configured model nothing sends is the same defect one layer along, and it is the shape twelve tests on this codebase have been caught in.
+
 - [ ] **Step 6: Suites twice. Power-check the resolver's override arm and its default arm separately. Commit.**
 
 ---
