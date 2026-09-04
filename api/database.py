@@ -1223,6 +1223,111 @@ async def _migrate_inbound_replies(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_project_agent_config(conn: aiosqlite.Connection) -> None:
+    """What this project calls an agent, what it shows for it, and how it sounds.
+
+    Keyed on `(project_id, agent_id)` - the permanent snake key from `agents/identity.py`, never
+    a display name. That separation is the whole reason this table is cheap: renaming Avery, or
+    running an engagement where he is called something else, moves no identity and breaks no
+    history, because nothing here is keyed on what a human reads.
+
+    **NULL means "use the default"; an empty string does not.** They are different states and
+    the difference is the point. A project that has deliberately cleared a name - or a face, or
+    a voice - has said something, and saying it must not be indistinguishable from never having
+    opened the settings. `resolve_agent_config` therefore tests each column for NULL and not for
+    truthiness: `''` is an override that resolves to `''`.
+
+    Every column but the key is nullable for the same reason, and each is resolved on its own,
+    so a project may choose a voice without also having to restate a name it was happy with.
+
+    Not `config_json`: this is per agent rather than per project, and it wants a row per agent
+    rather than a nested blob that every writer has to merge. Not `localStorage`, where the
+    voice choice lives today - a setting that never reaches the server cannot reach an
+    interview, which is exactly the first broken link in the wrong-voice defect.
+
+    Written as create-then-fill rather than a bare CREATE TABLE so it is defensive about the
+    shape it finds: `PRAGMA table_info` decides which columns are missing, and the migration
+    skips *itself* on a database that already has them rather than raising and taking every
+    later migration in the block down with it.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS project_agent_config (
+            project_id    INTEGER NOT NULL,
+            agent_id      TEXT NOT NULL,
+            display_name  TEXT,
+            image_url     TEXT,
+            voice_id      TEXT,
+            language      TEXT,
+            country_code  TEXT,
+            updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (project_id, agent_id)
+        )
+    """)
+    async with conn.execute("PRAGMA table_info(project_agent_config)") as cur:
+        cols = {row["name"] async for row in cur}
+    for column in ("display_name", "image_url", "voice_id", "language", "country_code"):
+        if column not in cols:
+            await conn.execute(f"ALTER TABLE project_agent_config ADD COLUMN {column} TEXT")
+    await conn.commit()
+
+
+async def fetch_agent_config(
+    conn: aiosqlite.Connection, *, project_id: int, agent_id: str
+) -> dict | None:
+    """The overrides this project has recorded for one agent, or None if it has recorded none.
+
+    A returned dict may hold NULLs. Distinguishing "no row" from "a row whose every column is
+    NULL" is deliberate even though `resolve_agent_config` resolves both to the defaults: the
+    settings door needs to know whether the project has ever been configured.
+    """
+    async with conn.execute(
+        "SELECT project_id, agent_id, display_name, image_url, voice_id, language,"
+        " country_code, updated_at FROM project_agent_config"
+        " WHERE project_id=? AND agent_id=?",
+        (project_id, agent_id),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def upsert_agent_config(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    agent_id: str,
+    display_name: str | None = None,
+    image_url: str | None = None,
+    voice_id: str | None = None,
+    language: str | None = None,
+    country_code: str | None = None,
+) -> None:
+    """Record this project's overrides for one agent, replacing whatever it held before.
+
+    Every field is written, so passing None **clears** that override and restores the default -
+    it does not leave the stored value alone. That is the honest reading of "NULL means use the
+    default": a caller that omits a field is saying the field has no override, and a settings
+    form that posts its whole state gets the behaviour it expects. A caller wanting to change
+    one field of several reads the row first.
+
+    An empty string is stored as an empty string and is *not* a clear.
+    """
+    await conn.execute(
+        "INSERT INTO project_agent_config"
+        " (project_id, agent_id, display_name, image_url, voice_id, language, country_code,"
+        "  updated_at)"
+        " VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)"
+        " ON CONFLICT(project_id, agent_id) DO UPDATE SET"
+        "  display_name=excluded.display_name,"
+        "  image_url=excluded.image_url,"
+        "  voice_id=excluded.voice_id,"
+        "  language=excluded.language,"
+        "  country_code=excluded.country_code,"
+        "  updated_at=CURRENT_TIMESTAMP",
+        (project_id, agent_id, display_name, image_url, voice_id, language, country_code),
+    )
+    await conn.commit()
+
+
 async def insert_inbound_reply(
     conn: aiosqlite.Connection,
     *,
@@ -1701,8 +1806,10 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_knowledge_collection_is_recorded.py::test_a_database_at_the_previous_version_
 # gains_the_collection_column, which fails on 12 and passes on 13; and
 # tests/test_local_inference_override.py::test_a_database_at_the_previous_version_gains_the_
-# force_local_inference_column, which fails on 13 and passes on 14.
-_SCHEMA_VERSION = 14
+# force_local_inference_column, which fails on 13 and passes on 14; and
+# tests/test_agent_config.py::test_a_database_at_the_previous_version_gains_the_project_agent_
+# config_table, which fails on 14 and passes on 15.
+_SCHEMA_VERSION = 15
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1819,6 +1926,7 @@ async def get_connection(slug: str):
             await _migrate_validation_warnings(conn)
             await _migrate_registry_output_type(conn)
             await _migrate_inbound_replies(conn)
+            await _migrate_project_agent_config(conn)
             # PRAGMA does not accept bound parameters; _SCHEMA_VERSION is a hardcoded
             # module constant, never user input, so formatting it in is safe.
             await conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")

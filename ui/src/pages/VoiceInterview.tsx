@@ -14,6 +14,20 @@ type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'test
 
 const BASE = '/api'
 
+// The voice used when a session carries no stamped `voice_config` of its own.
+//
+// This is a **mirror, not a decision**. The authority is `AGENT_IDENTITY['stakeholder_interviewer']`
+// in `agents/identity.py`, and `test_the_interview_portals_fallback_is_averys_default_voice`
+// fails if the two ever disagree - so the id below cannot drift, and cannot be changed here
+// alone. It used to be a decision, declared inside the component: `21m00Tcm4TlvDq8ikWAM`, which
+// is ElevenLabs' stock *Rachel*, a female voice, for an interviewer described as male
+// everywhere he is described at all. The first completed interview was conducted in it.
+//
+// It remains here at all only until sessions are stamped with their resolved configuration at
+// creation, after which a session with no `voice_config` is a bug rather than a state to have
+// a fallback for.
+const DEFAULT_VOICE_CONFIG = { elevenlabs_voice_id: 'onwK4e9ZLuTAKqWW03F9', language: 'en', country_code: 'GB' }
+
 export interface CapturedPair {
   question_id: string
   question: string
@@ -563,8 +577,6 @@ export default function VoiceInterview() {
     setStatusMessage('')
     setCurrentQuestion('')
   }
-
-  const DEFAULT_VOICE_CONFIG = { elevenlabs_voice_id: '21m00Tcm4TlvDq8ikWAM', language: 'en', country_code: 'GB' }
 
   async function runInterview() {
     if (!sessionData) return

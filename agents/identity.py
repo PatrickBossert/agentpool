@@ -38,18 +38,39 @@ map and that one disagree.
 these files; the front end prefixes its configured base. It is nullable because an agent without
 a headshot is a legitimate state - today every one of the seventeen has one, and
 `test_every_image_names_a_file_that_exists` asks the directory rather than trusting this list.
+
+`voice_id`, `language` and `country_code` are the third piece of the mutable half, and they moved
+here from `DEFAULT_VOICE_CONFIG` in `ui/src/pages/VoiceInterview.tsx`. A default living inside a
+component is a default no server can read, no project can override, and nobody reviews - which is
+how Avery, described as male everywhere he is described at all, came to conduct the first
+completed interview in `21m00Tcm4TlvDq8ikWAM`, ElevenLabs' stock *Rachel*. The voice heard was
+never a fallback for his; it was a hardcoded stranger. It is corrected below, in the one place
+`resolve_agent_config` reads defaults from.
+
+`voice_id` is nullable and is `None` for every agent that does not speak. Only the interviewers
+are synthesised today; the others carry the field because the shape is the same and a special
+case would be the expensive half. `language` and `country_code` are not nullable - a voice always
+has a locale, and `en`/`GB` is the pair the interview portal has always sent.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+# ElevenLabs' stock "Daniel" - a British male voice, and the correction to the defect above.
+# Named as a constant so the id appears once and the test that asserts Avery is not Rachel can
+# name the wrong id without also naming the right one from the same source it is checking.
+AVERY_VOICE_ID = "onwK4e9ZLuTAKqWW03F9"
+
 
 @dataclass(frozen=True)
 class Identity:
-    """The mutable half of an agent: what to call it, and what to show for it."""
+    """The mutable half of an agent: what to call it, what to show for it, how it sounds."""
 
     display_name: str
     image: str | None = None
+    voice_id: str | None = None
+    language: str = "en"
+    country_code: str = "GB"
 
 
 AGENT_IDENTITY: dict[str, Identity] = {
@@ -61,7 +82,8 @@ AGENT_IDENTITY: dict[str, Identity] = {
     "requirements_analyst":        Identity("Riley Kim",       "/agents/riley-kim.jpg"),
     "value_lever_analyst":         Identity("Morgan Davis",    "/agents/morgan-davis.jpg"),
     "interview_coordinator":       Identity("Taylor Brooks",   "/agents/taylor-brooks.jpg"),
-    "stakeholder_interviewer":     Identity("Avery Singh",     "/agents/avery-singh.jpg"),
+    "stakeholder_interviewer":     Identity("Avery Singh",     "/agents/avery-singh.jpg",
+                                            voice_id=AVERY_VOICE_ID),
     "synthesis_analyst":           Identity("Casey Liu",       "/agents/casey-liu.jpg"),
     "value_proposition_generator": Identity("Quinn Harper",    "/agents/quinn-harper.jpg"),
     "portfolio_manager":           Identity("Blake Anderson",  "/agents/blake-anderson.jpg"),

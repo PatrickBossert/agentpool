@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 from pydantic import BaseModel, Field
 
+from agents.identity import AVERY_VOICE_ID
 from api.auth import check_project_access, require_any_auth
 from api.config import get_settings
 from api.database import (
@@ -147,7 +148,11 @@ async def get_test_interview_script(payload: dict = Depends(require_any_auth)):
 
 class TestSpeakRequest(BaseModel):
     text: str
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    # The same defect as the interview portal's fallback, in the other language: this default
+    # was `21m00Tcm4TlvDq8ikWAM` - ElevenLabs' stock *Rachel*, a female voice - so a consultant
+    # rehearsing Avery in the test dialog heard somebody else. It names the identity registry
+    # rather than a literal so a rename or a re-voicing reaches both doors at once.
+    voice_id: str = AVERY_VOICE_ID
 
 
 @router.post("/test/speak")
