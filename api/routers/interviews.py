@@ -171,11 +171,33 @@ class TestSpeakRequest(BaseModel):
 async def test_speak_text(body: TestSpeakRequest, payload: dict = Depends(require_any_auth)):
     """TTS for the built-in test interview — no session token required.
 
-    The voice and the synthesis model are resolved from the project, through the same
-    `resolve_agent_config` the interview portal and the session stamp use. A consultant
-    rehearsing an agent hears what that agent is configured to sound like, or there is no
-    point rehearsing.
+    The voice and the synthesis model are resolved from the project through
+    `resolve_agent_config`, so a consultant rehearsing an agent hears what that agent is
+    configured to sound like.
+
+    **This is currently the only production caller of `resolve_agent_config`**, and saying so
+    matters more than it looks: configuring a voice changes what this door speaks in and
+    nothing else. The live interview portal does *not* resolve through here - it reads
+    `session.voice_config` and falls back to its own constant - and nothing stamps that column
+    yet, so a crew-created session still carries whatever Taylor's `VOICE_LOCALE_TABLE` gave
+    it. Two things close that loop and neither is this door: Task 3 stamps the resolved
+    configuration onto the session at creation, and Task 4 retires the prompt table so Taylor
+    resolves through here too. An earlier version of this docstring claimed the portal and the
+    stamp already used this function, which would have told the next reader the chain was
+    joined up when it is not.
+
+    `check_project_access` is the **first** line, before the slug reaches a database. This door
+    took a slug in its body only recently; before that there was nothing to scope, and adding
+    the slug added the exposure - an org_admin of an unrelated organisation could name any slug
+    and hear its configured voice, while the sibling door twelve lines below refused them. A
+    refusal raised after the project's database has been opened and its configuration read is
+    not a refusal.
+
+    It is also the second door on this codebase that takes its slug from the **body** rather
+    than the path, which CLAUDE.md records as invisible to the route sweep - the sweep counts
+    routes whose *path* holds `{slug}`. Enumerating by path would not find this one.
     """
+    await check_project_access(body.slug, payload)
     try:
         config = await resolve_agent_config(body.slug, body.agent_id)
     except UnknownAgent:

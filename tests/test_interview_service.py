@@ -171,7 +171,19 @@ async def test_generate_deepgram_token_raises_without_key():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_speak_raises_without_key():
+async def test_speak_raises_without_key(tmp_path, monkeypatch):
+    """`speak` consults the cache *before* the key check, so this test needs its own cache.
+
+    On the shared DATA_DIR a warm entry for this voice, model, and text would be returned and
+    the missing key never tested - the assertion would pass while asserting nothing. It fails
+    loudly rather than silently if that ever happens, which is why this is small; it is the
+    same shape as the wire tests' collision, and the fix is the same one.
+    """
+    from api.config import get_settings as real_get_settings
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    real_get_settings.cache_clear()
+
     with patch("api.services.interview_service.get_settings") as mock_settings:
         settings_obj = MagicMock()
         settings_obj.elevenlabs_api_key = ""

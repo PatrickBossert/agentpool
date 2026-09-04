@@ -21,13 +21,19 @@ import sqlite3
 
 import httpx
 import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from agents.identity import AGENT_IDENTITY, AVERY_VOICE_ID, DEFAULT_TTS_MODEL_ID
+from api.auth import create_access_token
 from api.config import get_settings
 from api.database import (
     get_connection,
+    get_system_connection,
     fetch_agent_config,
+    insert_organisation,
     insert_project,
+    insert_project_registry,
     upsert_agent_config,
 )
 from api.services.agent_config_service import (
@@ -695,3 +701,145 @@ async def test_the_migration_repairs_a_table_missing_a_column_rather_than_raisin
     assert set(CONFIG_FIELDS) <= columns
     assert "updated_at" in columns
     assert (await resolve_agent_config(slug, AVERY))["voice_id"] == "AFTER-REPAIR"
+
+
+# --- Who may make the rehearsal door speak --------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def two_engagements(tmp_path, monkeypatch, client):
+    """Two projects owned by two different organisations, and an org_admin of each.
+
+    DATABASE_DIR and PROJECTS_DIR are redirected at this test's own tmp_path, following
+    `tests/test_milestone_door_authority.py`: the system database holding `users`,
+    `project_memberships` and `project_registry` otherwise lives at the shared, persistent
+    /tmp/agentpool_test, and a fixture inserting rows by fixed name passes once and fails on
+    every run afterwards.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "tts"))
+    get_settings.cache_clear()
+
+    for slug in ("voice-alpha", "voice-beta"):
+        res = await client.post(
+            "/projects",
+            json={
+                "client_slug": slug,
+                "llm_mode": "standard",
+                "sector": "transport",
+                "stakeholder_groups": [],
+                "value_stream_labels": [],
+                "review_gates": True,
+                "slack_channel": "",
+            },
+        )
+        assert res.status_code in (200, 201), res.text
+
+    async with get_system_connection() as sys_conn:
+        org_a = await insert_organisation(sys_conn, slug="voice-org-alpha", name="Alpha")
+        org_b = await insert_organisation(sys_conn, slug="voice-org-beta", name="Beta")
+        await insert_project_registry(
+            sys_conn, slug="voice-alpha", org_id=org_a, display_name="voice-alpha"
+        )
+        await insert_project_registry(
+            sys_conn, slug="voice-beta", org_id=org_b, display_name="voice-beta"
+        )
+        await sys_conn.commit()
+
+    # A voice only project A's organisation should ever hear.
+    async with get_connection("voice-alpha") as conn:
+        async with conn.execute("SELECT id FROM projects WHERE slug='voice-alpha'") as cur:
+            project_id = (await cur.fetchone())["id"]
+        await upsert_agent_config(
+            conn, project_id=project_id, agent_id=AVERY, **_only(voice_id="THEIR-PRIVATE-VOICE")
+        )
+
+    def _client_for(username: str, org_id: int) -> AsyncClient:
+        from api.main import app
+
+        token = create_access_token(username, "org_admin", "test-secret", org_id=org_id)
+        return AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    owner = _client_for("voice-admin-a", org_a)
+    stranger = _client_for("voice-admin-b", org_b)
+    async with owner, stranger:
+        yield {"owner": owner, "stranger": stranger}
+
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_org_admin_cannot_make_the_rehearsal_door_speak(
+    two_engagements, monkeypatch, tmp_path
+):
+    """The exposure adding a slug to this door created, asserted as closed.
+
+    Driven with a **real, fully-privileged org_admin of another organisation**, which is the
+    only caller that isolates the rule: an anonymous request is refused by the dependency
+    before `check_project_access` is ever reached, so it would prove nothing. This caller
+    clears authentication on its login role alone, and the 403 is the floor and nothing else.
+
+    Asserted on the wire as well as the status, because a door that refused *and* synthesised
+    would be a stranger 403'd after hearing the voice. The check is the first line for that
+    reason, before the slug reaches a database at all.
+    """
+    seen = _capture_tts(monkeypatch, tmp_path)
+
+    res = await two_engagements["stranger"].post(
+        "/api/interviews/test/speak", json={"text": "Whose voice is this?", "slug": "voice-alpha"}
+    )
+
+    assert res.status_code == 403
+    assert res.json()["detail"] == "Access denied to this project"
+    assert seen == [], "the door synthesised before refusing"
+
+
+@pytest.mark.asyncio
+async def test_the_owning_org_admin_still_hears_their_own_configured_voice(
+    two_engagements, monkeypatch, tmp_path
+):
+    """The control. Without it, a door that refused everybody would pass the test above and
+    the rehearsal button would simply be broken."""
+    seen = _capture_tts(monkeypatch, tmp_path)
+
+    res = await two_engagements["owner"].post(
+        "/api/interviews/test/speak", json={"text": "Whose voice is this?", "slug": "voice-alpha"}
+    )
+
+    assert res.status_code == 200
+    assert seen[0]["url"].endswith("/text-to-speech/THEIR-PRIVATE-VOICE")
+
+
+@pytest.mark.asyncio
+async def test_both_test_interview_doors_refuse_the_same_stranger_in_the_same_voice(
+    two_engagements,
+):
+    """The two doors take their slug from the body and must agree about who may use it.
+
+    They did not: `/test/speak` answered 200 to this caller while `/test/elaboration-press`
+    answered 403, twelve lines apart in one file. Asserted on the refusal sentence rather than
+    the status, so "both are refused by the membership floor" is the claim rather than "both
+    happen to be refused".
+    """
+    stranger = two_engagements["stranger"]
+
+    speak = await stranger.post(
+        "/api/interviews/test/speak", json={"text": "hello", "slug": "voice-alpha"}
+    )
+    press = await stranger.post(
+        "/api/interviews/test/elaboration-press",
+        json={
+            "question_text": "q",
+            "response_text": "r",
+            "probing_instructions": "p",
+            "slug": "voice-alpha",
+        },
+    )
+
+    assert speak.status_code == press.status_code == 403
+    assert speak.json()["detail"] == press.json()["detail"] == "Access denied to this project"
