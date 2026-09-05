@@ -1,26 +1,51 @@
 # agents/discovery/stakeholder_interviewer.py
+"""The interviewing brief, and the two people who can run it.
+
+There are two interviewers on `discovery_interviews` - Avery Singh and Laura Nelson - and
+exactly one brief between them, declared here. A second interviewing prompt would make the
+transcripts incomparable, and it is Casey who would pay for that: he reasons across every
+answer in a campaign, so two interviewers instructed differently would leave him comparing
+the instruments rather than the organisations.
+
+`build_interviewer` is what makes that structural rather than a convention. Laura's module
+calls it with her own role name and passes nothing else, so there is no second goal and no
+second backstory to drift from these.
+"""
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
+INTERVIEWER_GOAL = (
+    "Orchestrate self-serve voice interview sessions, monitor completion, "
+    "and collect transcripts from all participating stakeholders."
+)
 
-def create_stakeholder_interviewer(slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
+INTERVIEWER_BACKSTORY = (
+    "You are an experienced discovery interviewer who coordinates asynchronous "
+    "voice interviews. You create sessions in the portal, share links with the "
+    "consultant, wait for stakeholder responses, then harvest transcripts for "
+    "synthesis."
+)
+
+
+def build_interviewer(role: str, slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
+    """One interviewer, under the one brief. `role` is the only thing that differs between them.
+
+    The role is what a reader and the log parser tell the two apart by, so it cannot be shared;
+    everything that shapes the work is.
+    """
     return Agent(
-        role="Stakeholder Interviewer",
-        goal=(
-            "Orchestrate self-serve voice interview sessions, monitor completion, "
-            "and collect transcripts from all participating stakeholders."
-        ),
-        backstory=(
-            "You are an experienced discovery interviewer who coordinates asynchronous "
-            "voice interviews. You create sessions in the portal, share links with the "
-            "consultant, wait for stakeholder responses, then harvest transcripts for "
-            "synthesis."
-        ),
+        role=role,
+        goal=INTERVIEWER_GOAL,
+        backstory=INTERVIEWER_BACKSTORY,
         llm=llm,
         tools=tools,
         verbose=True,
         allow_delegation=False,
     )
+
+
+def create_stakeholder_interviewer(slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
+    return build_interviewer("Stakeholder Interviewer", slug, llm, tools)
 
 
 def create_stakeholder_interviewer_task(
@@ -37,8 +62,10 @@ def create_stakeholder_interviewer_task(
             "to insert one interview_sessions DB row per stakeholder (initial status: pending). "
             "Pass each plan entry through unchanged - its script_id is what the stakeholder's "
             "answers are cited by, and dropping it cannot be repaired later.\n"
-            "   Each row stores the session_token, stakeholder_id, node_label, script_id, and "
-            "voice_config.\n"
+            "   Each row stores the session_token, stakeholder_id, node_label, and script_id. "
+            "The interviewer and their voice are resolved by the tool from the project's own "
+            "configuration and stamped on the row - any voice_config in the plan is ignored, "
+            "so do not try to correct or supply one.\n"
             "3. Produce a formatted interview URL list, one line per stakeholder:\n"
             "   [Name] — [node_label] — https://interview.portal/s/[session_token]\n"
             "4. Use HumanInputTool with prompt:\n"
@@ -59,13 +86,28 @@ def create_stakeholder_interviewer_task(
             "8. Compile transcripts into a JSON array where each element is:\n"
             "   {\n"
             "     \"stakeholder_id\": 1,\n"
-            "     \"name\": \"Alice Chen\",\n"
+            # Renamed from "Alice Chen", matching Taylor's example one module along. The
+            # placeholder is arbitrary and "Alice" is one of the four verified default
+            # voices, so a guard forbidding a locale table written under voice *names* could
+            # not be widened to this file while its own example tripped it. The two prompts'
+            # examples also describe one plan Avery consumes from Taylor, so they should not
+            # disagree. A throwaway name is the cheap side of that trade.
+            "     \"name\": \"Priya Raman\",\n"
             "     \"node_labels\": [\"Goods-in Inspection\"],\n"
+            "     \"interviewer_agent_id\": \"second_interviewer\",\n"
+            "     \"voice_config\": {\"elevenlabs_voice_id\": \"...\", \"language\": \"en\", "
+            "\"country_code\": \"GB\", \"model_id\": \"...\"},\n"
             "     \"qa_pairs\": [\n"
             "       {\"question\": \"Walk me through how an order is received.\", "
             "\"answer\": \"We receive orders via email...\"}\n"
             "     ]\n"
             "   }\n"
+            "   Copy interviewer_agent_id and voice_config from each session exactly as "
+            "get_transcripts returned them, and never fill them in yourself. A programme can be "
+            "conducted by more than one interviewer, and the session's own record is the only "
+            "thing that knows which one took it - a value you infer would be a guess about "
+            "somebody a participant actually spoke to. Where a session carries neither, it "
+            "predates the record: leave them out rather than inventing them.\n"
             "9. Use SQLiteStateTool with operation='write', key='interview_transcripts', "
             "agent_name='stakeholder_interviewer' to save the JSON array.\n"
         ),

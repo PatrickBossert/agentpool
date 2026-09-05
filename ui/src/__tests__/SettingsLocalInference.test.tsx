@@ -50,6 +50,8 @@ const BASE_SETTINGS: ProjectSettings = {
   discovery_document_ids: [],
   dev_mode: true,
   interview_method: 'none',
+  interviewer_selection: 'random',
+  interview_accent: 'british',
   // Deliberately not DEFAULTS' 8. This is the load barrier every test below waits on,
   // and a barrier whose value the form already holds is satisfied before the query
   // resolves - which lets an edit race the load and be clobbered by it. Two of these
@@ -69,6 +71,7 @@ const PLATFORM_TIER: MyPermissions = {
   can_grant_roles: false,
   can_issue_invite_links: true,
   can_change_platform_tier_settings: true,
+  can_administer_project: true,
   platform_tier_settings: PLATFORM_TIER_SETTINGS,
   writable_knowledge_tiers: ['project'],
 }
@@ -80,6 +83,7 @@ const PROJECT_ADMIN: MyPermissions = {
   can_grant_roles: true,
   can_issue_invite_links: false,
   can_change_platform_tier_settings: false,
+  can_administer_project: true,
 }
 
 function ok(config: AxiosRequestConfig, data: unknown, status = 200): AxiosResponse {

@@ -16,6 +16,7 @@ from api.database import fetch_project, get_connection
 # roles.py already imports it under this name for the same reason.
 from api.routers.projects import _PLATFORM_TIER_SETTINGS
 from api.services.authority_service import (
+    caller_may_administer_project,
     caller_may_grant_project_roles,
     caller_roles,
     writable_tiers_on_project,
@@ -57,6 +58,16 @@ async def get_my_permissions(slug: str, payload: dict = Depends(require_any_auth
         # so if that door ever changed tier the settings toggle would silently follow a door
         # it has nothing to do with, every test still green. Two names, two doors, two tests.
         "can_change_platform_tier_settings": is_org_admin_or_above(payload),
+        # What the agent configuration section on every Setup tab asks before offering its
+        # controls. `PUT /{slug}/agents/{agent_id}/config` takes the administration axis, so
+        # this is `caller_may_administer_project` - the predicate that door refuses with -
+        # rather than a fourth restatement of "platform tier or project_admin".
+        #
+        # Its own name, not `can_change_platform_tier_settings`, which is a *different and
+        # narrower* rule: a project_admin may configure their agents and may not move the
+        # engagement's inference off-premises. Reusing the narrower flag would silently
+        # withhold this section from exactly the person sp44 widened those doors for.
+        "can_administer_project": await caller_may_administer_project(slug, payload),
         # *Which* fields that permission covers - the server's own `_PLATFORM_TIER_SETTINGS`,
         # served rather than restated. The Settings tab disables a control by asking whether
         # its field is in this list, so the nine names live in exactly one place: a

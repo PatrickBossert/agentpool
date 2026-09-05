@@ -219,6 +219,8 @@ async def test_branding_in_session_response():
     from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock, patch
 
+    from tests.test_interview_service import _stub_interview_db_connection
+
     slug = "branding-proj"
     fake_db = "/tmp/agentpool_test/" + slug + ".db"
     fake_session = {
@@ -237,7 +239,10 @@ async def test_branding_in_session_response():
             new_callable=AsyncMock,
         ) as mock_fetch,
         patch("api.services.interview_service.get_settings") as mock_settings,
-        patch("aiosqlite.connect"),
+        patch(
+            "api.services.interview_service.interview_db_connection",
+            _stub_interview_db_connection(),
+        ),
     ):
         mock_find.return_value = fake_db
         mock_fetch.return_value = fake_session

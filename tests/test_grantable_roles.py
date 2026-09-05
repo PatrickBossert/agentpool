@@ -1206,6 +1206,13 @@ async def test_the_logins_a_project_admin_can_cause_are_confined_to_this_project
             # platform-tier fields on PATCH /settings are refused to everything below an
             # org_admin, and a redeemed invite mints a reviewer.
             "can_change_platform_tier_settings": False,
+            # Nor may it configure the engagement it has just joined. `can_administer_project`
+            # is the wider of the two administration answers - platform tier *or*
+            # `project_admin` on this slug - and a redeemed invite mints neither. The
+            # distinction is worth asserting here rather than only where it is True: this is
+            # the caller that would have gained the agent configuration section, and with it
+            # every agent's name, face and voice, if membership had been read as authority.
+            "can_administer_project": False,
             "platform_tier_settings": list(_PLATFORM_TIER_SETTINGS),
             # Nor may it add material to any knowledge store, at any width. Membership is
             # read access by design; writing the project's own store takes administration

@@ -66,6 +66,9 @@ async def test_permissions_reports_the_same_roles_the_gates_read(client, seeded_
         "can_review": True, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
         "can_change_platform_tier_settings": True,
+        # The client fixture is the platform administrator, so it administers
+        # every project too - unmoved by the patched content roles above.
+        "can_administer_project": True,
         "platform_tier_settings": list(_PLATFORM_TIER_SETTINGS),
         "writable_knowledge_tiers": ["sector", "project"],
     }

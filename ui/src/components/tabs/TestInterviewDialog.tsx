@@ -12,8 +12,14 @@ import { bcp47 } from '../../utils/holidays'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const webkitSpeechRecognition: any
 
-// George — Warm, Captivating Storyteller — ElevenLabs British male voice
-const AVERY_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'
+// There is deliberately no voice id here any more.
+//
+// This file used to declare `const AVERY_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'` - George - and pass
+// it explicitly on all three /speak calls, so the server's own corrected default was
+// unreachable and Avery rehearsed in one voice while interviewing in another, under the same
+// variable name in two files. The rehearsal door now resolves the voice and the synthesis model
+// from the project through `resolve_agent_config`, which is the one place that question is
+// answered. Sending `slug` is what makes that possible; sending a voice would undo it.
 const AVERY_HIRES    = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/agents/avery-singh-hires.jpg`
 const API_BASE       = '/api/interviews/test'
 
@@ -219,7 +225,7 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
       const res = await fetch(`${API_BASE}/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ text: "Hi there, I'm Avery. Your audio is working perfectly.", voice_id: AVERY_VOICE_ID }),
+        body: JSON.stringify({ text: "Hi there, I'm Avery. Your audio is working perfectly.", slug }),
       })
       if (!res.ok) return
       const url = URL.createObjectURL(await res.blob())
@@ -245,7 +251,7 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
       const res = await fetch(`${API_BASE}/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ text, voice_id: AVERY_VOICE_ID }),
+        body: JSON.stringify({ text, slug }),
         signal,
       })
       if (!res.ok || signal?.aborted) return
@@ -499,7 +505,7 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
     fetch(`${API_BASE}/speak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ text: BRIEFING, voice_id: AVERY_VOICE_ID }),
+      body: JSON.stringify({ text: BRIEFING, slug }),
     })
       .then(res => res.ok ? res.arrayBuffer() : Promise.reject(res.status))
       .then(buf => ctx.decodeAudioData(buf))

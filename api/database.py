@@ -526,6 +526,7 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
             session_token         TEXT NOT NULL UNIQUE,
             status                TEXT NOT NULL DEFAULT 'pending',
             voice_config          TEXT,
+            interviewer_agent_id  TEXT,
             script_id             TEXT,
             transcript_json       TEXT,
             ratings_json          TEXT,
@@ -571,6 +572,34 @@ async def _migrate_interview_sessions_script_id(conn: aiosqlite.Connection) -> N
     cols = {row[1] for row in await cur.fetchall()}
     if "script_id" not in cols:
         await conn.execute("ALTER TABLE interview_sessions ADD COLUMN script_id TEXT")
+    await conn.commit()
+
+
+async def _migrate_interview_sessions_interviewer(conn: aiosqlite.Connection) -> None:
+    """Record which interviewer a session was issued to, beside the voice it was issued with.
+
+    The selection is per session and the setting that drives it is per project, so the two
+    disagree the moment the setting is changed - which it may be at any point between an
+    invite being sent and the interview being taken. Re-reading `interviewer_selection` at
+    interview time would answer "who would be chosen now", and under `random` it would answer
+    a different person on every open of the same link. The row is the only thing that can say
+    who actually conducted it, which is the same argument `client_documents.
+    knowledge_collection` settled in sp57: an address that is re-derived is an address that
+    can move underneath the thing it points at.
+
+    Nullable, because every session created before this migration genuinely has no answer.
+    A NULL here means "issued before the interviewer was recorded", never "unknown now".
+
+    Guarded with `PRAGMA table_info` so it skips *itself* rather than raising on a database
+    that already has the column - a migration that raises takes every later migration in the
+    block down with it, and this one runs after twenty-odd others.
+    """
+    cur = await conn.execute("PRAGMA table_info(interview_sessions)")
+    cols = {row[1] for row in await cur.fetchall()}
+    if "interviewer_agent_id" not in cols:
+        await conn.execute(
+            "ALTER TABLE interview_sessions ADD COLUMN interviewer_agent_id TEXT"
+        )
     await conn.commit()
 
 
@@ -1223,6 +1252,150 @@ async def _migrate_inbound_replies(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+# The overridable columns of `project_agent_config`, in the order the design names them.
+# Stated once so the table, its repair loop, the SELECT, the upsert and the resolver's
+# `CONFIG_FIELDS` cannot drift apart on which fields exist - the drift that let `updated_at`
+# fall out of the repair loop while everything else agreed.
+AGENT_CONFIG_COLUMNS = (
+    "display_name",
+    "image_url",
+    "voice_id",
+    "language",
+    "country_code",
+    "model_id",
+)
+
+
+async def _migrate_project_agent_config(conn: aiosqlite.Connection) -> None:
+    """What this project calls an agent, what it shows for it, and how it sounds.
+
+    Keyed on `(project_id, agent_id)` - the permanent snake key from `agents/identity.py`, never
+    a display name. That separation is the whole reason this table is cheap: renaming Avery, or
+    running an engagement where he is called something else, moves no identity and breaks no
+    history, because nothing here is keyed on what a human reads.
+
+    **NULL means "use the default"; an empty string does not.** They are different states and
+    the difference is the point. A project that has deliberately cleared a name - or a face, or
+    a voice - has said something, and saying it must not be indistinguishable from never having
+    opened the settings. `resolve_agent_config` therefore tests each column for NULL and not for
+    truthiness: `''` is an override that resolves to `''`.
+
+    Every column but the key is nullable for the same reason, and each is resolved on its own,
+    so a project may choose a voice without also having to restate a name it was happy with.
+
+    Not `config_json`: this is per agent rather than per project, and it wants a row per agent
+    rather than a nested blob that every writer has to merge. Not `localStorage`, where the
+    voice choice lives today - a setting that never reaches the server cannot reach an
+    interview, which is exactly the first broken link in the wrong-voice defect.
+
+    `model_id` sits beside `voice_id` because voice and language are separate axes - a voice's
+    `verified_languages` names a model per language - so a project that chooses a French voice
+    and keeps an English synthesis model has configured half of what it meant. Every project is
+    English today and the resolved answer never varies; the column exists so that stops being
+    true without a second migration.
+
+    Written as create-then-fill rather than a bare CREATE TABLE so it is defensive about the
+    shape it finds: `PRAGMA table_info` decides which columns are missing, and the migration
+    skips *itself* on a database that already has them rather than raising and taking every
+    later migration in the block down with it. `updated_at` is repaired by the same loop and
+    with its own type - it was left out of the first version, so a table missing *that* column
+    was diagnosed as repaired and still broke `upsert_agent_config`, which writes it.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS project_agent_config (
+            project_id    INTEGER NOT NULL,
+            agent_id      TEXT NOT NULL,
+            display_name  TEXT,
+            image_url     TEXT,
+            voice_id      TEXT,
+            language      TEXT,
+            country_code  TEXT,
+            model_id      TEXT,
+            updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (project_id, agent_id)
+        )
+    """)
+    async with conn.execute("PRAGMA table_info(project_agent_config)") as cur:
+        cols = {row["name"] async for row in cur}
+    repairs = [(name, "TEXT") for name in AGENT_CONFIG_COLUMNS]
+    repairs.append(("updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"))
+    for column, declaration in repairs:
+        if column not in cols:
+            await conn.execute(
+                f"ALTER TABLE project_agent_config ADD COLUMN {column} {declaration}"
+            )
+    await conn.commit()
+
+
+async def fetch_agent_config(
+    conn: aiosqlite.Connection, *, project_id: int, agent_id: str
+) -> dict | None:
+    """The overrides this project has recorded for one agent, or None if it has recorded none.
+
+    A returned dict may hold NULLs. Distinguishing "no row" from "a row whose every column is
+    NULL" is deliberate even though `resolve_agent_config` resolves both to the defaults: the
+    settings door needs to know whether the project has ever been configured.
+    """
+    selected = ", ".join(AGENT_CONFIG_COLUMNS)
+    async with conn.execute(
+        f"SELECT project_id, agent_id, {selected}, updated_at FROM project_agent_config"
+        " WHERE project_id=? AND agent_id=?",
+        (project_id, agent_id),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def upsert_agent_config(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    agent_id: str,
+    display_name: str | None,
+    image_url: str | None,
+    voice_id: str | None,
+    language: str | None,
+    country_code: str | None,
+    model_id: str | None,
+) -> None:
+    """Record this project's overrides for one agent, replacing whatever it held before.
+
+    Every field is written, so passing None **clears** that override and restores the default -
+    it does not leave the stored value alone. That is the honest reading of "NULL means use the
+    default": a caller that omits a field is saying the field has no override, and a settings
+    form that posts its whole state gets the behaviour it expects. A caller wanting to change
+    one field of several reads the row first.
+
+    **None of the six has a Python default, deliberately.** With defaults,
+    `upsert_agent_config(conn, project_id=1, agent_id="x")` type-checks, reads at the call site
+    as a no-op, and wipes the row - so the shape most likely to be written by mistake is the
+    most destructive one available. Requiring all six puts the cost on the caller who means it
+    and makes a clear visible in the diff that performs it.
+
+    An empty string is stored as an empty string and is *not* a clear.
+    """
+    columns = ", ".join(AGENT_CONFIG_COLUMNS)
+    placeholders = ",".join("?" for _ in AGENT_CONFIG_COLUMNS)
+    assignments = ",".join(f" {name}=excluded.{name}" for name in AGENT_CONFIG_COLUMNS)
+    await conn.execute(
+        f"INSERT INTO project_agent_config (project_id, agent_id, {columns}, updated_at)"
+        f" VALUES (?,?,{placeholders},CURRENT_TIMESTAMP)"
+        f" ON CONFLICT(project_id, agent_id) DO UPDATE SET{assignments},"
+        "  updated_at=CURRENT_TIMESTAMP",
+        (
+            project_id,
+            agent_id,
+            display_name,
+            image_url,
+            voice_id,
+            language,
+            country_code,
+            model_id,
+        ),
+    )
+    await conn.commit()
+
+
 async def insert_inbound_reply(
     conn: aiosqlite.Connection,
     *,
@@ -1701,8 +1874,19 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_knowledge_collection_is_recorded.py::test_a_database_at_the_previous_version_
 # gains_the_collection_column, which fails on 12 and passes on 13; and
 # tests/test_local_inference_override.py::test_a_database_at_the_previous_version_gains_the_
-# force_local_inference_column, which fails on 13 and passes on 14.
-_SCHEMA_VERSION = 14
+# force_local_inference_column, which fails on 13 and passes on 14; and
+# tests/test_agent_config.py::test_a_database_at_the_previous_version_gains_the_project_agent_
+# config_table, which fails on 14 and passes on 15; and
+# tests/test_agent_config.py::test_a_database_at_version_15_gains_the_model_id_column, which
+# fails on 15 and passes on 16; and
+# tests/test_interviewer_selection.py::test_a_database_at_version_16_gains_the_interviewer_
+# column, which fails on 16 and passes on 17.
+#
+# Note that 15 → 16 adds a column to an *existing* migration rather than a new function, which
+# the comment above already covers and which is the easier bump to forget: the migration is
+# already in the block, already runs on a fresh database, and only the databases that have
+# already been opened at 15 are left behind.
+_SCHEMA_VERSION = 17
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1811,6 +1995,7 @@ async def get_connection(slug: str):
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
             await _migrate_interview_sessions_script_id(conn)
+            await _migrate_interview_sessions_interviewer(conn)
             await _migrate_stakeholder_roles(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)
@@ -1819,6 +2004,7 @@ async def get_connection(slug: str):
             await _migrate_validation_warnings(conn)
             await _migrate_registry_output_type(conn)
             await _migrate_inbound_replies(conn)
+            await _migrate_project_agent_config(conn)
             # PRAGMA does not accept bound parameters; _SCHEMA_VERSION is a hardcoded
             # module constant, never user input, so formatting it in is safe.
             await conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
@@ -3677,27 +3863,12 @@ async def replace_stakeholder_assignments(
 
 # ── Interview Sessions ────────────────────────────────────────────────────────
 
-async def insert_interview_session(
-    conn: aiosqlite.Connection,
-    *,
-    project_id: int,
-    orchestration_run_id: int | None,
-    stakeholder_id: int,
-    node_label: str,
-    session_token: str,
-    voice_config: str | None = None,
-    script_id: str | None = None,
-) -> int:
-    cur = await conn.execute(
-        "INSERT INTO interview_sessions "
-        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token,"
-        " voice_config, script_id) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token,
-         voice_config, script_id),
-    )
-    await conn.commit()
-    return cur.lastrowid
+# `insert_interview_session` used to live here and is now
+# `tests/support_interview_sessions.py`. It had no production caller - `InterviewSessionTool.
+# _create` is the only thing that creates a session - and it had drifted two columns behind it,
+# to the point where the sessions it wrote were refused by the speak door for carrying no
+# stamped voice. CLAUDE.md's rule is "delete it, or make it the producer"; it cannot be the
+# producer, because the producer is a synchronous tool on `sqlite3`.
 
 
 async def fetch_session_token_for_stakeholder(

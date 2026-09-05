@@ -30,6 +30,8 @@ const BASE_SETTINGS: ProjectSettings = {
   discovery_document_ids: [],
   dev_mode: true,
   interview_method: 'none',
+  interviewer_selection: 'random',
+  interview_accent: 'british',
   elaboration_press_timeout_seconds: 8,
   anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
   anthropic_deep_model: 'anthropic/claude-opus-4-6',
@@ -61,6 +63,7 @@ describe('Settings - press budget', () => {
       can_grant_roles: false,
       can_issue_invite_links: true,
       can_change_platform_tier_settings: true,
+      can_administer_project: true,
       // The server's real list. This caller may change them all, so nothing locks - but the
       // page now disables a control by asking this list, and a fixture that shipped an empty
       // one would exercise a page that never locks anything.

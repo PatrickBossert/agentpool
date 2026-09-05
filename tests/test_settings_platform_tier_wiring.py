@@ -214,6 +214,26 @@ def test_every_platform_tier_field_is_declared_on_the_frontend_settings_type(fie
     )
 
 
+def _declared_settings_fields() -> dict[str, bool]:
+    """Every field on `ProjectSettings` in types.ts, mapped to whether it is optional."""
+    block = (UI / "types.ts").read_text()
+    block = block[block.index("export interface ProjectSettings {"):]
+    block = block[:block.index("\n}")]
+    return {
+        name: optional == "?"
+        for name, optional in re.findall(r"^\s{2}(\w+)(\??):", block, re.M)
+    }
+
+
+def test_the_declaration_walk_reads_the_interface():
+    """Guard the guard. An empty mapping would excuse every field below, and the assertions
+    that follow are all of the form "this field is not missing and not optional" - which two
+    empty sets satisfy perfectly."""
+    declared = _declared_settings_fields()
+    assert declared.get("llm_mode") is False, "the walk cannot see a required field"
+    assert declared.get("client_name") is True, "the walk cannot see an optional field"
+
+
 def _typescript_defaults() -> dict[str, object]:
     """`DEFAULTS` in Settings.tsx, as a dict of the literal values it holds.
 
@@ -293,4 +313,60 @@ def test_every_platform_tier_field_has_a_frontend_default():
         f"{missing} are platform-tier and absent from Settings.tsx's DEFAULTS, so a save made "
         "before the settings load - or of a project whose config never stored them - omits "
         "them, and an omitted key is the server's default rather than the project's value"
+    )
+
+
+@pytest.mark.parametrize("field", sorted(_typescript_defaults()))
+def test_every_field_the_page_promises_to_send_is_declared_required(field):
+    """`DEFAULTS` is the Settings page's promise that a field travels on **every** save; the
+    type is what makes that promise survive a refactor. A field named by one and not the other
+    rides the untyped `{ ...DEFAULTS, ...settings }` spread alone.
+
+    Parametrised over `DEFAULTS` rather than over the fields anybody thought of, because that
+    is exactly how this hazard has already been missed twice: `force_local_inference` was
+    closed and `dev_mode` was found undeclared **one field over**, and `interviewer_selection`
+    and `interview_accent` were then found undeclared with no control at all - the second of
+    them silently resetting a Scottish engagement to british on any unrelated save.
+
+    Optional is refused as firmly as absent, and for a sharper reason: `tsc` has nothing to say
+    about an omitted optional key, so `interview_accent?: string` looks like a declaration,
+    passes the compiler, and drops on the first typed body anybody builds. `locale` was in
+    exactly that state and is now required.
+
+    Wider than `_PLATFORM_TIER_SETTINGS`, which the test above is keyed on, and deliberately:
+    the two new fields are **not** platform-tier - they decide the tone of a conversation, not
+    where this engagement's material is sent - so that tuple could never have covered them.
+    """
+    declared = _declared_settings_fields()
+    assert field in declared, (
+        f"Settings.tsx sends {field} on every save and ui/src/types.ts does not declare it on "
+        "ProjectSettings, so it survives only as an untyped extra key the object spread "
+        "happens to copy. An omitted key is the model default on the server, not the value "
+        "the project holds."
+    )
+    assert not declared[field], (
+        f"{field} is declared optional on ProjectSettings. Optional is how a field goes "
+        "missing - tsc says nothing about an omitted optional key, and the server then reads "
+        "its own default over whatever the project had chosen."
+    )
+
+
+@pytest.mark.parametrize("field", ["interviewer_selection", "interview_accent"])
+def test_the_interview_programme_settings_are_carried_by_the_defaults(field):
+    """Named, and the naming is the point.
+
+    The test above is keyed on `DEFAULTS` itself, so it is blind to a field being taken *out*
+    of `DEFAULTS` - remove the entry and the declaration together and nothing complains,
+    because the parametrisation simply shrinks. That is the one direction a walk over its own
+    input cannot see, and these two are the fields that were found in exactly that state:
+    real on the server, absent from the page, absent from the type, carried only by an
+    untyped spread.
+
+    They are the only two named here because they are the only two this branch found there.
+    A third belongs on this list only with the same evidence behind it.
+    """
+    assert field in _typescript_defaults(), (
+        f"{field} has been removed from Settings.tsx's DEFAULTS. It is a real ProjectSettings "
+        "field with a control on this page, and dropping it from the defaults also drops it "
+        "from the test above, which is parametrised over them."
     )

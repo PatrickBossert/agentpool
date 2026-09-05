@@ -30,7 +30,9 @@ import type { CrewRun, AgentOutput, HumanReview } from '../types'
 import StructureTab from './StructureTab'
 import AlexSetupTab from './tabs/AlexSetupTab'
 import MayaSetupTab from './tabs/MayaSetupTab'
-import { CrewSetupSections, AGENT_SETUP_SECTION } from './tabs/CrewSetupSections'
+import {
+  CrewAgentConfiguration, CrewSetupSections, AGENT_SETUP_SECTION,
+} from './tabs/CrewSetupSections'
 import AveryOutputExtra from './tabs/AveryOutputExtra'
 import JordanOutputExtra from './tabs/JordanOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
@@ -834,6 +836,13 @@ export default function AgentDetailPanel({
     }
     return 'output'
   })
+  // Whether Setup has ever been opened on this panel. The agent configuration block below
+  // mounts on the first visit and stays mounted, so a half-typed display name survives a trip
+  // to Output exactly as the rest of the tab's form state does - and a panel opened on Output
+  // and closed again asks the server for nothing. The tab is rendered `hidden` rather than
+  // unmounted, so without this it would fetch every agent's configuration for a tab nobody
+  // looked at.
+  const [setupOpened, setSetupOpened] = useState(false)
   const [messages, setMessages] = useState<{ role: 'user' | 'agent'; content: string; agentName?: string }[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
@@ -855,6 +864,12 @@ export default function AgentDetailPanel({
     queryFn: () => projectsApi.getMyPermissions(slug),
   })
   const writableTiers = permissions?.writable_knowledge_tiers ?? []
+
+  // Latched, never cleared. The panel can *open* on Setup - a deep link, or the tab this
+  // browser last used - so this cannot be set from the tab click alone.
+  useEffect(() => {
+    if (tab === 'setup') setSetupOpened(true)
+  }, [tab])
 
   useEffect(() => {
     // The list this caller may write can change under them (a role grant, a different
@@ -1319,6 +1334,13 @@ export default function AgentDetailPanel({
             <p className="text-xs text-gray-400 text-center py-12">No setup information available.</p>
           )
         })()}
+
+        {/* Every agent in this crew, whatever else the tab holds above. Name, image and
+            voice belong to all eighteen by the same rule, so this is not registered against
+            anything and has no empty case to fall through to - which is exactly why it sits
+            outside the branch above rather than inside it. It renders last so that nothing
+            already on the tab moves. */}
+        {setupOpened && <CrewAgentConfiguration crewKey={crewKey} slug={slug} />}
       </div>
 
       {/* ── ROLE & SKILLS TAB ──────────────────────────────────────────────────── */}

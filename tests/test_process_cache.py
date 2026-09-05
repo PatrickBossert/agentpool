@@ -292,6 +292,23 @@ _MODULE_LEVEL_STATE = {
         "trap: it accumulates, so one test's three sends leave a later test on the same "
         "session token answering 429"
     ),
+    "api/services/voice_metadata.py::_GENDER_CACHE": (
+        REGISTERED, "a voice's sex as ElevenLabs reports it, held because it does not change "
+        "- proved by probe below. Stale entries are the ordinary test-order trap and one that "
+        "would be hard to read: a test establishing a voice as female makes the next test's "
+        "differently-labelled voice pass because of the first, and the interviewer selection "
+        "is exactly what reads it"
+    ),
+    "api/services/voice_catalogue.py::_LIBRARY_ACCENTS": (
+        REGISTERED, "the accents the ElevenLabs Voice Library holds, asked unfiltered so the "
+        "voice picker can offer an accent the account does not have - irish, which is one of "
+        "the four planned engagements - proved by probe below. Held because it is a fact "
+        "about the provider rather than about a request, and a picker that narrows as a "
+        "consultant types would otherwise make one call per keystroke. The test-order trap is "
+        "the ordinary one and reads badly: a test that warmed it from one stubbed library "
+        "answers for the next test's differently-stocked one, so the second passes because of "
+        "the first"
+    ),
     "api/config.py::get_settings": (
         ISOLATED_ELSEWHERE, "conftest.reset_settings_cache, which predates the registry and "
         "clears it on both sides. Deliberately not also registered: api/config.py is the "
@@ -378,7 +395,35 @@ def _transcript_log_probe():
     )
 
 
+def _voice_gender_probe():
+    from api.services import voice_metadata
+    key = "process-cache-probe-voice"
+    return (
+        lambda: voice_metadata._GENDER_CACHE.__setitem__(key, "female"),
+        lambda: key in voice_metadata._GENDER_CACHE,
+    )
+
+
+def _library_accents_probe():
+    """A singleton rather than a dict, so the probe reassigns the module attribute.
+
+    Same shape as `_platform_url_probe`: there is no key to insert, and "warm" is simply
+    "not None".
+    """
+    from api.services import voice_catalogue
+    return (
+        lambda: setattr(
+            voice_catalogue,
+            "_LIBRARY_ACCENTS",
+            voice_catalogue.AccentProbe(["probe-accent"], False),
+        ),
+        lambda: voice_catalogue._LIBRARY_ACCENTS is not None,
+    )
+
+
 _REGISTERED_PROBES = {
+    "api/services/voice_metadata.py::_GENDER_CACHE": _voice_gender_probe,
+    "api/services/voice_catalogue.py::_LIBRARY_ACCENTS": _library_accents_probe,
     "api/services/chroma_client.py::_MODE_CACHE": _mode_cache_probe,
     "api/services/chroma_client.py::_FORCE_LOCAL_CACHE": _force_local_cache_probe,
     "api/services/platform_settings.py::_CACHED_URL": _platform_url_probe,

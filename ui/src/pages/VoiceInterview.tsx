@@ -9,10 +9,33 @@ declare const webkitSpeechRecognition: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const SpeechRecognitionEvent: any
 
+/** Initials for an interviewer with no headshot - a state agents/identity.py declares legitimate. */
+function initialsOf(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]!.toUpperCase())
+    .join('')
+}
+
 type Phase = 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'rating' | 'complete' | 'error'
 type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'testing' | 'ready'
 
 const BASE = '/api'
+
+// There is deliberately no default voice in this file, and there must never be one again.
+//
+// `DEFAULT_VOICE_CONFIG` lived here and was a *decision*: `21m00Tcm4TlvDq8ikWAM`, ElevenLabs'
+// stock Rachel, a female voice, for an interviewer described as male everywhere he is
+// described at all. The first completed interview was conducted in it. It was corrected to a
+// mirror of the server's answer, and then deleted, because a session now carries the voice it
+// was issued with - so a session arriving without one is a bug, and a fallback here would hide
+// it by putting a stranger in front of a participant.
+//
+// The portal does not send a voice at all now. `POST /interviews/{token}/speak` reads the
+// stamp off the session; the only thing this file still takes from `voice_config` is the
+// locale it hands the browser's speech recogniser.
 
 export interface CapturedPair {
   question_id: string
@@ -233,12 +256,12 @@ export default function VoiceInterview() {
     }
   }
 
-  async function speakText(text: string, voiceId: string): Promise<void> {
+  async function speakText(text: string): Promise<void> {
     setStatusMessage('Speaking…')
     const res = await fetch(`${BASE}/interviews/${sessionToken}/speak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice_id: voiceId }),
+      body: JSON.stringify({ text }),
     })
     if (!res.ok) {
       // Non-fatal: skip audio, continue
@@ -453,7 +476,7 @@ export default function VoiceInterview() {
    */
   async function listenWithRestart(
     lang: string = 'en-GB',
-    reprompt?: { text: string; voiceId: string },
+    reprompt?: { text: string },
   ): Promise<string> {
     restartAnswerRef.current = false
     appendToPreviousRef.current = false
@@ -490,14 +513,14 @@ export default function VoiceInterview() {
           continue
         }
         setStatusMessage('Go ahead — finish your last answer.')
-        if (reprompt) await speakText('Of course — go on.', reprompt.voiceId)
+        if (reprompt) await speakText('Of course — go on.')
         const extra = await listenForAnswer(lang)
         setStatusMessage('')
         if (extra.trim()) previous.answer = `${previous.answer} ${extra}`.trim()
         // Back to where we were.
         if (reprompt) {
           setCurrentQuestion(reprompt.text)
-          await speakText(reprompt.text, reprompt.voiceId)
+          await speakText(reprompt.text)
         }
         continue
       }
@@ -508,9 +531,9 @@ export default function VoiceInterview() {
       if (answer.length === 0 && reprompt && silentAttempts === 0) {
         silentAttempts++
         setStatusMessage('')
-        await speakText("Sorry — I didn't catch that. Let me ask again.", reprompt.voiceId)
+        await speakText("Sorry — I didn't catch that. Let me ask again.")
         setCurrentQuestion(reprompt.text)
-        await speakText(reprompt.text, reprompt.voiceId)
+        await speakText(reprompt.text)
         continue
       }
 
@@ -564,13 +587,22 @@ export default function VoiceInterview() {
     setCurrentQuestion('')
   }
 
-  const DEFAULT_VOICE_CONFIG = { elevenlabs_voice_id: '21m00Tcm4TlvDq8ikWAM', language: 'en', country_code: 'GB' }
-
   async function runInterview() {
     if (!sessionData) return
     const { session, script } = sessionData
-    const voiceConfig = session.voice_config ?? DEFAULT_VOICE_CONFIG
-    const voiceId = voiceConfig.elevenlabs_voice_id
+    // The session is stamped with its interviewer's resolved configuration when it is created.
+    // A session without one cannot be conducted, and saying so is the point: the alternative -
+    // a default declared here - is what conducted the first completed interview in a voice
+    // nobody had chosen. The speak door refuses the same case for the same reason.
+    const voiceConfig = session.voice_config
+    if (!voiceConfig?.elevenlabs_voice_id) {
+      setErrorMessage(
+        'This interview session was created without a voice, so it cannot be conducted. ' +
+        'Please contact the person who invited you.',
+      )
+      setPhase('error')
+      return
+    }
     const lang = `${voiceConfig.language}-${voiceConfig.country_code}`
     interviewLangRef.current = lang
 
@@ -585,7 +617,7 @@ export default function VoiceInterview() {
 
     // Welcome
     setCurrentQuestion(script.welcome_message)
-    await speakText(script.welcome_message, voiceId)
+    await speakText(script.welcome_message)
 
     // Framing block (L2 only) — spoken after welcome, before first question
     if (script.framing_block) {
@@ -595,7 +627,7 @@ export default function VoiceInterview() {
       // preamble after a welcome that had already covered purpose and confidentiality.
       // The rest stays in the script for the reader and the analyst; it is not read aloud.
       setCurrentQuestion(fb.positioning)
-      await speakText(fb.positioning, voiceId)
+      await speakText(fb.positioning)
     }
 
     let questionNumber = 0
@@ -615,10 +647,10 @@ export default function VoiceInterview() {
         setCurrentQuestion(question.text)
 
         // Ask the question
-        await speakText(question.text, voiceId)
+        await speakText(question.text)
 
         // Record primary answer
-        let answer = await listenWithRestart(lang, { text: question.text, voiceId })
+        let answer = await listenWithRestart(lang, { text: question.text })
 
         const needsElaboration =
           answer.trim().length > 0 &&
@@ -634,7 +666,7 @@ export default function VoiceInterview() {
           const pressText = await getElaborationPress(question.text, answer, question.probing_instructions)
           if (pressText) {
             setCurrentQuestion(pressText)
-            await speakText(pressText, voiceId)
+            await speakText(pressText)
             const followUpAnswer = await listenWithRestart(lang)
             qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, pressText, followUpAnswer, { kind: 'F', index: followUpCount + 1 }))
             answer = `${answer} ${followUpAnswer}`.trim()
@@ -649,7 +681,7 @@ export default function VoiceInterview() {
         while (followUpCount < question.follow_up_count && question.follow_up_branches[followUpCount]) {
           const branch = question.follow_up_branches[followUpCount]
           setCurrentQuestion(branch)
-          await speakText(branch, voiceId)
+          await speakText(branch)
           const branchAnswer = await listenWithRestart(lang)
           qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: followUpCount + 1 }))
           followUpCount++
@@ -659,7 +691,7 @@ export default function VoiceInterview() {
       // After all questions in a section, capture inline maturity rating if present (L1/L2 only)
       if (section.maturity_rating) {
         const mr = section.maturity_rating
-        await speakText(mr.prompt, voiceId)
+        await speakText(mr.prompt)
         const rating = await collectInlineRating(mr)
         sectionRatingsRef.current.push({ section_title: section.title, dimension: mr.dimension, rating })
         setPhase('interviewing')
@@ -694,20 +726,20 @@ export default function VoiceInterview() {
       const sc = script.synthesis_check
       // WITHDRAWN: scripted synthesis check.
       // setCurrentQuestion(sc.synthesis_prompt)
-      // await speakText(sc.synthesis_prompt, voiceId)
+      // await speakText(sc.synthesis_prompt)
       // const synthesisResponse = await listenWithRestart(lang)
       // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 1, sc.synthesis_prompt, synthesisResponse))
 
       // Peer referral - retained. It asks who else to speak to; it asserts nothing.
       setProgress(p => ({ ...p, current: p.current + 1 }))
       setCurrentQuestion(sc.peer_referral)
-      await speakText(sc.peer_referral, voiceId)
+      await speakText(sc.peer_referral)
       const referralResponse = await listenWithRestart(lang)
       qaRef.current.push(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
 
       // WITHDRAWN: forward roadmap.
       // setCurrentQuestion(sc.forward_roadmap)
-      // await speakText(sc.forward_roadmap, voiceId)
+      // await speakText(sc.forward_roadmap)
       // const roadmapResponse = await listenWithRestart(lang)
       // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 3, sc.forward_roadmap, roadmapResponse))
 
@@ -722,7 +754,7 @@ export default function VoiceInterview() {
     // Closing. The bar reaches 100% here and nowhere earlier.
     setProgress(p => ({ ...p, current: p.total }))
     setCurrentQuestion(script.closing_message)
-    await speakText(script.closing_message, voiceId)
+    await speakText(script.closing_message)
 
     await submitResponses(sectionRatingsRef.current)
   }
@@ -1083,16 +1115,28 @@ export default function VoiceInterview() {
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
           )}
 
-          {/* Interviewer persona */}
-          {branding?.interviewer_image_url && (
+          {/* Interviewer persona. Keyed on the NAME, not the photograph: the server resolves
+              both from the session's stamp, and an interviewer without a headshot is a
+              legitimate state that agents/identity.py has always allowed. Keying this block on
+              the image hid the name of the only interviewer who is actually in that state. */}
+          {branding?.interviewer_name && (
             <div className="flex flex-col items-center mb-6">
-              <img
-                src={branding.interviewer_image_url}
-                alt={branding.interviewer_name ?? 'Your interviewer'}
-                className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
-              />
+              {branding.interviewer_image_url ? (
+                <img
+                  src={branding.interviewer_image_url}
+                  alt={branding.interviewer_name}
+                  className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
+                />
+              ) : (
+                <div
+                  className="w-24 h-24 rounded-full mb-3 ring-4 ring-white shadow-md flex items-center justify-center text-2xl font-semibold text-white bg-gradient-to-br from-slate-500 to-slate-700"
+                  aria-hidden="true"
+                >
+                  {initialsOf(branding.interviewer_name)}
+                </div>
+              )}
               <p className="font-semibold text-gray-800" style={{ color: branding.text_color }}>
-                {branding.interviewer_name ?? 'Avery Singh'}
+                {branding.interviewer_name}
               </p>
               {branding.interviewer_tagline && (
                 <p className="text-sm text-gray-500 mt-0.5">{branding.interviewer_tagline}</p>
@@ -1178,9 +1222,14 @@ export default function VoiceInterview() {
     )
   }
 
-  // interviewing
-  const interviewerImg = branding?.interviewer_image_url ?? '/agents/avery-singh-hires.jpg'
-  const interviewerName = branding?.interviewer_name ?? 'Avery Singh'
+  // interviewing.
+  //
+  // No literal name and no literal photograph. Both used to be declared here - "Avery Singh"
+  // and /agents/avery-singh-hires.jpg - which were the third and fourth declarations of the
+  // interviewer's identity in the product, and they were what a participant read while Laura
+  // was speaking to them. The server resolves both from the session's stamp.
+  const interviewerImg = branding?.interviewer_image_url ?? ''
+  const interviewerName = branding?.interviewer_name ?? ''
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
@@ -1208,11 +1257,20 @@ export default function VoiceInterview() {
         {/* Interviewer panel */}
         <div className="w-56 flex-shrink-0 bg-slate-900 flex flex-col items-center justify-center gap-5 p-6 border-r border-slate-800">
           <div className="relative">
-            <img
-              src={interviewerImg}
-              alt={interviewerName}
-              className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
-            />
+            {interviewerImg ? (
+              <img
+                src={interviewerImg}
+                alt={interviewerName}
+                className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
+              />
+            ) : (
+              <div
+                className="w-40 h-40 rounded-full ring-4 ring-teal-400 shadow-2xl flex items-center justify-center text-4xl font-semibold text-white bg-gradient-to-br from-slate-600 to-slate-800"
+                aria-hidden="true"
+              >
+                {initialsOf(interviewerName)}
+              </div>
+            )}
             {(statusMessage || isListening) && (
               <span
                 className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 animate-pulse"

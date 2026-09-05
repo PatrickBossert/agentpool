@@ -7,10 +7,12 @@ IMPORTANT: The tool's orchestration_run_id field receives the crew_run_id from
 the registry. The tool resolves the actual orchestration_run_id from crew_runs
 at runtime, so queries against interview_sessions use the correct FK.
 """
+import asyncio
 import contextlib
 import json
 import sqlite3
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
@@ -19,6 +21,45 @@ from api.config import get_settings
 
 def _db_path(slug: str) -> str:
     return str(Path(get_settings().database_dir) / f"{slug}.db")
+
+
+def _await_sync(coro):
+    """Run one coroutine to completion from synchronous code, with or without a live loop.
+
+    In production there is no loop: CrewAI dispatches through `crew.kickoff_async()`, which
+    runs the crew under `asyncio.to_thread`, so a tool executes on a worker thread and
+    `asyncio.run` is exactly right. **That is not the only caller**, though - five existing
+    tests drive `_run` from inside an async test, where `asyncio.run` raises
+    "cannot be called from a running event loop". A tool that works from one calling context
+    and explodes in another is a trap laid for whoever next dispatches a crew differently, so
+    the loop case runs the coroutine on a thread of its own rather than being refused.
+
+    One coroutine, awaited once, in both arms - it is never scheduled twice, which would be a
+    second database read rather than a repeat of the first.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def _resolve_interviewers(slug: str):
+    """The interviewer selection for this project, resolved from a synchronous tool.
+
+    Called **once per batch, before the first INSERT**, and both halves of that are
+    deliberate: resolving per session would ask ElevenLabs the same question thirty times for
+    a thirty-person programme, and opening a second connection to this database *during* the
+    tool's own write transaction is a lock waiting to happen.
+
+    A sync re-implementation of `resolve_agent_config` was the alternative, and it is exactly
+    what this branch exists to stop: the rule about how a project's overrides beat a default
+    would then live in two places, and the second copy is always the one that drifts.
+    """
+    from api.services.interviewer_selection import resolve_interviewer_selection
+
+    return _await_sync(resolve_interviewer_selection(slug))
 
 
 def _script_ids_by_label(slug: str) -> dict[str, list[str]]:
@@ -169,6 +210,16 @@ class InterviewSessionTool(BaseTool):
         # every row, and the labels-to-ids index below is built from it.
         by_label = _script_ids_by_label(self.slug)
 
+        # Who may take these sessions, and what each of them sounds like on this project.
+        # Resolved before the first INSERT so that a project asking for a sex nobody's voice
+        # carries creates no sessions at all, rather than half a programme.
+        from api.services.interviewer_selection import NoInterviewerAvailable
+
+        try:
+            selection = _resolve_interviewers(self.slug)
+        except NoInterviewerAvailable as exc:
+            return f"Error: {exc}"
+
         urls = []
         for s in sessions:
             try:
@@ -180,14 +231,22 @@ class InterviewSessionTool(BaseTool):
             # its uniqueness must not depend on a language model. Minted here, in code,
             # regardless of anything the caller supplies.
             session_token = str(uuid.uuid4())
-            voice_config = s.get("voice_config")
-            voice_config_json = json.dumps(voice_config) if voice_config else None
+            # The voice is resolved here and **any `voice_config` in the plan is ignored**.
+            # It was previously taken from the plan, which meant the interviewer's voice was
+            # whatever a language model copied out of the voice-locale table that used to sit
+            # in `agents/discovery/interview_coordinator.py` - prose naming ElevenLabs' stock
+            # Rachel, a female voice, for the male interviewer, and disagreeing with its dead
+            # TypeScript twin on four of eight locales. Both are gone, and Taylor is now told
+            # not to emit a voice_config at all; the ignore stays, because a plan is a model's
+            # output and this row is a permanent record. A voice is a project's configuration.
+            interviewer_agent_id = selection.pick()
+            voice_config_json = json.dumps(selection.stamp_for(interviewer_agent_id))
             script_id = _resolve_script_id(s.get("script_id"), node_label, by_label)
             conn.execute(
                 "INSERT OR IGNORE INTO interview_sessions "
                 "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token,"
-                " voice_config, script_id) "
-                "VALUES (?,?,?,?,?,?,?)",
+                " voice_config, interviewer_agent_id, script_id) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (
                     project_id,
                     orchestration_run_id,
@@ -195,6 +254,7 @@ class InterviewSessionTool(BaseTool):
                     node_label,
                     session_token,
                     voice_config_json,
+                    interviewer_agent_id,
                     script_id,
                 ),
             )
@@ -221,8 +281,21 @@ class InterviewSessionTool(BaseTool):
         )
 
     def _get_transcripts(self, conn: sqlite3.Connection, orchestration_run_id: int) -> str:
+        """Completed transcripts, each carrying the interviewer that conducted it.
+
+        `interviewer_agent_id` and `voice_config` come out with the transcript because the
+        artefact this feeds - `interview_transcripts`, written by Avery - is the record of a
+        programme in which two people may have interviewed, and a transcript that cannot say
+        which of them conducted it is a transcript that has to guess. It is read off the row
+        rather than re-derived from the project's current setting, for the reason the stamp
+        exists at all.
+
+        A session issued before the interviewer was recorded answers None, which honestly
+        means "not recorded" rather than naming somebody who may not have been there.
+        """
         rows = conn.execute(
-            "SELECT s.name, is_.stakeholder_id, is_.node_label, is_.transcript_json "
+            "SELECT s.name, is_.stakeholder_id, is_.node_label, is_.transcript_json, "
+            "is_.interviewer_agent_id, is_.voice_config "
             "FROM interview_sessions is_ "
             "JOIN stakeholders s ON s.id = is_.stakeholder_id "
             "WHERE is_.orchestration_run_id=? AND is_.status='completed'",
@@ -235,10 +308,16 @@ class InterviewSessionTool(BaseTool):
                 parsed = json.loads(raw) if raw else None
             except json.JSONDecodeError:
                 parsed = None
+            try:
+                voice = json.loads(row["voice_config"]) if row["voice_config"] else None
+            except (json.JSONDecodeError, TypeError):
+                voice = None
             results.append({
                 "stakeholder_id": row["stakeholder_id"],
                 "name": row["name"],
                 "node_label": row["node_label"],
+                "interviewer_agent_id": row["interviewer_agent_id"],
+                "voice_config": voice,
                 "transcript_json": parsed,
             })
         return json.dumps(results)
