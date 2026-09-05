@@ -412,7 +412,11 @@ def _library_accents_probe():
     """
     from api.services import voice_catalogue
     return (
-        lambda: setattr(voice_catalogue, "_LIBRARY_ACCENTS", ["probe-accent"]),
+        lambda: setattr(
+            voice_catalogue,
+            "_LIBRARY_ACCENTS",
+            voice_catalogue.AccentProbe(["probe-accent"], False),
+        ),
         lambda: voice_catalogue._LIBRARY_ACCENTS is not None,
     )
 

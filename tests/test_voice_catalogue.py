@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -127,20 +128,29 @@ def _catalogue_wire(
     *,
     account: dict | int = ACCOUNT_BODY,
     library: dict | int = LIBRARY_BODY,
+    library_probe: dict | int | None = None,
     added: dict | int | None = None,
 ) -> list[httpx.Request]:
     """Point the catalogue's client at a `MockTransport` and record every request.
 
-    Each of the three arguments takes either a body to answer with or a status code to fail
-    with, which is what lets one fixture drive "the library is unreachable" without a second
-    handler. **The handler answers 404 for any other path**, deliberately: a request this file
-    has not anticipated must show up as a failure rather than as a cheerful empty list.
+    Each argument takes either a body to answer with or a status code to fail with, which is
+    what lets one fixture drive "the library is unreachable" without a second handler. **The
+    handler answers 404 for any other path**, deliberately: a request this file has not
+    anticipated must show up as a failure rather than as a cheerful empty list.
 
     **The library half honours `accent` and `gender`, as the real endpoint does.** A stub that
     ignored them would return every library voice to every query, and the one property that
     matters most here - that an Irish voice is *absent* from a british-filtered result and
     still reachable through `accent_options` - would be unobservable, because the Irish voice
     would be sitting in the result set either way.
+
+    **`library_probe` answers the *unfiltered* `shared-voices` call only**, so a test can fail
+    the accent probe while the narrowed result set succeeds. That pair is not reachable with
+    one `library` argument, and it is the pair that distinguishes two independent calls from
+    two calls sharing a `try`. The two are told apart by whether the request carries a
+    narrowing parameter, so a test using it must apply a **non-empty** accent: `?accent=`
+    clears the filter and the result set then goes out unfiltered too, which is genuinely
+    indistinguishable on the wire rather than a shortcoming of the stub.
     """
     seen: list[httpx.Request] = []
 
@@ -168,6 +178,9 @@ def _catalogue_wire(
         if path == "/v1/voices":
             return _answer(account, request)
         if path == "/v1/shared-voices":
+            narrowing = {"accent", "gender", "language", "search"} & set(request.url.params)
+            if library_probe is not None and not narrowing:
+                return _narrow(library_probe, request)
             return _narrow(library, request)
         if path.startswith("/v1/voices/add/"):
             return _answer(added if added is not None else {"voice_id": "acct-new"}, request)
@@ -611,6 +624,96 @@ async def test_an_empty_accent_puts_no_empty_option_in_the_list(engagements, mon
     assert body["accent_options"] == ["british", "irish", "scottish"]
 
 
+@pytest.mark.asyncio
+async def test_a_failed_accent_probe_still_leaves_a_full_narrowed_result_set(
+    engagements, monkeypatch
+):
+    """The probe is auxiliary, so its failure must not suppress the primary query.
+
+    The two library calls shared one `try` for a single commit, and that made the *heavier*
+    request gate the lighter one: the probe is the unfiltered hundred-voice page and the
+    result set is a narrowed query, so the call more likely to fail was the one deciding
+    whether the other was attempted at all. Driven here by failing only the unfiltered call.
+
+    The observable is the **result set**, not a call count: a picker showing no voices at all
+    because a dropdown could not be populated is the failure, and it looks from the outside
+    like an empty library.
+    """
+    seen = _catalogue_wire(monkeypatch, library_probe=502)
+
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=british")
+    assert res.status_code == 200, res.text
+    body = res.json()
+
+    assert [v["voice_id"] for v in body["library"]] == ["acct-daniel"], body["library"]
+    assert body["library_error"] is None
+    # The probe's failure is visible where it belongs: the options are not the whole
+    # vocabulary. It is not `library_error`, which names a failure of the result set - and
+    # were it, an account failure alongside it would be a 502 with a good listing in hand.
+    assert body["library_accents"] == []
+    assert body["accent_options_partial"] is True
+    assert "british" in body["accent_options"]
+
+    narrowed = [r for r in _library_calls(seen) if r.url.params.get("accent") == "british"]
+    assert len(narrowed) == 1, _urls(seen)
+
+
+@pytest.mark.asyncio
+async def test_a_warm_accent_probe_survives_a_failure_of_the_result_set(
+    engagements, monkeypatch
+):
+    """A cached, known-good answer is not discarded because a different call failed.
+
+    The shared `except` set `lib_accents = []` unconditionally, so a failure of the narrowed
+    call threw away a probe that had already succeeded - and what went with it was precisely
+    `irish`, the option the probe exists to add. `test_the_projects_own_accent_is_always_
+    among_its_options` cannot see this: it asserts only that the **applied** accent survives,
+    which `applied_accent` guarantees by a different route entirely.
+    """
+    _catalogue_wire(monkeypatch)
+    warm = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
+    assert warm["accent_options"] == ["british", "irish", "scottish"]
+
+    seen = _catalogue_wire(monkeypatch, library=502)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
+
+    assert body["library_error"] and "502" in body["library_error"]
+    assert body["library"] == []
+    assert "irish" in body["accent_options"], body["accent_options"]
+    assert body["accent_options"] == ["british", "irish", "scottish"]
+    assert body["library_accents"] == ["british", "irish"]
+
+    # The cache really is what answered - one library request went out on the second listing,
+    # the narrowed one. Without this the test could pass against a probe that was re-asked and
+    # happened to succeed.
+    assert len(_library_calls(seen)) == 1, _urls(seen)
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_page_says_whether_there_is_more(engagements, monkeypatch):
+    """`LIBRARY_PAGE_SIZE` and no pagination, so a first page must not read as the whole answer.
+
+    A consumer handed a bare list cannot tell a complete answer from a truncated one and will
+    eventually present one as the other - which on a picker reads as "that voice is not in the
+    library" rather than "narrow your filters". Both directions are asserted, so a field
+    hardcoded either way fails.
+    """
+    from api.services.voice_catalogue import forget_library_accents
+
+    _catalogue_wire(monkeypatch)
+    whole = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
+    assert whole["library_has_more"] is False
+    assert whole["accent_options_partial"] is False
+
+    # The probe is cached per process, so its `has_more` is too - and that is correct: it
+    # describes the page that was actually read. Dropped here so the second listing re-asks.
+    forget_library_accents()
+    _catalogue_wire(monkeypatch, library={**LIBRARY_BODY, "has_more": True})
+    truncated = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
+    assert truncated["library_has_more"] is True
+    assert truncated["accent_options_partial"] is True
+
+
 # --- Failure is reported, never hidden -------------------------------------------------------
 
 
@@ -882,6 +985,143 @@ def test_no_python_module_names_a_retired_voice_id_in_code():
         if found:
             offenders[str(path.relative_to(REPO))] = found
     assert offenders == {}, offenders
+
+
+# The two shapes that are a voice **fact** rather than wording about voices. Neither has any
+# legitimate reason to appear in a prompt in any of the modules below, whatever the prose
+# around it: one is an address for a voice and the other is the left-hand column of a table
+# that maps something to one.
+ELEVENLABS_ID_SHAPE = re.compile(r"\b[A-Za-z0-9]{20}\b")
+LOCALE_PAIR_SHAPE = re.compile(r"\b[a-z]{2}[/_-][A-Z]{2}\b")
+
+
+def _class_names_under(root: Path) -> frozenset[str]:
+    """Every class name this repository defines under `root`, derived rather than listed.
+
+    An ElevenLabs voice id is twenty characters of base62, and so - by coincidence that is
+    not going to be the last of its kind - are `InterviewSessionTool` and
+    `PowerPointOutputTool`, both of which prompts name because an agent has to call them.
+    Excusing them by **derivation** leaves the id shape itself intact: a token is excused only
+    because this codebase defines a class of that name, which a provider-generated id never
+    is. It also fails in the safe direction - a derivation that broke and returned nothing
+    makes the guard stricter rather than laxer, and says so by failing.
+    """
+    names: set[str] = set()
+    for path in root.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ClassDef):
+                names.add(node.name)
+    return frozenset(names)
+
+
+def _voice_facts_in(text: str, *, exempt: frozenset[str]) -> list[str]:
+    """The voice facts one string declares - a **pure function over given text**.
+
+    Pure so it can be driven with text of the reviewer's choosing rather than only against
+    the source it guards. Three times on this branch a guard's own account of its coverage has
+    been wrong - the mode-name inventory, sp58's `public_url` walk, and sp59's Settings walk,
+    whose opener list omitted `<button` while the comment beside it said otherwise. A walk
+    that can only be run against the real files is a walk that cannot be asked what it saw.
+    """
+    return [t for t in ELEVENLABS_ID_SHAPE.findall(text) if t not in exempt] + (
+        LOCALE_PAIR_SHAPE.findall(text)
+    )
+
+
+def _voice_fact_free_modules() -> list[Path]:
+    """Every module whose strings become part of what a discovery interviewing agent is told.
+
+    The discovery agents are enumerated by **glob**, so a new one is guarded on the day it is
+    added rather than on the day somebody remembers this list. The crew factory is named
+    because it is one file and a glob over `agents/crews` would guard nine crews this rule was
+    not reasoned about - but it is the file that assembles these agents, and injecting through
+    a factory parameter is the one-level-up move that produced the finding this widening
+    closes.
+    """
+    return sorted((REPO / "agents" / "discovery").glob("*.py")) + [
+        REPO / "agents" / "crews" / "discovery_interviews_crew.py"
+    ]
+
+
+def test_no_discovery_module_declares_a_voice_fact_in_a_string_it_can_send():
+    """Widened from Taylor's five strings to every prompt on the crew that speaks to people.
+
+    `test_nothing_taylor_is_given_chooses_a_voice_in_any_vocabulary` is one **file** wide,
+    which is the shape of the finding it was written for, one level up: a correct-id
+    locale-to-voice table was green when written straight into
+    `agents/discovery/stakeholder_interviewer.py`, and green when declared in
+    `agents/crews/discovery_interviews_crew.py` and injected into Taylor through
+    `discovery_brief=`. Both reach the model; neither is Taylor's own prompt.
+
+    **Only the two axes that are about data are widened, and that is deliberate.** A voice id
+    and a locale pairing express a voice *fact*, and no prompt in these modules has a reason
+    to carry either. The vocabulary axis - the words `voice` and `elevenlabs`, and the stock
+    voice names - does **not** generalise and must not be copied here:
+    `stakeholder_interviewer.py` legitimately says "voice interview" and carries `voice_config`
+    as the passthrough shape Avery must copy verbatim, and `interaction_designer.py` uses
+    "customer voice", "audit voice" and "frontline voice" throughout. A copied rule would fire
+    on every one of them, and a guard that has to be softened is a guard that gets deleted.
+
+    **What this deliberately does not reach**, so the next reader meets the edge rather than
+    rediscovering it: a mapping paraphrased with no id and no locale pair - *"For interviewees
+    in Dublin, use the warm narrator; in Edinburgh, the measured broadcaster"* - passes. It
+    names no id, so nothing downstream could act on it, and `InterviewSessionTool._create`
+    resolves the interviewer itself and never reads a `voice_config` out of the plan, so the
+    whole class is inert at run time. Closing it would mean forbidding ordinary English in
+    files that have ordinary reasons to use it. A guard that claims more than it delivers is
+    worse than one that states its edge.
+    """
+    exempt = _class_names_under(REPO / "agents")
+    assert exempt, "the class-name derivation found nothing, so the exemption is not derived"
+
+    modules = _voice_fact_free_modules()
+    assert len(modules) >= 3, modules
+    assert all(p.exists() for p in modules), [str(p) for p in modules if not p.exists()]
+
+    offenders: dict[str, list[str]] = {}
+    for path in modules:
+        found = [
+            fact
+            for constant in _code_constants(path)
+            for fact in _voice_facts_in(constant, exempt=exempt)
+        ]
+        if found:
+            offenders[str(path.relative_to(REPO))] = found
+    assert offenders == {}, offenders
+
+
+def test_the_voice_fact_walk_sees_both_axes_and_excuses_only_what_it_claims_to():
+    """The walk driven over given text, gated and ungated, one of each kind.
+
+    A one-sided test passes against a walk that reports everything and against one that
+    reports nothing, so both directions are here. The last case is the conceded edge above,
+    asserted as a **fact about the guard** rather than left as a sentence in a docstring that
+    nothing checks - if it ever starts being caught, this fails and the docstring gets fixed.
+    """
+    exempt = _class_names_under(REPO / "agents")
+
+    assert _voice_facts_in("use onwK4e9ZLuTAKqWW03F9 for this one", exempt=exempt) == [
+        "onwK4e9ZLuTAKqWW03F9"
+    ]
+    assert _voice_facts_in("en/GB, en_US and en-AU", exempt=exempt) == [
+        "en/GB", "en_US", "en-AU"
+    ]
+    assert len(_voice_facts_in("en/GB -> onwK4e9ZLuTAKqWW03F9", exempt=exempt)) == 2
+
+    # A tool an agent is told to call, and the phrasing every one of these prompts uses.
+    assert _voice_facts_in(
+        "Use InterviewSessionTool with operation='create', sessions=[...]", exempt=exempt
+    ) == []
+    assert _voice_facts_in("Copy voice_config exactly as returned.", exempt=exempt) == []
+
+    # The edge, stated and therefore checked: no id, no pairing, not caught.
+    assert _voice_facts_in(
+        "For interviewees in Dublin, use the warm narrator; in Edinburgh, the measured "
+        "broadcaster.",
+        exempt=exempt,
+    ) == []
 
 
 def test_the_dead_typescript_twin_is_gone_and_nothing_declares_a_locale_to_voice_map():

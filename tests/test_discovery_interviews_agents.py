@@ -158,6 +158,15 @@ def test_nothing_taylor_is_given_chooses_a_voice_in_any_vocabulary():
     Stripping the sanctioned sentences by importing them, rather than by matching a substring,
     is what keeps this honest: editing either sentence cannot silently widen the hole, because
     the constant the prompt uses is the constant the test removes.
+
+    **This is one file wide, and the other two files' worth is next door.** The two axes that
+    are about a voice *fact* rather than about wording - an id, and a locale pairing - are
+    applied to every discovery agent module and the crew factory by
+    `tests/test_voice_catalogue.py::test_no_discovery_module_declares_a_voice_fact_in_a_
+    string_it_can_send`. The vocabulary axis stays here deliberately: Avery legitimately says
+    "voice interview" and carries `voice_config`, and Maya says "customer voice" throughout,
+    so a copied vocabulary rule would fire on both. Nothing in *Taylor's* remit needs the
+    word, which is what makes it sustainable for him alone.
     """
     import re
 

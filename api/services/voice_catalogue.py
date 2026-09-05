@@ -47,7 +47,7 @@ listener, so only a test can tell them apart.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -193,6 +193,21 @@ async def fetch_account_voices() -> list[dict[str, Any]]:
     return [_from_account(v) for v in voices if isinstance(v, dict)] if isinstance(voices, list) else []
 
 
+class LibraryPage(NamedTuple):
+    """One page of the Voice Library, and whether the provider says there is another.
+
+    **A bare list cannot say "and there are more."** Every call here is bounded by
+    `LIBRARY_PAGE_SIZE` and there is no pagination, so a consumer handed a list has no way to
+    tell a complete answer from a first page and will eventually present one as the other -
+    which on a picker reads as "that voice is not in the library" rather than as "narrow your
+    filters". `has_more` is ElevenLabs' own answer about its own listing, passed through
+    unread, the same rule every other field in this module follows.
+    """
+
+    voices: list[dict[str, Any]]
+    has_more: bool
+
+
 async def fetch_library_voices(
     *,
     accent: str | None = None,
@@ -200,14 +215,17 @@ async def fetch_library_voices(
     language: str | None = None,
     search: str | None = None,
     account_ids: frozenset[str] = frozenset(),
-) -> list[dict[str, Any]]:
-    """The Voice Library, filtered **by the API**.
+) -> LibraryPage:
+    """The Voice Library, filtered **by the API**, as one bounded page.
 
     Every filter this takes is a query parameter ElevenLabs itself accepts, and each one is
     forwarded verbatim. Nothing in this function decides what `scottish` or `female` mean, and
     a filter value this codebase has never heard of reaches the provider unaltered - which is
     the point. A closed vocabulary here would be a restatement of ElevenLabs' own, stale the
     first time they add an accent.
+
+    Returns a `LibraryPage` rather than a list so the truncation is visible to every caller -
+    see that class for why a list was the wrong return type.
     """
     params: dict[str, Any] = {"page_size": LIBRARY_PAGE_SIZE}
     for key, value in (
@@ -216,10 +234,14 @@ async def fetch_library_voices(
         if value:
             params[key] = value
     body = await _get(SHARED_VOICES_URL, params)
+    has_more = bool(body.get("has_more"))
     voices = body.get("voices")
     if not isinstance(voices, list):
-        return []
-    return [_from_library(v, account_ids=account_ids) for v in voices if isinstance(v, dict)]
+        return LibraryPage([], has_more)
+    return LibraryPage(
+        [_from_library(v, account_ids=account_ids) for v in voices if isinstance(v, dict)],
+        has_more,
+    )
 
 
 def filter_account_voices(
@@ -258,9 +280,22 @@ def accents_present(voices: list[dict[str, Any]]) -> list[str]:
     return sorted({v["accent"] for v in voices if isinstance(v.get("accent"), str)})
 
 
+class AccentProbe(NamedTuple):
+    """The accents an unfiltered page of the library holds, and whether the page was the lot.
+
+    `partial` is `has_more` under the name that says what it *means* here: the accents are
+    read off one page, so a `True` is the probe saying "this is not the library's whole accent
+    vocabulary". A picker may render the options either way; it must not present them as
+    exhaustive when this is set.
+    """
+
+    accents: list[str]
+    partial: bool
+
+
 # The accents the Voice Library holds, once per process. See `library_accents` for why this
 # is cached and why only a successful answer is stored.
-_LIBRARY_ACCENTS: list[str] | None = None
+_LIBRARY_ACCENTS: AccentProbe | None = None
 
 
 def forget_library_accents() -> None:
@@ -275,7 +310,7 @@ def forget_library_accents() -> None:
 register_cache(forget_library_accents)
 
 
-async def library_accents() -> list[str]:
+async def library_accents() -> AccentProbe:
     """The accents the Voice Library holds, asked **unfiltered**.
 
     This exists because deriving the picker's options from the account listing alone made
@@ -299,14 +334,24 @@ async def library_accents() -> list[str]:
 
     **It is a page of the library, not an enumeration of it.** `LIBRARY_PAGE_SIZE` bounds it,
     so an accent held by only a handful of voices beyond the first page will not appear. That
-    is a real limit and it is stated rather than hidden - the alternative is a declared list,
-    which is worse, and the requested accent is added to the options by the door regardless so
-    a project's own choice is never missing from its own picker.
+    is a real limit and it is now *reported* rather than merely stated in prose: `partial`
+    carries the page's `has_more` out to the door and on to whatever renders the options. The
+    requested accent is added to the options by the door regardless, so a project's own choice
+    is never missing from its own picker.
+
+    **The four accents this has to serve are split across the two listings**, which is why the
+    union in the door needs both halves and neither is redundant. Page 1 of `shared-voices`,
+    unfiltered, on 5 September 2026: irish (2), australian (2), new zealand (1), british (8),
+    **scottish 0** - while the account holds scottish and not irish. So Irish reaches the
+    picker only through this probe and Scottish only through the account listing. That is one
+    observation of a moving page and deliberately not a test: it is a fact about the world on
+    a date, not a property of this code.
     """
     global _LIBRARY_ACCENTS
     if _LIBRARY_ACCENTS is None:
-        _LIBRARY_ACCENTS = accents_present(await fetch_library_voices())
-    return list(_LIBRARY_ACCENTS)
+        page = await fetch_library_voices()
+        _LIBRARY_ACCENTS = AccentProbe(accents_present(page.voices), page.has_more)
+    return AccentProbe(list(_LIBRARY_ACCENTS.accents), _LIBRARY_ACCENTS.partial)
 
 
 async def add_library_voice(

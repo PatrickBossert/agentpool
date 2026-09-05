@@ -89,6 +89,12 @@ async def list_voices(
     ninety is the failure that gets diagnosed as "there are no Scottish voices". If **both**
     fail there is nothing to show and it is a 502; the sentence names both.
 
+    **Truncation is a partial answer too, and it is reported the same way.** Both library
+    calls are one bounded page with no pagination behind it, so `library_has_more` and
+    `accent_options_partial` carry the provider's own `has_more` out to whatever renders
+    them. A consumer that cannot tell a complete answer from a first page will present one as
+    the other, and on a picker that reads as "that voice is not in the library".
+
     **`accent_options` is what a picker renders, and it is the union of both listings.** The
     first version of this door derived the options from the account alone, which made **Irish
     unreachable** - irish exists only in the library, and Irish is one of the four planned
@@ -105,7 +111,11 @@ async def list_voices(
     account_accents: list[str] = []
     account_error: str | None = None
     library: list[dict[str, Any]] = []
+    library_has_more = False
     lib_accents: list[str] = []
+    # True when the probe was truncated *or* failed. Either way the option list is not the
+    # library's whole accent vocabulary, and a picker must not present it as one.
+    accent_options_partial = False
     library_error: str | None = None
 
     try:
@@ -123,14 +133,33 @@ async def list_voices(
         account_error = str(exc)
         account_ids = frozenset()
 
+    # Asked **before** the narrowed call and deliberately unfiltered - see `library_accents`.
+    # Both are needed: the narrowed one is the result set, and asked with `accent=british` it
+    # reports british, so a dropdown derived from it would offer exactly the option already
+    # selected. Cached per process, so this is one extra request per process rather than per
+    # keystroke.
+    #
+    # **Its own `try`, and the separation is the whole point.** These two shared one for a
+    # single commit and the coupling ran in both directions. Sharing it made the *auxiliary*
+    # query gate the *primary* one, and the probe is the heavier of the two - the unfiltered
+    # hundred-voice page against a narrowed query - so the more likely failure was the one
+    # suppressing the result set entirely. And the shared `except` cleared `lib_accents`
+    # unconditionally, so a failure of the **narrowed** call discarded a cached, known-good
+    # probe: `accent_options` went from `['british', 'irish', 'scottish']` to
+    # `['british', 'scottish']`, losing precisely the option the probe exists to add.
     try:
-        # Asked **before** the narrowed call and deliberately unfiltered - see
-        # `library_accents`. Both are needed: the narrowed one is the result set, and asked
-        # with `accent=british` it reports british, so a dropdown derived from it would offer
-        # exactly the option already selected. Cached per process, so this is one extra
-        # request per process rather than per keystroke.
-        lib_accents = await library_accents()
-        library = await fetch_library_voices(
+        lib_accents, accent_options_partial = await library_accents()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except VoiceCatalogueUnavailable:
+        # Not reported in `library_error`, which names a failure of the *result set*: a
+        # picker with a short accent list and a full result set has something to show, and
+        # setting it here would make an account failure plus a probe failure a 502 while a
+        # perfectly good library listing sat in hand.
+        accent_options_partial = True
+
+    try:
+        library, library_has_more = await fetch_library_voices(
             accent=applied_accent,
             gender=gender,
             language=language,
@@ -141,7 +170,6 @@ async def list_voices(
         raise HTTPException(status_code=503, detail=str(exc))
     except VoiceCatalogueUnavailable as exc:
         library_error = str(exc)
-        lib_accents = []
 
     if account_error and library_error:
         raise HTTPException(status_code=502, detail=f"{account_error}; {library_error}")
@@ -164,11 +192,19 @@ async def list_voices(
         "accent_source": accent_source,
         "filters": {"gender": gender, "language": language, "search": search},
         "accent_options": accent_options,
+        # The options came off one bounded page, or off a probe that failed. Either way the
+        # list is not the library's whole accent vocabulary, and a control that renders it as
+        # exhaustive is presenting a first page as a complete answer.
+        "accent_options_partial": accent_options_partial,
         "account_accents": account_accents,
         "library_accents": lib_accents,
         "account": account,
         "account_error": account_error,
         "library": library,
+        # `LIBRARY_PAGE_SIZE` bounds the result set and there is no pagination, so this is how
+        # a picker knows to say "narrow your filters" rather than "that voice is not in the
+        # library".
+        "library_has_more": library_has_more,
         "library_error": library_error,
     }
 

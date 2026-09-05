@@ -86,7 +86,13 @@ def create_stakeholder_interviewer_task(
             "8. Compile transcripts into a JSON array where each element is:\n"
             "   {\n"
             "     \"stakeholder_id\": 1,\n"
-            "     \"name\": \"Alice Chen\",\n"
+            # Renamed from "Alice Chen", matching Taylor's example one module along. The
+            # placeholder is arbitrary and "Alice" is one of the four verified default
+            # voices, so a guard forbidding a locale table written under voice *names* could
+            # not be widened to this file while its own example tripped it. The two prompts'
+            # examples also describe one plan Avery consumes from Taylor, so they should not
+            # disagree. A throwaway name is the cheap side of that trade.
+            "     \"name\": \"Priya Raman\",\n"
             "     \"node_labels\": [\"Goods-in Inspection\"],\n"
             "     \"interviewer_agent_id\": \"second_interviewer\",\n"
             "     \"voice_config\": {\"elevenlabs_voice_id\": \"...\", \"language\": \"en\", "
