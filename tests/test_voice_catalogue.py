@@ -135,6 +135,12 @@ def _catalogue_wire(
     with, which is what lets one fixture drive "the library is unreachable" without a second
     handler. **The handler answers 404 for any other path**, deliberately: a request this file
     has not anticipated must show up as a failure rather than as a cheerful empty list.
+
+    **The library half honours `accent` and `gender`, as the real endpoint does.** A stub that
+    ignored them would return every library voice to every query, and the one property that
+    matters most here - that an Irish voice is *absent* from a british-filtered result and
+    still reachable through `accent_options` - would be unobservable, because the Irish voice
+    would be sitting in the result set either way.
     """
     seen: list[httpx.Request] = []
 
@@ -143,13 +149,26 @@ def _catalogue_wire(
             return httpx.Response(spec, json={"detail": "no"})
         return httpx.Response(200, json=spec)
 
+    def _narrow(spec, request: httpx.Request) -> httpx.Response:
+        if isinstance(spec, int):
+            return httpx.Response(spec, json={"detail": "no"})
+        kept = [
+            v
+            for v in spec["voices"]
+            if all(
+                request.url.params.get(field) in (None, v.get(field))
+                for field in ("accent", "gender", "language")
+            )
+        ]
+        return httpx.Response(200, json={**spec, "voices": kept})
+
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         path = request.url.path
         if path == "/v1/voices":
             return _answer(account, request)
         if path == "/v1/shared-voices":
-            return _answer(library, request)
+            return _narrow(library, request)
         if path.startswith("/v1/voices/add/"):
             return _answer(added if added is not None else {"voice_id": "acct-new"}, request)
         return httpx.Response(404, json={"detail": f"unexpected path {path}"})
@@ -255,6 +274,17 @@ def _urls(seen: list[httpx.Request]) -> list[str]:
     return [str(r.url) for r in seen]
 
 
+def _library_calls(seen: list[httpx.Request]) -> list[httpx.Request]:
+    """Every request to `shared-voices`, of which there are now **two** per listing.
+
+    One is the unfiltered accent probe and one is the narrowed result set, and they ask
+    different questions - so the assertions below select by what a request *carries* rather
+    than by its index. Indexing would be quietly wrong the moment the probe's process cache is
+    warm, which happens whenever one test calls the door twice.
+    """
+    return [r for r in seen if r.url.path == "/v1/shared-voices"]
+
+
 # --- The two properties only the wire can show ----------------------------------------------
 
 
@@ -319,9 +349,7 @@ async def test_the_projects_accent_reaches_the_library_query(engagements, monkey
     assert res.json()["accent"] == DEFAULT_INTERVIEW_ACCENT == "british"
     assert res.json()["accent_source"] == "project"
 
-    library = [r for r in seen if r.url.path == "/v1/shared-voices"]
-    assert len(library) == 1
-    assert library[0].url.params["accent"] == "british"
+    assert any(r.url.params.get("accent") == "british" for r in _library_calls(seen))
 
 
 @pytest.mark.asyncio
@@ -343,8 +371,7 @@ async def test_a_saved_accent_becomes_the_default_filter(engagements, monkeypatc
     assert res.status_code == 200, res.text
     assert res.json()["accent"] == "scottish"
 
-    library = [r for r in seen if r.url.path == "/v1/shared-voices"]
-    assert library[0].url.params["accent"] == "scottish"
+    assert any(r.url.params.get("accent") == "scottish" for r in _library_calls(seen))
 
 
 @pytest.mark.asyncio
@@ -364,14 +391,15 @@ async def test_an_explicit_accent_beats_the_projects_and_an_empty_one_clears_it(
     assert res.status_code == 200, res.text
     assert res.json()["accent"] == "irish"
     assert res.json()["accent_source"] == "request"
-    assert [r for r in seen if r.url.path == "/v1/shared-voices"][0].url.params["accent"] == "irish"
+    assert any(r.url.params.get("accent") == "irish" for r in _library_calls(seen))
 
     cleared = _catalogue_wire(monkeypatch)
     res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")
     assert res.status_code == 200, res.text
     assert res.json()["accent"] == ""
-    library = [r for r in cleared if r.url.path == "/v1/shared-voices"][0]
-    assert "accent" not in library.url.params, str(library.url)
+    calls = _library_calls(cleared)
+    assert calls, "the library was never asked, so 'no accent went out' is vacuous"
+    assert all("accent" not in r.url.params for r in calls), _urls(cleared)
     # And the account list is not narrowed either, so clearing really does show everything.
     assert len(res.json()["account"]) == len(ACCOUNT_BODY["voices"])
 
@@ -391,8 +419,7 @@ async def test_gender_is_forwarded_to_the_api_and_never_answered_from_a_list(
     res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=&gender=female")
     assert res.status_code == 200, res.text
 
-    library = [r for r in seen if r.url.path == "/v1/shared-voices"][0]
-    assert library.url.params["gender"] == "female"
+    assert any(r.url.params.get("gender") == "female" for r in _library_calls(seen))
 
     # The account endpoint takes no parameters at all, so the same narrowing has to happen
     # here - against the `labels.gender` the provider itself returned, which is reading its
@@ -500,6 +527,88 @@ async def test_the_accent_options_come_from_the_unfiltered_account_listing(
 
     assert body["account_accents"] == ["british", "scottish"]
     assert [v["voice_id"] for v in body["account"]] == ["acct-daniel"]
+
+
+@pytest.mark.asyncio
+async def test_an_accent_only_the_library_has_is_still_offered(engagements, monkeypatch):
+    """**Irish is one of the four planned engagements and lives only in the library.**
+
+    The first version of this door derived the options from the account listing alone, so a
+    picker built on it could never offer Irish - and the only routes left were to hardcode a
+    list of accents, which is the sixth declaration of voice facts on a branch that exists to
+    end them, or to type it as free text, which is weight the open `interview_accent`
+    vocabulary was not chosen to carry.
+
+    The default filter is `british`, so the *result* is the one British library voice and the
+    Irish one is genuinely absent from it - the stub narrows exactly as the endpoint does. The
+    option is still there, which is the property: **what you can filter to is not the same
+    question as what came back.**
+    """
+    _catalogue_wire(monkeypatch)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
+
+    assert body["accent"] == "british"
+    assert "irish" not in {v["accent"] for v in body["library"]}
+    assert "irish" not in body["account_accents"]
+    assert "irish" in body["library_accents"]
+    assert "irish" in body["accent_options"]
+    assert body["accent_options"] == ["british", "irish", "scottish"]
+
+
+@pytest.mark.asyncio
+async def test_the_accent_probe_is_unfiltered_and_the_result_set_is_not(
+    engagements, monkeypatch
+):
+    """Two questions, two requests - and the probe must carry no accent.
+
+    A probe that inherited the applied filter would answer "british" for a british query, and
+    the dropdown would offer exactly the option already selected. That failure looks identical
+    to a working picker until somebody needs a second accent, which is how Irish went missing
+    the first time.
+    """
+    seen = _catalogue_wire(monkeypatch)
+    await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=scottish&gender=male")
+
+    calls = _library_calls(seen)
+    assert len(calls) == 2, _urls(seen)
+    unfiltered = [r for r in calls if not {"accent", "gender"} & set(r.url.params)]
+    narrowed = [r for r in calls if r.url.params.get("accent") == "scottish"]
+    assert len(unfiltered) == 1, _urls(seen)
+    assert len(narrowed) == 1, _urls(seen)
+
+
+@pytest.mark.asyncio
+async def test_the_projects_own_accent_is_always_among_its_options(
+    engagements, monkeypatch
+):
+    """A picker must not apply a filter its own control cannot show.
+
+    `library_accents` reads a *page* of the library rather than enumerating it, so an accent
+    held by few voices can be missing from the probe - and the library call can fail outright.
+    In both cases the applied accent is still the state the picker is in, and a dropdown that
+    omits it disagrees with the filter it is displaying.
+    """
+    _catalogue_wire(monkeypatch, library=502)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=irish")).json()
+
+    assert body["library_accents"] == []
+    assert body["library_error"]
+    assert "irish" in body["accent_options"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_accent_puts_no_empty_option_in_the_list(engagements, monkeypatch):
+    """Clearing the filter is a state, not an accent.
+
+    `applied_accent` joins the options, and `""` is a legitimate value for it - so without the
+    falsy filter the dropdown would gain a blank entry that means "every accent" and reads as
+    a voice with no accent.
+    """
+    _catalogue_wire(monkeypatch)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")).json()
+
+    assert "" not in body["accent_options"]
+    assert body["accent_options"] == ["british", "irish", "scottish"]
 
 
 # --- Failure is reported, never hidden -------------------------------------------------------
@@ -804,20 +913,56 @@ def test_the_dead_typescript_twin_is_gone_and_nothing_declares_a_locale_to_voice
     assert offenders == {}, offenders
 
 
+# Anything that puts synthesis within reach of the voices path, in every spelling an import
+# can take. `speak` and `synthesise` are the two functions; the two **modules** are here
+# because `from api.services import interview_service` imports neither name and reaches both -
+# and that is precisely the form of the route deliberately left unmutated during the
+# power-checks, so the guard was blind to the one case most care had been taken over.
+SYNTHESIS_HANDLES = {
+    "speak",
+    "synthesise",
+    "interview_service",
+    "api.services.interview_service",
+    "tts_cache",
+    "api.services.tts_cache",
+}
+
+
+def _import_handles(path: Path) -> set[str]:
+    """Every name an import statement binds or names, in both dotted and bare form.
+
+    `from api.services import interview_service` yields `interview_service` *and*
+    `api.services.interview_service`; `import api.services.interview_service` yields the
+    dotted name and each of its prefixes. Collecting both forms is what makes the guard
+    independent of how the import happens to be written, which was the whole defect.
+    """
+    handles: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                handles.add(alias.name)
+                if node.module:
+                    handles.add(f"{node.module}.{alias.name}")
+                    handles.add(node.module)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                handles.update(".".join(parts[: i + 1]) for i in range(len(parts)))
+    return handles
+
+
 def test_the_voices_path_imports_nothing_that_can_synthesise():
     """A source guard beside the wire assertion, catching the *next* change rather than this one.
 
-    The wire test is the real one - it fails whatever route a synthesis call arrives by. This
-    one fails earlier and more legibly for the specific mistake somebody is most likely to
-    make: reaching for `speak` or `synthesise` to "make preview work properly".
+    The wire test is the real one - it fails whatever route a synthesis call arrives by, and
+    is form-agnostic by construction. This one fails earlier and more legibly for the specific
+    mistake somebody is most likely to make: reaching for `speak` or `synthesise` to "make
+    preview work properly".
+
+    It searched for the two function names only, which is one vocabulary deep in exactly the
+    way the coordinator guard was: `from api.services import interview_service` imports
+    neither name and reaches both. It now asks about the modules as well, in every spelling.
     """
     for module in ("api/services/voice_catalogue.py", "api/routers/voices.py"):
-        source = (REPO / module).read_text()
-        tree = ast.parse(source)
-        imported: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                imported.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.Import):
-                imported.update(alias.name for alias in node.names)
-        assert not ({"speak", "synthesise"} & imported), (module, sorted(imported))
+        handles = _import_handles(REPO / module)
+        assert not (SYNTHESIS_HANDLES & handles), (module, sorted(SYNTHESIS_HANDLES & handles))

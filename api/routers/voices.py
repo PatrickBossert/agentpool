@@ -48,6 +48,7 @@ from api.services.voice_catalogue import (
     fetch_account_voices,
     fetch_library_voices,
     filter_account_voices,
+    library_accents,
 )
 from api.services.voice_settings import project_interview_accent
 
@@ -87,6 +88,13 @@ async def list_voices(
     when the library is unreachable - and a picker silently showing five when it should show
     ninety is the failure that gets diagnosed as "there are no Scottish voices". If **both**
     fail there is nothing to show and it is a 502; the sentence names both.
+
+    **`accent_options` is what a picker renders, and it is the union of both listings.** The
+    first version of this door derived the options from the account alone, which made **Irish
+    unreachable** - irish exists only in the library, and Irish is one of the four planned
+    engagements. That left the picker two bad choices, hardcoding a list of accents or
+    offering no way to reach one of the four, and it quietly made free-text `interview_accent`
+    the only route to Irish, which is weight an open vocabulary was not chosen to carry.
     """
     await check_project_access(slug, payload)
 
@@ -97,6 +105,7 @@ async def list_voices(
     account_accents: list[str] = []
     account_error: str | None = None
     library: list[dict[str, Any]] = []
+    lib_accents: list[str] = []
     library_error: str | None = None
 
     try:
@@ -115,6 +124,12 @@ async def list_voices(
         account_ids = frozenset()
 
     try:
+        # Asked **before** the narrowed call and deliberately unfiltered - see
+        # `library_accents`. Both are needed: the narrowed one is the result set, and asked
+        # with `accent=british` it reports british, so a dropdown derived from it would offer
+        # exactly the option already selected. Cached per process, so this is one extra
+        # request per process rather than per keystroke.
+        lib_accents = await library_accents()
         library = await fetch_library_voices(
             accent=applied_accent,
             gender=gender,
@@ -126,15 +141,31 @@ async def list_voices(
         raise HTTPException(status_code=503, detail=str(exc))
     except VoiceCatalogueUnavailable as exc:
         library_error = str(exc)
+        lib_accents = []
 
     if account_error and library_error:
         raise HTTPException(status_code=502, detail=f"{account_error}; {library_error}")
+
+    # The union, and the one thing a picker should render. `account_accents` and
+    # `library_accents` are kept beside it because they answer different questions - "what can
+    # I use now" against "what could I add" - but neither alone is the option list: the account
+    # has no Irish voice and the library is where Irish lives.
+    #
+    # `applied_accent` joins them even when neither listing reported it, so a project whose
+    # saved accent is beyond the library page, or whose library call failed, still sees its own
+    # setting in its own picker rather than a control that silently disagrees with the filter
+    # it is applying.
+    accent_options = sorted(
+        {a for a in account_accents + lib_accents + [applied_accent] if a}
+    )
 
     return {
         "accent": applied_accent,
         "accent_source": accent_source,
         "filters": {"gender": gender, "language": language, "search": search},
+        "accent_options": accent_options,
         "account_accents": account_accents,
+        "library_accents": lib_accents,
         "account": account,
         "account_error": account_error,
         "library": library,

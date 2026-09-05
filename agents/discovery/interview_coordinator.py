@@ -24,6 +24,34 @@
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
+# The **only** two places anything Taylor is given may mention a voice, and both of them say a
+# voice is not his to choose. They are named rather than inlined so the guard in
+# `tests/test_discovery_interviews_agents.py` can strip exactly these two and then assert that
+# the vocabulary of voice-choosing - "voice", "ElevenLabs", an id, a locale pair, a stock voice
+# name - appears nowhere else in his role, goal, backstory, task description or expected
+# output.
+#
+# That inversion is the point, and it is the repair for a guard that was one field wide and one
+# vocabulary deep. The first version searched the task description alone and matched only the
+# shape of an id, and a reviewer reinstated the locale table three ways against a green suite:
+# naming the voices by name, writing the same mapping as prose with no ids at all, and putting
+# the four *correct* ids in the backstory. A guard that enumerates the ways a table can be
+# written will always be one form behind whoever writes the next one; a guard that permits two
+# sentences and forbids the subject everywhere else cannot be.
+VOICE_IS_NOT_YOURS = (
+    "Do not include a voice_config, and do not name an ElevenLabs voice id. "
+    "Which interviewer takes each session, and what they sound like, is the "
+    "project's configuration; it is resolved and recorded when the session is "
+    "created, and anything you write here is discarded."
+)
+
+VOICE_IS_NOT_IN_THE_OUTPUT = (
+    "Neither session_token nor voice_config is included - both are assigned in code "
+    "when the session is created."
+)
+
+SANCTIONED_VOICE_MENTIONS = (VOICE_IS_NOT_YOURS, VOICE_IS_NOT_IN_THE_OUTPUT)
+
 
 def create_interview_coordinator(slug: str, llm: LLM, tools: list[BaseTool]) -> Agent:
     return Agent(
@@ -91,24 +119,24 @@ def create_interview_coordinator_task(
             "   b. Produce a session entry:\n"
             "      {\n"
             "        \"stakeholder_id\": 1,\n"
-            "        \"name\": \"Alice Chen\",\n"
+            # Renamed from "Alice Chen". The placeholder is arbitrary, and "Alice" is one of
+            # the four verified default voices - so the guard below could not forbid a
+            # locale table written under voice *names* without this example tripping it. A
+            # throwaway name is the cheap side of that trade.
+            "        \"name\": \"Priya Raman\",\n"
             "        \"node_label\": \"Goods-in Inspection\",\n"
             "        \"script_id\": \"SC-001\"\n"
             "      }\n"
             "   Do not invent a session_token: one is assigned in code when the session "
             "is created, not by you.\n"
-            "   Do not include a voice_config, and do not name an ElevenLabs voice id. "
-            "Which interviewer takes each session, and what they sound like, is the "
-            "project's configuration; it is resolved and recorded when the session is "
-            "created, and anything you write here is discarded.\n"
+            f"   {VOICE_IS_NOT_YOURS}\n"
             "3. Assemble all session entries into a JSON array called interview_plan.\n"
             "4. Use SQLiteStateTool with operation='write', key='interview_plan', "
             "agent_name='interview_coordinator' to save the array.\n"
         ),
         expected_output=(
-            "A JSON interview_plan array saved via SQLiteStateTool, containing one session entry "
-            "per assigned stakeholder with script_id. Neither session_token nor voice_config is "
-            "included - both are assigned in code when the session is created."
+            "A JSON interview_plan array saved via SQLiteStateTool, containing one session "
+            f"entry per assigned stakeholder with script_id. {VOICE_IS_NOT_IN_THE_OUTPUT}"
         ),
         agent=agent,
         context=context,

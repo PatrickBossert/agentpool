@@ -299,6 +299,16 @@ _MODULE_LEVEL_STATE = {
         "differently-labelled voice pass because of the first, and the interviewer selection "
         "is exactly what reads it"
     ),
+    "api/services/voice_catalogue.py::_LIBRARY_ACCENTS": (
+        REGISTERED, "the accents the ElevenLabs Voice Library holds, asked unfiltered so the "
+        "voice picker can offer an accent the account does not have - irish, which is one of "
+        "the four planned engagements - proved by probe below. Held because it is a fact "
+        "about the provider rather than about a request, and a picker that narrows as a "
+        "consultant types would otherwise make one call per keystroke. The test-order trap is "
+        "the ordinary one and reads badly: a test that warmed it from one stubbed library "
+        "answers for the next test's differently-stocked one, so the second passes because of "
+        "the first"
+    ),
     "api/config.py::get_settings": (
         ISOLATED_ELSEWHERE, "conftest.reset_settings_cache, which predates the registry and "
         "clears it on both sides. Deliberately not also registered: api/config.py is the "
@@ -394,8 +404,22 @@ def _voice_gender_probe():
     )
 
 
+def _library_accents_probe():
+    """A singleton rather than a dict, so the probe reassigns the module attribute.
+
+    Same shape as `_platform_url_probe`: there is no key to insert, and "warm" is simply
+    "not None".
+    """
+    from api.services import voice_catalogue
+    return (
+        lambda: setattr(voice_catalogue, "_LIBRARY_ACCENTS", ["probe-accent"]),
+        lambda: voice_catalogue._LIBRARY_ACCENTS is not None,
+    )
+
+
 _REGISTERED_PROBES = {
     "api/services/voice_metadata.py::_GENDER_CACHE": _voice_gender_probe,
+    "api/services/voice_catalogue.py::_LIBRARY_ACCENTS": _library_accents_probe,
     "api/services/chroma_client.py::_MODE_CACHE": _mode_cache_probe,
     "api/services/chroma_client.py::_FORCE_LOCAL_CACHE": _force_local_cache_probe,
     "api/services/platform_settings.py::_CACHED_URL": _platform_url_probe,

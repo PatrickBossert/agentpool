@@ -53,6 +53,7 @@ import httpx
 
 from api.config import get_settings
 from api.services.http_clients import get_tts_client
+from api.services.process_cache import register_cache
 from api.services.voice_metadata import ELEVENLABS_V1, VOICES_URL
 
 SHARED_VOICES_URL = f"{ELEVENLABS_V1}/shared-voices"
@@ -255,6 +256,57 @@ def accents_present(voices: list[dict[str, Any]]) -> list[str]:
     against the account.
     """
     return sorted({v["accent"] for v in voices if isinstance(v.get("accent"), str)})
+
+
+# The accents the Voice Library holds, once per process. See `library_accents` for why this
+# is cached and why only a successful answer is stored.
+_LIBRARY_ACCENTS: list[str] | None = None
+
+
+def forget_library_accents() -> None:
+    """Drop the cached library accents. For tests, and for a long-lived process."""
+    global _LIBRARY_ACCENTS
+    _LIBRARY_ACCENTS = None
+
+
+# Registered so `conftest.reset_process_caches` empties it between tests. Without it a test
+# that warmed the cache would answer for the next test's differently-stocked library, and the
+# second test would pass because of the first rather than because of the code.
+register_cache(forget_library_accents)
+
+
+async def library_accents() -> list[str]:
+    """The accents the Voice Library holds, asked **unfiltered**.
+
+    This exists because deriving the picker's options from the account listing alone made
+    **Irish unreachable**, and Irish is one of the four planned engagements. The account holds
+    british, american, australian, new zealand and scottish; irish exists only in the library.
+    So a dropdown built from the account can never offer it, and the only two ways to reach an
+    Irish voice were to type the accent as free text - which is not what an open vocabulary was
+    chosen for - or to hardcode a list of accents, which would be the sixth declaration of
+    voice facts on a branch that exists to end them.
+
+    **Unfiltered, and that is the whole point.** The narrowed library call cannot answer this:
+    asked with `accent=british` it reports british, so a dropdown derived from it offers
+    exactly the option already selected. The two calls ask different questions and both are
+    needed, which is the same reason the door asks two endpoints rather than one.
+
+    **Cached per process**, because which accents exist in the Voice Library is a fact about
+    the provider rather than about this request, and a picker that narrows as a consultant
+    types would otherwise make one of these per keystroke. Only a **successful** answer is
+    stored, matching `voice_metadata`'s rule: a timeout says nothing about the library, and
+    caching it would make one bad minute permanent for the life of the process.
+
+    **It is a page of the library, not an enumeration of it.** `LIBRARY_PAGE_SIZE` bounds it,
+    so an accent held by only a handful of voices beyond the first page will not appear. That
+    is a real limit and it is stated rather than hidden - the alternative is a declared list,
+    which is worse, and the requested accent is added to the options by the door regardless so
+    a project's own choice is never missing from its own picker.
+    """
+    global _LIBRARY_ACCENTS
+    if _LIBRARY_ACCENTS is None:
+        _LIBRARY_ACCENTS = accents_present(await fetch_library_voices())
+    return list(_LIBRARY_ACCENTS)
 
 
 async def add_library_voice(
