@@ -8,6 +8,7 @@ from api.config import get_settings
 from api.database import (
     get_connection,
     get_db_path,
+    is_contained_slug,
     insert_project,
     seed_default_milestones,
     fetch_project,
@@ -166,6 +167,43 @@ async def list_all_projects(payload: dict | None = None) -> list[dict]:
                 if project:
                     results.append(dict(project))
     return sorted(results, key=lambda p: p.get("created_at", ""), reverse=True)
+
+
+async def read_project_config(slug: str) -> dict:
+    """One project's stored `config_json`, or `{}` when there is nothing to read.
+
+    The defensive read behind every "what has this project chosen for X?" accessor, extracted
+    when the second one appeared rather than after the fourth. It differs from
+    `get_project_settings` in what it is *for*: that answers the Settings tab, resolves
+    `force_local_inference` from its authoritative column, and returns `None` so a missing
+    project becomes a 404. This answers a single setting for a caller that has a default and
+    no way to report a 404 - `InterviewSessionTool` runs inside a crew - so every "no answer
+    here" state collapses to the same empty mapping and the caller applies its own default.
+
+    **A blank slug raises**, the rule `project_llm_mode` was corrected to and
+    `resolve_agent_config` follows: a caller that lost its slug must not be answered the
+    defaults, because the same mistake in the LLM seam sent a sensitive engagement's
+    interview answers to a hosted model. **A slug with no database answers `{}`**, which is
+    the opposite case and deliberately not the same one - and `is_contained_slug` is asked
+    before the path is touched so that probing slugs cannot materialise a database file per
+    guess, the guard `caller_roles` already carries.
+    """
+    if not slug or not slug.strip():
+        raise ValueError(
+            "read_project_config requires a slug; a blank one is a caller that lost it, "
+            "not a project that does not exist"
+        )
+    if not is_contained_slug(slug) or not get_db_path(slug).exists():
+        return {}
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+    if not project:
+        return {}
+    try:
+        config = json.loads(project.get("config_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return config if isinstance(config, dict) else {}
 
 
 async def get_project_settings(slug: str) -> dict | None:

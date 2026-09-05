@@ -233,10 +233,12 @@ class InterviewSessionTool(BaseTool):
             session_token = str(uuid.uuid4())
             # The voice is resolved here and **any `voice_config` in the plan is ignored**.
             # It was previously taken from the plan, which meant the interviewer's voice was
-            # whatever a language model copied out of `VOICE_LOCALE_TABLE` in its own prompt -
-            # a prose table naming ElevenLabs' stock Rachel, a female voice, for the male
-            # interviewer, and disagreeing with its dead TypeScript twin on four of eight
-            # locales. A voice is a project's configuration, not a model's output.
+            # whatever a language model copied out of the voice-locale table that used to sit
+            # in `agents/discovery/interview_coordinator.py` - prose naming ElevenLabs' stock
+            # Rachel, a female voice, for the male interviewer, and disagreeing with its dead
+            # TypeScript twin on four of eight locales. Both are gone, and Taylor is now told
+            # not to emit a voice_config at all; the ignore stays, because a plan is a model's
+            # output and this row is a permanent record. A voice is a project's configuration.
             interviewer_agent_id = selection.pick()
             voice_config_json = json.dumps(selection.stamp_for(interviewer_agent_id))
             script_id = _resolve_script_id(s.get("script_id"), node_label, by_label)

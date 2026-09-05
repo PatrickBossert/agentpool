@@ -1066,6 +1066,14 @@ file or declared in `agents/egress.py` (where an ungated reach resolves to the s
 the finding). "Nothing escapes secure mode" is true of the two capabilities and of nothing
 wider.
 
+The ElevenLabs entry covers **two shapes of request now, not one.** It was interview text
+going to `/v1/text-to-speech`; sp62 added the voice listings and the add-a-voice write
+(`api/services/voice_catalogue.py`), which carry an accent, a sex, a search term and a name.
+Widening what a listed path sends is worth a line even when the new content is innocuous - a
+row that names one shape reads as an assurance about all of them, and the next reader checking
+"what leaves a sensitive engagement?" would have been told something untrue about a path they
+had already accepted.
+
 **The guard, and its blind spot.** `tests/test_deployment_modes.py` inventories every literal
 mode name under `api/`, `agents/` and `scripts/`, attributed to `path::qualname` and
 **counted**, held equal to a ten-entry table in which each entry carries its reason. Syntax
@@ -1329,7 +1337,13 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   before its first task. Treat its first run as an experiment.
 - Deepgram (STT) and ElevenLabs (TTS) are used in secure mode by decision, both being
   streamed with no content retention. Local speech services are future work, not a
-  current requirement.
+  current requirement. ElevenLabs is now reached for a **second** kind of request - the two
+  voice listings behind `GET /projects/{slug}/voices` (`api/services/voice_catalogue.py`) -
+  and that request carries no client material at all: an accent, a sex, and a search term the
+  consultant typed. It is recorded because the row said "interview text" and would otherwise
+  have been quietly wrong about what leaves, not because it changes the decision. The one
+  ElevenLabs call that *writes* anything is `POST /projects/{slug}/voices/library`, which
+  copies a Voice Library voice into the deployment's account and sends only a name.
 - Avery still blocks on `HumanInputTool` for up to 24 hours during an interview programme,
   and nothing notifies the crew when a session completes. It does not affect interviewee
   experience, which is why sub-project B left it alone.

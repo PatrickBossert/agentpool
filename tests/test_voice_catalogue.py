@@ -1,0 +1,823 @@
+# tests/test_voice_catalogue.py
+"""The voices door: both listings, the accent that reaches the wire, and the table that is gone.
+
+**Every assertion here is on the request**, through an `httpx.MockTransport`, never on the
+status code alone. This branch has already paid for that lesson twice: a security gate moved to
+*after* synthesis still answered 403, and the only thing that caught it was reading what went
+out. **No real ElevenLabs call is made by anything in this file.**
+
+The two properties that are impossible to see any other way:
+
+- **Preview costs nothing.** `preview_url` is a sample the API already hosts, so a picker plays
+  it and makes no synthesis call. An implementation that spoke a line through `synthesise`
+  instead would sound *identical* to a listener and cost characters on every preview, so the
+  only thing that can distinguish them is an assertion that nothing reached
+  `/v1/text-to-speech`.
+- **Both listings are asked.** The rate exists only on `shared-voices` and Irish exists only
+  there; accents and the account's own voices come from `/v1/voices`. A door built on one of
+  them returns a plausible list that is missing either the cost or half the accents, and no
+  assertion about the *response body* alone can tell that apart from a quiet account.
+"""
+from __future__ import annotations
+
+import ast
+import json
+from pathlib import Path
+
+import httpx
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+from api.auth import create_access_token
+from api.config import get_settings
+from api.database import (
+    fetch_project,
+    fetch_user,
+    get_connection,
+    get_system_connection,
+    insert_organisation,
+    insert_project,
+    insert_project_registry,
+    insert_stakeholder,
+    insert_user,
+    link_membership,
+)
+from api.services.voice_settings import (
+    DEFAULT_INTERVIEW_ACCENT,
+    project_interview_accent,
+)
+
+REPO = Path(__file__).resolve().parent.parent
+
+SLUG_A = "voices-alpha"
+SLUG_B = "voices-beta"
+
+# The eight ids the two retired tables held between them - `VOICE_LOCALE_TABLE` in Taylor's
+# prompt and its dead TypeScript twin `ui/src/utils/voiceLocale.ts`, which disagreed on four of
+# them. Named here so the guards below can say "none of these" without reading them back out of
+# the source they are checking, which would make the assertion unfalsifiable.
+RETIRED_VOICE_IDS = {
+    "21m00Tcm4TlvDq8ikWAM",  # Rachel  - en/GB and en/US in the prompt table
+    "AZnzlk1XvdvUeBnXmlld",  # Domi    - en/AU
+    "MF3mGyEYCl7XYWbV9V6O",  # Elli    - en/NZ
+    "TxGEqnHWrfWFTfGW9XjX",  # Josh    - en/CA
+    "pNInz6obpgDQGcFmaJgB",  # Adam    - fr/FR in the prompt, de/DE in the twin
+    "yoZ06aMxZJJ28mfd3POQ",  # Sam     - de/DE in the prompt, es/ES in the twin
+    "ErXwobaYiN019PkySvjV",  # Antoni  - es/ES in the prompt only
+    "EXAVITQu4vr4xnSDxMaL",  # Bella   - en/US in the twin only
+    "VR6AewLTigWG4xSOukaG",  # Arnold  - fr/FR in the twin only
+}
+
+# Two account voices, in the shape `GET /v1/voices` answers: accent and gender under `labels`,
+# `available_for_tiers` present and empty, and no rate anywhere.
+ACCOUNT_BODY = {
+    "voices": [
+        {
+            "voice_id": "acct-daniel",
+            "name": "Daniel",
+            "labels": {"accent": "british", "gender": "male", "age": "middle-aged"},
+            "preview_url": "https://storage.example/daniel.mp3",
+            "available_for_tiers": [],
+            "verified_languages": [{"language": "en", "model_id": "eleven_multilingual_v2"}],
+        },
+        {
+            "voice_id": "acct-alba",
+            "name": "Alba Mac - Animated Scottish",
+            "labels": {"accent": "scottish", "gender": "female"},
+            "preview_url": "https://storage.example/alba.mp3",
+            "available_for_tiers": [],
+        },
+    ]
+}
+
+# Two library voices, in the shape `GET /v1/shared-voices` answers: accent and gender at the
+# top level, and the rate that exists nowhere else. One of them is already in the account.
+LIBRARY_BODY = {
+    "voices": [
+        {
+            "public_owner_id": "owner-1",
+            "voice_id": "lib-seamus",
+            "name": "Seamus",
+            "accent": "irish",
+            "gender": "male",
+            "preview_url": "https://storage.example/seamus.mp3",
+            "rate": 0.6,
+            "fiat_rate": 0.12,
+            "free_users_allowed": True,
+            "language": "en",
+        },
+        {
+            "public_owner_id": "owner-2",
+            "voice_id": "acct-daniel",
+            "name": "Daniel",
+            "accent": "british",
+            "gender": "male",
+            "preview_url": "https://storage.example/daniel.mp3",
+            "rate": 0.0,
+            "free_users_allowed": False,
+            "language": "en",
+        },
+    ]
+}
+
+
+def _catalogue_wire(
+    monkeypatch,
+    *,
+    account: dict | int = ACCOUNT_BODY,
+    library: dict | int = LIBRARY_BODY,
+    added: dict | int | None = None,
+) -> list[httpx.Request]:
+    """Point the catalogue's client at a `MockTransport` and record every request.
+
+    Each of the three arguments takes either a body to answer with or a status code to fail
+    with, which is what lets one fixture drive "the library is unreachable" without a second
+    handler. **The handler answers 404 for any other path**, deliberately: a request this file
+    has not anticipated must show up as a failure rather than as a cheerful empty list.
+    """
+    seen: list[httpx.Request] = []
+
+    def _answer(spec, request: httpx.Request) -> httpx.Response:
+        if isinstance(spec, int):
+            return httpx.Response(spec, json={"detail": "no"})
+        return httpx.Response(200, json=spec)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        path = request.url.path
+        if path == "/v1/voices":
+            return _answer(account, request)
+        if path == "/v1/shared-voices":
+            return _answer(library, request)
+        if path.startswith("/v1/voices/add/"):
+            return _answer(added if added is not None else {"voice_id": "acct-new"}, request)
+        return httpx.Response(404, json={"detail": f"unexpected path {path}"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("api.services.voice_catalogue.get_tts_client", lambda: client)
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
+    monkeypatch.setattr("api.services.voice_catalogue.get_settings", lambda: settings)
+    return seen
+
+
+def _client_for(username: str, role: str, org_id: int | None = None) -> AsyncClient:
+    from api.main import app
+
+    token = create_access_token(username, role, "test-secret", org_id=org_id)
+    return AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+@pytest_asyncio.fixture
+async def engagements(tmp_path, monkeypatch, client):
+    """Two projects owned by two organisations, and four callers with four different standings.
+
+    DATABASE_DIR and PROJECTS_DIR are redirected at this test's own tmp_path, following
+    `tests/test_milestone_door_authority.py`: `users`, `project_memberships` and
+    `project_registry` live in the shared, persistent system database, so a fixture inserting
+    rows by fixed name passes once and fails on every run afterwards.
+
+    The `project_admin` caller is the one that matters for the add door. An anonymous request
+    is refused by the dependency and says nothing; a real, fully-privileged administrator *of
+    this engagement* is the caller that isolates "the platform tier, not project
+    administration".
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "tts"))
+    get_settings.cache_clear()
+
+    for slug in (SLUG_A, SLUG_B):
+        res = await client.post(
+            "/projects",
+            json={
+                "client_slug": slug,
+                "llm_mode": "standard",
+                "sector": "transport",
+                "stakeholder_groups": [],
+                "value_stream_labels": [],
+                "review_gates": True,
+                "slack_channel": "",
+            },
+        )
+        assert res.status_code in (200, 201), res.text
+
+    async with get_system_connection() as sys_conn:
+        org_a = await insert_organisation(sys_conn, slug="voices-org-alpha", name="Alpha")
+        org_b = await insert_organisation(sys_conn, slug="voices-org-beta", name="Beta")
+        await insert_project_registry(
+            sys_conn, slug=SLUG_A, org_id=org_a, display_name=SLUG_A
+        )
+        await insert_project_registry(
+            sys_conn, slug=SLUG_B, org_id=org_b, display_name=SLUG_B
+        )
+        await sys_conn.commit()
+
+    async with get_connection(SLUG_A) as conn:
+        project = await fetch_project(conn, slug=SLUG_A)
+        stakeholder_id = await insert_stakeholder(
+            conn,
+            project_id=project["id"],
+            name="voices-padmin",
+            email="voices-padmin@example.com",
+            is_project_admin=True,
+        )
+    async with get_system_connection() as sys_conn:
+        await insert_user(
+            sys_conn,
+            username="voices-padmin",
+            email="voices-padmin@example.com",
+            role="reviewer",
+            hashed_pw="x",
+        )
+        user = await fetch_user(sys_conn, username="voices-padmin")
+        await link_membership(
+            sys_conn, user_id=user["id"], project_slug=SLUG_A, stakeholder_id=stakeholder_id
+        )
+        await sys_conn.commit()
+
+    owner = _client_for("voices-admin-a", "org_admin", org_a)
+    stranger = _client_for("voices-admin-b", "org_admin", org_b)
+    padmin = _client_for("voices-padmin", "reviewer")
+    async with owner, stranger, padmin:
+        yield {"owner": owner, "stranger": stranger, "project_admin": padmin}
+
+    get_settings.cache_clear()
+
+
+def _urls(seen: list[httpx.Request]) -> list[str]:
+    return [str(r.url) for r in seen]
+
+
+# --- The two properties only the wire can show ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_door_asks_both_listings_and_neither_alone(engagements, monkeypatch):
+    """One door, two listings, asserted on the wire.
+
+    The rate lives only on `shared-voices` and Irish exists only there; the account's own
+    voices and its accents come only from `/v1/voices`. A door that asked one of them would
+    still answer 200 with a plausible list, so the response body cannot distinguish a
+    one-endpoint picker from an account that happens to be small.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
+    assert res.status_code == 200, res.text
+
+    paths = [r.url.path for r in seen]
+    assert "/v1/voices" in paths
+    assert "/v1/shared-voices" in paths
+
+
+@pytest.mark.asyncio
+async def test_previewing_a_voice_reaches_no_text_to_speech_call(engagements, monkeypatch):
+    """The whole reason preview is `preview_url`.
+
+    Every voice in both listings carries a sample the API already hosts. Speaking one through
+    `synthesise` would cost characters, be slower, and produce audio a listener could not tell
+    from the free one - so the *only* thing that can distinguish the cheap implementation from
+    the expensive one is this assertion. It is on the wire and not on the code, because a
+    future caller reaching for `speak` would leave the source of this module untouched.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
+    assert res.status_code == 200, res.text
+
+    assert seen, "no request went out at all - this assertion would pass vacuously"
+    assert not [u for u in _urls(seen) if "text-to-speech" in u], _urls(seen)
+
+    body = res.json()
+    every = body["account"] + body["library"]
+    assert every, "nothing was returned, so 'every entry carries a preview' is vacuous"
+    assert all(v["preview_url"] for v in every), every
+
+
+# --- Where the accent comes from, and where it goes ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_projects_accent_reaches_the_library_query(engagements, monkeypatch):
+    """The default filter is the project's setting, and it goes on the wire unmodified.
+
+    Nothing translates it: the word stored in `interview_accent` is the word ElevenLabs is
+    asked for. A translation would be a table, and a table of voice facts is what this branch
+    exists to end.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
+    assert res.status_code == 200, res.text
+    assert res.json()["accent"] == DEFAULT_INTERVIEW_ACCENT == "british"
+    assert res.json()["accent_source"] == "project"
+
+    library = [r for r in seen if r.url.path == "/v1/shared-voices"]
+    assert len(library) == 1
+    assert library[0].url.params["accent"] == "british"
+
+
+@pytest.mark.asyncio
+async def test_a_saved_accent_becomes_the_default_filter(engagements, monkeypatch):
+    """A Scottish engagement's picker opens on Scottish, and it says so on the wire.
+
+    This is the decision the task had to make - where a project's locale comes from - asserted
+    end to end: `PATCH /settings` stores it, and the very next listing asks ElevenLabs for it.
+    """
+    saved = await engagements["owner"].get(f"/projects/{SLUG_A}/settings")
+    assert saved.status_code == 200, saved.text
+    body = {**saved.json(), "interview_accent": "scottish"}
+    patched = await engagements["owner"].patch(f"/projects/{SLUG_A}/settings", json=body)
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["interview_accent"] == "scottish"
+
+    seen = _catalogue_wire(monkeypatch)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
+    assert res.status_code == 200, res.text
+    assert res.json()["accent"] == "scottish"
+
+    library = [r for r in seen if r.url.path == "/v1/shared-voices"]
+    assert library[0].url.params["accent"] == "scottish"
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_accent_beats_the_projects_and_an_empty_one_clears_it(
+    engagements, monkeypatch
+):
+    """Omitted and empty are different, and the picker needs both.
+
+    Omitted means "you decide" and resolves to the project's setting; empty means the
+    consultant has cleared the filter and wants every accent. Collapsing them - which a
+    `default=""` on the query parameter would do - makes the project setting unclearable from
+    the picker, and makes it impossible to browse the library for an accent the project has
+    not chosen yet.
+    """
+    seen = _catalogue_wire(monkeypatch)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=irish")
+    assert res.status_code == 200, res.text
+    assert res.json()["accent"] == "irish"
+    assert res.json()["accent_source"] == "request"
+    assert [r for r in seen if r.url.path == "/v1/shared-voices"][0].url.params["accent"] == "irish"
+
+    cleared = _catalogue_wire(monkeypatch)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")
+    assert res.status_code == 200, res.text
+    assert res.json()["accent"] == ""
+    library = [r for r in cleared if r.url.path == "/v1/shared-voices"][0]
+    assert "accent" not in library.url.params, str(library.url)
+    # And the account list is not narrowed either, so clearing really does show everything.
+    assert len(res.json()["account"]) == len(ACCOUNT_BODY["voices"])
+
+
+@pytest.mark.asyncio
+async def test_gender_is_forwarded_to_the_api_and_never_answered_from_a_list(
+    engagements, monkeypatch
+):
+    """`labels.gender` is the authority on sex, and the filter is a query parameter.
+
+    A curated map of which voice is which sex would be the sixth declaration of voice facts on
+    a branch that exists to end the first five - and it would be wrong the first time a project
+    overrode an interviewer's voice, which is the entire point of `project_agent_config`.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=&gender=female")
+    assert res.status_code == 200, res.text
+
+    library = [r for r in seen if r.url.path == "/v1/shared-voices"][0]
+    assert library.url.params["gender"] == "female"
+
+    # The account endpoint takes no parameters at all, so the same narrowing has to happen
+    # here - against the `labels.gender` the provider itself returned, which is reading its
+    # answer rather than holding an opinion about its voices.
+    assert [v["name"] for v in res.json()["account"]] == ["Alba Mac - Animated Scottish"]
+
+
+@pytest.mark.asyncio
+async def test_the_account_listing_is_narrowed_on_the_labels_the_api_returned(
+    engagements, monkeypatch
+):
+    """Scottish is a label on the account voice, not a fact this codebase holds.
+
+    Driven by *changing the provider's answer*: the same voice id, relabelled british, must
+    stop matching. A local table would keep matching, which is the difference this asserts.
+    """
+    relabelled = json.loads(json.dumps(ACCOUNT_BODY))
+    relabelled["voices"][1]["labels"]["accent"] = "british"
+
+    _catalogue_wire(monkeypatch)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=scottish")
+    assert [v["voice_id"] for v in res.json()["account"]] == ["acct-alba"]
+
+    _catalogue_wire(monkeypatch, account=relabelled)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=scottish")
+    assert res.json()["account"] == []
+
+
+# --- What each listing can and cannot say ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_rate_comes_from_the_library_and_the_account_says_nothing(
+    engagements, monkeypatch
+):
+    """`rate` is `None` on an account voice, never `0.0`.
+
+    "This listing does not say what the voice costs" and "this voice is free" are different
+    statements, and `available_for_tiers` was `[]` on all 32 account voices on 4 September - so
+    a substituted default would present every account voice as free on a picker whose whole job
+    includes showing the cost.
+    """
+    _catalogue_wire(monkeypatch)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")
+    body = res.json()
+
+    assert all(v["rate"] is None for v in body["account"]), body["account"]
+    assert all(v["free_users_allowed"] is None for v in body["account"])
+    assert [v["rate"] for v in body["library"]] == [0.6, 0.0]
+    assert [v["free_users_allowed"] for v in body["library"]] == [True, False]
+    # The one account voice whose rate is genuinely 0.0 in the library proves the distinction
+    # is between None and 0.0 rather than between "falsy" and "set".
+    assert body["library"][1]["rate"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_accent_and_sex_are_read_from_whichever_place_the_endpoint_puts_them(
+    engagements, monkeypatch
+):
+    """`/v1/voices` nests them under `labels`; `/v1/shared-voices` has them at the top level.
+
+    One normalised shape, so a picker does not have to know which listing an entry came from -
+    and one place where that disagreement is absorbed rather than two.
+    """
+    _catalogue_wire(monkeypatch)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")).json()
+
+    assert {(v["name"], v["accent"], v["gender"]) for v in body["account"]} == {
+        ("Daniel", "british", "male"),
+        ("Alba Mac - Animated Scottish", "scottish", "female"),
+    }
+    assert ("Seamus", "irish", "male") in {
+        (v["name"], v["accent"], v["gender"]) for v in body["library"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_library_voice_already_in_the_account_is_marked_from_the_two_answers(
+    engagements, monkeypatch
+):
+    """`in_account` is computed by comparing ids the two calls returned.
+
+    Not from any list held here - which is what makes it right on a deployment whose account
+    this repository has never seen.
+    """
+    _catalogue_wire(monkeypatch)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")).json()
+
+    by_id = {v["voice_id"]: v for v in body["library"]}
+    assert by_id["acct-daniel"]["in_account"] is True
+    assert by_id["lib-seamus"]["in_account"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_accent_options_come_from_the_unfiltered_account_listing(
+    engagements, monkeypatch
+):
+    """The picker's accent dropdown is derived from the provider's answer, never declared.
+
+    Derived from the **unfiltered** listing on purpose: computing it after narrowing would
+    answer only the accent already selected, and the dropdown would offer one option.
+    """
+    _catalogue_wire(monkeypatch)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=british")).json()
+
+    assert body["account_accents"] == ["british", "scottish"]
+    assert [v["voice_id"] for v in body["account"]] == ["acct-daniel"]
+
+
+# --- Failure is reported, never hidden -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_library_is_named_rather_than_shown_as_no_voices(
+    engagements, monkeypatch
+):
+    """A partial answer says which half is missing.
+
+    A picker silently showing the account's two voices when it should show ninety is the
+    failure that gets diagnosed as "there are no Scottish voices in the library", and sends an
+    operator to reconfigure something that was never wrong. The same distinction
+    `VoiceSexAnswer` draws one module along.
+    """
+    _catalogue_wire(monkeypatch, library=502)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["library"] == []
+    assert body["library_error"] and "502" in body["library_error"]
+    assert body["account_error"] is None
+    assert len(body["account"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_both_listings_failing_is_a_502_naming_both(engagements, monkeypatch):
+    """Nothing to show is not an empty picker."""
+    _catalogue_wire(monkeypatch, account=500, library=502)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
+
+    assert res.status_code == 502, res.text
+    assert "500" in res.json()["detail"] and "502" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_no_api_key_is_a_503_and_not_an_empty_catalogue(engagements, monkeypatch):
+    """"This deployment has no key" must not be presented as "you have no voices".
+
+    The same rule `synthesise` and `voice_gender` already follow, and the reason they do: the
+    two send an operator to two different repairs, and only one of them is theirs to make.
+    """
+    _catalogue_wire(monkeypatch)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "", raising=False)
+
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
+    assert res.status_code == 503, res.text
+    assert "ELEVENLABS_API_KEY" in res.json()["detail"]
+
+
+# --- Who may open the door, and who may spend money through it -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_org_admin_cannot_read_this_projects_voices(engagements, monkeypatch):
+    """`check_project_access` is the **first** line, before anything reaches the provider.
+
+    Driven with a real, fully-privileged org_admin of another organisation - the caller that
+    isolates the rule. An anonymous request is refused by the dependency and would pass this
+    test against a door with no floor at all.
+
+    The wire assertion is the point: a refusal raised *after* the listing has been fetched is
+    still a 403, and this branch has already shipped exactly that shape once (a gate moved to
+    after synthesis, answering 403 while the private voice was spoken).
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["stranger"].get(f"/projects/{SLUG_A}/voices")
+    assert res.status_code == 403, res.text
+    assert seen == [], _urls(seen)
+
+
+@pytest.mark.asyncio
+async def test_adding_a_library_voice_is_platform_tier_and_not_project_administration(
+    engagements, monkeypatch
+):
+    """A `project_admin` of this very engagement is refused, and that is deliberate.
+
+    Adding a library voice copies it into the **deployment's** single ElevenLabs account,
+    shared by every client on it: it spends the consultancy's credit and changes what every
+    other engagement's picker shows. That is the shape `require_writable_tier` refuses at the
+    sector tier - the only store whose readership is other clients - so the door is one tier
+    tighter than the design's "same authority as any other project configuration change".
+
+    The wire assertion holds the refusal to the same standard as the read door's: nothing may
+    reach ElevenLabs before the caller is refused, or the credit is spent and the 403 is
+    cosmetic.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["project_admin"].post(
+        f"/projects/{SLUG_A}/voices/library",
+        json={"public_owner_id": "owner-1", "voice_id": "lib-seamus", "name": "Seamus"},
+    )
+    assert res.status_code == 403, res.text
+    assert seen == [], _urls(seen)
+
+
+@pytest.mark.asyncio
+async def test_the_project_admin_really_does_administer_this_engagement(engagements):
+    """The control for the test above, and the reason it is not vacuous.
+
+    Without this, a `project_admin` fixture that was silently *not* a project_admin - a
+    missing membership row, a flag that never landed - would refuse the add door for the wrong
+    reason and the assertion would pass while proving nothing.
+
+    Proved against a door that actually takes `require_project_administration`, rather than
+    against `/my-permissions`, which reports the roles a caller may *grant* and not the ones
+    they hold. The body is round-tripped unchanged so the platform-tier guard on
+    `_PLATFORM_TIER_SETTINGS` has nothing to refuse - what is being asserted is the
+    administration axis, not that axis' one carve-out.
+    """
+    current = await engagements["project_admin"].get(f"/projects/{SLUG_A}/settings")
+    assert current.status_code == 200, current.text
+
+    res = await engagements["project_admin"].patch(
+        f"/projects/{SLUG_A}/settings", json={**current.json(), "client_name": "Alpha Rail"}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["client_name"] == "Alpha Rail"
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_org_admin_cannot_add_a_voice_through_someone_elses_slug(
+    engagements, monkeypatch
+):
+    """The platform role passes the dependency; the membership floor is what refuses.
+
+    The door is mounted under a slug, and a platform tier says nothing about whether the
+    caller is on this engagement - so `check_project_access` runs first here exactly as it
+    does on the read.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["stranger"].post(
+        f"/projects/{SLUG_A}/voices/library",
+        json={"public_owner_id": "owner-1", "voice_id": "lib-seamus", "name": "Seamus"},
+    )
+    assert res.status_code == 403, res.text
+    assert seen == [], _urls(seen)
+
+
+@pytest.mark.asyncio
+async def test_an_org_admin_of_this_engagement_adds_the_voice_and_the_request_says_so(
+    engagements, monkeypatch
+):
+    """The permitted arm, asserted on the request that goes out.
+
+    Without it the two refusals above would pass against a door that refuses everybody. The
+    **new** `voice_id` comes back rather than the library one, because the account assigns its
+    own and a project's configuration must hold that one.
+    """
+    seen = _catalogue_wire(monkeypatch, added={"voice_id": "acct-seamus"})
+
+    res = await engagements["owner"].post(
+        f"/projects/{SLUG_A}/voices/library",
+        json={"public_owner_id": "owner-1", "voice_id": "lib-seamus", "name": "Seamus"},
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["voice_id"] == "acct-seamus"
+
+    posts = [r for r in seen if r.method == "POST"]
+    assert len(posts) == 1
+    assert posts[0].url.path == "/v1/voices/add/owner-1/lib-seamus"
+    assert json.loads(posts[0].content) == {"new_name": "Seamus"}
+    assert posts[0].headers["xi-api-key"] == "test-key"
+
+
+# --- Where a project's accent comes from -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_project_with_no_setting_answers_the_british_default(engagements):
+    """British English is the default for a new project, and this is the control.
+
+    Without it, a resolver that answered `""` for everything would pass every override test
+    above by never filtering, and would silently show a French engagement the whole library.
+    """
+    assert await project_interview_accent(SLUG_A) == "british"
+
+
+@pytest.mark.asyncio
+async def test_a_blank_slug_is_refused_rather_than_answered(engagements):
+    """The rule `project_llm_mode` was corrected to, and `resolve_agent_config` follows.
+
+    A caller that lost its slug must not be handed the defaults: the same silent answer in the
+    LLM seam sent a sensitive engagement's interview answers to a hosted model.
+    """
+    for slug in ("", "   ", "\t"):
+        with pytest.raises(ValueError):
+            await project_interview_accent(slug)
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_slug_answers_the_default_and_creates_no_database(
+    engagements, tmp_path
+):
+    """The opposite arm, and deliberately not the same one.
+
+    A project that genuinely does not exist has no configuration, and answering the default
+    for it is what avoids materialising one database file per guessed slug - the guard
+    `caller_roles` already carries.
+    """
+    assert await project_interview_accent("no-such-engagement") == "british"
+    assert not (tmp_path / "data" / "no-such-engagement.db").exists()
+
+
+@pytest.mark.asyncio
+async def test_an_empty_accent_is_a_choice_and_not_an_absent_one(engagements, monkeypatch):
+    """`''` is the project saying "every accent"; a missing key is it having said nothing.
+
+    Testing truthiness would collapse the two and quietly reinstate `british` over a decision
+    somebody made - `_override` in `agent_config_service` draws the same line for the same
+    reason.
+    """
+    async with get_connection(SLUG_A) as conn:
+        await conn.execute(
+            "UPDATE projects SET config_json=? WHERE slug=?",
+            (json.dumps({"interview_accent": ""}), SLUG_A),
+        )
+        await conn.commit()
+
+    assert await project_interview_accent(SLUG_A) == ""
+
+
+# --- The table is gone, and did not come back corrected --------------------------------------
+
+
+def _code_constants(path: Path) -> list[str]:
+    """Every string literal in a module **except** its docstrings.
+
+    Prose recording that Rachel was the wrong voice is the history of the defect and is worth
+    keeping; a literal naming her is the defect. `#` comments never reach the AST at all, and
+    a bare string expression is a docstring, so skipping those two leaves exactly the strings
+    the code can act on.
+    """
+    tree = ast.parse(path.read_text())
+    docstrings = {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+
+
+def test_no_python_module_names_a_retired_voice_id_in_code():
+    """The prompt table is gone, and it did not come back with corrected numbers.
+
+    Correcting the ids was the obvious repair and it is the wrong one: it leaves a fifth
+    declaration of voice facts that happens to be right on the day it is written, which is
+    exactly the state that produced four disagreeing copies. This asserts on the **union of
+    both** retired tables, so restoring either one fails - including the twin's four
+    disagreeing entries, which a guard written against the Python table alone would miss.
+    """
+    offenders: dict[str, list[str]] = {}
+    for path in list((REPO / "agents").rglob("*.py")) + list((REPO / "api").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        found = [c for c in _code_constants(path) if any(v in c for v in RETIRED_VOICE_IDS)]
+        if found:
+            offenders[str(path.relative_to(REPO))] = found
+    assert offenders == {}, offenders
+
+
+def test_the_dead_typescript_twin_is_gone_and_nothing_declares_a_locale_to_voice_map():
+    """`ui/src/utils/voiceLocale.ts` had no importers and disagreed with the prompt table on
+    four of eight locales, so "the voice for a French interview" already had two answers.
+
+    Deleting one copy is not the property; having none is. This walks the front end for both
+    the retired ids and the two names either copy went by, so a reinstated map fails whatever
+    it is called and whichever ids it holds.
+    """
+    assert not (REPO / "ui" / "src" / "utils" / "voiceLocale.ts").exists()
+
+    offenders: dict[str, list[str]] = {}
+    for path in (REPO / "ui" / "src").rglob("*.ts*"):
+        if "__tests__" in path.parts:
+            continue
+        text = path.read_text()
+        # Comment lines are the record of the defect; code naming it is the defect.
+        code = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("//")
+        )
+        found = [
+            token
+            for token in list(RETIRED_VOICE_IDS) + ["VOICE_LOCALE_MAP", "getVoiceId"]
+            if token in code
+        ]
+        if found:
+            offenders[str(path.relative_to(REPO))] = found
+    assert offenders == {}, offenders
+
+
+def test_the_voices_path_imports_nothing_that_can_synthesise():
+    """A source guard beside the wire assertion, catching the *next* change rather than this one.
+
+    The wire test is the real one - it fails whatever route a synthesis call arrives by. This
+    one fails earlier and more legibly for the specific mistake somebody is most likely to
+    make: reaching for `speak` or `synthesise` to "make preview work properly".
+    """
+    for module in ("api/services/voice_catalogue.py", "api/routers/voices.py"):
+        source = (REPO / module).read_text()
+        tree = ast.parse(source)
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+        assert not ({"speak", "synthesise"} & imported), (module, sorted(imported))

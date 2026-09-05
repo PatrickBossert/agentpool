@@ -82,16 +82,60 @@ def test_coordinator_task_injects_assignments():
     assert "Bob Smith" in kwargs["description"]
 
 
-def test_coordinator_task_includes_voice_locale_table():
-    """Task description contains the voice locale lookup table."""
+def test_coordinator_task_names_no_voice_and_no_voice_id():
+    """The inversion of `test_coordinator_task_includes_voice_locale_table`, which asserted
+    that Taylor's prompt carried a locale-to-voice-id table.
+
+    It carried eight rows in prose, naming ElevenLabs' stock Rachel - a female voice - for
+    `en/GB` and `en/US`, and a dead TypeScript twin at `ui/src/utils/voiceLocale.ts`
+    disagreed with it on four of the eight. Both are deleted. The ids were **not corrected**:
+    a corrected table is a fifth declaration of voice facts that happens to be right today,
+    which is the state that produced four disagreeing copies in the first place.
+
+    The whole task description is searched rather than a slice of it, because the failure this
+    guards against is the table coming back *anywhere* in the prompt - and the assertion is on
+    the shape of a voice id, not on a specific one, so restoring the table with different ids
+    fails too. `voice_config` must be absent from the example entry and present only in the
+    sentence forbidding it, which is why the check is on the key's JSON spelling.
+    """
+    import re
+
     from agents.discovery.interview_coordinator import create_interview_coordinator_task
     agent = _mock_agent()
     with patch("agents.discovery.interview_coordinator.Task") as MockTask:
         MockTask.return_value = MagicMock()
         create_interview_coordinator_task(agent=agent, stakeholder_assignments="")
     _, kwargs = MockTask.call_args
-    assert "elevenlabs_voice_id" in kwargs["description"]
-    assert "voice_config" in kwargs["description"]
+    description = kwargs["description"]
+
+    assert "elevenlabs_voice_id" not in description
+    assert '"voice_config"' not in description, (
+        "voice_config must not appear as a key in the session entry example - an entry the "
+        "example contains is one the model has a reason to emit"
+    )
+    # An ElevenLabs voice id is 20 characters of base62. Asserting the shape rather than the
+    # eight known ids means a table restored with *different* ids fails this too.
+    assert not re.search(r"\b[A-Za-z0-9]{20}\b", description), (
+        "no ElevenLabs voice id may appear in Taylor's prompt: the voice is resolved from "
+        "project_agent_config when the session is created, not chosen by the model"
+    )
+
+
+def test_coordinator_task_tells_taylor_the_voice_is_not_his():
+    """Deleting the table is half of it; the other half is saying so.
+
+    Silence would leave a model that has planned interviews before free to invent a
+    `voice_config` from its own training - which `InterviewSessionTool._create` would discard,
+    but only after the tokens were spent and a reviewer had read a plan implying the model
+    chose the voice.
+    """
+    from agents.discovery.interview_coordinator import create_interview_coordinator_task
+    agent = _mock_agent()
+    with patch("agents.discovery.interview_coordinator.Task") as MockTask:
+        MockTask.return_value = MagicMock()
+        create_interview_coordinator_task(agent=agent, stakeholder_assignments="")
+    _, kwargs = MockTask.call_args
+    assert "Do not include a voice_config" in kwargs["description"]
 
 
 # ── Stakeholder Interviewer ───────────────────────────────────────────────────

@@ -181,13 +181,12 @@ async def test_speak_text(body: TestSpeakRequest, payload: dict = Depends(requir
     row - so a configured voice now reaches a real interview and not only this rehearsal
     button. That was not true until Task 3: the live portal read `session.voice_config`,
     nothing wrote that column in code, and a crew-created session carried whatever Taylor
-    copied out of `VOICE_LOCALE_TABLE`.
+    copied out of the voice-locale table in his own prompt.
 
-    Two things are still open and neither is this door. Taylor's prompt table survives, so it
-    is still prose in a prompt naming a female stock voice for the male interviewer - it no
-    longer *reaches* a session, because `InterviewSessionTool._create` ignores any
-    `voice_config` in the plan, but retiring it is Task 4's. And the sessions created before
-    the stamp carry that table's answer permanently, because a stamp is not re-derived.
+    That table is gone as of Task 4, along with its dead TypeScript twin, and Taylor is told
+    not to emit a `voice_config` at all. One thing remains open and it is not this door: the
+    sessions created before the stamp carry the old table's answer permanently, because a
+    stamp is not re-derived.
 
     An earlier version of this docstring claimed the portal and the stamp already used this
     function when neither did. `tests/test_agent_config.py` holds the count of callers by an

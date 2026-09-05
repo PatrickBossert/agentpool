@@ -40,7 +40,14 @@ import httpx
 from api.config import get_settings
 from api.services.process_cache import register_cache
 
-_VOICES_URL = "https://api.elevenlabs.io/v1/voices"
+# Where ElevenLabs is. Declared here because this module held the first of these URLs, and
+# `api/services/voice_catalogue.py` imports both rather than typing the host a second time -
+# two modules holding the same literal is the duplication this branch exists to end, one
+# category along from the four disagreeing voice tables. The text-to-speech URL in
+# `interview_service.synthesise` is deliberately left where it is: this is a listing seam and
+# does not touch the synthesis path.
+ELEVENLABS_V1 = "https://api.elevenlabs.io/v1"
+VOICES_URL = f"{ELEVENLABS_V1}/voices"
 
 # voice_id -> what the provider answered about it, cached only when it answered.
 _GENDER_CACHE: dict[str, str | None] = {}
@@ -131,7 +138,7 @@ async def voice_gender(voice_id: str) -> str | None:
 
     async with _client() as client:
         resp = await client.get(
-            f"{_VOICES_URL}/{voice_id}",
+            f"{VOICES_URL}/{voice_id}",
             headers={"xi-api-key": settings.elevenlabs_api_key},
         )
         resp.raise_for_status()

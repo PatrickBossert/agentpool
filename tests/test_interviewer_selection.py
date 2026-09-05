@@ -51,8 +51,8 @@ AVERY = "stakeholder_interviewer"
 LAURA = "second_interviewer"
 
 # ElevenLabs' stock Rachel - the female voice the first completed interview was conducted in,
-# and the value Taylor's `VOICE_LOCALE_TABLE` still hands out in his prompt. Named here so the
-# tests can say "not this" without reading it from the source they are checking.
+# and the value the retired voice-locale table in Taylor's prompt used to hand out for en/GB.
+# Named here so the tests can say "not this" without reading it from the source they check.
 RACHEL = "21m00Tcm4TlvDq8ikWAM"
 
 
@@ -586,13 +586,15 @@ def test_the_stamp_is_the_projects_configuration_and_not_the_plans(project_dir, 
     """A `voice_config` in the plan is ignored, and this is the assertion that says so.
 
     It used to be stored as given, which meant the voice a participant heard was whatever a
-    language model copied out of `VOICE_LOCALE_TABLE` in its own prompt - a prose table naming
+    language model copied out of the voice-locale table in its own prompt - prose naming
     ElevenLabs' stock Rachel, a female voice, for the male interviewer. **A stamped value beats
     everything**, so as long as the plan supplied it, no amount of correcting defaults
     elsewhere could reach a real interview.
 
-    The table itself is still in Taylor's prompt and its retirement is Task 4's. What changed
-    here is that it no longer reaches a session.
+    Task 4 retired that table, so a plan carrying a `voice_config` no longer has an obvious
+    source. This assertion stays exactly as it is: a plan is a language model's output and
+    this row is a permanent record, so "the model happened to stop being told to" is not the
+    guarantee - the tool ignoring it is.
     """
     _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
     slug = "plan-ignored"
@@ -991,7 +993,7 @@ def test_a_gender_lookup_on_its_own_loop_leaves_the_shared_client_usable(monkeyp
 
     server = _local_voices_server()
     url = f"http://127.0.0.1:{server.server_port}/v1/voices"
-    monkeypatch.setattr("api.services.voice_metadata._VOICES_URL", url)
+    monkeypatch.setattr("api.services.voice_metadata.VOICES_URL", url)
     settings = get_settings()
     monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
     monkeypatch.setattr("api.services.voice_metadata.get_settings", lambda: settings)

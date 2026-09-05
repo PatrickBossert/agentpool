@@ -38,14 +38,13 @@ afterwards does not fix the sessions.
 """
 from __future__ import annotations
 
-import json
 import random as _random
 from dataclasses import dataclass, field
 from typing import Any
 
 from agents.identity import AGENT_IDENTITY
-from api.database import fetch_project, get_connection, get_db_path, is_contained_slug
 from api.services.agent_config_service import resolve_agent_config
+from api.services.project_service import read_project_config
 from api.services.voice_metadata import VoiceSexAnswer, ask_voice_sex
 
 # The sex each non-random mode asks for, in the vocabulary ElevenLabs answers in.
@@ -125,23 +124,15 @@ async def project_interviewer_selection(slug: str) -> str:
     Read from `config_json`, which is where `ProjectSettings` is stored. A project that
     predates the setting has no key, and `random` is what it has always effectively done -
     there was one interviewer.
+
+    The guarded read itself is `project_service.read_project_config`, which this function
+    used to carry inline. It was extracted when `voice_settings.project_interview_accent`
+    became the second accessor of exactly this shape: the blank-slug refusal, the
+    containment guard that stops a probed slug materialising a database, and the fall back
+    to `{}` on unparseable JSON are three rules that must not drift between two callers who
+    are both reading the same column.
     """
-    if not slug or not slug.strip():
-        raise ValueError(
-            "project_interviewer_selection requires a slug; a blank one is a caller that "
-            "lost it, not a project that does not exist"
-        )
-    if not is_contained_slug(slug) or not get_db_path(slug).exists():
-        return DEFAULT_SELECTION
-    async with get_connection(slug) as conn:
-        project = await fetch_project(conn, slug=slug)
-    if not project:
-        return DEFAULT_SELECTION
-    try:
-        config = json.loads(project.get("config_json") or "{}")
-    except (json.JSONDecodeError, TypeError):
-        return DEFAULT_SELECTION
-    choice = config.get("interviewer_selection")
+    choice = (await read_project_config(slug)).get("interviewer_selection")
     return choice if choice in _WANTED_GENDER or choice == "random" else DEFAULT_SELECTION
 
 
