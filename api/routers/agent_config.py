@@ -161,10 +161,20 @@ def _assert_renderable_image(image_url: str | None) -> None:
     `agents/egress.py`, naming both fields; the real fix is a same-origin upload path serving
     both, and it is its own task.
 
-    `//host/x.png` is permitted for the same reason - the browser resolves it to `https://host/`,
-    which is a shape this door already accepts spelled out in full. It is the one permitted value
-    that reads to an operator like a local path, so an operator-facing "this points off-site"
-    warning, whenever the upload task adds one, has to resolve rather than string-match.
+    `//host/x.png` is permitted for the same reason - the browser resolves it against **the
+    page's own scheme**, so it is `https://host/` on an https deployment and `http://host/` on an
+    http one, and either way it is a shape this door already accepts spelled out in full. It is
+    the one permitted value that reads to an operator like a local path, so an operator-facing
+    "this points off-site" warning, whenever the upload task adds one, has to resolve rather than
+    string-match.
+
+    **The asymmetry this does not close, named so it is not assumed away.** The `<img src>` this
+    value reaches is also fed by `brand_header_image_url`, which `interview_service` reads
+    straight out of `config` and which `PATCH /{slug}/settings` writes with no validator on any
+    part of the path. So the *scheme* half of this check is one door wide, exactly as the
+    *off-site* half is - and the paragraph above, which reasons carefully about the second, was
+    silent about the first, which is the half a reader would assume is closed. Both belong to the
+    shared same-origin upload path that is the recorded follow-up; neither is widened here.
 
     A relative path is the intended shape and passes untouched. `''` passes too: it is a
     deliberate clear, not an address.

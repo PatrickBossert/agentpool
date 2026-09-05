@@ -48,6 +48,19 @@ ADMIN_REQUIRED = (
 # places; a test fixture that reads like a real one is how the sixth copy gets written.
 CHOSEN_VOICE = "test-voice-not-a-real-id"
 
+# The same rule as CHOSEN_VOICE above, on the very next field - and it was broken there first.
+# The end-to-end test used `/agents/avery-singh.jpg` as its known-good value, which **is**
+# `agent_defaults("stakeholder_interviewer")["image_url"]`, so "the override survived" and "there
+# is no row and the resolver fell back" satisfied the assertion identically. Deleting the
+# known-good write left all four parameters green. That is CLAUDE.md's "assert the success
+# prefix, not a substring drawn from your own call" with the substring drawn from the system's
+# defaults instead of from the call, and the effect is the same.
+#
+# `test_the_sentinel_cannot_be_produced_by_any_default` holds the property rather than trusting
+# the spelling, so a future default that happened to match would fail loudly here rather than
+# quietly hollowing out the test that uses it.
+SENTINEL_IMAGE = "/agents/not-a-default-sentinel.jpg"
+
 
 def _project_body(slug: str) -> dict:
     return {
@@ -464,11 +477,17 @@ async def test_a_refused_image_writes_nothing(doors):
     A refusal raised after the write is not a refusal - the same rule the knowledge-tier doors
     follow for a purge. Driven by saving a good value first, so the assertion distinguishes
     "nothing was written" from "the row was never there".
+
+    `SENTINEL_IMAGE` rather than the agent's own default, for the reason given where it is
+    declared. This test happens to survive the collision - it reads the **column**, and
+    `fetch_agent_config` answers `None` for a missing row, so the subscript would raise - but
+    surviving by an accident of subscripting is not the same as being written to discriminate,
+    and the file should not have two conventions for the same hazard.
     """
     admin = doors["admin_a"]
     await admin.put(
         f"/projects/{SLUG_A}/agents/{AVERY}/config",
-        json={**_all_null(), "image_url": "/agents/avery-singh.jpg"},
+        json={**_all_null(), "image_url": SENTINEL_IMAGE},
     )
     r = await admin.put(
         f"/projects/{SLUG_A}/agents/{AVERY}/config",
@@ -479,7 +498,7 @@ async def test_a_refused_image_writes_nothing(doors):
     async with get_connection(SLUG_A) as conn:
         project = await fetch_project(conn, slug=SLUG_A)
         row = await fetch_agent_config(conn, project_id=project["id"], agent_id=AVERY)
-    assert row["image_url"] == "/agents/avery-singh.jpg"
+    assert row["image_url"] == SENTINEL_IMAGE
 
 
 def test_the_participant_image_reach_is_declared():
@@ -552,10 +571,19 @@ async def test_probing_an_unknown_slug_materialises_no_database(doors, client, v
         "\x00javascript:alert(1)",
     ],
 )
-async def test_nothing_a_browser_would_read_as_a_forbidden_scheme_reaches_the_interview_page(
+async def test_no_image_url_this_door_stores_is_read_back_as_a_forbidden_scheme(
     doors, candidate
 ):
     """The chain that matters, end to end: the door, the column, and the resolver.
+
+    **Named for the half it holds.** An earlier name claimed that nothing a browser reads as a
+    forbidden scheme reaches the interview page, and that is a *product* property this test does
+    not have: the same `<img src>` is also fed by `brand_header_image_url`, which
+    `interview_service.py` reads straight out of `config` and which `PATCH /{slug}/settings`
+    writes with no validator anywhere on the path. A `javascript:` value is storable there today.
+    Pre-existing, bounded by the same forgiving sink, and recorded as the follow-up rather than
+    widened into here - but a test name asserting the product property while holding one door's
+    half is exactly the failure this branch is about.
 
     **A test on the door's response body cannot see this defect.** The whole finding was that
     the two ends disagreed - the door read `ja\\tvascript:` as having no scheme at all and
@@ -567,15 +595,17 @@ async def test_nothing_a_browser_would_read_as_a_forbidden_scheme_reaches_the_in
     *other* entry point from the one the door uses, so a check that only held on the door's own
     read would not satisfy this.
 
-    A known-good value is stored first, so the assertion distinguishes "the hostile value never
-    landed" from "there was never a row" - and it is what the participant would see either way.
+    The known-good value is a **sentinel no agent default holds**, and that is the whole of what
+    makes the first write count. With the agent's own default there, the assertion was satisfied
+    by "there is no row at all" exactly as well as by "the override survived", so deleting the
+    write left every parameter green - the test could not witness the row it was asserting about.
     """
     from api.services.agent_config_service import resolve_agent_config_with
 
     admin = doors["admin_a"]
     await admin.put(
         f"/projects/{SLUG_A}/agents/{AVERY}/config",
-        json={**_all_null(), "image_url": "/agents/avery-singh.jpg"},
+        json={**_all_null(), "image_url": SENTINEL_IMAGE},
     )
     refused = await admin.put(
         f"/projects/{SLUG_A}/agents/{AVERY}/config",
@@ -585,9 +615,12 @@ async def test_nothing_a_browser_would_read_as_a_forbidden_scheme_reaches_the_in
 
     async with get_connection(SLUG_A) as conn:
         resolved = await resolve_agent_config_with(conn, slug=SLUG_A, agent_id=AVERY)
-    assert resolved["image_url"] == "/agents/avery-singh.jpg", (
-        "a value the browser reads as a forbidden scheme reached the interview page's branding "
-        "payload - the door and the browser disagree about what the string is"
+    assert resolved["image_url"] == SENTINEL_IMAGE, (
+        f"the interview page's branding payload resolved to {resolved['image_url']!r} rather "
+        f"than {SENTINEL_IMAGE!r}. In production that means a value the browser reads as a "
+        "forbidden scheme got through - the door and the browser disagreeing about what the "
+        "string is. Resolving to an agent's own default instead means the known-good write "
+        "above did not land, and this test cannot witness the row it is asserting about"
     )
 
 
@@ -635,3 +668,22 @@ def test_the_normalisation_matches_the_parser_and_not_pythons_strip():
         "​javascript:alert(1)",
     ):
         assert _as_the_browser_reads_it(benign) == benign
+
+
+def test_the_sentinel_cannot_be_produced_by_any_default():
+    """`SENTINEL_IMAGE` is a value the system cannot produce on its own, held rather than assumed.
+
+    The two tests that write it then assert on it are only as strong as this: an image the
+    resolver would have answered anyway makes "the override survived" and "there is no row and
+    the default came back" the same observation, and one of those is not the property.
+
+    Checked against **every** identity rather than against Avery's, because the collision that
+    actually happened was found by reading one agent's default and the next one added could be
+    any of the eighteen. This is the same guard `CHOSEN_VOICE`'s comment asks for, made
+    executable.
+    """
+    defaults = {identity.image for identity in AGENT_IDENTITY.values()}
+    assert SENTINEL_IMAGE not in defaults, (
+        f"SENTINEL_IMAGE is {SENTINEL_IMAGE!r}, which is some agent's default image - so an "
+        "assertion on it passes whether or not the write it is supposed to witness happened"
+    )
