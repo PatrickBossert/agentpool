@@ -653,6 +653,10 @@ async def test_a_failed_accent_probe_still_leaves_a_full_narrowed_result_set(
     assert body["library_accents"] == []
     assert body["accent_options_partial"] is True
     assert "british" in body["accent_options"]
+    # The two fields answer different questions and must not share a source: the probe
+    # failed (accent_options_partial above), but the result set is a full, un-truncated
+    # page - `library_has_more` must come from the result set, never the probe.
+    assert body["library_has_more"] is False
 
     narrowed = [r for r in _library_calls(seen) if r.url.params.get("accent") == "british"]
     assert len(narrowed) == 1, _urls(seen)
