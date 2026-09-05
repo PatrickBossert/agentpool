@@ -236,10 +236,21 @@ export const AGENT_SKILLS: Record<string, AgentSkill[]> = {
 // Every other map in this file is keyed by the role ('Stakeholder Interviewer'); the server is
 // keyed by the id ('stakeholder_interviewer'), which is what `AGENT_TIER`, `tool_map`,
 // `agent_outputs.agent_name` and `project_agent_config` all store. Configuring an agent needs
-// both, so the bridge has to exist somewhere - and it is **declared**, never derived. Nine of
-// the eighteen are `id.replace('_',' ').title()` and nine are not: PAM, the two interviewers,
-// and six more, so a formatting rule would be right about half the roll and silently wrong
-// about the rest. `agents/identity.py` records the same decision from the other side, and
+// both, so the bridge has to exist somewhere - and it is **declared**, never derived.
+//
+// Measured rather than asserted, because the first version of this comment claimed nine of the
+// eighteen resist the derivation and that was wrong by a factor of eight: **17 of the 18 are
+// exactly `id.replace('_',' ').title()`. Only PAM is not** - both interviewers derive cleanly.
+// One exception in eighteen is still the whole argument, and a near-total rule is the more
+// dangerous kind rather than the safer one: a derivation that works for seventeen entries reads
+// as correct at every call site, and the eighteenth fails silently. A wrong id here is not a
+// 404 a consultant sees either - `'Pam'` is refused, but any id that *exists* configures a
+// different agent and answers 200.
+//
+// This is a different pair from the one Task 2 rejected on evidence, which was display_name to
+// agent_id ('Avery Singh' from 'stakeholder_interviewer'); that stays underivable and
+// test_the_guard_does_not_cross_the_two_by_formatting_the_id still holds it.
+// `agents/identity.py` records the same decision from the other side, and
 // tests/test_persona_transcription.py holds this map's values equal to that file's keys.
 export const AGENT_IDS: Record<string, string> = {
   'PAM':                         'pam',

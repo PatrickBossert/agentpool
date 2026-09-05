@@ -71,8 +71,11 @@ export default function AverySetupTab({ slug }: { slug: string }) {
   return (
     <div className="space-y-5">
 
-      <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
-        <p className="text-[11px] text-blue-700 leading-relaxed">
+      {/* brand tokens, not blue-*. The classes were pre-existing and this change rewrote the
+          sentence inside them, which is the moment to stop leaving a do-not-use colour on a
+          line being edited. */}
+      <div className="rounded-lg bg-brand/5 border border-brand/20 px-3 py-2.5">
+        <p className="text-[11px] text-teal-700 leading-relaxed">
           These settings configure Avery's interviewing behaviour across all sessions. Who he
           sounds like is set in the agent configuration section below - one voice per
           interviewer per project, drawn from the accent on the Settings page, and not varied

@@ -160,9 +160,15 @@ def test_each_role_is_bridged_to_the_agent_of_that_name():
     while Avery's Setup tab now saves Laura's voice.
 
     This closes the name-to-id gap the face test above leaves open, and closes it the way that
-    test says it must not be closed lazily: through a **declared** map, not through
-    `id.replace('_',' ').title()`. Nine of the eighteen are not that formatting, so the
-    derivation would be right about half the roll and quietly wrong about the rest.
+    test says it must not be closed lazily: through a **declared** map rather than through
+    `id.replace('_',' ').title()`.
+
+    Counted rather than asserted, after this docstring's first version claimed nine of the
+    eighteen resist that formatting: **seventeen of the eighteen match it and only PAM does
+    not.** One exception is enough, and a near-total rule is the worse kind - a derivation
+    correct for seventeen entries reads as correct everywhere it is used, and the eighteenth is
+    wrong with nothing to say so. `test_the_bridge_is_not_a_formatting_of_the_id` below holds
+    that count so this paragraph fails rather than rots.
     """
     names = dict(re.findall(r"'([^']+)':\s+'([^']+)'", _block("AGENT_HUMAN_NAME")))
     mismatched = {
@@ -234,4 +240,77 @@ def test_no_new_module_types_the_seventeen_names_out():
         f"{sorted(unexpected)} hard-code the agents' names. Derive them from "
         f"AGENT_HUMAN_NAME - the copy the pitch deck used to hold had already gone stale, "
         f"and a stale persona list is read by a client rather than by a developer."
+    )
+
+
+# ── The bridge's own justification, and the two sets that must contain it ─────
+
+def test_the_bridge_is_not_a_formatting_of_the_id():
+    """`AGENT_IDS` is declared rather than derived, and this is the evidence for it.
+
+    Held as a count because the first version of the comment defending that decision gave a
+    number - "nine of the eighteen" - that was wrong by a factor of eight, and a justification
+    that overstates its evidence is worse than none: the next reader who checks it distrusts the
+    decision it was defending, and the decision is right.
+
+    **Seventeen of the eighteen derive; PAM alone does not.** That is what makes the derivation
+    dangerous rather than merely imperfect. A rule correct for seventeen entries reads as
+    correct at every call site, and there is no id shorter than the whole map that would show a
+    reader the exception. Asserted in both directions - the count *and* which agent it is - so
+    that renaming PAM's role key to something derivable fails here and prompts the decision
+    again, rather than silently making a `.title()` one-liner look safe.
+    """
+    ids = _frontend_ids()
+    derivable = {role for role, agent_id in ids.items()
+                 if agent_id.replace("_", " ").title() == role}
+    assert len(ids) - len(derivable) == 1, (
+        "the number of roles that resist id.replace('_',' ').title() has moved. Recount and "
+        "correct the comment on AGENT_IDS in agentStatus.ts and the docstring above - do not "
+        "adjust one number to match the other."
+    )
+    assert set(ids) - derivable == {"PAM"}, sorted(set(ids) - derivable)
+
+
+def test_every_run_dispatchable_role_is_a_key_of_the_bridge():
+    """`AGENT_RUN_KEYS` derives its twelve ids from `AGENT_IDS`, and nothing type-checks that.
+
+    `Object.fromEntries` widens to `any`, so `Record<string, string>` says nothing about a role
+    name in `RUN_DISPATCHABLE` that is not a key of `AGENT_IDS`: the entry becomes
+    `undefined`, `tsc` stays clean and the whole frontend suite stays green. The visible
+    consequence is `ReviewDialog`'s reverse lookup silently finding nothing, which reads as a
+    missing review rather than as a typo.
+
+    A typo in an `AGENT_IDS` *key* is already caught by the two tests above; only the derived
+    subset's own list was unguarded, which is precisely the surface the derivation created.
+    """
+    source = AGENT_STATUS.read_text()
+    block = re.search(r"const RUN_DISPATCHABLE = \[(.*?)\n\]", source, re.S)
+    assert block, f"RUN_DISPATCHABLE is no longer a literal array in {AGENT_STATUS.name}"
+    listed = re.findall(r"'([^']+)'", block.group(1))
+    assert listed, "the walk read no roles - it would excuse every one of them"
+    unknown = [role for role in listed if role not in _frontend_ids()]
+    assert not unknown, (
+        f"{unknown} are dispatchable and are not keys of AGENT_IDS, so AGENT_RUN_KEYS maps "
+        "them to undefined with tsc clean and the suite green"
+    )
+
+
+def test_every_crew_member_is_a_key_of_the_bridge():
+    """A crew member absent from `AGENT_IDS` renders a headed section with a blank body.
+
+    `CrewAgentConfiguration` emits the agent's heading and then `AgentConfigSection` returns
+    `null` because it has no id to configure - so the failure is an empty panel under somebody's
+    name, which reads as a loading fault rather than as a missing map entry. Same family as the
+    test above: both are places where a name is looked up in this map and a miss is silent.
+    """
+    source = AGENT_STATUS.read_text()
+    block = re.search(r"export const CREW_AGENTS: Record<string, string\[\]> = \{(.*?)\n\}",
+                      source, re.S)
+    assert block, f"CREW_AGENTS is no longer a literal map in {AGENT_STATUS.name}"
+    members = set(re.findall(r"'([^']+)'", block.group(1)))
+    assert len(members) >= 17, f"the walk read only {len(members)} crew members"
+    unknown = sorted(members - set(_frontend_ids()))
+    assert not unknown, (
+        f"{unknown} are in a crew and are not keys of AGENT_IDS, so their Setup tab shows a "
+        "heading with nothing under it"
     )

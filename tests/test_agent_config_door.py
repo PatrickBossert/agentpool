@@ -373,3 +373,148 @@ async def test_my_permissions_reports_the_authority_this_door_refuses_with(doors
         "tell the two flags apart"
     )
     assert member["can_administer_project"] is False
+
+
+# ── What reaches a participant's browser ────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "image_url",
+    [
+        "/agents/avery-singh.jpg",       # the intended shape
+        "agents/avery-singh.jpg",        # relative without a leading slash
+        "",                              # a deliberate clear, not an address
+        "https://cdn.example.com/a.jpg",  # off-site, and permitted - see the refusal test
+        "HTTPS://cdn.example.com/a.jpg",  # the scheme is compared case-insensitively
+    ],
+)
+async def test_an_image_a_browser_can_render_is_accepted(doors, image_url):
+    """The permitted shapes, including the off-site one.
+
+    The off-site case is here deliberately rather than by omission. It is a real disclosure -
+    every participant's browser fetches from that host - and it is allowed because
+    `brand_header_image_url` has permitted exactly the same thing on the same page since it
+    existed, so refusing it here would close half a class and leave an operator unable to tell
+    which half. The reach is declared in `agents/egress.py` instead, and
+    `test_the_participant_image_reach_is_declared` holds that.
+    """
+    r = await doors["admin_a"].put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "image_url": image_url},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["overrides"]["image_url"] == image_url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "image_url,scheme",
+    [
+        ("javascript:alert(1)", "javascript"),
+        ("JavaScript:alert(1)", "JavaScript"),
+        ("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", "data"),
+        ("file:///etc/passwd", "file"),
+        ("vbscript:msgbox(1)", "vbscript"),
+    ],
+)
+async def test_an_image_a_browser_must_not_render_is_refused_by_name(doors, image_url, scheme):
+    """This value is handed to a participant's browser and never read by this server, and the
+    interview page has no floor at all - CLAUDE.md documents it as one of exactly two doors in
+    that state, because a participant has no login.
+
+    The refusal names the scheme rather than saying "invalid", because `describeError` shows the
+    server's own sentence in the Setup section and "the configuration could not be saved" would
+    send an administrator to retry the same value.
+    """
+    r = await doors["admin_a"].put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "image_url": image_url},
+    )
+    assert r.status_code == 422, r.text
+    assert "image_url" in r.json()["detail"]
+    assert f"'{scheme}:'" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_image_writes_nothing(doors):
+    """The check runs **before** `upsert_agent_config`, so a refused body leaves the row alone.
+
+    A refusal raised after the write is not a refusal - the same rule the knowledge-tier doors
+    follow for a purge. Driven by saving a good value first, so the assertion distinguishes
+    "nothing was written" from "the row was never there".
+    """
+    admin = doors["admin_a"]
+    await admin.put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "image_url": "/agents/avery-singh.jpg"},
+    )
+    r = await admin.put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "image_url": "javascript:alert(1)"},
+    )
+    assert r.status_code == 422
+
+    async with get_connection(SLUG_A) as conn:
+        project = await fetch_project(conn, slug=SLUG_A)
+        row = await fetch_agent_config(conn, project_id=project["id"], agent_id=AVERY)
+    assert row["image_url"] == "/agents/avery-singh.jpg"
+
+
+def test_the_participant_image_reach_is_declared():
+    """The reach exists in `agents/egress.py`, names **both** fields, and is ungated.
+
+    CLAUDE.md's rule for that module is that an ungated reach is written out rather than left
+    implicit, "because that sameness *is* the finding" - and a row naming one field would be
+    wrong about the other in exactly the way the ElevenLabs row was before sp62 widened it. So
+    both names are asserted: `image_url` is the one this task made writable, and
+    `brand_header_image_url` is the one that has been writable all along.
+
+    Ungated is asserted rather than assumed. A grant appearing here would say a mode stands
+    between a configured address and a participant's browser, and none does.
+    """
+    from agents.egress import (
+        ALL_GRANTS,
+        NO_GRANTS,
+        PARTICIPANT_IMAGE_EGRESS,
+        Reach,
+        _destination,
+    )
+
+    assert PARTICIPANT_IMAGE_EGRESS.reaches is Reach.PARTICIPANT_BROWSER
+    for field in ("brand_header_image_url", "project_agent_config.image_url"):
+        assert field in PARTICIPANT_IMAGE_EGRESS.sends, (
+            f"{field} is rendered into the same <img src> and is not named in the declaration"
+        )
+    granted = _destination(Reach.PARTICIPANT_BROWSER, ALL_GRANTS)
+    withheld = _destination(Reach.PARTICIPANT_BROWSER, NO_GRANTS)
+    assert granted is withheld, "a grant appears to move this reach, and none does"
+    assert granted.leaves_deployment is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verb", ["get", "put"])
+async def test_probing_an_unknown_slug_materialises_no_database(doors, client, verb):
+    """A slug with no database is a 404, and asking must not create one.
+
+    `get_connection` runs the migration block against whatever file it is handed and creates it
+    if missing, so a caller working through a list of guesses would otherwise leave one database
+    per guess on disk. CLAUDE.md names this hazard twice and `caller_roles` and
+    `_stakeholder_matches_invite` both carry the guard for it.
+
+    Driven as a **sysadmin**, because nobody else can reach the check: every other role is
+    refused by `check_project_access` before `get_connection` is asked for anything. So this is
+    the file-per-guess hazard rather than an escalation - and it is exactly the caller for whom
+    the door would otherwise be the file-creating one.
+    """
+    from api.database import get_db_path
+
+    unknown = f"no-such-project-agent-config-{verb}"
+    assert not get_db_path(unknown).exists(), "the fixture slug already exists"
+
+    url = f"/projects/{unknown}/agents/{AVERY}/config"
+    r = await client.get(url) if verb == "get" else await client.put(url, json=_all_null())
+
+    assert r.status_code == 404, r.text
+    assert not get_db_path(unknown).exists(), (
+        "asking about an unknown slug created its database - one file per guess"
+    )

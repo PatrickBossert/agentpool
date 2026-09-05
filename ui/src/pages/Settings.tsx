@@ -471,13 +471,21 @@ export default function Settings() {
             placeholder="british"
             className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
           />
+          {/* Deliberately names no accent. The five this deployment happens to reach were
+              written out here in the first draft, inside the very sentence explaining that the
+              vocabulary is the provider's - a voice fact restated in TypeScript, on the one
+              side Task 4's Python guard cannot see, in the paragraph predicting it would go
+              stale. The accents that exist are `accent_options` on the voices door, and the
+              picker on each agent's Setup tab renders them; this page does not call that door
+              and should not start, so it points at the place that does rather than keeping a
+              copy that nothing compares. */}
           <p className="text-xs text-muted mt-1">
             The accent this project's voices are chosen from, in the voice provider's own word
-            for it - british, scottish, irish, australian, new zealand. Free text rather than a
-            list, because the vocabulary is theirs and closing it here would go stale the first
-            time they add one; each agent's Setup tab lists the accents that actually exist.
-            Leave it empty to search every accent. It is not the country above - GB is the
-            country of a Scottish engagement exactly as it is of a British one.
+            for it. Free text rather than a list, because the vocabulary is theirs and closing
+            it here would go stale the first time they add one - the accents that actually
+            exist are offered in the voice picker on each agent's Setup tab. Leave it empty to
+            search every accent. It is not the country above: GB is the country of a Scottish
+            engagement exactly as it is of a British one.
           </p>
         </div>
 

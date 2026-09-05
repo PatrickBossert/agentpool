@@ -33,6 +33,7 @@ called a model id and only one of them is a security control; this is the other 
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -44,6 +45,8 @@ from api.database import (
     fetch_agent_config,
     fetch_project,
     get_connection,
+    get_db_path,
+    is_contained_slug,
     upsert_agent_config,
 )
 from api.services.agent_config_service import (
@@ -74,6 +77,73 @@ class AgentConfigBody(BaseModel):
     language: str | None = None
     country_code: str | None = None
     model_id: str | None = None
+
+
+# A URI scheme at the front of the string: `scheme:` where scheme starts with a letter. RFC
+# 3986's production, so `/agents/x.jpg`, `agents/x.jpg` and `//host/x.jpg` all correctly have
+# none - a relative reference cannot contain a colon before its first slash.
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
+_BROWSER_SCHEMES = {"http", "https"}
+
+
+def _assert_renderable_image(image_url: str | None) -> None:
+    """Refuse an `image_url` a browser would not fetch as an ordinary image.
+
+    **This value is not read by this server.** It is written into the interview page's branding
+    payload and lands in an `<img src>` on `VoiceInterview.tsx`, and that page is rendered for a
+    participant holding a session token and no login - `GET /projects/{slug}/branding/image` is
+    one of the two doors CLAUDE.md documents as deliberately having no floor at all, for exactly
+    that reason. So what is stored here is a string this deployment hands to somebody else's
+    browser, and the question is what that browser will do with it.
+
+    Two things it must not do, and both are cheap to refuse: `javascript:` executes on the
+    interview origin, and `data:` embeds arbitrary content the server never saw. Neither is a
+    plausible mistake, which is the point - the check exists so that neither is available to a
+    door that is otherwise a perfectly ordinary configuration write.
+
+    **An off-site `http`/`https` URL is still allowed, and that is a decision rather than an
+    oversight.** It makes every participant's browser fetch from a third party, disclosing their
+    IP, their user agent and the timing of an interview in progress - on a `sensitive`
+    engagement whose documents and inference this project keeps on the premises. It is permitted
+    because `brand_header_image_url` on `ProjectSettings` has always done the same thing on the
+    same page through `PATCH /{slug}/settings`, so refusing it here would close half a class and
+    leave the operator unable to tell which half. The reach is **declared** instead, in
+    `agents/egress.py`, naming both fields; the real fix is a same-origin upload path serving
+    both, and it is its own task.
+
+    A relative path is the intended shape and passes untouched. `''` passes too: it is a
+    deliberate clear, not an address.
+    """
+    if not image_url:
+        return
+    match = _SCHEME.match(image_url.strip())
+    if match and match.group(0)[:-1].lower() not in _BROWSER_SCHEMES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"image_url must be a path or an http/https address - "
+                f"'{match.group(0)[:-1]}:' is not one a browser may render on the interview "
+                "page"
+            ),
+        )
+
+
+def _assert_project_exists(slug: str) -> None:
+    """404 for a slug with no database, **before** `get_connection` is asked for one.
+
+    `get_connection` runs the migration block against whatever file it is handed and creates
+    the file if it is missing, so a caller probing slugs would otherwise materialise one
+    database per guess. `caller_roles` and `_stakeholder_matches_invite` already carry this
+    guard for the same reason, and CLAUDE.md names the hazard twice.
+
+    Only a `sysadmin` could ever reach it here - everyone else is refused by
+    `check_project_access` first - so this is the file-per-guess hazard rather than an
+    escalation. `is_contained_slug` is asked as well as existence because a slug that escapes
+    `DATABASE_DIR` would have this door running schema into somebody else's database, and the
+    two questions are answered together everywhere else this pattern appears.
+    """
+    if not is_contained_slug(slug) or not get_db_path(slug).exists():
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
 
 def _defaults_or_404(agent_id: str) -> dict[str, Any]:
@@ -123,6 +193,7 @@ async def get_agent_config(
     are about to change; a reviewer sees who is going to interview their stakeholders.
     """
     await check_project_access(slug, payload)
+    _assert_project_exists(slug)
     defaults = _defaults_or_404(agent_id)
     async with get_connection(slug) as conn:
         return await _answer(conn, slug=slug, agent_id=agent_id, defaults=defaults)
@@ -146,6 +217,8 @@ async def put_agent_config(
     """
     await check_project_access(slug, payload)
     await require_project_administration(slug, payload)
+    _assert_project_exists(slug)
+    _assert_renderable_image(body.image_url)
     defaults = _defaults_or_404(agent_id)
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
