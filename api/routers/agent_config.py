@@ -85,9 +85,48 @@ class AgentConfigBody(BaseModel):
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
 _BROWSER_SCHEMES = {"http", "https"}
 
+# The two things the WHATWG URL parser does to a string **before** it reads the scheme, and the
+# only two this function reproduces. Nothing else of that algorithm is copied: the rest decides
+# hosts, ports and paths, none of which this check has an opinion about.
+_TAB_OR_NEWLINE = re.compile(r"[\t\n\r]")
+# C0 control or space - U+0000 to U+0020 inclusive. `str.strip()` is **not** this set: it strips
+# some Unicode spaces this does not, and misses `\x00`-`\x08`, `\x0e`-`\x1f`, which this does.
+_C0_OR_SPACE = "".join(chr(code) for code in range(0x21))
+
+
+def _as_the_browser_reads_it(value: str) -> str:
+    """The candidate, normalised the way the URL parser normalises it before parsing a scheme.
+
+    **A smaller normalisation is a bypass, and this one was.** The first version of this check
+    called `str.strip()`, which cannot see a character in the *middle* of a string - so
+    `ja\\tvascript:alert(1)` matched no scheme, was accepted with 200, was stored verbatim, and
+    came back out of `resolve_agent_config_with` for the browser to reassemble into
+    `javascript:alert(1)`. Eight inputs got through that way, including `\\x00javascript:` and
+    the `data:` equivalents. It is the textbook scheme-filter bypass and it defeated the check
+    completely: any refused scheme could be spelled with a tab in it.
+
+    Two steps, in the parser's own order:
+
+    1. Remove leading and trailing **C0 control or space**. Strictly larger than `str.strip()`
+       at the ends, which is the half that let a leading `\\x00` through.
+    2. Remove **every** tab, line feed and carriage return, from anywhere. This is the half a
+       `strip()` can never do, and the half that matters - the colon has to end up adjacent to
+       the letters before any scheme test can see it.
+
+    Both orders happen to agree here, since tab, LF and CR are themselves C0 controls, but the
+    parser's order is kept so the correspondence is checkable rather than argued.
+
+    Deliberately **not** the whole algorithm. Percent-encoding, full-width colons and zero-width
+    spaces are all left alone, and they are safe to leave: a browser resolves each of them to a
+    same-origin *relative path*, which is the permitted case, rather than reconstituting a
+    scheme. Reproducing more would be a second URL parser in this repository, which is a worse
+    thing to own than this five-line correspondence.
+    """
+    return _TAB_OR_NEWLINE.sub("", value.strip(_C0_OR_SPACE))
+
 
 def _assert_renderable_image(image_url: str | None) -> None:
-    """Refuse an `image_url` a browser would not fetch as an ordinary image.
+    """Refuse an `image_url` a browser would not fetch over http or https.
 
     **This value is not read by this server.** It is written into the interview page's branding
     payload and lands in an `<img src>` on `VoiceInterview.tsx`, and that page is rendered for a
@@ -96,10 +135,21 @@ def _assert_renderable_image(image_url: str | None) -> None:
     that reason. So what is stored here is a string this deployment hands to somebody else's
     browser, and the question is what that browser will do with it.
 
-    Two things it must not do, and both are cheap to refuse: `javascript:` executes on the
-    interview origin, and `data:` embeds arbitrary content the server never saw. Neither is a
-    plausible mistake, which is the point - the check exists so that neither is available to a
-    door that is otherwise a perfectly ordinary configuration write.
+    **What this guard is actually for, stated at its real strength.** `<img src>` is the only
+    sink, and in that sink a `javascript:` URL does **not** execute - the load simply fails - and
+    a `data:image/svg+xml` renders in the restricted image mode, with no script and no external
+    fetch. An earlier version of this docstring said `javascript:` "executes on the interview
+    origin", which is untrue here, and it said so in the same paragraph as a check that any tab
+    could walk through. Overstating the threat while understating the porousness is the pairing
+    most likely to stop the next reader looking, and CLAUDE.md's rule is that a guard's reach is
+    established rather than described.
+
+    The honest reason is narrower and still worth having: it holds the field to the two schemes
+    that **fetch a resource over the network**, so the reach stays inside the class
+    `brand_header_image_url` already permits and does not quietly grow a new one. That matters
+    most for a change nobody has made yet - move this value into an `href`, a CSS `url()` or an
+    `<object>` and the sink stops being forgiving, while a guard that reads as working would be
+    inherited unexamined.
 
     **An off-site `http`/`https` URL is still allowed, and that is a decision rather than an
     oversight.** It makes every participant's browser fetch from a third party, disclosing their
@@ -111,18 +161,35 @@ def _assert_renderable_image(image_url: str | None) -> None:
     `agents/egress.py`, naming both fields; the real fix is a same-origin upload path serving
     both, and it is its own task.
 
+    `//host/x.png` is permitted for the same reason - the browser resolves it to `https://host/`,
+    which is a shape this door already accepts spelled out in full. It is the one permitted value
+    that reads to an operator like a local path, so an operator-facing "this points off-site"
+    warning, whenever the upload task adds one, has to resolve rather than string-match.
+
     A relative path is the intended shape and passes untouched. `''` passes too: it is a
     deliberate clear, not an address.
+
+    The refusal names the scheme **as the browser would reconstitute it**, not as it was typed.
+    An administrator who pasted something with a stray tab in it is told what it actually is, and
+    a test asserting that name cannot pass against a check that skipped the normalisation.
     """
     if not image_url:
         return
-    match = _SCHEME.match(image_url.strip())
-    if match and match.group(0)[:-1].lower() not in _BROWSER_SCHEMES:
+    match = _SCHEME.match(_as_the_browser_reads_it(image_url))
+    if match is None:
+        return
+    # Lower-cased, because the parser lower-cases a scheme too: the sentence reports what the
+    # browser would end up with rather than how it was typed, which is the whole point of
+    # normalising before matching. `JavaScript:` and `ja<tab>vascript:` are both reported as
+    # `javascript:`, and a test asserting that name cannot pass against a check that matched the
+    # raw string.
+    scheme = match.group(0)[:-1].lower()
+    if scheme not in _BROWSER_SCHEMES:
         raise HTTPException(
             status_code=422,
             detail=(
                 f"image_url must be a path or an http/https address - "
-                f"'{match.group(0)[:-1]}:' is not one a browser may render on the interview "
+                f"'{scheme}:' is not one a browser fetches over the network on the interview "
                 "page"
             ),
         )

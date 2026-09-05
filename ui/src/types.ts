@@ -137,15 +137,22 @@ export interface ProjectSettings {
    */
   interviewer_selection: 'always_male' | 'always_female' | 'random'
   /**
-   * Which regional accent this project's voices are chosen from, in ElevenLabs' own
-   * vocabulary - british, scottish, irish, australian, new zealand - and forwarded to their
-   * listing unmodified, so nothing here translates it. `''` means every accent.
+   * Which regional accent this project's voices are chosen from, held in the voice provider's
+   * own word for it and forwarded to their listing unmodified, so nothing here translates it.
+   * `''` means every accent.
    *
-   * Declared required for the same reason, with the sharpest consequence of the three. A
-   * dropped key is `british` on the server, so saving an unrelated field on a **Scottish**
-   * engagement silently resets it - and the reset is invisible until somebody opens the
-   * voice picker and finds it filtered to the wrong country, or worse, picks from it. No
-   * error, no 403, and a system that reported success throughout.
+   * **Names no accent, deliberately.** The five this deployment happens to reach were written
+   * out here in the first draft - a hardcoded slice of the provider's vocabulary, in
+   * TypeScript, on the field whose whole point is that the vocabulary is not ours, and one
+   * file away from the help text the same list was deleted from. The accents that exist are
+   * `accent_options` on `GET /projects/{slug}/voices`, and the picker on each agent's Setup
+   * tab renders them.
+   *
+   * Declared required for the same reason its neighbours are, with the sharpest consequence of
+   * the three. A dropped key is `british` on the server, so saving an unrelated field on a
+   * **Scottish** engagement silently resets it - and the reset is invisible until somebody
+   * opens the voice picker and finds it filtered to the wrong country, or worse, picks from
+   * it. No error, no 403, and a system that reported success throughout.
    */
   interview_accent: string
   sector: string

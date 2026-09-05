@@ -410,11 +410,27 @@ async def test_an_image_a_browser_can_render_is_accepted(doors, image_url):
 @pytest.mark.parametrize(
     "image_url,scheme",
     [
+        # The plain forms. These were already refused before the normalisation was corrected,
+        # which is exactly why none of them is a useful power-check candidate for it.
         ("javascript:alert(1)", "javascript"),
-        ("JavaScript:alert(1)", "JavaScript"),
+        ("JavaScript:alert(1)", "javascript"),
         ("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", "data"),
         ("file:///etc/passwd", "file"),
         ("vbscript:msgbox(1)", "vbscript"),
+        # The forms that walked through the first version of this check with a 200. The URL
+        # parser removes tab, LF and CR from **anywhere** in a string before it reads the
+        # scheme, so the colon ends up adjacent to the letters and the browser reassembles
+        # precisely the scheme that was refused. `str.strip()` cannot see any of these.
+        ("ja\tvascript:alert(1)", "javascript"),
+        ("java\nscript:alert(1)", "javascript"),
+        ("java\rscript:alert(1)", "javascript"),
+        ("da\tta:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", "data"),
+        # And the leading C0 controls, which are stripped by the parser and not by
+        # `str.strip()` - the other half of the same differential.
+        ("\x00javascript:alert(1)", "javascript"),
+        ("\x01javascript:alert(1)", "javascript"),
+        ("\x0ejavascript:alert(1)", "javascript"),
+        ("\x1bdata:image/svg+xml,x", "data"),
     ],
 )
 async def test_an_image_a_browser_must_not_render_is_refused_by_name(doors, image_url, scheme):
@@ -425,6 +441,12 @@ async def test_an_image_a_browser_must_not_render_is_refused_by_name(doors, imag
     The refusal names the scheme rather than saying "invalid", because `describeError` shows the
     server's own sentence in the Setup section and "the configuration could not be saved" would
     send an administrator to retry the same value.
+
+    **The expected scheme is the one the browser reconstitutes, not the one that was typed.**
+    `ja\tvascript:` is expected to be refused as `javascript`, so this assertion cannot pass
+    against a check that skipped the normalisation - it would either accept the value or, if it
+    matched on the raw string, name something else. That is what makes the parametrisation
+    discriminating rather than merely long.
     """
     r = await doors["admin_a"].put(
         f"/projects/{SLUG_A}/agents/{AVERY}/config",
@@ -518,3 +540,98 @@ async def test_probing_an_unknown_slug_materialises_no_database(doors, client, v
     assert not get_db_path(unknown).exists(), (
         "asking about an unknown slug created its database - one file per guess"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "ja\tvascript:alert(1)",
+        "java\nscript:alert(1)",
+        "da\tta:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+        "\x00javascript:alert(1)",
+    ],
+)
+async def test_nothing_a_browser_would_read_as_a_forbidden_scheme_reaches_the_interview_page(
+    doors, candidate
+):
+    """The chain that matters, end to end: the door, the column, and the resolver.
+
+    **A test on the door's response body cannot see this defect.** The whole finding was that
+    the two ends disagreed - the door read `ja\\tvascript:` as having no scheme at all and
+    answered 200, and the browser at the other end read it as `javascript:`. Anything asserting
+    only what the door said would have passed throughout.
+
+    So this drives the value the interview page actually gets: `resolve_agent_config_with` is the
+    function `interview_service` calls to build the branding payload, and it is deliberately the
+    *other* entry point from the one the door uses, so a check that only held on the door's own
+    read would not satisfy this.
+
+    A known-good value is stored first, so the assertion distinguishes "the hostile value never
+    landed" from "there was never a row" - and it is what the participant would see either way.
+    """
+    from api.services.agent_config_service import resolve_agent_config_with
+
+    admin = doors["admin_a"]
+    await admin.put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "image_url": "/agents/avery-singh.jpg"},
+    )
+    refused = await admin.put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "image_url": candidate},
+    )
+    assert refused.status_code == 422, refused.text
+
+    async with get_connection(SLUG_A) as conn:
+        resolved = await resolve_agent_config_with(conn, slug=SLUG_A, agent_id=AVERY)
+    assert resolved["image_url"] == "/agents/avery-singh.jpg", (
+        "a value the browser reads as a forbidden scheme reached the interview page's branding "
+        "payload - the door and the browser disagree about what the string is"
+    )
+
+
+def test_the_normalisation_matches_the_parser_and_not_pythons_strip():
+    """The correspondence the guard depends on, driven as a pure function over given text.
+
+    CLAUDE.md: a guard's reach must be **established, not described** - three times on this
+    project a guard's own account of its coverage has been wrong, and this is the fourth, raised
+    against a guard whose docstring cited the other three. The repair each time is the same:
+    make the walk a pure function and drive one of each kind through it, both the case it must
+    catch and the case it must not.
+
+    So both halves. `str.strip()` is asserted to be **insufficient** for the middle-of-string
+    cases, which is the reason this function exists rather than a claim about it; and the
+    shapes that are safe to leave alone are asserted to be left alone, because a normalisation
+    that mangled a legitimate path would be a different defect wearing the same clothes.
+    """
+    from api.routers.agent_config import _as_the_browser_reads_it
+
+    # The bypasses. Each reconstitutes a scheme the check refuses, and each survives `.strip()`.
+    for hostile in ("ja\tvascript:x", "java\nscript:x", "java\rscript:x", "da\tta:x"):
+        assert _as_the_browser_reads_it(hostile).startswith(("javascript:", "data:"))
+        assert not hostile.strip().startswith(("javascript:", "data:")), (
+            f"{hostile!r} is caught by str.strip() alone, so it proves nothing about this "
+            "function - replace it with a candidate that is not"
+        )
+
+    # The leading C0 controls `.strip()` does not remove.
+    for prefix in ("\x00", "\x01", "\x08", "\x0e", "\x1b"):
+        assert _as_the_browser_reads_it(f"{prefix}javascript:x") == "javascript:x"
+        assert prefix + "javascript:x" == (prefix + "javascript:x").strip(), (
+            f"{prefix!r} is stripped by str.strip(), so it is the wrong control to test with"
+        )
+
+    # And what must survive untouched: the intended shape, the permitted off-site shapes, and
+    # the three the re-review confirmed a browser resolves to a same-origin relative path
+    # rather than to a scheme, which is why reproducing more of the parser buys nothing.
+    for benign in (
+        "/agents/avery-singh.jpg",
+        "agents/avery-singh.jpg",
+        "https://cdn.example.invalid/a.jpg",
+        "//cdn.example.invalid/a.jpg",
+        "javascript%3Aalert(1)",
+        "javascript：alert(1)",
+        "​javascript:alert(1)",
+    ):
+        assert _as_the_browser_reads_it(benign) == benign
