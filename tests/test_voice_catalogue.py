@@ -152,9 +152,10 @@ def _catalogue_wire(
     call - it **armed** one. This fixture writes a non-empty `elevenlabs_api_key` onto the
     shared settings object, which is exactly the guard (`raise ValueError("ELEVENLABS_API_KEY
     not configured")`) that otherwise stops `synthesise` before any socket. Driven: `await
-    speak(...)` added to `list_voices` left the wire assertion green and sent a **real HTTPS
-    request to api.elevenlabs.io**, refused 400. A test fixture that both blinds the recorder
-    and unlocks the provider is worse than no fixture.
+    speak(...)` added to `list_voices` did not leave the wire assertion green - it failed
+    noisily, and for the wrong reason: a **real HTTPS request to api.elevenlabs.io**, refused
+    400, rather than the assertion that names the URL. A test fixture that both blinds the
+    recorder and unlocks the provider is worse than no fixture.
 
     **`/v1/text-to-speech` is answered 200 rather than 404**, and that is deliberate against
     the 404-for-anything-else rule above. It is the one path this file asserts the *absence*
@@ -168,6 +169,13 @@ def _catalogue_wire(
     for event-loop reasons of its own. It does not synthesise; if anything on this path ever
     reaches for its own client, this recorder is blind to it and
     `test_the_voices_path_imports_nothing_that_can_synthesise` is the guard that is not.
+
+    **A second gap installing on the global rather than a name opens up:** `close_http_clients()`
+    called while this recorder is installed sets `_tts_client` back to `None`, and the next
+    `get_tts_client()` silently rebuilds a **real** `httpx.AsyncClient` - un-mocking every route
+    this fixture armed, from that call onward. The old one-module `setattr` could not do this,
+    since it replaced the function itself rather than a value the function reads. Not reached by
+    anything in this file today - nothing that uses this fixture calls `close_http_clients()`.
 
     **The library half honours `accent` and `gender`, as the real endpoint does.** A stub that
     ignored them would return every library voice to every query, and the one property that

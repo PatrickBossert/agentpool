@@ -1353,14 +1353,16 @@ The fourth is sp62's and it is not a walk, so it is worth stating separately.
 and its docstring claimed it *"fails whatever route a synthesis call arrives by"*, while
 `_catalogue_wire` installed the recorder with
 `setattr("api.services.voice_catalogue.get_tts_client", ...)` - **one module's imported name**.
-`interview_service` binds its own copy, so `await speak(...)` added to `list_voices` left the
-wire assertion green. The twist that makes it worse than a blind spot: the same fixture writes
-a non-empty `elevenlabs_api_key` onto the shared settings object, which disarms `synthesise`'s
-"not configured" guard - so the call the recorder could not see **went to the real provider**,
-refused 400. A fixture that blinds the recorder and unlocks the network is worse than no
-fixture. The repair generalises the walk one above: **install the recorder on the shared
-resource, not on a name** - `http_clients._tts_client` is the object every `get_tts_client()`
-returns, so every module and every import spelling now lands on the mock - and *establish* it,
+`interview_service` binds its own copy, so `await speak(...)` added to `list_voices` did not
+stay green - it failed noisily, and for the wrong reason. The twist that makes it worse than a
+blind spot: the same fixture writes a non-empty `elevenlabs_api_key` onto the shared settings
+object, which disarms `synthesise`'s "not configured" guard - so the call the recorder could
+not see **went to the real provider**, refused 400, taking the file to 23 failed of 36 rather
+than reporting on the one assertion that names it. A fixture that blinds the recorder and
+unlocks the network is worse than no fixture. The repair generalises the walk one above:
+**install the recorder on the shared resource, not on a name** - `http_clients._tts_client` is
+the object every `get_tts_client()` returns, so every module and every import spelling now
+lands on the mock - and *establish* it,
 which is `test_the_wire_recorder_sees_a_synthesis_call_from_another_module` deliberately
 calling through the other module's binding. The residue is stated rather than papered over: a
 caller that builds its own `httpx.AsyncClient` (as `voice_metadata.py` does on purpose) is
