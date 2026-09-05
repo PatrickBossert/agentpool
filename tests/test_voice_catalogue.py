@@ -131,12 +131,43 @@ def _catalogue_wire(
     library_probe: dict | int | None = None,
     added: dict | int | None = None,
 ) -> list[httpx.Request]:
-    """Point the catalogue's client at a `MockTransport` and record every request.
+    """Point **the shared ElevenLabs client** at a `MockTransport` and record every request.
 
     Each argument takes either a body to answer with or a status code to fail with, which is
     what lets one fixture drive "the library is unreachable" without a second handler. **The
     handler answers 404 for any other path**, deliberately: a request this file has not
     anticipated must show up as a failure rather than as a cheerful empty list.
+
+    **It is installed on `http_clients._tts_client`, not on a module's imported name**, and
+    that is the difference between a recorder one module wide and one that sees every route
+    through this provider. `get_tts_client` is imported *by value* into both
+    `voice_catalogue` and `interview_service`, so rebinding either module's copy leaves the
+    other's untouched - but every copy is the same function object, and every copy returns
+    this module global. Setting the global therefore catches a synthesis call whatever module
+    it arrives from and however its import happens to be written, which is the property
+    `_import_handles` holds one layer down for imports.
+
+    It replaced a `setattr("api.services.voice_catalogue.get_tts_client", ...)` that was one
+    module wide, and the old form did not merely fail to *record* an out-of-module synthesis
+    call - it **armed** one. This fixture writes a non-empty `elevenlabs_api_key` onto the
+    shared settings object, which is exactly the guard (`raise ValueError("ELEVENLABS_API_KEY
+    not configured")`) that otherwise stops `synthesise` before any socket. Driven: `await
+    speak(...)` added to `list_voices` left the wire assertion green and sent a **real HTTPS
+    request to api.elevenlabs.io**, refused 400. A test fixture that both blinds the recorder
+    and unlocks the provider is worse than no fixture.
+
+    **`/v1/text-to-speech` is answered 200 rather than 404**, and that is deliberate against
+    the 404-for-anything-else rule above. It is the one path this file asserts the *absence*
+    of, so it must be able to succeed: answered 404, an injected synthesis call raises, the
+    door 500s, and the test fails on its status assertion instead of on the assertion that
+    names the URL - a right answer for a wrong reason, and one that says nothing about
+    synthesis to whoever reads the failure.
+
+    **What it still cannot see:** a caller that builds its own `httpx.AsyncClient` rather than
+    asking `get_tts_client()`. `api/services/voice_metadata.py` deliberately does exactly that,
+    for event-loop reasons of its own. It does not synthesise; if anything on this path ever
+    reaches for its own client, this recorder is blind to it and
+    `test_the_voices_path_imports_nothing_that_can_synthesise` is the guard that is not.
 
     **The library half honours `accent` and `gender`, as the real endpoint does.** A stub that
     ignored them would return every library voice to every query, and the one property that
@@ -184,10 +215,14 @@ def _catalogue_wire(
             return _narrow(library, request)
         if path.startswith("/v1/voices/add/"):
             return _answer(added if added is not None else {"voice_id": "acct-new"}, request)
+        if path.startswith("/v1/text-to-speech"):
+            # Answered, not refused - see the docstring. The assertion is that nothing came
+            # here, and an assertion about absence needs the path to have been available.
+            return httpx.Response(200, content=b"audio-that-should-never-be-asked-for")
         return httpx.Response(404, json={"detail": f"unexpected path {path}"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr("api.services.voice_catalogue.get_tts_client", lambda: client)
+    monkeypatch.setattr("api.services.http_clients._tts_client", client)
 
     settings = get_settings()
     monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
@@ -329,6 +364,14 @@ async def test_previewing_a_voice_reaches_no_text_to_speech_call(engagements, mo
     from the free one - so the *only* thing that can distinguish the cheap implementation from
     the expensive one is this assertion. It is on the wire and not on the code, because a
     future caller reaching for `speak` would leave the source of this module untouched.
+
+    **Its reach, stated as what it is and established by the test below rather than claimed
+    here:** every route that asks `get_tts_client()`, from any module and under any spelling of
+    the import, because the recorder is installed on the shared client itself. Not "whatever
+    route a synthesis call arrives by" - which is what this docstring and its sibling's used to
+    say, while the recorder was one module wide and the injection they existed to catch went
+    to the real provider. A caller that builds its own `httpx.AsyncClient` is still outside it,
+    and `test_the_voices_path_imports_nothing_that_can_synthesise` is what covers that.
     """
     seen = _catalogue_wire(monkeypatch)
 
@@ -342,6 +385,38 @@ async def test_previewing_a_voice_reaches_no_text_to_speech_call(engagements, mo
     every = body["account"] + body["library"]
     assert every, "nothing was returned, so 'every entry carries a preview' is vacuous"
     assert all(v["preview_url"] for v in every), every
+
+
+@pytest.mark.asyncio
+async def test_the_wire_recorder_sees_a_synthesis_call_from_another_module(
+    engagements, monkeypatch
+):
+    """The reach of the test above, established rather than described.
+
+    This project has now had four guards whose own account of their coverage was wrong, and the
+    repair each time is the same: drive one of the thing the guard claims to see. The claim here
+    is "any route to text-to-speech, not just this module's" - so the call is made through
+    `interview_service`'s **own** binding of `get_tts_client`, which is a different object from
+    `voice_catalogue`'s and is the exact route the previous installation could not see. If the
+    recorder is ever narrowed back to one module's imported name, this fails and the sentence
+    above stops being true at the same moment.
+
+    It is also the containment half. Under the previous fixture this same call left the machine
+    for api.elevenlabs.io, because the fixture's own `elevenlabs_api_key` patch disarms the
+    "not configured" guard that would otherwise have stopped it. A green suite is not evidence
+    that no request went out; only a recorder in front of the socket is.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    from api.services.interview_service import speak
+
+    await speak("sample", "acct-daniel", "eleven_turbo_v2")
+
+    spoken = [u for u in _urls(seen) if "text-to-speech" in u]
+    assert spoken, (
+        "a synthesis call made through another module's binding was invisible to the "
+        f"recorder, so the wire assertion above is one module wide: {_urls(seen)}"
+    )
 
 
 # --- Where the accent comes from, and where it goes ------------------------------------------
@@ -1196,12 +1271,22 @@ def _import_handles(path: Path) -> set[str]:
 
 
 def test_the_voices_path_imports_nothing_that_can_synthesise():
-    """A source guard beside the wire assertion, catching the *next* change rather than this one.
+    """A source guard beside the wire assertion, and the two cover different things.
 
-    The wire test is the real one - it fails whatever route a synthesis call arrives by, and
-    is form-agnostic by construction. This one fails earlier and more legibly for the specific
-    mistake somebody is most likely to make: reaching for `speak` or `synthesise` to "make
-    preview work properly".
+    The wire test catches any synthesis call that goes through the shared client - any module,
+    any import spelling - and that reach is established by
+    `test_the_wire_recorder_sees_a_synthesis_call_from_another_module` rather than asserted
+    here. What it cannot see is a caller that builds its own `httpx.AsyncClient`, which
+    `voice_metadata.py` shows is a thing this codebase does on purpose. **That gap is this
+    test's**, and it is why the pair exists rather than either alone. This one also fails
+    earlier and more legibly for the specific mistake somebody is most likely to make:
+    reaching for `speak` or `synthesise` to "make preview work properly".
+
+    It is name-keyed, and therefore blind to a handle assembled at run time or to a module it
+    does not list - the standing weakness of every guard on this project that walks source. It
+    is stated because the earlier version of this docstring called the other one
+    "form-agnostic by construction" and pointed a reader at the wrong guard, when the injection
+    that motivated the pair was in fact caught by this one alone.
 
     It searched for the two function names only, which is one vocabulary deep in exactly the
     way the coordinator guard was: `from api.services import interview_service` imports

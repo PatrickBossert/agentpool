@@ -8,9 +8,11 @@
 //   1. **No voice fact is declared in TypeScript.** Task 4 built a Python source guard that
 //      refuses a sixth copy of "which voice is which"; it walks Python and cannot see this
 //      side. So the accent options, the sexes offered, and every voice shown are asserted to
-//      be the ones the payload carried - and a payload naming an accent this codebase has
-//      never heard of is driven through, since a hardcoded list would still pass a test that
-//      only used british.
+//      be the ones the payload carried - and for **both** dropdowns a payload naming a value
+//      this codebase has never heard of is driven through, since a hardcoded list would still
+//      pass a test built from the values that list would contain. The accent half was written
+//      that way from the start; the sex half was not, and a hardcoded `['female', 'male']`
+//      passed the whole suite until the two cases below were added.
 //   2. **Preview plays the provider's own URL and synthesises nothing.** The cheap
 //      implementation and the expensive one are identical to a listener, so only a test can
 //      tell them apart.
@@ -119,11 +121,51 @@ describe('the voice picker - nothing about a voice is declared here', () => {
   })
 
   it('offers exactly the sexes present in the listing', async () => {
+    // On its own this case **cannot** hold the property its name states, and the two below
+    // exist because of that. The base fixture's voices are female and male, which are the two
+    // words anybody hardcoding a list would hardcode - so `return ['female', 'male']` in
+    // `gendersIn` passes this assertion exactly. It was driven and it did. A fixture built
+    // from the values the wrong implementation would guess is a fixture that cannot see it.
     renderPicker()
     await loaded()
     const select = screen.getByLabelText('Voice sex')
     expect(within(select).getAllByRole('option').map((o) => o.textContent))
       .toEqual(['Any', 'female', 'male'])
+  })
+
+  it('offers a sex the payload carries that this codebase never names', async () => {
+    // The picker's half of the design's "the filter is applied to the API's `labels.gender`,
+    // not to a list in this codebase". The server half is held in Python; that guard walks
+    // Python and cannot see this side, so this is where the picker's half lives or nowhere.
+    //
+    // `neutral` is not hypothetical: `ui/src/api/voices.ts` says the field is
+    // `male | female | neutral`, so a curated two-item list drops a value the provider
+    // already returns - on the control whose only job is to offer what the provider sent.
+    vi.mocked(voicesApi.list).mockResolvedValue(catalogue({
+      account: [{ ...ACCOUNT_VOICE, gender: 'neutral' }],
+      library: [{ ...LIBRARY_VOICE, gender: 'female' }],
+    }))
+    renderPicker()
+    await loaded()
+    const select = screen.getByLabelText('Voice sex')
+    expect(within(select).getAllByRole('option').map((o) => o.textContent))
+      .toEqual(['Any', 'female', 'neutral'])
+  })
+
+  it('offers no sex the listing does not carry', async () => {
+    // The other direction, and the one a "does it offer neutral" case alone would miss: an
+    // implementation that offered its own list *plus* whatever arrived would pass that one
+    // while still putting `male` in front of an operator on an all-female listing, where
+    // choosing it returns nothing and reads as a broken picker.
+    vi.mocked(voicesApi.list).mockResolvedValue(catalogue({
+      account: [ACCOUNT_VOICE],
+      library: [{ ...LIBRARY_VOICE, gender: 'female' }],
+    }))
+    renderPicker()
+    await loaded()
+    const select = screen.getByLabelText('Voice sex')
+    expect(within(select).getAllByRole('option').map((o) => o.textContent))
+      .toEqual(['Any', 'female'])
   })
 
   it('asks the server for a sex rather than filtering the page it already has', async () => {

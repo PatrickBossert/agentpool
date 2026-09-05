@@ -914,24 +914,58 @@ must `await waitFor(() => expect(control).toBeEnabled())` first - `fireEvent.cha
 disabled input is silently ignored, which had already made one existing test racy rather than
 failing.
 
-**Every `ProjectSettings` field is declared in `ui/src/types.ts`, and required.** Settings are
-saved by posting the page's whole state, assembled as `{ ...DEFAULTS, ...settings }` - an untyped
-spread, so an undeclared field survives the round-trip by luck and vanishes the moment anybody
-builds that payload field by field. It fails silently in the worst direction: a dropped
+**Every field `Settings.tsx` promises to send is declared in `ui/src/types.ts`, and required.**
+That is the 23 fields in the page's `DEFAULTS`, out of `ProjectSettings`' **39**, and it is the
+whole of what `test_every_field_the_page_promises_to_send_is_declared_required` holds. Settings
+are saved by posting the page's whole state, assembled as `{ ...DEFAULTS, ...settings }` - an
+untyped spread, so an undeclared field survives the round-trip by luck and vanishes the moment
+anybody builds that payload field by field. It fails silently in the worst direction: a dropped
 `interview_accent` **resets a Scottish project to british**, and the next interview is conducted
 in the wrong accent by a system reporting success. No error, no 403, nothing on the screen.
 `interviewer_selection` and `interview_accent` are the third and fourth fields to need this, and
 `locale` the fifth - `force_local_inference` and `dev_mode` were already declared for exactly
 this reason, the second found undeclared *one field over* from the first, and `locale` found the
-same way again. So: **a `ProjectSettings` field with no declaration here is a defect waiting for
+same way again. So: **a field the page sends with no declaration here is a defect waiting for
 a typed request body, not a stylistic gap**, and optionalising one (`interview_accent?: string`)
 reopens the hazard as completely as omitting it.
-`test_every_field_the_page_promises_to_send_is_declared_required` walks `DEFAULTS` and holds
-this - but a walk keyed on its own input cannot see a field removed from *both* `DEFAULTS` and
-the type, because the parametrisation simply shrinks and complains about nothing. That is why
+The walk is keyed on `DEFAULTS`, so it cannot see a field removed from *both* `DEFAULTS` and
+the type - the parametrisation simply shrinks and complains about nothing. That is why
 `test_the_interview_programme_settings_are_carried_by_the_defaults` names
 `interviewer_selection` and `interview_accent` explicitly: the two this branch actually found in
 that state, guarded by name rather than by the walk that cannot see them go.
+
+**The other sixteen fields are outside that guard, and the sentence above used to claim them.**
+It read *every `ProjectSettings` field*, which was untrue of sixteen of thirty-nine - and untrue
+of three fields **this branch itself touched**, so the commit declaring the class closed left
+three of its own inside it. Recount rather than trusting either number; they move independently:
+
+| | count | |
+|---|---|---|
+| declared **required** | 23 | exactly `DEFAULTS`, and exactly what the guard walks |
+| declared **optional** (`?:`) | 13 | includes `brand_header_image_url`, which this section warns about by name |
+| **not declared at all** | 3 | `brand_interviewer_name`, `brand_interviewer_image_url`, `brand_interviewer_tagline` |
+
+They are outside the guard because none of them is in `DEFAULTS`, so the Settings page makes no
+promise about them - not because they are safe. **Five call sites build this body, not one**:
+`Settings.tsx`, `Schedule.tsx`, `PamSetupTab.tsx`, `MayaSetupTab.tsx` and `AlexSetupTab.tsx`, and
+the four besides Settings spread the *fetched* row (`{ ...settings, sched_start: … }`) to change
+one field. TypeScript's excess-property check does not apply through a spread, so the three
+undeclared fields ride all five by the same luck, and the thirteen optional ones are declared but
+carry no obligation - `tsc` has nothing to say about an omitted optional key. Declaring the
+sixteen is the fix; until then this is a known sixteen rather than a closed class.
+
+Of the three undeclared, **`brand_interviewer_tagline` is live** - `interview_service.py:184`
+reads it onto the interview page - so it is the one carrying real risk today.
+**`brand_interviewer_name` and `brand_interviewer_image_url` are dead.** Nothing reads either:
+`get_session_with_script` builds the participant's branding from `_interviewer_identity`, the
+session's own stamp, which is what *The interviewer and the voice are stamped on the session*
+below is describing - and no UI has ever set them. Every stored `config_json` on the deployment
+still holds the shipped literal `"Avery Singh"`, which is precisely why they had to stop being
+read: a project could not distinguish "we branded this" from "this is what shipped", and with
+two interviewers roughly half of every project's participants would have heard Laura and read
+Avery. So a **deletion, not a migration** - nothing reads the stored value, so nothing has to be
+moved. They are named here rather than left as two undocumented unused fields that read as
+somebody's unfinished intent.
 
 `AGENT_IDS` in `ui/src/components/agentStatus.ts` bridges the front end's role keys
 (`'Stakeholder Interviewer'`) to the server's permanent ids (`'stakeholder_interviewer'`), and
@@ -1057,6 +1091,40 @@ picker, where the *sex* options come from a second unfiltered question for the i
 `library_has_more` exists because the library listing is one bounded page and must never be
 presented as a complete list - a picker showing five voices where ninety exist gets diagnosed as
 "there are no Scottish voices", and somebody reconfigures a project that was never wrong.
+
+**Two notions of an engagement's locale, and nothing reconciles them.** `interview_accent` is
+per project, set on the Settings page, held in the provider's own vocabulary, and it decides
+which voices the picker offers - the **speaking** side. An agent's `language` and `country_code`
+are per agent per project, set in the agent Setup section, stamped into `voice_config` at session
+creation, and `VoiceInterview.tsx:606` joins them into `recognition.lang` for the browser's
+speech-to-text - the **listening** side. Neither field moves the other. **So an Irish engagement
+set to `interview_accent = irish` with an Irish voice still listens as `en-GB`**, until somebody
+separately edits Avery's `country_code` on a different screen. Of the four planned engagements -
+Scottish, Irish, New Zealand, Australian - this reaches the recognition side of all but the
+British default. Both halves are correct on their own terms, both are operator-editable, and
+what is missing is the **link**; whether an accent should drive the recogniser's locale is a
+design decision, not a defect to patch, so it is recorded rather than fixed. It also corrects
+the design document
+(`docs/superpowers/specs/2026-09-04-agent-config-and-interviewer-selection-design.md`), which
+says *"the gap is on the speaking side, not the listening side"*. That is now incomplete: the
+listening side is correct and **unconnected**, which is a different thing from correct.
+
+Three smaller things about that branch, recorded so they are known rather than rediscovered.
+The design document's Testing section still reads *"`always_female` never yields Avery, and
+`always_male` never yields Laura"*, which the code deliberately reinterprets and improves on -
+the sex follows the **configured voice**, not the agent, so a project that gives Avery a female
+voice gets Avery under `always_female`
+(`test_the_sex_follows_the_configured_voice_and_not_the_agent`). The spec sentence was left
+standing when the file was edited; the code is the right one.
+`test_resolving_the_interviewer_does_not_migrate_the_participants_database` is an **AST guard
+with no behavioural half**, and its docstring says so honestly - the participant-facing
+consequence is covered beside it by
+`test_an_unmigrated_database_answers_the_defaults_rather_than_five_hundred`, and a `PRAGMA
+user_version` assertion around a real participant request is what would close the rest.
+And `AgentConfigSection.tsx`'s Image help text - *"A path under the dashboard, such as
+`/agents/avery-singh.jpg`"* - is **narrower than the door accepts**: `_assert_renderable_image`
+deliberately permits off-site `http`/`https`. Guidance rather than the rule, and the difference
+wants stating outright when the shared same-origin upload path below lands.
 
 **A guard on one door is not a guard on a field.** `PUT .../agents/{agent_id}/config` refuses an
 `image_url` whose scheme is not `http` or `https`. `brand_header_image_url` reaches **the same
@@ -1271,7 +1339,7 @@ and **a mode name written before it is declared**, since it keys on the table's 
 so it is weakest during exactly the change it protects. **When sovereign lands, add it to
 `EGRESS_GRANTS` first, then wire the routing.**
 
-**A guard's reach must be established, not described** - three times now a guard's own account
+**A guard's reach must be established, not described** - four times now a guard's own account
 of its coverage has been wrong. The inventory above, sp58's `public_url` walk, and sp59's
 Settings-page walk, whose opener list omitted `<button` so neither `role="switch"` toggle was
 examined - **including the control that task had just added** - while the comment beside the
@@ -1279,6 +1347,24 @@ list said they were. The repair is the same each time: make the walk a **pure fu
 given text**, and drive one of each kind through it *both gated and ungated*, since a one-sided
 test passes against a walk that reports everything and against one that reports nothing. A walk
 that can only run against the real source is a walk that cannot be asked what it saw.
+
+The fourth is sp62's and it is not a walk, so it is worth stating separately.
+`test_previewing_a_voice_reaches_no_text_to_speech_call` asserts on an `httpx.MockTransport`
+and its docstring claimed it *"fails whatever route a synthesis call arrives by"*, while
+`_catalogue_wire` installed the recorder with
+`setattr("api.services.voice_catalogue.get_tts_client", ...)` - **one module's imported name**.
+`interview_service` binds its own copy, so `await speak(...)` added to `list_voices` left the
+wire assertion green. The twist that makes it worse than a blind spot: the same fixture writes
+a non-empty `elevenlabs_api_key` onto the shared settings object, which disarms `synthesise`'s
+"not configured" guard - so the call the recorder could not see **went to the real provider**,
+refused 400. A fixture that blinds the recorder and unlocks the network is worse than no
+fixture. The repair generalises the walk one above: **install the recorder on the shared
+resource, not on a name** - `http_clients._tts_client` is the object every `get_tts_client()`
+returns, so every module and every import spelling now lands on the mock - and *establish* it,
+which is `test_the_wire_recorder_sees_a_synthesis_call_from_another_module` deliberately
+calling through the other module's binding. The residue is stated rather than papered over: a
+caller that builds its own `httpx.AsyncClient` (as `voice_metadata.py` does on purpose) is
+still outside it, and the name-keyed import guard beside it is what covers that.
 
 ---
 
