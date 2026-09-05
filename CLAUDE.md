@@ -174,6 +174,36 @@ been a fabricated UUID forming a well-formed dead link on the deployment's own d
 into `draft_message`. **"This code has never run" is not "this code works"**, and repairing
 whatever kept it from running is precisely when the difference arrives.
 
+**Quoting a rule is not applying it.** A guard was written on this branch whose docstring
+*cited* this file's own "a guard's reach must be established, not described" - and then
+described its reach instead of establishing it. It was defeated on the first attempt, by a
+parser differential: `str.strip()` removes a strictly smaller set than the WHATWG URL parser,
+which also strips tab, LF and CR from *anywhere* in the string before it reads a scheme, so
+`ja\tvascript:` matched no scheme at the door, was stored verbatim, and was reassembled by the
+browser into exactly the scheme being refused. Every refused scheme could be spelled with a tab
+in it. **This is the fourth recorded instance of that failure and the first introduced by a
+change quoting the other three**, and the citation did active harm: it read as evidence the rule
+had been followed, to the reviewer as well as to the author. A comment citing a rule is evidence
+about intent, and it is routinely read as evidence about behaviour. The repair is the one this
+file already prescribes - the normaliser is now a pure function driven directly, in **both**
+directions, so a hostile candidate that `str.strip()` already handles fails the test rather than
+passing it, and an over-aggressive normaliser fails it too.
+
+**A sentinel drawn from the system's own defaults cannot fail.** The end-to-end test wrote
+`/agents/avery-singh.jpg` and asserted on it - and that string *is*
+`agent_defaults("stakeholder_interviewer")["image_url"]`. Deleting the known-good write entirely
+left all four parameters green: the assertion could not distinguish "the hostile value never
+landed" from "there was never a row". Same family as the `check_write` case above, where the
+refusal message quoted the key it was refusing, with the substring drawn from the system's
+defaults rather than from the call. What makes it worth recording is where the rule already was:
+**the same file states it thirty lines higher**, in `CHOSEN_VOICE`'s own comment - *a string
+chosen to be visibly unlike any real id, so an assertion on it cannot accidentally pass because a
+default happened to match* - written by the same author in the same change. A rule stated beside
+code protects that code and nothing else, which is the milestone-clock lesson arriving in a
+second form. The generalisable half is the repair: the sentinel is held against **every**
+identity's image rather than against Avery's, because the collision was found by reading one
+agent's default and the next agent added could be any of the eighteen.
+
 ---
 
 ## Database conventions
@@ -401,18 +431,41 @@ assertable rather than merely intended.
 *Administration* is running the engagement: stakeholders and their roles, campaigns and
 reminder emails, the document library, starting a run or an orchestration, PAM assignment,
 and `PATCH /{slug}/settings`, the milestone schedule, the non-working calendar, and the
-branding header. Thirty-three project-scoped doors, none of which takes a content gate, as
-project creation does not either. That is deliberate: a consultant configures the
-engagement, and a client-side approver does not, however senior they are on the project.
-They now split across the two administration rows:
+branding header, and each agent's name, face and voice. Thirty-four project-scoped doors,
+none of which takes a content gate, as project creation does not either. That is deliberate:
+a consultant configures the engagement, and a client-side approver does not, however senior
+they are on the project. They now split across the two administration rows:
 
 | Gate | Doors |
 |------|-------|
-| `require_project_administration` (15) | `stakeholders.py` (6 - not `resend-invite`), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`) |
-| `Depends(require_org_admin_or_above)` (18) | `campaigns.py` (10), `documents.py` (3), `assignment.py` (2), `orchestrate.py`, `run.py`, and `stakeholders.py`'s `resend-invite` |
+| `require_project_administration` (16) | `stakeholders.py` (5 - not `resend-invite`, and not the roster `GET`), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`), `assignment.py` (1 - `POST /{slug}/assignment`), `agent_config.py` (1 - `PUT .../agents/{agent_id}/config`) |
+| `Depends(require_org_admin_or_above)` (18) | `campaigns.py` (10), `documents.py` (3), `assignment.py` (1 - `advance`), `orchestrate.py`, `run.py`, `voices.py`'s `POST /{slug}/voices/library`, and `stakeholders.py`'s `resend-invite` |
 
-15 + 18 = the thirty-three. `POST /projects` sits outside the count and keeps the platform
+16 + 18 = the thirty-four. `POST /projects` sits outside the count and keeps the platform
 tier of necessity: there is no slug yet to scope a per-project role by.
+
+**Recounted in sp62 from `app.routes`, and the composition had drifted further than the
+totals.** The file said 15 + 18 = 33; the measurement is 16 + 18 = 34, and *three* doors moved
+under a total that changed by one. `stakeholders.py`'s roster `GET` came off the gate
+(96863718 - it answers the roster to any member and drops the account-derived fields instead,
+so the disclosure is narrowed in the response rather than at the door) and `assignment.py`'s
+`POST /{slug}/assignment` moved onto it (64712393); **both predate sp62**, and only
+`agent_config.py`'s `PUT` is this branch's. So the second row's total is unchanged while two
+of its members are not the ones named, and the `require_project_administration` docstring's
+"sixteen doors" - wrong for a sprint - was made *accidentally correct* by an unrelated task.
+That is the case this file's "recount rather than adjusting one to match the other" was
+written for: adjusting either number to agree with the other would have produced a table that
+is internally consistent and wrong in three places.
+
+**What the second row's eighteen excludes, so the next recount does not find twenty-two and
+assume drift.** Twenty-two `{slug}` routes carry `require_org_admin_or_above` or
+`require_sysadmin` as a dependency. Four are deliberately outside the project-scoped
+administration count: `admin.py`'s three (`DELETE /auth/projects/{slug}` and the two
+`/auth/users/{user_id}/projects/{slug}` membership writes) are registry and account
+administration, global by nature and governed by the exclusion rule above rather than by this
+table; and `GET /projects/{slug}/data-architecture` is a **read**. An administration door is
+one that changes how the engagement is run, so a read behind a platform-tier dependency is
+not one of them.
 
 **`PATCH /{slug}/settings` is on the widened list but is not uniformly widened.** Its body
 carries `llm_mode`, `force_local_inference`, `dev_mode` and the six per-agent model ids
@@ -435,7 +488,7 @@ every project before its first full settings save, eight of the nine protected f
 simply not in `config_json` and a `field in current` test would have protected the mode alone.
 Both counts move independently - recount rather than adjusting one to match the other.
 
-The second group is not a judgement that those seventeen should stay - sp44 widened exactly
+The second group is not a judgement that those eighteen should stay - sp44 widened exactly
 what its brief named, which is the set the design calls "configures the project and its
 people". Whether a project_admin should start a crew run or import a campaign is a live
 question, not a settled one. What is settled is the exclusion above: the membership,
@@ -608,8 +661,8 @@ question is which authenticated write path should have done it earlier.
 **Enumerate by behaviour, not by name.** The alias hid two files from a `require_any_auth`
 grep; `pam_report.py` then hid from the *alias* sweep by not aliasing, and it had the same
 hole. Two accidental discoveries meant the enumeration was wrong twice, so it was done
-properly: 97 handlers are mounted under a path containing `{slug}`, and the check is whether
-each one calls `check_project_access`. **Ninety-five of the ninety-seven call it.** The two
+properly: 100 handlers are mounted under a path containing `{slug}`, and the check is whether
+each one calls `check_project_access`. **Ninety-eight of the hundred call it.** The two
 that do not:
 
 | Door | Why not |
@@ -640,7 +693,20 @@ enforce it, which is the third time on this codebase a name-keyed sweep has miss
 **The sweep counts routes whose *path* holds `{slug}` and nothing else.** A project-scoped
 door taking its slug from the request *body* does not appear in it - `POST
 /api/interviews/test/elaboration-press` is that shape, and does call `check_project_access`,
-but the technique cannot see it. Ninety-seven is not a completeness guarantee.
+but the technique cannot see it. One hundred is not a completeness guarantee.
+
+**There are two body-slug doors now, and the second one arrived carrying a live hole.**
+`POST /api/interviews/test/speak` had no slug at all until sp62 gave it one so it could
+resolve the rehearsed agent's voice per project - and **adding the slug added the exposure**,
+because a door with nothing to scope by needs no floor and a door with a slug does. An
+`org_admin` of an *unrelated* organisation was answered 200 and the wire carried that
+project's private voice. `check_project_access(body.slug, payload)` is now the first line of
+both, before the slug reaches a database. Two things generalise. A door that gains a slug
+gains a floor in the same change, and the sweep will not remind you. And the refusal was
+asserted **on the wire**, not on the status: moving the check to after `speak` returns still
+answers 403, so a status-only test passes a door that synthesises the private voice and
+*then* refuses. Nothing anywhere sweeps for handlers reading a slug from the body; that is
+its own task, and the count above is the reason it is easy to keep forgetting.
 
 `POST` and `DELETE /auth/users/{user_id}/projects/{slug}` were the sweep's most important
 find and are closed. They write the `project_memberships` table that every
@@ -848,6 +914,57 @@ must `await waitFor(() => expect(control).toBeEnabled())` first - `fireEvent.cha
 disabled input is silently ignored, which had already made one existing test racy rather than
 failing.
 
+**Every `ProjectSettings` field is declared in `ui/src/types.ts`, and required.** Settings are
+saved by posting the page's whole state, assembled as `{ ...DEFAULTS, ...settings }` - an untyped
+spread, so an undeclared field survives the round-trip by luck and vanishes the moment anybody
+builds that payload field by field. It fails silently in the worst direction: a dropped
+`interview_accent` **resets a Scottish project to british**, and the next interview is conducted
+in the wrong accent by a system reporting success. No error, no 403, nothing on the screen.
+`interviewer_selection` and `interview_accent` are the third and fourth fields to need this, and
+`locale` the fifth - `force_local_inference` and `dev_mode` were already declared for exactly
+this reason, the second found undeclared *one field over* from the first, and `locale` found the
+same way again. So: **a `ProjectSettings` field with no declaration here is a defect waiting for
+a typed request body, not a stylistic gap**, and optionalising one (`interview_accent?: string`)
+reopens the hazard as completely as omitting it.
+`test_every_field_the_page_promises_to_send_is_declared_required` walks `DEFAULTS` and holds
+this - but a walk keyed on its own input cannot see a field removed from *both* `DEFAULTS` and
+the type, because the parametrisation simply shrinks and complains about nothing. That is why
+`test_the_interview_programme_settings_are_carried_by_the_defaults` names
+`interviewer_selection` and `interview_accent` explicitly: the two this branch actually found in
+that state, guarded by name rather than by the walk that cannot see them go.
+
+`AGENT_IDS` in `ui/src/components/agentStatus.ts` bridges the front end's role keys
+(`'Stakeholder Interviewer'`) to the server's permanent ids (`'stakeholder_interviewer'`), and
+it is **declared, never derived**. 18 entries, of which **17 derive** from
+`id.replace('_',' ').title()` and only `pam` resists. One exception out of eighteen is the whole
+argument, and it is the *more* dangerous ratio rather than the safer one: a derivation correct
+for seventeen entries reads as correct at every call site while the eighteenth fails silently -
+silently being precise, because a wrong id that happens to exist configures a different agent
+and answers 200. The count is held by
+`test_the_bridge_is_not_a_formatting_of_the_id`, which asserts both the number and that PAM is
+the one, so making PAM derivable asks for the decision again instead of quietly making a
+`.title()` one-liner look safe. (An earlier comment claimed nine of eighteen and named both
+interviewers among the exceptions; both derive cleanly. It rotted because nothing could
+contradict it.)
+
+**Two Setup tabs still persist to `localStorage`, and neither has ever reached an agent.**
+`AverySetupTab.tsx` writes `agentpool-avery-voice-config-<slug>` - six *behavioural* preferences
+(interviewing style, question depth, follow-up persistence, silence tolerance and two more) and,
+despite the key's name, **no voice field at all**. `TaylorSetupTab.tsx` writes
+`agentpool-taylor-invite-config-<slug>`, the invite chase rules. Both are per browser as well as
+per slug, neither reaches the server, and therefore neither has ever reached an interview or a
+reminder: a consultant configures them, a colleague opens the same project and sees defaults, and
+the crew sees nothing either way. They owe the same fix - a table and a door, the shape
+`project_agent_config` now has - and are recorded together because finding one and repairing it
+alone leaves the other reading as deliberate.
+
+*Correcting the design document while we are here*, because the specifics are what a reader would
+act on: `docs/superpowers/specs/2026-09-04-agent-config-and-interviewer-selection-design.md` says
+Avery's **voice** choice lived in `agentpool-avery-voice-config`. It did not - that key holds no
+voice field, and never did. The diagnosis was right in substance and stronger than it read: there
+was no voice choice *anywhere*, in `localStorage` or otherwise, so nothing was migrated out of it
+and the voice is new configuration in a new table behind a new door.
+
 `describeError` lives in `ui/src/utils/describeError.ts` and is imported, not copied. Four
 identical copies had grown before sp44 moved it - `StakeholderForm`, `ScriptReviewPanel`,
 `MayaOutputExtra` and `InterviewTemplateEditor`. It exists because several of this API's
@@ -892,6 +1009,72 @@ A project not granted `HOSTED_INFERENCE` - `sensitive`, or any mode with
 of the other tier. `get_llm_for_agent` asks `project_permits`, never a mode name; the mode is
 read only to word that refusal, and two seams that both look like the routing decision is how a
 test stub lands on the wrong one.
+
+### Configuring an agent: the id is the key, everything else is data
+
+**Agent configuration keys on the permanent `agent_id`. The name, the image, the voice and the
+synthesis model are data.** `project_agent_config` is one row per project per agent;
+`resolve_agent_config(slug, agent_id)` resolves each column against `AGENT_IDENTITY`'s default,
+where NULL means "use the default" and `''` does not. `agents/identity.py` separated a permanent
+id from a mutable display name before any of this existed, and **this is what that separation
+was for**: renaming an agent, or running an engagement where it is called something else, moves
+no identity, breaks no history, and reconfigures nothing. The same rule the email seam states as
+*the name is the person, the address is the role*, one axis over.
+
+**Two different things in this product are called a model id, and one of them is a security
+control.** `project_agent_config.model_id` is the **ElevenLabs speech synthesis model** -
+`DEFAULT_TTS_MODEL_ID` in `agents/identity.py`, threaded through `synthesise(text, voice_id,
+model_id)` and into the TTS cache key. The six in `_PLATFORM_TIER_SETTINGS`
+(`anthropic_fast_model`, `local_deep_url` and their siblings) decide **where an engagement's
+prompts are sent** and 403 a `project_admin`. The agent Setup section is therefore labelled
+"Speech synthesis model", with a line disclaiming the language models on the Settings page, and
+that label is load-bearing rather than cosmetic: a field called "Model" reads as the LLM to the
+consultant who set the LLM one screen earlier, and the two live on the same page of the same
+product at different tiers. Anything new that adds a "model" field owes the same disambiguation
+in the label, not only in a docstring.
+
+**The interviewer and the voice are stamped on the session, not re-derived from it.**
+`interview_sessions.interviewer_agent_id` and the `voice_config` beside it record who conducted
+the session and what they sounded like, at creation. Same rule as
+`client_documents.knowledge_collection` and for the same reason - a re-derived address moves
+underneath the thing it points at - but with two consequences that case could not show. With two
+interviewers on the roster, a transcript that cannot say who conducted it has to **guess**. And
+`interviewer_selection` defaults to `random`, so an unstamped choice would be **re-rolled**: a
+participant who closes their browser and returns to the same link meets a different person, in a
+different voice, under a different name. The stamp is why `_create` ignores any `voice_config` an
+agent proposes in its plan, which is the structural half of retiring the prompt's locale table.
+
+**A picker never applies a filter its own control cannot show.** `GET /projects/{slug}/voices`
+unions the ElevenLabs account listing with a deliberately *unfiltered* library probe, and the
+union is load-bearing rather than belt-and-braces. Measured on the live account, 5 September
+2026: **Irish** is in the library and not in the account; **Scottish** is in the account and not
+in the library's first page. Of the four planned engagements - Scottish, Irish, New Zealand and
+Australian - **neither listing alone serves all four**. The general shape is worth more than the
+measurement, which is a moving target: a listing narrowed to `british` answers `british`, so a
+dropdown built from the narrowed answer offers exactly the option already selected and there is
+no way back. Correct-looking, and a closed loop. The same argument repeats one layer up in the
+picker, where the *sex* options come from a second unfiltered question for the identical reason.
+`library_has_more` exists because the library listing is one bounded page and must never be
+presented as a complete list - a picker showing five voices where ninety exist gets diagnosed as
+"there are no Scottish voices", and somebody reconfigures a project that was never wrong.
+
+**A guard on one door is not a guard on a field.** `PUT .../agents/{agent_id}/config` refuses an
+`image_url` whose scheme is not `http` or `https`. `brand_header_image_url` reaches **the same
+`<img src>` on the same unauthenticated interview page**, through `PATCH /{slug}/settings`, with
+**no validator of any kind**, and takes any scheme. So the *scheme* half of that check is exactly
+one door wide, as the *off-site* half openly is - and the scheme half is the one a reader assumes
+is closed, precisely because the paragraph beside it reasons so carefully about the other. The
+interview page has **no login by design** - a participant has none, `GET /{slug}/branding/image`
+is one of the two deliberate floor exceptions above for exactly that reason, and the rest of the
+page authenticates by session token - so an administrator-chosen off-site URL discloses every
+participant's IP address, user agent and the timing of a live interview, on an engagement whose
+documents and inference are otherwise on-premises. **The follow-up is a task, not a wish: the two fields owe a shared same-origin
+upload path**, which closes both halves for both fields at once. Until it lands, `agents/egress.py`
+names both fields in `PARTICIPANT_IMAGE_EGRESS` and **nothing renders that row** -
+`data_architecture()` builds the auditor's privacy page from agents and the tools they hold, and
+this reach is neither, because the request is made by a *participant's browser* and not by this
+deployment. Attributing it to an agent would be false, so it is a known limitation of the privacy
+view rather than an oversight; surfacing it belongs with the upload path, not before it.
 
 Maya owes one interview script per active value chain activity. Coverage is checked on every
 `interview_scripts` write by `api/services/coverage_validation.py` and reported as
@@ -1163,6 +1346,16 @@ thread must still route - the same reason `accounts@` and `admissions@` outlive 
 behind them. The operational consequence: **one mailbox per role, ever.** Per-project
 display names add none, and a coding-agent crew would add one, not one per engagement.
 
+**A per-project display name does not reach the correspondence, and that is now an open
+question rather than a hypothetical.** `outbound_mail.py` resolves the correspondent through
+`agents/identity.py` **at send time**, and none of `resolve_agent_config`'s callers is it - so a
+project that renames its interviewer gives the participant one name on screen and in the speech,
+and **a different name in their inbox**. The gap was unreachable before sp62, because there was
+no per-project name to disagree with. It is a design question and not a missing line: this
+section already says the display name is the person and the address is the role, and whether a
+per-project name may change a *correspondent* is an argument that starts there. Left open
+deliberately; whoever closes it should decide the rule, not patch the one call site.
+
 The local part is the `agent_id` with underscores as hyphens - `stakeholder_manager` →
 `stakeholder-manager`, `pam` → `pam`. It is a **rule over the id, never a table**: a
 mapping of ids to addresses is a second registry free to drift from `agents/identity.py`.
@@ -1343,7 +1536,17 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   consultant typed. It is recorded because the row said "interview text" and would otherwise
   have been quietly wrong about what leaves, not because it changes the decision. The one
   ElevenLabs call that *writes* anything is `POST /projects/{slug}/voices/library`, which
-  copies a Voice Library voice into the deployment's account and sends only a name.
+  copies a Voice Library voice into the deployment's account and sends only a name. That door
+  is **platform tier, one step tighter than the axis rules would put it**, and deliberately:
+  it looks like project configuration, but one ElevenLabs account serves every engagement, so
+  the write leaves the project the way a sector-tier document does. Do not widen it to
+  `require_project_administration` on the grounds that it configures an agent - the reason is
+  the shared account, not the field. It is also the one path on this surface **never confirmed
+  against the real provider**: `POST /v1/voices/add/{owner}/{voice}` is assumed from the
+  documented API, because verifying a write to the shared account means performing it. It could
+  fail in production having passed every test. Its failure is reported to the operator rather
+  than swallowed, and it refuses to fall back to the library id, so the worst case is a clear
+  message rather than a well-formed dead configuration.
 - Avery still blocks on `HumanInputTool` for up to 24 hours during an interview programme,
   and nothing notifies the crew when a session completes. It does not affect interviewee
   experience, which is why sub-project B left it alone.
@@ -1369,10 +1572,20 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   ambiguity is no longer repeated - but the single arbitrary choice at plan time remains, and
   `_resolve_script_id` deliberately stores NULL rather than guessing when a label is ambiguous.
   The real fix is a `script_id` column on `stakeholder_assignments`.
-- `api.database.insert_interview_session` has no production caller - `InterviewSessionTool._create`
-  is the only thing that inserts a session. The helper is driven by tests alone, which is exactly
-  how a branch once extended it with a `script_id` column that production never populated. Delete
-  it, or make it the producer; do not leave both.
+- **A helper with no production caller is a helper that will drift from production.**
+  `api.database.insert_interview_session` was the recorded instance - driven by tests alone, and
+  extended on one branch with a `script_id` column production never populated. **This entry is
+  closed**: sp62 moved it to `tests/support_interview_sessions.py` (28 call sites, 11 files),
+  where being test-only is what it says on the tin, and
+  `tests/test_interviewer_selection.py` asserts it has not come back to `api/database.py`.
+  `InterviewSessionTool._create` is the sole producer. It is recorded rather than deleted
+  because the shape recurred immediately: `upsert_agent_config` and `resolve_agent_config`
+  landed with the table in sp62 Task 1, and **nothing but a test could write that table** until
+  the door landed in Task 5 - three tasks during which the resolver, the stamp and the migration
+  were all built against a column no production path could set. The rule from the first instance
+  is the rule for the second: **delete it, or make it the producer; do not leave both.** Finding
+  it the expensive way twice is the argument for asking the question when the helper is written,
+  not when the door is.
 - Retiring an interview script - `interview_script_ledger.active = 0` - is unreachable in
   practice. `SET active` appears exactly once in the codebase
   (`register_scripts_sync`, `agents/tools/_db.py`), its only route is an
@@ -1404,6 +1617,12 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   precondition is non-empty on the current deployment - `vc-sort-check` is a project database
   with no `project_registry` row. Its own task, not a patch inside a tier rule: the same fix
   is `check_project_access` on `POST /projects` for the whole engagement.
+- **`brand_header_image_url` and `project_agent_config.image_url` owe a shared same-origin
+  upload path.** Two doors onto one hazard: both put an administrator-chosen URL into the same
+  `<img src>` on the unauthenticated interview page, and only the second validates a scheme at
+  all. Its own task, because the fix serves both fields and closes both halves - scheme and
+  off-site - at once, and surfacing the reach to the auditor belongs with it rather than before
+  it. Argued in full under *Crew / agent conventions*; recorded here so it is findable as work.
 - **A failed reingest leaves chunks behind with `ingested=0`.** The first ingest's chunks stay
   in the store while the row is marked not-ingested, and `DELETE /{slug}/documents/{doc_id}`
   purges only `if doc["ingested"]` (`api/routers/documents.py:225`) - so the delete answers
