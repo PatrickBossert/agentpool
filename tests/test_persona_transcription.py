@@ -114,15 +114,67 @@ def test_each_person_has_the_same_face_in_both_files():
     the TypeScript already relates its own two maps through a shared role key, so the pairing
     is read rather than invented.
 
-    The name-to-id half stays open on purpose. Pairing those would need a key the two files do
-    not share, and the only candidate is `id.replace("_", " ").title()` - the coupling Task 2
-    rejected on evidence. So swapping two *names* between agent ids is still invisible here.
-    The cost of that gap is a mislabelled agent; the cost of closing it this way is writing the
-    rejected derivation into a test, where the next reader takes it for the rule.
+    The name-to-id half was open here on purpose and is now closed **elsewhere**, by
+    `test_each_role_is_bridged_to_the_agent_of_that_name` below. What made it unclosable here
+    was that the only candidate join was `id.replace("_", " ").title()` - the coupling Task 2
+    rejected on evidence, and writing it into a test is where the next reader takes it for the
+    rule. sp62 needed the bridge for a different reason (the Setup section saves an agent's
+    configuration by id) so it is **declared**, in `AGENT_IDS`, and a declared map is a fact
+    rather than a derivation. This test stays as it is: it needs no join key and gains nothing
+    from one.
     """
     assert _python_faces() == _frontend_faces(), (
         "an agent's name and headshot are paired differently in the two files - most likely "
         "two rows were transcribed across each other"
+    )
+
+
+def _frontend_ids() -> dict[str, str]:
+    """`AGENT_IDS` - the role key the front end is arranged by, to the permanent agent id."""
+    return dict(re.findall(r"'([^']+)':\s+'([^']+)'", _block("AGENT_IDS")))
+
+
+def test_the_id_parser_reads_the_bridge_map():
+    """Guard the guard, again: an unreadable map makes both assertions below vacuous."""
+    assert len(_frontend_ids()) == 18, sorted(_frontend_ids())
+
+
+def test_the_front_end_and_the_roll_agree_about_the_agent_ids():
+    """The front end is keyed by role and the server by `agent_id`, so configuring an agent
+    needs a bridge - and a bridge free to disagree with the roll would post a project's voice
+    choice against an id nothing reads, answering 200 the whole way.
+
+    Set equality over the values, so a *missing* id and an *invented* one both fail. The
+    second is the dangerous direction: a typo is a 404 the operator sees, but an id that
+    exists and belongs to a different agent configures the wrong one silently.
+    """
+    assert set(_frontend_ids().values()) == set(AGENT_IDENTITY), (
+        "ui/src/components/agentStatus.ts's AGENT_IDS and agents/identity.py's AGENT_IDENTITY "
+        "name different agents. The front end saves an agent's configuration by the id in "
+        "that map, so an id the roll does not hold is a save against nothing."
+    )
+
+
+def test_each_role_is_bridged_to_the_agent_of_that_name():
+    """Set equality cannot see a swap - exchange two roles' ids and both sets are unchanged,
+    while Avery's Setup tab now saves Laura's voice.
+
+    This closes the name-to-id gap the face test above leaves open, and closes it the way that
+    test says it must not be closed lazily: through a **declared** map, not through
+    `id.replace('_',' ').title()`. Nine of the eighteen are not that formatting, so the
+    derivation would be right about half the roll and quietly wrong about the rest.
+    """
+    names = dict(re.findall(r"'([^']+)':\s+'([^']+)'", _block("AGENT_HUMAN_NAME")))
+    mismatched = {
+        role: (names.get(role), AGENT_IDENTITY[agent_id].display_name)
+        for role, agent_id in _frontend_ids().items()
+        if agent_id in AGENT_IDENTITY
+        and names.get(role) != AGENT_IDENTITY[agent_id].display_name
+    }
+    assert not mismatched, (
+        "a role is bridged to an agent of a different name - {role: (front end, roll)} "
+        f"{mismatched}. Two rows have most likely been transcribed across each other, which "
+        "puts one agent's configuration under another's name on the Setup tab."
     )
 
 

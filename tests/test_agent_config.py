@@ -862,7 +862,7 @@ async def test_both_test_interview_doors_refuse_the_same_stranger_in_the_same_vo
     assert speak.json()["detail"] == press.json()["detail"] == "Access denied to this project"
 
 
-def test_the_resolver_is_reached_by_the_three_doors_that_may_reach_it():
+def test_the_resolver_is_reached_by_the_four_doors_that_may_reach_it():
     """The docstring's central claim, held by a mechanism rather than by prose.
 
     This test used to be named `..._is_still_the_only_production_caller_of_the_resolver` and
@@ -878,6 +878,15 @@ def test_the_resolver_is_reached_by_the_three_doors_that_may_reach_it():
     An equality is what makes both directions fail: a caller lost is as much a change as a
     caller gained, and the loss is the one that would put the wrong voice back into interviews
     without anybody noticing.
+
+    Task 5 adds the fourth and it is the only one of them that is *not* a consumer:
+    `api/routers/agent_config.py` is the door the Setup section reads and writes through, and
+    it resolves so that a page never has to merge overrides over defaults for itself. That
+    rule - NULL means the default, `''` does not - lives in `_merge` and nowhere else, and a
+    second expression of it in TypeScript is exactly the drift the resolver was built to end.
+    Its arrival is also what the restating discipline is for: `test_speak_text`'s docstring
+    said "two production callers" while this set already held three, so the sentence had
+    quietly rotted between two tasks and was corrected in the same change as this line.
     """
     from pathlib import Path
 
@@ -911,6 +920,7 @@ def test_the_resolver_is_reached_by_the_three_doors_that_may_reach_it():
                     callers.add(str(path.relative_to(root)))
 
     assert callers == {
+        "api/routers/agent_config.py",
         "api/routers/interviews.py",
         "api/services/interviewer_selection.py",
         "api/services/interview_service.py",

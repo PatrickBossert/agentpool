@@ -175,11 +175,14 @@ async def test_speak_text(body: TestSpeakRequest, payload: dict = Depends(requir
     `resolve_agent_config`, so a consultant rehearsing an agent hears what that agent is
     configured to sound like.
 
-    **There are two production callers of `resolve_agent_config`, and this is the lesser of
-    them.** The other is `api/services/interviewer_selection.py`, which resolves every
-    interviewer's configuration when a session is created and stamps the chosen one's onto the
-    row - so a configured voice now reaches a real interview and not only this rehearsal
-    button. That was not true until Task 3: the live portal read `session.voice_config`,
+    **There are four production callers of `resolve_agent_config`, and this is the least of
+    them.** `api/services/interviewer_selection.py` resolves every interviewer's configuration
+    when a session is created and `api/services/interview_service.py` stamps the chosen one's
+    onto the row - so a configured voice now reaches a real interview and not only this
+    rehearsal button. The fourth is `api/routers/agent_config.py`, the door the Setup section
+    reads and writes through, which is where the configuration this door speaks in is chosen
+    in the first place. That was not true until Task 3: the live portal read
+    `session.voice_config`,
     nothing wrote that column in code, and a crew-created session carried whatever Taylor
     copied out of the voice-locale table in his own prompt.
 

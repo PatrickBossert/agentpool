@@ -29,6 +29,11 @@ const DEFAULTS: ProjectSettings = {
   discovery_links: [],
   discovery_document_ids: [],
   interview_method: 'none',
+  // Both match api/models.py's defaults, which test_the_frontend_defaults_are_the_models_
+  // defaults holds them to. Neither is platform-tier: they decide the tone of a conversation,
+  // not where this engagement's material is sent.
+  interviewer_selection: 'random',
+  interview_accent: 'british',
   elaboration_press_timeout_seconds: 8,
   anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
   anthropic_deep_model: 'anthropic/claude-opus-4-6',
@@ -425,6 +430,55 @@ export default function Settings() {
               </label>
             ))}
           </div>
+        </div>
+
+        <div>
+          <label htmlFor="interviewer_selection" className="text-xs text-gray-600 block mb-1">
+            Who conducts the interview
+          </label>
+          <select
+            {...fieldProps('interviewer_selection')}
+            value={form.interviewer_selection}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                interviewer_selection: e.target
+                  .value as ProjectSettings['interviewer_selection'],
+              })
+            }
+            className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+          >
+            <option value="random">Either interviewer, chosen per session</option>
+            <option value="always_male">Always the male interviewer</option>
+            <option value="always_female">Always the female interviewer</option>
+          </select>
+          <p className="text-xs text-muted mt-1">
+            Decided once when a session is created and recorded on it, so a participant who
+            returns to their link meets the same person. Which interviewer has which voice is
+            read from the voice itself, never from a list held here.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="interview_accent" className="text-xs text-gray-600 block mb-1">
+            Interview accent
+          </label>
+          <input
+            {...fieldProps('interview_accent')}
+            type="text"
+            value={form.interview_accent}
+            onChange={(e) => setForm({ ...form, interview_accent: e.target.value })}
+            placeholder="british"
+            className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+          />
+          <p className="text-xs text-muted mt-1">
+            The accent this project's voices are chosen from, in the voice provider's own word
+            for it - british, scottish, irish, australian, new zealand. Free text rather than a
+            list, because the vocabulary is theirs and closing it here would go stale the first
+            time they add one; each agent's Setup tab lists the accents that actually exist.
+            Leave it empty to search every accent. It is not the country above - GB is the
+            country of a Scottish engagement exactly as it is of a British one.
+          </p>
         </div>
 
         <div>

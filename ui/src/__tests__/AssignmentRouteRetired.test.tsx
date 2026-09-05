@@ -24,6 +24,32 @@ vi.mock('../context/AuthContext', () => ({
   }),
 }))
 
+// The agent configuration section mounts with the Setup tab and asks the server for each
+// agent's name, image and voice. Stubbed rather than left to reach the network: an unmocked
+// call resolves as a rejected promise inside react-query, which is noise in this file's
+// output and a race in anybody else's.
+vi.mock('../api/agentConfig', () => ({
+  agentConfigApi: {
+    get: vi.fn().mockResolvedValue({
+      agent_id: 'stub',
+      configured: false,
+      defaults: {
+        display_name: 'Stub', image_url: null, voice_id: null,
+        language: 'en', country_code: 'GB', model_id: 'eleven_turbo_v2',
+      },
+      overrides: {
+        display_name: null, image_url: null, voice_id: null,
+        language: null, country_code: null, model_id: null,
+      },
+      resolved: {
+        display_name: 'Stub', image_url: null, voice_id: null,
+        language: 'en', country_code: 'GB', model_id: 'eleven_turbo_v2',
+      },
+    }),
+    put: vi.fn(),
+  },
+}))
+
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
     list: vi.fn().mockResolvedValue([]),

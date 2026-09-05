@@ -1,5 +1,16 @@
 // ui/src/components/tabs/AverySetupTab.tsx
-// Avery's Setup tab: voice interviewer configuration (localStorage-backed preferences)
+//
+// Avery's *interviewing behaviour* - style, depth, persistence, timing, guidance.
+//
+// **It holds no voice**, despite `agentpool-avery-voice-config` naming one. Who Avery sounds
+// like is `project_agent_config`, reached through the agent configuration section that now
+// renders on this tab beside this one; the misnamed key is the reason the design's first
+// finding read as "the voice choice never leaves the browser" when the truth was stronger -
+// there was no voice choice anywhere at all.
+//
+// These preferences **are** still in `localStorage`, per browser rather than per project, and
+// they still reach no server and therefore no interview. That is a known defect the design
+// puts out of scope for this branch, kept here rather than half-migrated.
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { FlaskConical } from 'lucide-react'
@@ -62,7 +73,10 @@ export default function AverySetupTab({ slug }: { slug: string }) {
 
       <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
         <p className="text-[11px] text-blue-700 leading-relaxed">
-          Avery uses a male AI voice with accent matched to the interviewee's country (set on each stakeholder profile). These settings configure his interviewing behaviour across all sessions.
+          These settings configure Avery's interviewing behaviour across all sessions. Who he
+          sounds like is set in the agent configuration section below - one voice per
+          interviewer per project, drawn from the accent on the Settings page, and not varied
+          per interviewee.
         </p>
       </div>
 

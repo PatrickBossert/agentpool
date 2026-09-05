@@ -15,6 +15,7 @@
 import type { FC } from 'react'
 
 import { CREW_AGENTS, AGENT_HUMAN_NAME } from '../agentStatus'
+import AgentConfigSection from './AgentConfigSection'
 import TaylorSetupTab from './TaylorSetupTab'
 import AverySetupTab from './AverySetupTab'
 import JordanSetupTab from './JordanSetupTab'
@@ -62,6 +63,43 @@ export function CrewSetupSections({ crewKey, slug }: { crewKey: string; slug: st
         </section>
       ))}
     </>
+  )
+}
+
+/**
+ * The agent configuration section, for **every** agent this crew holds.
+ *
+ * Separate from `CrewSetupSections` above, and deliberately so. That map is a registry of
+ * *bespoke* configuration - three agents have one and fifteen do not, and the caller falls
+ * through to the crew's reads/produces metadata when none of its agents is in it. This is the
+ * opposite: name, image and voice belong to every agent by the same rule, so there is nothing
+ * to register and nothing to fall through to. Folding the two together would have made "this
+ * crew has no bespoke configuration" unaskable, which is the question the caller asks.
+ *
+ * Rendered in the crew's own agent order, headed by whose it is, for the reason the sections
+ * above are: a crew of four cannot have a tab named after one of them.
+ */
+export function CrewAgentConfiguration({ crewKey, slug }: { crewKey: string; slug: string }) {
+  const agents = CREW_AGENTS[crewKey] ?? []
+  if (agents.length === 0) return null
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest border-b border-surface-border pb-1">
+        Agent configuration
+      </h3>
+      {agents.map((agent) => (
+        <section key={agent} data-testid={`agent-config-section-${agent}`} className="space-y-3">
+          <div className="flex items-baseline gap-2">
+            <h4 className="text-xs font-semibold text-gray-600">
+              {AGENT_HUMAN_NAME[agent] ?? agent}
+            </h4>
+            <span className="text-[10px] text-gray-400">{agent}</span>
+          </div>
+          <AgentConfigSection slug={slug} agentName={agent} />
+        </section>
+      ))}
+    </div>
   )
 }
 
