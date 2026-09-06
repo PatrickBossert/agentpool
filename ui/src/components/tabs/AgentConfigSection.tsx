@@ -111,7 +111,12 @@ export default function AgentConfigSection({
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
-  const { data: config } = useQuery({
+  // `error` is read as well as `data`, and the pair is what separates "still arriving" from
+  // "never arriving". Reading `data` alone made a failed read and a pending one render the
+  // same sentence, and in production they were not the same thing at all: the API had been
+  // up since before this door existed, answered 404 to every section, and an administrator
+  // was told to wait for something that was never coming.
+  const { data: config, error: loadError } = useQuery({
     queryKey: ['agent-config', slug, agentId],
     queryFn: () => agentConfigApi.get(slug, agentId),
     enabled: !!slug && !!agentId,
@@ -147,6 +152,26 @@ export default function AgentConfigSection({
   })
 
   if (!agentId) return null
+  // Before the loading branch, deliberately: a failed read has data of `undefined` too, so
+  // testing `!config` first would answer "loading" for ever. describeError is imported, not
+  // copied, so a refusal that says which authority is missing reaches the administrator in
+  // the server's own words rather than as a fixed string.
+  if (loadError) {
+    // The sentence is stated and the server's words are *appended*, which is the opposite of
+    // how the save path uses describeError - and deliberately so. A refusal to save says
+    // something a fixed string cannot ("Project administration required"), and stands alone.
+    // A failed read is usually the transport talking: `Not Found` on its own is as unhelpful
+    // as the endless "Loading…" it replaces, and reads as intentional rather than broken.
+    // describeError stays the only place the server's sentence is extracted - passing an
+    // empty fallback asks it for that sentence and nothing else.
+    const detail = describeError(loadError, '')
+    return (
+      <p className="text-xs text-rose-400">
+        This agent&rsquo;s configuration could not be loaded.
+        {detail ? ` - ${detail}` : ''}
+      </p>
+    )
+  }
   if (!config || !draft) {
     return <p className="text-xs text-gray-400">Loading this agent's configuration…</p>
   }

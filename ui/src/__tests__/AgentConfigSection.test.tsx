@@ -242,3 +242,44 @@ describe('the agent configuration section - what it sends', () => {
     expect(await screen.findByText(/Project administration required/)).toBeInTheDocument()
   })
 })
+
+describe('the agent configuration section - when the read itself fails', () => {
+  // Found in production on 7 September, and the diagnosis cost more than the fix. The API
+  // had been running since 19 August, so it predated this branch and served no
+  // `/projects/{slug}/agents/{agent_id}/config` at all - every section on every agent
+  // answered 404. What an administrator saw was "Loading this agent's configuration…",
+  // for ever, on all of them.
+  //
+  // The section consulted `data` alone, so a query that had FAILED and a query still in
+  // FLIGHT rendered the same sentence. The save path already reported refusals in the
+  // server's own words; the read path had no error branch at all, which is the half a
+  // reader never checks because the other half is visibly careful.
+  //
+  // Asserted as the absence of the loading text as well as the presence of the error,
+  // because a component that rendered both would still be telling an administrator to wait
+  // for something that is never coming.
+  it('says the configuration could not be loaded, and stops saying it is loading', async () => {
+    vi.mocked(agentConfigApi.get).mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 404, data: { detail: 'Not Found' } },
+    })
+    renderSection()
+
+    expect(await screen.findByText(/could not be loaded/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Loading this agent/i)).not.toBeInTheDocument()
+    // The server's own words survive alongside the framing rather than replacing it. On the
+    // save path describeError's sentence stands alone; here it is appended, because a bare
+    // `Not Found` reads as deliberate and an administrator cannot act on it.
+    expect(screen.getByText(/Not Found/)).toBeInTheDocument()
+  })
+
+  it('still says it is loading while the read is genuinely in flight', async () => {
+    // The control. Without it, a component that reported an error unconditionally - or one
+    // that simply deleted the loading branch - would pass the test above.
+    vi.mocked(agentConfigApi.get).mockImplementation(() => new Promise(() => {}))
+    renderSection()
+
+    expect(await screen.findByText(/Loading this agent/i)).toBeInTheDocument()
+    expect(screen.queryByText(/could not be loaded/i)).not.toBeInTheDocument()
+  })
+})
