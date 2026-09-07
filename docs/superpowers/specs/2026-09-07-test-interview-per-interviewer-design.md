@@ -194,3 +194,83 @@ the fallback is what makes her usable in the meantime rather than blocked on one
 
 A portrait asset for Laura. Changing who Taylor picks or how. Any voice-sex concept stored in
 this repository. Rehearsing a crew agent that is not an interviewer.
+
+---
+
+# Separating agent setup from crew setup
+
+**Decided by Patrick, 7 September**, after the Setup pane was measured at 86px holding 3364px
+of content. The height was a layout bug and is fixed; the 3364px is not a bug, it is four full
+agent configurations stacked under a heading that also holds the crew's own settings.
+
+## The distinction, and why it is real
+
+| | Keyed on | Answers | Changed |
+|---|---|---|---|
+| **Agent** | `(project_id, agent_id)` | who this person is - name, face, voice, synthesis model, and any options peculiar to that agent | once, at the start |
+| **Crew** | project and crew | what this crew should do on this engagement | repeatedly, during delivery |
+
+Two objects, two keys, two clocks. Stacking the rarely-touched one above the frequently-touched
+one means scrolling past four portraits to reach a brief.
+
+**The code already separates them and the tab does not.** `CrewSetupSections` renders *bespoke*
+agent configuration - three of eighteen agents have one - and `CrewAgentConfiguration` renders
+name, image, voice and model for **all** of them. Their docstrings argue for the split; the tab
+concatenates the result.
+
+**And the current split is already inconsistent.** `CREW_SETUP_OVERRIDE` replaces the Setup tab
+wholesale for three crews, with `PamSetupTab`, `AlexSetupTab` and `MayaSetupTab` - components
+named after *agents*, configuring agents, occupying a crew's tab. So "Setup" today holds crew
+metadata, three agent panels presented as crew settings, and every agent's universal
+configuration. Three different things under one heading, which is why no arrangement of it
+scrolls well: it is not one topic.
+
+## What this builds
+
+**A new `Agents` tab** on the detail panel, between Setup and Skills. It holds an agent selector
+for the crew's agents and, for the selected one, everything agent-scoped:
+
+- the universal configuration - display name, image, voice, synthesis model
+- that agent's bespoke section, if it has one (`AGENT_SETUP_SECTION`)
+- the rehearsal button, for agents that can conduct an interview
+
+**Setup keeps crew configuration only** - the crew's note, reads and produces, and any genuinely
+crew-level settings.
+
+**The three overrides move to the Agents tab**, beside the agent they are named after. Alex's
+discovery brief sits under Alex. This is what makes the split consistent: everything
+agent-scoped in one place whatever its shape, rather than a rule about which shapes count.
+
+*The consequence to accept:* a crew's Setup tab may now be metadata alone. That is honest -
+those crews have no crew-level configuration, and the previous arrangement concealed it by
+filling the space with agent panels.
+
+## Three traps in adding a tab to this panel
+
+Named because each is a silent failure, and the panel restates its tab list in three places.
+
+**The list is written out three times** - the `Tab` union, the `isTab` guard, and the
+saved-tab restore - plus the rendered tab array and the mount latch. Five sites, and a new tab
+missing from the guard or the restore does not error: it falls back to `output`, so the tab
+works until the user reloads and then silently forgets where they were. **Derive the guard and
+the restore from one list** rather than adding a sixth restatement.
+
+**The tab needs its own mount latch.** Setup renders `hidden` rather than unmounted, and
+`setSetupOpened` exists so that opening a panel and closing it again asks the server for
+nothing. An Agents tab without the same latch fetches every agent's configuration for a tab
+nobody opened - which is the defect sp62 found and fixed for Setup, arriving in the tab that
+holds four times as many requests.
+
+**The selector must not re-fetch on every switch.** Selecting an agent changes which block is
+shown, not which data exists; the configurations are already keyed by agent in the query cache.
+
+## Testing
+
+- The Agents tab survives a reload - asserted through the **saved-tab restore**, not by
+  rendering it once. A tab absent from the guard renders correctly and forgets itself.
+- Opening a panel on Output asks for **no** agent configuration, and opening Agents asks for it.
+  The control for the latch, and the property sp62 had to fix once already.
+- The tab shows the agent clicked in the carousel, not always the first.
+- Setup no longer renders any agent configuration, asserted by its **absence** - a test that
+  only checks the Agents tab has it would pass with both showing it.
+- An agent with a bespoke section shows it under Agents, and its crew's Setup tab does not.
