@@ -127,10 +127,17 @@ holds exactly two tracked files, so a real checkout has no `sp-gs-am`, and four 
 absence of a fixture under it rather than the two this machine reports - two of them
 (`test_sqlite_state_validation.py` and `test_value_chain_model.py`, both on
 `value_chain_model_v2.json`) pass here only because a live crew run left the file behind, and two
-in `test_value_chain_migration.py` are dark on every machine including this one. So **"2675
+in `test_value_chain_migration.py` are dark on every machine including this one. So **"2680
 passed / 2 skipped" is a property of this workstation, not of the repository**; a clean clone
-answers 2673 / 4 and nothing is wrong. The fix is committed fixtures under `tests/fixtures/`,
+answers 2678 / 4 and nothing is wrong. The fix is committed fixtures under `tests/fixtures/`,
 which the two dark tests already name as theirs.
+
+Two things about that pair of numbers. **Recount both rather than adjusting one to match the
+other** - the gap is exactly two today because exactly two tests depend on the stray file, and
+nothing holds it there. And the four read a bare relative `Path("projects/sp-gs-am/outputs/…")`,
+which reads neither `PROJECTS_DIR` nor the settings, so they are equally dark when `pytest` is run
+from any directory but the repository root - `51b8af1b`'s settings repair does not reach them, and
+committed fixtures still do.
 
 **A module fixture that wipes the project `.db` is not enough.** `project_registry` lives in
 the *shared system* database, and `POST /projects` registers with `INSERT OR IGNORE` - so a
@@ -727,6 +734,16 @@ The three that do not:
 | `GET /projects/{slug}/agents/{agent_id}/image` | The same exception serving the same page - a participant sees the interviewer's face before they have any login to check. It multiplies the probe surface by eighteen without widening it: a 200 tells a caller who already knows the slug that a portrait exists, which is what the door is for. |
 | `DELETE /auth/projects/{slug}` | Registry administration, `require_sysadmin`. Global by nature, and a sysadmin passes the floor unconditionally, so the call would be a no-op. |
 
+**This table is keyed on `{slug}`, so it cannot show every unauthenticated door - and there is
+a fourth.** `GET /api/agents/{agent_id}/image` (`api/routers/agent_assets.py`) serves the
+deployment's promoted default portrait to the same participant, with no authentication and no
+project at all, so the sweep above never sees it and a reader of the three rows concludes the
+surface has three when it has four. It is the deliberate sibling of the second row rather than a
+new decision: same page, same reason, and *less* to learn from it, since an address with no slug
+in it cannot be used to probe whether an engagement exists. The caveat is the same one two
+paragraphs below makes for a door taking its slug from the request body - this is one step
+further out, a door with no slug anywhere.
+
 `WEBSOCKET /ws/{slug}` was the third row and this file called it the largest remaining
 exposure on the surface: open to anyone who could reach the port, streaming agent log lines
 that carry client material verbatim. It is closed and has been for a while - `api/routers/
@@ -1296,8 +1313,12 @@ and `GET /{slug}/agents/{agent_id}/image` are two of the three deliberate floor 
 for exactly that reason, and the rest of the page authenticates by session token - so an
 administrator-chosen off-site URL discloses every
 participant's IP address, user agent and the timing of a live interview, on an engagement whose
-documents and inference are otherwise on-premises. **The follow-up is a task, not a wish: the two fields owe a shared same-origin
-upload path**, which closes both halves for both fields at once. Until it lands, `agents/egress.py`
+documents and inference are otherwise on-premises. **The follow-up is a task, not a wish: the two
+fields owe a shared validator**, which closes both halves - scheme and off-site - for both fields
+at once. It is deliberately *not* the same-origin uploader: both fields have one already (`POST
+/{slug}/branding/image` and `POST /{slug}/agents/{agent_id}/image`), and an uploader beside a
+free-text box changes the ordinary route without narrowing what the write door accepts. Until it
+lands, `agents/egress.py`
 names both fields in `PARTICIPANT_IMAGE_EGRESS` and **nothing renders that row** -
 `data_architecture()` builds the auditor's privacy page from agents and the tools they hold, and
 this reach is neither, because the request is made by a *participant's browser* and not by this
@@ -1770,6 +1791,14 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 
 ## Known issues / tech debt
 
+- **Four tests read a bare relative `Path("projects/sp-gs-am/outputs/…")` and skip silently
+  when it is not there** - `test_sqlite_state_validation.py`, `test_value_chain_model.py`, and
+  two in `test_value_chain_migration.py`. `projects/` holds two tracked files, so a clean clone
+  runs none of them, and neither does this workstation when `pytest` is started from anywhere
+  but the repository root: the path reads neither `PROJECTS_DIR` nor the settings. Its own
+  task, and the fix is committed fixtures under `tests/fixtures/` - which the two permanently
+  dark tests already name as theirs. Argued in full under *Test commands*; recorded here so it
+  is findable as work.
 - `python-pptx` must be installed inside the venv (not system pip on macOS with Homebrew Python 3.13 / PEP 668)
 - `taskreimagination.ai` must be a verified sender domain in Resend before reminder emails deliver
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
@@ -1865,16 +1894,25 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   precondition is non-empty on the current deployment - `vc-sort-check` is a project database
   with no `project_registry` row. Its own task, not a patch inside a tier rule: the same fix
   is `check_project_access` on `POST /projects` for the whole engagement.
-- **`brand_header_image_url` and `project_agent_config.image_url` owe a shared same-origin
+- **`brand_header_image_url` and `project_agent_config.image_url` owe a validator, not an
   upload path.** Two doors onto one hazard: both put an administrator-chosen URL into the same
-  `<img src>` on the unauthenticated interview page, and only the second validates a scheme at
-  all. Its own task, because the fix serves both fields and closes both halves - scheme and
-  off-site - at once, and surfacing the reach to the auditor belongs with it rather than before
-  it. Argued in full under *Crew / agent conventions*; recorded here so it is findable as work.
-  **sp63 narrowed this rather than closing it**: `POST /{slug}/agents/{agent_id}/image` is the
-  same-origin upload path, for that field alone, and the text box beside it still takes an
-  off-site URL. `brand_header_image_url` has no upload path and no validator at all, so the
-  hazard is exactly as wide as it was.
+  `<img src>` on the unauthenticated interview page. Its own task, because the fix serves both
+  fields and closes both halves - scheme and off-site - at once, and surfacing the reach to the
+  auditor belongs with it rather than before it. Argued in full under *Crew / agent
+  conventions*; recorded here so it is findable as work.
+
+  **Both fields now have a same-origin upload path, and the asymmetry that is left is the
+  validator.** `POST /{slug}/branding/image` has served the header since before sp63 and is
+  wired into the field (`Settings.tsx` writes the URL it answers straight into
+  `brand_header_image_url`); sp63 added `POST /{slug}/agents/{agent_id}/image` as its
+  equivalent for the portrait, and fixed the address the branding door returns. So the
+  ordinary route is same-origin for both. What differs is what happens when the free-text box
+  beside each is used instead: `PUT .../agents/{agent_id}/config` refuses an `image_url` whose
+  scheme is not `http` or `https`, and `PATCH /{slug}/settings` accepts anything at all for
+  `brand_header_image_url`. **An upload path is not a validator** - neither field's text box is
+  removed, so as long as one exists the hazard is decided by what the *write* door checks, and
+  writing "there is an uploader now" where the sentence means "the field is guarded" is exactly
+  the substitution this entry was corrected for.
 - **A failed reingest leaves chunks behind with `ingested=0`.** The first ingest's chunks stay
   in the store while the row is marked not-ingested, and `DELETE /{slug}/documents/{doc_id}`
   purges only `if doc["ingested"]` (`api/routers/documents.py:225`) - so the delete answers
