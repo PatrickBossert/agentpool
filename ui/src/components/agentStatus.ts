@@ -380,11 +380,16 @@ export const AGENT_HUMAN_NAME: Record<string, string> = {
 const _base = import.meta.env.BASE_URL.replace(/\/$/, '')
 const _img  = (f: string) => `${_base}/agents/${f}`
 
-// Seventeen of the eighteen. 'Second Interviewer' is deliberately absent: Laura Nelson has no
-// headshot yet, `AgentFace` falls back to her initials on a gradient, and a stand-in borrowed
-// from somebody else would put one person's face on two names. `agents/identity.py` records the
-// same absence as `image=None`, and the two are held equal by
-// tests/test_persona_transcription.py - so this is one line to add when a portrait exists.
+// All eighteen, since 7 September. 'Second Interviewer' was deliberately absent until then -
+// Laura Nelson had no headshot, `AgentFace` fell back to her initials on a gradient, and a
+// stand-in borrowed from somebody else would have put one person's face on two names. A
+// portrait was supplied and the line was added, which is what that note said to do.
+//
+// The fallback stays, and so does the reason: the next agent declared is faceless until
+// somebody draws them. `agents/identity.py` carries the same map and the two are held equal by
+// tests/test_persona_transcription.py, which counts names and faces **separately** - they agree
+// at eighteen today and must not be collapsed into one count, because the state where they
+// differ has already happened once and will happen again.
 export const AGENT_AVATAR_IMAGE: Record<string, string> = {
   'PAM':                         _img('pam.jpg'),
   'Value Chain Mapper':          _img('alex-chen.jpg'),
