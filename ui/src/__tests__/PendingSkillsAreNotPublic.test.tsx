@@ -88,8 +88,18 @@ vi.mock('../api/skills', () => ({
   },
 }))
 
-// The rule as the review drove it, and the name `_derive_skill_name` gives it - the first five
-// words. Both are asserted absent, because hiding one and not the other hides nothing.
+// The rule as the review drove it, and a name of the shape `_derive_skill_name` produces -
+// words taken off the front of the rule, so it carries the client. Both are asserted absent,
+// because hiding one and not the other hides nothing.
+//
+// **Not the exact output of that function, and it must not be read as such.** Nothing links
+// these two languages, so a comment claiming the correspondence is a claim no test can hold
+// (the previous one said "the first five words" of a four-word constant, and was wrong in a
+// way nothing could catch). What makes the assertions here mean something is instead local:
+// this constant is also the fixture's `name` field, and every absence assertion is paired
+// with a presence control using the same constant, so "it did not render" cannot pass because
+// the selector never matched anything. The Python-side pin lives where it can be checked -
+// `tests/test_pending_skills_are_not_public.py::test_the_derived_name_really_does_carry_the_rule`.
 const RULE = "When interviewing Iberdrola's SAP migration staff, never name the Q3 outage."
 const PROPOSAL_NAME = "When interviewing Iberdrola's SAP"
 

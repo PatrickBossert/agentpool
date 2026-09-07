@@ -229,6 +229,83 @@ async def _rules_already_held(conn, role: str) -> list[dict]:
     return held
 
 
+def _candidates_that_may_travel(slug: str, candidates: list[dict]) -> list[dict]:
+    """The candidates it is permissible to send with a comparison routed on `slug`.
+
+    **A candidate travels only where its own project's material may travel.** The routing one
+    function down decides where the *proposed* rule goes, and says nothing about the list it
+    goes with - so a `sensitive` engagement's pending rule was being posted to hosted Haiku
+    the moment any *other* engagement made a proposal for the same agent, because the payload
+    is routed by the proposing project alone. Same material, same reasoning that made the
+    queue sysadmin-only in `list_skills`, leaving the deployment entirely.
+
+    Two questions, asked in this order, and both through `project_permits` rather than against
+    a mode name:
+
+    1. **Is this comparison going off the premises at all?** If the proposing project is not
+       granted `HOSTED_INFERENCE`, the payload goes to a model on this deployment and nothing
+       leaves, so every candidate may travel. A sensitive project therefore still compares
+       against everything, which is where recurrence accumulates best and costs nothing.
+    2. **May *this* candidate go there?** Asked of the candidate's own `source_project`, never
+       of the proposing one - the proposing project's grants are about the proposing
+       project's material.
+
+    `approved` is exempt, and that is not a loophole. An approved skill is already injected
+    into that agent's prompt on **every** engagement by `_fetch_skill_notes`, including the
+    standard ones whose prompts go to hosted Anthropic; it is the agent's published
+    instruction rather than one client's material, which is the same distinction `list_skills`
+    turns on. Excluding it would lose deduplication with nothing gained.
+
+    The exemption is an allow-list of that one status rather than a "not pending" test, so a
+    third status added to `_DEDUP_STATUSES` later has to prove itself rather than inherit the
+    exemption by not being named.
+
+    A pending candidate with no `source_project` is **dropped**, because it cannot be
+    attributed and "may this travel" has no answer without an engagement to ask about. Today
+    that is only a row an administrator typed on the global skills page - `propose_skill`
+    requires a non-blank slug - so the cost is that a hand-typed pending rule does not
+    deduplicate against a hosted comparison. That is a quality loss in an edge case; the other
+    default is a disclosure.
+
+    **Known, accepted, and inherited:** `project_llm_mode` answers `standard` for a slug whose
+    database does not exist, and `standard` grants hosted inference. So a candidate whose
+    project has been deleted since the proposal was made would travel. That is this codebase's
+    stated policy - a genuinely absent project has no secrets - and changing it belongs on
+    that seam rather than here.
+    """
+    from api.services.deployment_modes import Capability, project_permits
+
+    if not project_permits(slug, Capability.HOSTED_INFERENCE):
+        return candidates
+
+    may_travel: list[dict] = []
+    withheld: list[str] = []
+    by_origin: dict[str, bool] = {}
+    for candidate in candidates:
+        if candidate.get("status") == "approved":
+            may_travel.append(candidate)
+            continue
+        origin = (candidate.get("source_project") or "").strip()
+        if origin and origin not in by_origin:
+            by_origin[origin] = project_permits(origin, Capability.HOSTED_INFERENCE)
+        if origin and by_origin[origin]:
+            may_travel.append(candidate)
+        else:
+            withheld.append(origin or "no engagement recorded")
+    if withheld:
+        # `info`, not `warning`: on a deployment holding engagements of different modes this is
+        # the correct outcome and will fire often. It is logged at all because it is the answer
+        # to "why did this recurrence not accumulate", which is otherwise unanswerable from
+        # anything the queue shows.
+        log.info(
+            "skills: %d candidate(s) withheld from a comparison routed on %r, which is granted "
+            "hosted inference - their own engagements (%s) are not. The proposal is compared "
+            "against the rest.",
+            len(withheld), slug, ", ".join(sorted(set(withheld))),
+        )
+    return may_travel
+
+
 async def find_duplicate_skill(
     slug: str, description: str, candidates: list[dict]
 ) -> int | None:
@@ -260,7 +337,15 @@ async def find_duplicate_skill(
     log every time. **Nothing here ever answers by sending the text somewhere the project's
     grants refuse** - that is the one failure this must not have, and it is why the degradation
     is to "not a duplicate" rather than to a hosted retry.
+
+    That sentence used to be true of the proposed rule and false of the **candidates**, which
+    travel with it. `_candidates_that_may_travel` is what makes it true of both, and it is
+    called here rather than where the list is read because this is the function that sends:
+    the check belongs before the send, and a caller assembling candidates some other way gets
+    it too. `offered` is built from the narrowed list, so the model can only name something
+    that actually left.
     """
+    candidates = _candidates_that_may_travel(slug, candidates)
     if not candidates:
         return None
     offered = {int(c["id"]): c for c in candidates}

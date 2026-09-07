@@ -3809,6 +3809,17 @@ async def fetch_skills(
     both of the first two keys and the order falls to whatever SQLite happens to return. A
     reviewer reloading the queue would see the same rows in a different order for no reason
     they could name. Three keys make the ordering total.
+
+    **`status=None` means no filter, so the approved-only guarantee lives in the callers and
+    not here.** Six of the nine call sites pass no status, and each is safe for a reason of its
+    own: `/export` hardcodes `approved`, `/import` and `/seed` deduplicate by name and answer
+    counts, `POST` and `PATCH` select only the row the caller just touched. The two that read
+    for a purpose - `_fetch_skill_notes` and `_rules_already_held` - name their statuses. The
+    safe default is the other way round, and this signature is the wrong shape to express it
+    without silently narrowing those six, so the honest thing is to say where the guarantee
+    sits: **a new caller writing `fetch_skills(conn)` inherits a read of pending rows**, and a
+    pending row is one engagement's material rather than the agent's published instruction -
+    `list_skills` in `api/routers/skills.py` has the argument.
     """
     where: list[str] = []
     params: list = []

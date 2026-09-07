@@ -1637,6 +1637,23 @@ for the mechanism, or the answer only ever describes the sites already doing it 
 `skills_service.py` still answers that second sweep, and now needs the first one too: it builds
 `AsyncAnthropic` for its global door and asks `project_completion` for the agent's.
 
+**Routing a call by one project says nothing about the other projects' material inside it.**
+The seam takes a slug and sends the payload where that slug's grants allow, which is the right
+question asked of the wrong scope the moment a payload carries anything belonging to a second
+engagement. `find_duplicate_skill` was exactly that: routed correctly on the proposing
+project, and carrying every *other* engagement's pending rules as the candidates to compare
+against - so a `sensitive` engagement's rule went to hosted Haiku whenever any `standard` one
+proposed a rule for the same agent. Nothing was wrong with the routing; the payload had a
+second owner and only one of them was asked.
+
+So when a payload is assembled from more than one project, **ask `project_permits` of each
+contributor's own slug, not of the caller's**. `_candidates_that_may_travel` in
+`skills_service.py` is the shape: if the call is not leaving the deployment nothing is
+withheld, and if it is, each contribution must show its own grant. Note which way the two
+halves fall - a *global* artefact travels freely (an approved skill is already in every
+engagement's prompt), and anything that cannot be attributed to an engagement is withheld,
+because "may this travel" has no answer without a project to ask about.
+
 **The boundary, stated honestly.** For those two declared capabilities, nothing leaves a
 `sensitive` deployment. Five paths still send material off-premises with **no mode question
 asked at all** - the global skills library door, `TavilySearchTool`, `WebFetchTool`,

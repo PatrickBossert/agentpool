@@ -8,7 +8,7 @@ alongside api/services/skills_service.py, which is hosted for the same reason.
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from anthropic import Anthropic
-from api.auth import require_any_auth
+from api.auth import require_any_auth, require_sysadmin
 from api.database import get_system_db, insert_skill_note, fetch_skill_notes
 from api.config import get_settings
 
@@ -53,7 +53,26 @@ async def create_skill_note(
 @router.get("")
 async def list_skill_notes(
     agent_name: str | None = None,
-    payload: dict = Depends(require_any_auth),
+    _payload: dict = Depends(require_sysadmin),
     conn=Depends(get_system_db),
 ):
+    """Every stored note, with the feedback it was distilled from (sysadmin only).
+
+    **Two columns, and only one of them is global.** `note` is the imperative the extraction
+    produced - it is injected into that agent's prompt on every engagement by
+    `_fetch_skill_notes`, which is what makes it the agent's published instruction rather than
+    one client's material. `raw_input` is the reviewer's verbatim sentence, written from
+    `ReviewDialog`, and it is free to name the engagement, its people, and what went wrong on
+    it: *"Maya named the Q3 outage at Iberdrola in the welcome for SC-014"* is the shape it
+    actually takes. `fetch_skill_notes` is a `SELECT *`, so this returned both to any login.
+
+    The same finding as `list_skills`' pending queue, one table over, and closed the same way:
+    whoever may act on it may read it. Nothing consumes this endpoint - `skillNotesApi.list`
+    in `ui/src/api/endpoints.ts` has no caller - so the whole door is narrowed rather than the
+    response projected. **If a non-admin surface is ever wanted, the split is `note` yes,
+    `raw_input` no**, and it is written down here so it does not have to be rediscovered.
+
+    `POST` stays `require_any_auth`, deliberately: leaving feedback about an agent's output is
+    a reviewer's job, and writing your own sentence is not reading somebody else's.
+    """
     return await fetch_skill_notes(conn, agent_name=agent_name)

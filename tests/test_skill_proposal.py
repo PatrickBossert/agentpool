@@ -891,3 +891,214 @@ async def test_a_proposal_with_no_project_is_refused_rather_than_routed(monkeypa
 
     assert local == [] and hosted == []
     assert await _count_skills(AGENT) == 0
+
+
+# ── C2: a candidate travels only where its own project's material may travel ───────────────
+#
+# The routing above decides where the *proposed* rule goes. It says nothing about the
+# candidate list that goes with it - so a sensitive engagement's pending rule was posted to
+# hosted Haiku the moment any other engagement proposed a rule for the same agent, because the
+# payload is routed by the proposing project alone.
+#
+# Asserted on the **request**, not on which client was constructed: `_transports` installs a
+# fake transport for both providers at once, and these read the bytes that actually left. Each
+# leak test is paired with a control, because a fix that simply dropped every candidate would
+# pass all four of the negative ones and silently end deduplication.
+
+
+async def _pending_rule_from(slug: str, description: str, *, status: str = "pending") -> int:
+    """One row assigned to this file's agent, attributed to `slug`.
+
+    Written directly rather than by proposing on `slug`, so the test does not need that
+    project's model to answer before the case it is about can begin.
+    """
+    from api.database import get_system_connection, insert_skill
+
+    async with get_system_connection() as conn:
+        return await insert_skill(
+            conn,
+            name="A rule held already",
+            description=description,
+            source="revision",
+            source_project=slug,
+            source_ref="SC-014",
+            proposed_by_agent=AGENT,
+            status=status,
+            agents=[_SNAKE_TO_DISPLAY[AGENT]],
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_sensitive_engagements_pending_rule_is_not_sent_with_another_projects_comparison(
+    monkeypatch, tmp_path
+):
+    """The leak, driven as the review drove it.
+
+    Engagement A is sensitive and holds a proposal naming its client. An agent then proposes an
+    unrelated rule while running on engagement B, which is standard - so the comparison is
+    correctly routed to hosted Anthropic, and A's sentence used to ride along inside it.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    await _project("c2-sensitive-a", "sensitive", {
+        "local_fast_model": "gemma4:fast", "local_fast_url": "http://localhost:11999/v1",
+    })
+    await _project("c2-standard-b", "standard", {})
+    secret = "When interviewing Iberdrola's SAP migration staff, never name the Q3 outage."
+    await _pending_rule_from("c2-sensitive-a", secret)
+    # B's own pending rule, so the comparison still happens and this asserts *which candidate*
+    # was withheld rather than that the request vanished. Without it the whole list is empty,
+    # `find_duplicate_skill` short-circuits, and "the secret did not travel" would be true of a
+    # fix that simply stopped comparing - which is the test one file over
+    # (`test_withholding_every_candidate_asks_no_model_at_all`), not this one.
+    permitted = "Keep confidentiality in the welcome on every script."
+    await _pending_rule_from("c2-standard-b", permitted)
+
+    local, hosted = _transports(monkeypatch)
+    await propose_skill(AGENT, DIFFERENT_RULE, "c2-standard-b", "SC-031")
+
+    assert len(hosted) == 1, "the standard project's own comparison did not happen"
+    body = hosted[0].content.decode()
+    assert secret not in body, (
+        "a sensitive engagement's pending rule reached Anthropic inside another project's "
+        "comparison"
+    )
+    assert permitted in body, "the narrowing took the proposing project's own rule with it"
+    assert local == []
+
+
+@pytest.mark.asyncio
+async def test_a_standard_engagements_pending_rule_still_travels_to_another_standard_one(
+    monkeypatch, tmp_path
+):
+    """The control that makes the test above mean something.
+
+    Without it, a fix that dropped every pending candidate would pass - and `occurrences` would
+    stop counting the recurrence it exists to count, which is what the queue is ordered by.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    await _project("c2-standard-one", "standard", {})
+    await _project("c2-standard-two", "standard", {})
+    held = "Keep confidentiality in the welcome on every script."
+    await _pending_rule_from("c2-standard-one", held)
+
+    local, hosted = _transports(monkeypatch)
+    await propose_skill(AGENT, DIFFERENT_RULE, "c2-standard-two", "SC-031")
+
+    assert len(hosted) == 1
+    assert held in hosted[0].content.decode(), (
+        "cross-engagement recurrence stopped accumulating between projects that both permit it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_sensitive_project_is_still_compared_against_everything(monkeypatch, tmp_path):
+    """Nothing leaves, so nothing is withheld.
+
+    The narrowing is about where a candidate may *go*, not about who may see it - and a
+    comparison on a sensitive project's own model goes nowhere. Narrowing here as well would
+    cost the engagement that most needs the deduplication its best evidence, for no gain.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    await _project("c2-sensitive-here", "sensitive", {
+        "local_fast_model": "gemma4:fast", "local_fast_url": "http://localhost:11999/v1",
+    })
+    await _project("c2-standard-elsewhere", "standard", {})
+    await _project("c2-sensitive-elsewhere", "sensitive", {
+        "local_fast_model": "gemma4:fast", "local_fast_url": "http://localhost:11999/v1",
+    })
+    held = "Keep confidentiality in the welcome on every script."
+    await _pending_rule_from("c2-standard-elsewhere", held)
+    # A candidate from a *second sensitive* engagement, which is the case this arm uniquely
+    # protects: it is the one that would be withheld if the rule were applied per candidate
+    # regardless of whether the comparison leaves the deployment. A standard candidate would
+    # travel under any version of the rule and so proves nothing about this branch.
+    also_held = "Name the interviewer and the team they belong to in the welcome."
+    await _pending_rule_from("c2-sensitive-elsewhere", also_held)
+
+    local, hosted = _transports(monkeypatch)
+    await propose_skill(AGENT, DIFFERENT_RULE, "c2-sensitive-here", "SC-031")
+
+    assert hosted == []
+    assert len(local) == 1
+    body = local[0].content.decode()
+    assert held in body
+    assert also_held in body
+
+
+@pytest.mark.asyncio
+async def test_an_approved_rule_travels_whatever_engagement_it_came_from(monkeypatch, tmp_path):
+    """The exemption, and it is not a loophole.
+
+    An approved skill is already injected into this agent's prompt on every engagement by
+    `_fetch_skill_notes`, including the standard ones whose prompts go to Anthropic. It is the
+    agent's published instruction rather than one client's material - the same distinction
+    `list_skills` turns on - so withholding it would lose deduplication and protect nothing.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    await _project("c2-sensitive-origin", "sensitive", {
+        "local_fast_model": "gemma4:fast", "local_fast_url": "http://localhost:11999/v1",
+    })
+    await _project("c2-standard-proposer", "standard", {})
+    published = "State the units on every figure you carry forward."
+    await _pending_rule_from("c2-sensitive-origin", published, status="approved")
+
+    local, hosted = _transports(monkeypatch)
+    await propose_skill(AGENT, DIFFERENT_RULE, "c2-standard-proposer", "SC-031")
+
+    assert len(hosted) == 1
+    assert published in hosted[0].content.decode()
+
+
+@pytest.mark.asyncio
+async def test_a_pending_rule_that_names_no_engagement_is_withheld(monkeypatch, tmp_path, caplog):
+    """Fails closed, because "may this travel" has no answer without an engagement to ask about.
+
+    Only reachable for a row an administrator typed on the global skills page - `propose_skill`
+    refuses a blank slug - so the cost is that a hand-typed pending rule does not deduplicate
+    against a hosted comparison, and the alternative default is a disclosure.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    await _project("c2-standard-asker", "standard", {})
+    unattributed = "Some rule an administrator typed with no engagement attached."
+    await _pending_rule_from(None, unattributed)
+    permitted = "Keep confidentiality in the welcome on every script."
+    await _pending_rule_from("c2-standard-asker", permitted)
+
+    local, hosted = _transports(monkeypatch)
+    with caplog.at_level("INFO", logger="api.services.skills_service"):
+        await propose_skill(AGENT, DIFFERENT_RULE, "c2-standard-asker", "SC-031")
+
+    assert len(hosted) == 1
+    body = hosted[0].content.decode()
+    assert unattributed not in body
+    assert permitted in body
+    # Logged, because it is the only available answer to "why did that recurrence not count".
+    assert any("withheld from a comparison" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_withholding_every_candidate_asks_no_model_at_all(monkeypatch, tmp_path):
+    """The narrowed list is what the short-circuit is applied to, not the original.
+
+    A comparison whose whole candidate list is withheld has nothing to ask about, and asking
+    anyway would send the proposed rule to a model to be compared against an empty list - a
+    request with a cost and no possible answer.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    await _project("c2-sensitive-only", "sensitive", {
+        "local_fast_model": "gemma4:fast", "local_fast_url": "http://localhost:11999/v1",
+    })
+    await _project("c2-standard-lonely", "standard", {})
+    await _pending_rule_from("c2-sensitive-only", "The only rule anybody holds.")
+
+    local, hosted = _transports(monkeypatch)
+    result = await propose_skill(AGENT, DIFFERENT_RULE, "c2-standard-lonely", "SC-031")
+
+    assert local == [] and hosted == []
+    assert result["action"] == "created"
