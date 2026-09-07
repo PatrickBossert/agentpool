@@ -186,13 +186,16 @@ interface CrewCardProps {
   anyBusy: boolean
   readiness?: Record<string, CrewReadiness>
   onSelect: () => void
+  /** Which agent's face on this card was clicked. Optional, so a caller that does not care
+      about agent selection - or a test rendering the card alone - needs no stub. */
+  onSelectAgent?: (agent: string) => void
   onRun: (crewKey: string) => void
   onRerun: (crewKey: string) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
 }
 
-function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, isHovered, anotherCardHovered, carouselDragging, logs, anyBusy, readiness, onSelect, onRun, onRerun, onMouseEnter, onMouseLeave }: CrewCardProps) {
+function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, isHovered, anotherCardHovered, carouselDragging, logs, anyBusy, readiness, onSelect, onSelectAgent, onRun, onRerun, onMouseEnter, onMouseLeave }: CrewCardProps) {
   const { rotation } = useSchedulerHeartbeat()
   const status = getCrewStatus(crewRun, isActive, isPipelineActive, isWaiting, isRejected)
   const agents = CREW_AGENTS[crewKey] ?? []
@@ -296,12 +299,24 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
           ) : (
             <div className="flex items-center gap-1.5 flex-wrap justify-center w-full">
               {agents.map((agent, idx) => (
-                <div key={agent} className="flex flex-col items-center gap-1">
+                /* A face is a way in to that agent, not decoration. Clicking one selects the
+                   crew as any part of the card does - the event is deliberately allowed to
+                   bubble - and additionally says which agent the Agents tab should open on.
+                   It does not switch tabs: naming the agent is the answer to "whose panel did
+                   I ask for", and hijacking navigation on a click that has always meant
+                   "select this crew" would be a different, larger promise. */
+                <button
+                  key={agent}
+                  type="button"
+                  onClick={() => onSelectAgent?.(agent)}
+                  title={`Configure ${AGENT_HUMAN_NAME[agent] ?? agent}`}
+                  className="flex flex-col items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                >
                   <AgentFace name={agent} status={agentStatuses[idx]} size={faceSize} />
                   <span className="text-[10px] text-gray-400 font-medium leading-none">
                     {(AGENT_HUMAN_NAME[agent] ?? agent).split(' ')[0]}
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -349,6 +364,8 @@ export interface CrewCarouselProps {
   rejectedCrews?: Set<string>
   selectedCrew: string
   onSelectCrew: (crewKey: string) => void
+  /** A face was clicked: this crew, and this agent within it. */
+  onSelectAgent?: (crewKey: string, agent: string) => void
   onRunCrew: (crewKey: string) => void
   onRerunCrew: (crewKey: string) => void
   runningCrew?: string | null
@@ -361,7 +378,7 @@ export interface CrewCarouselProps {
 
 export default function CrewCarousel({
   crewRuns, isPipelineActive, logs, hitlReviews = [], rejectedCrews = new Set(),
-  selectedCrew, onSelectCrew, onRunCrew, onRerunCrew, runningCrew, readiness,
+  selectedCrew, onSelectCrew, onSelectAgent, onRunCrew, onRerunCrew, runningCrew, readiness,
   onRunPipeline, isPipelineStarting = false, orchestrationStatus = null,
 }: CrewCarouselProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -505,6 +522,7 @@ export default function CrewCarousel({
           <CrewCard
             key={crewKey}
             crewKey={crewKey}
+            onSelectAgent={(agent) => onSelectAgent?.(crewKey, agent)}
             crewRun={deduped.get(crewKey)}
             isActive={activeCrewName === crewKey || runningCrew === crewKey}
             isPipelineActive={isPipelineActive}

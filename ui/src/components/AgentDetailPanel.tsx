@@ -115,6 +115,17 @@ interface CrewMeta {
 }
 
 const CREW_META: Record<string, CrewMeta> = {
+  // PAM gained an entry when her Setup tab stopped being `PamSetupTab`. That component was the
+  // whole tab and it configures *her* - PAM assignment, the report recipients - so it moved to
+  // the Agents tab with the other two agent-named overrides. Without this entry Setup then read
+  // "No setup information available", which is the spec's named "consequence to accept" at its
+  // starkest: the crew genuinely has no crew-level configuration, and the previous arrangement
+  // concealed that by filling the space with an agent's panel.
+  PAM: {
+    reads: ['Every crew\'s outputs and run status', 'Review flags and milestone dates', 'Project settings'],
+    produces: ['Orchestration runs', 'The daily report to governors and approvers'],
+    note: 'PAM orchestrates the other crews rather than producing an artefact of her own - she is the only agent in no crew. Her own configuration is on the Agents tab.',
+  },
   discovery_mapping: {
     reads: ['Uploaded documents', 'Discovery settings (sector, standards)', 'Existing registry (for iteration)'],
     produces: ['value_chain_registry.json', 'value_chain_tree.json', 'value_chain_summary.txt'],

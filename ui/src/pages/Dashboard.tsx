@@ -102,6 +102,11 @@ export default function Dashboard() {
   const tabFromUrl = searchParams.get('tab') ?? undefined
 
   const [selectedCrew, setSelectedCrew] = useState<string>(crewFromUrl || 'PAM')
+  // Which agent's face was last clicked in the carousel, so the Agents tab opens on the one
+  // the user asked about rather than always on the crew's first. Cleared when the crew
+  // changes: an agent id from the previous crew is not in this one's roster, and the tab
+  // would fall back to its first agent anyway - clearing says so rather than relying on it.
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
 
   const { data: status } = useQuery({
     queryKey: ['status', slug],
@@ -306,7 +311,8 @@ export default function Dashboard() {
               hitlReviews={hitlReviews}
               rejectedCrews={rejectedCrews}
               selectedCrew={selectedCrew}
-              onSelectCrew={setSelectedCrew}
+              onSelectCrew={(crew) => { setSelectedCrew(crew); setSelectedAgent(null) }}
+              onSelectAgent={(crew, agent) => { setSelectedCrew(crew); setSelectedAgent(agent) }}
               onRunCrew={handleRunCrew}
               onRerunCrew={setRerunCrew}
               runningCrew={runningCrew}
@@ -336,6 +342,7 @@ export default function Dashboard() {
               hitlReviews={hitlReviews}
               locale={settings?.locale}
               initialTab={tabFromUrl}
+              initialAgent={selectedAgent ?? undefined}
             />
           </div>
         </div>
