@@ -20,10 +20,26 @@ import { useSchedulerHeartbeat } from '../context/SchedulerHeartbeatContext'
 // lg(80px): 2×80+6  = 166 ≤ 168  ✓
 // md(48px): 3×48+12 = 156 ≤ 168  ✓
 // sm(36px): 4×36+18 = 162 ≤ 168  ✓  (5+ wraps)
+//
+// **Four is two rows of two, not one row of four.** Four faces at `md` do not fit on one row
+// either - 4×48+18 = 210 > 168 - so `flex-wrap` broke them 3+1, which reads as a crew of three
+// with an afterthought. Laying them out as 2×2 buys back the width to make them `lg`, the same
+// size a two-agent card already uses, so the faces are 80px rather than 48px and every card
+// shows people at one of two sizes rather than three.
+//
+// `discovery_interviews` is the only crew with four today and the largest has four, so the
+// `sm` branch is currently unreachable. It is kept because the roll grows.
 function computeFaceSize(n: number): 'sm' | 'md' | 'lg' {
   if (n <= 2) return 'lg'
+  if (n === 4) return 'lg'   // two per row - see faceColumns below
   if (n <= 4) return 'md'
   return 'sm'
+}
+
+/** How many faces sit on a row. Two for a four-agent crew, so the pair above is the width
+ *  budget rather than the row of four that does not fit. */
+function faceColumns(n: number): number {
+  return n === 4 ? 2 : n
 }
 
 // ── Agent face circle ──────────────────────────────────────────────────────────
@@ -297,7 +313,14 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
               </span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 flex-wrap justify-center w-full">
+            /* A grid rather than a wrapping flex row, so the break is decided here rather than
+               by whatever happens to fit. `flex-wrap` put four faces 3+1; the column count says
+               2+2 and means it. `gap-y` is tighter than `gap-x` because the labels already
+               separate the rows visually. */
+            <div
+              className="grid gap-x-1.5 gap-y-0.5 justify-items-center items-center w-full"
+              style={{ gridTemplateColumns: `repeat(${faceColumns(agents.length)}, minmax(0, 1fr))` }}
+            >
               {agents.map((agent, idx) => (
                 /* A face is a way in to that agent, not decoration. Clicking one selects the
                    crew as any part of the card does - the event is deliberately allowed to
