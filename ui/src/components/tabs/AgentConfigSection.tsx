@@ -33,6 +33,7 @@ import { projectsApi } from '../../api/endpoints'
 import { describeError } from '../../utils/describeError'
 import { AGENT_IDS } from '../agentStatus'
 import VoicePicker from './VoicePicker'
+import { voicesApi } from '../../api/voices'
 
 /** The three types the upload door accepts, so the file dialog opens filtered to them.
  *
@@ -158,6 +159,30 @@ export default function AgentConfigSection({
     queryFn: () => agentConfigApi.get(slug, agentId),
     enabled: !!slug && !!agentId,
   })
+
+  // A voice is stored as an id and read by a person. `Xb7hH8MSUJpSbSDYk0k2` tells an
+  // administrator nothing about who they have chosen, and the id was the only thing on the
+  // screen unless the voice happened to be picked in this same session.
+  //
+  // Asked with `accent: ''` - every accent, not the project's - because the stored voice need
+  // not share the project's. The **account** listing is the right source: "Add to account and
+  // use" copies a library voice in, so anything a project can have configured is in it.
+  //
+  // Its own query rather than the picker's: the picker's key carries the accent, gender and
+  // search terms it is filtering by, so sharing it would make the name on this line depend on
+  // what somebody last typed into a dropdown.
+  const { data: catalogue } = useQuery({
+    queryKey: ['voice-names', slug],
+    queryFn: () => voicesApi.list(slug, { accent: '' }),
+    enabled: !!slug,
+    staleTime: 5 * 60_000,
+  })
+
+  const voiceName = (id: string | null | undefined): string | null => {
+    if (!id) return null
+    const all = [...(catalogue?.account ?? []), ...(catalogue?.library ?? [])]
+    return all.find((v) => v.voice_id === id)?.name ?? null
+  }
 
   // Whether the server would accept the save, asked rather than inferred - the same predicate
   // `PUT /{slug}/agents/{agent_id}/config` refuses with. A control that always 403s is worse
@@ -370,15 +395,33 @@ export default function AgentConfigSection({
           </span>
           <Provenance
             overridden={draft.voice_id !== null}
-            fallback={config.defaults.voice_id ?? 'none - this agent does not speak'}
+            fallback={
+              voiceName(config.defaults.voice_id)
+              ?? config.defaults.voice_id
+              ?? 'none - this agent does not speak'
+            }
           />
         </div>
         <div className="flex items-center gap-2">
-          <span data-testid="voice-id" className="font-mono text-[11px] text-gray-700">
-            {voiceId ?? 'none'}
+          {/* The name leads and the id follows it, quietly. `chosenVoiceName` is preferred over
+              the catalogue for one reason: a voice picked a moment ago is named before the
+              listing has been re-fetched, so the line answers immediately instead of showing
+              an id that turns into a name a second later.
+
+              The id remains on the screen rather than only in a tooltip - it is what the
+              project stores, it is what a support conversation or a database row will quote,
+              and hiding it would trade one unreadable line for one unquotable one. */}
+          <span data-testid="voice-name" className="text-[11px] font-medium text-gray-800">
+            {chosenVoiceName ?? voiceName(voiceId) ?? (voiceId ? 'Unknown voice' : 'none')}
           </span>
-          {chosenVoiceName && (
-            <span className="text-[11px] text-gray-500">{chosenVoiceName}</span>
+          {voiceId && (
+            <span
+              data-testid="voice-id"
+              title="The identifier this project stores for the voice"
+              className="font-mono text-[10px] text-gray-400"
+            >
+              {voiceId}
+            </span>
           )}
           <button
             type="button"

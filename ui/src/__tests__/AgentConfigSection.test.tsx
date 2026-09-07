@@ -31,6 +31,22 @@ vi.mock('../api/endpoints', () => ({
 
 // The voice picker makes its own call; this file is about the section, and the picker has its
 // own. Left unmocked it would reach the network from inside a component under test.
+// The section names the stored voice from the catalogue, so this door is now on its path even
+// when the picker is never opened. Two entries and one deliberate absence: `unknown-voice-id`
+// is in no listing, which is what a voice removed from the account looks like.
+vi.mock('../api/voices', () => ({
+  voicesApi: {
+    list: vi.fn().mockResolvedValue({
+      account: [
+        { voice_id: 'default-voice-id', name: 'Daniel - Steady Broadcaster', accent: 'british', gender: 'male' },
+        { voice_id: 'chosen-voice-id', name: 'Alice - Clear, Engaging Educator', accent: 'british', gender: 'female' },
+      ],
+      library: [],
+      accent_options: ['british'],
+    }),
+  },
+}))
+
 vi.mock('../components/tabs/VoicePicker', () => ({
   default: ({ onChoose }: { onChoose: (id: string, name: string) => void }) => (
     <button type="button" onClick={() => onChoose('chosen-voice-id', 'Chosen Voice')}>
@@ -426,5 +442,53 @@ describe('the agent configuration section - when the read itself fails', () => {
 
     expect(await screen.findByText(/Loading this agent/i)).toBeInTheDocument()
     expect(screen.queryByText(/could not be loaded/i)).not.toBeInTheDocument()
+  })
+})
+
+
+describe('the voice a project has chosen, read by a person', () => {
+  // An id is what the project stores and tells an administrator nothing about who they picked.
+  // `Xb7hH8MSUJpSbSDYk0k2` was the whole of the answer unless the voice happened to be chosen
+  // in the same session, which is the one case that was already handled.
+  it('names the configured voice', async () => {
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config({ voice_id: 'chosen-voice-id' }))
+    renderSection()
+    expect(await screen.findByText('Alice - Clear, Engaging Educator')).toBeInTheDocument()
+  })
+
+  it('names the default when nothing is configured', async () => {
+    // The provenance chip said `default - default-voice-id`. The default is inherited rather
+    // than chosen, which makes naming it *more* useful, not less: nobody picked it, so nobody
+    // has any reason to recognise the id.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    renderSection()
+    // Scoped to the provenance chip. With no override the voice line names the default too -
+    // correctly, since it is what the agent will speak with - so an unscoped query finds both
+    // and cannot say which one this test is about.
+    await waitFor(() =>
+      expect(
+        screen.getAllByTestId('provenance').some((chip) =>
+          /Daniel - Steady Broadcaster/.test(chip.textContent ?? ''),
+        ),
+      ).toBe(true),
+    )
+  })
+
+  it('still shows the id, so it stays quotable', async () => {
+    // The id is what a database row and a support conversation will carry. Hiding it entirely
+    // would trade one unreadable line for one unquotable one.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config({ voice_id: 'chosen-voice-id' }))
+    renderSection()
+    expect(await screen.findByTestId('voice-id')).toHaveTextContent('chosen-voice-id')
+  })
+
+  it('falls back to saying so when the catalogue does not know the voice', async () => {
+    // The control, and a real state: a voice removed from the account, or a catalogue request
+    // that failed. Showing nothing, or showing a stale name, would both be worse than saying
+    // the id and admitting the name is unknown.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config({ voice_id: 'unknown-voice-id' }))
+    renderSection()
+    expect(await screen.findByTestId('voice-id')).toHaveTextContent('unknown-voice-id')
+    expect(screen.getByTestId('voice-name')).toHaveTextContent('Unknown voice')
   })
 })
