@@ -892,6 +892,32 @@ than smuggled into a proxy fix. Until then, the split is real: `/api/templates` 
 
 Do NOT use `sky-*` or `blue-*` classes — these were replaced with `brand` tokens.
 
+**Each tab of `AgentDetailPanel` means one thing, and the test that decides is: if this agent
+were renamed or replaced, would this content move with them?** *Agents* is who the agent is and
+how they behave, keyed on the agent (`AGENT_SETUP_SECTION` in `tabs/CrewAgentsTab.tsx`);
+*Setup* is how the engagement is configured and *Status* is what it is doing, both keyed on the
+crew (`CREW_SETUP_SECTION` / `CREW_STATUS_SECTION` in `AgentDetailPanel.tsx`). Six panels were
+on Agents because their **components were named after agents** - `PamSetupTab`, `AlexSetupTab`,
+`MayaSetupTab`, `JordanSetupTab`, `TaylorSetupTab` - and asked the question, five of them held
+the engagement's schedule, brief, disciplines, mapping and roster rather than anything of the
+agent's. Only Avery's interviewing style survives, and the Agents tab being thin is the correct
+outcome. `ui/src/__tests__/TabClassification.test.tsx` states the classification as a property: set
+equality per tab over each panel's `data-panel-section`, so a seventh panel registered with no
+decision about where it belongs fails rather than lands.
+
+Three consequences worth knowing before touching it. **Every absence assertion must be scoped
+with `within()` on the tab's own panel and made after every tab has been opened** - Output,
+Setup and Agents render `hidden` rather than unmounted (a half-typed brief must survive a trip
+to Output), so a screen-level `queryByText` finds content on an inactive tab and an assertion
+made before a tab mounts passes against the mount latch instead of against the placement.
+**Hidden means latched**: `setupOpened` / `agentsOpened` stop a panel opened on Output fetching
+a schedule nobody asked for, and they are effects on `tab`, not click handlers, because a deep
+link can open the panel straight onto either. And **two deep links name a tab** -
+`AssignmentRedirect` in `router.tsx` and Runs' "Assign stakeholders" - so anything that moves
+the stakeholder mapping moves both; they are driven to the content in
+`ui/src/__tests__/AssignmentRouteRetired.test.tsx` rather than checked for a string, because a link that lands on
+the right crew and the wrong tab looks exactly like working navigation.
+
 `StakeholderForm.tsx` offers five role checkboxes, and the last two - Project Administrator
 and Governor - render only when `GET /my-permissions` answers `can_grant_roles`, because the
 server refuses both to anyone without `project_admin` on that slug and a checkbox that always

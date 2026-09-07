@@ -1,17 +1,21 @@
 // ui/src/__tests__/AssignmentRouteRetired.test.tsx
 //
-// /:slug/assignment was not orphaned - Runs.tsx links to it from any run sitting in
-// `awaiting_assignment` - so retiring the page it rendered leaves live links pointing at it,
-// in the runs list and in anyone's bookmarks. It redirects to where the mapping lives now.
+// Two links point at the stakeholder-to-activity mapping: the retired `/:slug/assignment`
+// route, which anyone may have bookmarked, and the "Assign stakeholders" link Runs.tsx shows
+// against a run sitting in `awaiting_assignment`. Both are driven here, because both name a
+// tab and the mapping has now changed tabs twice - to Agents when Setup was narrowed to what
+// a crew owns, and back to Setup when the panels were re-read against the rename test.
 //
 // Asserted on the shipped `routes` export and driven to the destination, not stopped at the
-// Navigate: a redirect that lands somewhere with no assignment surface on it would satisfy a
-// pathname check and still leave the person with nothing to do.
-import { render, screen, waitFor } from '@testing-library/react'
+// Navigate: a link that lands on the right crew and the wrong tab satisfies a pathname check,
+// looks like working navigation, and simply does not hold what was asked for.
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest'
 import { routes } from '../router'
+import { projectsApi } from '../api/endpoints'
 
 vi.mock('../context/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -92,25 +96,56 @@ beforeAll(() => vi.stubGlobal('Request', PermissiveRequest))
 afterAll(() => vi.unstubAllGlobals())
 beforeEach(() => localStorage.clear())
 
+function renderAt(entry: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: [entry] })
+  render(
+    <QueryClientProvider client={qc}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  )
+  return router
+}
+
+/**
+ * The mapping is on screen, on the tab the link named - not merely somewhere in the document.
+ *
+ * Scoped with `within`, and that is the whole point rather than tidiness: the Setup tab is
+ * rendered `hidden` rather than unmounted, so an unscoped `findByLabelText` would find the
+ * filter box whether or not the tab holding it was the one that opened.
+ */
+async function expectTheMappingOnTheSetupTab() {
+  expect(await screen.findByTestId('selected-crew-stakeholder_management')).toBeInTheDocument()
+  expect(await screen.findByTestId('active-tab-setup')).toBeInTheDocument()
+  const setup = await screen.findByTestId('setup-tab-panel')
+  expect(setup).toBeVisible()
+  expect(await within(setup).findByLabelText('Filter activities')).toBeInTheDocument()
+}
+
 describe('the retired /:slug/assignment route', () => {
-  it('sends a bookmark to Jordan, on the Agents tab where his settings live', async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const router = createMemoryRouter(routes, { initialEntries: ['/acme/assignment'] })
-    render(
-      <QueryClientProvider client={qc}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>,
-    )
+  it('sends a bookmark to the Setup tab, where the mapping is made', async () => {
+    const router = renderAt('/acme/assignment')
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/acme'))
-    // `tab=agents`, and the assertion below is why it matters: a redirect left pointing at
-    // Setup still lands, still selects the right crew, and simply does not hold the mapping.
-    expect(router.state.location.search).toBe('?crew=stakeholder_management&tab=agents')
+    expect(router.state.location.search).toBe('?crew=stakeholder_management&tab=setup')
 
-    // And the destination really holds the surface: Jordan's crew is selected, his section
-    // is mounted under his own name, and it is the assignment mapping that is on it.
-    expect(await screen.findByTestId('selected-crew-stakeholder_management')).toBeInTheDocument()
-    expect(await screen.findByTestId('setup-section-Stakeholder Manager')).toBeInTheDocument()
-    expect(await screen.findByLabelText('Filter activities')).toBeInTheDocument()
+    await expectTheMappingOnTheSetupTab()
+  })
+})
+
+describe("Runs' \"Assign stakeholders\" link", () => {
+  it('opens the same tab, driven rather than read off the href', async () => {
+    // The second link, and it does not depend on the redirect above - it goes direct. Two
+    // links, one destination: the mapping moved tabs twice and this is the one that would be
+    // left behind, because nothing about the runs list mentions a tab.
+    vi.mocked(projectsApi.listRuns).mockResolvedValue([
+      { id: 4, status: 'awaiting_assignment', started_at: null, completed_at: null, crew_runs: [] },
+    ] as never)
+    const router = renderAt('/acme/runs')
+
+    await userEvent.click(await screen.findByRole('link', { name: /Assign stakeholders/ }))
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/acme'))
+    await expectTheMappingOnTheSetupTab()
   })
 })

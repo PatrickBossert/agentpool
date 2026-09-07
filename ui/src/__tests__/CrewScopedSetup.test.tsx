@@ -11,6 +11,12 @@
 //
 // So configuration is registered per AGENT and assembled per crew, in the crew's own agent
 // order. Renaming the file fixes today's instance; keying on the agent fixes the class.
+//
+// The map is down to one entry, and that is the second half of the same lesson rather than a
+// regression. Five of the six panels registered here were named after an agent and belonged to
+// the engagement - see TabClassification.test.tsx - so they are crew sections on Setup and
+// Status now. What is left is Avery's interviewing style, which is the only one that would
+// move with the agent if he were renamed or replaced.
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -62,11 +68,14 @@ vi.mock('../api/endpoints', () => ({
 }))
 
 describe('an agent-scoped Agents tab', () => {
-  it('gives each agent that has bespoke configuration its own named section', () => {
+  it('gives an agent that has bespoke configuration their own named section', () => {
     renderAgents('discovery_interviews')
-    // Both are in this crew. Neither owns the tab, so both are headed by their own agent.
-    expect(screen.getByTestId('setup-section-Interview Coordinator')).toBeInTheDocument()
+    // Avery's, and headed by him rather than by the crew - four agents work here and a tab
+    // named after any one of them was wrong for the other three.
     expect(screen.getByTestId('setup-section-Stakeholder Interviewer')).toBeInTheDocument()
+    // And nobody else's, because nobody else in this crew has anything that is theirs.
+    // Taylor's chase rules and roster used to render here and are the engagement's.
+    expect(screen.queryByTestId('setup-section-Interview Coordinator')).toBeNull()
   })
 
   it("heads an agent's block with their name, so ownership is on the screen", () => {
@@ -77,22 +86,29 @@ describe('an agent-scoped Agents tab', () => {
 
   it("does not put one crew's configuration under another crew", () => {
     // The defect. Taylor's chase rules were registered against stakeholder_management,
-    // which is Jordan's crew and contains no interview coordinator at all.
+    // which is Jordan's crew and contains no interview coordinator at all. Neither renders
+    // here now - the rules are the engagement's and the mapping is too - and the assertion
+    // that matters is still that nothing belonging to another crew's agent appears.
     renderAgents('stakeholder_management')
     expect(screen.queryByTestId('setup-section-Interview Coordinator')).toBeNull()
-    // Jordan's own configuration is what belongs there, and does render.
-    expect(screen.getByTestId('setup-section-Stakeholder Manager')).toBeInTheDocument()
+    expect(screen.queryByTestId(/^setup-section-/)).toBeNull()
+    // The agent is still configured here; it is only the engagement's mapping that left.
+    expect(screen.getByTestId('agent-config-section-Stakeholder Manager')).toBeInTheDocument()
   })
 
-  it("renders sections in the crew's own agent order", () => {
+  it("renders agents in the crew's own order", () => {
     // The order work happens in: coordinate, interview, synthesise. Alphabetical or
-    // registration order would read as arbitrary to anyone following the process.
+    // registration order would read as arbitrary to anyone following the process. Asserted
+    // over the agent panels rather than the bespoke sections, because one crew member having
+    // a bespoke section makes an order test over those vacuous.
     renderAgents('discovery_interviews')
-    const rendered = screen.getAllByTestId(/^setup-section-/)
+    const rendered = screen.getAllByTestId(/^agent-panel-/)
       .map((el) => el.getAttribute('data-testid'))
     expect(rendered).toEqual([
-      'setup-section-Interview Coordinator',
-      'setup-section-Stakeholder Interviewer',
+      'agent-panel-Interview Coordinator',
+      'agent-panel-Stakeholder Interviewer',
+      'agent-panel-Second Interviewer',
+      'agent-panel-Synthesis Analyst',
     ])
   })
 

@@ -11,7 +11,7 @@ import { buildPrintHtml } from '../components/PamReportView'
 import type { PamReport, PamReportMilestone } from '../types'
 
 // `milestoneVariance` defaults `today` to the real clock, and these tests exercise components
-// that legitimately read it - PamReportView and PamSetupTab render a live view, so threading a
+// that legitimately read it - PamReportView and ProjectScheduleSetup render a live view, so threading a
 // date through them would be wrong. The clock is faked instead.
 //
 // Fixed once already in milestoneVariance.test.ts on 19 Aug 2026, where every call was given an

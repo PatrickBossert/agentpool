@@ -65,7 +65,7 @@ vi.mock('../api/endpoints', () => ({
     save: vi.fn(),
     migrate: vi.fn(),
   },
-  // Needed only by the AgentDetailPanel-mounted tests below - AlexSetupTab (Alex's Setup tab)
+  // Needed only by the AgentDetailPanel-mounted tests below - DiscoveryBriefSetup
   // reads project settings and documents when the panel's Setup tab is visited.
   projectsApi: {
     getSettings: vi.fn().mockResolvedValue({}),
@@ -222,9 +222,9 @@ describe('ValueChain save', () => {
 // branch is kept mounted and merely hidden (`hidden={tab !== 'output'}`) rather than
 // conditionally rendered, specifically so this pair keeps passing.
 //
-// The round trip goes through Agents rather than Setup because that is where Alex's own
-// settings live now, and a tab whose content this file can recognise is what proves the click
-// navigated rather than merely not crashing.
+// The round trip goes through Setup, because that is where the discovery brief lives - it
+// describes the client, not the agent that reads it - and a tab whose content this file can
+// recognise is what proves the click navigated rather than merely not crashing.
 describe('unsaved Structure edits across an AgentDetailPanel tab change', () => {
   async function editDescriptionInThePanel() {
     render(<PanelWrapper />)
@@ -233,12 +233,12 @@ describe('unsaved Structure edits across an AgentDetailPanel tab change', () => 
     return field
   }
 
-  it('keeps a description edit when Agents is visited and Output is returned to', async () => {
+  it('keeps a description edit when Setup is visited and Output is returned to', async () => {
     await editDescriptionInThePanel()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Agents' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
     // Proves the click actually navigated, not just that nothing crashed - the tab's own
-    // content (Alex's Research Brief section) has to be on screen before switching back.
+    // content (the Research Brief section) has to be on screen before switching back.
     await screen.findByText('Research Brief')
     await userEvent.click(screen.getByRole('button', { name: /^Output/ }))
 
@@ -246,13 +246,13 @@ describe('unsaved Structure edits across an AgentDetailPanel tab change', () => 
     expect(field.value).toBe('first more')
   })
 
-  it('still reports the edit as unsaved after the round trip through Agents', async () => {
+  it('still reports the edit as unsaved after the round trip through Setup', async () => {
     // Losing the indicator is worse than losing the edit: it says the working copy matches
     // the server when it does not.
     await editDescriptionInThePanel()
     expect(screen.getByTestId('unsaved-changes')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Agents' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
     await screen.findByText('Research Brief')
     await userEvent.click(screen.getByRole('button', { name: /^Output/ }))
 

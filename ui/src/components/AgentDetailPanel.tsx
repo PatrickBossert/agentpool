@@ -34,6 +34,14 @@ import AveryOutputExtra from './tabs/AveryOutputExtra'
 import JordanOutputExtra from './tabs/JordanOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
 import MayaOutputExtra from './tabs/MayaOutputExtra'
+import DiscoveryBriefSetup from './tabs/DiscoveryBriefSetup'
+import InstrumentDesignSetup from './tabs/InstrumentDesignSetup'
+import InterviewInviteRulesSetup from './tabs/InterviewInviteRulesSetup'
+import InterviewProgrammePanel from './tabs/InterviewProgrammePanel'
+import MilestoneStatusPanel from './tabs/MilestoneStatusPanel'
+import ProjectScheduleSetup from './tabs/ProjectScheduleSetup'
+import StakeholderMappingSetup from './tabs/StakeholderMappingSetup'
+import StakeholderSummaryPanel from './tabs/StakeholderSummaryPanel'
 
 // ── Chat attachments: the tier picker ───────────────────────────────────────────
 //
@@ -53,11 +61,45 @@ const KNOWLEDGE_TIER_LABEL: Record<string, string> = {
 
 export type SlotFC = FC<{ slug: string }>
 
-// `CREW_SETUP_OVERRIDE` used to sit here, replacing the whole Setup tab for three crews with
-// PamSetupTab, AlexSetupTab and MayaSetupTab. Those are named after *agents* and configure
-// agents, so they are entries in AGENT_SETUP_SECTION now - see tabs/CrewAgentsTab.tsx - and
-// this map is gone rather than emptied. Setup holds what a crew owns; the Agents tab holds
-// everything scoped to a person.
+// ── Where a panel belongs: the rename test ─────────────────────────────────────
+//
+// **If this agent were renamed or replaced, would this content move with them?**
+//
+// Avery's interviewing style would - it is how *he* conducts an interview. A project's
+// milestone schedule would not, and neither would its research brief. Six panels named after
+// agents were read as agent configuration for exactly as long as nobody asked that question of
+// them; asked, five of the six turned out to be the engagement's.
+//
+// So each tab now means one thing:
+//
+// | Tab | What it holds | Keyed on |
+// |-----|---------------|----------|
+// | Agents | who the agent is and how they behave | the agent |
+// | Setup | how the engagement is configured | the crew |
+// | Status | what the engagement is doing | the crew |
+//
+// Two consequences worth stating rather than rediscovering. The Agents tab is thin, and that
+// is the correct outcome. And a panel is registered against a *crew* here - which is not the
+// mistake `CREW_SETUP_OVERRIDE` made, because that keyed **agent-scoped** content on a crew;
+// these are engagement-scoped, and a crew is the engagement-side scope.
+
+// How the engagement is configured, for the crew whose work it configures. Rendered under the
+// crew's own note, reads and produces.
+export const CREW_SETUP_SECTION: Partial<Record<string, SlotFC>> = {
+  PAM:                    ProjectScheduleSetup,
+  discovery_mapping:      DiscoveryBriefSetup,
+  assessment_design:      InstrumentDesignSetup,
+  stakeholder_management: StakeholderMappingSetup,
+  discovery_interviews:   InterviewInviteRulesSetup,
+}
+
+// What the engagement is doing, rendered above the crew's own run history. Read-only, with one
+// declared exception - see StakeholderSummaryPanel's own note on CSV import.
+export const CREW_STATUS_SECTION: Partial<Record<string, SlotFC>> = {
+  PAM:                  MilestoneStatusPanel,
+  assessment_design:    InterviewProgrammePanel,
+  discovery_interviews: StakeholderSummaryPanel,
+}
 
 // Rendered after the primary artefact in the Output tab. Exported because AgentOutputTab's
 // empty state has to know a crew has one of these: "No outputs yet" printed directly above a
@@ -116,22 +158,18 @@ interface CrewMeta {
 }
 
 const CREW_META: Record<string, CrewMeta> = {
-  // PAM gained an entry when her Setup tab stopped being `PamSetupTab`. That component was the
-  // whole tab and it configures *her* - PAM assignment, the report recipients - so it moved to
-  // the Agents tab with the other two agent-named overrides. Without this entry Setup then read
-  // "No setup information available", which is the spec's named "consequence to accept" at its
-  // starkest: the crew genuinely has no crew-level configuration, and the previous arrangement
-  // concealed that by filling the space with an agent's panel.
+  // PAM gained an entry when the schedule stopped being her whole Setup tab. The schedule is
+  // back on Setup - it configures the engagement, not PAM - and this metadata heads it.
   PAM: {
     reads: ['Every crew\'s outputs and run status', 'Review flags and milestone dates', 'Project settings'],
     produces: ['Orchestration runs', 'The daily report to governors and approvers'],
-    note: 'PAM orchestrates the other crews rather than producing an artefact of her own - she is the only agent in no crew. Her own configuration is on the Agents tab.',
+    note: 'PAM orchestrates the other crews rather than producing an artefact of her own - she is the only agent in no crew. The project schedule she reads is below; how the schedule is running is on the Status tab.',
   },
   discovery_mapping: {
     reads: ['Uploaded documents', 'Discovery settings (sector, standards)', 'Existing registry (for iteration)'],
     produces: ['value_chain_registry.json', 'value_chain_tree.json', 'value_chain_summary.txt'],
-    // No configPage: it pointed at the retired /:slug/value-chain page, and Alex's own
-    // discovery brief - which is what a reader would go looking for - is on the Agents tab.
+    // No configPage: it pointed at the retired /:slug/value-chain page, and the discovery
+    // brief - which is what a reader would go looking for - is on this tab, below.
     note: 'Re-running will preserve existing IDs and extend the registry - existing downstream artefacts reference these IDs.',
   },
   assessment_design: {
@@ -875,6 +913,14 @@ export default function AgentDetailPanel({
   // would fetch a configuration for *every agent in the crew* for a tab nobody looked at -
   // four requests on discovery_interviews, where the Setup tab this replaces cost one.
   const [agentsOpened, setAgentsOpened] = useState(false)
+  // The same latch for Setup, and it moved here with the content that pays for it. Setup used
+  // to be conditional on `tab === 'setup'` and hold nothing but static metadata, so mounting
+  // it cost a render and unmounting it cost nothing. It now holds the project schedule, the
+  // discovery brief, the stakeholder mapping and the invite rules - every one of them a form
+  // whose fields are React state committed only by an explicit Save, and three of them
+  // fetching - so it is rendered `hidden` (a trip to Output must not discard a half-typed
+  // brief) and latched (a panel opened on Output must not fetch a schedule nobody asked for).
+  const [setupOpened, setSetupOpened] = useState(false)
   const [messages, setMessages] = useState<{ role: 'user' | 'agent'; content: string; agentName?: string }[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
@@ -897,10 +943,12 @@ export default function AgentDetailPanel({
   })
   const writableTiers = permissions?.writable_knowledge_tiers ?? []
 
-  // Latched, never cleared. The panel can *open* on Agents - a deep link, or the tab this
-  // browser last used - so this cannot be set from the tab click alone.
+  // Latched, never cleared. The panel can *open* on either of these - a deep link, or the tab
+  // this browser last used - so neither can be set from the tab click alone. `/:slug/assignment`
+  // redirects straight onto Setup, which is exactly that case.
   useEffect(() => {
     if (tab === 'agents') setAgentsOpened(true)
+    if (tab === 'setup') setSetupOpened(true)
   }, [tab])
 
   useEffect(() => {
@@ -1138,24 +1186,39 @@ export default function AgentDetailPanel({
       )}
 
       {/* ── STATUS TAB ─────────────────────────────────────────────────────────── */}
-      {tab === 'status' && crewKey === 'PAM' && (
-        <div ref={statusScrollRef} className="flex-1 overflow-y-auto p-4">
-          <PamCrewStatusDetail slug={slug} />
-        </div>
-      )}
-
-      {tab === 'status' && crewKey !== 'PAM' && (
-        <div ref={statusScrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-          <AgentStatusTab
-            slug={slug}
-            crewKey={crewKey}
-            crewRun={crewRun}
-            outputs={crewOutputs}
-            statusEvents={statusEvents}
-            locale={locale}
-            primaryModel={primaryModel}
-            crewStatus={crewStatus}
-          />
+      {/* What the engagement is doing. Conditional rather than hidden, and deliberately so:
+          nothing on it is a draft, so a remount costs a refetch and loses nothing - which is
+          also why it needs no mount latch of its own. Nothing here is fetched until it is
+          opened, because it is not mounted until it is opened. */}
+      {tab === 'status' && (
+        <div
+          ref={statusScrollRef}
+          data-testid="status-tab-panel"
+          className="flex-1 overflow-y-auto p-4 space-y-4"
+        >
+          {(() => {
+            const StatusSection = CREW_STATUS_SECTION[crewKey]
+            if (!StatusSection) return null
+            return (
+              <section data-panel-section={`status:${crewKey}`} className="space-y-3">
+                <StatusSection slug={slug} />
+              </section>
+            )
+          })()}
+          {crewKey === 'PAM' ? (
+            <PamCrewStatusDetail slug={slug} />
+          ) : (
+            <AgentStatusTab
+              slug={slug}
+              crewKey={crewKey}
+              crewRun={crewRun}
+              outputs={crewOutputs}
+              statusEvents={statusEvents}
+              locale={locale}
+              primaryModel={primaryModel}
+              crewStatus={crewStatus}
+            />
+          )}
         </div>
       )}
 
@@ -1305,14 +1368,18 @@ export default function AgentDetailPanel({
       )}
 
       {/* ── SETUP TAB ──────────────────────────────────────────────────────────── */}
-      {/* What this *crew* is for on this engagement, and nothing keyed to a person. The note,
-          the reads and the produces are all it holds now; name, image, voice, synthesis model
-          and every bespoke agent panel are on the Agents tab beside the agent that owns them.
-          A crew with no crew-level configuration therefore shows metadata alone, which is
-          honest - the previous arrangement concealed it by filling the space with four agent
-          panels. Conditional rather than hidden: nothing on it is a draft. */}
-      {tab === 'setup' && (
-        <div data-testid="setup-tab-panel" className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* How this engagement is configured, for the work this crew does: the crew's note,
+          reads and produces, and whatever configuration the engagement carries for it.
+          Nothing keyed to a person - name, image, voice, synthesis model and Avery's
+          interviewing style are on the Agents tab beside the agent that owns them.
+          Hidden rather than unmounted, and latched, for the reasons on `setupOpened`. */}
+      <div
+        hidden={tab !== 'setup'}
+        data-testid="setup-tab-panel"
+        className="flex-1 overflow-y-auto p-4 space-y-4"
+      >
+        {setupOpened && (
+          <>
           {crewMeta ? (
             <>
               {crewMeta.note && (
@@ -1357,8 +1424,22 @@ export default function AgentDetailPanel({
           ) : (
             <p className="text-xs text-gray-400 text-center py-12">No setup information available.</p>
           )}
-        </div>
-      )}
+
+          {(() => {
+            const SetupSection = CREW_SETUP_SECTION[crewKey]
+            if (!SetupSection) return null
+            return (
+              <section
+                data-panel-section={`setup:${crewKey}`}
+                className="space-y-3 border-t border-gray-100 pt-4"
+              >
+                <SetupSection slug={slug} />
+              </section>
+            )
+          })()}
+          </>
+        )}
+      </div>
 
       {/* ── AGENTS TAB ─────────────────────────────────────────────────────────── */}
       {/* Hidden rather than unmounted, for the same reason the Output tab is. Every block on

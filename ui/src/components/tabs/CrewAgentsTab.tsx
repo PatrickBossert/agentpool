@@ -13,11 +13,16 @@
 // own agents have one, in the crew's own order. Renaming the file would have fixed today's
 // instance; keying on the agent fixes the class.
 //
-// **The whole-tab overrides are gone.** `CREW_SETUP_OVERRIDE` replaced the Setup tab outright
-// for three crews with PamSetupTab, AlexSetupTab and MayaSetupTab - components named after
-// *agents*, configuring agents, occupying a crew's tab. They are ordinary entries in
-// `AGENT_SETUP_SECTION` now, beside the agent each is named after, so everything agent-scoped
-// is in one place whatever its shape rather than a rule about which shapes count.
+// **Being named after an agent is not the same as belonging to one.** Six panels arrived here
+// on that reasoning and five of them left again: PamSetupTab held a project's schedule,
+// AlexSetupTab its research brief, MayaSetupTab its disciplines and its interview programme,
+// JordanSetupTab its stakeholder-to-activity mapping, TaylorSetupTab its roster and its chase
+// rules. Apply the test - if this agent were renamed or replaced, would this content move with
+// them? - and every one of those answers no. They are crew-scoped sections on Setup and Status
+// now (see AgentDetailPanel's CREW_SETUP_SECTION / CREW_STATUS_SECTION), and what is left here
+// is the only content that is genuinely about an agent rather than about the engagement.
+//
+// **The tab becoming thin is the correct outcome**, not a loss.
 //
 // **One agent at a time.** The Setup tab stacked four full configurations under a heading
 // that also held the crew's own settings - 3364px of it, measured on 7 September. An agent
@@ -30,28 +35,22 @@ import { useState, type FC } from 'react'
 import { CREW_AGENTS, AGENT_AVATAR } from '../agentStatus'
 import { useAgentIdentity } from '../../hooks/useAgentIdentity'
 import AgentConfigSection from './AgentConfigSection'
-import AlexSetupTab from './AlexSetupTab'
 import AverySetupTab from './AverySetupTab'
-import JordanSetupTab from './JordanSetupTab'
-import MayaSetupTab from './MayaSetupTab'
-import PamSetupTab from './PamSetupTab'
-import TaylorSetupTab from './TaylorSetupTab'
 
 export type SetupSectionFC = FC<{ slug: string }>
 
 /**
  * Bespoke configuration sections, keyed by the agent that owns them - never by a crew.
  *
- * Six of eighteen agents have one; the other twelve have their name, image, voice and
- * synthesis model and nothing else. The three that arrived here from `CREW_SETUP_OVERRIDE`
- * (PAM, Alex, Maya) are the ones that used to replace a whole crew's tab.
+ * **One of eighteen agents has one**, and that is the honest count rather than a gap waiting
+ * to be filled. Avery's interviewing style - how firmly he presses, how long he waits in a
+ * silence - is how *he* conducts an interview, so it moves with him if he is renamed or
+ * replaced. The other seventeen have their name, image, voice and synthesis model and nothing
+ * else, because nothing else about them is theirs rather than the engagement's.
+ *
+ * The map stays keyed on the agent, and the entry for a second such panel goes here.
  */
 export const AGENT_SETUP_SECTION: Record<string, SetupSectionFC> = {
-  'PAM':                     PamSetupTab,
-  'Value Chain Mapper':      AlexSetupTab,
-  'Interaction Designer':    MayaSetupTab,
-  'Stakeholder Manager':     JordanSetupTab,
-  'Interview Coordinator':   TaylorSetupTab,
   'Stakeholder Interviewer': AverySetupTab,
 }
 
@@ -162,6 +161,11 @@ export function CrewAgentsTab({
             {Section && (
               <section
                 data-testid={`setup-section-${agent}`}
+                // The classification, in the DOM rather than in a comment. Every bespoke
+                // panel carries `<tab>:<owner>`, and TabClassification.test.tsx holds the
+                // set each tab may contain - so a panel registered anywhere without a
+                // decision about which tab it belongs on fails rather than lands.
+                data-panel-section={`agents:${agent}`}
                 className="space-y-3 border-t border-surface-border pt-4"
               >
                 <h4 className="text-xs font-semibold text-gray-600">

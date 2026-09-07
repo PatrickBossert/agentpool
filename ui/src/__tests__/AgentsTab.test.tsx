@@ -22,7 +22,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import AgentDetailPanel from '../components/AgentDetailPanel'
 import { agentConfigApi } from '../api/agentConfig'
-import { valueChainApi } from '../api/endpoints'
+import { projectsApi, valueChainApi } from '../api/endpoints'
 
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({
@@ -240,6 +240,38 @@ describe('Setup keeps only what a crew owns', () => {
     expect(setup).toHaveTextContent('interview_transcripts.json')
   })
 
+  it('asks the server for nothing when the panel opens on Output', async () => {
+    // Setup is rendered `hidden` rather than unmounted now, because it holds forms whose
+    // fields are React state - so without the latch, opening any panel on any tab would fetch
+    // this crew's assignment mapping and, on the PMO crew, a whole schedule that nobody
+    // asked to see. The same property AgentDetailPanelAgentsMount.test.tsx holds
+    // for the Agents tab, on the tab that has just started paying for queries.
+    renderPanel({ crewKey: 'stakeholder_management', initialTab: 'output' })
+    await waitFor(() => expect(projectsApi.getMyPermissions).toHaveBeenCalled())
+
+    expect(projectsApi.getAssignment).not.toHaveBeenCalled()
+  })
+
+  it('asks once Setup has been opened, and not again on the way back', async () => {
+    // The other half, and the half a latch set in the tab's onClick would fail: it is
+    // latched, never cleared, so a half-typed brief survives a trip to Output.
+    const user = userEvent.setup()
+    renderPanel({ crewKey: 'stakeholder_management', initialTab: 'output' })
+    await waitFor(() => expect(projectsApi.getMyPermissions).toHaveBeenCalled())
+
+    await user.click(screen.getByRole('button', { name: 'Setup' }))
+    await waitFor(() => expect(projectsApi.getAssignment).toHaveBeenCalled())
+    const firstPass = vi.mocked(projectsApi.getAssignment).mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: 'Output' }))
+    await user.click(screen.getByRole('button', { name: 'Setup' }))
+
+    expect(vi.mocked(projectsApi.getAssignment).mock.calls.length).toBe(firstPass)
+    // Mounted throughout, which the count alone cannot tell from a component that unmounted
+    // and was served from the query cache on the way back.
+    expect(screen.getByTestId('assignment-coverage')).toBeInTheDocument()
+  })
+
   it('renders the agent configuration under Agents instead', async () => {
     renderPanel({ initialTab: 'agents' })
 
@@ -252,21 +284,32 @@ describe('Setup keeps only what a crew owns', () => {
 })
 
 describe("an agent's bespoke section moves with the agent", () => {
-  it("shows Maya's own settings on the Agents tab", async () => {
-    // MayaSetupTab was a CREW_SETUP_OVERRIDE - a component named after an agent, configuring
-    // an agent, replacing a crew's whole tab. It is an ordinary AGENT_SETUP_SECTION now.
-    renderPanel({ crewKey: 'assessment_design', initialTab: 'agents' })
+  it("shows Avery's own settings on the Agents tab", async () => {
+    // Avery's interviewing style is the one panel that survives the rename test: how firmly
+    // he presses and how long he waits in a silence is how *he* conducts an interview, so it
+    // moves with him. Every other bespoke panel was the engagement's and left.
+    renderPanel({ crewKey: 'discovery_interviews', initialTab: 'agents',
+                  initialAgent: 'Stakeholder Interviewer' })
 
-    expect(await screen.findByTestId('setup-section-Interaction Designer')).toBeVisible()
+    expect(await screen.findByTestId('setup-section-Stakeholder Interviewer')).toBeVisible()
   })
 
   it("leaves nothing of it on that crew's Setup tab", async () => {
-    // MayaSetupTab *was* that crew's whole Setup tab, so this is the sharpest case of the
-    // absence: the tab it used to be now holds the crew's reads and produces instead.
-    renderPanel({ crewKey: 'assessment_design', initialTab: 'setup' })
+    renderPanel({ crewKey: 'discovery_interviews', initialTab: 'setup' })
 
     const setup = await screen.findByTestId('setup-tab-panel')
-    expect(within(setup).queryByTestId('setup-section-Interaction Designer')).toBeNull()
-    expect(setup).toHaveTextContent('interview_scripts.json')
+    expect(within(setup).queryByTestId('setup-section-Stakeholder Interviewer')).toBeNull()
+    expect(setup).toHaveTextContent('interview_transcripts.json')
+  })
+
+  it("keeps nothing of Maya's on the Agents tab, because none of it was hers", async () => {
+    // MayaSetupTab was a whole-tab override, then an AGENT_SETUP_SECTION, and neither was
+    // right: a project's disciplines and the eight-instrument programme are the engagement's,
+    // and outlive any change of designer. Both halves are asserted below rather than only the
+    // absence, so this cannot pass by the content having been lost altogether.
+    renderPanel({ crewKey: 'assessment_design', initialTab: 'agents' })
+
+    await screen.findByTestId('agent-config-section-Interaction Designer')
+    expect(screen.queryByTestId('setup-section-Interaction Designer')).toBeNull()
   })
 })

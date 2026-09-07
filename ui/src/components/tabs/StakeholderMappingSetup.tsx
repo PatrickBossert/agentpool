@@ -1,5 +1,5 @@
-// ui/src/components/tabs/JordanSetupTab.tsx
-// Jordan's Setup section: who speaks for which value chain activity.
+// ui/src/components/tabs/StakeholderMappingSetup.tsx
+// Who speaks for which value chain activity.
 //
 // This is the mapping the Interview Coordinator plans sessions from, and until this shipped
 // there was no way to make it. The page that looked like the way - /:slug/assignment - wrote
@@ -7,9 +7,15 @@
 // the table agents do read, `stakeholder_assignments`, had no writer at all. Both are one
 // table now, keyed on the value chain node id, and this is its only door.
 //
-// It is in a Setup tab because the mapping is configuration, not an event inside a run. The
+// It is on the Setup tab because the mapping is configuration, not an event inside a run. The
 // old page was reachable only from a run sitting in `awaiting_assignment`, so the work could
 // not be done before the first orchestration - which is the defect this fixes.
+//
+// It was `JordanSetupTab`, on the Agents tab, because the Stakeholder Manager hands the
+// mapping to the Interview Coordinator. Replace him and the mapping stands: it is a statement
+// about the client's people and the client's value chain, so it belongs to the engagement.
+// **Two deep links point here** - `/:slug/assignment` and Runs' "Assign stakeholders" - and
+// both name the tab, so both move whenever this does.
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -357,7 +363,7 @@ function OffChainPanel({
 
 // ── The section ───────────────────────────────────────────────────────────────
 
-export default function JordanSetupTab({ slug }: { slug: string }) {
+export default function StakeholderMappingSetup({ slug }: { slug: string }) {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState<Pair[] | null>(null)
   const [query, setQuery] = useState('')
@@ -537,7 +543,7 @@ export default function JordanSetupTab({ slug }: { slug: string }) {
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-gray-400 leading-relaxed">
-        Who speaks for which value chain activity. Jordan hands this to the Interview
+        Who speaks for which value chain activity. It is handed to the Interview
         Coordinator, who plans one session per assignment, so an activity with nobody against
         it is an activity nobody is interviewed about. The mapping is made by hand - job
         titles do not carry enough detail to derive it - and several people on one activity is
@@ -546,7 +552,7 @@ export default function JordanSetupTab({ slug }: { slug: string }) {
 
       {allNodes.length === 0 && (
         <p className="text-[11px] text-amber-600">
-          No value chain registry yet. Alex maps the chain first; the activities to assign
+          No value chain registry yet. The value chain is mapped first; the activities to assign
           against appear here once he has run.
         </p>
       )}

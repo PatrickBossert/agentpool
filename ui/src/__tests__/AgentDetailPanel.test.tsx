@@ -311,19 +311,19 @@ describe('AgentDetailPanel - the Output tab badge', () => {
 describe('AgentDetailPanel - unsaved work across a tab change', () => {
   // beforeunload does not fire on an in-panel tab change, so a tab that holds a draft and is
   // rendered conditionally loses it the moment another tab is clicked, silently and with no
-  // warning. Alex's own settings hold ten pieces of form state committed only by an explicit
-  // Save; Avery's and Taylor's do the same. They are on the Agents tab now, which is why this
-  // asserts against that one - Setup holds no draft any more.
+  // warning. The discovery brief holds ten pieces of form state committed only by an explicit
+  // Save, and so do the invite rules and the stakeholder mapping - all of them on Setup, which
+  // is why Setup is rendered `hidden` rather than conditionally and why this asserts there.
   it("keeps a typed discovery brief when the user visits Output and comes back", async () => {
     const user = userEvent.setup()
-    renderPanel({ crewKey: 'discovery_mapping', outputs: ALEX_OUTPUTS, initialTab: 'agents' })
+    renderPanel({ crewKey: 'discovery_mapping', outputs: ALEX_OUTPUTS, initialTab: 'setup' })
 
     const brief = await screen.findByPlaceholderText(/The client operates primarily/i)
     await user.type(brief, 'Focus on depot operations')
 
     // The Output tab's label carries a count badge, so its accessible name is "Output 1".
     await user.click(screen.getByRole('button', { name: /^Output/ }))
-    await user.click(screen.getByRole('button', { name: /^Agents$/ }))
+    await user.click(screen.getByRole('button', { name: /^Setup$/ }))
 
     expect(await screen.findByPlaceholderText(/The client operates primarily/i))
       .toHaveValue('Focus on depot operations')
