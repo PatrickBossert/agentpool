@@ -134,13 +134,87 @@ it('offers a test interview for an interviewer and not for anybody else', async 
 
 ---
 
-### Task 4: Document it
+### Task 4: An agent portrait is uploaded, not typed - and it is downscaled on the way in
+
+**Files:** Modify `api/routers/agent_config.py`, `requirements.txt`, `ui/src/components/tabs/AgentConfigSection.tsx`, `ui/src/api/agentConfig.ts`; Create `api/services/image_intake.py`; Test: new `tests/test_agent_image_upload.py`, extend `ui/src/__tests__/AgentConfigSection.test.tsx`
+
+Patrick's instruction, 7 September: *"if a new agent image is selected and the configuration is
+saved, check the filesize and down-scale it appropriately."* Today `image_url` is a free-text
+path with no upload at all, so there is nothing to downscale yet - this task builds both.
+
+**Interfaces:**
+- Produces: `POST /projects/{slug}/agents/{agent_id}/image` returning `{"url": "..."}`, and
+  `GET /projects/{slug}/agents/{agent_id}/image` serving it **unauthenticated**.
+- Produces: `prepare_portrait(data: bytes, content_type: str) -> tuple[bytes, str]` in
+  `api/services/image_intake.py` - the downscale, testable without HTTP.
+
+- [ ] **Step 1: Read `upload_branding_image` in `api/routers/projects.py:390` and report what it does, in order.** It is the precedent and this door copies its shape: membership floor first, then `require_project_administration`, then the existence check - *"a caller from outside the engagement must not be able to use this door to learn which slugs exist"* - then content-type allowlist, then size, then **magic-byte verification**, then write. Report each, then follow it. Its `GET` sibling is unauthenticated, and this one must be too: the interview page has no login and CLAUDE.md documents that as one of exactly two deliberate floor exceptions.
+
+- [ ] **Step 2: Declare Pillow in `requirements.txt`.** It is installed at 12.3.0 but only as a transitive dependency of `pdfplumber` and `python-pptx`, so nothing declares it and a resolver that dropped both would take it with them. **Pin it the way its neighbours are pinned.** Do not add any other new dependency.
+
+- [ ] **Step 3: Write the failing test - the downscale, as a pure function**
+
+```python
+def test_a_large_portrait_is_downscaled_to_the_longest_side():
+    big = Image.new("RGB", (3000, 2000), "white")
+    out, ext = prepare_portrait(_encode(big, "JPEG"), "image/jpeg")
+    assert Image.open(io.BytesIO(out)).size == (512, 341)   # aspect ratio preserved, not cropped
+```
+
+`prepare_portrait` is a pure function over bytes so it can be driven directly - CLAUDE.md
+records three guards whose reach could not be established because they only ran against real
+inputs. **512 on the longest side**: the largest portrait in the product renders at `w-40`
+(160 CSS px, 320 at 2x), so 512 is generous and the file stays small.
+
+- [ ] **Step 4: Do not upscale.** A 200px portrait stays 200px. Assert it separately - a
+  `resize` that always runs would pass Step 3 and quietly blur every small image.
+
+- [ ] **Step 5: Honour EXIF orientation, then strip EXIF entirely.** Two properties, two tests.
+  A phone photograph carries an orientation flag - ignore it and the portrait is sideways - and
+  it carries **GPS coordinates**, which would then be served from an *unauthenticated* page to
+  every interview participant. `ImageOps.exif_transpose` first, then save without `exif`.
+
+```python
+def test_a_portrait_keeps_no_exif_and_therefore_no_location():
+    out, _ = prepare_portrait(_jpeg_with_gps(), "image/jpeg")
+    assert not Image.open(io.BytesIO(out)).getexif()
+```
+
+- [ ] **Step 6: A ceiling still applies, and it is a refusal.** Downscaling is not a reason to
+  accept an unbounded upload - the bytes are read into memory before Pillow sees them. Reject
+  above **10 MB** with a 422 naming the limit, and keep the magic-byte check: a decoder pointed
+  at a file that is not the type it claims is the part of this door that is a security control.
+
+- [ ] **Step 7: The stored URL is same-origin**, `/api/projects/{slug}/agents/{agent_id}/image`,
+  exactly as the branding door stores its own. **This is the half that matters beyond tidiness.**
+  sp62's review found that an off-site `image_url` makes every participant's browser reach a
+  third party from the unauthenticated interview page, disclosing their IP, user agent and the
+  timing of an interview - on an engagement whose documents and inference are on-premises. An
+  uploaded portrait has no such reach. Record in the report that the free-text field still
+  permits an off-site URL, so this **narrows** the hole rather than closing it, and that closing
+  it means retiring the text field once uploads exist for both image fields.
+
+- [ ] **Step 8: The frontend offers a file input beside the field**, and on save posts the file
+  first, then the configuration with the returned URL. Assert **what is sent**, both calls and
+  in that order - a test that asserts the input renders is the twelfth of exactly that shape on
+  this project.
+
+- [ ] **Step 9: Suites twice. Power-check each of Steps 3, 4, 5 and 6 separately - for Step 5
+  use an image that is BOTH rotated and carries GPS, and confirm the two properties fail
+  independently. Commit.**
+
+
+---
+
+### Task 5: Document it
 
 **Files:** Modify `CLAUDE.md`
 
 - [ ] **Step 1: State the rule.** Who can conduct an interview is answered by `interviewer_agent_ids()` - an identity with a `voice_id` - and both the crew's selection and the rehearsal button read it from there. Record that `is_interviewer` and `voice_sex` are **derived** onto the configuration response rather than stored.
 
 - [ ] **Step 2: Record the decision the sex filter did not reverse.** The picker filters by the sex of the interviewer's *current voice*, never by a table mapping agents to sexes, and say why: a project that gives Avery a female voice has said something, and a table here would contradict it while looking authoritative.
+
+- [ ] **Step 2b: Record the portrait upload.** An agent image is uploaded and downscaled to 512px on its longest side, EXIF stripped (orientation honoured first), and stored same-origin - so an uploaded portrait cannot reach a third party from the unauthenticated interview page. The free-text field still can, so say the hole is narrowed rather than closed.
 
 - [ ] **Step 3: Record that Laura has no portrait**, that `AgentAvatar` renders initials for any agent without one, and that a real asset is wanted and is not blocked on code.
 
@@ -150,7 +224,7 @@ it('offers a test interview for an interviewer and not for anybody else', async 
 
 ## Self-Review
 
-**Spec coverage:** the button's audience derived not restated (1, 3), the sex filter from the voice (1, 2), the filter clearable and never empty (2), the dialog de-Averyed (3), the portrait fallback (3), documented (4).
+**Spec coverage:** the button's audience derived not restated (1, 3), the sex filter from the voice (1, 2), the filter clearable and never empty (2), the dialog de-Averyed (3), the portrait fallback (3), the portrait upload and downscale (4), documented (5).
 
 **Placeholder scan:** none. Tasks 1, 2 and 3 each open by establishing facts from the code, because a brief on this project has been wrong about the codebase more than a dozen times - twice on the immediately preceding branch.
 
