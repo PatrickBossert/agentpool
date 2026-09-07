@@ -42,6 +42,7 @@ from api.services.agent_config_service import agent_defaults, resolve_agent_conf
 from api.services.agent_default_images import (
     forget_agent_default_images,
     promoted_default_dir,
+    promoted_default_file,
     promoted_default_url,
 )
 
@@ -569,6 +570,45 @@ async def test_the_deployment_door_names_an_agent_outside_the_roll(deployment):
     response = await deployment["anonymous"].get("/api/agents/no_such_agent/image")
     assert response.status_code == 404
     assert response.json()["detail"] == "Unknown agent 'no_such_agent'"
+
+
+@pytest.mark.asyncio
+async def test_a_row_naming_an_unservable_extension_is_refused_rather_than_guessed_at(
+    deployment,
+):
+    """The one guard on this branch whose reach was described and never established.
+
+    `promoted_default_file` refuses a row whose extension maps to no accepted content type,
+    because serving bytes under a guessed type from an unauthenticated door is worse than
+    answering that there is nothing here. Only a hand-edited row reaches it - the map is
+    inverted from `PORTRAIT_CONTENT_TYPES`, so a storable extension cannot become unservable
+    by drift - so a hand-edited row is what this drives.
+
+    **The file is written as well as the row, and that is the whole test.** Without it the
+    door's own `path.exists()` check answers the same 404 for a different reason, and a
+    version of the guard that guessed `application/octet-stream` would pass just as happily.
+    With the bytes present, guessing serves them and refusing does not.
+    """
+    await deployment["admin"].post(
+        f"/projects/{SLUG_A}/agents/{FACELESS}/image", files=_upload(_png())
+    )
+    async with get_system_connection() as conn:
+        await conn.execute(
+            "UPDATE agent_default_images SET extension = ? WHERE agent_id = ?",
+            (".bmp", FACELESS),
+        )
+        await conn.commit()
+    (promoted_default_dir() / f"{FACELESS}.bmp").write_bytes(_png())
+    forget_agent_default_images()
+
+    assert promoted_default_file(FACELESS) is None, (
+        "an extension no accepted content type maps to was resolved to a file to serve"
+    )
+    response = await deployment["anonymous"].get(f"/api/agents/{FACELESS}/image")
+    assert response.status_code == 404, (
+        f"the door served {response.status_code} for a row naming an unservable extension"
+    )
+    assert response.json()["detail"] == "No default portrait for this agent."
 
 
 @pytest.mark.asyncio
