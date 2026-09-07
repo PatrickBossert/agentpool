@@ -161,12 +161,26 @@ export default function Dashboard() {
   const crewFromUrl = searchParams.get('crew')
   const tabFromUrl = searchParams.get('tab') ?? undefined
 
-  const [selectedCrew, setSelectedCrew] = useState<string>(crewFromUrl || 'PAM')
-  // Which agent's face was last clicked in the carousel, so the Agents tab opens on the one
-  // the user asked about rather than always on the crew's first. Cleared when the crew
-  // changes: an agent id from the previous crew is not in this one's roster, and the tab
-  // would fall back to its first agent anyway - clearing says so rather than relying on it.
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  // The crew on show and, within it, which agent's face was last clicked - so the Agents tab
+  // shows the one the reader asked about rather than always the crew's first.
+  //
+  // **One piece of state and functional updates, not two setters.** A face click deliberately
+  // bubbles: the face's own handler fires and then the card's, because a face is part of its
+  // card and clicking anywhere on a card has always selected the crew. With the agent and the
+  // crew held separately, the crew handler's unconditional `setSelectedAgent(null)` ran second
+  // and threw away the agent it had just been given - so *every* face click opened the tab on
+  // the crew's first agent, and the seam looked wired while doing nothing. Selecting the crew
+  // you are already on now keeps the agent, which makes the pair independent of the order the
+  // two events happen to arrive in rather than correct for one of the two orders.
+  const [selection, setSelection] = useState<{ crew: string; agent: string | null }>(
+    { crew: crewFromUrl || 'PAM', agent: null },
+  )
+  const { crew: selectedCrew, agent: selectedAgent } = selection
+  // A genuine change of crew still clears the agent: an agent from the previous crew is not
+  // in this one's roster, and the tab would fall back to its first agent anyway - clearing
+  // says so rather than relying on it.
+  const selectCrew = (crew: string) =>
+    setSelection(s => (s.crew === crew ? s : { crew, agent: null }))
 
   const { data: status } = useQuery({
     queryKey: ['status', slug],
@@ -374,8 +388,8 @@ export default function Dashboard() {
               hitlReviews={hitlReviews}
               rejectedCrews={rejectedCrews}
               selectedCrew={selectedCrew}
-              onSelectCrew={(crew) => { setSelectedCrew(crew); setSelectedAgent(null) }}
-              onSelectAgent={(crew, agent) => { setSelectedCrew(crew); setSelectedAgent(agent) }}
+              onSelectCrew={selectCrew}
+              onSelectAgent={(crew, agent) => setSelection({ crew, agent })}
               onRunCrew={handleRunCrew}
               onRerunCrew={setRerunCrew}
               runningCrew={runningCrew}
@@ -406,6 +420,11 @@ export default function Dashboard() {
               locale={settings?.locale}
               initialTab={tabFromUrl}
               initialAgent={selectedAgent ?? undefined}
+              // The tab's own selector reports back, so the two ways of choosing an agent
+              // hold one answer between them. Without this a chip click would leave the
+              // carousel still believing the previous agent was on show, and clicking that
+              // agent's face again would be no change at all and move nothing.
+              onAgentSelected={(agent) => setSelection(s => ({ ...s, agent }))}
             />
           </div>
         </div>

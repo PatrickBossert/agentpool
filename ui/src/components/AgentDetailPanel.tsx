@@ -872,16 +872,17 @@ export interface AgentDetailPanelProps {
   // browser last had saved, or an approver whose last visit ended on Chat lands on Chat no
   // matter what the email said.
   initialTab?: string
-  // Which agent the Agents tab opens on. The tab shows one agent at a time, and a reader who
+  // Which agent the Agents tab shows. The tab shows one agent at a time, and a reader who
   // arrived by way of a particular agent should not have to find them again.
   //
-  // **Nothing passes it yet, and that is a known gap rather than a spare parameter.** The
-  // carousel selects a *crew* - its agent faces are decoration, not controls - so the
-  // selection this is meant to carry does not exist to be handed over, and wiring one needs
-  // state in Dashboard.tsx that this change deliberately did not touch. Absent, the tab opens
-  // on the crew's first agent, which is the path every test here drives; when the carousel
-  // learns to select a face, this is the seam it arrives on rather than a new one.
+  // Dashboard passes the face last clicked in the carousel. It is followed on every change,
+  // not only on the first render - see CrewAgentsTab, where a second face on the same crew
+  // was silently ignored for as long as an initialiser was the only reader.
   initialAgent?: string
+  // The mirror of it: which agent the reader picked from the tab's own selector. Supplying
+  // `initialAgent` without this leaves the two selectors holding different answers, and the
+  // carousel then cannot move the tab back to an agent it still believes is showing.
+  onAgentSelected?: (agent: string) => void
 }
 
 function isTab(value: string | null | undefined): value is Tab {
@@ -890,7 +891,7 @@ function isTab(value: string | null | undefined): value is Tab {
 
 export default function AgentDetailPanel({
   slug, crewKey, crewRun, outputs, logs, isPipelineActive, hitlReviews = [], locale = 'GB',
-  initialTab, initialAgent,
+  initialTab, initialAgent, onAgentSelected,
 }: AgentDetailPanelProps) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -1454,7 +1455,13 @@ export default function AgentDetailPanel({
         {agentsOpened && (
           // Keyed on the crew: selecting another crew is a different set of agents and a
           // different set of drafts, so the selection must not survive the change.
-          <CrewAgentsTab key={crewKey} crewKey={crewKey} slug={slug} initialAgent={initialAgent} />
+          <CrewAgentsTab
+            key={crewKey}
+            crewKey={crewKey}
+            slug={slug}
+            initialAgent={initialAgent}
+            onAgentSelected={onAgentSelected}
+          />
         )}
       </div>
 

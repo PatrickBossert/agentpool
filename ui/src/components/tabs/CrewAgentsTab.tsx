@@ -30,7 +30,7 @@
 // own tabs are: every block below holds form state committed only by an explicit Save, and
 // unmounting on a selector click throws away a half-typed display name with nothing to catch
 // it. React Query keys each configuration by agent, so nothing refetches on a switch either.
-import { useState, type FC } from 'react'
+import { useEffect, useState, type FC } from 'react'
 
 import { CREW_AGENTS, AGENT_AVATAR } from '../agentStatus'
 import { useAgentIdentity } from '../../hooks/useAgentIdentity'
@@ -88,20 +88,38 @@ export function CrewAgentsTab({
   crewKey,
   slug,
   initialAgent,
+  onAgentSelected,
 }: {
   crewKey: string
   slug: string
   /**
-   * Which agent to open on. Ignored when it names somebody who is not in this crew, so a
+   * Which agent to show. Ignored when it names somebody who is not in this crew, so a
    * stale selection cannot leave the tab showing nobody at all.
+   *
+   * **A request, not only a starting point**, which is why the effect below exists as well as
+   * the initialiser. This component is keyed on the crew, so clicking a second face on the
+   * *same* card changes this prop without remounting - and an initialiser runs once per crew,
+   * so the second click used to do nothing whatever. Keying the component on the agent
+   * instead would move the selection and throw away the drafts the `hidden` rendering below
+   * exists to preserve, which trades one silent loss for a worse one.
    */
   initialAgent?: string
+  /**
+   * Reported when the reader picks an agent from the selector here, so whoever supplies
+   * `initialAgent` can keep up. Without it the two selectors disagree the moment both are
+   * used: a chip click moves this tab and leaves the caller still holding the previous agent,
+   * so re-clicking that agent's face upstream is not a change and moves nothing.
+   */
+  onAgentSelected?: (agent: string) => void
 }) {
   const agents = CREW_AGENTS[crewKey] ?? []
   const [selected, setSelected] = useState(
     () => (initialAgent && agents.includes(initialAgent) ? initialAgent : agents[0]) ?? '',
   )
   // Above the early return: a hook cannot be called conditionally.
+  useEffect(() => {
+    if (initialAgent && agents.includes(initialAgent)) setSelected(initialAgent)
+  }, [initialAgent, agents])
   const identity = useAgentIdentity(slug)
 
   if (agents.length === 0) {
@@ -121,7 +139,7 @@ export function CrewAgentsTab({
             <button
               key={agent}
               type="button"
-              onClick={() => setSelected(agent)}
+              onClick={() => { setSelected(agent); onAgentSelected?.(agent) }}
               aria-pressed={agent === selected}
               data-testid={`agent-selector-${agent}`}
               className={`flex items-center gap-1.5 rounded-full border pl-1 pr-2.5 py-1 text-[11px] font-medium transition-colors ${
