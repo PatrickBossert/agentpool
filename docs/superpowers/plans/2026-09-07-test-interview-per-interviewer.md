@@ -194,10 +194,25 @@ def test_a_portrait_keeps_no_exif_and_therefore_no_location():
   permits an off-site URL, so this **narrows** the hole rather than closing it, and that closing
   it means retiring the text field once uploads exist for both image fields.
 
-- [ ] **Step 8: The frontend offers a file input beside the field**, and on save posts the file
-  first, then the configuration with the returned URL. Assert **what is sent**, both calls and
-  in that order - a test that asserts the input renders is the twelfth of exactly that shape on
-  this project.
+- [ ] **Step 8: The frontend offers an Open… file selector beside the field.** Patrick's
+  instruction, 7 September. A visible **"Choose image…"** button that opens the operating
+  system's file dialog - a Lucide icon and `brand` tokens, matching the voice picker's
+  "Choose…" beside it, because these are the two controls on this section that open something.
+
+  The native `<input type="file">` is styled out of the way rather than shown raw; it stays a
+  real focusable input so the keyboard and the accessibility tree still reach it. `accept` is
+  set to the same three types the door allows, so the dialog filters to them - **and the server
+  still validates**, because `accept` is a convenience the user can defeat by typing a filename.
+
+  Show the **chosen filename and the resulting size** after selection, since the point of this
+  task is that a large file quietly becomes a small one - an administrator who is never told it
+  happened will upload the same 8 MB photograph again next time.
+
+- [ ] **Step 8b: On save, post the file first, then the configuration with the returned URL.**
+  Assert **what is sent**, both calls and **in that order** - a test that asserts the input
+  renders is the twelfth of exactly that shape on this project. Drive the failure too: if the
+  upload fails the configuration save must not proceed with a stale or empty `image_url`, and
+  the administrator must be told which half failed.
 
 - [ ] **Step 9: Suites twice. Power-check each of Steps 3, 4, 5 and 6 separately - for Step 5
   use an image that is BOTH rotated and carries GPS, and confirm the two properties fail
