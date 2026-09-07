@@ -386,6 +386,15 @@ _IMAGE_CONTENT_TYPES = {
 
 _MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2 MB
 
+# The first bytes each declared type must start with. Keyed on the same three
+# `_IMAGE_CONTENT_TYPES` declares, and held equal to it by a test - see the note at the use site
+# for why the lookup below is a subscript.
+_MAGIC_BYTES = {
+    "image/png": b"\x89PNG",
+    "image/jpeg": b"\xff\xd8",
+    "image/webp": b"RIFF",
+}
+
 
 @router.post("/{slug}/branding/image")
 async def upload_branding_image(
@@ -426,13 +435,15 @@ async def upload_branding_image(
                 detail="Image exceeds maximum allowed size of 2 MB.",
             )
 
-        # Magic-byte content-type verification
-        MAGIC_BYTES = {
-            "image/png": b"\x89PNG",
-            "image/jpeg": b"\xff\xd8",
-            "image/webp": b"RIFF",
-        }
-        if not data[:4].startswith(MAGIC_BYTES.get(file.content_type, b"")):
+        # Magic-byte content-type verification.
+        #
+        # A **subscript, not a `.get(..., b"")`**, and the validated `content_type` rather than
+        # the raw `file.content_type`. `b""` is a prefix of every payload, so a defaulting
+        # lookup would give a fourth type added to `_IMAGE_CONTENT_TYPES` a check that refuses
+        # nothing and says nothing - a guard that reads as working while covering none of it.
+        # `test_every_branding_content_type_has_a_magic_prefix` holds the two tables equal, so
+        # the cost of forgetting is a red suite rather than a 500 on somebody's upload.
+        if not data[:4].startswith(_MAGIC_BYTES[content_type]):
             raise HTTPException(status_code=422, detail="File content does not match declared content type")
 
         # Save file

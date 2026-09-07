@@ -373,6 +373,111 @@ async def test_one_agents_portrait_is_not_served_for_another(doors):
     assert r.status_code == 404, r.text
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "filename,content_type,expected,forbidden",
+    [
+        # The extension the caller supplied disagrees with the type they declared. `.jpeg` is
+        # the ordinary shape of this - a camera writes it and a person uploads it unchanged.
+        ("portrait.jpeg", "image/jpeg", ".jpg", ".jpeg"),
+        # No extension at all, which a filename from a paste or a scanner carries.
+        ("portrait", "image/png", ".png", ""),
+        # And the hostile shape. `file.filename` is the caller's string; if it ever reached the
+        # stored name, this is what would be reaching it.
+        ("../../../evil.php", "image/png", ".png", ".php"),
+    ],
+)
+async def test_the_stored_extension_comes_from_the_declared_type_never_from_the_filename(
+    doors, tmp_path, filename, content_type, expected, forbidden
+):
+    """The one input on this door that reaches the filesystem, and it is not the caller's.
+
+    `extension` is `prepare_portrait`'s, taken from `PORTRAIT_CONTENT_TYPES` after the
+    allowlist, after the magic-byte prefix and after Pillow agreed the decoded format matched.
+    The property was **true and asserted by nothing** until this test: a review mutation taking
+    the extension from `file.filename` instead passed all twenty-two tests in this file, because
+    every one of them uploads a file whose name already agrees with its type.
+
+    The consequence of that mutation is functional rather than exploitable, and it is worse for
+    being quiet: `portrait.jpeg` stores as `.jpeg`, the `GET` looks for `.jpg` and answers 404
+    for ever, and the replacement loop - which iterates the same three extensions - never cleans
+    it up. So the assertion is two-sided, on the name that must exist **and** the name that must
+    not, since "the right file is there" passes just as well when a second, wrong one is beside
+    it.
+    """
+    data = _jpeg() if content_type == "image/jpeg" else _png()
+    r = await doors["admin_a"].post(
+        f"/projects/{SLUG_A}/agents/{AVERY}/image",
+        files=_upload(data, content_type, filename),
+    )
+    assert r.status_code == 200, r.text
+
+    root = tmp_path / "projects"
+    directory = root / SLUG_A / "assets" / "agents"
+    assert (directory / f"{AVERY}{expected}").exists()
+    if forbidden:
+        assert not (directory / f"{AVERY}{forbidden}").exists()
+    # The assets tree holds that one file and nothing else, and nothing anywhere under the root
+    # carries the caller's name - which is where the traversal in the third parameter would
+    # show up rather than beside the portrait. (The root also holds `config.yaml`, written by
+    # project creation, so it is scoped rather than compared whole.)
+    written = {p.name for p in (root / SLUG_A / "assets").rglob("*") if p.is_file()}
+    assert written == {f"{AVERY}{expected}"}, f"unexpected files in the assets tree: {written}"
+    assert not list(root.rglob("*evil*")), "the caller's filename reached the filesystem"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "slug,shape",
+    [
+        ("%00", "a slug that is nothing but a NUL byte"),
+        ("rev%00alpha", "a NUL byte in the middle of a real-looking slug"),
+        ("x" * 400, "a slug longer than any filesystem will accept"),
+    ],
+)
+async def test_a_slug_the_filesystem_will_not_accept_answers_404_and_not_500(doors, slug, shape):
+    """Driven **anonymously**, because this door has no floor to stop anybody reaching it.
+
+    All three answered 500 on delivery, from two different places: a NUL byte raises
+    `ValueError` out of `_portrait_dir`'s `.resolve()`, and an over-long name resolves perfectly
+    well and then raises `OSError(ENAMETOOLONG)` at the `exists()` in the serving loop. So the
+    two halves have to be guarded separately - a fix at the first place alone leaves the third
+    parameter failing, which is exactly why it is parametrised rather than asserted once.
+
+    `is_contained_slug` has carried this guard since it was written; `_portrait_dir` reasoned
+    correctly about not reusing that function for the *root* and dropped the half that was not
+    about the root at all.
+
+    Not merely tidiness: it is unauthenticated, reachable by anyone who can reach the port, and
+    it writes a stack trace to the log on every request. It also made the door's own docstring
+    untrue, which is the shape CLAUDE.md names - a guard described rather than established.
+    """
+    r = await doors["anonymous"].get(f"/projects/{slug}/agents/{AVERY}/image")
+    assert r.status_code == 404, f"{shape} answered {r.status_code}: {r.text[:200]}"
+    assert r.json()["detail"] == "No portrait found for this agent.", (
+        "a hostile slug must be indistinguishable from a project that uploaded nothing"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slug", ["%00", "x" * 400])
+async def test_the_same_slugs_answer_404_on_the_upload_door_too(doors, client, slug):
+    """The `POST` side of the same defect, refused at `_assert_project_exists`.
+
+    Lower stakes - it is behind the administration gate, so only somebody who could already
+    upload can reach it - but it is the identical `Path.exists()` on a caller-chosen name, one
+    function above, and a known 500 left beside a fixed one is what lends false confidence to
+    the entry next to it.
+
+    Driven as a **sysadmin**, because that is the only caller `check_project_access` lets
+    through to the existence check on a slug that does not exist.
+    """
+    r = await client.post(
+        f"/projects/{slug}/agents/{AVERY}/image", files=_upload(_png())
+    )
+    assert r.status_code == 404, r.text
+
+
 def test_the_portrait_directory_cannot_escape_the_projects_root(monkeypatch, tmp_path):
     """Driven as a pure function over given slugs, both the shapes it must refuse and the shape
     it must not.
@@ -394,6 +499,12 @@ def test_the_portrait_directory_cannot_escape_the_projects_root(monkeypatch, tmp
 
     for escape in ("../elsewhere", "../../etc", "/etc", "a/../../b"):
         assert _portrait_dir(escape) is None, f"{escape!r} resolved to a path outside the root"
+
+    # And the names the filesystem refuses outright, which are a different failure from a name
+    # that points somewhere else: `.resolve()` raises on these rather than answering a path, so
+    # a containment check written without a `try` never runs at all.
+    for unusable in ("\x00", "rev\x00alpha"):
+        assert _portrait_dir(unusable) is None, f"{unusable!r} raised instead of being refused"
 
     get_settings.cache_clear()
 

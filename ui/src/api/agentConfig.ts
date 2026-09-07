@@ -44,7 +44,13 @@ export interface AgentConfig {
  *  uploads the same 8 MB file again next time.
  */
 export interface PortraitUpload {
-  /** Same-origin, always - `/api/projects/{slug}/agents/{agent_id}/image`. */
+  /**
+   * Same-origin, always - `/projects/{slug}/agents/{agent_id}/image`.
+   *
+   * **No `/api` prefix.** This router is mounted at `/projects`, and only `/api/templates` and
+   * `/api/interviews` carry that prefix, so `/api/projects/...` is served by nothing. Store what
+   * the door answers; never assemble this address here.
+   */
   url: string
   /** Bytes actually stored, after the downscale. */
   bytes: number

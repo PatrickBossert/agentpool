@@ -152,6 +152,14 @@ export default function Settings() {
   const [imageStatus, setImageStatus] = useState<string>('')
   const [imageError, setImageError] = useState(false)
   const [imageUploading, setImageUploading] = useState(false)
+  // The portrait just uploaded, and when. It exists so the **preview** can be cache-busted
+  // without the buster reaching what is stored: the door serves every version of a header image
+  // from one unchanging address, so a browser that already holds the old one shows it after a
+  // replacement, and appending `?t=` to the value in the form persists a frozen timestamp into
+  // `config_json` on the next save. Harmless while that address 404'd; live now that it
+  // resolves. Keyed on the URL as well as the time, so typing a different address in the box
+  // clears the buster rather than decorating somebody else's URL with it.
+  const [uploadedHeader, setUploadedHeader] = useState<{ url: string; at: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: settings, isError: settingsFailed, error: settingsError } = useQuery({
@@ -232,7 +240,10 @@ export default function Settings() {
     setImageStatus('')
     try {
       const data = await projectsApi.uploadBrandingImage(slug, file)
-      setForm((f) => ({ ...f, brand_header_image_url: `${data.url}?t=${Date.now()}` }))
+      // Stored clean. What the door answered is what the interview page must render, and a
+      // timestamp baked into it would be served to every participant for ever.
+      setForm((f) => ({ ...f, brand_header_image_url: data.url }))
+      setUploadedHeader({ url: data.url, at: Date.now() })
       setImageStatus('Image uploaded successfully.')
       setImageError(false)
     } catch {
@@ -554,7 +565,11 @@ export default function Settings() {
           <label className="text-xs text-gray-600 block mb-1">Header Image</label>
           {form.brand_header_image_url && (
             <img
-              src={form.brand_header_image_url}
+              src={
+                uploadedHeader && uploadedHeader.url === form.brand_header_image_url
+                  ? `${uploadedHeader.url}?t=${uploadedHeader.at}`
+                  : form.brand_header_image_url
+              }
               alt="Brand header preview"
               className="mb-2 max-h-24 rounded border border-gray-200 object-contain"
             />

@@ -247,6 +247,31 @@ def _assert_renderable_image(image_url: str | None) -> None:
         )
 
 
+def _exists(path: Path) -> bool:
+    """`Path.exists()` for a name a caller chose, answering `False` rather than raising.
+
+    Two shapes reach the filesystem calls on this router and neither is a path that merely does
+    not exist. A **NUL byte** in the slug raises `ValueError` out of `stat`, and an **over-long**
+    name raises `OSError(ENAMETOOLONG)` - and `Path.exists()` re-raises both rather than
+    swallowing them, so an unguarded call answers **500** and writes a stack trace per request.
+    That mattered most on `GET .../image`, which has no floor at all: anyone who could reach the
+    port could produce one.
+
+    `is_contained_slug` (`api/database.py`) has carried exactly this guard, with exactly this
+    comment, since it was written. `_portrait_dir` below declines to reuse that function and is
+    right to - it answers the same question about a different root - but the containment argument
+    is the only part of it that is about the root, and this part is not.
+
+    Deliberately not narrowed to `ENAMETOOLONG`: the question this answers is "is there a file
+    here", and every way of failing to find out is the same answer. A refusal is the safe
+    direction on both doors.
+    """
+    try:
+        return path.exists()
+    except (OSError, ValueError):  # NUL bytes, over-long names - as is_contained_slug
+        return False
+
+
 def _assert_project_exists(slug: str) -> None:
     """404 for a slug with no database, **before** `get_connection` is asked for one.
 
@@ -261,7 +286,7 @@ def _assert_project_exists(slug: str) -> None:
     `DATABASE_DIR` would have this door running schema into somebody else's database, and the
     two questions are answered together everywhere else this pattern appears.
     """
-    if not is_contained_slug(slug) or not get_db_path(slug).exists():
+    if not is_contained_slug(slug) or not _exists(get_db_path(slug)):
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
 
@@ -360,10 +385,18 @@ def _portrait_dir(slug: str) -> Path | None:
 
     Not `is_contained_slug`, which answers the same question about a different root
     (DATABASE_DIR) - two rules that happen to reject the same strings are not one rule, and the
-    guarantee wanted here is about the directory the bytes are actually read from.
+    guarantee wanted here is about the directory the bytes are actually read from. **What that
+    reasoning dropped**, and had to be given back, is the `try`/`except` around `.resolve()`:
+    that half of `is_contained_slug` is not about the root at all, and without it a NUL byte in
+    the slug raised `ValueError` straight out of an unauthenticated door. Refusing is the right
+    answer for the same reason containment is - a name the filesystem will not accept is not a
+    project.
     """
     root = Path(get_settings().projects_dir).resolve()
-    candidate = (root / slug / "assets" / "agents").resolve()
+    try:
+        candidate = (root / slug / "assets" / "agents").resolve()
+    except (OSError, ValueError):  # NUL bytes, over-long names - as is_contained_slug
+        return None
     if not str(candidate).startswith(str(root) + os.sep):
         return None
     return candidate
@@ -426,6 +459,13 @@ async def upload_agent_image(
     if directory is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     directory.mkdir(parents=True, exist_ok=True)
+    # `extension` is `prepare_portrait`'s, which took it from `PORTRAIT_CONTENT_TYPES` after the
+    # allowlist, after the prefix check and after Pillow agreed the decoded format matched.
+    # **Never `file.filename`**, which is the caller's string and is not consulted anywhere on
+    # this path. Preserving the caller's extension is a plausible-looking edit and would break
+    # the door in a way that looks like a serving bug: `portrait.jpeg` would be stored as
+    # `.jpeg`, the `GET` looks for `.jpg`, and the replacement loop below - which iterates the
+    # same three - would never clean it up.
     stored = directory / f"{agent_id}{extension}"
 
     # Any portrait stored under a different extension goes, and this is a correctness
@@ -463,9 +503,24 @@ async def get_agent_image(slug: str, agent_id: str) -> FileResponse:
     exception serving the same page, and if an agent portrait ever becomes client-confidential
     the repair is session-token scoping rather than `check_project_access`.
 
-    It answers 404 for an unknown project, an unknown agent and a project that has uploaded
-    nothing, without distinguishing them - there is nothing here worth telling an anonymous
-    caller apart.
+    **It answers 404 for every case it refuses, and two of those cases are not the same
+    sentence.** An unknown project, an unrenderable slug and a project that has uploaded nothing
+    all answer `No portrait found for this agent.`, so no anonymous caller can tell a real slug
+    from an invented one. An unknown **agent** answers `Unknown agent '...'` instead, and that is
+    deliberate rather than an oversight: the roll is a global constant already returned by
+    `GET .../config`, so naming it discloses nothing about this engagement, and the caller who
+    hits it is an operator with a typo rather than somebody probing.
+
+    An earlier version of this paragraph said all three were indistinguishable and that was
+    simply untrue of two shapes of slug, which answered **500**. The guard is `_exists` and
+    `_portrait_dir`'s `except`; this sentence is the description, and CLAUDE.md's rule is that
+    the first is what has to hold.
+
+    One oracle remains and is inherent rather than reparable: a project that **has** uploaded a
+    portrait answers 200, so a caller who already knows a slug learns it has one.
+    `GET /{slug}/branding/image` has had that property since it was written, and what is new is
+    only that the roll multiplies the probe surface by eighteen. It discloses the portrait, which
+    is what the door is for.
     """
     _defaults_or_404(agent_id)
     directory = _portrait_dir(slug)
@@ -473,7 +528,10 @@ async def get_agent_image(slug: str, agent_id: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="No portrait found for this agent.")
     for content_type, (extension, _) in PORTRAIT_CONTENT_TYPES.items():
         candidate = directory / f"{agent_id}{extension}"
-        if candidate.exists():
+        # `_exists`, not `.exists()`: `_portrait_dir` refuses a NUL byte but an over-long slug
+        # resolves perfectly well and only fails here, at the stat - so the guard is needed at
+        # both ends of this path and not merely at the first one that was noticed.
+        if _exists(candidate):
             return FileResponse(
                 path=candidate,
                 media_type=content_type,
