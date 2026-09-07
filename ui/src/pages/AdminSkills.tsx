@@ -1,8 +1,12 @@
 // ui/src/pages/AdminSkills.tsx
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Check, X, Download, Upload, BookOpen, Clock, Sprout, RotateCcw } from 'lucide-react'
+import {
+  AlertTriangle, Check, X, Download, Upload, BookOpen, Clock, Sprout, RotateCcw,
+  Repeat, ChevronDown, ChevronRight, Globe,
+} from 'lucide-react'
 import { skillsApi, type AgentSkill } from '../api/skills'
+import { describeError } from '../utils/describeError'
 import { CREW_AGENTS } from '../components/agentStatus'
 
 const ALL_AGENTS = Array.from(
@@ -15,6 +19,9 @@ const SOURCE_LABEL: Record<string, string> = {
   import:   'Imported',
   review:   'Revision review',
   chat:     'Agent chat',
+  // Written by `propose_skill` when an agent generalises the correction it has just made in
+  // response to a send-back. Without this key the card showed the raw column value.
+  revision: 'Proposed after a revision',
 }
 
 function AgentPill({ name }: { name: string }) {
@@ -73,6 +80,70 @@ function FlagCard({ reason, suggestion }: { reason: string; suggestion: string |
   )
 }
 
+/** "Seen once" / "Seen 3 times" - the count the queue is ordered by, in words. */
+function occurrenceLabel(occurrences: number): string {
+  const n = Math.max(1, occurrences || 1)
+  return n === 1 ? 'Seen once' : `Seen ${n} times`
+}
+
+/**
+ * The evidence behind the count, fetched only when a reviewer asks for it.
+ *
+ * A count on its own says how strong the signal is; it does not say what the signal is made
+ * of. The occurrences carry the engagement, the output that was corrected, and the wording
+ * the agent used that time - which is how a reviewer tells one rule recurring from an agent
+ * repeating itself about one script. Loaded on disclosure rather than with the list, so a
+ * queue of twenty proposals is still one request.
+ */
+function EvidencePanel({ skill }: { skill: AgentSkill }) {
+  const [open, setOpen] = useState(false)
+  const { data: occurrences = [], isLoading, error } = useQuery({
+    queryKey: ['skills', 'occurrences', skill.id],
+    queryFn: () => skillsApi.occurrences(skill.id),
+    enabled: open,
+  })
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-surface px-3 py-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-700 hover:text-gray-900 transition-colors"
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        {open ? 'Hide the evidence' : 'Show the evidence'}
+      </button>
+
+      {open && (
+        <div className="mt-2 space-y-2">
+          {isLoading && <p className="text-[11px] text-gray-600">Loading…</p>}
+          {error && (
+            <p role="alert" className="text-[11px] text-red-600">
+              {describeError(error, 'Could not load where this rule came from.')}
+            </p>
+          )}
+          {!isLoading && !error && occurrences.length === 0 && (
+            <p className="text-[11px] text-gray-600">
+              No sightings recorded. This skill predates the proposal path, or was written by hand.
+            </p>
+          )}
+          {occurrences.map(o => (
+            <div key={o.id} className="border-l-2 border-brand-light pl-2.5 space-y-0.5">
+              <p className="text-[10px] font-semibold text-gray-700">
+                {o.source_project || 'Engagement not recorded'}
+                {o.source_ref && ` · ${o.source_ref}`}
+                {o.proposed_by_agent && ` · ${o.proposed_by_agent}`}
+                {o.created_at && ` · ${o.created_at.slice(0, 10)}`}
+              </p>
+              <p className="text-[11px] text-gray-600 leading-relaxed italic">{o.description}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function EditableSkillCard({
   skill,
   onApprove,
@@ -86,6 +157,15 @@ function EditableSkillCard({
   const [name, setName] = useState(skill.name)
   const [description, setDescription] = useState(skill.description)
   const [agents, setAgents] = useState(skill.agents)
+
+  // The consequence sentence is bound to the Approve button by `aria-describedby`, not left
+  // beside it. CLAUDE.md records a note asserted per section satisfying every control in that
+  // section: proximity is not association, and an association the DOM holds is one a test can
+  // read back from the button rather than infer from the layout.
+  const noteId = `skill-${skill.id}-approve-consequence`
+  const holders = (editing ? agents : skill.agents)
+  const agentPhrase = holders.length > 0 ? holders.join(', ') : 'the agent it is assigned to'
+  const origin = skill.source_project || 'the engagement it came from'
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
@@ -134,6 +214,32 @@ function EditableSkillCard({
         <FlagCard reason={skill.flag_reason} suggestion={skill.flag_suggestion} />
       )}
 
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand/15 px-2 py-0.5 text-[10px] font-semibold text-gray-800">
+          <Repeat size={10} /> {occurrenceLabel(skill.occurrences)}
+        </span>
+        {skill.proposed_by_agent && (
+          <span className="text-[10px] text-gray-500">
+            Proposed by {skill.proposed_by_agent}
+            {skill.source_ref && ` on ${skill.source_ref}`}
+          </span>
+        )}
+      </div>
+
+      {!editing && <EvidencePanel skill={skill} />}
+
+      <p
+        id={noteId}
+        className="flex items-start gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-[11px] text-gray-800 leading-relaxed"
+      >
+        <Globe size={12} className="mt-0.5 flex-shrink-0 text-brand-dark" />
+        <span>
+          Approving is a change to {agentPhrase} on <strong>every engagement</strong>, not only{' '}
+          {origin}. The rule joins that agent&rsquo;s instructions on its next run everywhere.
+          Rejecting leaves the instructions as they are.
+        </span>
+      </p>
+
       <div className="flex items-center gap-2 justify-between">
         <span className="text-[10px] text-gray-500">
           {SOURCE_LABEL[skill.source] ?? skill.source}
@@ -154,9 +260,10 @@ function EditableSkillCard({
           </button>
           <button
             onClick={() => onApprove(skill.id, name, description, agents)}
-            className="flex items-center gap-1 text-xs text-white bg-teal-600 hover:bg-teal-700 transition-colors px-3 py-1 rounded font-semibold"
+            aria-describedby={noteId}
+            className="flex items-center gap-1 text-xs text-white bg-brand-dark hover:bg-brand transition-colors px-3 py-1 rounded font-semibold"
           >
-            <Check size={11} /> Approve
+            <Check size={11} /> Approve everywhere
           </button>
         </div>
       </div>
@@ -421,9 +528,21 @@ export default function AdminSkills() {
         </button>
       </div>
 
-      {/* Queue tab */}
+      {/* Queue tab.
+          The order is the server's - GET /admin/skills sends the queue occurrences-descending,
+          so a rule an agent has proposed three times arrives above one proposed once. Nothing
+          here re-sorts it. Two places deciding one ordering is how they come to disagree, and
+          the page is not the half holding the count. */}
       {activeTab === 'queue' && (
         <div className="space-y-3">
+          {updateMut.isError && (
+            <p
+              role="alert"
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+            >
+              {describeError(updateMut.error, 'Could not update the skill. Please try again.')}
+            </p>
+          )}
           {loadingQueue ? (
             <p className="text-sm text-gray-600 text-center py-8">Loading…</p>
           ) : pending.length === 0 ? (

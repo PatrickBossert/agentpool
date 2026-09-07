@@ -11,6 +11,7 @@ from api.database import (
     get_system_db,
     insert_skill,
     fetch_skills,
+    fetch_skill_occurrences,
     update_skill,
     delete_skill,
 )
@@ -137,6 +138,33 @@ async def list_skills(
     if payload.get("role") != "sysadmin" and status not in ("approved", "pending"):
         status = "approved"
     return await fetch_skills(conn, agent_name=agent_name, status=status)
+
+
+@router.get("/admin/skills/{skill_id}/occurrences")
+async def list_skill_occurrences(
+    skill_id: int,
+    _payload: dict = Depends(require_sysadmin),
+    conn=Depends(get_system_db),
+):
+    """Every recorded sighting of one skill's rule, oldest first (sysadmin only).
+
+    The evidence behind the count the queue sorts on. `skills.occurrences` says how many
+    times an agent proposed the same rule; this says *where* - the engagement, the output it
+    was corrected on, and the wording used that time - which is what a reviewer needs before
+    approving a change to an agent's behaviour on every engagement.
+
+    Sysadmin, matching the PATCH that acts on the queue rather than the GET that lists it:
+    only a sysadmin can approve, so only a sysadmin needs the evidence, and these rows name
+    client engagements and quote the agent's own words about them.
+
+    An empty list is a legitimate answer, not a miss - the fifty-three skills that predate
+    the proposal path have no occurrence rows at all. A skill that does not exist is 404, so
+    the two are told apart.
+    """
+    rows = await fetch_skills(conn)
+    if not any(s["id"] == skill_id for s in rows):
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return await fetch_skill_occurrences(conn, skill_id=skill_id)
 
 
 @router.patch("/admin/skills/{skill_id}")

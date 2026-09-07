@@ -3794,6 +3794,22 @@ async def fetch_skills(
     agent_name: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
+    """Skills with their agent assignments, most-evidenced first and then most recent.
+
+    The ordering is here and takes no parameter, so there is nothing for a caller to get
+    wrong and nothing for two callers to spell differently. It is what the review queue
+    rests on: `occurrences` counts how many times an agent has proposed the same rule, so a
+    rule seen three times sits above one seen once, and a reviewer approving a change to an
+    agent's behaviour on every engagement reads the evidence before the prose. `created_at`
+    breaks the tie, which leaves the fifty-three pre-existing rows - all `occurrences` 1 -
+    in exactly the order they were in before.
+
+    `id` breaks the tie after that, and it is not decoration: `created_at` is
+    `CURRENT_TIMESTAMP`, whole seconds, so any two rows written in the same second tie on
+    both of the first two keys and the order falls to whatever SQLite happens to return. A
+    reviewer reloading the queue would see the same rows in a different order for no reason
+    they could name. Three keys make the ordering total.
+    """
     where: list[str] = []
     params: list = []
     if status is not None:
@@ -3809,7 +3825,7 @@ async def fetch_skills(
         LEFT JOIN agent_skill_assignments asa ON asa.skill_id = s.id
         {where_sql}
         GROUP BY s.id
-        ORDER BY s.created_at DESC
+        ORDER BY s.occurrences DESC, s.created_at DESC, s.id DESC
     """
     rows: list[dict] = []
     async with conn.execute(query, params) as cur:
