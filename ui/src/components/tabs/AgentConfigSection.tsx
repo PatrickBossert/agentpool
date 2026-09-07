@@ -22,7 +22,7 @@
 // override" and sends `null`.
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ImagePlus, Mic, RotateCcw, Save } from 'lucide-react'
+import { FlaskConical, ImagePlus, Mic, RotateCcw, Save } from 'lucide-react'
 
 import {
   agentConfigApi,
@@ -31,7 +31,9 @@ import {
 } from '../../api/agentConfig'
 import { projectsApi } from '../../api/endpoints'
 import { describeError } from '../../utils/describeError'
+import { useAgentIdentity } from '../../hooks/useAgentIdentity'
 import { AGENT_IDS } from '../agentStatus'
+import TestInterviewDialog from './TestInterviewDialog'
 import VoicePicker from './VoicePicker'
 import { voicesApi } from '../../api/voices'
 
@@ -145,6 +147,9 @@ export default function AgentConfigSection({
   // when it is chosen, so that one action means one outcome: an administrator who picks the
   // wrong file and navigates away has changed nothing on the server.
   const [pendingImage, setPendingImage] = useState<File | null>(null)
+  // The rehearsal dialog, mounted only once it is asked for. Mounting it always would fetch a
+  // script and post a `/test/speak` the moment anybody opened the Agents tab.
+  const [rehearsing, setRehearsing] = useState(false)
   // What the last upload actually cost, kept so the downscale is visible. An administrator who
   // is never told their 8 MB photograph became 74 kB uploads the same 8 MB file again.
   const [uploaded, setUploaded] = useState<PortraitUpload | null>(null)
@@ -195,6 +200,15 @@ export default function AgentConfigSection({
   // An unanswered question locks. A control enabled for the moment the answer takes is a
   // control that can be changed and then refused, which is the failure the gating prevents.
   const mayAdminister = permissions?.can_administer_project ?? false
+
+  // The name and face to rehearse under, asked of the one place that answers it for the whole
+  // dashboard. Not re-derived from `config` here, though it is sitting right there: the rule is
+  // "the override, then the static map, never the server's resolved value", because the
+  // resolved default is `/agents/laura-nelson.jpg` while Vite serves `ui/public` under
+  // `/dashboard` - so drawing the resolved value 404s for every agent without an override.
+  // `useAgentIdentity` states that once, shares this page's existing query, and is where a
+  // second copy of the rule would be free to drift from the first.
+  const { name: humanName, imageUrl } = useAgentIdentity(slug)(agentName)
 
   useEffect(() => {
     if (config) setDraft(config.overrides)
@@ -475,6 +489,61 @@ export default function AgentConfigSection({
         {saved && <span className="text-emerald-500 text-xs">Saved.</span>}
         {error && <span className="text-red-500 text-xs">{error}</span>}
       </div>
+
+      {/*
+        Rehearsing an interview, for the agents that conduct one.
+
+        **`is_interviewer` is read, never re-derived.** The roster lives once, in
+        `interviewer_selection`, and both the per-agent and the bulk configuration doors already
+        answer it - so a list of agent ids in TypeScript would be a second roster on the one
+        side nothing is watching, and it would be wrong the first time an interviewer is added.
+
+        **Not gated on `mayAdminister`**, unlike every control above it. `POST
+        /api/interviews/test/speak` asks `check_project_access` and nothing else, so rehearsing
+        is reading rather than configuring; greying this out would refuse somebody the server
+        would have served.
+
+        It used to live on Avery's own Setup tab, and that is precisely why the dialog could
+        hardcode his photograph in five renders and his name in three lines and still look
+        correct. One route, and it carries whose rehearsal it is.
+      */}
+      {config.is_interviewer && (
+        <div className="border-t border-gray-100 pt-4 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">
+              Test interview
+            </p>
+            <p className="text-[11px] text-gray-500 leading-relaxed max-w-sm">
+              Rehearse a short interview with {humanName} using the sample script. They ask real
+              questions in the voice configured above and you answer aloud - a way to hear this
+              configuration before a participant does.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setRehearsing(true)}
+            className="flex items-center gap-1.5 flex-shrink-0 px-3 py-1.5 bg-brand hover:bg-brand-dark text-white text-xs font-medium rounded"
+          >
+            <FlaskConical size={12} aria-hidden="true" />
+            Test interview
+          </button>
+        </div>
+      )}
+
+      {rehearsing && (
+        <TestInterviewDialog
+          slug={slug}
+          agentId={agentId}
+          displayName={humanName}
+          imageUrl={imageUrl}
+          // This agent's country, not the project's. It decides which BCP-47 tag the browser
+          // listens in, and an interviewer configured for fr-FR being heard as en-GB is the
+          // same class of disagreement between a person and their settings that this task is
+          // about - one field along.
+          locale={config.resolved.country_code}
+          onClose={() => setRehearsing(false)}
+        />
+      )}
     </div>
   )
 }

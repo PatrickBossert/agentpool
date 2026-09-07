@@ -21,8 +21,36 @@ import { projectsApi } from '../api/endpoints'
 import type { AgentConfig } from '../api/agentConfig'
 import type { MyPermissions } from '../types'
 
+// `getAll` is on the mock because the section asks `useAgentIdentity` what face and name to
+// hand the rehearsal dialog, rather than re-deriving "override, then the static map" itself -
+// the rule that hook exists to state once. Left off, the hook's query throws and every agent
+// silently falls back to the static answer, which is the one case these tests must not be run
+// under.
 vi.mock('../api/agentConfig', () => ({
-  agentConfigApi: { get: vi.fn(), put: vi.fn(), uploadImage: vi.fn() },
+  agentConfigApi: { get: vi.fn(), getAll: vi.fn(), put: vi.fn(), uploadImage: vi.fn() },
+}))
+
+// The dialog itself is driven in TestInterviewPerInterviewer.test.tsx. Here it is a stub that
+// records what it was handed, because the property this file is about is what the section
+// SENDS to it - a dialog opened for the wrong agent renders perfectly and rehearses somebody
+// else, which is the whole defect sp63 repairs.
+vi.mock('../components/tabs/TestInterviewDialog', () => ({
+  default: (props: {
+    slug: string
+    agentId: string
+    displayName: string
+    imageUrl: string | null
+    locale?: string
+  }) => (
+    <div
+      data-testid="rehearsal-dialog"
+      data-slug={props.slug}
+      data-agent-id={props.agentId}
+      data-display-name={props.displayName}
+      data-image-url={props.imageUrl ?? ''}
+      data-locale={props.locale ?? ''}
+    />
+  ),
 }))
 
 vi.mock('../api/endpoints', () => ({
@@ -98,11 +126,11 @@ const PERMISSIONS: MyPermissions = {
   writable_knowledge_tiers: ['project'],
 }
 
-function renderSection() {
+function renderSection(agentName = 'Stakeholder Interviewer') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <AgentConfigSection slug="acme" agentName="Stakeholder Interviewer" />
+      <AgentConfigSection slug="acme" agentName={agentName} />
     </QueryClientProvider>,
   )
 }
@@ -130,6 +158,9 @@ beforeEach(() => {
   // first test passes, and the ones after it pass or fail on a body they never sent.
   vi.clearAllMocks()
   vi.mocked(projectsApi.getMyPermissions).mockResolvedValue(PERMISSIONS)
+  // No project has overridden anybody, so `useAgentIdentity` answers from the static maps -
+  // which is what the dashboard's other nine display sites do for an unconfigured agent.
+  vi.mocked(agentConfigApi.getAll).mockResolvedValue({ agents: {} })
   vi.mocked(agentConfigApi.put).mockImplementation(async (_s, _a, overrides) =>
     config(overrides),
   )
@@ -449,6 +480,84 @@ describe('the agent configuration section - when the read itself fails', () => {
   })
 })
 
+
+describe('rehearsing an interview, from the agent it belongs to', () => {
+  // The rehearsal button used to live on Avery's own Setup tab, which is the only reason the
+  // dialog could hardcode his face and his name and still look right. There is one route to it
+  // now, on the section every agent renders, and which agents get it is `is_interviewer` on the
+  // payload - never a list of agent ids restated in TypeScript, which would be a second roster
+  // beside `interviewer_selection`'s with nothing comparing the two.
+  const rehearse = () => screen.getByRole('button', { name: /test interview/i })
+
+  it('offers a test interview for an interviewer and not for anybody else', async () => {
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    const interviewer = renderSection()
+    await waitFor(() => expect(rehearse()).toBeInTheDocument())
+    interviewer.unmount()
+
+    // Both ways, in one test, because asserting only the true case passes against a section
+    // that renders the button for all eighteen agents - and seventeen of them have no script,
+    // no voice necessarily, and nothing to rehearse.
+    vi.mocked(agentConfigApi.get).mockResolvedValue({
+      ...config(),
+      agent_id: 'stakeholder_manager',
+      is_interviewer: false,
+    })
+    renderSection('Stakeholder Manager')
+    await waitFor(() => expect(screen.getByLabelText('Display name')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /test interview/i })).toBeNull()
+  })
+
+  it('opens the dialog for this agent, with this agent’s name and face', async () => {
+    // The half a "the button renders" assertion cannot see. `TestSpeakRequest.agent_id`
+    // defaults to `stakeholder_interviewer` on the server, so a dialog opened without an
+    // agent - or with the wrong one - answers 200 and rehearses Avery under Laura's heading.
+    vi.mocked(agentConfigApi.get).mockResolvedValue({
+      ...config(),
+      agent_id: 'second_interviewer',
+    })
+    renderSection('Second Interviewer')
+
+    await waitFor(() => expect(rehearse()).toBeInTheDocument())
+    fireEvent.click(rehearse())
+
+    const dialog = await screen.findByTestId('rehearsal-dialog')
+    expect(dialog).toHaveAttribute('data-agent-id', 'second_interviewer')
+    expect(dialog).toHaveAttribute('data-display-name', 'Laura Nelson')
+    // Under the Vite base, and asserted with it rather than without. This is the difference
+    // between `useAgentIdentity` and `config.resolved.image_url`, which is the tempting thing
+    // to read since the section is already holding it: the server's resolved default is
+    // `/agents/laura-nelson.jpg`, Vite serves `ui/public` under `/dashboard`, and drawing the
+    // resolved value would 404 for every agent this project has not overridden. A test written
+    // without the prefix would have passed against exactly that mistake.
+    expect(dialog).toHaveAttribute('data-image-url', '/dashboard/agents/laura-nelson.jpg')
+    expect(dialog).toHaveAttribute('data-slug', 'acme')
+  })
+
+  it('shows nothing until the button is pressed', async () => {
+    // The control for the test above: a section that always mounted the dialog would pass it,
+    // and would fire a /test/speak the moment anybody opened the Agents tab.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    renderSection()
+    await waitFor(() => expect(rehearse()).toBeInTheDocument())
+    expect(screen.queryByTestId('rehearsal-dialog')).toBeNull()
+  })
+
+  it('offers it to somebody who may not administer the project', async () => {
+    // Deliberate, and the reason it is not wired to `mayAdminister` like every control above
+    // it. `POST /api/interviews/test/speak` asks `check_project_access` and nothing more, so
+    // rehearsing is reading rather than configuring - and greying it out would refuse somebody
+    // the server would have served.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
+      ...PERMISSIONS, can_administer_project: false,
+    })
+    renderSection()
+
+    await waitFor(() => expect(screen.getByTestId('agent-config-locked')).toBeInTheDocument())
+    expect(rehearse()).toBeEnabled()
+  })
+})
 
 describe('the voice a project has chosen, read by a person', () => {
   // An id is what the project stores and tells an administrator nothing about who they picked.
