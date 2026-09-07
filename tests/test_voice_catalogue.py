@@ -44,6 +44,7 @@ from api.database import (
     insert_user,
     link_membership,
 )
+from api.services import voice_metadata
 from api.services.voice_settings import (
     DEFAULT_INTERVIEW_ACCENT,
     project_interview_accent,
@@ -216,6 +217,19 @@ def _catalogue_wire(
         path = request.url.path
         if path == "/v1/voices":
             return _answer(account, request)
+        if path.startswith("/v1/voices/") and not path.startswith("/v1/voices/add/"):
+            # One voice's metadata, which is what `voice_metadata.voice_gender` asks for. It
+            # answers out of the same `account` body the listing does, so a test cannot set a
+            # voice's sex in the listing and have this contradict it - the door and the crew
+            # read one source and the fixture must not be the place they diverge. A voice the
+            # account does not hold is 404, exactly as the provider answers, which
+            # `ask_voice_sex` turns into "could not ask" rather than into a sex.
+            wanted = path.rsplit("/", 1)[-1]
+            body = account if isinstance(account, dict) else {"voices": []}
+            for voice in body["voices"]:
+                if voice["voice_id"] == wanted:
+                    return httpx.Response(200, json=voice)
+            return httpx.Response(404, json={"detail": f"no such voice {wanted}"})
         if path == "/v1/shared-voices":
             narrowing = {"accent", "gender", "language", "search"} & set(request.url.params)
             if library_probe is not None and not narrowing:
@@ -232,9 +246,24 @@ def _catalogue_wire(
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     monkeypatch.setattr("api.services.http_clients._tts_client", client)
 
+    # `voice_metadata` builds its **own** client rather than asking `get_tts_client()`, for
+    # event-loop reasons of its own, so the line above cannot reach it - the docstring above
+    # named that as this recorder's blind spot while nothing on this path used it. The voices
+    # door now does, for `voice_sex`, and the gap stopped being theoretical the moment it did:
+    # the fixture writes a **non-empty** api key onto the shared settings object, which is the
+    # only thing standing between `voice_gender` and a real request to api.elevenlabs.io. A
+    # fixture that arms the provider is worse than no fixture, which this file has already
+    # learned once about `synthesise`. A fresh client per call, because `_client()`'s callers
+    # close it.
+    monkeypatch.setattr(
+        "api.services.voice_metadata._client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
     settings = get_settings()
     monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
     monkeypatch.setattr("api.services.voice_catalogue.get_settings", lambda: settings)
+    monkeypatch.setattr("api.services.voice_metadata.get_settings", lambda: settings)
     return seen
 
 
@@ -521,6 +550,298 @@ async def test_gender_is_forwarded_to_the_api_and_never_answered_from_a_list(
     # here - against the `labels.gender` the provider itself returned, which is reading its
     # answer rather than holding an opinion about its voices.
     assert [v["name"] for v in res.json()["account"]] == ["Alba Mac - Animated Scottish"]
+
+
+# --- The sex of the voice the caller already has --------------------------------------------
+#
+# `voice_sex` answers "what sex is the voice this agent is already configured with", so the
+# picker can open on voices of the same sex. It lives on **this** door and not on
+# `GET /projects/{slug}/agents/{agent_id}/config`, which is read once per agent panel on every
+# render - and a third-party lookup on that read is paid by everybody who opens the section, to
+# serve a value only whoever clicks "Change voice" consumes. Since failed lookups are not
+# cached, an outage was re-paid on every render.
+#
+# The unit-level cases live with the function, in `resolved_voice_sex` below the door tests.
+
+
+@pytest.mark.asyncio
+async def test_the_door_answers_the_sex_of_the_voice_it_was_given(engagements, monkeypatch):
+    """Both arms, and the request that carries the answer is on the wire.
+
+    Two voices of different sexes in the same account body, so a door that answered a constant,
+    or answered from the first voice in the listing, fails one arm. The wire assertion is what
+    distinguishes "asked the provider about this voice" from "found it in a list I already
+    had": the shortcut of reading the sex out of `account` looks identical in the response and
+    fails silently for a voice the accent filter excluded.
+    """
+    for voice_id, expected in (("acct-daniel", "male"), ("acct-alba", "female")):
+        seen = _catalogue_wire(monkeypatch)
+        res = await engagements["owner"].get(
+            f"/projects/{SLUG_A}/voices?current_voice_id={voice_id}"
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["voice_sex"] == expected, voice_id
+        assert f"/v1/voices/{voice_id}" in [r.url.path for r in seen], voice_id
+
+
+@pytest.mark.asyncio
+async def test_a_voice_the_accent_filter_excluded_is_still_answered(engagements, monkeypatch):
+    """The reason the sex is asked for rather than read out of the listing.
+
+    Alba is Scottish, and this request applies the project's british accent, so she is **not**
+    in `account` - which is exactly the state a project that configured an accent is in for
+    every voice of another one. A picker deriving the sex from its own listing would find
+    nothing and open unfiltered, silently, for precisely those projects. Asserted both ways:
+    the sex comes back, and the voice it belongs to is absent from the answer.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["owner"].get(
+        f"/projects/{SLUG_A}/voices?accent=british&current_voice_id=acct-alba"
+    )
+    assert res.status_code == 200, res.text
+    assert "acct-alba" not in [v["voice_id"] for v in res.json()["account"]]
+    assert res.json()["voice_sex"] == "female"
+    assert "/v1/voices/acct-alba" in [r.url.path for r in seen]
+
+
+@pytest.mark.asyncio
+async def test_no_current_voice_costs_no_request_and_answers_none(engagements, monkeypatch):
+    """The picker opens for an agent that has no voice yet, and asks nobody about it.
+
+    Asserted on the request that is **not** made: `null` is cheap to produce by accident - a
+    door that looked the voice up and swallowed the failure would answer identically - so the
+    absence of the lookup is the property, not the value.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
+    assert res.status_code == 200, res.text
+    assert res.json()["voice_sex"] is None
+    assert not [r for r in seen if r.url.path.startswith("/v1/voices/")]
+
+
+@pytest.mark.asyncio
+async def test_a_voice_the_provider_does_not_know_opens_the_picker_unfiltered(
+    engagements, monkeypatch
+):
+    """A 404 from the provider is not a sex, and it is not an error either.
+
+    The listing is still served in full and `voice_sex` is `null`, which the picker reads as
+    "open unfiltered". **Showing nothing because a lookup failed is the worst outcome
+    available** - it is indistinguishable from an account with no voices, and it sends a
+    consultant to diagnose a picker that is working.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["owner"].get(
+        f"/projects/{SLUG_A}/voices?current_voice_id=a-voice-this-account-never-had"
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["voice_sex"] is None
+    assert res.json()["account"], "a failed sex lookup must not empty the listing"
+    assert "/v1/voices/a-voice-this-account-never-had" in [r.url.path for r in seen]
+
+
+@pytest.mark.asyncio
+async def test_a_sex_this_product_cannot_filter_on_opens_the_picker_unfiltered(
+    engagements, monkeypatch
+):
+    """ElevenLabs' vocabulary is wider than this product's, and the wide half must not leak.
+
+    Driven by *changing the provider's answer* - Daniel relabelled `Non-Binary`, which is a
+    real value in `labels.gender`. Passed through, the picker would pre-set `gender=non-binary`
+    on its own listing, the listing would answer nothing, and the picker would open **empty**:
+    the one outcome the design forbids, reached by way of a perfectly correct provider answer
+    and a field typed as though only two existed.
+    """
+    relabelled = json.loads(json.dumps(ACCOUNT_BODY))
+    relabelled["voices"][0]["labels"]["gender"] = "Non-Binary"
+    _catalogue_wire(monkeypatch, account=relabelled)
+
+    res = await engagements["owner"].get(
+        f"/projects/{SLUG_A}/voices?accent=&current_voice_id=acct-daniel"
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["voice_sex"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_sex_is_asked_of_the_same_function_the_crew_selects_with(
+    engagements, monkeypatch
+):
+    """One source, asserted by replacing it and watching the door follow.
+
+    `interviewer_selection`'s `always_male`/`always_female` reads `ask_voice_sex`, and so does
+    this door - so a project cannot be told one thing by its picker and another by the crew
+    that issues its sessions. Held by monkeypatching `ask_voice_sex` **on `voice_metadata`**,
+    where `resolved_voice_sex` looks it up, and asserting the door's answer moves with it; a
+    door that had grown its own lookup would go on answering `male`.
+    """
+    from api.services import voice_metadata
+
+    _catalogue_wire(monkeypatch)
+
+    async def one_source(voice_id):
+        return voice_metadata.VoiceSexAnswer(label="female", answered=True)
+
+    monkeypatch.setattr(voice_metadata, "ask_voice_sex", one_source)
+
+    res = await engagements["owner"].get(
+        f"/projects/{SLUG_A}/voices?current_voice_id=acct-daniel"
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["voice_sex"] == "female", (
+        "the door answered without asking ask_voice_sex - the picker and the crew can now "
+        "disagree about what a voice is"
+    )
+
+
+# --- `resolved_voice_sex`, case by case -----------------------------------------------------
+#
+# Four routes in and two answers out, and the three that answer `None` do so for different
+# reasons. One test cannot witness them, and the one that matters most is the one that stays
+# `None` because the provider was never asked.
+
+
+def _stub_ask_voice_sex(monkeypatch, answer) -> list[str | None]:
+    """Replace `ask_voice_sex` **where `resolved_voice_sex` looks it up**, and record the ask.
+
+    Both live in `voice_metadata`, so the module global is the lookup site - which is the same
+    rule that made the previous home of this function patch `agent_config_service` rather than
+    `api.services.voice_metadata`. CLAUDE.md records four crew tests that patched a definition
+    site while the module held its own reference and passed anyway, hiding a live production
+    bug for as long as they were green.
+
+    `answer` may be a `VoiceSexAnswer` to return or an exception to raise.
+    """
+    asked: list[str | None] = []
+
+    async def fake(voice_id):
+        asked.append(voice_id)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(voice_metadata, "ask_voice_sex", fake)
+    return asked
+
+
+@pytest.mark.asyncio
+async def test_a_voice_the_provider_gives_a_sex_for_answers_that_sex(monkeypatch):
+    """The control for the three `None` cases below.
+
+    Without it, an implementation answering `None` unconditionally would pass every other test
+    in this section and the picker would open unfiltered for ever while looking correct.
+    """
+    asked = _stub_ask_voice_sex(monkeypatch, voice_metadata.VoiceSexAnswer("female", True))
+
+    assert await voice_metadata.resolved_voice_sex("a-voice") == "female"
+    assert asked == ["a-voice"], "the sex was answered without asking about the voice"
+
+
+@pytest.mark.asyncio
+async def test_a_voice_the_provider_gives_no_sex_for_answers_none(monkeypatch):
+    """The provider answered and simply does not classify this voice.
+
+    `None` rather than a guess: the picker opens unfiltered, which shows every voice the
+    account has. Pre-setting a filter from an unlabelled voice would hide half of them on the
+    strength of nothing.
+    """
+    _stub_ask_voice_sex(monkeypatch, voice_metadata.VoiceSexAnswer(None, True))
+
+    assert await voice_metadata.resolved_voice_sex("an-unlabelled-voice") is None
+
+
+@pytest.mark.parametrize("label", [None, "male"])
+@pytest.mark.asyncio
+async def test_a_lookup_that_could_not_be_made_answers_none_rather_than_a_sex(
+    monkeypatch, label
+):
+    """Unreachable, refused, or unparseable - and this says nothing about the voice.
+
+    A distinct test from the one above because `ask_voice_sex` distinguishes the two on
+    purpose, and one test cannot witness both: "the provider says nothing about this voice" and
+    "the provider was not asked" are different facts with different repairs. They agree only in
+    what the picker does with them.
+
+    The second parameter is the reason `answered` is tested before `label` rather than after.
+    `ask_voice_sex` never pairs a label with `answered=False` today, so without it the branch
+    would be indistinguishable from the one below and could be deleted with the suite green -
+    a branch that documents an intention rather than holding one. Driven, it holds the real
+    property: **a sex is never reported from a lookup that did not happen**, whatever the
+    answer object claims.
+    """
+    _stub_ask_voice_sex(monkeypatch, voice_metadata.VoiceSexAnswer(label, False))
+
+    assert await voice_metadata.resolved_voice_sex("a-voice-nobody-could-ask-about") is None
+
+
+@pytest.mark.parametrize("label", ["non-binary", "neutral", "MALE"])
+@pytest.mark.asyncio
+async def test_a_label_this_product_cannot_act_on_answers_none(monkeypatch, label):
+    """ElevenLabs' vocabulary is not this repository's, and only the actionable part is used.
+
+    `MALE` is in the list deliberately: `voice_gender` lower-cases what it reads, so an
+    upper-cased label never reaches here in practice - and a comparison written against the raw
+    string would pass every other test in this file while failing this one. Asserting the case
+    rule at the seam that depends on it is cheaper than discovering it from a picker that
+    opened unfiltered for a voice plainly labelled male.
+    """
+    _stub_ask_voice_sex(monkeypatch, voice_metadata.VoiceSexAnswer(label, True))
+
+    assert await voice_metadata.resolved_voice_sex("a-voice") is None
+
+
+@pytest.mark.asyncio
+async def test_a_voice_that_is_absent_answers_none_and_asks_nobody(monkeypatch):
+    """Driven through the **real** `ask_voice_sex` rather than a stub.
+
+    A voice that is not there has no sex, which is a fact rather than an outage - and the fact
+    is established without a request, so this asserts on the request that is not made. Stubbed
+    at `voice_metadata._client` rather than at `ask_voice_sex`, because a stub of the function
+    under test would make "nothing was asked" true by construction: the client spy is the only
+    thing that can tell an early return from a swallowed answer.
+    """
+    def refuse_to_build_a_client():
+        raise AssertionError("an absent voice must not be looked up at ElevenLabs")
+
+    monkeypatch.setattr(voice_metadata, "_client", refuse_to_build_a_client)
+
+    assert await voice_metadata.resolved_voice_sex(None) is None
+    assert await voice_metadata.resolved_voice_sex("") is None
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_with_no_elevenlabs_key_answers_none_rather_than_failing(
+    monkeypatch,
+):
+    """The picker must still open on a deployment that has never configured ElevenLabs.
+
+    `ask_voice_sex` lets `ValueError` out on purpose - for the session stamp a missing key
+    would otherwise turn "always female" into whoever the shuffle produced, permanently, since
+    the choice is stamped. This reader has the opposite obligation, so the refusal is caught at
+    this call site and nowhere near where it is raised.
+    """
+    _stub_ask_voice_sex(monkeypatch, ValueError("ELEVENLABS_API_KEY not configured"))
+
+    assert await voice_metadata.resolved_voice_sex("a-voice") is None
+
+
+@pytest.mark.asyncio
+async def test_any_other_value_error_is_not_swallowed(monkeypatch):
+    """The catch is narrowed to the sentence it documents, and this is what holds it there.
+
+    `ValueError` is a wide net - `json.JSONDecodeError` is one of its subclasses - so an
+    unqualified `except ValueError` would report any future failure under `ask_voice_sex` as
+    "this voice has no sex". A `None` that means "something broke" is the shape a picker cannot
+    distinguish from a fact, and the missing-key case is the only one that has been reasoned
+    about.
+    """
+    _stub_ask_voice_sex(monkeypatch, ValueError("something else went wrong entirely"))
+
+    with pytest.raises(ValueError, match="something else"):
+        await voice_metadata.resolved_voice_sex("a-voice")
 
 
 @pytest.mark.asyncio

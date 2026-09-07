@@ -50,6 +50,7 @@ from api.services.voice_catalogue import (
     filter_account_voices,
     library_accents,
 )
+from api.services.voice_metadata import resolved_voice_sex
 from api.services.voice_settings import project_interview_accent
 
 router = APIRouter(prefix="/projects/{slug}/voices", tags=["voices"])
@@ -69,6 +70,14 @@ async def list_voices(
     gender: str | None = Query(default=None),
     language: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    current_voice_id: str | None = Query(
+        default=None,
+        description=(
+            "The voice this agent is already configured with. Not a filter - it is answered "
+            "back as `voice_sex`, so the picker can open on voices of the same sex without "
+            "deriving that from the listing."
+        ),
+    ),
     payload: dict = Depends(require_any_auth),
 ) -> dict[str, Any]:
     """Both voice listings for this project, with the project's accent applied by default.
@@ -94,6 +103,21 @@ async def list_voices(
     `accent_options_partial` carry the provider's own `has_more` out to whatever renders
     them. A consumer that cannot tell a complete answer from a first page will present one as
     the other, and on a picker that reads as "that voice is not in the library".
+
+    **`voice_sex` answers the sex of the voice the caller already has**, and it is here rather
+    than on the agent configuration door because this is the request the picker makes when it
+    *opens*: a user-initiated action where a wait is expected, on a surface that already has a
+    spinner and already tolerates a failed listing. Resolving it on the configuration read
+    instead put a third-party round trip on the happy path of a read every agent panel makes,
+    for a value only the picker consumes - and since failed lookups are not cached, an outage
+    was re-paid on every render.
+
+    **It is asked of `ask_voice_sex`, never derived from the listing.** The obvious shortcut is
+    to look the voice up in `account` and read its `gender`, and it fails silently for exactly
+    the projects that configured an accent: the listing is narrowed by `applied_accent`, so a
+    voice of a different accent is simply not in it, and "not found" is indistinguishable from
+    "no label". Asking keeps this door and the crew's `always_male`/`always_female` selection
+    reading one source, which is the constraint this whole line of work turns on.
 
     **`accent_options` is what a picker renders, and it is the union of both listings.** The
     first version of this door derived the options from the account alone, which made **Irish
@@ -191,6 +215,17 @@ async def list_voices(
         "accent": applied_accent,
         "accent_source": accent_source,
         "filters": {"gender": gender, "language": language, "search": search},
+        # The sex of the voice the caller arrived with, or None where it cannot be established
+        # or acted on. `None` means **open unfiltered**, never "no voices" and never an error:
+        # `resolved_voice_sex` collapses four routes onto it and the picker must treat them
+        # alike.
+        #
+        # It is one more provider round trip on a door that already makes up to three, and it
+        # does add to the wait rather than overlapping it. That is the trade this move accepts:
+        # the cost belongs on the request a consultant made by opening the picker, not on the
+        # configuration read that renders behind it. Omitting `current_voice_id` costs nothing
+        # at all - `ask_voice_sex` returns without a request for an absent voice.
+        "voice_sex": await resolved_voice_sex(current_voice_id),
         "accent_options": accent_options,
         # The options came off one bounded page, or off a probe that failed. Either way the
         # list is not the library's whole accent vocabulary, and a control that renders it as

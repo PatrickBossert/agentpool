@@ -13,11 +13,16 @@ of one over the other - because a Setup tab has to show a value **and** say whet
 choice or an inheritance. Serving only the resolved answer would make those indistinguishable,
 which is the thing sp58's platform-URL panel exists to avoid saying wrongly.
 
-It also answers two facts **about** the resolution - `is_interviewer` and `voice_sex` - so that
-the section can offer a rehearsal to the agents that can conduct an interview and open their
-voice picker on voices of the right sex. Both are derived server-side, from
-`interviewer_agent_ids()` and from the resolved voice's own metadata; neither is stored, and
-neither may be restated in TypeScript. See `_answer` below.
+It also answers one fact **about** the resolution - `is_interviewer`, from
+`interviewer_agent_ids()` - so the section can offer a rehearsal to the agents that can conduct
+an interview. Derived server-side, not stored, and not to be restated in TypeScript.
+
+**The sex of the resolved voice is answered by `GET /projects/{slug}/voices`, not here**, and
+the reason is what this door costs. It is read once per agent panel on every render, so a
+third-party lookup on its happy path is paid by every consultant opening the section, to serve
+a value used only by whoever clicks "Change voice" - and because failed lookups are not cached,
+an ElevenLabs outage is re-paid on every read rather than once per process. The picker's own
+door already takes the voice id and already opens on a user action where a wait is expected.
 
 `PUT` replaces the row. `upsert_agent_config` writes all six columns on every call, so a field
 absent from the body is **cleared** rather than left alone - and a `PATCH` on that writer would
@@ -60,7 +65,6 @@ from api.services.agent_config_service import (
     agent_defaults,
     is_interviewer,
     resolve_agent_config_with,
-    resolved_voice_sex,
 )
 from api.services.authority_service import require_project_administration
 
@@ -245,25 +249,26 @@ def _defaults_or_404(agent_id: str) -> dict[str, Any]:
 
 
 async def _answer(conn: Any, *, slug: str, agent_id: str, defaults: dict[str, Any]) -> dict:
-    """Defaults, overrides, the resolution of one over the other, and two facts about it.
+    """Defaults, overrides, the resolution of one over the other, and one fact about it.
 
     The resolution is `resolve_agent_config_with` rather than a merge written here. The rule -
     NULL means the default, `''` does not - lives in `agent_config_service._merge` and a second
     expression of it in a router is precisely the drift that module exists to end.
 
-    `is_interviewer` and `voice_sex` are **derived from the resolution, not stored beside it**,
-    and both are answered by `agent_config_service` for the same reason the merge is. The Setup
-    section renders a Test interview button on the first and pre-sets its voice picker's filter
-    from the second, and re-deriving either in TypeScript would be a fifth declaration of a
-    voice fact - the exact thing this branch exists to end. Note which value the sex is asked
-    about: **the resolved voice**, so a project that has chosen a different voice for an
-    interviewer gets a picker that agrees with the choice it made.
+    `is_interviewer` is **derived, not stored beside the row**, and it is answered by
+    `agent_config_service` for the same reason the merge is: the Setup section renders a Test
+    interview button on it, and re-deriving the roster in TypeScript would be a fifth
+    declaration of a voice fact - the exact thing this branch exists to end.
+
+    **Nothing here reaches a third party.** Both values are read from local data, which is the
+    property that had to be restored: the sex of the resolved voice was answered here for one
+    commit and moved to the picker's own door, because this one is read on every render of
+    every agent panel.
     """
     project = await fetch_project(conn, slug=slug)
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     row = await fetch_agent_config(conn, project_id=project["id"], agent_id=agent_id)
-    resolved = await resolve_agent_config_with(conn, slug=slug, agent_id=agent_id)
     return {
         "agent_id": agent_id,
         # Whether this project has ever recorded anything for this agent. Distinct from "every
@@ -272,9 +277,8 @@ async def _answer(conn: Any, *, slug: str, agent_id: str, defaults: dict[str, An
         "configured": row is not None,
         "defaults": defaults,
         "overrides": {field: (row[field] if row else None) for field in AGENT_CONFIG_COLUMNS},
-        "resolved": resolved,
+        "resolved": await resolve_agent_config_with(conn, slug=slug, agent_id=agent_id),
         "is_interviewer": is_interviewer(agent_id),
-        "voice_sex": await resolved_voice_sex(resolved["voice_id"]),
     }
 
 

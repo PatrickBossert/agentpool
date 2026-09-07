@@ -283,13 +283,12 @@ async def test_one_projects_configuration_does_not_reach_another(doors):
     assert (await resolve_agent_config(SLUG_B, AVERY))["voice_id"] == AGENT_IDENTITY[AVERY].voice_id
 
 
-# ── The two derived facts, over HTTP ────────────────────────────────────────────────────
+# ── Who can be offered a rehearsal, over HTTP ───────────────────────────────────────────
 #
-# `agent_config_service` is where both are derived and `tests/test_agent_config.py` drives the
-# derivation. These are about the **wiring**: that the door carries them, and that the sex is
-# asked about the voice this project resolved rather than the one the agent ships with. A
-# derivation asserted only at the service is CLAUDE.md's recurring failure mode - a property
-# verified one layer away from where it holds.
+# `agent_config_service.is_interviewer` is where this is derived and `tests/test_agent_config.py`
+# drives the derivation. These are about the **wiring**: that the door carries it, and that the
+# door reaches no third party to answer. A derivation asserted only at the service is CLAUDE.md's
+# recurring failure mode - a property verified one layer away from where it holds.
 
 @pytest.mark.asyncio
 async def test_the_door_says_who_can_be_offered_a_rehearsal(doors):
@@ -312,64 +311,79 @@ async def test_the_door_says_who_can_be_offered_a_rehearsal(doors):
 
 
 @pytest.mark.asyncio
-async def test_the_door_asks_about_the_voice_this_project_resolved(doors, monkeypatch):
-    """The sex follows the project's chosen voice, not the agent's default.
+@pytest.mark.parametrize("agent_id", ["stakeholder_interviewer", "pam"])
+async def test_the_configuration_door_reaches_no_third_party(doors, monkeypatch, agent_id):
+    """This door is read once per agent panel on every render, so it must ask nobody.
 
-    That is the whole reason there is no table: a project that gives an interviewer a different
-    voice "has said something", and a picker pre-set from a stored sex would contradict the
-    choice while looking authoritative. Asserted by recording **which voice id was asked
-    about**, which is the only thing that distinguishes this from a door that asks about the
-    default and gets the right answer by luck.
+    It did for one commit: the sex of the resolved voice was answered here, which put an
+    ElevenLabs round trip on the happy path of the most-rendered read in the section - and
+    because failed lookups are not cached, an outage was re-paid on every render, showing
+    "Loading this agent's configuration…" indefinitely. The field moved to
+    `GET /projects/{slug}/voices`; this is what stops it coming back.
 
-    Stubbed at the name `agent_config_service` looks it up under, so no ElevenLabs request is
-    made - patching `voice_metadata.ask_voice_sex` would leave that module's own reference in
-    place and the real function would run.
-    """
-    from api.services import agent_config_service
+    Driven for a **voiced** agent as well as a voiceless one, because the version being guarded
+    against only made a request when there was a voice to ask about. The client is made to
+    explode rather than a lookup stubbed, so the property is the absence of a request rather
+    than the shape of a mock.
 
-    asked: list[str | None] = []
-
-    async def fake_ask(voice_id):
-        asked.append(voice_id)
-        from api.services.voice_metadata import VoiceSexAnswer
-
-        return VoiceSexAnswer(label="female" if voice_id == CHOSEN_VOICE else "male",
-                              answered=True)
-
-    monkeypatch.setattr(agent_config_service, "ask_voice_sex", fake_ask)
-
-    before = (await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/{AVERY}/config")).json()
-    assert before["voice_sex"] == "male"
-    assert asked[-1] == AGENT_IDENTITY[AVERY].voice_id
-
-    await doors["admin_a"].put(
-        f"/projects/{SLUG_A}/agents/{AVERY}/config",
-        json={**_all_null(), "voice_id": CHOSEN_VOICE},
-    )
-    after = (await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/{AVERY}/config")).json()
-    assert after["voice_sex"] == "female"
-    assert asked[-1] == CHOSEN_VOICE
-
-
-@pytest.mark.asyncio
-async def test_an_agent_with_no_voice_is_answered_without_a_lookup(doors, monkeypatch):
-    """A configuration page must open on a deployment with no ElevenLabs key at all.
-
-    Fifteen of the eighteen agents have no voice, and the door answers for every one of them.
-    The client is made to explode rather than the lookup stubbed, so "nothing was asked" is
-    established by the absence of a request rather than assumed from a mock.
+    **The API key has to be armed for the spy to mean anything**, and that is not a detail.
+    The suite runs with a blank `ELEVENLABS_API_KEY`, and `voice_gender` raises on a blank key
+    **before** it builds a client - so without the two lines below the spy can never fire, and
+    this test would be carried entirely by the `voice_sex` key assertion while claiming to
+    assert the absence of a request. Verified by mutation: with the field restored to this
+    door, an unarmed spy failed on the key and an armed one failed on the request.
+    `tests/test_voice_catalogue.py` learned the same lesson in reverse, where a fixture arming
+    the key was what turned an assertion about synthesis into a real provider call.
     """
     from api.services import voice_metadata
 
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
+    monkeypatch.setattr(voice_metadata, "get_settings", lambda: settings)
+
     def refuse_to_build_a_client():
-        raise AssertionError("a voiceless agent must not be looked up at ElevenLabs")
+        raise AssertionError(
+            "the agent configuration door must not reach ElevenLabs - the voice sex belongs "
+            "to GET /projects/{slug}/voices, which opens on a user action"
+        )
 
     monkeypatch.setattr(voice_metadata, "_client", refuse_to_build_a_client)
 
-    body = (await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/pam/config")).json()
-    assert body["resolved"]["voice_id"] is None
-    assert body["voice_sex"] is None
-    assert body["is_interviewer"] is False
+    r = await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/{agent_id}/config")
+    assert r.status_code == 200, r.text
+    assert "voice_sex" not in r.json(), (
+        "the voice sex is answered by the picker's own door, not by this one"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_saved_voice_does_not_make_this_door_reach_out_either(doors, monkeypatch):
+    """The same property after a `PUT`, because `_answer` serves both verbs.
+
+    A save is the other action that would have paid the provider round trip, and it is the one
+    a consultant makes while watching. Asserted with a voice this repository has no opinion
+    about, so nothing can be answered from a cache warmed by a default.
+    """
+    from api.services import voice_metadata
+
+    # Armed, for the reason the test above gives at length: a blank key raises before a client
+    # is ever built, so an unarmed spy is a spy that cannot fire.
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
+    monkeypatch.setattr(voice_metadata, "get_settings", lambda: settings)
+
+    def refuse_to_build_a_client():
+        raise AssertionError("saving a voice must not reach ElevenLabs")
+
+    monkeypatch.setattr(voice_metadata, "_client", refuse_to_build_a_client)
+
+    r = await doors["admin_a"].put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "voice_id": CHOSEN_VOICE},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["resolved"]["voice_id"] == CHOSEN_VOICE
+    assert "voice_sex" not in r.json()
 
 
 # ── The roll is closed ──────────────────────────────────────────────────────────────────

@@ -37,14 +37,13 @@ from api.database import (
     insert_project_registry,
     upsert_agent_config,
 )
-from api.services import agent_config_service, voice_metadata
+from api.services import agent_config_service
 from api.services.agent_config_service import (
     CONFIG_FIELDS,
     UnknownAgent,
     agent_defaults,
     resolve_agent_config,
 )
-from api.services.voice_metadata import VoiceSexAnswer
 
 # ElevenLabs' stock Rachel. Named here so the tests below can say "not this" without reading it
 # back out of the source they are checking, which would make the assertion unfalsifiable.
@@ -425,38 +424,13 @@ async def test_no_row_and_a_row_of_nulls_are_distinguishable_at_the_helper(proje
         assert await fetch_agent_config(conn, project_id=project_id, agent_id=AVERY) is not None
 
 
-# --- The two derived facts ------------------------------------------------------------------
+# --- Who can be offered a rehearsal ---------------------------------------------------------
 #
-# `is_interviewer` and `voice_sex` are answered by the configuration door so the Setup section
-# can offer a rehearsal to the agents that can conduct an interview, and open their voice
-# picker on voices of the right sex. Neither is stored, and the whole point of both is that
-# nothing in this repository maps an agent to a sex.
-
-
-def _stub_ask_voice_sex(monkeypatch, answer) -> list[str | None]:
-    """Replace `ask_voice_sex` **where `agent_config_service` looks it up**, and record the ask.
-
-    Not at `api.services.voice_metadata.ask_voice_sex`, which is where it is defined:
-    `agent_config_service` binds its own reference with `from ... import`, so patching the
-    definition site leaves the module holding the real function. CLAUDE.md records four crew
-    tests that made exactly that mistake and passed anyway, hiding a live production bug for
-    the whole time they were green.
-
-    The recorded argument is what makes the door test one layer down rather than one layer
-    away: it says *which voice was asked about*, not merely that something was.
-
-    `answer` may be a `VoiceSexAnswer` to return or an exception to raise.
-    """
-    asked: list[str | None] = []
-
-    async def fake(voice_id):
-        asked.append(voice_id)
-        if isinstance(answer, BaseException):
-            raise answer
-        return answer
-
-    monkeypatch.setattr(agent_config_service, "ask_voice_sex", fake)
-    return asked
+# `is_interviewer` is answered by the configuration door so the Setup section can offer a Test
+# interview to the agents that can conduct one. It is derived from local data and costs
+# nothing, which is why it stayed here when the voice sex moved to the picker's own door - see
+# `tests/test_voice_catalogue.py` for that half, and `tests/test_interviewer_selection.py` for
+# the guard that no module anywhere maps an agent to a sex.
 
 
 def test_is_interviewer_follows_the_roster_rather_than_a_list_here(monkeypatch):
@@ -492,117 +466,6 @@ def test_the_roster_the_configuration_reads_is_the_one_the_selection_reads():
         for agent_id in AGENT_IDENTITY
         if agent_config_service.is_interviewer(agent_id)
     }
-
-
-@pytest.mark.asyncio
-async def test_a_voice_the_provider_gives_a_sex_for_answers_that_sex(monkeypatch):
-    """The control for the two `None` cases below.
-
-    Without it an implementation that answered `None` unconditionally would pass every other
-    test in this section, and the picker would open unfiltered for ever while looking correct.
-    """
-    asked = _stub_ask_voice_sex(monkeypatch, VoiceSexAnswer(label="female", answered=True))
-
-    assert await agent_config_service.resolved_voice_sex("a-voice") == "female"
-    assert asked == ["a-voice"], "the sex was answered without asking about the voice"
-
-
-@pytest.mark.asyncio
-async def test_a_voice_the_provider_gives_no_sex_for_answers_none(monkeypatch):
-    """The provider answered and simply does not classify this voice.
-
-    `None` rather than a guess: the picker opens unfiltered, which shows every voice the
-    account has. Pre-setting a filter from an unlabelled voice would hide half of them on the
-    strength of nothing.
-    """
-    _stub_ask_voice_sex(monkeypatch, VoiceSexAnswer(label=None, answered=True))
-
-    assert await agent_config_service.resolved_voice_sex("an-unlabelled-voice") is None
-
-
-@pytest.mark.parametrize("label", [None, "male"])
-@pytest.mark.asyncio
-async def test_a_lookup_that_could_not_be_made_answers_none_rather_than_a_sex(monkeypatch, label):
-    """Unreachable, refused, or unparseable - and this says nothing about the voice.
-
-    A distinct test from the one above because `ask_voice_sex` distinguishes the two on
-    purpose, and one test cannot witness both: "the provider says nothing about this voice" and
-    "the provider was not asked" are different facts with different repairs. They agree here
-    only in what the picker does with them, and the picker opening **unfiltered rather than
-    empty** is the property - an empty picker is indistinguishable from an account with no
-    voices, and sends a consultant to fix a configuration that is correct.
-
-    The second parameter is the reason `answered` is tested before `label` rather than after.
-    `ask_voice_sex` never pairs a label with `answered=False` today, so without it the branch
-    would be indistinguishable from the one below and could be deleted with the suite green -
-    a branch that documents an intention rather than holding one. Driven, it holds the real
-    property: **a sex is never reported from a lookup that did not happen**, whatever the
-    answer object claims.
-    """
-    _stub_ask_voice_sex(monkeypatch, VoiceSexAnswer(label=label, answered=False))
-
-    assert await agent_config_service.resolved_voice_sex("a-voice-nobody-could-ask-about") is None
-
-
-@pytest.mark.asyncio
-async def test_an_agent_with_no_voice_answers_none_and_asks_nobody(monkeypatch):
-    """The third case, driven through the **real** `ask_voice_sex` rather than a stub.
-
-    An agent with no voice has no sex, which is a fact rather than an outage - and the fact is
-    established without a request, so this test asserts on the request that is not made. It is
-    stubbed at `voice_metadata._client` rather than at `ask_voice_sex`, because a stub of the
-    function under test would make "no call was made" true by construction: the client spy is
-    the only thing that can tell an early return from a swallowed answer.
-    """
-    def refuse_to_build_a_client():
-        raise AssertionError("an agent with no voice must not be looked up at ElevenLabs")
-
-    monkeypatch.setattr(voice_metadata, "_client", refuse_to_build_a_client)
-
-    assert await agent_config_service.resolved_voice_sex(None) is None
-
-
-@pytest.mark.asyncio
-async def test_a_deployment_with_no_elevenlabs_key_answers_none_rather_than_failing(monkeypatch):
-    """The Setup tab must still open on a deployment that has never configured ElevenLabs.
-
-    `ask_voice_sex` lets `ValueError` out on purpose - for the session stamp a missing key
-    would otherwise turn "always female" into whoever the shuffle produced, permanently, since
-    the choice is stamped. This reader has the opposite obligation, and a 500 here would take
-    the whole configuration page down rather than one field on it, so the refusal is caught at
-    this call site and nowhere near where it is raised.
-    """
-    _stub_ask_voice_sex(monkeypatch, ValueError("ELEVENLABS_API_KEY not configured"))
-
-    assert await agent_config_service.resolved_voice_sex("a-voice") is None
-
-
-def test_neither_derived_fact_is_a_table_of_agents_to_sexes():
-    """The constraint the whole shape exists to satisfy, held over the module that derives it.
-
-    An AST walk over string *constants*, matching `test_no_agent_to_sex_table`'s technique in
-    `tests/test_interviewer_selection.py`: prose naming an agent explains why the rule exists,
-    while a literal `"stakeholder_interviewer"` beside a sex is the rule being broken, and a
-    substring search cannot tell the two apart.
-    """
-    from pathlib import Path
-
-    source = Path(__file__).resolve().parents[1] / "api/services/agent_config_service.py"
-    literals = {
-        node.value
-        for node in ast.walk(ast.parse(source.read_text()))
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
-    for agent_id in (AVERY, "second_interviewer"):
-        assert agent_id not in literals, (
-            f"agent_config_service.py names {agent_id} as a literal - the sex of an "
-            f"interviewer's voice is read from the voice, never from a roster of who is which"
-        )
-    for sex in ("male", "female"):
-        assert sex not in literals, (
-            f"agent_config_service.py names '{sex}' as a literal - the sexes are ElevenLabs' "
-            f"vocabulary and are passed through, never enumerated here"
-        )
 
 
 # --- The defaults themselves ----------------------------------------------------------------

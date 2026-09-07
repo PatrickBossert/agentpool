@@ -34,14 +34,24 @@ The defaults live in `agents/identity.py`, beside the permanent `agent_id` this 
 here is keyed on a display name, which is what makes renaming an agent - or running an
 engagement where it is called something else - free.
 
-**Two facts are derived here rather than stored**, and both are read off the resolution above
-rather than declared beside it. `is_interviewer` asks `interviewer_agent_ids()`, the one place
-"who can conduct an interview" is answered; `resolved_voice_sex` asks ElevenLabs about the
-voice this project actually resolved, which is the same source
-`interviewer_selection`'s `always_male`/`always_female` reads, so the picker and the crew cannot
-disagree about what a voice is. **Neither is a table.** A map of agents to sexes is refused in
-writing in `interviewer_selection.py`, and it would be wrong the first time a project used the
-table above to give an interviewer a different voice - which is the entire point of the table.
+**One fact is derived here rather than stored.** `is_interviewer` asks
+`interviewer_agent_ids()`, the one place "who can conduct an interview" is answered, so the
+Setup section can offer a rehearsal to the agents that can conduct one. It is derived from
+local data and costs nothing.
+
+**The interviewer's voice sex is deliberately not answered here**, though it was for one
+commit. It is `resolved_voice_sex` in `api/services/voice_metadata.py`, answered by
+`GET /projects/{slug}/voices` - the request the picker already makes when it opens - because
+resolving it here put a third-party round trip on the happy path of the read that *every*
+agent panel makes, to serve a value read only when somebody clicks "Change voice". Failed
+lookups are not cached, so an ElevenLabs outage was paid on every render of this door rather
+than once per process. The rule did not move: `ask_voice_sex` is still the single source, and
+still the same one `interviewer_selection`'s `always_male`/`always_female` reads, so the picker
+and the crew cannot disagree about what a voice is.
+
+**Neither fact is a table.** A map of agents to sexes is refused in writing in
+`interviewer_selection.py`, and it would be wrong the first time a project used the table above
+to give an interviewer a different voice - which is the entire point of the table.
 """
 from __future__ import annotations
 
@@ -55,7 +65,6 @@ from api.database import (
     get_db_path,
     is_contained_slug,
 )
-from api.services.voice_metadata import ask_voice_sex
 
 # The keys `resolve_agent_config` answers. Taken from the table's own column list rather than
 # restated, so a column added to `project_agent_config` cannot be one the resolver ignores -
@@ -171,54 +180,6 @@ def is_interviewer(agent_id: str) -> bool:
     `agents/identity.py` rather than a second list here.
     """
     return agent_id in interviewer_agent_ids()
-
-
-async def resolved_voice_sex(voice_id: str | None) -> str | None:
-    """The sex of the voice a project resolved for an agent, where it can be established.
-
-    The answer pre-sets the voice picker's filter, so the states this collapses matter more
-    than they look. `ask_voice_sex` reports **whether the provider answered** as well as what,
-    and the three outcomes are kept apart here rather than merged into one test:
-
-    | Outcome | Answer | What the picker does |
-    |---|---|---|
-    | the provider gave a sex | that sex | opens on voices of that sex |
-    | the provider carries no `gender` label, or there is no voice to ask about | None | opens unfiltered |
-    | the provider could not be asked | None | opens unfiltered |
-
-    **Only the first pre-sets a filter, and the rest open unfiltered rather than empty.**
-    Showing nothing because a lookup failed is the worst outcome available - it is
-    indistinguishable from an account with no voices, and it would send a consultant to
-    diagnose a correctly-configured picker.
-
-    **It is a default, not a lock.** A project that gives Laura a male voice has said
-    something, and `interviewer_selection` says so in writing; this field must not be the thing
-    that forbids it. Nothing here refuses anything - it only says what the voice already is.
-
-    **A missing API key is answered here and not swallowed there.** `ask_voice_sex` lets
-    `ValueError` out on purpose, because for the session stamp a deployment with no key would
-    otherwise turn "always female" into whoever the shuffle produced - permanently, since the
-    choice is stamped. This caller has the opposite obligation: it is a read that decorates a
-    configuration page, and a 500 here would take the whole Setup tab down on every deployment
-    that has not configured ElevenLabs. The refusal is right where it is raised and wrong here,
-    so it is caught at this call site rather than removed from that one.
-    """
-    try:
-        answer = await ask_voice_sex(voice_id)
-    except ValueError:
-        # No API key configured. Nothing was asked, so nothing is known - the same answer as a
-        # lookup that failed, and for the same reason.
-        return None
-    if not answer.answered:
-        # Unreachable, refused, or unparseable. This says nothing about the voice, so it must
-        # not be reported as a fact about it.
-        return None
-    if answer.label is None:
-        # Asked and answered: either this voice carries no `gender` label, or there was no
-        # voice to ask about - "an agent with no voice has no sex, which is a fact rather than
-        # an outage". Neither is a sex, and neither is a filter.
-        return None
-    return answer.label
 
 
 async def _fetch_overrides(slug: str, agent_id: str) -> dict[str, Any] | None:
