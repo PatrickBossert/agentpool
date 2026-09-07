@@ -10,11 +10,27 @@ from api.config import get_settings
 
 @pytest.fixture(autouse=True)
 def clean_test_state():
-    """Remove any leftover test-rail state before each test."""
+    """Remove any leftover test-rail state before each test, **where the app actually looks**.
+
+    This asked `get_settings` to forget its cache and then cleaned two hardcoded paths, which
+    is only the same directory while nobody overrides the environment. `tests/conftest.py`
+    sets `DATABASE_DIR` with `os.environ.setdefault`, so exporting it - which is how two
+    sessions run pytest at once without deleting each other's databases - made this fixture
+    scrub a directory nothing was using while the real one kept its rows.
+
+    Three tests failed that way and were catalogued for weeks as "fail against a fresh
+    database": `test_portfolio_register_returns_data` wrote its fixture file to the hardcoded
+    projects directory and the endpoint read the configured one, so it asserted `0 == 1` and
+    read as a product defect. It was a path disagreement inside the test.
+
+    The wider consequence is worth stating because it made every count on this project
+    provisional: **the suite's green depended on those two paths coinciding**, so a clean
+    checkout, a new machine or CI did not reproduce it. Read the directories off the settings
+    the code under test reads, and the question of which run poisoned which stops existing.
+    """
     get_settings.cache_clear()
-    db_dir = Path("/tmp/agentpool_test")
-    proj_dir = Path("/tmp/agentpool_test_projects")
-    for d in (db_dir, proj_dir):
+    settings = get_settings()
+    for d in (Path(settings.database_dir), Path(settings.projects_dir)):
         if d.exists():
             shutil.rmtree(d)
         d.mkdir(parents=True, exist_ok=True)
@@ -146,7 +162,9 @@ async def test_portfolio_register_returns_data(client):
             },
         }
     ]
-    outputs_dir = Path("/tmp/agentpool_test_projects/test-rail/outputs")
+    # Written where the endpoint reads, not where it used to. This line asserting 0 == 1 was
+    # catalogued as a fresh-database failure for weeks; it was this path.
+    outputs_dir = Path(get_settings().projects_dir) / "test-rail" / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
     (outputs_dir / "portfolio_register.json").write_text(
         json.dumps(register), encoding="utf-8"

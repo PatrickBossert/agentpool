@@ -66,7 +66,7 @@ async def test_update_and_delete_template(sysdb):
 async def auth_client():
     """AsyncClient with a valid Bearer token for the test admin user."""
     # Remove system.db so the admin user is freshly seeded
-    system_db = Path("/tmp/agentpool_test/system.db")
+    system_db = Path(get_settings().database_dir) / "system.db"
     system_db.unlink(missing_ok=True)
     get_settings.cache_clear()
 
