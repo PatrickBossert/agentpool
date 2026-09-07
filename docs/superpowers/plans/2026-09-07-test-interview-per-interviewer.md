@@ -375,3 +375,67 @@ it('is still the Agents tab after a reload', () => {
   for Step 3, delete the new entry from the `isTab` derivation and confirm the reload test fails
   while every rendering test still passes. Commit.**
 
+
+---
+
+### Task 7: A configured name and face reach the places that draw them
+
+**Files:** Modify `api/routers/agent_config.py`, `ui/src/components/agentStatus.ts`; Create `ui/src/hooks/useAgentIdentity.ts`; Modify the nine display sites; Test: new `tests/test_agent_config_bulk.py`, new `ui/src/__tests__/useAgentIdentity.test.tsx`
+
+Reported by Patrick, 7 September: he uploaded a portrait for Jordan on `sp-gs-am`, the door
+downscaled and stored it, the configuration row saved `/projects/sp-gs-am/agents/
+stakeholder_manager/image`, the URL serves 200 - **and every face on the dashboard was
+unchanged.**
+
+The feature is correct at the layer it was built and invisible at the layer it is looked at,
+which is this project's most-recorded failure shape arriving in the UI rather than in a test.
+**Nine sites draw an agent's face and all nine read `AGENT_AVATAR_IMAGE`**, a static map in
+`agentStatus.ts`. Nothing outside `AgentConfigSection` and the interview page's session stamp
+reads the configured value.
+
+The same is true of `display_name`: a project that renames an agent sees the new name in the
+form it typed it into and the old one everywhere else.
+
+- [ ] **Step 1: List the nine sites before changing any**, with the file and line: `AgentHoverCard`,
+  `AgentOutputTab`, `AgentDetailPanel` (×3), `AgentStatusTab`, `CrewAgentsTab`, `Team.tsx`,
+  `CrewCarousel` (×2, one of which is PAM's card). Report which of them have a `slug` in scope
+  and which do not - `Team.tsx` is the one to check first, because a page listing the roll
+  across the deployment may have no project to resolve against.
+
+- [ ] **Step 2: Add `GET /projects/{slug}/agents/config`** - every agent's resolved
+  configuration in one response, keyed by `agent_id`. **One request, not eighteen**: the
+  existing per-agent door is fine for a form and would be nine renders × eighteen agents here.
+  Membership floor only; this is a read, and it answers what the panel already shows.
+
+- [ ] **Step 3: Write the failing test - the bulk door agrees with the single door**
+
+```python
+async def test_the_bulk_door_answers_what_the_single_door_answers(...):
+    # Same resolution, not a second implementation of it. A separate code path here is a
+    # second place for "override beats default" to be got wrong, and the two would diverge
+    # silently because nothing compares them.
+    for agent_id in interviewer_agent_ids() + ["pam", "stakeholder_manager"]:
+        assert bulk["agents"][agent_id] == (await single_door(agent_id))["resolved"]
+```
+
+- [ ] **Step 4: Build `useAgentIdentity(slug)`**, returning `(agentName) => { name, imageUrl }`
+  with the resolved override first and the static map as the fallback. Keyed by the **display**
+  name the front end uses, since that is what all nine sites hold - `AGENT_ID_BY_NAME` in
+  `agentStatus.ts` already maps one to the other, so do not add a second mapping.
+
+- [ ] **Step 5: Write the failing test - the fallback and the override, both ways**
+
+An agent with no override renders the static map's image; an agent with one renders the
+configured URL. Both, because a hook that ignored the configuration entirely passes the first
+and a hook that ignored the fallback passes the second.
+
+- [ ] **Step 6: Replace the nine sites.** Where there is no slug - if `Team.tsx` has none - say
+  so and leave it on the static map rather than inventing a project for it.
+
+- [ ] **Step 7: Write the failing test at the site that reported the defect** - the carousel
+  face for a project that has configured one. This is the assertion that would have caught the
+  bug, and it is worth more than the hook's own test: the hook can be perfect and unused.
+
+- [ ] **Step 8: Suites twice, frontend and `tsc` clean. Power-check each of Steps 3, 5 and 7
+  separately. Commit.**
+
