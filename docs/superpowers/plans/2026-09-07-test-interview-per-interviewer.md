@@ -4,7 +4,7 @@
 
 **Goal:** Each interviewer gets a Test interview button on their own configuration section, a voice picker that opens on voices of their sex, and a rehearsal dialog that is theirs rather than Avery's.
 
-**Architecture:** No new door. `GET /projects/{slug}/agents/{agent_id}/config` gains two derived fields - `is_interviewer` from `interviewer_agent_ids()` and `voice_sex` from `ask_voice_sex` - and the frontend reads both. The rehearsal dialog takes an `agentId` and resolves its name and face from the configuration.
+**Architecture:** No new door. Two derived fields on two existing responses - `is_interviewer` from `interviewer_agent_ids()` on `GET /projects/{slug}/agents/{agent_id}/config`, and `voice_sex` from `ask_voice_sex` on `GET /projects/{slug}/voices`, the request the picker already makes when it opens. The rehearsal dialog takes an `agentId` and resolves its name and face from the configuration.
 
 **Spec:** `docs/superpowers/specs/2026-09-07-test-interview-per-interviewer-design.md`
 
@@ -56,14 +56,16 @@ Each of the three `ask_voice_sex` outcomes gets its own test with a stubbed answ
 
 ### Task 2: The picker opens on the right voices, and lets you leave
 
-**Files:** Modify `ui/src/components/tabs/VoicePicker.tsx`, `ui/src/api/agentConfig.ts`; Test: extend `ui/src/__tests__/VoicePicker.test.tsx`
+**Files:** Modify `ui/src/components/tabs/VoicePicker.tsx`, `ui/src/api/voices.ts`, `ui/src/api/agentConfig.ts`; Test: extend `ui/src/__tests__/VoicePicker.test.tsx`
 
 **Interfaces:**
-- Consumes: `voice_sex` from Task 1.
+- Consumes: `is_interviewer` from `GET .../agents/{agent_id}/config`, and `voice_sex` from `GET /projects/{slug}/voices` - **two doors, not one.** Task 1's round-1 review moved the sex off the configuration door: that read is made once per agent panel on every render, and a third-party lookup on its happy path was re-paid on every render during an outage, showing "Loading this agent's configuration…" indefinitely - the string from the 7 September incident. The picker's own door opens on a user action where a wait is expected.
 
 - [ ] **Step 1: Report how `VoicePicker` builds its request today**, including `gendersIn()` and where the gender options come from. sp62's final review found the sex options unguarded here once already; read that test before adding to it.
 
-- [ ] **Step 2: Declare `is_interviewer` and `voice_sex` in the `AgentConfig` type.** Required, not optional - CLAUDE.md records four `ProjectSettings` fields that survived a save only on an untyped spread, and the cost of the fifth is the same.
+- [ ] **Step 2: Declare `is_interviewer` on `AgentConfig`, and `voice_sex` on the voices response.** Required, not optional - CLAUDE.md records four `ProjectSettings` fields that survived a save only on an untyped spread, and the cost of the fifth is the same. **Send `current_voice_id`** on the listing request; the picker already holds it as `currentVoiceId`, and without it the server answers `voice_sex: null` and the filter never pre-sets.
+  - **Type `voice_sex` as `string | null`, never `'male' | 'female' | null`.** The server narrows it to the two actionable labels, but the type is a claim the client would then be free to switch exhaustively over, and ElevenLabs' vocabulary is not ours. Pre-set only when the value is among the options the listing itself offers.
+  - **Do not derive the sex from the listing.** The obvious shortcut is to find `currentVoiceId` in `account` and read its `gender`, and it fails **silently for exactly the projects that configured an accent**: the listing is narrowed by `interview_accent`, so a voice of another accent is simply absent, and "not found" is indistinguishable from "no label". This was established in review; do not re-litigate it.
 
 - [ ] **Step 3: Write the failing test - assert what is SENT**
 
@@ -221,6 +223,71 @@ def test_a_portrait_keeps_no_exif_and_therefore_no_location():
 
 ---
 
+### Task 4c: The first portrait for a faceless agent becomes the deployment's default
+
+**Files:** Modify `api/database.py`, `api/routers/agent_config.py`, `api/services/agent_config_service.py`; Create `api/routers/agent_assets.py`; Test: new `tests/test_agent_default_image.py`
+
+Patrick's instruction, 7 September: portraits stay per project, but *"if no default image exists,
+then use the first uploaded image as the default for all future projects."* Runs after Task 4b,
+which builds the upload it hooks into.
+
+**Interfaces:**
+- Consumes: `prepare_portrait` (Task 4a) and the upload door (Task 4b).
+- Produces: `GET /api/agents/{agent_id}/image`, **unauthenticated**.
+
+- [ ] **Step 1: Report the four precedence levels from the spec and where each is read today.**
+  Project override, promoted default, built-in asset, initials. Report what currently resolves
+  `image_url` and where a level 2 has to be inserted - one place, not two, or the interview page
+  and the Setup section will disagree about an agent's face.
+
+- [ ] **Step 2: Add `agent_default_images` to `init_system_db`** - `agent_id` PRIMARY KEY,
+  `extension`, `promoted_from_slug`, `promoted_at`. **Do NOT bump `_SCHEMA_VERSION`**: it gates
+  *project* databases, `init_system_db` has no version gate and runs on every system connection,
+  and bumping it would re-run every project migration for a table in a database it does not
+  govern. CLAUDE.md states this rule and states that it is inverted from the project rule.
+
+- [ ] **Step 3: Write the failing test - first wins, and second does not**
+
+```python
+async def test_the_second_upload_does_not_displace_the_promoted_default():
+    await upload_portrait("project-a", "second_interviewer", _png())      # promotes
+    await upload_portrait("project-b", "second_interviewer", _other_png())  # must not
+    row = await fetch_agent_default_image("second_interviewer")
+    assert row["promoted_from_slug"] == "project-a"
+```
+
+**Assert the provenance, not merely that a row exists.** A promotion that overwrote would leave
+a row too, and the test would pass against exactly the behaviour it forbids.
+
+- [ ] **Step 4: Claim it with `INSERT OR IGNORE` on `agent_id`, never check-then-write.** The
+  window in check-then-write is two clients' portraits racing, and the loser would overwrite the
+  winner's file after losing the row. Follow `register_project_if_unregistered`, which is the
+  same shape for the same reason. **Write the file only if the claim was won** - `rowcount`
+  decides, not a prior `SELECT`.
+
+- [ ] **Step 5: Write the failing test - an agent that already has a face is never promoted
+  over.** Upload for `stakeholder_interviewer`, whose built-in `/agents/avery-singh.jpg` exists,
+  and assert **no row is created at all**. Without this, a promotion keyed only on "is the table
+  empty for this agent" would silently give Avery a new face on every future engagement.
+
+- [ ] **Step 6: Serve it from `GET /api/agents/{agent_id}/image`, unauthenticated**, in a new
+  `api/routers/agent_assets.py`. Not from the project it came from: that would tie every
+  project's rendering to the continued existence of whichever engagement uploaded first, and
+  leak that slug into an unrelated client's markup. **Register the new prefix in BOTH proxies** -
+  `Caddyfile` and `vite.config.ts` - or it falls through to the static file server and answers
+  the landing page with a **200**. `tests/test_proxy_prefix_coverage.py` enumerates `app.routes`
+  and will fail if you forget; read it before adding the route.
+
+- [ ] **Step 7: Resolution honours all four levels, in order.** One test per level, and a fifth
+  asserting a project override **beats** a promoted default - the pair is the whole point, and a
+  resolver returning the promoted default always would pass four of the five.
+
+- [ ] **Step 8: Suites twice. Power-check Steps 3, 5 and 7 separately - for Step 4, drive two
+  concurrent uploads and confirm exactly one row and one file result. Commit.**
+
+
+---
+
 ### Task 5: Document it
 
 **Files:** Modify `CLAUDE.md`
@@ -228,6 +295,8 @@ def test_a_portrait_keeps_no_exif_and_therefore_no_location():
 - [ ] **Step 1: State the rule.** Who can conduct an interview is answered by `interviewer_agent_ids()` - an identity with a `voice_id` - and both the crew's selection and the rehearsal button read it from there. Record that `is_interviewer` and `voice_sex` are **derived** onto the configuration response rather than stored.
 
 - [ ] **Step 2: Record the decision the sex filter did not reverse.** The picker filters by the sex of the interviewer's *current voice*, never by a table mapping agents to sexes, and say why: a project that gives Avery a female voice has said something, and a table here would contradict it while looking authoritative.
+
+- [ ] **Step 2c: Record the promotion rule and its precedence table**, including the one property that makes it safe - it fills only the promoted-default level, never a built-in asset and never itself - and the one consequence that makes it unusual: this is the only write in the product where an upload on one engagement changes what a different client's engagement displays. Say that replacing a promoted default needs a deletion door that does not exist yet, and is sysadmin-tier when it does.
 
 - [ ] **Step 2b: Record the portrait upload.** An agent image is uploaded and downscaled to 512px on its longest side, EXIF stripped (orientation honoured first), and stored same-origin - so an uploaded portrait cannot reach a third party from the unauthenticated interview page. The free-text field still can, so say the hole is narrowed rather than closed.
 
