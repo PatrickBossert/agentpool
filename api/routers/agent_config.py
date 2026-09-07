@@ -96,6 +96,7 @@ from api.services.agent_config_service import (
     UnknownAgent,
     agent_defaults,
     is_interviewer,
+    promoted_default_image_url,
     resolve_agent_config_with,
 )
 from api.services.agent_default_images import promote_if_unclaimed
@@ -312,7 +313,7 @@ def _defaults_or_404(agent_id: str) -> dict[str, Any]:
 
 
 async def _answer(conn: Any, *, slug: str, agent_id: str, defaults: dict[str, Any]) -> dict:
-    """Defaults, overrides, the resolution of one over the other, and one fact about it.
+    """Defaults, overrides, the resolution of one over the other, and two facts about it.
 
     The resolution is `resolve_agent_config_with` rather than a merge written here. The rule -
     NULL means the default, `''` does not - lives in `agent_config_service._merge` and a second
@@ -323,9 +324,21 @@ async def _answer(conn: Any, *, slug: str, agent_id: str, defaults: dict[str, An
     interview button on it, and re-deriving the roster in TypeScript would be a fifth
     declaration of a voice fact - the exact thing this branch exists to end.
 
-    **Nothing here reaches a third party.** Both values are read from local data, which is the
-    property that had to be restored: the sex of the resolved voice was answered here for one
-    commit and moved to the picker's own door, because this one is read on every render of
+    `promoted_default_image_url` is the second fact, and it exists because the dashboard cannot
+    render `defaults["image_url"]`: for an agent with no promotion that value is
+    `AGENT_IDENTITY`'s `/agents/avery-singh.jpg`, and Vite serves `ui/public` under the
+    `/dashboard` base, so it 404s. The hook therefore completes the four levels itself, and
+    **it has to be told which defaults are promoted** - the alternative it must not take is
+    sniffing for an `/api/` prefix, which is this rule restated in TypeScript and wrong the
+    moment a promoted portrait is served from anywhere else.
+
+    Answered here rather than in either door's body, so the batch and the per-agent door cannot
+    disagree about it: `test_the_bulk_door_answers_what_the_single_door_answers` compares whole
+    responses, and a key added to one of them alone would fail it.
+
+    **Nothing here reaches a third party.** All three values are read from local data, which is
+    the property that had to be restored: the sex of the resolved voice was answered here for
+    one commit and moved to the picker's own door, because this one is read on every render of
     every agent panel.
     """
     project = await fetch_project(conn, slug=slug)
@@ -342,6 +355,10 @@ async def _answer(conn: Any, *, slug: str, agent_id: str, defaults: dict[str, An
         "overrides": {field: (row[field] if row else None) for field in AGENT_CONFIG_COLUMNS},
         "resolved": await resolve_agent_config_with(conn, slug=slug, agent_id=agent_id),
         "is_interviewer": is_interviewer(agent_id),
+        # `None` for the seventeen-eighteenths case - every agent whose default is the built-in
+        # asset. Not `defaults["image_url"] if promoted else None` spelled out at the caller:
+        # this is the level, reported as itself.
+        "promoted_default_image_url": promoted_default_image_url(agent_id),
     }
 
 
@@ -367,8 +384,9 @@ async def get_all_agent_configs(
     generous.** The front end cannot use a resolved *image*: `AGENT_IDENTITY` stores
     `/agents/jordan-williams.jpg`, and Vite serves `ui/public` under the base `/dashboard`, so
     that address 404s in the dashboard for every agent with no override. The hook therefore
-    reads `overrides` and falls back to `AGENT_AVATAR_IMAGE`, which is the only map that knows
-    the base - and it can only do that if `overrides` is here.
+    walks the four levels itself - `overrides`, then `promoted_default_image_url`, then
+    `AGENT_AVATAR_IMAGE`, which is the only map that knows the base, then initials - and it can
+    only do that if the first two are here.
 
     A read, so the membership floor and nothing else - the authority of the door it batches. It
     discloses nothing the per-agent door would not answer eighteen times.

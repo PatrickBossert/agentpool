@@ -36,6 +36,21 @@ export interface AgentConfig {
   /** The one over the other, per field. What the interview actually uses. */
   resolved: AgentConfigFields
   /**
+   * Level 2 of the four: the portrait promoted for this agent across the whole deployment, or
+   * `null` when its default is the built-in asset shipped in the repository.
+   *
+   * **Read this, never sniff `defaults.image_url` for a prefix.** The two defaults are
+   * different kinds of address - a promoted one is `/api/agents/{id}/image`, served
+   * same-origin, while a built-in one is `/agents/avery-singh.jpg`, which 404s under Vite's
+   * `/dashboard` base - and telling them apart in TypeScript would be the server's rule
+   * restated on the one side nothing is watching. The server says which it is; this field is
+   * that answer.
+   *
+   * Required rather than optional, for the reason `is_interviewer` gives above: an optional
+   * field survives a spread that drops it, and nothing says so.
+   */
+  promoted_default_image_url: string | null
+  /**
    * Whether this agent conducts interviews - `agent_config_service.is_interviewer`, which asks
    * `interviewer_selection`'s own roster.
    *

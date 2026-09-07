@@ -106,6 +106,9 @@ function config(agentId: string) {
     // Stipulated, not derived from the id: the roster of who interviews lives in one place in
     // Python. Nothing in these cases reads it.
     is_interviewer: false,
+    // Level 2 of the four - `null` because this agent's default is the portrait shipped in the
+    // repository, which is true of every agent on the roll today.
+    promoted_default_image_url: null,
   }
 }
 

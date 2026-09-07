@@ -39,10 +39,25 @@ const NO_OVERRIDES: AgentConfigOverrides = {
   language: null, country_code: null, model_id: null,
 }
 
-function entry(agentId: string, overrides: Partial<AgentConfigOverrides> = {}): AgentConfig {
+// A portrait promoted for the whole deployment - level 2. The `/api/` prefix is what the
+// deployment door actually serves it from, and it is written out rather than assembled for the
+// same reason the address above is. **Nothing in the production code may key on that prefix**:
+// the server names this level in its own field, and the test would still pass if it did.
+const PROMOTED_PORTRAIT = '/api/agents/value_chain_mapper/image'
+
+function entry(
+  agentId: string,
+  overrides: Partial<AgentConfigOverrides> = {},
+  promotedDefaultImageUrl: string | null = null,
+): AgentConfig {
   const merged = { ...NO_OVERRIDES, ...overrides }
   const defaults = {
-    display_name: 'Server Default', image_url: '/agents/server-default.jpg', voice_id: null,
+    display_name: 'Server Default',
+    // The **unprefixed** shape `AGENT_IDENTITY` actually holds, so a component that rendered a
+    // resolved default would draw an address that 404s under Vite's `/dashboard` base - the
+    // trap this branch has fallen into three times - and the assertions below would say so.
+    image_url: promotedDefaultImageUrl ?? '/agents/server-default.jpg',
+    voice_id: null,
     language: 'en', country_code: 'GB', model_id: 'eleven_turbo_v2',
   }
   return {
@@ -57,6 +72,11 @@ function entry(agentId: string, overrides: Partial<AgentConfigOverrides> = {}): 
     // Stipulated, not derived from the id: the roster of who interviews lives in one place in
     // Python. Nothing in these cases reads it.
     is_interviewer: false,
+    // Level 2, as the server reports it: the promoted address itself, `null` when this agent's
+    // default is the built-in asset. Folded into `defaults.image_url` above as well, because
+    // that is what `agent_defaults` does on the wire - so a component reading the wrong one of
+    // the two is not saved by the fixture disagreeing with the server.
+    promoted_default_image_url: promotedDefaultImageUrl,
   }
 }
 
@@ -166,6 +186,71 @@ describe('the carousel draws the project its faces belong to', () => {
     await waitFor(() =>
       expect(screen.getByAltText('Pamela')).toHaveAttribute('src', PAMS_PORTRAIT),
     )
+  })
+
+  it("draws the deployment's promoted portrait for an agent this project has not configured",
+    async () => {
+      // **The defect this test exists for.** Task 4c promoted the first portrait uploaded for a
+      // faceless agent to a deployment-wide default, and it reached the interview page - which
+      // renders the server's *resolved* value - the moment it was written. It reached no face on
+      // the dashboard, because the hook read the override and then went straight to the static
+      // map, so a promoted agent rendered as INITIALS on every dashboard face.
+      //
+      // Alex is the control in the same response, and he is the half that makes this
+      // falsifiable: a hook "fixed" by reading `defaults.image_url` unconditionally would draw
+      // the promotion correctly and give Jordan `/agents/server-default.jpg`, an address that
+      // 404s under the `/dashboard` base. Both agents, one render, every time.
+      vi.mocked(agentConfigApi.getAll).mockResolvedValue({
+        agents: {
+          value_chain_mapper: entry('value_chain_mapper', {}, PROMOTED_PORTRAIT),
+          stakeholder_manager: entry('stakeholder_manager'),
+        },
+      })
+
+      renderCarousel()
+
+      await waitFor(() =>
+        expect(screen.getByAltText('Alex')).toHaveAttribute('src', PROMOTED_PORTRAIT),
+      )
+      expect(screen.getByAltText('Jordan')).toHaveAttribute(
+        'src', AGENT_AVATAR_IMAGE['Stakeholder Manager'],
+      )
+    })
+
+  it("draws this project's own portrait over the deployment's promoted one", async () => {
+    // Level 1 over level 2, at the site that renders it. Without this, a hook that read the
+    // promoted default *first* would pass the test above and would silently ignore the portrait
+    // an administrator uploaded onto this engagement - which is the original defect again,
+    // wearing the fix as a disguise.
+    vi.mocked(agentConfigApi.getAll).mockResolvedValue({
+      agents: {
+        value_chain_mapper: entry(
+          'value_chain_mapper', { image_url: JORDANS_PORTRAIT }, PROMOTED_PORTRAIT,
+        ),
+      },
+    })
+
+    renderCarousel()
+
+    await waitFor(() =>
+      expect(screen.getByAltText('Alex')).toHaveAttribute('src', JORDANS_PORTRAIT),
+    )
+  })
+
+  it('renders initials for a cleared portrait even when a promoted default exists', async () => {
+    // `''` is the project saying "nothing", and it must beat level 2 as decisively as it beats
+    // level 3. `||` in the fallback chain would reinstate the deployment's face over a decision
+    // somebody made here, and the empty string is the only input that tells the two apart.
+    vi.mocked(agentConfigApi.getAll).mockResolvedValue({
+      agents: {
+        value_chain_mapper: entry('value_chain_mapper', { image_url: '' }, PROMOTED_PORTRAIT),
+      },
+    })
+
+    renderCarousel()
+
+    await waitFor(() => expect(screen.getByText('AC')).toBeInTheDocument())
+    expect(screen.queryByAltText('Alex')).not.toBeInTheDocument()
   })
 
   it('renders initials rather than a broken image when a project clears a portrait', async () => {

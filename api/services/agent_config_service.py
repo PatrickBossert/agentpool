@@ -36,8 +36,15 @@ engagement where it is called something else - free.
 
 **One default is not in that file.** `image_url` may resolve to a *promoted* portrait - the
 first one uploaded for an agent that had no face at all, which becomes the deployment's default
-for every later project. `agent_defaults` below is the single place that level is read, and
-`api/services/agent_default_images.py` holds the four-level precedence table and the reasoning.
+for every later project. `agent_defaults` below is the single place that level is *folded into*
+a resolution, and `api/services/agent_default_images.py` holds the four-level precedence table
+and the reasoning.
+
+`promoted_default_image_url` reports that same level **unfolded**, and the config doors answer
+it beside the resolution. The dashboard is the reason: it cannot render a resolved default
+(`/agents/avery-singh.jpg` 404s under Vite's `/dashboard` base) so it completes the same four
+levels itself, and it must be *told* which defaults are promoted rather than inferring it from
+the shape of a URL.
 
 **One fact is derived here rather than stored.** `is_interviewer` asks
 `interviewer_agent_ids()`, the one place "who can conduct an interview" is answered, so the
@@ -88,10 +95,33 @@ class UnknownAgent(KeyError):
     """
 
 
+def promoted_default_image_url(agent_id: str) -> str | None:
+    """Level 2 alone - the portrait promoted for this agent across the deployment, or `None`.
+
+    **The one read of level 2 in this codebase**, and `agent_defaults` below is its one caller
+    in the resolution. Exposing it separately is not a second fold of the level: it is the same
+    value, from the same accessor, reported *beside* the resolution rather than folded into it
+    a second time.
+
+    It has to be reported, because the dashboard cannot use the folded answer. `defaults
+    ["image_url"]` is a promoted URL for a promoted agent and `AGENT_IDENTITY`'s
+    `/agents/avery-singh.jpg` for everybody else - and Vite serves `ui/public` under the
+    `/dashboard` base, so rendering that second shape 404s. The front end therefore needs to
+    know **which** default is a promoted one, and the only honest way to tell it is to say so:
+    a front end that sniffed for an `/api/` prefix would be restating this rule in TypeScript
+    and would break the moment a promoted portrait is served from anywhere else.
+
+    `None` for an id outside the roll rather than `UnknownAgent`, deliberately: this answers
+    "has anything been promoted for this id", which has an answer for any string, and the doors
+    that need the roll enforced already ask `agent_defaults`.
+    """
+    return promoted_default_url(agent_id)
+
+
 def agent_defaults(agent_id: str) -> dict[str, Any]:
     """The unconfigured answer for one agent - what runs today, and what an override overrides.
 
-    **The one place the promoted default is read**, and that is the whole reason it is here
+    **The one place the promoted default is folded in**, and that is the whole reason it is here
     rather than in either door. `image_url` resolves through three of the four levels
     `agent_default_images` states: a project override beats everything (`_merge`, above a
     caller of this), a *promoted* default beats the built-in asset, and the built-in asset is
@@ -108,7 +138,7 @@ def agent_defaults(agent_id: str) -> dict[str, Any]:
         raise UnknownAgent(agent_id)
     return {
         "display_name": identity.display_name,
-        "image_url": promoted_default_url(agent_id) or identity.image,
+        "image_url": promoted_default_image_url(agent_id) or identity.image,
         "voice_id": identity.voice_id,
         "language": identity.language,
         "country_code": identity.country_code,

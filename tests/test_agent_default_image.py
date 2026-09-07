@@ -336,6 +336,111 @@ async def test_a_promoted_default_outranks_a_built_in_asset_added_afterwards(dep
     assert agent_defaults(FACELESS)["image_url"] == PROMOTED_URL
 
 
+# ── The doors say which default is a promoted one ───────────────────────────────────────
+#
+# The promotion reached the interview page from the moment it was written, because that page
+# renders `resolve_agent_config`'s **resolved** value and level 2 is folded into it. The
+# dashboard cannot do that: `defaults["image_url"]` is `/agents/avery-singh.jpg` for an agent
+# with no promotion, and Vite serves `ui/public` under the `/dashboard` base, so a front end
+# reading it unconditionally 404s all eighteen faces. It therefore walks the four levels itself
+# and needs to be **told** which defaults are promoted - the alternative, sniffing for an
+# `/api/` prefix, is this rule restated in TypeScript.
+
+
+@pytest.mark.asyncio
+async def test_the_config_door_names_the_promoted_default_for_an_agent_that_has_one(
+    deployment,
+):
+    """Uploaded on A, named on B - the project that did nothing and inherits the face.
+
+    `promoted_default_image_url` is the level itself rather than a flag about `defaults`, so
+    what the dashboard has to draw is on the wire as an address it can draw.
+    """
+    await deployment["admin"].post(
+        f"/projects/{SLUG_A}/agents/{FACELESS}/image", files=_upload(_png())
+    )
+
+    body = (
+        await deployment["admin"].get(f"/projects/{SLUG_B}/agents/{FACELESS}/config")
+    ).json()
+
+    assert body["promoted_default_image_url"] == PROMOTED_URL
+    # And the resolution still folds it in, unchanged. The new key reports a level; it does not
+    # replace the fold, and a change that moved level 2 out of `agent_defaults` would fail here.
+    assert body["defaults"]["image_url"] == PROMOTED_URL
+    assert body["resolved"]["image_url"] == PROMOTED_URL
+
+
+@pytest.mark.asyncio
+async def test_an_agent_whose_default_is_a_built_in_asset_is_named_as_having_none(deployment):
+    """The control, and the reason the field is worth anything.
+
+    A key that simply echoed `defaults["image_url"]` would satisfy the test above and would tell
+    the dashboard to render `/agents/avery-singh.jpg`, which is the 404 this whole field exists
+    to prevent. Avery has a shipped portrait and no promotion, so the two answers must differ.
+    """
+    body = (
+        await deployment["admin"].get(f"/projects/{SLUG_B}/agents/{AVERY}/config")
+    ).json()
+
+    assert body["promoted_default_image_url"] is None
+    assert body["defaults"]["image_url"] == AGENT_IDENTITY[AVERY].image
+    assert body["defaults"]["image_url"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_project_override_does_not_change_what_the_promoted_level_is(deployment):
+    """Level 1 beating level 2 is the *front end's* decision, and it needs both to make it.
+
+    The door reports the levels; it does not pre-empt them. A door that answered `None` here
+    because an override existed would work today and break the moment anything wanted to say
+    "this project has overridden the deployment's face".
+    """
+    upload = await deployment["admin"].post(
+        f"/projects/{SLUG_A}/agents/{FACELESS}/image", files=_upload(_png())
+    )
+    own_url = upload.json()["url"]
+    assert own_url != PROMOTED_URL
+
+    save = await deployment["admin"].put(
+        f"/projects/{SLUG_A}/agents/{FACELESS}/config", json={"image_url": own_url}
+    )
+    assert save.status_code == 200, save.text
+
+    assert save.json()["overrides"]["image_url"] == own_url
+    assert save.json()["promoted_default_image_url"] == PROMOTED_URL
+
+
+@pytest.mark.asyncio
+async def test_the_bulk_door_names_the_promoted_default_exactly_as_the_single_door_does(
+    deployment,
+):
+    """Both doors, with a promotion in play - which is the state no other comparison reaches.
+
+    `test_the_bulk_door_answers_what_the_single_door_answers` already holds whole responses
+    equal for every agent on the roll, and it is the stronger test - but it runs on a deployment
+    with nothing promoted, where every agent's answer to this question is `None`. A batch that
+    hard-coded `None` would pass it. This one has a subject, and a control beside it in the same
+    response.
+    """
+    await deployment["admin"].post(
+        f"/projects/{SLUG_A}/agents/{FACELESS}/image", files=_upload(_png())
+    )
+
+    agents = (
+        await deployment["admin"].get(f"/projects/{SLUG_B}/agents/config")
+    ).json()["agents"]
+
+    for agent_id in (FACELESS, AVERY):
+        single = await deployment["admin"].get(
+            f"/projects/{SLUG_B}/agents/{agent_id}/config"
+        )
+        assert agents[agent_id] == single.json(), agent_id
+
+    assert agents[FACELESS]["promoted_default_image_url"] == PROMOTED_URL
+    assert agents[AVERY]["promoted_default_image_url"] is None
+
+
 # ── Step 4's power-check: two uploads racing produce one row and one file ───────────────
 
 

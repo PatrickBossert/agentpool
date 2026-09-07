@@ -31,11 +31,24 @@ const NO_OVERRIDES: AgentConfigOverrides = {
   language: null, country_code: null, model_id: null,
 }
 
-function entry(agentId: string, overrides: Partial<AgentConfigOverrides> = {}): AgentConfig {
+// A portrait promoted for the whole deployment - level 2, served from its own door. Written out
+// rather than assembled, and **nothing in the production code may key on the `/api/` prefix**:
+// the server names this level in a field of its own, which is what makes the hook's fallback a
+// read rather than a rule restated in TypeScript.
+const PROMOTED_PORTRAIT = '/api/agents/value_chain_mapper/image'
+
+function entry(
+  agentId: string,
+  overrides: Partial<AgentConfigOverrides> = {},
+  promotedDefaultImageUrl: string | null = null,
+): AgentConfig {
   const merged = { ...NO_OVERRIDES, ...overrides }
   const defaults = {
     display_name: 'Default Name',
-    image_url: '/agents/default.jpg',
+    // Folded, exactly as `agent_defaults` folds it on the wire: a promoted default *is* the
+    // agent's default image. So a hook reading `defaults.image_url` would pass the promotion
+    // test below and break the other seventeen agents, which is what the control catches.
+    image_url: promotedDefaultImageUrl ?? '/agents/default.jpg',
     voice_id: null,
     language: 'en',
     country_code: 'GB',
@@ -56,6 +69,7 @@ function entry(agentId: string, overrides: Partial<AgentConfigOverrides> = {}): 
     // Stipulated, not derived from the id: the roster of who interviews lives in one place in
     // Python. Nothing in these cases reads it.
     is_interviewer: false,
+    promoted_default_image_url: promotedDefaultImageUrl,
   }
 }
 
@@ -177,6 +191,69 @@ describe('useAgentIdentity', () => {
         '/agents/default.jpg',
       )
     })
+
+  it('draws a promoted deployment default over the static map, and only where there is one',
+    async () => {
+      // Level 2 over level 3. Alex carries a promotion and Jordan does not, in the same
+      // response, because the wrong repair for this - reading `defaults.image_url`
+      // unconditionally - draws Alex correctly and gives Jordan `/agents/default.jpg`, an
+      // address that 404s under the `/dashboard` base.
+      vi.mocked(agentConfigApi.getAll).mockResolvedValue({
+        agents: {
+          value_chain_mapper: entry('value_chain_mapper', {}, PROMOTED_PORTRAIT),
+          stakeholder_manager: entry('stakeholder_manager'),
+        },
+      })
+
+      renderProbe(['Value Chain Mapper', 'Stakeholder Manager'], 'sp-gs-am')
+
+      await waitFor(() =>
+        expect(screen.getByTestId('Value Chain Mapper-image')).toHaveTextContent(
+          PROMOTED_PORTRAIT,
+        ),
+      )
+      expect(screen.getByTestId('Stakeholder Manager-image')).toHaveTextContent(
+        AGENT_AVATAR_IMAGE['Stakeholder Manager'],
+      )
+    })
+
+  it("draws this project's own portrait over a promoted deployment default", async () => {
+    // Level 1 over level 2. Without it, a hook that consulted the promotion first would pass
+    // the test above while ignoring the portrait an administrator uploaded onto this
+    // engagement - which is the reported defect again, wearing the repair as a disguise.
+    vi.mocked(agentConfigApi.getAll).mockResolvedValue({
+      agents: {
+        value_chain_mapper: entry(
+          'value_chain_mapper', { image_url: JORDANS_PORTRAIT }, PROMOTED_PORTRAIT,
+        ),
+      },
+    })
+
+    renderProbe(['Value Chain Mapper'], 'sp-gs-am')
+
+    await waitFor(() =>
+      expect(screen.getByTestId('Value Chain Mapper-image')).toHaveTextContent(
+        JORDANS_PORTRAIT,
+      ),
+    )
+  })
+
+  it('treats a cleared portrait as cleared even when a promoted default exists', async () => {
+    // `''` beats level 2 as decisively as it beats level 3, and it is the only input that can
+    // tell `??` from `||` here: with `||`, the deployment's face would be reinstated over a
+    // decision this project made.
+    vi.mocked(agentConfigApi.getAll).mockResolvedValue({
+      agents: {
+        value_chain_mapper: entry('value_chain_mapper', { image_url: '' }, PROMOTED_PORTRAIT),
+      },
+    })
+
+    renderProbe(['Value Chain Mapper'], 'sp-gs-am')
+
+    await waitFor(() =>
+      expect(screen.getByTestId('Value Chain Mapper-image')).toHaveTextContent('(cleared)'),
+    )
+  })
 
   it('treats a deliberately cleared portrait as cleared, not as an absent override', async () => {
     // `''` is the project saying "nothing"; NULL is the project saying nothing at all. The whole

@@ -37,14 +37,32 @@ export interface AgentIdentity {
  * a second name-to-id map here would be free to drift from it with nothing comparing the two,
  * and a wrong id is not a 404 anybody sees - any id that *exists* configures a different agent.
  *
- * **The override first, the static map second - never the server's resolved value.** The batch
- * answers `resolved` too and it is the wrong thing to render here: `AGENT_IDENTITY`'s default
- * image is `/agents/jordan-williams.jpg`, while Vite serves `ui/public` under the base
- * `/dashboard`, so drawing the resolved default would 404 for every agent *without* an override
- * and turn a bug about one face into a bug about eighteen. `AGENT_AVATAR_IMAGE` is the only map
- * that knows the base, so it stays the fallback. The two agree about which file they mean -
- * `tests/test_persona_transcription.py` holds them equal - so this is a difference of address
- * rather than of content.
+ * **Four levels, and the precedence is stated once** - in
+ * `docs/superpowers/specs/2026-09-07-test-interview-per-interviewer-design.md`, which this
+ * follows rather than reinvents:
+ *
+ * | | Here | Set by |
+ * |---|---|---|
+ * | 1. Project override | `overrides.image_url` | uploading on that project |
+ * | 2. Promoted default | `promoted_default_image_url` | the first upload for a faceless agent |
+ * | 3. Built-in asset | `AGENT_AVATAR_IMAGE` | whoever added the agent |
+ * | 4. Initials | `null` | `AgentAvatar` |
+ *
+ * **Never the server's resolved value.** The batch answers `resolved` too and it is the wrong
+ * thing to render here: `AGENT_IDENTITY`'s default image is `/agents/jordan-williams.jpg`, while
+ * Vite serves `ui/public` under the base `/dashboard`, so drawing the resolved default would 404
+ * for every agent *without* an override and turn a bug about one face into a bug about eighteen.
+ * That trap has caught three separate pieces of work on this branch, which is why level 3 is
+ * `AGENT_AVATAR_IMAGE` - the only map that knows the base. It and `AGENT_IDENTITY` agree about
+ * which file they mean (`tests/test_persona_transcription.py` holds them equal), so this is a
+ * difference of address rather than of content.
+ *
+ * Level 2 is the *reason a separate field exists*. A promoted portrait is served from
+ * `/api/agents/{id}/image`, which is a real address in the dashboard, so it can be drawn - but
+ * it arrives on the wire as `defaults.image_url` for a promoted agent and as the unprefixed
+ * built-in path for everybody else, and the two cannot be told apart from the value. So the
+ * server names it. **Do not sniff for `/api/`**: that is the server's rule restated in
+ * TypeScript, and it breaks the moment a promoted portrait is served from anywhere else.
  *
  * **"Present" means "not NULL", never "truthy"** - `agent_config_service._override`'s rule, and
  * the reason this uses `??` rather than `||`. A project that has cleared an agent's portrait has
@@ -67,10 +85,14 @@ export function useAgentIdentity(slug?: string): (agentName: string) => AgentIde
 
   return useCallback(
     (agentName: string): AgentIdentity => {
-      const overrides = data?.agents[AGENT_IDS[agentName]]?.overrides
+      const config = data?.agents[AGENT_IDS[agentName]]
       return {
-        name: overrides?.display_name ?? AGENT_HUMAN_NAME[agentName] ?? agentName,
-        imageUrl: overrides?.image_url ?? AGENT_AVATAR_IMAGE[agentName] ?? null,
+        name: config?.overrides.display_name ?? AGENT_HUMAN_NAME[agentName] ?? agentName,
+        imageUrl:
+          config?.overrides.image_url
+          ?? config?.promoted_default_image_url
+          ?? AGENT_AVATAR_IMAGE[agentName]
+          ?? null,
       }
     },
     [data],

@@ -112,6 +112,10 @@ function config(overrides: Partial<AgentConfig['overrides']> = {}): AgentConfig 
     // from the id: the roster of who interviews lives in one place in Python, and a fixture
     // that re-derived it would be a second copy of it on the side nothing is watching.
     is_interviewer: true,
+    // Level 2 of the four - `null` because this agent's default is the portrait shipped in the
+    // repository, which is true of all eighteen agents on the roll today. The promotion rule
+    // has no live subject; `tests/test_agent_default_image.py` synthesises one.
+    promoted_default_image_url: null,
   }
 }
 
