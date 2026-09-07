@@ -100,6 +100,38 @@ must use `monkeypatch.setenv("DATABASE_DIR", str(tmp_path))` with `get_settings.
 both sides; tests using the shared `client` fixture must scope every assertion to a row they
 created rather than hardcoding an id or counting globally.
 
+**Export `DATABASE_DIR`, `PROJECTS_DIR` and `DATA_DIR` to a private directory before invoking
+pytest.** `conftest.py` reads all three with `setdefault`, so exporting them is the whole of it.
+The fixed defaults are not only a hazard across *successive* runs: two agents running pytest at
+once **corrupt each other**, because `conftest.py` `shutil.rmtree`s the default `DATA_DIR` at
+import time, so a second session starting mid-flight deletes a directory under the first. The
+tell is the shape of the failures - readonly database, `Directory not empty`, never an
+assertion - and one such collision produced 77 failures and 28 errors, not one of them real. The
+`rmtree` is guarded on the directory's own name being `agentpool_test_data`, which is precisely
+what makes exporting the fix rather than a hope. Parallel agents are normal on this project now,
+so this is a rule and not a precaution.
+
+**The five tests catalogued for weeks as failing "against a fresh database" were never product
+defects.** Three test files hardcoded `/tmp/agentpool_test` while the code under test reads
+`get_settings().database_dir` and `.projects_dir`, so under isolation `test_projects_api`'s
+autouse fixture scrubbed a directory nothing was using, `test_portfolio_register_returns_data`
+wrote its fixture where the endpoint would never look, and `test_agent_chat` seeded one database
+while the app opened another. Fixed in `51b8af1b` by reading the directories off the settings the
+code under test reads. The consequence is the half worth keeping: **the suite's green depended on
+those two paths coinciding**, which they do only while nobody exports the variables - so no clean
+checkout, no new machine and no CI run has ever reproduced the counts this project has been
+quoting, sp62's included.
+
+**A second, unrelated reason the same sentence is true, found while verifying it.** `projects/`
+holds exactly two tracked files, so a real checkout has no `sp-gs-am`, and four tests skip on the
+absence of a fixture under it rather than the two this machine reports - two of them
+(`test_sqlite_state_validation.py` and `test_value_chain_model.py`, both on
+`value_chain_model_v2.json`) pass here only because a live crew run left the file behind, and two
+in `test_value_chain_migration.py` are dark on every machine including this one. So **"2675
+passed / 2 skipped" is a property of this workstation, not of the repository**; a clean clone
+answers 2673 / 4 and nothing is wrong. The fix is committed fixtures under `tests/fixtures/`,
+which the two dark tests already name as theirs.
+
 **A module fixture that wipes the project `.db` is not enough.** `project_registry` lives in
 the *shared system* database, and `POST /projects` registers with `INSERT OR IGNORE` - so a
 test that reassigns a slug to another organisation leaves it owned by that organisation, and
@@ -128,9 +160,11 @@ Two things that look like evidence during forensics on `data/` and are not:
 
 ## Reviewing changes: the recurring failure mode
 
-Five times on this project a test has verified a property **one layer away from where it holds**.
+Repeatedly on this project a test has verified a property **one layer away from where it holds**.
 In every case the shipped code was correct and the test could not distinguish correct from
-incorrect:
+incorrect (this sentence read "five times" for several sprints while the list below ran to
+eight, which is its own small instance of the lesson - it is ten now, and the word is there so
+it cannot rot again):
 
 - `check_write` tested; the tool calling it not.
 - `staleness` tested; the endpoint assembling it not.
@@ -153,6 +187,19 @@ incorrect:
   Alone, 12 passed; behind anything that imports the crew module first, 4 failed — and the
   production bug they were hiding (`create_business_plan_crew` raises `ValueError: Unknown
   agent: visual_illustrator`) had been live on master the entire time.
+- A test that asserted one phase of a **multi-phase** screen. The rehearsal dialog draws the
+  interviewer's face in five places across four phases; mutating each render back to the wrong
+  agent in turn, **four of the five still passed**, because the first version asserted the
+  device-setup screen alone. Right in one place and wrong in four is exactly what a screen looks
+  like from its first frame. It now walks every phase, asserts every avatar on screen at each,
+  and counts them so the loop cannot pass vacuously.
+- Two doors answered a URL that nothing served, and both tests were green. The portrait test
+  asserted the returned URL **equalled the literal the handler built**; the branding test
+  asserted that literal and then fetched a *different* hardcoded path - so between them they
+  proved a file was servable somewhere and that the door returned a string, and never that the
+  two agreed. **A URL is a promise that something answers: fetch what the door returned.** The
+  branding door had carried the defect since it was written, unseen because no deployment had
+  ever uploaded a header image.
 
 When a test passes alone and fails in the suite, the isolated pass is the thing to distrust —
 it is usually the one running under state no production caller ever has.
@@ -431,17 +478,17 @@ assertable rather than merely intended.
 *Administration* is running the engagement: stakeholders and their roles, campaigns and
 reminder emails, the document library, starting a run or an orchestration, PAM assignment,
 and `PATCH /{slug}/settings`, the milestone schedule, the non-working calendar, and the
-branding header, and each agent's name, face and voice. Thirty-four project-scoped doors,
+branding header, and each agent's name, face and voice. Thirty-five project-scoped doors,
 none of which takes a content gate, as project creation does not either. That is deliberate:
 a consultant configures the engagement, and a client-side approver does not, however senior
 they are on the project. They now split across the two administration rows:
 
 | Gate | Doors |
 |------|-------|
-| `require_project_administration` (16) | `stakeholders.py` (5 - not `resend-invite`, and not the roster `GET`), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`), `assignment.py` (1 - `POST /{slug}/assignment`), `agent_config.py` (1 - `PUT .../agents/{agent_id}/config`) |
+| `require_project_administration` (17) | `stakeholders.py` (5 - not `resend-invite`, and not the roster `GET`), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`), `assignment.py` (1 - `POST /{slug}/assignment`), `agent_config.py` (2 - `PUT .../agents/{agent_id}/config` and `POST .../agents/{agent_id}/image`) |
 | `Depends(require_org_admin_or_above)` (18) | `campaigns.py` (10), `documents.py` (3), `assignment.py` (1 - `advance`), `orchestrate.py`, `run.py`, `voices.py`'s `POST /{slug}/voices/library`, and `stakeholders.py`'s `resend-invite` |
 
-16 + 18 = the thirty-four. `POST /projects` sits outside the count and keeps the platform
+17 + 18 = the thirty-five. `POST /projects` sits outside the count and keeps the platform
 tier of necessity: there is no slug yet to scope a per-project role by.
 
 **Recounted in sp62 from `app.routes`, and the composition had drifted further than the
@@ -456,6 +503,15 @@ of its members are not the ones named, and the `require_project_administration` 
 That is the case this file's "recount rather than adjusting one to match the other" was
 written for: adjusting either number to agree with the other would have produced a table that
 is internally consistent and wrong in three places.
+
+**Recounted again in sp63 - 104 `{slug}` routes, 101 calling the floor, 17 on
+`require_project_administration` - and the technique matters more than the totals, because a
+text-keyed sweep can no longer produce them.** `get_agent_image` explains in its docstring why
+it has no floor, and *contains the string `check_project_access` while doing so*, so a grep
+counts it as gated and finds two exceptions where there are three. Parse each handler and look
+for a **call**: a docstring cannot be an `ast.Call`. That is *enumerate by behaviour, not by
+name* arriving a fourth time, in the one shape the earlier three did not take - not a file
+hidden from the sweep, but a file the sweep saw and misread.
 
 **What the second row's eighteen excludes, so the next recount does not find twenty-two and
 assume drift.** Twenty-two `{slug}` routes carry `require_org_admin_or_above` or
@@ -661,13 +717,14 @@ question is which authenticated write path should have done it earlier.
 **Enumerate by behaviour, not by name.** The alias hid two files from a `require_any_auth`
 grep; `pam_report.py` then hid from the *alias* sweep by not aliasing, and it had the same
 hole. Two accidental discoveries meant the enumeration was wrong twice, so it was done
-properly: 100 handlers are mounted under a path containing `{slug}`, and the check is whether
-each one calls `check_project_access`. **Ninety-eight of the hundred call it.** The two
-that do not:
+properly: 104 handlers are mounted under a path containing `{slug}`, and the check is whether
+each one calls `check_project_access`. **One hundred and one of the hundred and four call it.**
+The three that do not:
 
 | Door | Why not |
 |------|---------|
 | `GET /projects/{slug}/branding/image` | Deliberate - no auth at all. The interview page renders it for a participant who has no login. If that image ever becomes client-confidential the fix is session-token scoping, not `check_project_access`. |
+| `GET /projects/{slug}/agents/{agent_id}/image` | The same exception serving the same page - a participant sees the interviewer's face before they have any login to check. It multiplies the probe surface by eighteen without widening it: a 200 tells a caller who already knows the slug that a portrait exists, which is what the door is for. |
 | `DELETE /auth/projects/{slug}` | Registry administration, `require_sysadmin`. Global by nature, and a sysadmin passes the floor unconditionally, so the call would be a no-op. |
 
 `WEBSOCKET /ws/{slug}` was the third row and this file called it the largest remaining
@@ -693,7 +750,7 @@ enforce it, which is the third time on this codebase a name-keyed sweep has miss
 **The sweep counts routes whose *path* holds `{slug}` and nothing else.** A project-scoped
 door taking its slug from the request *body* does not appear in it - `POST
 /api/interviews/test/elaboration-press` is that shape, and does call `check_project_access`,
-but the technique cannot see it. One hundred is not a completeness guarantee.
+but the technique cannot see it. One hundred and four is not a completeness guarantee.
 
 **There are two body-slug doors now, and the second one arrived carrying a live hole.**
 `POST /api/interviews/test/speak` had no slug at all until sp62 gave it one so it could
@@ -901,9 +958,14 @@ on Agents because their **components were named after agents** - `PamSetupTab`, 
 `MayaSetupTab`, `JordanSetupTab`, `TaylorSetupTab` - and asked the question, five of them held
 the engagement's schedule, brief, disciplines, mapping and roster rather than anything of the
 agent's. Only Avery's interviewing style survives, and the Agents tab being thin is the correct
-outcome. `ui/src/__tests__/TabClassification.test.tsx` states the classification as a property: set
-equality per tab over each panel's `data-panel-section`, so a seventh panel registered with no
-decision about where it belongs fails rather than lands.
+outcome. **All five files were renamed** - `ProjectScheduleSetup`, `DiscoveryBriefSetup`,
+`InterviewProgrammePanel`, `StakeholderMappingSetup`, `StakeholderSummaryPanel` - because the
+filename was the *mechanism* of the misclassification rather than a symptom of it: a component
+called `PamSetupTab` is configuration **for** an agent read as configuration **of** one, and
+moving it while leaving the name would hand the next reader the same wrong signal and invite the
+same decision back. `ui/src/__tests__/TabClassification.test.tsx` states the classification as a
+property: set equality per tab over each panel's `data-panel-section`, so a seventh panel
+registered with no decision about where it belongs fails rather than lands.
 
 Three consequences worth knowing before touching it. **Every absence assertion must be scoped
 with `within()` on the tab's own panel and made after every tab has been opened** - Output,
@@ -917,6 +979,23 @@ link can open the panel straight onto either. And **two deep links name a tab** 
 the stakeholder mapping moves both; they are driven to the content in
 `ui/src/__tests__/AssignmentRouteRetired.test.tsx` rather than checked for a string, because a link that lands on
 the right crew and the wrong tab looks exactly like working navigation.
+
+**`ui/public` is served under the `/dashboard` base, so a bare `/agents/*.jpg` 404s in the
+browser.** `AGENT_AVATAR_IMAGE` in `agentStatus.ts` is the only map that knows the base - it
+prefixes `import.meta.env.BASE_URL` - while `AGENT_IDENTITY.image` on the server is the
+unprefixed path. They mean the same file and `tests/test_persona_transcription.py` holds them
+equal, so the difference is one of **address** rather than of content, and rendering the server's
+resolved default turns a bug about one face into a bug about eighteen. This has caught three
+separate pieces of work on one branch, which is why it is here rather than in a comment.
+`useAgentIdentity` is where it is decided - the project's override first, then a default the
+front end can actually fetch - and `??` rather than `||`, because `''` is a portrait a project
+has **deliberately cleared** and must reach the initials rather than reinstate the map over that
+decision. The consequence for anything drawing a default: a **promoted** default is a URL this
+deployment serves and resolves, a **built-in** one is that bare path and does not, so the server's
+answer has to say which it handed over. Never sniff an `/api/` prefix in the client.
+`AgentAvatar` owns the missing-portrait fallback - initials on a plain background, never a broken
+image and never some other agent's face - and six older sites still carry their own copy of that
+rule, which `agentInitials` is exported so they can stop doing.
 
 `StakeholderForm.tsx` offers five role checkboxes, and the last two - Project Administrator
 and Governor - render only when `GET /my-permissions` answers `can_grant_roles`, because the
@@ -1081,6 +1160,58 @@ was for**: renaming an agent, or running an engagement where it is called someth
 no identity, breaks no history, and reconfigures nothing. The same rule the email seam states as
 *the name is the person, the address is the role*, one axis over.
 
+**"Who can conduct an interview" is answered in one place, and the answer is a rule rather than
+a roll.** `interviewer_agent_ids()` - an identity with a `voice_id` - lives in
+`agents/identity.py`, and both callers read it from there: `interviewer_selection.py` for the
+crew's choice of interviewer, and `agent_config_service.is_interviewer` for the rehearsal button.
+It is in `identity.py` and not in `interviewer_selection.py` because the second import is
+**circular** - `interviewer_selection` already imports `resolve_agent_config` - so the design
+document's sentence locating it there is one hop stale. `is_interviewer` is **derived onto the
+configuration response, never stored beside the row**, as is which kind of default a face came
+from: an agent given a voice becomes an interviewer with nothing to migrate, and the alternative
+is a second roster in TypeScript that has to be kept in step with this one.
+
+**The sex filter derives from the voice, never from a table.** `interviewer_selection.py`
+refuses an agent-to-sex mapping in writing, because the sex is a property of the *voice* and a
+project that gives Avery a female voice has said something a table in this repository would
+contradict while looking authoritative. So `GET /projects/{slug}/voices` takes
+`current_voice_id`, answers `voice_sex` from `ask_voice_sex`, and the picker pre-sets its filter
+from that. **A default, not a lock** - and the mechanism is the file's existing `null`/`''`
+distinction rather than a "has the user overridden this" flag: `null` means the consultant has
+not touched the control, `''` means they cleared it and want every sex, exactly as `accent`
+already used them, so default-not-lock is structural rather than a boolean free to drift. It
+pre-sets only when the listing actually offers that sex, because a filter narrowing to nothing
+is indistinguishable from an account with no voices, which is the worst outcome available.
+
+**A portrait is uploaded, not typed.** `prepare_portrait` in `api/services/image_intake.py` is a
+pure function over bytes - no HTTP, no filesystem, no project - so every property it holds can be
+driven directly. It checks the declared content type against the format Pillow actually decodes,
+fits the longest edge to 512px, honours the EXIF orientation flag **and then** rebuilds the image
+from raw pixels to discard everything else. The order is not interchangeable: strip first and the
+portrait renders sideways, because the rotation lives in the metadata. The stripping is a privacy
+control rather than tidiness - a phone photograph carries GPS, and this image is served from the
+interview page, which has **no authentication by design** - and it rebuilds rather than "saving
+without EXIF", because the encoder dropping a block it was not handed is today's default and a
+default is not a guarantee.
+
+**An agent's face resolves in four steps, and the second is unique in this product.** The
+project's own override wins; then the deployment's promoted default; then the portrait shipped in
+the repository; then initials. `api/services/agent_default_images.py` holds that table and the
+reasoning, and **level 2 is inserted in exactly one place** - `agent_defaults`, where level 3 was
+already read - so the interview page and the Setup section cannot come to disagree about a face.
+The promotion fires only for an agent with **no** built-in portrait and only for the first
+upload: it is claimed with `INSERT OR IGNORE` on `agent_id` and the file is written **only on a
+won claim**, because check-then-write here is two clients' photographs racing. It is served from
+its own unauthenticated door rather than from the project it came from, or every engagement's
+rendering would depend on the continued existence of whichever one uploaded first, and that
+slug would appear in an unrelated client's markup. `agent_default_images` is a `system.db` table
+and therefore takes **no `_SCHEMA_VERSION` bump** - the rule above, in the direction people get
+backwards. Provenance is recorded rather than inferred from file timestamps, because this is the
+one write in the product where **an upload on one engagement changes what a different client's
+engagement displays**. All eighteen agents carry a portrait today, so the rule currently has no
+subject: it is for the next agent declared, in the window between being declared and being drawn,
+and its tests use a synthetic faceless one for that reason.
+
 **Two different things in this product are called a model id, and one of them is a security
 control.** `project_agent_config.model_id` is the **ElevenLabs speech synthesis model** -
 `DEFAULT_TTS_MODEL_ID` in `agents/identity.py`, threaded through `synthesise(text, voice_id,
@@ -1147,10 +1278,12 @@ with no behavioural half**, and its docstring says so honestly - the participant
 consequence is covered beside it by
 `test_an_unmigrated_database_answers_the_defaults_rather_than_five_hundred`, and a `PRAGMA
 user_version` assertion around a real participant request is what would close the rest.
-And `AgentConfigSection.tsx`'s Image help text - *"A path under the dashboard, such as
-`/agents/avery-singh.jpg`"* - is **narrower than the door accepts**: `_assert_renderable_image`
-deliberately permits off-site `http`/`https`. Guidance rather than the rule, and the difference
-wants stating outright when the shared same-origin upload path below lands.
+And `AgentConfigSection.tsx`'s Image help text is still **narrower than the door accepts**:
+`_assert_renderable_image` deliberately permits off-site `http`/`https`, and the text names only
+the selector and a path. sp63 gave the field a `Choose image…` control and the same-origin upload
+behind it, so the help is now accurate about the *ordinary* route and the text box survives as
+the escape hatch - which means it is still guidance rather than the rule, and still silent about
+the reach described below.
 
 **A guard on one door is not a guard on a field.** `PUT .../agents/{agent_id}/config` refuses an
 `image_url` whose scheme is not `http` or `https`. `brand_header_image_url` reaches **the same
@@ -1159,8 +1292,9 @@ wants stating outright when the shared same-origin upload path below lands.
 one door wide, as the *off-site* half openly is - and the scheme half is the one a reader assumes
 is closed, precisely because the paragraph beside it reasons so carefully about the other. The
 interview page has **no login by design** - a participant has none, `GET /{slug}/branding/image`
-is one of the two deliberate floor exceptions above for exactly that reason, and the rest of the
-page authenticates by session token - so an administrator-chosen off-site URL discloses every
+and `GET /{slug}/agents/{agent_id}/image` are two of the three deliberate floor exceptions above
+for exactly that reason, and the rest of the page authenticates by session token - so an
+administrator-chosen off-site URL discloses every
 participant's IP address, user agent and the timing of a live interview, on an engagement whose
 documents and inference are otherwise on-premises. **The follow-up is a task, not a wish: the two fields owe a shared same-origin
 upload path**, which closes both halves for both fields at once. Until it lands, `agents/egress.py`
@@ -1737,6 +1871,10 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   all. Its own task, because the fix serves both fields and closes both halves - scheme and
   off-site - at once, and surfacing the reach to the auditor belongs with it rather than before
   it. Argued in full under *Crew / agent conventions*; recorded here so it is findable as work.
+  **sp63 narrowed this rather than closing it**: `POST /{slug}/agents/{agent_id}/image` is the
+  same-origin upload path, for that field alone, and the text box beside it still takes an
+  off-site URL. `brand_header_image_url` has no upload path and no validator at all, so the
+  hazard is exactly as wide as it was.
 - **A failed reingest leaves chunks behind with `ingested=0`.** The first ingest's chunks stay
   in the store while the row is marked not-ingested, and `DELETE /{slug}/documents/{doc_id}`
   purges only `if doc["ingested"]` (`api/routers/documents.py:225`) - so the delete answers
