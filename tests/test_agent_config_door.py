@@ -283,6 +283,95 @@ async def test_one_projects_configuration_does_not_reach_another(doors):
     assert (await resolve_agent_config(SLUG_B, AVERY))["voice_id"] == AGENT_IDENTITY[AVERY].voice_id
 
 
+# ── The two derived facts, over HTTP ────────────────────────────────────────────────────
+#
+# `agent_config_service` is where both are derived and `tests/test_agent_config.py` drives the
+# derivation. These are about the **wiring**: that the door carries them, and that the sex is
+# asked about the voice this project resolved rather than the one the agent ships with. A
+# derivation asserted only at the service is CLAUDE.md's recurring failure mode - a property
+# verified one layer away from where it holds.
+
+@pytest.mark.asyncio
+async def test_the_door_says_who_can_be_offered_a_rehearsal(doors):
+    """Both arms, and neither is a list written in this file.
+
+    The expected answers come from `interviewer_agent_ids()` - the one place the question is
+    answered - so a door that hardcoded a pair of ids would pass the first assertion and fail
+    the moment the roster changed, rather than silently disagreeing with the crew.
+    """
+    from agents.identity import interviewer_agent_ids
+
+    roster = interviewer_agent_ids()
+    assert AVERY in roster and "pam" not in roster, "the fixture chose the wrong two agents"
+
+    for agent_id in (AVERY, "pam"):
+        body = (
+            await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/{agent_id}/config")
+        ).json()
+        assert body["is_interviewer"] is (agent_id in roster), agent_id
+
+
+@pytest.mark.asyncio
+async def test_the_door_asks_about_the_voice_this_project_resolved(doors, monkeypatch):
+    """The sex follows the project's chosen voice, not the agent's default.
+
+    That is the whole reason there is no table: a project that gives an interviewer a different
+    voice "has said something", and a picker pre-set from a stored sex would contradict the
+    choice while looking authoritative. Asserted by recording **which voice id was asked
+    about**, which is the only thing that distinguishes this from a door that asks about the
+    default and gets the right answer by luck.
+
+    Stubbed at the name `agent_config_service` looks it up under, so no ElevenLabs request is
+    made - patching `voice_metadata.ask_voice_sex` would leave that module's own reference in
+    place and the real function would run.
+    """
+    from api.services import agent_config_service
+
+    asked: list[str | None] = []
+
+    async def fake_ask(voice_id):
+        asked.append(voice_id)
+        from api.services.voice_metadata import VoiceSexAnswer
+
+        return VoiceSexAnswer(label="female" if voice_id == CHOSEN_VOICE else "male",
+                              answered=True)
+
+    monkeypatch.setattr(agent_config_service, "ask_voice_sex", fake_ask)
+
+    before = (await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/{AVERY}/config")).json()
+    assert before["voice_sex"] == "male"
+    assert asked[-1] == AGENT_IDENTITY[AVERY].voice_id
+
+    await doors["admin_a"].put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "voice_id": CHOSEN_VOICE},
+    )
+    after = (await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/{AVERY}/config")).json()
+    assert after["voice_sex"] == "female"
+    assert asked[-1] == CHOSEN_VOICE
+
+
+@pytest.mark.asyncio
+async def test_an_agent_with_no_voice_is_answered_without_a_lookup(doors, monkeypatch):
+    """A configuration page must open on a deployment with no ElevenLabs key at all.
+
+    Fifteen of the eighteen agents have no voice, and the door answers for every one of them.
+    The client is made to explode rather than the lookup stubbed, so "nothing was asked" is
+    established by the absence of a request rather than assumed from a mock.
+    """
+    from api.services import voice_metadata
+
+    def refuse_to_build_a_client():
+        raise AssertionError("a voiceless agent must not be looked up at ElevenLabs")
+
+    monkeypatch.setattr(voice_metadata, "_client", refuse_to_build_a_client)
+
+    body = (await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/pam/config")).json()
+    assert body["resolved"]["voice_id"] is None
+    assert body["voice_sex"] is None
+    assert body["is_interviewer"] is False
+
+
 # ── The roll is closed ──────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

@@ -23,12 +23,16 @@ would also be the sixth declaration of voice facts on a branch that exists to en
 five.
 
 **Who counts as an interviewer.** Derived, not listed: the agents `AGENT_IDENTITY` gives a
-`voice_id` to. `agents/identity.py` states the rule this reads - `voice_id` is None for every
-agent that does not speak, and only the interviewers are synthesised - so the roster is a
-consequence of an existing declaration rather than a new one beside it.
-`test_the_roster_is_the_interviewers_the_crew_builds` holds that derivation against the
-independent declaration in `discovery_interviews`, so an agent given a voice for some other
-purpose fails a test rather than quietly joining the interviewing roster.
+`voice_id` to. `interviewer_agent_ids` states that rule, and it is imported from
+`agents/identity.py` rather than written here - `voice_id` is None for every agent that does
+not speak, and only the interviewers are synthesised, so the roster is a consequence of an
+existing declaration rather than a new one beside it. It was defined in this module until a
+second caller appeared (`agent_config_service.is_interviewer`, answering the configuration
+door), at which point keeping it here would have meant the configuration resolver importing
+this module while this module imports it - so the rule moved down to the map it reads instead
+of being copied. `test_the_roster_is_the_interviewers_the_crew_builds` holds that derivation
+against the independent declaration in `discovery_interviews`, so an agent given a voice for
+some other purpose fails a test rather than quietly joining the interviewing roster.
 
 **A sex that cannot be established is a refusal, not a shrug.** If a project asks for a female
 interviewer and no candidate voice can be shown to be female, no session is created and the
@@ -42,7 +46,7 @@ import random as _random
 from dataclasses import dataclass, field
 from typing import Any
 
-from agents.identity import AGENT_IDENTITY
+from agents.identity import interviewer_agent_ids
 from api.services.agent_config_service import resolve_agent_config
 from api.services.project_service import read_project_config
 from api.services.voice_metadata import VoiceSexAnswer, ask_voice_sex
@@ -59,19 +63,6 @@ class NoInterviewerAvailable(RuntimeError):
     Raised rather than resolved to somebody, because the choice is stamped: a session created
     with the wrong interviewer stays wrong after the cause is fixed.
     """
-
-
-def interviewer_agent_ids() -> list[str]:
-    """The agents that can conduct an interview, in a stable order.
-
-    Sorted so that a deterministic tie-break is available to tests and to
-    `_random.Random(seed)`, and so the order does not depend on dictionary insertion.
-    """
-    return sorted(
-        agent_id
-        for agent_id, identity in AGENT_IDENTITY.items()
-        if identity.voice_id
-    )
 
 
 @dataclass(frozen=True)

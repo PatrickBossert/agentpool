@@ -13,6 +13,12 @@ of one over the other - because a Setup tab has to show a value **and** say whet
 choice or an inheritance. Serving only the resolved answer would make those indistinguishable,
 which is the thing sp58's platform-URL panel exists to avoid saying wrongly.
 
+It also answers two facts **about** the resolution - `is_interviewer` and `voice_sex` - so that
+the section can offer a rehearsal to the agents that can conduct an interview and open their
+voice picker on voices of the right sex. Both are derived server-side, from
+`interviewer_agent_ids()` and from the resolved voice's own metadata; neither is stored, and
+neither may be restated in TypeScript. See `_answer` below.
+
 `PUT` replaces the row. `upsert_agent_config` writes all six columns on every call, so a field
 absent from the body is **cleared** rather than left alone - and a `PATCH` on that writer would
 be a lie about its semantics. The section posts its whole state, which is the shape this suits.
@@ -52,7 +58,9 @@ from api.database import (
 from api.services.agent_config_service import (
     UnknownAgent,
     agent_defaults,
+    is_interviewer,
     resolve_agent_config_with,
+    resolved_voice_sex,
 )
 from api.services.authority_service import require_project_administration
 
@@ -237,16 +245,25 @@ def _defaults_or_404(agent_id: str) -> dict[str, Any]:
 
 
 async def _answer(conn: Any, *, slug: str, agent_id: str, defaults: dict[str, Any]) -> dict:
-    """Defaults, overrides and the resolution of one over the other, in one shape.
+    """Defaults, overrides, the resolution of one over the other, and two facts about it.
 
     The resolution is `resolve_agent_config_with` rather than a merge written here. The rule -
     NULL means the default, `''` does not - lives in `agent_config_service._merge` and a second
     expression of it in a router is precisely the drift that module exists to end.
+
+    `is_interviewer` and `voice_sex` are **derived from the resolution, not stored beside it**,
+    and both are answered by `agent_config_service` for the same reason the merge is. The Setup
+    section renders a Test interview button on the first and pre-sets its voice picker's filter
+    from the second, and re-deriving either in TypeScript would be a fifth declaration of a
+    voice fact - the exact thing this branch exists to end. Note which value the sex is asked
+    about: **the resolved voice**, so a project that has chosen a different voice for an
+    interviewer gets a picker that agrees with the choice it made.
     """
     project = await fetch_project(conn, slug=slug)
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
     row = await fetch_agent_config(conn, project_id=project["id"], agent_id=agent_id)
+    resolved = await resolve_agent_config_with(conn, slug=slug, agent_id=agent_id)
     return {
         "agent_id": agent_id,
         # Whether this project has ever recorded anything for this agent. Distinct from "every
@@ -255,7 +272,9 @@ async def _answer(conn: Any, *, slug: str, agent_id: str, defaults: dict[str, An
         "configured": row is not None,
         "defaults": defaults,
         "overrides": {field: (row[field] if row else None) for field in AGENT_CONFIG_COLUMNS},
-        "resolved": await resolve_agent_config_with(conn, slug=slug, agent_id=agent_id),
+        "resolved": resolved,
+        "is_interviewer": is_interviewer(agent_id),
+        "voice_sex": await resolved_voice_sex(resolved["voice_id"]),
     }
 
 

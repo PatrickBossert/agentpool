@@ -33,12 +33,21 @@ database file per guessed slug.
 The defaults live in `agents/identity.py`, beside the permanent `agent_id` this keys on. Nothing
 here is keyed on a display name, which is what makes renaming an agent - or running an
 engagement where it is called something else - free.
+
+**Two facts are derived here rather than stored**, and both are read off the resolution above
+rather than declared beside it. `is_interviewer` asks `interviewer_agent_ids()`, the one place
+"who can conduct an interview" is answered; `resolved_voice_sex` asks ElevenLabs about the
+voice this project actually resolved, which is the same source
+`interviewer_selection`'s `always_male`/`always_female` reads, so the picker and the crew cannot
+disagree about what a voice is. **Neither is a table.** A map of agents to sexes is refused in
+writing in `interviewer_selection.py`, and it would be wrong the first time a project used the
+table above to give an interviewer a different voice - which is the entire point of the table.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from agents.identity import AGENT_IDENTITY
+from agents.identity import AGENT_IDENTITY, interviewer_agent_ids
 from api.database import (
     AGENT_CONFIG_COLUMNS,
     fetch_agent_config,
@@ -46,6 +55,7 @@ from api.database import (
     get_db_path,
     is_contained_slug,
 )
+from api.services.voice_metadata import ask_voice_sex
 
 # The keys `resolve_agent_config` answers. Taken from the table's own column list rather than
 # restated, so a column added to `project_agent_config` cannot be one the resolver ignores -
@@ -144,6 +154,71 @@ async def resolve_agent_config_with(conn: Any, *, slug: str, agent_id: str) -> d
         return _merge(defaults, None)
     row = await fetch_agent_config(conn, project_id=project["id"], agent_id=agent_id)
     return _merge(defaults, row)
+
+
+def is_interviewer(agent_id: str) -> bool:
+    """Whether this agent can conduct an interview.
+
+    Asked of `interviewer_agent_ids()`, which is where that question is answered - its rule is
+    "an identity with a `voice_id`", and a second `if identity.voice_id` written here would be
+    the fifth declaration of a voice fact on a branch that exists to end the first four. The
+    roster is asked on every call rather than captured at import, so improving the rule in the
+    one place improves this answer too.
+
+    **Deliberately not a new concept.** An agent that can speak is an agent that can rehearse
+    an interview, and the predicate already means exactly that. If a non-interviewing agent is
+    ever given a voice, the rehearsal button follows it, and the repair is a better rule in
+    `agents/identity.py` rather than a second list here.
+    """
+    return agent_id in interviewer_agent_ids()
+
+
+async def resolved_voice_sex(voice_id: str | None) -> str | None:
+    """The sex of the voice a project resolved for an agent, where it can be established.
+
+    The answer pre-sets the voice picker's filter, so the states this collapses matter more
+    than they look. `ask_voice_sex` reports **whether the provider answered** as well as what,
+    and the three outcomes are kept apart here rather than merged into one test:
+
+    | Outcome | Answer | What the picker does |
+    |---|---|---|
+    | the provider gave a sex | that sex | opens on voices of that sex |
+    | the provider carries no `gender` label, or there is no voice to ask about | None | opens unfiltered |
+    | the provider could not be asked | None | opens unfiltered |
+
+    **Only the first pre-sets a filter, and the rest open unfiltered rather than empty.**
+    Showing nothing because a lookup failed is the worst outcome available - it is
+    indistinguishable from an account with no voices, and it would send a consultant to
+    diagnose a correctly-configured picker.
+
+    **It is a default, not a lock.** A project that gives Laura a male voice has said
+    something, and `interviewer_selection` says so in writing; this field must not be the thing
+    that forbids it. Nothing here refuses anything - it only says what the voice already is.
+
+    **A missing API key is answered here and not swallowed there.** `ask_voice_sex` lets
+    `ValueError` out on purpose, because for the session stamp a deployment with no key would
+    otherwise turn "always female" into whoever the shuffle produced - permanently, since the
+    choice is stamped. This caller has the opposite obligation: it is a read that decorates a
+    configuration page, and a 500 here would take the whole Setup tab down on every deployment
+    that has not configured ElevenLabs. The refusal is right where it is raised and wrong here,
+    so it is caught at this call site rather than removed from that one.
+    """
+    try:
+        answer = await ask_voice_sex(voice_id)
+    except ValueError:
+        # No API key configured. Nothing was asked, so nothing is known - the same answer as a
+        # lookup that failed, and for the same reason.
+        return None
+    if not answer.answered:
+        # Unreachable, refused, or unparseable. This says nothing about the voice, so it must
+        # not be reported as a fact about it.
+        return None
+    if answer.label is None:
+        # Asked and answered: either this voice carries no `gender` label, or there was no
+        # voice to ask about - "an agent with no voice has no sex, which is a fact rather than
+        # an outage". Neither is a sex, and neither is a filter.
+        return None
+    return answer.label
 
 
 async def _fetch_overrides(slug: str, agent_id: str) -> dict[str, Any] | None:

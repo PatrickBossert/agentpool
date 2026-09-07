@@ -126,6 +126,32 @@ AGENT_IDENTITY: dict[str, Identity] = {
 }
 
 
+def interviewer_agent_ids() -> list[str]:
+    """The agents that can conduct an interview, in a stable order.
+
+    Derived, never listed: an interviewer is an identity carrying a `voice_id`. The paragraph
+    above states why that is the rule rather than a coincidence - `voice_id` is None for every
+    agent that does not speak, and only the interviewers are synthesised - so the roster is a
+    consequence of the map above rather than a second list beside it. An agent given a voice
+    for some other purpose joins the roster, and the repair then is a better rule here rather
+    than a list of exceptions somewhere else.
+
+    **Why it lives beside the map rather than beside its first caller.** It was written in
+    `api/services/interviewer_selection.py`, which is where the roster is turned into a choice
+    of interviewer. A second caller now needs it - `agent_config_service.is_interviewer`, which
+    answers `is_interviewer` on the configuration door - and that module is one
+    `interviewer_selection` already imports, so leaving the rule there would have made the
+    configuration resolver import the selection policy that imports it back. The rule moved
+    down to the data it reads; it was not copied, which is the outcome that mattered.
+
+    Sorted so that a deterministic tie-break is available to tests and to `_random.Random(seed)`,
+    and so the order does not depend on dictionary insertion.
+    """
+    return sorted(
+        agent_id for agent_id, identity in AGENT_IDENTITY.items() if identity.voice_id
+    )
+
+
 # A crew's id is permanent in exactly the way an agent's is - `crew_runs.crew_name` stores it,
 # `CREW_DEPENDENCIES` keys on it, and PAM dispatches by it - and its label is the mutable half.
 #
