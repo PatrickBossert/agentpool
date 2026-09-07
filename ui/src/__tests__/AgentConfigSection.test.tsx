@@ -22,7 +22,7 @@ import type { AgentConfig } from '../api/agentConfig'
 import type { MyPermissions } from '../types'
 
 vi.mock('../api/agentConfig', () => ({
-  agentConfigApi: { get: vi.fn(), put: vi.fn() },
+  agentConfigApi: { get: vi.fn(), put: vi.fn(), uploadImage: vi.fn() },
 }))
 
 vi.mock('../api/endpoints', () => ({
@@ -89,6 +89,19 @@ function renderSection() {
 
 const name = () => screen.getByLabelText('Display name')
 const save = () => screen.getByRole('button', { name: /save configuration/i })
+const chooser = () => screen.getByLabelText(/choose image/i) as HTMLInputElement
+
+/** A file of a stated size, so an assertion about what the administrator is told is real. */
+function photograph(bytes: number, filename = 'headshot.jpg'): File {
+  return new File(['x'.repeat(bytes)], filename, { type: 'image/jpeg' })
+}
+
+function choose(file: File) {
+  fireEvent.change(chooser(), { target: { files: [file] } })
+}
+
+const STORED = { url: '/api/projects/acme/agents/stakeholder_interviewer/image',
+                 bytes: 74_000, original_bytes: 8_200_000 }
 
 beforeEach(() => {
   // Every assertion below reads `put.mock.calls[0]`, and without this the calls accumulate
@@ -100,6 +113,7 @@ beforeEach(() => {
   vi.mocked(agentConfigApi.put).mockImplementation(async (_s, _a, overrides) =>
     config(overrides),
   )
+  vi.mocked(agentConfigApi.uploadImage).mockResolvedValue(STORED)
 })
 
 describe('the agent configuration section - what it shows', () => {
@@ -240,6 +254,137 @@ describe('the agent configuration section - what it sends', () => {
     await waitFor(() => expect(name()).toBeEnabled())
     fireEvent.click(save())
     expect(await screen.findByText(/Project administration required/)).toBeInTheDocument()
+  })
+})
+
+describe('the agent configuration section - choosing a portrait', () => {
+  // Patrick's instruction, 7 September: an Open… selector beside the field, and a large file
+  // quietly becoming a small one is something the administrator is told about.
+  //
+  // Every test here that names the save drives it through to the two calls that leave the
+  // browser, **and to the order between them**. CLAUDE.md records a radio tested as rendered
+  // and not as sent; "the file input renders" is that same assertion wearing a new hat, and it
+  // would pass against a section that uploaded nothing at all.
+
+  it('offers a real file input, filtered to the types the door accepts', async () => {
+    // A real focusable input rather than a button calling `.click()` on a hidden one: the
+    // keyboard and the accessibility tree have to reach it, which is why it is styled out of
+    // the way instead of removed. `accept` is asserted because the dialog should not offer a
+    // TIFF the server is going to refuse - it is a convenience, and the server still validates.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    renderSection()
+
+    await waitFor(() => expect(chooser()).toBeInTheDocument())
+    expect(chooser().type).toBe('file')
+    expect(chooser()).toHaveAttribute('accept', 'image/png,image/jpeg,image/webp')
+  })
+
+  it('names the chosen file and its size, and says nothing has been sent yet', async () => {
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    renderSection()
+
+    await waitFor(() => expect(chooser()).toBeEnabled())
+    choose(photograph(8_200_000, 'avery.jpg'))
+
+    const note = await screen.findByTestId('pending-portrait')
+    expect(note).toHaveTextContent('avery.jpg')
+    expect(note).toHaveTextContent('8.2 MB')
+    // Choosing is not uploading. One action, one outcome: an administrator who picks the wrong
+    // file and navigates away has changed nothing on the server.
+    expect(agentConfigApi.uploadImage).not.toHaveBeenCalled()
+  })
+
+  it('uploads the file BEFORE saving, and saves the URL the upload answered', async () => {
+    // The whole of Step 8b, and the order is the half a "both were called" assertion misses.
+    // Saving first and uploading afterwards would record an address for a file that may never
+    // arrive, and every screen would look identical.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    renderSection()
+
+    await waitFor(() => expect(chooser()).toBeEnabled())
+    choose(photograph(8_200_000))
+    fireEvent.click(save())
+
+    await waitFor(() => expect(agentConfigApi.put).toHaveBeenCalled())
+    const uploadedAt = vi.mocked(agentConfigApi.uploadImage).mock.invocationCallOrder[0]
+    const savedAt = vi.mocked(agentConfigApi.put).mock.invocationCallOrder[0]
+    expect(uploadedAt).toBeLessThan(savedAt)
+
+    const [uploadSlug, uploadAgent, sentFile] = vi.mocked(agentConfigApi.uploadImage).mock.calls[0]
+    expect(uploadSlug).toBe('acme')
+    expect(uploadAgent).toBe('stakeholder_interviewer')
+    expect(sentFile.name).toBe('headshot.jpg')
+
+    // And the URL the door answered is what the row is given - not the file name, not a path
+    // this component invented, and not the empty box the administrator was looking at.
+    expect(vi.mocked(agentConfigApi.put).mock.calls[0][2].image_url).toBe(STORED.url)
+  })
+
+  it('saves the typed path unchanged when no file was chosen', async () => {
+    // The control. Without it, a section that always sent the upload's URL - or always sent
+    // null - would pass the test above, and the free-text field would have quietly stopped
+    // working for every project that uses one.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config({ image_url: '/agents/avery-singh.jpg' }))
+    renderSection()
+
+    await waitFor(() => expect(save()).toBeEnabled())
+    fireEvent.click(save())
+
+    await waitFor(() => expect(agentConfigApi.put).toHaveBeenCalled())
+    expect(agentConfigApi.uploadImage).not.toHaveBeenCalled()
+    expect(vi.mocked(agentConfigApi.put).mock.calls[0][2].image_url).toBe('/agents/avery-singh.jpg')
+  })
+
+  it('does not save the configuration at all when the upload is refused', async () => {
+    // The failure Step 8b asks to be driven. Continuing would write whatever `image_url` the
+    // draft was already holding - a stale address, or nothing - while the administrator was
+    // looking at the filename they had just chosen.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    vi.mocked(agentConfigApi.uploadImage).mockRejectedValue({
+      isAxiosError: true,
+      response: { data: { detail: 'Image exceeds the maximum allowed size of 10 MB.' } },
+    })
+    renderSection()
+
+    await waitFor(() => expect(chooser()).toBeEnabled())
+    choose(photograph(12_000_000))
+    fireEvent.click(save())
+
+    // Which half failed, said on the screen: a refused portrait means try another file, and a
+    // refused save means ask for authority. Told the wrong one, an administrator goes looking
+    // for a permissions problem that is not there.
+    expect(await screen.findByText(/image could not be uploaded/i)).toBeInTheDocument()
+    // The server's own sentence survives - it names the limit, and no fixed string can.
+    expect(screen.getByText(/10 MB/)).toBeInTheDocument()
+    expect(agentConfigApi.put).not.toHaveBeenCalled()
+  })
+
+  it('reports what the downscale cost once the portrait is stored', async () => {
+    // The point of the whole task, said out loud. An administrator who is never told their
+    // 8 MB photograph became 74 kB uploads the same 8 MB file again next time.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    renderSection()
+
+    await waitFor(() => expect(chooser()).toBeEnabled())
+    choose(photograph(8_200_000))
+    fireEvent.click(save())
+
+    const note = await screen.findByTestId('stored-portrait')
+    expect(note).toHaveTextContent('8.2 MB')
+    expect(note).toHaveTextContent('74 kB')
+  })
+
+  it('offers no portrait selector to somebody who may not administer the project', async () => {
+    // The same rule as every other control in this section - the door refuses them with
+    // `require_project_administration`, so a control that always 403s is worse than none.
+    vi.mocked(agentConfigApi.get).mockResolvedValue(config())
+    vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
+      ...PERMISSIONS, can_administer_project: false,
+    })
+    renderSection()
+
+    await waitFor(() => expect(screen.getByTestId('agent-config-locked')).toBeInTheDocument())
+    expect(chooser()).toBeDisabled()
   })
 })
 

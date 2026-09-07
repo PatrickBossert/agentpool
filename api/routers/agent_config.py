@@ -41,16 +41,41 @@ through `synthesise(text, voice_id, model_id)`), which exists so a French voice 
 through an English model. The six LLM model ids that *do* decide where prompts go live on
 `ProjectSettings` and are refused to a `project_admin`. Two different things in this product are
 called a model id and only one of them is a security control; this is the other one.
+
+## The portrait is uploaded, not typed
+
+`image_url` has always been free text, so the only way to give an agent a face was to name a
+path that somebody had already put in the repository - or an address on somebody else's server.
+`POST .../image` takes the photograph itself, hands it to `prepare_portrait`, and answers a
+**same-origin** URL under this door's own `GET` sibling.
+
+`GET .../image` has **no authentication at all**, exactly like `GET /{slug}/branding/image` and
+for the same reason: the interview page renders it for a participant who has no login. CLAUDE.md
+names those two as the deliberate exceptions to the membership floor, and this is the second
+shape of the first one rather than a third exception - the same page, the same participant, the
+same absence of a credential to check.
+
+**This door does not write `project_agent_config`, and that is deliberate rather than
+forgotten.** `upsert_agent_config` replaces the row - a field absent from the call is *cleared* -
+so an upload that wrote `image_url` on its own would silently clear the agent's name, voice,
+language, country and synthesis model. The upload answers the URL and the caller sends it back
+through `PUT .../config` with the rest of the row, which is what the Setup section does. Two
+consequences to expect rather than diagnose: a file uploaded and never saved is an orphan on
+disk that nothing resolves to, and the order matters - post the file, then the configuration.
 """
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from api.auth import check_project_access, require_any_auth
+from api.config import get_settings
 from api.database import (
     AGENT_CONFIG_COLUMNS,
     fetch_agent_config,
@@ -67,6 +92,11 @@ from api.services.agent_config_service import (
     resolve_agent_config_with,
 )
 from api.services.authority_service import require_project_administration
+from api.services.image_intake import (
+    PORTRAIT_CONTENT_TYPES,
+    PortraitRejected,
+    prepare_portrait,
+)
 
 router = APIRouter(prefix="/projects/{slug}/agents", tags=["agent-config"])
 
@@ -297,6 +327,154 @@ async def get_agent_config(
     defaults = _defaults_or_404(agent_id)
     async with get_connection(slug) as conn:
         return await _answer(conn, slug=slug, agent_id=agent_id, defaults=defaults)
+
+
+# The first four bytes each declared type must start with. **Kept in front of
+# `prepare_portrait`, which performs a strictly stronger check**, because the stronger one hands
+# the whole payload to a decoder before it can say anything: this refuses the obvious cases
+# before Pillow is reached, exactly as `upload_branding_image` does. The two are complementary,
+# not redundant, and dropping this one on the grounds that the decoder verifies the format would
+# be trading a cheap refusal for an expensive one.
+#
+# Keyed on the same content types the allowlist declares, and
+# `test_every_accepted_content_type_has_a_magic_prefix` holds the two equal. The lookup below is
+# a **subscript rather than a `.get(..., b"")`** for that reason: `b""` is a prefix of every
+# payload, so a default would give a fourth type added to `PORTRAIT_CONTENT_TYPES` a check that
+# refuses nothing and says nothing. `upload_branding_image` has the defaulting form today; this
+# one fails loudly instead, and the test above turns that from a 500 into a red suite.
+_MAGIC_PREFIXES: dict[str, bytes] = {
+    "image/png": b"\x89PNG",
+    "image/jpeg": b"\xff\xd8",
+    "image/webp": b"RIFF",
+}
+
+
+def _portrait_dir(slug: str) -> Path | None:
+    """Where this project keeps its agent portraits, or `None` if the slug escapes.
+
+    The slug reaches `GET .../image` with **no authentication at all**, so it is the one input
+    on this door that an anonymous caller chooses freely, and it is joined onto a filesystem
+    path. Containment is asserted against the resolved path rather than the string, which is the
+    technique `serve_output_file` already uses on the same root: `..` lands above PROJECTS_DIR
+    and an absolute slug replaces it outright, and both resolve to somewhere this refuses.
+
+    Not `is_contained_slug`, which answers the same question about a different root
+    (DATABASE_DIR) - two rules that happen to reject the same strings are not one rule, and the
+    guarantee wanted here is about the directory the bytes are actually read from.
+    """
+    root = Path(get_settings().projects_dir).resolve()
+    candidate = (root / slug / "assets" / "agents").resolve()
+    if not str(candidate).startswith(str(root) + os.sep):
+        return None
+    return candidate
+
+
+@router.post("/{agent_id}/image")
+async def upload_agent_image(
+    slug: str,
+    agent_id: str,
+    file: UploadFile = File(...),
+    payload: dict = Depends(require_any_auth),
+) -> dict:
+    """Store a portrait for one agent on this project, and answer the URL that serves it.
+
+    The order is `upload_branding_image`'s and is copied deliberately: the membership floor
+    first, then the administration gate, and **both before the existence check** - a caller from
+    outside the engagement must not be able to use this door to learn which slugs exist. The
+    agent roll comes next, for the reason `_defaults_or_404` gives.
+
+    Then the cheap refusals in the order that spends the least on a payload that is going to be
+    refused anyway: the declared type, the magic-byte prefix, and only then `prepare_portrait`,
+    which decodes. The ceiling is `prepare_portrait`'s and is not restated here - it names the
+    limit in a sentence written to be returned verbatim, and a second copy of `10 * 1024 * 1024`
+    in a router is the drift that module exists to prevent.
+
+    Answers the stored size alongside the URL. That is not decoration: the whole point of this
+    path is that a large photograph quietly becomes a small one, and an administrator who is
+    never told it happened uploads the same 8 MB file again next time.
+    """
+    await check_project_access(slug, payload)
+    await require_project_administration(slug, payload)
+    _assert_project_exists(slug)
+    _defaults_or_404(agent_id)
+
+    content_type = file.content_type or ""
+    if content_type not in PORTRAIT_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unsupported image type '{content_type}'. Must be one of "
+                f"{', '.join(sorted(PORTRAIT_CONTENT_TYPES))}."
+            ),
+        )
+
+    data = await file.read()
+    if not data[:4].startswith(_MAGIC_PREFIXES[content_type]):
+        raise HTTPException(
+            status_code=422, detail="File content does not match declared content type"
+        )
+
+    try:
+        prepared, extension = prepare_portrait(data, content_type)
+    except PortraitRejected as exc:
+        # The only exception this path raises for any input, and every sentence it carries is
+        # written to be returned to the caller. Anything else escaping it is a defect in
+        # `image_intake` and stays a 500 rather than being dressed up as the caller's fault.
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    directory = _portrait_dir(slug)
+    if directory is None:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    directory.mkdir(parents=True, exist_ok=True)
+    stored = directory / f"{agent_id}{extension}"
+
+    # Any portrait stored under a different extension goes, and this is a correctness
+    # requirement rather than tidiness: the `GET` below serves the first extension it finds, so
+    # a JPEG left beside a newly uploaded PNG would go on being served and the administrator
+    # would be told the upload succeeded while the old face stayed on the interview page.
+    for other_extension, _ in PORTRAIT_CONTENT_TYPES.values():
+        previous = directory / f"{agent_id}{other_extension}"
+        if previous != stored and previous.exists():
+            previous.unlink()
+
+    stored.write_bytes(prepared)
+
+    return {
+        "url": f"/api/projects/{slug}/agents/{agent_id}/image",
+        "bytes": len(prepared),
+        "original_bytes": len(data),
+    }
+
+
+@router.get("/{agent_id}/image")
+async def get_agent_image(slug: str, agent_id: str) -> FileResponse:
+    """Serve this project's portrait for one agent. **No authentication, by design.**
+
+    The interview page renders it for a participant holding a session token and no login, which
+    is the same reason `GET /{slug}/branding/image` has no floor either. CLAUDE.md documents
+    that door as one of exactly two deliberate exceptions on the whole surface; this is the same
+    exception serving the same page, and if an agent portrait ever becomes client-confidential
+    the repair is session-token scoping rather than `check_project_access`.
+
+    It answers 404 for an unknown project, an unknown agent and a project that has uploaded
+    nothing, without distinguishing them - there is nothing here worth telling an anonymous
+    caller apart.
+    """
+    _defaults_or_404(agent_id)
+    directory = _portrait_dir(slug)
+    if directory is None:
+        raise HTTPException(status_code=404, detail="No portrait found for this agent.")
+    for content_type, (extension, _) in PORTRAIT_CONTENT_TYPES.items():
+        candidate = directory / f"{agent_id}{extension}"
+        if candidate.exists():
+            return FileResponse(
+                path=candidate,
+                media_type=content_type,
+                # The bytes are chosen by an administrator and served from the deployment's own
+                # origin, so a browser must not be free to decide they are something else.
+                headers={"X-Content-Type-Options": "nosniff"},
+            )
+    raise HTTPException(status_code=404, detail="No portrait found for this agent.")
 
 
 @router.put("/{agent_id}/config")

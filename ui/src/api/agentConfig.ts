@@ -37,6 +37,21 @@ export interface AgentConfig {
   resolved: AgentConfigFields
 }
 
+/** What the upload door answers: where the portrait now lives, and what it cost to store.
+ *
+ *  The two sizes are not decoration. The whole point of the upload path is that a large
+ *  photograph quietly becomes a small one, and an administrator who is never told it happened
+ *  uploads the same 8 MB file again next time.
+ */
+export interface PortraitUpload {
+  /** Same-origin, always - `/api/projects/{slug}/agents/{agent_id}/image`. */
+  url: string
+  /** Bytes actually stored, after the downscale. */
+  bytes: number
+  /** Bytes the browser sent. */
+  original_bytes: number
+}
+
 export const agentConfigApi = {
   get: async (slug: string, agentId: string): Promise<AgentConfig> => {
     const res = await apiClient.get<AgentConfig>(
@@ -61,6 +76,34 @@ export const agentConfigApi = {
     const res = await apiClient.put<AgentConfig>(
       `/projects/${slug}/agents/${agentId}/config`,
       overrides,
+    )
+    return res.data
+  },
+
+  /**
+   * Store a portrait for this agent on this project, and get back the URL that serves it.
+   *
+   * **This does not save the configuration.** The server writes the file and answers a URL; the
+   * row is written by `put` above, because `upsert_agent_config` replaces the whole row and a
+   * partial write from the upload door would clear the agent's name, voice, language, country
+   * and synthesis model. So the caller uploads first and then saves with the returned URL - in
+   * that order, and never the other way round, or the row records an address for a file that
+   * may never arrive.
+   *
+   * The `Content-Type` is left unset on purpose. A multipart body needs the boundary token in
+   * the header, and only the thing assembling the body knows it - the same shape
+   * `uploadBrandingImage` has used since it existed.
+   */
+  uploadImage: async (
+    slug: string,
+    agentId: string,
+    file: File,
+  ): Promise<PortraitUpload> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await apiClient.post<PortraitUpload>(
+      `/projects/${slug}/agents/${agentId}/image`,
+      form,
     )
     return res.data
   },

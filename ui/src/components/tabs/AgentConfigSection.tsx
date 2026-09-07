@@ -22,13 +22,43 @@
 // override" and sends `null`.
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Mic, RotateCcw, Save } from 'lucide-react'
+import { ImagePlus, Mic, RotateCcw, Save } from 'lucide-react'
 
-import { agentConfigApi, type AgentConfigOverrides } from '../../api/agentConfig'
+import {
+  agentConfigApi,
+  type AgentConfigOverrides,
+  type PortraitUpload,
+} from '../../api/agentConfig'
 import { projectsApi } from '../../api/endpoints'
 import { describeError } from '../../utils/describeError'
 import { AGENT_IDS } from '../agentStatus'
 import VoicePicker from './VoicePicker'
+
+/** The three types the upload door accepts, so the file dialog opens filtered to them.
+ *
+ *  A convenience and never a control: a person can defeat `accept` by typing a filename, and
+ *  the server validates the declared type, the first four bytes, and then the decoded format
+ *  regardless. Restated here rather than fetched because it is a hint about a dialog, not a
+ *  rule - the rule lives in `api/services/image_intake.py` and is enforced there.
+ */
+const PORTRAIT_ACCEPT = 'image/png,image/jpeg,image/webp'
+
+/** A file size an administrator can read at a glance. Decimal, as every operating system's
+ *  file dialog reports it, so the number beside the filename matches the one they just saw. */
+function readableSize(bytes: number): string {
+  if (bytes < 1000) return `${bytes} bytes`
+  if (bytes < 1000 * 1000) return `${(bytes / 1000).toFixed(0)} kB`
+  return `${(bytes / (1000 * 1000)).toFixed(1)} MB`
+}
+
+/** A save that failed on the **upload** half rather than on the configuration half.
+ *
+ *  The two are told apart on the screen because they need different actions: a refused portrait
+ *  means try another file, and a refused save means ask for authority. Without the distinction
+ *  an administrator whose 12 MB photograph was rejected is told the configuration could not be
+ *  saved, and goes looking for a permissions problem that is not there.
+ */
+class PortraitUploadFailed extends Error {}
 
 /** The five fields a text box can express, and what each one is for.
  *
@@ -52,7 +82,7 @@ const TEXT_FIELDS: {
   {
     field: 'image_url',
     label: 'Image',
-    help: 'A path under the dashboard, such as /agents/avery-singh.jpg. Shown to a participant on the interview page.',
+    help: 'Shown to a participant on the interview page. Choose an image below and it is stored on this deployment; typing a path such as /agents/avery-singh.jpg still works.',
   },
   {
     field: 'language',
@@ -110,6 +140,13 @@ export default function AgentConfigSection({
   const [chosenVoiceName, setChosenVoiceName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  // A portrait chosen but not yet sent. It is uploaded when the configuration is saved, not
+  // when it is chosen, so that one action means one outcome: an administrator who picks the
+  // wrong file and navigates away has changed nothing on the server.
+  const [pendingImage, setPendingImage] = useState<File | null>(null)
+  // What the last upload actually cost, kept so the downscale is visible. An administrator who
+  // is never told their 8 MB photograph became 74 kB uploads the same 8 MB file again.
+  const [uploaded, setUploaded] = useState<PortraitUpload | null>(null)
 
   // `error` is read as well as `data`, and the pair is what separates "still arriving" from
   // "never arriving". Reading `data` alone made a failed read and a pending one render the
@@ -138,17 +175,52 @@ export default function AgentConfigSection({
     if (config) setDraft(config.overrides)
   }, [config])
 
+  // Two calls, in one order, and the order is the whole of Step 8b.
+  //
+  // The portrait goes first because its answer is an input to the second call: the upload door
+  // stores the file and returns the URL that serves it, and `PUT .../config` is what writes
+  // that URL onto the row. Saving first and uploading afterwards would record an address for a
+  // file that may never arrive.
+  //
+  // **A failed upload stops the save.** Continuing would write whatever `image_url` the draft
+  // was already holding - a stale address, or nothing at all - while the administrator was
+  // looking at the filename they had just chosen, and the section would then render as though
+  // the portrait had been accepted.
   const save = useMutation({
-    mutationFn: (overrides: AgentConfigOverrides) =>
-      agentConfigApi.put(slug, agentId, overrides),
-    onSuccess: (updated) => {
+    mutationFn: async (overrides: AgentConfigOverrides) => {
+      let next = overrides
+      let portrait: PortraitUpload | null = null
+      if (pendingImage) {
+        try {
+          portrait = await agentConfigApi.uploadImage(slug, agentId, pendingImage)
+        } catch (err) {
+          // describeError, imported rather than copied: the door's refusals say which type was
+          // sent, or which limit was exceeded, and no fixed string can.
+          throw new PortraitUploadFailed(
+            describeError(err, 'The image could not be uploaded, so nothing was saved.'),
+          )
+        }
+        next = { ...overrides, image_url: portrait.url }
+      }
+      return { config: await agentConfigApi.put(slug, agentId, next), portrait }
+    },
+    onSuccess: ({ config: updated, portrait }) => {
       qc.setQueryData(['agent-config', slug, agentId], updated)
       setDraft(updated.overrides)
+      if (portrait) {
+        setUploaded(portrait)
+        setPendingImage(null)
+      }
       setError(null)
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     },
-    onError: (err) => setError(describeError(err, 'The configuration could not be saved.')),
+    onError: (err) =>
+      setError(
+        err instanceof PortraitUploadFailed
+          ? `The image could not be uploaded, so nothing was saved - ${err.message}`
+          : describeError(err, 'The configuration could not be saved.'),
+      ),
   })
 
   if (!agentId) return null
@@ -229,6 +301,58 @@ export default function AgentConfigSection({
               onChange={(e) => set(field, e.target.value)}
               className={inputCls}
             />
+            {field === 'image_url' && (
+              // The selector sits beside the field it fills in, not in a corner of its own -
+              // it is the ordinary way to set this value and the text box is the escape hatch.
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <label
+                  htmlFor={`${agentId}-portrait`}
+                  className={`flex items-center gap-1 px-2 py-1 border border-gray-200 rounded text-[11px] text-gray-700 ${
+                    mayAdminister
+                      ? 'cursor-pointer hover:border-brand'
+                      : 'opacity-40 cursor-not-allowed'
+                  }`}
+                >
+                  <ImagePlus size={11} aria-hidden="true" />
+                  Choose image…
+                </label>
+                {/*
+                  The native control, styled out of the way rather than replaced. `sr-only`
+                  keeps it a real, focusable input in the accessibility tree - `display: none`
+                  would take it out of both, leaving the keyboard and a screen reader with a
+                  label pointing at nothing.
+
+                  `accept` filters the dialog to the three types the door takes. It is a
+                  convenience, never a control: a person can defeat it by typing a filename,
+                  and the server checks the declared type, the first four bytes and the decoded
+                  format regardless.
+                */}
+                <input
+                  id={`${agentId}-portrait`}
+                  type="file"
+                  accept={PORTRAIT_ACCEPT}
+                  disabled={!mayAdminister}
+                  onChange={(e) => {
+                    setPendingImage(e.target.files?.[0] ?? null)
+                    setUploaded(null)
+                  }}
+                  className="sr-only"
+                />
+                {pendingImage ? (
+                  <span data-testid="pending-portrait" className="text-[11px] text-gray-600">
+                    {pendingImage.name} - {readableSize(pendingImage.size)}, uploaded when you
+                    save this configuration.
+                  </span>
+                ) : (
+                  uploaded && (
+                    <span data-testid="stored-portrait" className="text-[11px] text-gray-600">
+                      Stored - {readableSize(uploaded.original_bytes)} downscaled to{' '}
+                      {readableSize(uploaded.bytes)}.
+                    </span>
+                  )
+                )}
+              </div>
+            )}
             <p className="text-[10px] text-gray-400 mt-1 leading-relaxed">{help}</p>
           </div>
         ))}
