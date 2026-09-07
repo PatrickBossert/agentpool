@@ -22,6 +22,13 @@ import { AGENT_SETUP_SECTION } from '../components/tabs/CrewAgentsTab'
 import { apiClient } from '../api/client'
 import type { Stakeholder, ValueChainRegistryActivity } from '../types'
 
+// Task 7: the name and face on this component resolve through `useAgentIdentity`, which reads
+// this door. An empty roll means the static map answers - which is what these tests were
+// written against - and nothing here reaches the network.
+vi.mock('../api/agentConfig', () => ({
+  agentConfigApi: { getAll: vi.fn().mockResolvedValue({ agents: {} }) },
+}))
+
 // The live registry's own shape, trimmed: `0` and its role nodes carry no parent_id at all,
 // while `1.1` and below do. Both arms of buildTree's parent resolution are exercised by it.
 const ACTIVITIES: ValueChainRegistryActivity[] = [

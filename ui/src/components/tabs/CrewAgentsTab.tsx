@@ -27,7 +27,8 @@
 // it. React Query keys each configuration by agent, so nothing refetches on a switch either.
 import { useState, type FC } from 'react'
 
-import { CREW_AGENTS, AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME } from '../agentStatus'
+import { CREW_AGENTS, AGENT_AVATAR } from '../agentStatus'
+import { useAgentIdentity } from '../../hooks/useAgentIdentity'
 import AgentConfigSection from './AgentConfigSection'
 import AlexSetupTab from './AlexSetupTab'
 import AverySetupTab from './AverySetupTab'
@@ -55,9 +56,8 @@ export const AGENT_SETUP_SECTION: Record<string, SetupSectionFC> = {
 }
 
 /** The face and first name of one agent, as the selector shows them. */
-function AgentChip({ agent }: { agent: string }) {
-  const humanName = AGENT_HUMAN_NAME[agent] ?? agent
-  const imageSrc = AGENT_AVATAR_IMAGE[agent]
+function AgentChip({ agent, slug }: { agent: string; slug: string }) {
+  const { name: humanName, imageUrl: imageSrc } = useAgentIdentity(slug)(agent)
   const gradient = (AGENT_AVATAR[agent] ?? { gradient: 'from-gray-400 to-gray-600' }).gradient
 
   return (
@@ -102,6 +102,8 @@ export function CrewAgentsTab({
   const [selected, setSelected] = useState(
     () => (initialAgent && agents.includes(initialAgent) ? initialAgent : agents[0]) ?? '',
   )
+  // Above the early return: a hook cannot be called conditionally.
+  const identity = useAgentIdentity(slug)
 
   if (agents.length === 0) {
     return <p className="text-xs text-gray-400 text-center py-12">This crew has no agents.</p>
@@ -129,14 +131,14 @@ export function CrewAgentsTab({
                   : 'border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
-              <AgentChip agent={agent} />
+              <AgentChip agent={agent} slug={slug} />
             </button>
           ))}
         </div>
       )}
 
       {agents.map((agent) => {
-        const humanName = AGENT_HUMAN_NAME[agent] ?? agent
+        const humanName = identity(agent).name
         const Section = AGENT_SETUP_SECTION[agent]
         return (
           <div

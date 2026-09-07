@@ -367,6 +367,7 @@ export default function Dashboard() {
           {/* Crew carousel */}
           <div className="px-5 pt-4 pb-1 flex-shrink-0">
             <CrewCarousel
+              slug={slug}
               crewRuns={crewRuns}
               isPipelineActive={isPipelineActive}
               logs={logs}

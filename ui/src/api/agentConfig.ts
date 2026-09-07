@@ -58,11 +58,35 @@ export interface PortraitUpload {
   original_bytes: number
 }
 
+/**
+ * Every agent's configuration on one project, keyed by the permanent `agent_id`.
+ *
+ * Each entry is the identical object `GET .../{agent_id}/config` answers - the server builds it
+ * with the same function - so nothing here needs its own idea of what "override beats default"
+ * means. `tests/test_agent_config_bulk.py` holds the two responses equal for every agent on the
+ * roll, which is what makes reading the batch as safe as reading the door eighteen times.
+ */
+export interface AgentConfigBundle {
+  agents: Record<string, AgentConfig>
+}
+
 export const agentConfigApi = {
   get: async (slug: string, agentId: string): Promise<AgentConfig> => {
     const res = await apiClient.get<AgentConfig>(
       `/projects/${slug}/agents/${agentId}/config`,
     )
+    return res.data
+  },
+
+  /**
+   * Every agent's configuration on this project, in one request.
+   *
+   * The dashboard draws an agent's name and face in nine places, and each of those renders the
+   * whole roll rather than one agent, so asking the per-agent door would be a hundred and
+   * sixty-two calls to paint one screen. This is the read those sites share.
+   */
+  getAll: async (slug: string): Promise<AgentConfigBundle> => {
+    const res = await apiClient.get<AgentConfigBundle>(`/projects/${slug}/agents/config`)
     return res.data
   },
 

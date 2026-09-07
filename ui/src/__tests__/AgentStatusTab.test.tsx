@@ -7,6 +7,13 @@ import { AgentStatusTab } from '../components/AgentStatusTab'
 import type { CrewStatus } from '../components/agentStatus'
 import type { AgentOutput, CrewRun } from '../types'
 
+// Task 7: the name and face on this component resolve through `useAgentIdentity`, which reads
+// this door. An empty roll means the static map answers - which is what these tests were
+// written against - and nothing here reaches the network.
+vi.mock('../api/agentConfig', () => ({
+  agentConfigApi: { getAll: vi.fn().mockResolvedValue({ agents: {} }) },
+}))
+
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
     getOutputContent: vi.fn(),

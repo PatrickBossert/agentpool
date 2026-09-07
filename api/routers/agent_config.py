@@ -28,6 +28,12 @@ door already takes the voice id and already opens on a user action where a wait 
 absent from the body is **cleared** rather than left alone - and a `PATCH` on that writer would
 be a lie about its semantics. The section posts its whole state, which is the shape this suits.
 
+`GET /config` - no `agent_id` - is the same `GET` for the whole roll, and it exists because a
+configuration nothing draws is a configuration nobody sees. Nine sites on the dashboard draw an
+agent's name and face, all nine held a static map, and Patrick's uploaded portrait for Jordan
+reached the disk, the row and a 200 without changing a single one of them. Each entry is
+literally `_answer`, so the batch cannot resolve differently from the door it batches.
+
 ## Authority: administration, per project
 
 Naming an agent and choosing its voice is configuring the engagement, so this is the
@@ -74,6 +80,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from agents.identity import AGENT_IDENTITY
 from api.auth import check_project_access, require_any_auth
 from api.config import get_settings
 from api.database import (
@@ -335,6 +342,51 @@ async def _answer(conn: Any, *, slug: str, agent_id: str, defaults: dict[str, An
         "resolved": await resolve_agent_config_with(conn, slug=slug, agent_id=agent_id),
         "is_interviewer": is_interviewer(agent_id),
     }
+
+
+@router.get("/config")
+async def get_all_agent_configs(
+    slug: str, payload: dict = Depends(require_any_auth)
+) -> dict:
+    """Every agent's configuration on this project, keyed by `agent_id`. One request.
+
+    The dashboard draws an agent's name and face in nine places and each one holds a *display*
+    name rather than an id, so the answer has to cover the whole roll: nine renders asking the
+    per-agent door for eighteen agents is a hundred and sixty-two requests to draw one screen.
+    This is that read, not a different one.
+
+    **The same resolution, literally.** Each entry is `_answer` - the identical object
+    `GET .../{agent_id}/config` returns for that agent, field for field. It is not a second
+    implementation of "override where present, default otherwise", and it must not become one:
+    two code paths for that rule are two places to get it wrong, and they would diverge
+    silently because nothing compares them. `test_the_bulk_door_answers_what_the_single_door_
+    answers` compares them, whole response against whole response, for every agent on the roll.
+
+    **The whole object rather than just `resolved`, and that is load-bearing rather than
+    generous.** The front end cannot use a resolved *image*: `AGENT_IDENTITY` stores
+    `/agents/jordan-williams.jpg`, and Vite serves `ui/public` under the base `/dashboard`, so
+    that address 404s in the dashboard for every agent with no override. The hook therefore
+    reads `overrides` and falls back to `AGENT_AVATAR_IMAGE`, which is the only map that knows
+    the base - and it can only do that if `overrides` is here.
+
+    A read, so the membership floor and nothing else - the authority of the door it batches. It
+    discloses nothing the per-agent door would not answer eighteen times.
+    """
+    await check_project_access(slug, payload)
+    _assert_project_exists(slug)
+    async with get_connection(slug) as conn:
+        return {
+            "agents": {
+                agent_id: await _answer(
+                    conn, slug=slug, agent_id=agent_id, defaults=agent_defaults(agent_id)
+                )
+                # `AGENT_IDENTITY` rather than a list here. The roll is that map, and an agent
+                # added to it must appear on this door without anybody remembering to add it -
+                # a second enumeration is how a newly declared agent comes to be configurable
+                # through one door and invisible through the other.
+                for agent_id in AGENT_IDENTITY
+            }
+        }
 
 
 @router.get("/{agent_id}/config")

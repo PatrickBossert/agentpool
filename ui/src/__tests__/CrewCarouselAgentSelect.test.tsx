@@ -12,14 +12,25 @@
 // Interviewer, Synthesis Analyst]; every case uses Avery or Laura, never Taylor.
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import CrewCarousel from '../components/CrewCarousel'
+
+// The carousel resolves each agent's name and face against the project's configuration since
+// Task 7. Mocked to an empty roll so these tests are still about what they say they are about -
+// and so nothing here reaches the network. `CarouselAgentIdentity.test.tsx` is where a
+// configured face is driven.
+vi.mock('../api/agentConfig', () => ({
+  agentConfigApi: { getAll: vi.fn().mockResolvedValue({ agents: {} }) },
+}))
 
 function renderCarousel(onSelectAgent?: (crewKey: string, agent: string) => void,
                         onSelectCrew: (crewKey: string) => void = () => {}) {
   return render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <MemoryRouter>
       <CrewCarousel
+        slug="carousel-test"
         crewRuns={[]}
         isPipelineActive={false}
         logs={[]}
@@ -31,7 +42,8 @@ function renderCarousel(onSelectAgent?: (crewKey: string, agent: string) => void
         onRerunCrew={() => {}}
         onRunPipeline={() => {}}
       />
-    </MemoryRouter>,
+    </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 
@@ -103,13 +115,16 @@ describe('how a four-agent crew lays its faces out', () => {
     // pair is still one row of two large faces, which is the thing a careless "always two
     // columns" rule would leave intact and a careless "always two ROWS" rule would break.
     render(
-      <MemoryRouter>
-        <CrewCarousel
-          crewRuns={[]} isPipelineActive={false} logs={[]} hitlReviews={[]}
-          selectedCrew="discovery_mapping" onSelectCrew={() => {}}
-          onRunCrew={() => {}} onRerunCrew={() => {}} onRunPipeline={() => {}}
-        />
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <CrewCarousel
+            slug="carousel-test"
+            crewRuns={[]} isPipelineActive={false} logs={[]} hitlReviews={[]}
+            selectedCrew="discovery_mapping" onSelectCrew={() => {}}
+            onRunCrew={() => {}} onRerunCrew={() => {}} onRunPipeline={() => {}}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
     )
     // Named agents, not an index into everything on screen: the carousel renders EVERY crew's
     // card at once, so `getAllByTitle(/^Configure /)` returns all fourteen faces on the strip.

@@ -206,6 +206,11 @@ export default function AgentConfigSection({
     },
     onSuccess: ({ config: updated, portrait }) => {
       qc.setQueryData(['agent-config', slug, agentId], updated)
+      // The batch every face and name on the dashboard is drawn from. Without this the nine
+      // display sites go on showing the old portrait until the page is reloaded - which is a
+      // milder version of the exact defect this task repairs, and would read to an
+      // administrator as the save not having worked.
+      qc.invalidateQueries({ queryKey: ['agent-config-all', slug] })
       setDraft(updated.overrides)
       if (portrait) {
         setUploaded(portrait)

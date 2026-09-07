@@ -34,7 +34,13 @@ vi.mock('../context/AuthContext', () => ({
 }))
 
 vi.mock('../api/agentConfig', () => ({
-  agentConfigApi: { get: vi.fn(), put: vi.fn(), uploadImage: vi.fn() },
+  agentConfigApi: {
+    get: vi.fn(), put: vi.fn(), uploadImage: vi.fn(),
+    // Task 7: every face and name on the panel resolves through `useAgentIdentity`,
+    // which reads this. An empty roll means the static map answers, which is what
+    // these tests were written against.
+    getAll: vi.fn().mockResolvedValue({ agents: {} }),
+  },
 }))
 
 vi.mock('../api/endpoints', () => ({

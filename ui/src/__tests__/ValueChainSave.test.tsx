@@ -35,6 +35,10 @@ const MODEL: ValueChainModel = {
 // output and a race in anybody else's.
 vi.mock('../api/agentConfig', () => ({
   agentConfigApi: {
+    // Task 7: every face and name on the panel resolves through `useAgentIdentity`,
+    // which reads this. An empty roll means the static map answers, which is what
+    // these tests were written against.
+    getAll: vi.fn().mockResolvedValue({ agents: {} }),
     get: vi.fn().mockResolvedValue({
       agent_id: 'stub',
       configured: false,

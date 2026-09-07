@@ -15,12 +15,13 @@ import { skillsApi } from '../api/skills'
 import { useAuth } from '../context/AuthContext'
 import {
   CREW_LABELS, CREW_AGENTS,
-  AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME, AGENT_ROLE, AGENT_SKILLS,
+  AGENT_AVATAR, AGENT_ROLE, AGENT_SKILLS,
   getCrewStatus,
 } from './agentStatus'
 import { parseDbDate } from './crewOutputs'
 import { CREW_ICON_COMPONENT } from './crewIcons'
 import AgentHoverCard from './AgentHoverCard'
+import { useAgentIdentity } from '../hooks/useAgentIdentity'
 import PamReportView, { PamCrewStatusDetail } from './PamReportView'
 import { AgentOutputTab } from './AgentOutputTab'
 import { AgentStatusTab, type PrimaryModelCounts } from './AgentStatusTab'
@@ -616,9 +617,10 @@ function AddSkillForm({
   )
 }
 
-function SkillsTabContent({ agents }: { agents: string[] }) {
+function SkillsTabContent({ agents, slug }: { agents: string[]; slug: string }) {
   const { user } = useAuth()
   const qc = useQueryClient()
+  const identity = useAgentIdentity(slug)
   const isAdmin = user?.role === 'sysadmin'
 
   const { data: approvedSkills = [] } = useQuery({
@@ -663,9 +665,8 @@ function SkillsTabContent({ agents }: { agents: string[] }) {
     <div className="flex-1 overflow-y-auto p-4 space-y-5">
       {agents.map(agentName => {
         const avatar     = AGENT_AVATAR[agentName] ?? { gradient: 'from-gray-400 to-gray-600' }
-        const humanName  = AGENT_HUMAN_NAME[agentName] ?? agentName
+        const { name: humanName, imageUrl: imageSrc } = identity(agentName)
         const agentFirst = humanName.split(' ')[0]
-        const imageSrc   = AGENT_AVATAR_IMAGE[agentName]
         const role       = AGENT_ROLE[agentName] ?? ''
         const hardcoded      = AGENT_SKILLS[agentName] ?? []
         const agentDB        = approvedSkills.filter(s => s.agents.includes(agentName))
@@ -680,7 +681,7 @@ function SkillsTabContent({ agents }: { agents: string[] }) {
           <div key={agentName} className="space-y-2">
             {/* Agent header */}
             <div className="flex items-center gap-2.5">
-              <AgentHoverCard agentName={agentName}>
+              <AgentHoverCard agentName={agentName} slug={slug}>
                 <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0 cursor-default">
                   {imageSrc ? (
                     <img src={imageSrc} alt={agentFirst} className="w-full h-full object-cover" />
@@ -966,7 +967,8 @@ export default function AgentDetailPanel({
   }
 
   const primaryAvatar = AGENT_AVATAR[primaryAgent] ?? { emoji: '🤖', gradient: 'from-gray-400 to-gray-600' }
-  const primaryHumanName = AGENT_HUMAN_NAME[primaryAgent] ?? primaryAgent
+  const identity = useAgentIdentity(slug)
+  const { name: primaryHumanName, imageUrl: primaryImage } = identity(primaryAgent)
   const firstName = primaryHumanName.split(' ')[0]
 
   const waitingCrews = new Set(hitlReviews.map(r => r.crew_name).filter(Boolean) as string[])
@@ -1168,7 +1170,7 @@ export default function AgentDetailPanel({
                     <div className="flex items-center justify-center">
                       {agents.map((agent, i) => {
                         const av = AGENT_AVATAR[agent] ?? { gradient: 'from-gray-400 to-gray-600' }
-                        const hn = AGENT_HUMAN_NAME[agent] ?? agent
+                        const { name: hn, imageUrl: agentImage } = identity(agent)
                         const fn = hn.split(' ')[0]
                         return (
                           <div
@@ -1177,8 +1179,8 @@ export default function AgentDetailPanel({
                             style={{ marginLeft: i === 0 ? 0 : -8, zIndex: agents.length - i }}
                           >
                             <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-white flex-shrink-0">
-                              {AGENT_AVATAR_IMAGE[agent] ? (
-                                <img src={AGENT_AVATAR_IMAGE[agent]} alt={fn} className="w-full h-full object-cover" />
+                              {agentImage ? (
+                                <img src={agentImage} alt={fn} className="w-full h-full object-cover" />
                               ) : (
                                 <div className={`w-full h-full bg-gradient-to-br ${av.gradient} flex items-center justify-center text-sm font-semibold text-white`}>
                                   {fn[0]}
@@ -1191,7 +1193,7 @@ export default function AgentDetailPanel({
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap justify-center">
                       {agents.map((agent, i) => {
-                        const hn = AGENT_HUMAN_NAME[agent] ?? agent
+                        const hn = identity(agent).name
                         return (
                           <span key={agent} className="text-xs text-gray-500">
                             {hn.split(' ')[0]}{i < agents.length - 1 ? ' ·' : ''}
@@ -1204,8 +1206,8 @@ export default function AgentDetailPanel({
                 ) : (
                   <>
                     <div className="w-12 h-12 rounded-full overflow-hidden flex-shrink-0">
-                      {AGENT_AVATAR_IMAGE[primaryAgent] ? (
-                        <img src={AGENT_AVATAR_IMAGE[primaryAgent]} alt={firstName} className="w-full h-full object-cover" />
+                      {primaryImage ? (
+                        <img src={primaryImage} alt={firstName} className="w-full h-full object-cover" />
                       ) : (
                         <div className={`w-full h-full bg-gradient-to-br ${primaryAvatar.gradient} flex items-center justify-center text-xl`}>
                           {firstName[0]}
@@ -1377,7 +1379,7 @@ export default function AgentDetailPanel({
 
       {/* ── ROLE & SKILLS TAB ──────────────────────────────────────────────────── */}
       {tab === 'skills' && (
-        <SkillsTabContent agents={agents} />
+        <SkillsTabContent agents={agents} slug={slug} />
       )}
     </div>
   )
