@@ -11,6 +11,7 @@ system.db only ever has ``skills``. These tests write directly to ``skills`` to 
 what /admin/skills/seed actually reads and writes.
 """
 import pytest
+import pytest_asyncio
 
 from api.services.skills_service import BASELINE_SKILLS
 
@@ -49,7 +50,18 @@ async def _stored_description(name: str) -> str:
     return row["description"] if row else ""
 
 
-@pytest.fixture(autouse=True)
+# `pytest_asyncio.fixture`, not `pytest.fixture`, and the difference is silent.
+#
+# `pytest.ini` sets `asyncio_mode = strict`, under which a plain `@pytest.fixture` declared
+# `async def` is handed to the test as an **un-awaited async generator**: the body never runs,
+# so neither the setup before `yield` nor the clean-up after it happens, and nothing reports
+# anything. This fixture existed to stop these tests leaving rows in `system.db` and had never
+# once removed one - the poisoned-database trap CLAUDE.md describes, arriving through the
+# fixture written to prevent it.
+#
+# Found by the Task 4 implementer when its own new fixture saw six rows where it had written
+# two.
+@pytest_asyncio.fixture(autouse=True)
 async def clean():
     yield
     from api.database import get_system_connection
