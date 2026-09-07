@@ -1,6 +1,6 @@
 // ui/src/__tests__/JordanAssignment.test.tsx
 //
-// What Jordan's Setup tab actually sends.
+// What the stakeholder mapping section actually sends.
 //
 // The recurring failure on this project is a test that verifies a property one layer from
 // where it holds, and this surface has the exact shape that invites one: a control can be
@@ -17,10 +17,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, it, expect } from 'vitest'
 
-import JordanSetupTab, { buildTree } from '../components/tabs/JordanSetupTab'
-import { AGENT_SETUP_SECTION } from '../components/tabs/CrewSetupSections'
+import StakeholderMappingSetup, { buildTree } from '../components/tabs/StakeholderMappingSetup'
+import { CREW_SETUP_SECTION } from '../components/AgentDetailPanel'
 import { apiClient } from '../api/client'
 import type { Stakeholder, ValueChainRegistryActivity } from '../types'
+
+// Task 7: the name and face on this component resolve through `useAgentIdentity`, which reads
+// this door. An empty roll means the static map answers - which is what these tests were
+// written against - and nothing here reaches the network.
+vi.mock('../api/agentConfig', () => ({
+  agentConfigApi: { getAll: vi.fn().mockResolvedValue({ agents: {} }) },
+}))
 
 // The live registry's own shape, trimmed: `0` and its role nodes carry no parent_id at all,
 // while `1.1` and below do. Both arms of buildTree's parent resolution are exercised by it.
@@ -92,7 +99,7 @@ function renderTab() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <JordanSetupTab slug="acme" />
+        <StakeholderMappingSetup slug="acme" />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -358,7 +365,12 @@ describe('assignments that are not against a live activity', () => {
 })
 
 describe('where the assignment surface lives', () => {
-  it('is registered against Jordan, the agent whose crew needs it', () => {
-    expect(AGENT_SETUP_SECTION['Stakeholder Manager']).toBe(JordanSetupTab)
+  it("is the stakeholder crew's Setup section, not an agent's", () => {
+    // It was `AGENT_SETUP_SECTION['Stakeholder Manager']` - registered against Jordan, on the
+    // Agents tab - until the rename test was applied to it. Who speaks for which activity is a
+    // fact about the client's people and the client's value chain: replace the Stakeholder
+    // Manager tomorrow and every row of it stands. So it is engagement configuration, and the
+    // two deep links that point at it name `tab=setup`.
+    expect(CREW_SETUP_SECTION['stakeholder_management']).toBe(StakeholderMappingSetup)
   })
 })

@@ -8,16 +8,32 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2, Pause, Play, Pencil, Check } from 'lucide-react'
 import { bcp47 } from '../../utils/holidays'
+import AgentAvatar from '../AgentAvatar'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const webkitSpeechRecognition: any
 
-// George — Warm, Captivating Storyteller — ElevenLabs British male voice
-const AVERY_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'
-const AVERY_HIRES    = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/agents/avery-singh-hires.jpg`
+// There is deliberately no voice id here any more, and since sp63 no agent either.
+//
+// This file used to declare `const AVERY_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'` - George - and pass
+// it explicitly on all three /speak calls, so the server's own corrected default was
+// unreachable and Avery rehearsed in one voice while interviewing in another, under the same
+// variable name in two files. The rehearsal door now resolves the voice and the synthesis model
+// from the project through `resolve_agent_config`, which is the one place that question is
+// answered. Sending `slug` is what makes that possible; sending a voice would undo it.
+//
+// `const AVERY_HIRES = '/agents/avery-singh-hires.jpg'` stood here and was the same mistake one
+// field along: five renders drew Avery's face and three lines said his name, so opening this
+// dialog for Laura greeted a consultant as Avery in Laura's voice. That is finding 1 of the
+// interview walkthrough exactly. The face, the name and the `agent_id` are props now.
 const API_BASE       = '/api/interviews/test'
 
-// Gentle repeats Avery uses when no response is detected
+// The initials disc, on this dialog's dark surface. `AgentAvatar`'s own default is the light
+// one the Setup section sits on, and a light disc here would read as a failed image load -
+// which is the impression the whole fallback exists to avoid.
+const FALLBACK_FACE  = 'bg-slate-800 text-teal-300 font-semibold'
+
+// Gentle repeats the interviewer uses when no response is detected
 const NO_RESPONSE_PROMPTS = [
   'Apologies — I didn\'t quite catch that. ',
   'Sorry about that — let me try again. ',
@@ -68,13 +84,41 @@ function wordSimilarity(a: string, b: string): number {
 
 // ── Main dialog ───────────────────────────────────────────────────────────────
 
-interface Props { slug: string; onClose: () => void; locale?: string }
+interface Props {
+  slug: string
+  onClose: () => void
+  locale?: string
+  /**
+   * The permanent snake id of the interviewer being rehearsed - `second_interviewer`, not
+   * `Second Interviewer` and not a display name.
+   *
+   * **Required, with no default.** `TestSpeakRequest.agent_id` already defaults to
+   * `stakeholder_interviewer` on the server, so a default here would mean two layers agreeing
+   * to be wrong quietly: Laura's rehearsal would answer 200 and speak in Avery's configured
+   * voice, and nothing on either side would say so.
+   */
+  agentId: string
+  /** What this project calls them. Spoken in the briefing, and written on the screen. */
+  displayName: string
+  /** Their portrait, or `null`/`''` when there is none and `AgentAvatar` draws initials. */
+  imageUrl: string | null
+}
 
 // The slug is not decoration. The script comes from the smoke-test project, but the answers
 // the consultant types are this project's, and the elaboration press is what sends them to a
 // model - so the press has to say which project it belongs to or it cannot be routed by that
 // project's llm_mode.
-export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Props) {
+export default function TestInterviewDialog({
+  slug,
+  onClose,
+  locale = 'GB',
+  agentId,
+  displayName,
+  imageUrl,
+}: Props) {
+  // What a person is called to their face. The briefing and the speaker test are spoken aloud
+  // in the first person, where a surname reads as a job application rather than a greeting.
+  const firstName = displayName.split(/\s+/)[0] || displayName
   const [phase, setPhase]             = useState<Phase>('loading')
   const [script, setScript]           = useState<InterviewScript | null>(null)
   const [errorMsg, setErrorMsg]       = useState('')
@@ -219,7 +263,11 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
       const res = await fetch(`${API_BASE}/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ text: "Hi there, I'm Avery. Your audio is working perfectly.", voice_id: AVERY_VOICE_ID }),
+        body: JSON.stringify({
+          text: `Hi there, I'm ${firstName}. Your audio is working perfectly.`,
+          slug,
+          agent_id: agentId,
+        }),
       })
       if (!res.ok) return
       const url = URL.createObjectURL(await res.blob())
@@ -245,7 +293,7 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
       const res = await fetch(`${API_BASE}/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ text, voice_id: AVERY_VOICE_ID }),
+        body: JSON.stringify({ text, slug, agent_id: agentId }),
         signal,
       })
       if (!res.ok || signal?.aborted) return
@@ -482,7 +530,7 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
   // AudioContext captures the user gesture before any async boundary.
   function startBriefingAudio() {
     const BRIEFING =
-      "Hi, I'm Avery — and I'll be your interviewer today. " +
+      `Hi, I'm ${firstName} - and I'll be your interviewer today. ` +
       "Before we begin, let me run through how this works. " +
       "This is a verbal interview — just speak naturally and in your own words. " +
       "After each answer, a brief pause will move us to the next question, or tap Done whenever you're ready. " +
@@ -499,7 +547,7 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
     fetch(`${API_BASE}/speak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ text: BRIEFING, voice_id: AVERY_VOICE_ID }),
+      body: JSON.stringify({ text: BRIEFING, slug, agent_id: agentId }),
     })
       .then(res => res.ok ? res.arrayBuffer() : Promise.reject(res.status))
       .then(buf => ctx.decodeAudioData(buf))
@@ -674,7 +722,12 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
         {phase === 'setup' && script && (
           <div className="flex flex-col gap-6 px-8 py-8">
             <div className="flex items-center gap-4">
-              <img src={AVERY_HIRES} alt="Avery Singh" className="w-16 h-16 rounded-full object-cover ring-2 ring-teal-500/40 flex-shrink-0" />
+              <AgentAvatar
+                name={displayName}
+                imageUrl={imageUrl}
+                className="w-16 h-16 ring-2 ring-teal-500/40 flex-shrink-0"
+                fallbackClassName={FALLBACK_FACE}
+              />
               <div>
                 <p className="text-teal-400 text-[10px] font-bold uppercase tracking-widest mb-0.5">Device Setup</p>
                 <h2 className="text-white font-semibold">Check your audio before starting</h2>
@@ -751,10 +804,11 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
         {phase === 'ready' && script && (
           <div className="flex flex-col items-center py-8 px-8 gap-5">
             <div className="flex items-center gap-4 w-full max-w-md">
-              <img
-                src={AVERY_HIRES}
-                alt="Avery Singh"
-                className="w-16 h-16 rounded-full object-cover ring-2 ring-teal-500/40 shadow-lg flex-shrink-0"
+              <AgentAvatar
+                name={displayName}
+                imageUrl={imageUrl}
+                className="w-16 h-16 ring-2 ring-teal-500/40 shadow-lg flex-shrink-0"
+                fallbackClassName={FALLBACK_FACE}
               />
               <div>
                 <p className="text-teal-400 text-[10px] font-bold uppercase tracking-widest mb-0.5">Test Interview</p>
@@ -783,7 +837,7 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
             {isBriefing ? (
               <div className="flex items-center gap-3 text-slate-400 text-sm">
                 <WaveformIcon />
-                <span>Avery is speaking…</span>
+                <span>{firstName} is speaking…</span>
               </div>
             ) : (
               <div className="flex items-center gap-3">
@@ -816,20 +870,21 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
             </div>
 
             <div className="flex flex-1 min-h-0">
-              {/* Avery photo */}
+              {/* The interviewer's face */}
               <div className="flex-shrink-0 w-52 bg-slate-950 flex flex-col items-center justify-center gap-4 p-6 border-r border-slate-800">
                 <div className="relative">
-                  <img
-                    src={AVERY_HIRES}
-                    alt="Avery Singh"
-                    className="w-36 h-36 rounded-full object-cover ring-4 ring-teal-500/30 shadow-xl"
+                  <AgentAvatar
+                    name={displayName}
+                    imageUrl={imageUrl}
+                    className="w-36 h-36 ring-4 ring-teal-500/30 shadow-xl"
+                    fallbackClassName={`${FALLBACK_FACE} text-4xl`}
                   />
                   {(isFetching || isPlaying || isListening) && (
                     <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-950 bg-teal-400 animate-pulse" />
                   )}
                 </div>
                 <div className="text-center">
-                  <p className="text-white text-sm font-semibold">Avery Singh</p>
+                  <p className="text-white text-sm font-semibold">{displayName}</p>
                   <p className="text-slate-500 text-[11px]">AI Interviewer</p>
                 </div>
                 <div className="text-[10px] text-slate-500">Q {progress.current} / {progress.total}</div>
@@ -924,7 +979,12 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
         {phase === 'complete' && (
           <div className="flex flex-col max-h-[90vh]">
             <div className="flex items-center gap-4 px-8 py-6 border-b border-slate-800 flex-shrink-0">
-              <img src={AVERY_HIRES} alt="Avery Singh" className="w-14 h-14 rounded-full object-cover ring-2 ring-teal-500/40 flex-shrink-0" />
+              <AgentAvatar
+                name={displayName}
+                imageUrl={imageUrl}
+                className="w-14 h-14 ring-2 ring-teal-500/40 flex-shrink-0"
+                fallbackClassName={FALLBACK_FACE}
+              />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 size={16} className="text-teal-400 flex-shrink-0" />
@@ -946,7 +1006,12 @@ export default function TestInterviewDialog({ slug, onClose, locale = 'GB' }: Pr
               {transcript.map((pair, i) => (
                 <div key={i} className="space-y-2">
                   <div className="flex items-start gap-3">
-                    <img src={AVERY_HIRES} alt="Avery" className="w-6 h-6 rounded-full object-cover flex-shrink-0 mt-0.5 opacity-80" />
+                    <AgentAvatar
+                      name={displayName}
+                      imageUrl={imageUrl}
+                      className="w-6 h-6 flex-shrink-0 mt-0.5 opacity-80"
+                      fallbackClassName={`${FALLBACK_FACE} text-[9px]`}
+                    />
                     <div className="bg-slate-800 rounded-xl rounded-tl-none px-4 py-3 flex-1">
                       <p className="text-slate-200 text-sm leading-relaxed">{pair.question}</p>
                     </div>

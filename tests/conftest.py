@@ -35,8 +35,26 @@ os.environ.setdefault("CHROMA_PORT", "8002")  # pydantic coerces str→int
 os.environ.setdefault("CHROMA_API_KEY", "")
 os.environ.setdefault("RESEND_API_KEY", "")
 os.environ.setdefault("TAVILY_API_KEY", "")
-os.environ.setdefault("ELEVENLABS_API_KEY", "")
 os.environ.setdefault("DEEPGRAM_API_KEY", "")
+# **Forced, not defaulted, and it is the one that has to be.** `setdefault` yields to a
+# variable already exported in the shell - that is what it is for - so the sentence above was
+# false for any developer using direnv, `export $(cat .env | xargs)`, or CI with the key in a
+# secret store. Nineteen tests in `tests/test_agent_config_door.py` reach a voice-metadata
+# lookup on an ordinary read of the agent configuration door, and with a key exported the only
+# thing between them and `api.elevenlabs.io` was this line. That is real credit against a real
+# account, spent by an unattended suite.
+#
+# Blank is the right forced value: every ElevenLabs path raises `ValueError("ELEVENLABS_API_KEY
+# not configured")` on a blank key, which is what the suite has always run against. **Nothing
+# is weakened by forcing it**, because no test reads this variable - every test that needs a
+# key writes one onto the settings object with `monkeypatch.setattr` and points the transport
+# at a mock.
+#
+# The four above stay `setdefault` deliberately: `tests/integration/test_tools.py` skips on
+# `os.getenv("TAVILY_API_KEY")`, so an exported key is how an opt-in integration run reaches
+# the real service. They carry the same latent exposure and none of them has a demonstrated
+# path to the network from a unit test - see the round-1 report.
+os.environ["ELEVENLABS_API_KEY"] = ""
 # The home organisation, for the same reason as everything above it: .env is read directly by
 # pydantic-settings, and a deployment that renamed its consultancy - which is the entire reason
 # these are settings rather than constants - would otherwise change what the suite asserts.

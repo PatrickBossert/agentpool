@@ -138,6 +138,16 @@ def get_tools_for_agent(
             HumanInputTool(slug=slug, run_id=run_id),
             InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
         ],
+        # Laura's list is Avery's, class for class, because the job is his: she is a second
+        # voice, not a second brief. Written out rather than aliased to his entry, because
+        # `agents/graph.py` reads this literal with an AST walk and a reference to another key
+        # is not a list it can read - and the guard that holds this reading against what the
+        # function actually returns would then be checking nothing for her.
+        "second_interviewer": [
+            SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
+            HumanInputTool(slug=slug, run_id=run_id),
+            InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
+        ],
         "synthesis_analyst": [
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
             # The interview corpus is too large to read whole, and a transcript blob cannot
@@ -150,9 +160,11 @@ def get_tools_for_agent(
             ChromaQueryTool(slug=slug, sector=sector, run_id=run_id, agent_name=agent_name),
             HumanInputTool(slug=slug, run_id=run_id),
         ],
+        # No InterviewSessionTool: the interview process is the Interview Coordinator's, and a
+        # tool an agent holds is a tool it can decide to call. Jordan owns the roster and its
+        # coverage of the value chain; sessions, invitations and reminders are not his.
         "stakeholder_manager": [
             SQLiteStateTool(slug=slug, agent_name=agent_name, run_id=run_id),
-            InterviewSessionTool(slug=slug, orchestration_run_id=run_id),
         ],
     }
 

@@ -730,3 +730,68 @@ def test_the_edge_into_the_interviews_still_carries_nothing():
     )
     assert edge.kind is EdgeKind.SEQUENCING
     assert edge.artefacts == ()
+
+
+# ── The interview process is not his ──────────────────────────────────────────
+#
+# Jordan's brief was written too broad before the pipeline had been run end to end, and the
+# breadth produced a live defect: a drafting step told him to emit `{url_base}/{session_token}`
+# when he has no route to any session token. The lint that removed it left nothing behind that
+# would notice its return - putting `InterviewSessionTool` back in his tool list passed the whole
+# suite - so the absence is asserted at the two boundaries rather than described in a commit
+# message. Both drive the real doors: the registry the crew factory calls, and the task
+# description the agent is actually handed.
+
+
+def test_jordan_does_not_hold_the_interview_session_tool():
+    """A tool an agent holds is a tool it can decide to call.
+
+    Asserted against `get_tools_for_agent` rather than against `tool_map`'s source, because the
+    registry is what `create_stakeholder_management_crew` calls. The positive control is in the
+    same assertion: he must still hold `SQLiteStateTool`, or a registry that raised or returned
+    nothing would satisfy the absence for the wrong reason.
+    """
+    from agents.tools.registry import get_tools_for_agent
+
+    held = {
+        type(tool).__name__
+        for tool in get_tools_for_agent(
+            "stakeholder_manager", slug=SLUG, run_id=1, sector="rail"
+        )
+    }
+    assert held == {"SQLiteStateTool"}, held
+
+
+@pytest.mark.asyncio
+async def test_his_task_asks_for_nothing_about_the_interview_process(project):
+    """Every removed instruction, named individually, plus the sentence that replaced them.
+
+    The absences are the removed *instructions* and the removed *schema keys*, not the word
+    "interview" - the task still names the interview process once, to say it is the Interview
+    Coordinator's. A bare "interview" not in description would fail on that sentence, and
+    deleting the sentence to satisfy it would remove the only thing telling him whose the
+    process is.
+    """
+    description = await _task_description(project["id"])
+
+    for gone in (
+        "key='interview_sessions'",   # the session-state read
+        "not yet invited",            # nodes with no sessions created
+        "needs chasing",              # pending over five days
+        "needs re-engagement",        # abandoned
+        "may need more perspectives", # single-completer
+        "draft an appropriate message",
+        "draft_message",
+        "outreach_actions",
+        "re_engage",
+        "stakeholders_pending",
+        "stakeholders_completed",
+    ):
+        assert gone not in description, f"still asks for {gone!r}"
+
+    assert "do not draft any message to a stakeholder" in description
+    # The positive control: the half of the task that stays must still be there, or a task
+    # that failed to build would pass every absence above.
+    assert "key='value_chain_registry'" in description
+    assert "key='stakeholder_engagement_plan'" in description
+    assert "assignment_coverage" in description

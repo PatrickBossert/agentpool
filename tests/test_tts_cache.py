@@ -25,12 +25,25 @@ def test_the_key_separates_voice_from_text():
     """Concatenation alone would collide: voice 'ab' + text 'c' and voice 'a' + text 'bc'
     are different requests that must not share an entry."""
     from api.services.tts_cache import cache_key
-    assert cache_key("ab", "c") != cache_key("a", "bc")
+    assert cache_key("ab", "m", "c") != cache_key("a", "m", "bc")
+
+
+def test_the_key_separates_the_model_from_the_voice_and_the_text():
+    """The same collision, one field along, and the reason `model_id` joined the key.
+
+    Two models render the same words in the same voice differently, and the cache never
+    expires - so a key that ignored the model would serve a project on one model the audio
+    another project stored on a different one, permanently. The separator is driven on this
+    field too: without it, voice 'ab' + model 'c' and voice 'a' + model 'bc' would collide.
+    """
+    from api.services.tts_cache import cache_key
+    assert cache_key("v", "turbo", "hello") != cache_key("v", "multilingual", "hello")
+    assert cache_key("ab", "c", "x") != cache_key("a", "bc", "x")
 
 
 def test_a_miss_returns_none_and_a_stored_key_returns_the_audio():
     from api.services.tts_cache import cache_key, cached_audio, store_audio
-    k = cache_key("voice-1", "What does a good day look like?")
+    k = cache_key("voice-1", "model-1", "What does a good day look like?")
     assert cached_audio(k) is None
     store_audio(k, b"AUDIO")
     assert cached_audio(k) == b"AUDIO"
@@ -41,7 +54,7 @@ async def test_a_cache_hit_makes_no_provider_call(monkeypatch):
     """The property that matters: a warm cache must not touch ElevenLabs at all."""
     from api.services import interview_service as svc
     from api.services.tts_cache import cache_key, store_audio
-    store_audio(cache_key("voice-1", "Hello"), b"CACHED")
+    store_audio(cache_key("voice-1", "model-1", "Hello"), b"CACHED")
 
     called = False
 
@@ -51,7 +64,7 @@ async def test_a_cache_hit_makes_no_provider_call(monkeypatch):
         raise AssertionError("provider called on a cache hit")
 
     monkeypatch.setattr(svc, "get_tts_client", explode)
-    assert await svc.speak("Hello", "voice-1") == b"CACHED"
+    assert await svc.speak("Hello", "voice-1", "model-1") == b"CACHED"
     assert called is False
 
 
@@ -62,12 +75,17 @@ async def test_a_cache_miss_synthesises_and_then_stores_it(monkeypatch):
     from api.services import interview_service as svc
     from api.services.tts_cache import cache_key, cached_audio
 
-    async def fake_synthesise(text, voice_id):
+    seen: list[tuple[str, str, str]] = []
+
+    async def fake_synthesise(text, voice_id, model_id):
+        seen.append((text, voice_id, model_id))
         return b"FRESH"
 
     monkeypatch.setattr(svc, "synthesise", fake_synthesise)
-    assert await svc.speak("Brand new question", "voice-2") == b"FRESH"
-    assert cached_audio(cache_key("voice-2", "Brand new question")) == b"FRESH"
+    assert await svc.speak("Brand new question", "voice-2", "model-2") == b"FRESH"
+    assert cached_audio(cache_key("voice-2", "model-2", "Brand new question")) == b"FRESH"
+    # The model reaches the synthesis call, not only the key it is stored under.
+    assert seen == [("Brand new question", "voice-2", "model-2")]
 
 
 @pytest.mark.asyncio
@@ -87,13 +105,13 @@ async def test_prewarm_is_idempotent(tmp_path, monkeypatch):
 
     calls = []
 
-    async def fake_synth(text, voice_id):
-        calls.append(text)
+    async def fake_synth(text, voice_id, model_id):
+        calls.append((text, voice_id, model_id))
         return b"AUDIO"
 
     monkeypatch.setattr("api.services.interview_service.synthesise", fake_synth)
-    assert await tts_cache.prewarm_script_audio("warm", "SC-001", "v1") == 2
-    assert await tts_cache.prewarm_script_audio("warm", "SC-001", "v1") == 0
+    assert await tts_cache.prewarm_script_audio("warm", "SC-001", "v1", "m1") == 2
+    assert await tts_cache.prewarm_script_audio("warm", "SC-001", "v1", "m1") == 0
     assert len(calls) == 2, "second pre-warm re-synthesised an already warm script"
 
 
@@ -101,7 +119,8 @@ async def test_prewarm_is_idempotent(tmp_path, monkeypatch):
 async def test_prewarm_stores_audio_under_the_key_speak_would_look_up(tmp_path, monkeypatch):
     """A count proves nothing about whether the audio is actually retrievable afterwards.
     Pre-warm a script, then look it up the same way `speak` does: via `cache_key(voice_id,
-    text)`. If prewarm ever wrote under a different key (e.g. hashed only the text, or only
+    model_id, text)`. If prewarm ever wrote under a different key (e.g. hashed only the text,
+    or only
     the question id), this is the test that would catch it - the idempotency test above
     would still pass, since it only counts calls."""
     import json
@@ -117,13 +136,15 @@ async def test_prewarm_stores_audio_under_the_key_speak_would_look_up(tmp_path, 
     monkeypatch.setattr(tts_cache, "current_output_path",
                         lambda slug, t: outputs / "interview_scripts_v1.json")
 
-    async def fake_synth(text, voice_id):
+    async def fake_synth(text, voice_id, model_id):
         return b"WARM-AUDIO"
 
     monkeypatch.setattr("api.services.interview_service.synthesise", fake_synth)
-    assert await tts_cache.prewarm_script_audio("warm2", "SC-001", "voice-9") == 1
+    assert (
+        await tts_cache.prewarm_script_audio("warm2", "SC-001", "voice-9", "model-9") == 1
+    )
 
-    key = cache_key("voice-9", "What does a good day look like?")
+    key = cache_key("voice-9", "model-9", "What does a good day look like?")
     assert cached_audio(key) == b"WARM-AUDIO"
 
 
@@ -146,7 +167,7 @@ def test_concurrent_writers_on_the_same_key_do_not_corrupt_each_others_payload()
     payload_b = b"B" * 300_000
 
     for trial in range(10):
-        key = cache_key("voice-race", f"concurrent question {trial}")
+        key = cache_key("voice-race", "model-race", f"concurrent question {trial}")
         barrier = threading.Barrier(2)
 
         def write(payload):
@@ -197,7 +218,7 @@ def test_store_audio_gives_each_call_its_own_temp_file(monkeypatch):
 
     monkeypatch.setattr(tempfile_module, "mkstemp", spy)
 
-    key = cache_key("voice-x", "same question, twice")
+    key = cache_key("voice-x", "model-x", "same question, twice")
     store_audio(key, b"first")
     store_audio(key, b"second")
 
@@ -222,7 +243,7 @@ def test_store_audio_swallows_a_disk_failure_instead_of_raising(monkeypatch):
 
     monkeypatch.setattr(tempfile_module, "mkstemp", explode)
 
-    key = cache_key("voice-full-disk", "does this raise?")
+    key = cache_key("voice-full-disk", "model-full-disk", "does this raise?")
     store_audio(key, b"AUDIO")  # must return normally, not raise
 
 
@@ -237,7 +258,7 @@ async def test_speak_still_returns_audio_when_the_cache_write_fails(monkeypatch)
     import tempfile as tempfile_module
     from api.services import interview_service as svc
 
-    async def fake_synthesise(text, voice_id):
+    async def fake_synthesise(text, voice_id, model_id):
         return b"FRESH-DESPITE-DISK-FULL"
 
     def explode(*args, **kwargs):
@@ -246,4 +267,7 @@ async def test_speak_still_returns_audio_when_the_cache_write_fails(monkeypatch)
     monkeypatch.setattr(svc, "synthesise", fake_synthesise)
     monkeypatch.setattr(tempfile_module, "mkstemp", explode)
 
-    assert await svc.speak("A brand new question", "voice-1") == b"FRESH-DESPITE-DISK-FULL"
+    assert (
+        await svc.speak("A brand new question", "voice-1", "model-1")
+        == b"FRESH-DESPITE-DISK-FULL"
+    )

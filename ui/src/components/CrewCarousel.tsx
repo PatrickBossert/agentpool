@@ -5,11 +5,12 @@ import type { CrewRun, HumanReview } from '../types'
 import type { CrewReadiness } from '../api/endpoints'
 import {
   CREW_ORDER, CREW_LABELS, CREW_AGENTS,
-  AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME,
+  AGENT_AVATAR,
   inferAgentStatuses, getCrewStatus, getRotatedIdleStatus, crewStatusLabel,
   type AgentStatus,
 } from './agentStatus'
 import { CREW_ICON_COMPONENT } from './crewIcons'
+import { useAgentIdentity } from '../hooks/useAgentIdentity'
 import AgentHoverCard from './AgentHoverCard'
 import FadingText from './FadingText'
 import { useSchedulerHeartbeat } from '../context/SchedulerHeartbeatContext'
@@ -20,19 +21,37 @@ import { useSchedulerHeartbeat } from '../context/SchedulerHeartbeatContext'
 // lg(80px): 2×80+6  = 166 ≤ 168  ✓
 // md(48px): 3×48+12 = 156 ≤ 168  ✓
 // sm(36px): 4×36+18 = 162 ≤ 168  ✓  (5+ wraps)
+//
+// **Four is two rows of two, not one row of four.** Four faces at `md` do not fit on one row
+// either - 4×48+18 = 210 > 168 - so `flex-wrap` broke them 3+1, which reads as a crew of three
+// with an afterthought. Laying them out as 2×2 buys back the width to make them `lg`, the same
+// size a two-agent card already uses, so the faces are 80px rather than 48px and every card
+// shows people at one of two sizes rather than three.
+//
+// `discovery_interviews` is the only crew with four today and the largest has four, so the
+// `sm` branch is currently unreachable. It is kept because the roll grows.
 function computeFaceSize(n: number): 'sm' | 'md' | 'lg' {
   if (n <= 2) return 'lg'
+  if (n === 4) return 'lg'   // two per row - see faceColumns below
   if (n <= 4) return 'md'
   return 'sm'
 }
 
+/** How many faces sit on a row. Two for a four-agent crew, so the pair above is the width
+ *  budget rather than the row of four that does not fit. */
+function faceColumns(n: number): number {
+  return n === 4 ? 2 : n
+}
+
 // ── Agent face circle ──────────────────────────────────────────────────────────
 
-function AgentFace({ name, status, size = 'md' }: { name: string; status: AgentStatus; size?: 'sm' | 'md' | 'lg' }) {
+function AgentFace({ name, status, size = 'md', slug }: { name: string; status: AgentStatus; size?: 'sm' | 'md' | 'lg'; slug: string }) {
   const avatar    = AGENT_AVATAR[name] ?? { gradient: 'from-gray-400 to-gray-600' }
-  const humanName = AGENT_HUMAN_NAME[name] ?? name
+  // This project's name and face for the agent, falling back to the roll's. The static maps
+  // were read directly here until 7 September, which is why a portrait uploaded for Jordan
+  // reached the disk, the row and a 200 without changing the face on this card.
+  const { name: humanName, imageUrl: imageSrc } = useAgentIdentity(slug)(name)
   const firstName = humanName.split(' ')[0]
-  const imageSrc  = AGENT_AVATAR_IMAGE[name]
 
   const dim = size === 'lg' ? 'w-20 h-20' : size === 'md' ? 'w-12 h-12' : 'w-9 h-9'
   const textDim = size === 'lg' ? 'text-2xl' : size === 'md' ? 'text-lg' : 'text-sm'
@@ -44,7 +63,7 @@ function AgentFace({ name, status, size = 'md' }: { name: string; status: AgentS
                              ''
 
   return (
-    <AgentHoverCard agentName={name}>
+    <AgentHoverCard agentName={name} slug={slug}>
       <div className={`${dim} rounded-full overflow-hidden flex-shrink-0 ${ringClass} transition-all cursor-default`}>
         {imageSrc ? (
           <img src={imageSrc} alt={firstName} className="w-full h-full object-cover" />
@@ -61,6 +80,7 @@ function AgentFace({ name, status, size = 'md' }: { name: string; status: AgentS
 // ── PAM card ───────────────────────────────────────────────────────────────────
 
 interface PamCardProps {
+  slug: string
   orchestrationStatus: string | null
   isPipelineActive: boolean
   isStarting: boolean
@@ -76,8 +96,11 @@ interface PamCardProps {
   onMouseLeave: () => void
 }
 
-function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReviewCount, runCount, isSelected, isHovered, anotherCardHovered, carouselDragging, onSelect, onRunPipeline, onMouseEnter, onMouseLeave }: PamCardProps) {
-  const imageSrc = AGENT_AVATAR_IMAGE['PAM']
+function PamCard({ slug, orchestrationStatus, isPipelineActive, isStarting, hitlReviewCount, runCount, isSelected, isHovered, anotherCardHovered, carouselDragging, onSelect, onRunPipeline, onMouseEnter, onMouseLeave }: PamCardProps) {
+  // Pamela's card is a display site like any other: a project that renames her or gives her its
+  // own portrait should see it here too.
+  const { name: pamName, imageUrl: imageSrc } = useAgentIdentity(slug)('PAM')
+  const pamFirstName = pamName.split(' ')[0]
   const { rotation } = useSchedulerHeartbeat()
 
   const borderClass = isSelected
@@ -127,16 +150,18 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
       <div className="p-3 flex flex-col gap-2.5 flex-1">
         {/* PAM face + name */}
         <div className="flex-1 flex flex-col items-center justify-center gap-1 py-1">
-          <AgentHoverCard agentName="PAM">
+          <AgentHoverCard agentName="PAM" slug={slug}>
             <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-teal-200 shadow-sm flex-shrink-0 cursor-default">
               {imageSrc ? (
-                <img src={imageSrc} alt="Pamela" className="w-full h-full object-cover" />
+                <img src={imageSrc} alt={pamFirstName} className="w-full h-full object-cover" />
               ) : (
-                <div className="w-full h-full bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center text-2xl font-bold text-white">P</div>
+                <div className="w-full h-full bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center text-2xl font-bold text-white">
+                  {pamName.split(' ').map((w: string) => w[0]).join('').slice(0, 2)}
+                </div>
               )}
             </div>
           </AgentHoverCard>
-          <span className="text-xs text-gray-500 font-medium">Pam</span>
+          <span className="text-xs text-gray-500 font-medium">{pamFirstName}</span>
           {hitlReviewCount > 0 && (
             <span className="text-[9px] text-amber-600 font-medium flex items-center gap-0.5">
               <PauseCircle size={9} />{hitlReviewCount} awaiting review
@@ -172,6 +197,7 @@ function PamCard({ orchestrationStatus, isPipelineActive, isStarting, hitlReview
 // ── Single crew card ───────────────────────────────────────────────────────────
 
 interface CrewCardProps {
+  slug: string
   crewKey: string
   crewRun: CrewRun | undefined
   isActive: boolean
@@ -186,14 +212,20 @@ interface CrewCardProps {
   anyBusy: boolean
   readiness?: Record<string, CrewReadiness>
   onSelect: () => void
+  /** Which agent's face on this card was clicked. Optional, so a caller that does not care
+      about agent selection - or a test rendering the card alone - needs no stub. */
+  onSelectAgent?: (agent: string) => void
   onRun: (crewKey: string) => void
   onRerun: (crewKey: string) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
 }
 
-function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, isHovered, anotherCardHovered, carouselDragging, logs, anyBusy, readiness, onSelect, onRun, onRerun, onMouseEnter, onMouseLeave }: CrewCardProps) {
+function CrewCard({ slug, crewKey, crewRun, isActive, isPipelineActive, isWaiting, isRejected, isSelected, isHovered, anotherCardHovered, carouselDragging, logs, anyBusy, readiness, onSelect, onSelectAgent, onRun, onRerun, onMouseEnter, onMouseLeave }: CrewCardProps) {
   const { rotation } = useSchedulerHeartbeat()
+  // This project's names for the crew's agents. The labels under the faces read the same
+  // answer the faces do, so a renamed agent cannot end up with a new portrait and an old name.
+  const identity = useAgentIdentity(slug)
   const status = getCrewStatus(crewRun, isActive, isPipelineActive, isWaiting, isRejected)
   const agents = CREW_AGENTS[crewKey] ?? []
   const isReady = readiness?.[crewKey]?.ready ?? false
@@ -288,20 +320,39 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
         <div className="flex-1 flex items-center">
           {isSingleAgent ? (
             <div className="flex flex-col items-center gap-1.5 w-full justify-center">
-              <AgentFace name={agents[0]} status={agentStatuses[0]} size="lg" />
+              <AgentFace name={agents[0]} status={agentStatuses[0]} size="lg" slug={slug} />
               <span className="text-xs text-gray-500 font-medium">
-                {(AGENT_HUMAN_NAME[agents[0]] ?? agents[0]).split(' ')[0]}
+                {identity(agents[0]).name.split(' ')[0]}
               </span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 flex-wrap justify-center w-full">
+            /* A grid rather than a wrapping flex row, so the break is decided here rather than
+               by whatever happens to fit. `flex-wrap` put four faces 3+1; the column count says
+               2+2 and means it. `gap-y` is tighter than `gap-x` because the labels already
+               separate the rows visually. */
+            <div
+              className="grid gap-x-1.5 gap-y-0.5 justify-items-center items-center w-full"
+              style={{ gridTemplateColumns: `repeat(${faceColumns(agents.length)}, minmax(0, 1fr))` }}
+            >
               {agents.map((agent, idx) => (
-                <div key={agent} className="flex flex-col items-center gap-1">
-                  <AgentFace name={agent} status={agentStatuses[idx]} size={faceSize} />
+                /* A face is a way in to that agent, not decoration. Clicking one selects the
+                   crew as any part of the card does - the event is deliberately allowed to
+                   bubble - and additionally says which agent the Agents tab should open on.
+                   It does not switch tabs: naming the agent is the answer to "whose panel did
+                   I ask for", and hijacking navigation on a click that has always meant
+                   "select this crew" would be a different, larger promise. */
+                <button
+                  key={agent}
+                  type="button"
+                  onClick={() => onSelectAgent?.(agent)}
+                  title={`Configure ${identity(agent).name}`}
+                  className="flex flex-col items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                >
+                  <AgentFace name={agent} status={agentStatuses[idx]} size={faceSize} slug={slug} />
                   <span className="text-[10px] text-gray-400 font-medium leading-none">
-                    {(AGENT_HUMAN_NAME[agent] ?? agent).split(' ')[0]}
+                    {identity(agent).name.split(' ')[0]}
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -342,6 +393,8 @@ function CrewCard({ crewKey, crewRun, isActive, isPipelineActive, isWaiting, isR
 // ── CrewCarousel ───────────────────────────────────────────────────────────────
 
 export interface CrewCarouselProps {
+  /** The project whose agent configuration the faces and names are drawn from. */
+  slug: string
   crewRuns: CrewRun[]
   isPipelineActive: boolean
   logs: string[]
@@ -349,6 +402,8 @@ export interface CrewCarouselProps {
   rejectedCrews?: Set<string>
   selectedCrew: string
   onSelectCrew: (crewKey: string) => void
+  /** A face was clicked: this crew, and this agent within it. */
+  onSelectAgent?: (crewKey: string, agent: string) => void
   onRunCrew: (crewKey: string) => void
   onRerunCrew: (crewKey: string) => void
   runningCrew?: string | null
@@ -360,8 +415,8 @@ export interface CrewCarouselProps {
 }
 
 export default function CrewCarousel({
-  crewRuns, isPipelineActive, logs, hitlReviews = [], rejectedCrews = new Set(),
-  selectedCrew, onSelectCrew, onRunCrew, onRerunCrew, runningCrew, readiness,
+  slug, crewRuns, isPipelineActive, logs, hitlReviews = [], rejectedCrews = new Set(),
+  selectedCrew, onSelectCrew, onSelectAgent, onRunCrew, onRerunCrew, runningCrew, readiness,
   onRunPipeline, isPipelineStarting = false, orchestrationStatus = null,
 }: CrewCarouselProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -479,6 +534,7 @@ export default function CrewCarousel({
       >
         {/* PAM - pipeline orchestrator */}
         <PamCard
+          slug={slug}
           orchestrationStatus={orchestrationStatus}
           isPipelineActive={isPipelineActive}
           isStarting={isPipelineStarting}
@@ -504,7 +560,9 @@ export default function CrewCarousel({
         {CREW_ORDER.map(crewKey => (
           <CrewCard
             key={crewKey}
+            slug={slug}
             crewKey={crewKey}
+            onSelectAgent={(agent) => onSelectAgent?.(crewKey, agent)}
             crewRun={deduped.get(crewKey)}
             isActive={activeCrewName === crewKey || runningCrew === crewKey}
             isPipelineActive={isPipelineActive}

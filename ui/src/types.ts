@@ -120,6 +120,29 @@ export interface ProjectSettings {
    * intact, not because anything renders it.
    */
   dev_mode: boolean
+  /**
+   * Which of the two interviewers a participant meets - always male, always female, or a
+   * random one per session. Resolved once at session creation and stamped on the row, so it
+   * decides who conducts every interview issued from now on.
+   *
+   * Declared for the reason its two neighbours above are, and it was found undeclared for
+   * the same reason `dev_mode` was: it appeared nowhere in `ui/src/` at all, and survived a
+   * save only as an untyped extra key the `{ ...DEFAULTS, ...settings }` spread happened to
+   * copy. Its own consequence, and it is not either neighbour's. A dropped key is `random`
+   * on the server, so a project that deliberately chose a single interviewer - because their
+   * participants asked for one, or because only one voice is right for the engagement -
+   * quietly goes back to a coin toss per session, and nobody finds out until two people
+   * compare notes about who interviewed them. Never optional: an omitted optional key is
+   * exactly the drop this closes.
+   */
+  interviewer_selection: 'always_male' | 'always_female' | 'random'
+  // `interview_accent` was declared here and is retired (sp64), on the server in the same
+  // change - a field removed from one side and left on the other is the drift this project has
+  // now recorded four times, so neither half of the removal stands alone. It defaulted to
+  // `british` and its one reader was the voice picker's opening filter, which showed 6 of 41
+  // account voices: `en` is the language and `british` is an accent of it, so the axis was
+  // narrowing where it should have broadened. The accent is now an opt-in narrowing in the
+  // picker itself, alongside a language control, both offering what the listings carry.
   sector: string
   stakeholder_groups: string[]
   value_stream_labels: string[]
@@ -146,7 +169,15 @@ export interface ProjectSettings {
   standards_references?: string
   preferred_questionnaire_sections?: number
   preferred_questions_per_section?: number
-  locale?: string
+  /**
+   * The engagement's country, ISO 3166-1 alpha-2. Required rather than optional because
+   * `DEFAULTS` on the Settings page already declares it, and a field the page promises to
+   * send on every save while the type says it may be absent is the dropped-key hazard with
+   * the declaration half missing. It is **not** the interview accent above - `GB` is the
+   * country of a Scottish engagement exactly as it is of a British one, which is why the
+   * accent is its own field rather than derived from this one.
+   */
+  locale: string
   sched_start?: string | null
   sched_duration_weeks?: number | null
   client_name?: string
@@ -498,10 +529,18 @@ export interface AssignmentData {
   stakeholders: Stakeholder[]
 }
 
+// What a session was stamped with at creation. The front end reads the locale off it and
+// nothing else - the voice and the synthesis model are the speak door's business, and are
+// declared here only because they are part of the row that comes back.
+//
+// `model_id` is optional because sessions created before it was stamped genuinely do not have
+// one; those were spoken through the server's default model every time, which is what they
+// keep. It is not optional in the sense of "the server may forget it".
 export interface VoiceConfig {
   language: string
   country_code: string
   elevenlabs_voice_id: string
+  model_id?: string
 }
 
 export interface InterviewQuestion {
@@ -920,6 +959,16 @@ export interface MyPermissions {
   // field is in here, so a tenth member added on the server disables its control with no
   // change to this file. Never narrow this to the fields one page happens to render.
   platform_tier_settings: string[]
+  // Whether this caller may configure this engagement - the administration axis, which is
+  // "platform tier, or project_admin on this slug". What the agent configuration section on
+  // every Setup tab asks before offering its controls, because
+  // PUT /{slug}/agents/{agent_id}/config refuses with exactly this predicate.
+  //
+  // Wider than can_change_platform_tier_settings above, and the difference is the point: a
+  // project_admin names their own agents and chooses their voices, and may not move the
+  // engagement's inference off-premises. Reading the narrower flag here would withhold the
+  // section from the person sp44 widened those fifteen doors for.
+  can_administer_project: boolean
   // The knowledge tiers this caller may add material at on this project, broadest first -
   // some subset of 'sector', 'organisation', 'project'. What an upload tier picker offers,
   // and the whole of what it may offer: the rule is the server's

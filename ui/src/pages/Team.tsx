@@ -58,6 +58,11 @@ function AgentCard({
   crewLabel: string
   pendingSkills: AgentSkill[]
 }) {
+  // **The one display site left on the static maps, deliberately.** Every other place that draws
+  // an agent's name or face resolves it against a project through `useAgentIdentity`; this page
+  // is the roll across the whole deployment and has no slug to resolve against. Inventing one -
+  // "the project they last looked at", say - would show one engagement's renames and portraits
+  // on a page that claims to describe the team, so it stays on the roll's own answer.
   const humanName = AGENT_HUMAN_NAME[agentName] ?? agentName
   const avatar    = AGENT_AVATAR[agentName] ?? { gradient: 'from-gray-400 to-gray-600', emoji: '🤖' }
   const imageSrc  = AGENT_AVATAR_IMAGE[agentName]

@@ -182,7 +182,7 @@ def _agent_vocabulary() -> set[str]:
                       AGENT_STATUS.read_text(), re.S)
     assert block, "AGENT_HUMAN_NAME not found - the vocabulary would be half empty"
     roles = {role for role, _ in re.findall(r"'([^']+)':\s+'([^']+)'", block.group(1))}
-    assert len(roles) == 17, sorted(roles)
+    assert len(roles) == 18, sorted(roles)
     return ids | roles
 
 

@@ -28,6 +28,8 @@ const REACHES_MILESTONE_VARIANCE = [
   'milestoneVariance.test.ts',
   'PamReportExport.test.ts',
   'PamSetupMilestones.test.tsx',
+  // Drives the whole panel, and the PMO crew's Setup tab mounts the schedule.
+  'TabClassification.test.tsx',
 ]
 
 describe('milestone tests do not read the wall clock', () => {
@@ -46,7 +48,7 @@ describe('milestone tests do not read the wall clock', () => {
     // The list above is hand-maintained, which is the weakness. This fails when a test file
     // mentions milestoneVariance or a component known to use it and is absent from the list -
     // so the list cannot silently fall behind the suite.
-    const USERS_OF_VARIANCE = ['milestoneVariance', 'PamReportView', 'PamSetupTab']
+    const USERS_OF_VARIANCE = ['milestoneVariance', 'PamReportView', 'ProjectScheduleSetup']
     const candidates = readdirSync(DIR)
       .filter(f => f.endsWith('.test.ts') || f.endsWith('.test.tsx'))
       .filter(f => {

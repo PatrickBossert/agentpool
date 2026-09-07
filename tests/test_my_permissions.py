@@ -76,6 +76,13 @@ async def test_it_reports_what_the_shared_authority_check_says(client, seeded_pr
         # follow the resend door's tier if that ever moved.
         # tests/test_grantable_roles.py drives it against the settings door itself.
         "can_change_platform_tier_settings": True,
+        # Administering *this project* - the axis PUT /{slug}/agents/{agent_id}/config and
+        # the fifteen doors sp44 widened refuse with. Wider than the flag above and reported
+        # apart from it for the same reason that one is reported apart from
+        # can_issue_invite_links: a project_admin configures their engagement's agents and may
+        # not move its inference off-premises, so a shared key would withhold the agent
+        # configuration section from exactly the caller it was widened for.
+        "can_administer_project": True,
         # The nine field names the permission above covers, served from the router's own
         # _PLATFORM_TIER_SETTINGS so the Settings tab need not restate them.
         # test_my_permissions_serves_the_servers_own_platform_tier_list holds the two equal.
@@ -110,6 +117,13 @@ async def test_a_caller_with_no_content_roles_is_told_so(client, seeded_project_
         "can_review": False, "can_approve": False, "can_grant_roles": True,
         "can_issue_invite_links": True,
         "can_change_platform_tier_settings": True,
+        # Administering *this project* - the axis PUT /{slug}/agents/{agent_id}/config and
+        # the fifteen doors sp44 widened refuse with. Wider than the flag above and reported
+        # apart from it for the same reason that one is reported apart from
+        # can_issue_invite_links: a project_admin configures their engagement's agents and may
+        # not move its inference off-premises, so a shared key would withhold the agent
+        # configuration section from exactly the caller it was widened for.
+        "can_administer_project": True,
         # The nine field names the permission above covers, served from the router's own
         # _PLATFORM_TIER_SETTINGS so the Settings tab need not restate them.
         # test_my_permissions_serves_the_servers_own_platform_tier_list holds the two equal.

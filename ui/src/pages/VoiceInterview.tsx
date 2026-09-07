@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Pause, Play, Pencil, Check, X } from 'lucide-react'
+import { Check, Pause, Pencil, Play, Undo2, X } from 'lucide-react'
 import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
 
 // webkit speech recognition types (Chrome/Safari vendor prefix)
@@ -9,10 +9,33 @@ declare const webkitSpeechRecognition: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const SpeechRecognitionEvent: any
 
+/** Initials for an interviewer with no headshot - a state agents/identity.py declares legitimate. */
+function initialsOf(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]!.toUpperCase())
+    .join('')
+}
+
 type Phase = 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'rating' | 'complete' | 'error'
 type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'testing' | 'ready'
 
 const BASE = '/api'
+
+// There is deliberately no default voice in this file, and there must never be one again.
+//
+// `DEFAULT_VOICE_CONFIG` lived here and was a *decision*: `21m00Tcm4TlvDq8ikWAM`, ElevenLabs'
+// stock Rachel, a female voice, for an interviewer described as male everywhere he is
+// described at all. The first completed interview was conducted in it. It was corrected to a
+// mirror of the server's answer, and then deleted, because a session now carries the voice it
+// was issued with - so a session arriving without one is a bug, and a fallback here would hide
+// it by putting a stranger in front of a participant.
+//
+// The portal does not send a voice at all now. `POST /interviews/{token}/speak` reads the
+// stamp off the session; the only thing this file still takes from `voice_config` is the
+// locale it hands the browser's speech recogniser.
 
 export interface CapturedPair {
   question_id: string
@@ -73,6 +96,10 @@ export default function VoiceInterview() {
   const [interimText, setInterimText] = useState('')
   const recognitionRef = useRef<any>(null)
   const restartAnswerRef = useRef(false)
+  // Set by "Finish my last answer". Read inside listenWithRestart, the same way
+  // restartAnswerRef is - a flag rather than a callback, because the listen loop owns the
+  // recognition object and nothing outside it may drive the microphone.
+  const appendToPreviousRef = useRef(false)
   const qaRef = useRef<CapturedPair[]>([])
   const sectionRatingsRef = useRef<SectionMaturityRating[]>([])
   const ratingResolveRef = useRef<((rating: number) => void) | null>(null)
@@ -202,10 +229,20 @@ export default function VoiceInterview() {
       const res = await fetch(`${BASE}/interviews/${sessionToken}`)
       if (!res.ok) throw new Error(`Failed to load interview (${res.status})`)
       const data = await res.json()
+      // Peer referral and the closing message are steps the participant still has to sit
+      // through, so they count. Without them the bar read 100% on the last scripted
+      // question while follow-ups, the referral and the closing were all still to come -
+      // which is the moment a participant decides how much longer this will take.
+      //
+      // Follow-ups are deliberately NOT in the denominator: there are nought to two per
+      // question, decided live, so any fixed guess is wrong in both directions. The bar
+      // therefore advances a little slower than the work remaining, and never overstates
+      // completion, which is the failure that matters.
+      const TRAILING_STEPS = 2
       const total = data.script.sections.reduce(
         (acc: number, s: { questions: unknown[] }) => acc + s.questions.length,
         0
-      )
+      ) + TRAILING_STEPS
       setProgress({ current: 0, total })
       setSessionData(data)
       setBranding(data.branding ?? null)
@@ -219,12 +256,12 @@ export default function VoiceInterview() {
     }
   }
 
-  async function speakText(text: string, voiceId: string): Promise<void> {
+  async function speakText(text: string): Promise<void> {
     setStatusMessage('Speaking…')
     const res = await fetch(`${BASE}/interviews/${sessionToken}/speak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice_id: voiceId }),
+      body: JSON.stringify({ text }),
     })
     if (!res.ok) {
       // Non-fatal: skip audio, continue
@@ -387,6 +424,29 @@ export default function VoiceInterview() {
     submitAnswer()
   }
 
+  /**
+   * "Finish my last answer" - continuation, not navigation.
+   *
+   * Twice in the first completed interview a participant paused mid-reply, the three-second
+   * gap elapsed, and the interview moved on with the thought unfinished and no way back.
+   *
+   * This does not go back. The interview is an await loop over sections and questions, so
+   * going back means unwinding an await, which needs the whole engine restructured into an
+   * index-driven state machine - a large change to a working thing, for a capability nobody
+   * asked for. True back navigation also has to decide what happens to the answer already
+   * given (overwrite, keep both, discard), and every choice loses something.
+   *
+   * What was actually wanted was to finish a sentence. So the next thing said is appended to
+   * the previous answer, and the current question is then re-asked. The transcript ends up
+   * with one complete answer per question rather than a fragment and an orphan - which
+   * matters downstream, where a truncated answer can also read as evasive and provoke a
+   * press the participant never warranted.
+   */
+  function finishLastAnswer() {
+    appendToPreviousRef.current = true
+    submitAnswer()
+  }
+
   function handlePause() {
     if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
     if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
@@ -401,17 +461,83 @@ export default function VoiceInterview() {
     resetSilenceTimerRef.current?.()
   }
 
-  async function listenWithRestart(lang: string = 'en-GB'): Promise<string> {
+  /**
+   * Listen for an answer, re-prompting once if nothing was said.
+   *
+   * `listenForAnswer` resolves `''` after ten seconds of no speech, and the flow used to
+   * take that as an answer and advance. A participant who paused to think, or whose
+   * microphone picked up only room noise, lost the question without being told - which is
+   * what happened in the first completed interview.
+   *
+   * One re-prompt, then move on. Not unlimited: a participant who has walked away must not
+   * trap the interview in a loop, and repeating a third time reads as nagging rather than
+   * patience. `reprompt` is spoken only when the caller supplies it, so a caller with
+   * nothing sensible to repeat simply gets the old behaviour.
+   */
+  async function listenWithRestart(
+    lang: string = 'en-GB',
+    reprompt?: { text: string },
+  ): Promise<string> {
     restartAnswerRef.current = false
+    appendToPreviousRef.current = false
+    let silentAttempts = 0
+    // Anything already said for THIS question before "Finish my last answer" was tapped.
+    // Carried rather than discarded: the participant is correcting the previous answer, not
+    // retracting this one, and losing words they have already spoken is the same failure the
+    // button exists to fix.
+    let carried = ''
     // eslint-disable-next-line no-constant-condition
     while (true) {
       setInterimText('')
-      const answer = await listenForAnswer(lang)
-      if (!restartAnswerRef.current) return answer
-      restartAnswerRef.current = false
-      setStatusMessage('Restarting…')
-      await new Promise(r => setTimeout(r, 300))
-      setStatusMessage('')
+      const heard = await listenForAnswer(lang)
+
+      if (restartAnswerRef.current) {
+        restartAnswerRef.current = false
+        carried = ''
+        setStatusMessage('Restarting…')
+        await new Promise(r => setTimeout(r, 300))
+        setStatusMessage('')
+        continue
+      }
+
+      if (appendToPreviousRef.current) {
+        appendToPreviousRef.current = false
+        carried = [carried, heard].filter(Boolean).join(' ').trim()
+        const previous = qaRef.current[qaRef.current.length - 1]
+        if (!previous) {
+          // Nothing has been committed yet, so there is nothing to finish. Say so rather
+          // than silently doing nothing, and carry on with the current question.
+          setStatusMessage('There is no earlier answer to add to yet.')
+          await new Promise(r => setTimeout(r, 1500))
+          setStatusMessage('')
+          continue
+        }
+        setStatusMessage('Go ahead — finish your last answer.')
+        if (reprompt) await speakText('Of course — go on.')
+        const extra = await listenForAnswer(lang)
+        setStatusMessage('')
+        if (extra.trim()) previous.answer = `${previous.answer} ${extra}`.trim()
+        // Back to where we were.
+        if (reprompt) {
+          setCurrentQuestion(reprompt.text)
+          await speakText(reprompt.text)
+        }
+        continue
+      }
+
+      const answer = [carried, heard].filter(Boolean).join(' ').trim()
+
+      // Nothing heard. Ask once more before giving up on this question.
+      if (answer.length === 0 && reprompt && silentAttempts === 0) {
+        silentAttempts++
+        setStatusMessage('')
+        await speakText("Sorry — I didn't catch that. Let me ask again.")
+        setCurrentQuestion(reprompt.text)
+        await speakText(reprompt.text)
+        continue
+      }
+
+      return answer
     }
   }
 
@@ -461,13 +587,22 @@ export default function VoiceInterview() {
     setCurrentQuestion('')
   }
 
-  const DEFAULT_VOICE_CONFIG = { elevenlabs_voice_id: '21m00Tcm4TlvDq8ikWAM', language: 'en', country_code: 'GB' }
-
   async function runInterview() {
     if (!sessionData) return
     const { session, script } = sessionData
-    const voiceConfig = session.voice_config ?? DEFAULT_VOICE_CONFIG
-    const voiceId = voiceConfig.elevenlabs_voice_id
+    // The session is stamped with its interviewer's resolved configuration when it is created.
+    // A session without one cannot be conducted, and saying so is the point: the alternative -
+    // a default declared here - is what conducted the first completed interview in a voice
+    // nobody had chosen. The speak door refuses the same case for the same reason.
+    const voiceConfig = session.voice_config
+    if (!voiceConfig?.elevenlabs_voice_id) {
+      setErrorMessage(
+        'This interview session was created without a voice, so it cannot be conducted. ' +
+        'Please contact the person who invited you.',
+      )
+      setPhase('error')
+      return
+    }
     const lang = `${voiceConfig.language}-${voiceConfig.country_code}`
     interviewLangRef.current = lang
 
@@ -482,19 +617,17 @@ export default function VoiceInterview() {
 
     // Welcome
     setCurrentQuestion(script.welcome_message)
-    await speakText(script.welcome_message, voiceId)
+    await speakText(script.welcome_message)
 
     // Framing block (L2 only) — spoken after welcome, before first question
     if (script.framing_block) {
       const fb = script.framing_block
-      const framingText = [
-        fb.positioning,
-        ...fb.context_setting,
-        fb.dual_lenses.efficiency,
-        fb.dual_lenses.effectiveness,
-      ].join(' ')
+      // Positioning only. The block previously spoke positioning, every context_setting
+      // bullet and both dual_lenses joined into one utterance - around a minute of
+      // preamble after a welcome that had already covered purpose and confidentiality.
+      // The rest stays in the script for the reader and the analyst; it is not read aloud.
       setCurrentQuestion(fb.positioning)
-      await speakText(framingText, voiceId)
+      await speakText(fb.positioning)
     }
 
     let questionNumber = 0
@@ -514,10 +647,10 @@ export default function VoiceInterview() {
         setCurrentQuestion(question.text)
 
         // Ask the question
-        await speakText(question.text, voiceId)
+        await speakText(question.text)
 
         // Record primary answer
-        let answer = await listenWithRestart(lang)
+        let answer = await listenWithRestart(lang, { text: question.text })
 
         const needsElaboration =
           answer.trim().length > 0 &&
@@ -533,7 +666,7 @@ export default function VoiceInterview() {
           const pressText = await getElaborationPress(question.text, answer, question.probing_instructions)
           if (pressText) {
             setCurrentQuestion(pressText)
-            await speakText(pressText, voiceId)
+            await speakText(pressText)
             const followUpAnswer = await listenWithRestart(lang)
             qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, pressText, followUpAnswer, { kind: 'F', index: followUpCount + 1 }))
             answer = `${answer} ${followUpAnswer}`.trim()
@@ -548,7 +681,7 @@ export default function VoiceInterview() {
         while (followUpCount < question.follow_up_count && question.follow_up_branches[followUpCount]) {
           const branch = question.follow_up_branches[followUpCount]
           setCurrentQuestion(branch)
-          await speakText(branch, voiceId)
+          await speakText(branch)
           const branchAnswer = await listenWithRestart(lang)
           qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: followUpCount + 1 }))
           followUpCount++
@@ -558,50 +691,70 @@ export default function VoiceInterview() {
       // After all questions in a section, capture inline maturity rating if present (L1/L2 only)
       if (section.maturity_rating) {
         const mr = section.maturity_rating
-        await speakText(mr.prompt, voiceId)
+        await speakText(mr.prompt)
         const rating = await collectInlineRating(mr)
         sectionRatingsRef.current.push({ section_title: section.title, dimension: mr.dimension, rating })
         setPhase('interviewing')
       }
     }
 
-    // Synthesis check (L2 only) — spoken after all sections, before closing
+    // SYNTHESIS WITHDRAWN — 4 September 2026, until further notice.
+    //
+    // Everything below except peer referral is commented out rather than deleted, on
+    // Patrick's instruction, after the first completed interview.
+    //
+    // Two findings, and the second is the sharper one:
+    //
+    //  - `synthesis_prompt` is written by Maya at design time, so the interviewer read a
+    //    summary of the conversation composed before anybody had said anything. A synthesis
+    //    check has to be a check of what was actually said.
+    //
+    //  - `portfolio_options` did the same for the recommendation. It offered three sequencing
+    //    options - sequential, parallel, phased - to a participant who had already said the
+    //    projects must run in parallel. It was assumed at the time to be dynamic synthesis
+    //    going wrong; it is not. Nothing here generates anything. The script pre-supposed the
+    //    answer, which is worse, because it is repeatable.
+    //
+    // The general rule this leaves: anything an agent says TO a participant in real time has
+    // no reviewer between it and them, so it is either scripted and true, or absent.
+    //
+    // Peer referral survives because it asks a question rather than asserting a conclusion.
+    //
+    // Restoring any of this needs the Maya-side change too: the fields stay in the script
+    // schema for now, and are dropped from questionnaire design later.
     if (script.synthesis_check) {
       const sc = script.synthesis_check
-      setCurrentQuestion(sc.synthesis_prompt)
-      await speakText(sc.synthesis_prompt, voiceId)
-      // Listen for the interviewee's confirmation or correction
-      const synthesisResponse = await listenWithRestart(lang)
-      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 1, sc.synthesis_prompt, synthesisResponse))
-      // Peer referral
+      // WITHDRAWN: scripted synthesis check.
+      // setCurrentQuestion(sc.synthesis_prompt)
+      // await speakText(sc.synthesis_prompt)
+      // const synthesisResponse = await listenWithRestart(lang)
+      // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 1, sc.synthesis_prompt, synthesisResponse))
+
+      // Peer referral - retained. It asks who else to speak to; it asserts nothing.
+      setProgress(p => ({ ...p, current: p.current + 1 }))
       setCurrentQuestion(sc.peer_referral)
-      await speakText(sc.peer_referral, voiceId)
+      await speakText(sc.peer_referral)
       const referralResponse = await listenWithRestart(lang)
       qaRef.current.push(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
-      // Forward roadmap
-      setCurrentQuestion(sc.forward_roadmap)
-      await speakText(sc.forward_roadmap, voiceId)
-      const roadmapResponse = await listenWithRestart(lang)
-      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 3, sc.forward_roadmap, roadmapResponse))
-      // L0 only — portfolio sequencing options validation
-      if (sc.portfolio_options) {
-        setCurrentQuestion(sc.portfolio_options)
-        await speakText(sc.portfolio_options, voiceId)
-        const portfolioResponse = await listenWithRestart(lang)
-        qaRef.current.push(capturedPair(scriptId, 'SYNTH', 4, sc.portfolio_options, portfolioResponse))
-      }
-      // L0 only — executive sponsorship commitment check
-      if (sc.sponsorship_check) {
-        setCurrentQuestion(sc.sponsorship_check)
-        await speakText(sc.sponsorship_check, voiceId)
-        const sponsorshipResponse = await listenWithRestart(lang)
-        qaRef.current.push(capturedPair(scriptId, 'SYNTH', 5, sc.sponsorship_check, sponsorshipResponse))
-      }
+
+      // WITHDRAWN: forward roadmap.
+      // setCurrentQuestion(sc.forward_roadmap)
+      // await speakText(sc.forward_roadmap)
+      // const roadmapResponse = await listenWithRestart(lang)
+      // qaRef.current.push(capturedPair(scriptId, 'SYNTH', 3, sc.forward_roadmap, roadmapResponse))
+
+      // WITHDRAWN: portfolio sequencing options - the field that offered a participant
+      // options they had already ruled out.
+      // if (sc.portfolio_options) { ... }
+
+      // WITHDRAWN: sponsorship commitment check.
+      // if (sc.sponsorship_check) { ... }
     }
 
-    // Closing
+    // Closing. The bar reaches 100% here and nowhere earlier.
+    setProgress(p => ({ ...p, current: p.total }))
     setCurrentQuestion(script.closing_message)
-    await speakText(script.closing_message, voiceId)
+    await speakText(script.closing_message)
 
     await submitResponses(sectionRatingsRef.current)
   }
@@ -962,16 +1115,28 @@ export default function VoiceInterview() {
             <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
           )}
 
-          {/* Interviewer persona */}
-          {branding?.interviewer_image_url && (
+          {/* Interviewer persona. Keyed on the NAME, not the photograph: the server resolves
+              both from the session's stamp, and an interviewer without a headshot is a
+              legitimate state that agents/identity.py has always allowed. Keying this block on
+              the image hid the name of the only interviewer who is actually in that state. */}
+          {branding?.interviewer_name && (
             <div className="flex flex-col items-center mb-6">
-              <img
-                src={branding.interviewer_image_url}
-                alt={branding.interviewer_name ?? 'Your interviewer'}
-                className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
-              />
+              {branding.interviewer_image_url ? (
+                <img
+                  src={branding.interviewer_image_url}
+                  alt={branding.interviewer_name}
+                  className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
+                />
+              ) : (
+                <div
+                  className="w-24 h-24 rounded-full mb-3 ring-4 ring-white shadow-md flex items-center justify-center text-2xl font-semibold text-white bg-gradient-to-br from-slate-500 to-slate-700"
+                  aria-hidden="true"
+                >
+                  {initialsOf(branding.interviewer_name)}
+                </div>
+              )}
               <p className="font-semibold text-gray-800" style={{ color: branding.text_color }}>
-                {branding.interviewer_name ?? 'Avery Singh'}
+                {branding.interviewer_name}
               </p>
               {branding.interviewer_tagline && (
                 <p className="text-sm text-gray-500 mt-0.5">{branding.interviewer_tagline}</p>
@@ -989,9 +1154,10 @@ export default function VoiceInterview() {
             <ul className="space-y-2.5">
               {[
                 'This is a verbal interview — speak naturally and in your own words.',
-                'A pause of a few seconds, or tapping “✓ Done”, will move to the next question.',
+                'Once you have answered, a pause of a few seconds - or tapping “✓ Done” - moves on.',
                 'Need a moment to think? Tap “Hold — I\'m thinking” to pause the timer.',
                 'Tap “Restart answer” at any time to re-record your response.',
+                'Cut off mid-thought? “Finish my last answer” adds to your previous reply.',
                 'Take your time — there are no right or wrong answers.',
               ].map((tip, i) => (
                 <li key={i} className="flex items-start gap-2.5 text-sm text-gray-600">
@@ -1056,9 +1222,14 @@ export default function VoiceInterview() {
     )
   }
 
-  // interviewing
-  const interviewerImg = branding?.interviewer_image_url ?? '/agents/avery-singh-hires.jpg'
-  const interviewerName = branding?.interviewer_name ?? 'Avery Singh'
+  // interviewing.
+  //
+  // No literal name and no literal photograph. Both used to be declared here - "Avery Singh"
+  // and /agents/avery-singh-hires.jpg - which were the third and fourth declarations of the
+  // interviewer's identity in the product, and they were what a participant read while Laura
+  // was speaking to them. The server resolves both from the session's stamp.
+  const interviewerImg = branding?.interviewer_image_url ?? ''
+  const interviewerName = branding?.interviewer_name ?? ''
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
@@ -1086,11 +1257,20 @@ export default function VoiceInterview() {
         {/* Interviewer panel */}
         <div className="w-56 flex-shrink-0 bg-slate-900 flex flex-col items-center justify-center gap-5 p-6 border-r border-slate-800">
           <div className="relative">
-            <img
-              src={interviewerImg}
-              alt={interviewerName}
-              className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
-            />
+            {interviewerImg ? (
+              <img
+                src={interviewerImg}
+                alt={interviewerName}
+                className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
+              />
+            ) : (
+              <div
+                className="w-40 h-40 rounded-full ring-4 ring-teal-400 shadow-2xl flex items-center justify-center text-4xl font-semibold text-white bg-gradient-to-br from-slate-600 to-slate-800"
+                aria-hidden="true"
+              >
+                {initialsOf(interviewerName)}
+              </div>
+            )}
             {(statusMessage || isListening) && (
               <span
                 className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 animate-pulse"
@@ -1156,6 +1336,16 @@ export default function VoiceInterview() {
                   >
                     Restart answer
                   </button>
+                  {/* Only offered once there is an earlier answer to add to. */}
+                  {qaRef.current.length > 0 && (
+                    <button
+                      onClick={finishLastAnswer}
+                      className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors"
+                      aria-label="Finish my last answer"
+                    >
+                      <Undo2 size={14} />Finish my last answer
+                    </button>
+                  )}
                 </div>
                 {/* Pause / Resume thinking time */}
                 {isPaused ? (

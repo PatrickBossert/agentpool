@@ -468,21 +468,14 @@ async def test_an_id_the_model_was_never_offered_is_refused(monkeypatch):
 
 
 # ── the agent id has to resolve, or nobody can ever action the proposal ────────
-
-def test_every_dispatched_crew_agent_resolves_to_a_skills_name():
-    """The structural guard, and the one that would have caught `visual_illustrator`.
-
-    Absence from `_SNAKE_TO_DISPLAY` is silent in both directions and looks like working: the
-    agent is injected with no skills however many are assigned to it, and a proposal it makes
-    is filed under a name no approval can reach. Enumerated from `_CREW_AGENT_NAMES` rather
-    than listed here, so the next agent added is measured against this rather than joining the
-    gap.
-    """
-    from api.services.run_service import _CREW_AGENT_NAMES
-
-    dispatched = {a for agents in _CREW_AGENT_NAMES.values() for a in agents}
-    assert sorted(dispatched - set(_SNAKE_TO_DISPLAY)) == []
-
+#
+# The structural guard - every dispatched agent resolves to a skills name - lives in
+# `tests/test_crew_agent_registration.py`, beside the tool-map guard asking the same question
+# of the other registry an agent has to be in. This file had a second copy under the same name,
+# written while that one was being written on master; two tests with one name guarding one
+# property is a guard that can be deleted in either place and still look present in the other.
+# The end-to-end below is what this file is for, and it is not a duplicate: it drives a
+# proposal from the agent the absence was found on, all the way to the prompt.
 
 @pytest.mark.asyncio
 async def test_a_proposal_from_the_illustrator_is_filed_where_an_approval_can_reach_it():

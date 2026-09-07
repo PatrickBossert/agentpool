@@ -100,6 +100,45 @@ must use `monkeypatch.setenv("DATABASE_DIR", str(tmp_path))` with `get_settings.
 both sides; tests using the shared `client` fixture must scope every assertion to a row they
 created rather than hardcoding an id or counting globally.
 
+**Export `DATABASE_DIR`, `PROJECTS_DIR` and `DATA_DIR` to a private directory before invoking
+pytest.** `conftest.py` reads all three with `setdefault`, so exporting them is the whole of it.
+The fixed defaults are not only a hazard across *successive* runs: two agents running pytest at
+once **corrupt each other**, because `conftest.py` `shutil.rmtree`s the default `DATA_DIR` at
+import time, so a second session starting mid-flight deletes a directory under the first. The
+tell is the shape of the failures - readonly database, `Directory not empty`, never an
+assertion - and one such collision produced 77 failures and 28 errors, not one of them real. The
+`rmtree` is guarded on the directory's own name being `agentpool_test_data`, which is precisely
+what makes exporting the fix rather than a hope. Parallel agents are normal on this project now,
+so this is a rule and not a precaution.
+
+**The five tests catalogued for weeks as failing "against a fresh database" were never product
+defects.** Three test files hardcoded `/tmp/agentpool_test` while the code under test reads
+`get_settings().database_dir` and `.projects_dir`, so under isolation `test_projects_api`'s
+autouse fixture scrubbed a directory nothing was using, `test_portfolio_register_returns_data`
+wrote its fixture where the endpoint would never look, and `test_agent_chat` seeded one database
+while the app opened another. Fixed in `51b8af1b` by reading the directories off the settings the
+code under test reads. The consequence is the half worth keeping: **the suite's green depended on
+those two paths coinciding**, which they do only while nobody exports the variables - so no clean
+checkout, no new machine and no CI run has ever reproduced the counts this project has been
+quoting, sp62's included.
+
+**A second, unrelated reason the same sentence is true, found while verifying it.** `projects/`
+holds exactly two tracked files, so a real checkout has no `sp-gs-am`, and four tests skip on the
+absence of a fixture under it rather than the two this machine reports - two of them
+(`test_sqlite_state_validation.py` and `test_value_chain_model.py`, both on
+`value_chain_model_v2.json`) pass here only because a live crew run left the file behind, and two
+in `test_value_chain_migration.py` are dark on every machine including this one. So **"2680
+passed / 2 skipped" is a property of this workstation, not of the repository**; a clean clone
+answers 2678 / 4 and nothing is wrong. The fix is committed fixtures under `tests/fixtures/`,
+which the two dark tests already name as theirs.
+
+Two things about that pair of numbers. **Recount both rather than adjusting one to match the
+other** - the gap is exactly two today because exactly two tests depend on the stray file, and
+nothing holds it there. And the four read a bare relative `Path("projects/sp-gs-am/outputs/…")`,
+which reads neither `PROJECTS_DIR` nor the settings, so they are equally dark when `pytest` is run
+from any directory but the repository root - `51b8af1b`'s settings repair does not reach them, and
+committed fixtures still do.
+
 **A module fixture that wipes the project `.db` is not enough.** `project_registry` lives in
 the *shared system* database, and `POST /projects` registers with `INSERT OR IGNORE` - so a
 test that reassigns a slug to another organisation leaves it owned by that organisation, and
@@ -128,9 +167,11 @@ Two things that look like evidence during forensics on `data/` and are not:
 
 ## Reviewing changes: the recurring failure mode
 
-Five times on this project a test has verified a property **one layer away from where it holds**.
+Repeatedly on this project a test has verified a property **one layer away from where it holds**.
 In every case the shipped code was correct and the test could not distinguish correct from
-incorrect:
+incorrect (this sentence read "five times" for several sprints while the list below ran to
+eight, which is its own small instance of the lesson - it is ten now, and the word is there so
+it cannot rot again):
 
 - `check_write` tested; the tool calling it not.
 - `staleness` tested; the endpoint assembling it not.
@@ -153,6 +194,19 @@ incorrect:
   Alone, 12 passed; behind anything that imports the crew module first, 4 failed — and the
   production bug they were hiding (`create_business_plan_crew` raises `ValueError: Unknown
   agent: visual_illustrator`) had been live on master the entire time.
+- A test that asserted one phase of a **multi-phase** screen. The rehearsal dialog draws the
+  interviewer's face in five places across four phases; mutating each render back to the wrong
+  agent in turn, **four of the five still passed**, because the first version asserted the
+  device-setup screen alone. Right in one place and wrong in four is exactly what a screen looks
+  like from its first frame. It now walks every phase, asserts every avatar on screen at each,
+  and counts them so the loop cannot pass vacuously.
+- Two doors answered a URL that nothing served, and both tests were green. The portrait test
+  asserted the returned URL **equalled the literal the handler built**; the branding test
+  asserted that literal and then fetched a *different* hardcoded path - so between them they
+  proved a file was servable somewhere and that the door returned a string, and never that the
+  two agreed. **A URL is a promise that something answers: fetch what the door returned.** The
+  branding door had carried the defect since it was written, unseen because no deployment had
+  ever uploaded a header image.
 
 When a test passes alone and fails in the suite, the isolated pass is the thing to distrust —
 it is usually the one running under state no production caller ever has.
@@ -173,6 +227,36 @@ read a real value - a correct repair in itself - would have armed it, and the ou
 been a fabricated UUID forming a well-formed dead link on the deployment's own domain, written
 into `draft_message`. **"This code has never run" is not "this code works"**, and repairing
 whatever kept it from running is precisely when the difference arrives.
+
+**Quoting a rule is not applying it.** A guard was written on this branch whose docstring
+*cited* this file's own "a guard's reach must be established, not described" - and then
+described its reach instead of establishing it. It was defeated on the first attempt, by a
+parser differential: `str.strip()` removes a strictly smaller set than the WHATWG URL parser,
+which also strips tab, LF and CR from *anywhere* in the string before it reads a scheme, so
+`ja\tvascript:` matched no scheme at the door, was stored verbatim, and was reassembled by the
+browser into exactly the scheme being refused. Every refused scheme could be spelled with a tab
+in it. **This is the fourth recorded instance of that failure and the first introduced by a
+change quoting the other three**, and the citation did active harm: it read as evidence the rule
+had been followed, to the reviewer as well as to the author. A comment citing a rule is evidence
+about intent, and it is routinely read as evidence about behaviour. The repair is the one this
+file already prescribes - the normaliser is now a pure function driven directly, in **both**
+directions, so a hostile candidate that `str.strip()` already handles fails the test rather than
+passing it, and an over-aggressive normaliser fails it too.
+
+**A sentinel drawn from the system's own defaults cannot fail.** The end-to-end test wrote
+`/agents/avery-singh.jpg` and asserted on it - and that string *is*
+`agent_defaults("stakeholder_interviewer")["image_url"]`. Deleting the known-good write entirely
+left all four parameters green: the assertion could not distinguish "the hostile value never
+landed" from "there was never a row". Same family as the `check_write` case above, where the
+refusal message quoted the key it was refusing, with the substring drawn from the system's
+defaults rather than from the call. What makes it worth recording is where the rule already was:
+**the same file states it thirty lines higher**, in `CHOSEN_VOICE`'s own comment - *a string
+chosen to be visibly unlike any real id, so an assertion on it cannot accidentally pass because a
+default happened to match* - written by the same author in the same change. A rule stated beside
+code protects that code and nothing else, which is the milestone-clock lesson arriving in a
+second form. The generalisable half is the repair: the sentinel is held against **every**
+identity's image rather than against Avery's, because the collision was found by reading one
+agent's default and the next agent added could be any of the eighteen.
 
 ---
 
@@ -401,18 +485,50 @@ assertable rather than merely intended.
 *Administration* is running the engagement: stakeholders and their roles, campaigns and
 reminder emails, the document library, starting a run or an orchestration, PAM assignment,
 and `PATCH /{slug}/settings`, the milestone schedule, the non-working calendar, and the
-branding header. Thirty-three project-scoped doors, none of which takes a content gate, as
-project creation does not either. That is deliberate: a consultant configures the
-engagement, and a client-side approver does not, however senior they are on the project.
-They now split across the two administration rows:
+branding header, and each agent's name, face and voice. Thirty-five project-scoped doors,
+none of which takes a content gate, as project creation does not either. That is deliberate:
+a consultant configures the engagement, and a client-side approver does not, however senior
+they are on the project. They now split across the two administration rows:
 
 | Gate | Doors |
 |------|-------|
-| `require_project_administration` (15) | `stakeholders.py` (6 - not `resend-invite`), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`) |
-| `Depends(require_org_admin_or_above)` (18) | `campaigns.py` (10), `documents.py` (3), `assignment.py` (2), `orchestrate.py`, `run.py`, and `stakeholders.py`'s `resend-invite` |
+| `require_project_administration` (17) | `stakeholders.py` (5 - not `resend-invite`, and not the roster `GET`), `milestones.py` (4 - not `rebaseline`), `nonworking.py` (3), `projects.py` (2 - `PATCH /{slug}/settings` and `POST /{slug}/branding/image`), `assignment.py` (1 - `POST /{slug}/assignment`), `agent_config.py` (2 - `PUT .../agents/{agent_id}/config` and `POST .../agents/{agent_id}/image`) |
+| `Depends(require_org_admin_or_above)` (18) | `campaigns.py` (10), `documents.py` (3), `assignment.py` (1 - `advance`), `orchestrate.py`, `run.py`, `voices.py`'s `POST /{slug}/voices/library`, and `stakeholders.py`'s `resend-invite` |
 
-15 + 18 = the thirty-three. `POST /projects` sits outside the count and keeps the platform
+17 + 18 = the thirty-five. `POST /projects` sits outside the count and keeps the platform
 tier of necessity: there is no slug yet to scope a per-project role by.
+
+**Recounted in sp62 from `app.routes`, and the composition had drifted further than the
+totals.** The file said 15 + 18 = 33; the measurement is 16 + 18 = 34, and *three* doors moved
+under a total that changed by one. `stakeholders.py`'s roster `GET` came off the gate
+(96863718 - it answers the roster to any member and drops the account-derived fields instead,
+so the disclosure is narrowed in the response rather than at the door) and `assignment.py`'s
+`POST /{slug}/assignment` moved onto it (64712393); **both predate sp62**, and only
+`agent_config.py`'s `PUT` is this branch's. So the second row's total is unchanged while two
+of its members are not the ones named, and the `require_project_administration` docstring's
+"sixteen doors" - wrong for a sprint - was made *accidentally correct* by an unrelated task.
+That is the case this file's "recount rather than adjusting one to match the other" was
+written for: adjusting either number to agree with the other would have produced a table that
+is internally consistent and wrong in three places.
+
+**Recounted again in sp63 - 104 `{slug}` routes, 101 calling the floor, 17 on
+`require_project_administration` - and the technique matters more than the totals, because a
+text-keyed sweep can no longer produce them.** `get_agent_image` explains in its docstring why
+it has no floor, and *contains the string `check_project_access` while doing so*, so a grep
+counts it as gated and finds two exceptions where there are three. Parse each handler and look
+for a **call**: a docstring cannot be an `ast.Call`. That is *enumerate by behaviour, not by
+name* arriving a fourth time, in the one shape the earlier three did not take - not a file
+hidden from the sweep, but a file the sweep saw and misread.
+
+**What the second row's eighteen excludes, so the next recount does not find twenty-two and
+assume drift.** Twenty-two `{slug}` routes carry `require_org_admin_or_above` or
+`require_sysadmin` as a dependency. Four are deliberately outside the project-scoped
+administration count: `admin.py`'s three (`DELETE /auth/projects/{slug}` and the two
+`/auth/users/{user_id}/projects/{slug}` membership writes) are registry and account
+administration, global by nature and governed by the exclusion rule above rather than by this
+table; and `GET /projects/{slug}/data-architecture` is a **read**. An administration door is
+one that changes how the engagement is run, so a read behind a platform-tier dependency is
+not one of them.
 
 **`PATCH /{slug}/settings` is on the widened list but is not uniformly widened.** Its body
 carries `llm_mode`, `force_local_inference`, `dev_mode` and the six per-agent model ids
@@ -435,7 +551,7 @@ every project before its first full settings save, eight of the nine protected f
 simply not in `config_json` and a `field in current` test would have protected the mode alone.
 Both counts move independently - recount rather than adjusting one to match the other.
 
-The second group is not a judgement that those seventeen should stay - sp44 widened exactly
+The second group is not a judgement that those eighteen should stay - sp44 widened exactly
 what its brief named, which is the set the design calls "configures the project and its
 people". Whether a project_admin should start a crew run or import a campaign is a live
 question, not a settled one. What is settled is the exclusion above: the membership,
@@ -608,14 +724,25 @@ question is which authenticated write path should have done it earlier.
 **Enumerate by behaviour, not by name.** The alias hid two files from a `require_any_auth`
 grep; `pam_report.py` then hid from the *alias* sweep by not aliasing, and it had the same
 hole. Two accidental discoveries meant the enumeration was wrong twice, so it was done
-properly: 97 handlers are mounted under a path containing `{slug}`, and the check is whether
-each one calls `check_project_access`. **Ninety-five of the ninety-seven call it.** The two
-that do not:
+properly: 104 handlers are mounted under a path containing `{slug}`, and the check is whether
+each one calls `check_project_access`. **One hundred and one of the hundred and four call it.**
+The three that do not:
 
 | Door | Why not |
 |------|---------|
 | `GET /projects/{slug}/branding/image` | Deliberate - no auth at all. The interview page renders it for a participant who has no login. If that image ever becomes client-confidential the fix is session-token scoping, not `check_project_access`. |
+| `GET /projects/{slug}/agents/{agent_id}/image` | The same exception serving the same page - a participant sees the interviewer's face before they have any login to check. It multiplies the probe surface by eighteen without widening it: a 200 tells a caller who already knows the slug that a portrait exists, which is what the door is for. |
 | `DELETE /auth/projects/{slug}` | Registry administration, `require_sysadmin`. Global by nature, and a sysadmin passes the floor unconditionally, so the call would be a no-op. |
+
+**This table is keyed on `{slug}`, so it cannot show every unauthenticated door - and there is
+a fourth.** `GET /api/agents/{agent_id}/image` (`api/routers/agent_assets.py`) serves the
+deployment's promoted default portrait to the same participant, with no authentication and no
+project at all, so the sweep above never sees it and a reader of the three rows concludes the
+surface has three when it has four. It is the deliberate sibling of the second row rather than a
+new decision: same page, same reason, and *less* to learn from it, since an address with no slug
+in it cannot be used to probe whether an engagement exists. The caveat is the same one two
+paragraphs below makes for a door taking its slug from the request body - this is one step
+further out, a door with no slug anywhere.
 
 `WEBSOCKET /ws/{slug}` was the third row and this file called it the largest remaining
 exposure on the surface: open to anyone who could reach the port, streaming agent log lines
@@ -640,7 +767,20 @@ enforce it, which is the third time on this codebase a name-keyed sweep has miss
 **The sweep counts routes whose *path* holds `{slug}` and nothing else.** A project-scoped
 door taking its slug from the request *body* does not appear in it - `POST
 /api/interviews/test/elaboration-press` is that shape, and does call `check_project_access`,
-but the technique cannot see it. Ninety-seven is not a completeness guarantee.
+but the technique cannot see it. One hundred and four is not a completeness guarantee.
+
+**There are two body-slug doors now, and the second one arrived carrying a live hole.**
+`POST /api/interviews/test/speak` had no slug at all until sp62 gave it one so it could
+resolve the rehearsed agent's voice per project - and **adding the slug added the exposure**,
+because a door with nothing to scope by needs no floor and a door with a slug does. An
+`org_admin` of an *unrelated* organisation was answered 200 and the wire carried that
+project's private voice. `check_project_access(body.slug, payload)` is now the first line of
+both, before the slug reaches a database. Two things generalise. A door that gains a slug
+gains a floor in the same change, and the sweep will not remind you. And the refusal was
+asserted **on the wire**, not on the status: moving the check to after `speak` returns still
+answers 403, so a status-only test passes a door that synthesises the private voice and
+*then* refuses. Nothing anywhere sweeps for handlers reading a slug from the body; that is
+its own task, and the count above is the reason it is easy to keep forgetting.
 
 `POST` and `DELETE /auth/users/{user_id}/projects/{slug}` were the sweep's most important
 find and are closed. They write the `project_memberships` table that every
@@ -826,6 +966,54 @@ than smuggled into a proxy fix. Until then, the split is real: `/api/templates` 
 
 Do NOT use `sky-*` or `blue-*` classes — these were replaced with `brand` tokens.
 
+**Each tab of `AgentDetailPanel` means one thing, and the test that decides is: if this agent
+were renamed or replaced, would this content move with them?** *Agents* is who the agent is and
+how they behave, keyed on the agent (`AGENT_SETUP_SECTION` in `tabs/CrewAgentsTab.tsx`);
+*Setup* is how the engagement is configured and *Status* is what it is doing, both keyed on the
+crew (`CREW_SETUP_SECTION` / `CREW_STATUS_SECTION` in `AgentDetailPanel.tsx`). Six panels were
+on Agents because their **components were named after agents** - `PamSetupTab`, `AlexSetupTab`,
+`MayaSetupTab`, `JordanSetupTab`, `TaylorSetupTab` - and asked the question, five of them held
+the engagement's schedule, brief, disciplines, mapping and roster rather than anything of the
+agent's. Only Avery's interviewing style survives, and the Agents tab being thin is the correct
+outcome. **All five files were renamed** - `ProjectScheduleSetup`, `DiscoveryBriefSetup`,
+`InterviewProgrammePanel`, `StakeholderMappingSetup`, `StakeholderSummaryPanel` - because the
+filename was the *mechanism* of the misclassification rather than a symptom of it: a component
+called `PamSetupTab` is configuration **for** an agent read as configuration **of** one, and
+moving it while leaving the name would hand the next reader the same wrong signal and invite the
+same decision back. `ui/src/__tests__/TabClassification.test.tsx` states the classification as a
+property: set equality per tab over each panel's `data-panel-section`, so a seventh panel
+registered with no decision about where it belongs fails rather than lands.
+
+Three consequences worth knowing before touching it. **Every absence assertion must be scoped
+with `within()` on the tab's own panel and made after every tab has been opened** - Output,
+Setup and Agents render `hidden` rather than unmounted (a half-typed brief must survive a trip
+to Output), so a screen-level `queryByText` finds content on an inactive tab and an assertion
+made before a tab mounts passes against the mount latch instead of against the placement.
+**Hidden means latched**: `setupOpened` / `agentsOpened` stop a panel opened on Output fetching
+a schedule nobody asked for, and they are effects on `tab`, not click handlers, because a deep
+link can open the panel straight onto either. And **two deep links name a tab** -
+`AssignmentRedirect` in `router.tsx` and Runs' "Assign stakeholders" - so anything that moves
+the stakeholder mapping moves both; they are driven to the content in
+`ui/src/__tests__/AssignmentRouteRetired.test.tsx` rather than checked for a string, because a link that lands on
+the right crew and the wrong tab looks exactly like working navigation.
+
+**`ui/public` is served under the `/dashboard` base, so a bare `/agents/*.jpg` 404s in the
+browser.** `AGENT_AVATAR_IMAGE` in `agentStatus.ts` is the only map that knows the base - it
+prefixes `import.meta.env.BASE_URL` - while `AGENT_IDENTITY.image` on the server is the
+unprefixed path. They mean the same file and `tests/test_persona_transcription.py` holds them
+equal, so the difference is one of **address** rather than of content, and rendering the server's
+resolved default turns a bug about one face into a bug about eighteen. This has caught three
+separate pieces of work on one branch, which is why it is here rather than in a comment.
+`useAgentIdentity` is where it is decided - the project's override first, then a default the
+front end can actually fetch - and `??` rather than `||`, because `''` is a portrait a project
+has **deliberately cleared** and must reach the initials rather than reinstate the map over that
+decision. The consequence for anything drawing a default: a **promoted** default is a URL this
+deployment serves and resolves, a **built-in** one is that bare path and does not, so the server's
+answer has to say which it handed over. Never sniff an `/api/` prefix in the client.
+`AgentAvatar` owns the missing-portrait fallback - initials on a plain background, never a broken
+image and never some other agent's face - and six older sites still carry their own copy of that
+rule, which `agentInitials` is exported so they can stop doing.
+
 `StakeholderForm.tsx` offers five role checkboxes, and the last two - Project Administrator
 and Governor - render only when `GET /my-permissions` answers `can_grant_roles`, because the
 server refuses both to anyone without `project_admin` on that slug and a checkbox that always
@@ -847,6 +1035,96 @@ still the field's. Two consequences when writing tests here: a locked control ne
 must `await waitFor(() => expect(control).toBeEnabled())` first - `fireEvent.change` on a
 disabled input is silently ignored, which had already made one existing test racy rather than
 failing.
+
+**Every field `Settings.tsx` promises to send is declared in `ui/src/types.ts`, and required.**
+That is the 22 fields in the page's `DEFAULTS`, out of `ProjectSettings`' **38**, and it is the
+whole of what `test_every_field_the_page_promises_to_send_is_declared_required` holds. Settings
+are saved by posting the page's whole state, assembled as `{ ...DEFAULTS, ...settings }` - an
+untyped spread, so an undeclared field survives the round-trip by luck and vanishes the moment
+anybody builds that payload field by field. It fails silently in the worst direction: a dropped
+`interviewer_selection` **puts a project that chose one interviewer back on a coin toss per
+session**, by a system reporting success. No error, no 403, nothing on the screen.
+`interviewer_selection` and `interview_accent` were the third and fourth fields to need this,
+and `locale` the fifth - `force_local_inference` and `dev_mode` were already declared for
+exactly this reason, the second found undeclared *one field over* from the first, and `locale`
+found the same way again. So: **a field the page sends with no declaration here is a defect
+waiting for a typed request body, not a stylistic gap**, and optionalising one
+(`some_field?: string`) reopens the hazard as completely as omitting it.
+The walk is keyed on `DEFAULTS`, so it cannot see a field removed from *both* `DEFAULTS` and
+the type - the parametrisation simply shrinks and complains about nothing. That is why
+`test_the_interview_programme_settings_are_carried_by_the_defaults` names
+`interviewer_selection` explicitly: guarded by name rather than by the walk that cannot see it
+go. **`interview_accent` was named beside it and is retired in sp64**, which is the one removal
+that list must not resist - so a name comes off it only alongside the `ProjectSettings` field
+it guards, and that pairing is itself asserted, in
+`tests/test_voice_catalogue.py::test_neither_side_declares_the_retired_interview_accent_setting`.
+Every count in this section moved by one when it went - recount rather than adjusting one to
+match another, which is the instruction the platform-tier section beside it already gives.
+
+**The other sixteen fields are outside that guard, and the sentence above used to claim them.**
+It read *every `ProjectSettings` field*, which was untrue of sixteen of thirty-eight - and untrue
+of three fields **this branch itself touched**, so the commit declaring the class closed left
+three of its own inside it. Recount rather than trusting either number; they move independently:
+
+| | count | |
+|---|---|---|
+| declared **required** | 22 | exactly `DEFAULTS`, and exactly what the guard walks |
+| declared **optional** (`?:`) | 13 | includes `brand_header_image_url`, which this section warns about by name |
+| **not declared at all** | 3 | `brand_interviewer_name`, `brand_interviewer_image_url`, `brand_interviewer_tagline` |
+
+They are outside the guard because none of them is in `DEFAULTS`, so the Settings page makes no
+promise about them - not because they are safe. **Five call sites build this body, not one**:
+`Settings.tsx`, `Schedule.tsx`, `PamSetupTab.tsx`, `MayaSetupTab.tsx` and `AlexSetupTab.tsx`, and
+the four besides Settings spread the *fetched* row (`{ ...settings, sched_start: … }`) to change
+one field. TypeScript's excess-property check does not apply through a spread, so the three
+undeclared fields ride all five by the same luck, and the thirteen optional ones are declared but
+carry no obligation - `tsc` has nothing to say about an omitted optional key. Declaring the
+sixteen is the fix; until then this is a known sixteen rather than a closed class.
+
+Of the three undeclared, **`brand_interviewer_tagline` is live** - `interview_service.py:184`
+reads it onto the interview page - so it is the one carrying real risk today.
+**`brand_interviewer_name` and `brand_interviewer_image_url` are dead.** Nothing reads either:
+`get_session_with_script` builds the participant's branding from `_interviewer_identity`, the
+session's own stamp, which is what *The interviewer and the voice are stamped on the session*
+below is describing - and no UI has ever set them. Every stored `config_json` on the deployment
+still holds the shipped literal `"Avery Singh"`, which is precisely why they had to stop being
+read: a project could not distinguish "we branded this" from "this is what shipped", and with
+two interviewers roughly half of every project's participants would have heard Laura and read
+Avery. So a **deletion, not a migration** - nothing reads the stored value, so nothing has to be
+moved. They are named here rather than left as two undocumented unused fields that read as
+somebody's unfinished intent.
+
+`AGENT_IDS` in `ui/src/components/agentStatus.ts` bridges the front end's role keys
+(`'Stakeholder Interviewer'`) to the server's permanent ids (`'stakeholder_interviewer'`), and
+it is **declared, never derived**. 18 entries, of which **17 derive** from
+`id.replace('_',' ').title()` and only `pam` resists. One exception out of eighteen is the whole
+argument, and it is the *more* dangerous ratio rather than the safer one: a derivation correct
+for seventeen entries reads as correct at every call site while the eighteenth fails silently -
+silently being precise, because a wrong id that happens to exist configures a different agent
+and answers 200. The count is held by
+`test_the_bridge_is_not_a_formatting_of_the_id`, which asserts both the number and that PAM is
+the one, so making PAM derivable asks for the decision again instead of quietly making a
+`.title()` one-liner look safe. (An earlier comment claimed nine of eighteen and named both
+interviewers among the exceptions; both derive cleanly. It rotted because nothing could
+contradict it.)
+
+**Two Setup tabs still persist to `localStorage`, and neither has ever reached an agent.**
+`AverySetupTab.tsx` writes `agentpool-avery-voice-config-<slug>` - six *behavioural* preferences
+(interviewing style, question depth, follow-up persistence, silence tolerance and two more) and,
+despite the key's name, **no voice field at all**. `TaylorSetupTab.tsx` writes
+`agentpool-taylor-invite-config-<slug>`, the invite chase rules. Both are per browser as well as
+per slug, neither reaches the server, and therefore neither has ever reached an interview or a
+reminder: a consultant configures them, a colleague opens the same project and sees defaults, and
+the crew sees nothing either way. They owe the same fix - a table and a door, the shape
+`project_agent_config` now has - and are recorded together because finding one and repairing it
+alone leaves the other reading as deliberate.
+
+*Correcting the design document while we are here*, because the specifics are what a reader would
+act on: `docs/superpowers/specs/2026-09-04-agent-config-and-interviewer-selection-design.md` says
+Avery's **voice** choice lived in `agentpool-avery-voice-config`. It did not - that key holds no
+voice field, and never did. The diagnosis was right in substance and stronger than it read: there
+was no voice choice *anywhere*, in `localStorage` or otherwise, so nothing was migrated out of it
+and the voice is new configuration in a new table behind a new door.
 
 `describeError` lives in `ui/src/utils/describeError.ts` and is imported, not copied. Four
 identical copies had grown before sp44 moved it - `StakeholderForm`, `ScriptReviewPanel`,
@@ -892,6 +1170,192 @@ A project not granted `HOSTED_INFERENCE` - `sensitive`, or any mode with
 of the other tier. `get_llm_for_agent` asks `project_permits`, never a mode name; the mode is
 read only to word that refusal, and two seams that both look like the routing decision is how a
 test stub lands on the wrong one.
+
+### Configuring an agent: the id is the key, everything else is data
+
+**Agent configuration keys on the permanent `agent_id`. The name, the image, the voice and the
+synthesis model are data.** `project_agent_config` is one row per project per agent;
+`resolve_agent_config(slug, agent_id)` resolves each column against `AGENT_IDENTITY`'s default,
+where NULL means "use the default" and `''` does not. `agents/identity.py` separated a permanent
+id from a mutable display name before any of this existed, and **this is what that separation
+was for**: renaming an agent, or running an engagement where it is called something else, moves
+no identity, breaks no history, and reconfigures nothing. The same rule the email seam states as
+*the name is the person, the address is the role*, one axis over.
+
+**"Who can conduct an interview" is answered in one place, and the answer is a rule rather than
+a roll.** `interviewer_agent_ids()` - an identity with a `voice_id` - lives in
+`agents/identity.py`, and both callers read it from there: `interviewer_selection.py` for the
+crew's choice of interviewer, and `agent_config_service.is_interviewer` for the rehearsal button.
+It is in `identity.py` and not in `interviewer_selection.py` because the second import is
+**circular** - `interviewer_selection` already imports `resolve_agent_config` - so the design
+document's sentence locating it there is one hop stale. `is_interviewer` is **derived onto the
+configuration response, never stored beside the row**, as is which kind of default a face came
+from: an agent given a voice becomes an interviewer with nothing to migrate, and the alternative
+is a second roster in TypeScript that has to be kept in step with this one.
+
+**The sex filter derives from the voice, never from a table.** `interviewer_selection.py`
+refuses an agent-to-sex mapping in writing, because the sex is a property of the *voice* and a
+project that gives Avery a female voice has said something a table in this repository would
+contradict while looking authoritative. So `GET /projects/{slug}/voices` takes
+`current_voice_id`, answers `voice_sex` from `ask_voice_sex`, and the picker pre-sets its filter
+from that. **A default, not a lock** - and the mechanism is the file's existing `null`/`''`
+distinction rather than a "has the user overridden this" flag: `null` means the consultant has
+not touched the control, `''` means they cleared it and want every sex, exactly as `accent`
+already used them, so default-not-lock is structural rather than a boolean free to drift. It
+pre-sets only when the listing actually offers that sex, because a filter narrowing to nothing
+is indistinguishable from an account with no voices, which is the worst outcome available.
+
+**A portrait is uploaded, not typed.** `prepare_portrait` in `api/services/image_intake.py` is a
+pure function over bytes - no HTTP, no filesystem, no project - so every property it holds can be
+driven directly. It checks the declared content type against the format Pillow actually decodes,
+fits the longest edge to 512px, honours the EXIF orientation flag **and then** rebuilds the image
+from raw pixels to discard everything else. The order is not interchangeable: strip first and the
+portrait renders sideways, because the rotation lives in the metadata. The stripping is a privacy
+control rather than tidiness - a phone photograph carries GPS, and this image is served from the
+interview page, which has **no authentication by design** - and it rebuilds rather than "saving
+without EXIF", because the encoder dropping a block it was not handed is today's default and a
+default is not a guarantee.
+
+**An agent's face resolves in four steps, and the second is unique in this product.** The
+project's own override wins; then the deployment's promoted default; then the portrait shipped in
+the repository; then initials. `api/services/agent_default_images.py` holds that table and the
+reasoning, and **level 2 is inserted in exactly one place** - `agent_defaults`, where level 3 was
+already read - so the interview page and the Setup section cannot come to disagree about a face.
+The promotion fires only for an agent with **no** built-in portrait and only for the first
+upload: it is claimed with `INSERT OR IGNORE` on `agent_id` and the file is written **only on a
+won claim**, because check-then-write here is two clients' photographs racing. It is served from
+its own unauthenticated door rather than from the project it came from, or every engagement's
+rendering would depend on the continued existence of whichever one uploaded first, and that
+slug would appear in an unrelated client's markup. `agent_default_images` is a `system.db` table
+and therefore takes **no `_SCHEMA_VERSION` bump** - the rule above, in the direction people get
+backwards. Provenance is recorded rather than inferred from file timestamps, because this is the
+one write in the product where **an upload on one engagement changes what a different client's
+engagement displays**. All eighteen agents carry a portrait today, so the rule currently has no
+subject: it is for the next agent declared, in the window between being declared and being drawn,
+and its tests use a synthetic faceless one for that reason.
+
+**Two different things in this product are called a model id, and one of them is a security
+control.** `project_agent_config.model_id` is the **ElevenLabs speech synthesis model** -
+`DEFAULT_TTS_MODEL_ID` in `agents/identity.py`, threaded through `synthesise(text, voice_id,
+model_id)` and into the TTS cache key. The six in `_PLATFORM_TIER_SETTINGS`
+(`anthropic_fast_model`, `local_deep_url` and their siblings) decide **where an engagement's
+prompts are sent** and 403 a `project_admin`. The agent Setup section is therefore labelled
+"Speech synthesis model", with a line disclaiming the language models on the Settings page, and
+that label is load-bearing rather than cosmetic: a field called "Model" reads as the LLM to the
+consultant who set the LLM one screen earlier, and the two live on the same page of the same
+product at different tiers. Anything new that adds a "model" field owes the same disambiguation
+in the label, not only in a docstring.
+
+**The interviewer and the voice are stamped on the session, not re-derived from it.**
+`interview_sessions.interviewer_agent_id` and the `voice_config` beside it record who conducted
+the session and what they sounded like, at creation. Same rule as
+`client_documents.knowledge_collection` and for the same reason - a re-derived address moves
+underneath the thing it points at - but with two consequences that case could not show. With two
+interviewers on the roster, a transcript that cannot say who conducted it has to **guess**. And
+`interviewer_selection` defaults to `random`, so an unstamped choice would be **re-rolled**: a
+participant who closes their browser and returns to the same link meets a different person, in a
+different voice, under a different name. The stamp is why `_create` ignores any `voice_config` an
+agent proposes in its plan, which is the structural half of retiring the prompt's locale table.
+
+**A picker never applies a filter its own control cannot show.** `GET /projects/{slug}/voices`
+unions the ElevenLabs account listing with a deliberately *unfiltered* library probe, and the
+union is load-bearing rather than belt-and-braces. Measured on the live account, 5 September
+2026: **Irish** is in the library and not in the account; **Scottish** is in the account and not
+in the library's first page. Of the four planned engagements - Scottish, Irish, New Zealand and
+Australian - **neither listing alone serves all four**. The general shape is worth more than the
+measurement, which is a moving target: a listing narrowed to `british` answers `british`, so a
+dropdown built from the narrowed answer offers exactly the option already selected and there is
+no way back. Correct-looking, and a closed loop. The same argument repeats one layer up in the
+picker, where the *sex* options come from a second unfiltered question for the identical reason.
+`library_has_more` exists because the library listing is one bounded page and must never be
+presented as a complete list - a picker showing five voices where ninety exist gets diagnosed as
+"there are no Scottish voices", and somebody reconfigures a project that was never wrong.
+
+**Language is the axis; accent is a narrowing (sp64).** `en` is the language; `british`,
+`irish`, `american` and `new zealand` are accents *of* it, and ElevenLabs keeps them as separate
+query parameters. The door used to open filtered to the project's `interview_accent`, `british`
+by default, which showed **6 of 41** account voices - an axis that should broaden used as one
+that narrows. So the default sits on the language (`DEFAULT_LIBRARY_LANGUAGE` in
+`voice_catalogue.py`, never in TypeScript), the accent narrows nothing until asked, and the
+picker carries a control for each. The account listing is deliberately **never** narrowed by
+language: those are the deployment's own voices, every one added on purpose, and the parameter
+is simply not passed rather than a rule to remember.
+
+`interview_accent` is **retired**, model and type together. It had one production reader - that
+default filter - and reached no interview: the accent an interview is conducted in is a property
+of the voice each interviewer is given, chosen per agent and stamped on the session.
+
+**The vocabulary probe walks several pages, and the reason is a moving target.** The library's
+first unfiltered page is a *selection*, not a prefix: on 7 September `irish` was on page 0 at
+04:44 and on page 1 by 15:00, same account, same query, no code change - so the accent dropdown
+lost Irish while `?accent=irish` still returned 85 voices. Cumulative distinct accents that
+afternoon were 22 after page 0, 46 after page 1, 54 after page 2, 64 after page 3, and
+`page_size` above 100 is a 400. `LIBRARY_PROBE_PAGES` bounds the walk at four, stopping early on
+`has_more`, cached for process life so the cost is per process rather than per keystroke. It is
+still **partial** and says so, and the repair for a missing accent is a wider window and an
+honest flag - **never naming an accent**, which would be the sixth declaration of voice facts
+and wrong the first time the provider adds one.
+
+**Two notions of an engagement's locale, and nothing reconciles them.** The picker's accent is
+chosen per agent, per project, when a voice is picked - the **speaking** side. An agent's
+`language` and `country_code` are also per agent per project, set in the agent Setup section,
+stamped into `voice_config` at session creation, and `VoiceInterview.tsx:606` joins them into
+`recognition.lang` for the browser's speech-to-text - the **listening** side. Neither moves the
+other. **So an Irish engagement given an Irish voice still listens as `en-GB`**, until somebody
+separately edits Avery's `country_code`. Of the four planned engagements - Scottish, Irish, New
+Zealand, Australian - this reaches the recognition side of all but the British default. sp64
+narrowed the gap without closing it: retiring `interview_accent` removed the *project-level*
+half of the disagreement, so both sides are now per agent per project and could in principle be
+joined, but nothing joins them. Both halves are correct on their own terms, both are
+operator-editable, and what is missing is the **link**; whether a chosen voice's accent should
+drive the recogniser's locale is a design decision, not a defect to patch, so it is recorded
+rather than fixed. It also corrects
+the design document
+(`docs/superpowers/specs/2026-09-04-agent-config-and-interviewer-selection-design.md`), which
+says *"the gap is on the speaking side, not the listening side"*. That is now incomplete: the
+listening side is correct and **unconnected**, which is a different thing from correct.
+
+Three smaller things about that branch, recorded so they are known rather than rediscovered.
+The design document's Testing section still reads *"`always_female` never yields Avery, and
+`always_male` never yields Laura"*, which the code deliberately reinterprets and improves on -
+the sex follows the **configured voice**, not the agent, so a project that gives Avery a female
+voice gets Avery under `always_female`
+(`test_the_sex_follows_the_configured_voice_and_not_the_agent`). The spec sentence was left
+standing when the file was edited; the code is the right one.
+`test_resolving_the_interviewer_does_not_migrate_the_participants_database` is an **AST guard
+with no behavioural half**, and its docstring says so honestly - the participant-facing
+consequence is covered beside it by
+`test_an_unmigrated_database_answers_the_defaults_rather_than_five_hundred`, and a `PRAGMA
+user_version` assertion around a real participant request is what would close the rest.
+And `AgentConfigSection.tsx`'s Image help text is still **narrower than the door accepts**:
+`_assert_renderable_image` deliberately permits off-site `http`/`https`, and the text names only
+the selector and a path. sp63 gave the field a `Choose image…` control and the same-origin upload
+behind it, so the help is now accurate about the *ordinary* route and the text box survives as
+the escape hatch - which means it is still guidance rather than the rule, and still silent about
+the reach described below.
+
+**A guard on one door is not a guard on a field.** `PUT .../agents/{agent_id}/config` refuses an
+`image_url` whose scheme is not `http` or `https`. `brand_header_image_url` reaches **the same
+`<img src>` on the same unauthenticated interview page**, through `PATCH /{slug}/settings`, with
+**no validator of any kind**, and takes any scheme. So the *scheme* half of that check is exactly
+one door wide, as the *off-site* half openly is - and the scheme half is the one a reader assumes
+is closed, precisely because the paragraph beside it reasons so carefully about the other. The
+interview page has **no login by design** - a participant has none, `GET /{slug}/branding/image`
+and `GET /{slug}/agents/{agent_id}/image` are two of the three deliberate floor exceptions above
+for exactly that reason, and the rest of the page authenticates by session token - so an
+administrator-chosen off-site URL discloses every
+participant's IP address, user agent and the timing of a live interview, on an engagement whose
+documents and inference are otherwise on-premises. **The follow-up is a task, not a wish: the two
+fields owe a shared validator**, which closes both halves - scheme and off-site - for both fields
+at once. It is deliberately *not* the same-origin uploader: both fields have one already (`POST
+/{slug}/branding/image` and `POST /{slug}/agents/{agent_id}/image`), and an uploader beside a
+free-text box changes the ordinary route without narrowing what the write door accepts. Until it
+lands, `agents/egress.py`
+names both fields in `PARTICIPANT_IMAGE_EGRESS` and **nothing renders that row** -
+`data_architecture()` builds the auditor's privacy page from agents and the tools they hold, and
+this reach is neither, because the request is made by a *participant's browser* and not by this
+deployment. Attributing it to an agent would be false, so it is a known limitation of the privacy
+view rather than an oversight; surfacing it belongs with the upload path, not before it.
 
 Maya owes one interview script per active value chain activity. Coverage is checked on every
 `interview_scripts` write by `api/services/coverage_validation.py` and reported as
@@ -1066,6 +1530,14 @@ file or declared in `agents/egress.py` (where an ungated reach resolves to the s
 the finding). "Nothing escapes secure mode" is true of the two capabilities and of nothing
 wider.
 
+The ElevenLabs entry covers **two shapes of request now, not one.** It was interview text
+going to `/v1/text-to-speech`; sp62 added the voice listings and the add-a-voice write
+(`api/services/voice_catalogue.py`), which carry an accent, a sex, a search term and a name.
+Widening what a listed path sends is worth a line even when the new content is innocuous - a
+row that names one shape reads as an assurance about all of them, and the next reader checking
+"what leaves a sensitive engagement?" would have been told something untrue about a path they
+had already accepted.
+
 **The guard, and its blind spot.** `tests/test_deployment_modes.py` inventories every literal
 mode name under `api/`, `agents/` and `scripts/`, attributed to `path::qualname` and
 **counted**, held equal to a ten-entry table in which each entry carries its reason. Syntax
@@ -1080,7 +1552,7 @@ and **a mode name written before it is declared**, since it keys on the table's 
 so it is weakest during exactly the change it protects. **When sovereign lands, add it to
 `EGRESS_GRANTS` first, then wire the routing.**
 
-**A guard's reach must be established, not described** - three times now a guard's own account
+**A guard's reach must be established, not described** - four times now a guard's own account
 of its coverage has been wrong. The inventory above, sp58's `public_url` walk, and sp59's
 Settings-page walk, whose opener list omitted `<button` so neither `role="switch"` toggle was
 examined - **including the control that task had just added** - while the comment beside the
@@ -1088,6 +1560,26 @@ list said they were. The repair is the same each time: make the walk a **pure fu
 given text**, and drive one of each kind through it *both gated and ungated*, since a one-sided
 test passes against a walk that reports everything and against one that reports nothing. A walk
 that can only run against the real source is a walk that cannot be asked what it saw.
+
+The fourth is sp62's and it is not a walk, so it is worth stating separately.
+`test_previewing_a_voice_reaches_no_text_to_speech_call` asserts on an `httpx.MockTransport`
+and its docstring claimed it *"fails whatever route a synthesis call arrives by"*, while
+`_catalogue_wire` installed the recorder with
+`setattr("api.services.voice_catalogue.get_tts_client", ...)` - **one module's imported name**.
+`interview_service` binds its own copy, so `await speak(...)` added to `list_voices` did not
+stay green - it failed noisily, and for the wrong reason. The twist that makes it worse than a
+blind spot: the same fixture writes a non-empty `elevenlabs_api_key` onto the shared settings
+object, which disarms `synthesise`'s "not configured" guard - so the call the recorder could
+not see **went to the real provider**, refused 400, taking the file to 23 failed of 36 rather
+than reporting on the one assertion that names it. A fixture that blinds the recorder and
+unlocks the network is worse than no fixture. The repair generalises the walk one above:
+**install the recorder on the shared resource, not on a name** - `http_clients._tts_client` is
+the object every `get_tts_client()` returns, so every module and every import spelling now
+lands on the mock - and *establish* it,
+which is `test_the_wire_recorder_sees_a_synthesis_call_from_another_module` deliberately
+calling through the other module's binding. The residue is stated rather than papered over: a
+caller that builds its own `httpx.AsyncClient` (as `voice_metadata.py` does on purpose) is
+still outside it, and the name-keyed import guard beside it is what covers that.
 
 ---
 
@@ -1154,6 +1646,16 @@ address must outlive the agent being renamed, re-personed or replaced, and a yea
 thread must still route - the same reason `accounts@` and `admissions@` outlive the people
 behind them. The operational consequence: **one mailbox per role, ever.** Per-project
 display names add none, and a coding-agent crew would add one, not one per engagement.
+
+**A per-project display name does not reach the correspondence, and that is now an open
+question rather than a hypothetical.** `outbound_mail.py` resolves the correspondent through
+`agents/identity.py` **at send time**, and none of `resolve_agent_config`'s callers is it - so a
+project that renames its interviewer gives the participant one name on screen and in the speech,
+and **a different name in their inbox**. The gap was unreachable before sp62, because there was
+no per-project name to disagree with. It is a design question and not a missing line: this
+section already says the display name is the person and the address is the role, and whether a
+per-project name may change a *correspondent* is an argument that starts there. Left open
+deliberately; whoever closes it should decide the rule, not patch the one call site.
 
 The local part is the `agent_id` with underscores as hyphens - `stakeholder_manager` →
 `stakeholder-manager`, `pam` → `pam`. It is a **rule over the id, never a table**: a
@@ -1321,6 +1823,14 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 
 ## Known issues / tech debt
 
+- **Four tests read a bare relative `Path("projects/sp-gs-am/outputs/…")` and skip silently
+  when it is not there** - `test_sqlite_state_validation.py`, `test_value_chain_model.py`, and
+  two in `test_value_chain_migration.py`. `projects/` holds two tracked files, so a clean clone
+  runs none of them, and neither does this workstation when `pytest` is started from anywhere
+  but the repository root: the path reads neither `PROJECTS_DIR` nor the settings. Its own
+  task, and the fix is committed fixtures under `tests/fixtures/` - which the two permanently
+  dark tests already name as theirs. Argued in full under *Test commands*; recorded here so it
+  is findable as work.
 - `python-pptx` must be installed inside the venv (not system pip on macOS with Homebrew Python 3.13 / PEP 668)
 - `taskreimagination.ai` must be a verified sender domain in Resend before reminder emails deliver
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
@@ -1329,7 +1839,23 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   before its first task. Treat its first run as an experiment.
 - Deepgram (STT) and ElevenLabs (TTS) are used in secure mode by decision, both being
   streamed with no content retention. Local speech services are future work, not a
-  current requirement.
+  current requirement. ElevenLabs is now reached for a **second** kind of request - the two
+  voice listings behind `GET /projects/{slug}/voices` (`api/services/voice_catalogue.py`) -
+  and that request carries no client material at all: an accent, a sex, and a search term the
+  consultant typed. It is recorded because the row said "interview text" and would otherwise
+  have been quietly wrong about what leaves, not because it changes the decision. The one
+  ElevenLabs call that *writes* anything is `POST /projects/{slug}/voices/library`, which
+  copies a Voice Library voice into the deployment's account and sends only a name. That door
+  is **platform tier, one step tighter than the axis rules would put it**, and deliberately:
+  it looks like project configuration, but one ElevenLabs account serves every engagement, so
+  the write leaves the project the way a sector-tier document does. Do not widen it to
+  `require_project_administration` on the grounds that it configures an agent - the reason is
+  the shared account, not the field. It is also the one path on this surface **never confirmed
+  against the real provider**: `POST /v1/voices/add/{owner}/{voice}` is assumed from the
+  documented API, because verifying a write to the shared account means performing it. It could
+  fail in production having passed every test. Its failure is reported to the operator rather
+  than swallowed, and it refuses to fall back to the library id, so the worst case is a clear
+  message rather than a well-formed dead configuration.
 - Avery still blocks on `HumanInputTool` for up to 24 hours during an interview programme,
   and nothing notifies the crew when a session completes. It does not affect interviewee
   experience, which is why sub-project B left it alone.
@@ -1355,10 +1881,20 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   ambiguity is no longer repeated - but the single arbitrary choice at plan time remains, and
   `_resolve_script_id` deliberately stores NULL rather than guessing when a label is ambiguous.
   The real fix is a `script_id` column on `stakeholder_assignments`.
-- `api.database.insert_interview_session` has no production caller - `InterviewSessionTool._create`
-  is the only thing that inserts a session. The helper is driven by tests alone, which is exactly
-  how a branch once extended it with a `script_id` column that production never populated. Delete
-  it, or make it the producer; do not leave both.
+- **A helper with no production caller is a helper that will drift from production.**
+  `api.database.insert_interview_session` was the recorded instance - driven by tests alone, and
+  extended on one branch with a `script_id` column production never populated. **This entry is
+  closed**: sp62 moved it to `tests/support_interview_sessions.py` (28 call sites, 11 files),
+  where being test-only is what it says on the tin, and
+  `tests/test_interviewer_selection.py` asserts it has not come back to `api/database.py`.
+  `InterviewSessionTool._create` is the sole producer. It is recorded rather than deleted
+  because the shape recurred immediately: `upsert_agent_config` and `resolve_agent_config`
+  landed with the table in sp62 Task 1, and **nothing but a test could write that table** until
+  the door landed in Task 5 - three tasks during which the resolver, the stamp and the migration
+  were all built against a column no production path could set. The rule from the first instance
+  is the rule for the second: **delete it, or make it the producer; do not leave both.** Finding
+  it the expensive way twice is the argument for asking the question when the helper is written,
+  not when the door is.
 - Retiring an interview script - `interview_script_ledger.active = 0` - is unreachable in
   practice. `SET active` appears exactly once in the codebase
   (`register_scripts_sync`, `agents/tools/_db.py`), its only route is an
@@ -1390,6 +1926,25 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   precondition is non-empty on the current deployment - `vc-sort-check` is a project database
   with no `project_registry` row. Its own task, not a patch inside a tier rule: the same fix
   is `check_project_access` on `POST /projects` for the whole engagement.
+- **`brand_header_image_url` and `project_agent_config.image_url` owe a validator, not an
+  upload path.** Two doors onto one hazard: both put an administrator-chosen URL into the same
+  `<img src>` on the unauthenticated interview page. Its own task, because the fix serves both
+  fields and closes both halves - scheme and off-site - at once, and surfacing the reach to the
+  auditor belongs with it rather than before it. Argued in full under *Crew / agent
+  conventions*; recorded here so it is findable as work.
+
+  **Both fields now have a same-origin upload path, and the asymmetry that is left is the
+  validator.** `POST /{slug}/branding/image` has served the header since before sp63 and is
+  wired into the field (`Settings.tsx` writes the URL it answers straight into
+  `brand_header_image_url`); sp63 added `POST /{slug}/agents/{agent_id}/image` as its
+  equivalent for the portrait, and fixed the address the branding door returns. So the
+  ordinary route is same-origin for both. What differs is what happens when the free-text box
+  beside each is used instead: `PUT .../agents/{agent_id}/config` refuses an `image_url` whose
+  scheme is not `http` or `https`, and `PATCH /{slug}/settings` accepts anything at all for
+  `brand_header_image_url`. **An upload path is not a validator** - neither field's text box is
+  removed, so as long as one exists the hazard is decided by what the *write* door checks, and
+  writing "there is an uploader now" where the sentence means "the field is guarded" is exactly
+  the substitution this entry was corrected for.
 - **A failed reingest leaves chunks behind with `ingested=0`.** The first ingest's chunks stay
   in the store while the row is marked not-ingested, and `DELETE /{slug}/documents/{doc_id}`
   purges only `if doc["ingested"]` (`api/routers/documents.py:225`) - so the delete answers

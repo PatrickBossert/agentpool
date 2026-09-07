@@ -54,9 +54,17 @@ function ValueChainRedirect() {
 }
 
 // The assignment page was retired - the mapping is configuration, and it lives in Jordan's
-// Setup tab now rather than on a page reachable only from a run parked in
+// own settings now rather than on a page reachable only from a run parked in
 // `awaiting_assignment`. Runs.tsx links straight to the tab, but bookmarks and the links in
 // runs already listed still point here, so this redirects rather than 404s.
+//
+// `tab=setup`. This has now moved twice, which is the point of the note rather than an
+// embarrassment: the mapping went to Agents when Setup was narrowed to what a crew owns, and
+// came back when the tabs were re-read against the rename test - who speaks for which activity
+// is a fact about the client's people, not about the Stakeholder Manager, so it is engagement
+// configuration. A redirect left pointing at the wrong tab still lands, still selects the right
+// crew, and simply does not hold the mapping: working navigation that fails silently, which is
+// the shape this whole split exists to stop. Driven, not grepped, in TabClassification.test.tsx.
 function AssignmentRedirect() {
   const { slug } = useParams<{ slug: string }>()
   return <Navigate to={`/${slug}?crew=stakeholder_management&tab=setup`} replace />

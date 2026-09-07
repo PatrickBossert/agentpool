@@ -7,6 +7,8 @@ where the hosted-or-local decision - and the client lookup - happens. See
 tests/test_agent_chat_routing.py for the routing itself.
 """
 import pytest
+
+from api.config import get_settings
 import pytest_asyncio
 import aiosqlite
 from pathlib import Path
@@ -15,8 +17,13 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 @pytest_asyncio.fixture
 async def chat_project():
-    """Seed /tmp/agentpool_test/chatproj.db for agent chat tests."""
-    db_path = Path("/tmp/agentpool_test/chatproj.db")
+    """Seed chatproj.db for agent chat tests, in the configured database directory.
+
+    Hardcoded until 7 September, which made these three tests fail whenever
+    DATABASE_DIR was exported - the seed landed in one directory and the app read
+    another. Read it off the settings the code under test reads.
+    """
+    db_path = Path(get_settings().database_dir) / "chatproj.db"
     async with aiosqlite.connect(db_path) as conn:
         await conn.executescript("""
             CREATE TABLE IF NOT EXISTS projects (
@@ -78,6 +85,7 @@ async def chat_project():
                 session_token TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL DEFAULT 'pending',
                 voice_config TEXT,
+                interviewer_agent_id TEXT,
                 transcript_json TEXT,
                 ratings_json TEXT,
                 started_at TEXT,

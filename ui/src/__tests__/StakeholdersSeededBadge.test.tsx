@@ -56,6 +56,7 @@ describe('Stakeholders: a seeded row says so', () => {
       can_review: true, can_approve: true, can_grant_roles: false,
       can_issue_invite_links: false,
       can_change_platform_tier_settings: false,
+      can_administer_project: true,
       platform_tier_settings: [],
       // Not what these tests are about - the invite-link action does not read it.
       writable_knowledge_tiers: ['project'],

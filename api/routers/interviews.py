@@ -17,7 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 from pydantic import BaseModel, Field
 
+from agents.identity import DEFAULT_TTS_MODEL_ID
 from api.auth import check_project_access, require_any_auth
+from api.services.agent_config_service import UnknownAgent, resolve_agent_config
 from api.config import get_settings
 from api.database import (
     fetch_interview_sessions_for_run,
@@ -147,14 +149,77 @@ async def get_test_interview_script(payload: dict = Depends(require_any_auth)):
 
 class TestSpeakRequest(BaseModel):
     text: str
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    # Required, min_length=1, and exactly the rule the sibling elaboration-press door already
+    # carries. The rehearsal dialog is opened from a real project's setup tab and holds the
+    # slug in its props, so there is no honest caller without one - and `resolve_agent_config`
+    # refuses a blank slug rather than quietly answering the defaults for it.
+    slug: str = Field(min_length=1)
+    # The permanent snake key, never a display name. It defaults to the interviewer because
+    # that is whose rehearsal button exists today; Laura's setup tab passes her own id rather
+    # than needing a second door.
+    agent_id: str = "stakeholder_interviewer"
+
+    # There is deliberately **no `voice_id`**. It had one, with a default corrected from
+    # ElevenLabs' stock Rachel to Avery's - and the correction reached nobody, because the only
+    # caller passed `voice_id` explicitly from a *second* constant also called `AVERY_VOICE_ID`
+    # (`TestInterviewDialog.tsx`), holding George. Avery rehearsed as one man and interviewed
+    # as another, under one variable name, and every gate was green. A field the client fills
+    # is a field the client decides; the voice is the project's, so the server resolves it.
 
 
 @router.post("/test/speak")
 async def test_speak_text(body: TestSpeakRequest, payload: dict = Depends(require_any_auth)):
-    """TTS for the built-in test interview — no session token required."""
+    """TTS for the built-in test interview — no session token required.
+
+    The voice and the synthesis model are resolved from the project through
+    `resolve_agent_config`, so a consultant rehearsing an agent hears what that agent is
+    configured to sound like.
+
+    **There are four production callers of `resolve_agent_config`, and this is the least of
+    them.** `api/services/interviewer_selection.py` resolves every interviewer's configuration
+    when a session is created and `api/services/interview_service.py` stamps the chosen one's
+    onto the row - so a configured voice now reaches a real interview and not only this
+    rehearsal button. The fourth is `api/routers/agent_config.py`, the door the Setup section
+    reads and writes through, which is where the configuration this door speaks in is chosen
+    in the first place. That was not true until Task 3: the live portal read
+    `session.voice_config`,
+    nothing wrote that column in code, and a crew-created session carried whatever Taylor
+    copied out of the voice-locale table in his own prompt.
+
+    That table is gone as of Task 4, along with its dead TypeScript twin, and Taylor is told
+    not to emit a `voice_config` at all. One thing remains open and it is not this door: the
+    sessions created before the stamp carry the old table's answer permanently, because a
+    stamp is not re-derived.
+
+    An earlier version of this docstring claimed the portal and the stamp already used this
+    function when neither did. `tests/test_agent_config.py` holds the count of callers by an
+    AST walk rather than by prose, so the sentence above fails a test when it stops being
+    true instead of rotting quietly - which is what it did when this door was the only one.
+
+    `check_project_access` is the **first** line, before the slug reaches a database. This door
+    took a slug in its body only recently; before that there was nothing to scope, and adding
+    the slug added the exposure - an org_admin of an unrelated organisation could name any slug
+    and hear its configured voice, while the sibling door twelve lines below refused them. A
+    refusal raised after the project's database has been opened and its configuration read is
+    not a refusal.
+
+    It is also the second door on this codebase that takes its slug from the **body** rather
+    than the path, which CLAUDE.md records as invisible to the route sweep - the sweep counts
+    routes whose *path* holds `{slug}`. Enumerating by path would not find this one.
+    """
+    await check_project_access(body.slug, payload)
     try:
-        audio_bytes = await speak(body.text, body.voice_id)
+        config = await resolve_agent_config(body.slug, body.agent_id)
+    except UnknownAgent:
+        raise HTTPException(status_code=404, detail=f"Unknown agent: {body.agent_id}")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not config["voice_id"]:
+        raise HTTPException(
+            status_code=422, detail=f"{body.agent_id} has no voice configured"
+        )
+    try:
+        audio_bytes = await speak(body.text, config["voice_id"], config["model_id"])
         return Response(content=audio_bytes, media_type="audio/mpeg")
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -228,16 +293,51 @@ async def get_deepgram_token(session_token: str):
 
 class SpeakRequest(BaseModel):
     text: str
-    voice_id: str
+
+    # There is deliberately **no `voice_id`**. The portal used to send one, read from
+    # `session.voice_config` with a hardcoded fallback in the component when the session
+    # carried none - so the voice a participant heard was decided by the browser, from a
+    # constant no server could read. It is the session's now, and the session's alone: a field
+    # the client fills is a field the client decides. `TestSpeakRequest` above lost the same
+    # field for the same reason.
 
 
 @router.post("/{session_token}/speak")
 async def speak_text(session_token: str, body: SpeakRequest):
+    """TTS for a live interview, in the voice **and model** the session was issued with.
+
+    Both are read off `interview_sessions.voice_config`, stamped at creation from
+    `resolve_agent_config`, and neither is re-derived here. This door holds a session token
+    rather than a slug, so it could not resolve the project's configuration even if it should
+    - but it should not: a project's voice, model and interviewer may all be edited between an
+    invite being issued and the interview being taken, and re-reading them would make the
+    recording disagree with the transcript. sp57 settled the same question for
+    `client_documents.knowledge_collection`: an address that is re-derived is an address that
+    can move underneath the thing it points at.
+
+    **A session with no stamp is refused rather than spoken.** Until Task 3 there was a
+    fallback voice for that case, in the front end; a fallback now would hide the only bug it
+    could be covering, which is a session created without a resolved configuration. A stamp
+    that predates `model_id` is a different matter and is not a bug - those sessions were
+    spoken through `DEFAULT_TTS_MODEL_ID` every time, so that is what they keep.
+    """
     result = await get_session_with_script(session_token)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
+    voice_config = result["session"].get("voice_config") or {}
+    voice_id = voice_config.get("elevenlabs_voice_id") if isinstance(voice_config, dict) else None
+    if not voice_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This session carries no stamped voice configuration. A session records the "
+                "voice it was issued with at creation; one without it cannot be spoken, and "
+                "guessing a voice here would be a stranger conducting the interview."
+            ),
+        )
+    model_id = voice_config.get("model_id") or DEFAULT_TTS_MODEL_ID
     try:
-        audio_bytes = await speak(body.text, body.voice_id)
+        audio_bytes = await speak(body.text, voice_id, model_id)
         return Response(content=audio_bytes, media_type="audio/mpeg")
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))

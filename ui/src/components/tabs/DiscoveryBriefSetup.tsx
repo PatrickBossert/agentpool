@@ -1,11 +1,19 @@
-// ui/src/components/tabs/AlexSetupTab.tsx
-// Alex's Setup tab: value chain discovery configuration (brief, links, docs, standards, questionnaire prefs)
+// ui/src/components/tabs/DiscoveryBriefSetup.tsx
+//
+// What this engagement is about, in the terms the mapping and the instruments are built from:
+// the research brief, the links and documents to read, the client's own name, services,
+// vendors and regulators, and the standards the questionnaires are built against.
+//
+// It was `AlexSetupTab`. The Value Chain Mapper reads all of it, which is what made the
+// filename read as configuration *of* him - but replace him tomorrow and not one field here
+// changes, because every one of them describes the client rather than the agent. That is the
+// rename test, and it puts the whole panel on Setup.
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectsApi } from '../../api/endpoints'
 import type { ProjectSettings, DiscoveryLink, ClientDocument } from '../../types'
 
-export default function AlexSetupTab({ slug }: { slug: string }) {
+export default function DiscoveryBriefSetup({ slug }: { slug: string }) {
   const qc = useQueryClient()
   const [brief, setBrief] = useState('')
   const [links, setLinks] = useState<DiscoveryLink[]>([])
@@ -101,7 +109,7 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
       <section>
         <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Research Brief</h3>
         <p className="text-[11px] text-gray-400 mb-2">
-          Context Alex uses before starting — strategic priorities, scope constraints, client flags.
+          Context the mapping agent uses before starting — strategic priorities, scope constraints, client flags.
         </p>
         <textarea
           value={brief}
@@ -116,7 +124,7 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
       <section>
         <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Research Links</h3>
         <p className="text-[11px] text-gray-400 mb-2">
-          URLs Alex will fetch before analysis — industry bodies, regulatory sites, company pages, reports.
+          URLs fetched before analysis — industry bodies, regulatory sites, company pages, reports.
         </p>
         {links.length > 0 && (
           <ul className="mb-2 space-y-1">
@@ -161,7 +169,7 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
       <section>
         <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Source Documents</h3>
         <p className="text-[11px] text-gray-400 mb-2">
-          Alex will focus ChromaDB queries on these documents.
+          ChromaDB queries are focused on these documents.
         </p>
         {documents.length === 0 ? (
           <p className="text-[11px] text-gray-400 italic">No documents uploaded yet — use the Documents page to upload.</p>
@@ -186,11 +194,11 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
         )}
       </section>
 
-      {/* Project Context — Alex's handoff to Maya */}
+      {/* Project context - the value chain mapping crew's handoff to assessment design */}
       <section>
         <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Project Context</h3>
         <p className="text-[11px] text-gray-400 mb-3">
-          Alex establishes these fields after value chain discovery. Maya reads them at run time to make interview instruments specific to this engagement — populate before running Maya.
+          These fields are established after value chain discovery, and read at run time to make interview instruments specific to this engagement — populate before the assessment design crew runs.
         </p>
         <div className="space-y-3">
           <div>
@@ -243,7 +251,7 @@ export default function AlexSetupTab({ slug }: { slug: string }) {
       <section>
         <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Standards &amp; Questionnaire Build</h3>
         <p className="text-[11px] text-gray-400 mb-2">
-          Frameworks Maya uses when designing maturity questionnaires for each value chain node.
+          Frameworks used when designing maturity questionnaires for each value chain node.
         </p>
         <textarea
           value={standardsRefs}

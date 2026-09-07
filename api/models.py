@@ -59,9 +59,41 @@ class ProjectSettings(BaseModel):
     brand_header_image_url: str = ""
     brand_primary_color: str = Field(default="#0d9488", pattern=r"^#[0-9a-fA-F]{3,8}$")
     brand_text_color: str = Field(default="#1f2937", pattern=r"^#[0-9a-fA-F]{3,8}$")
+    # Retained so a stored config keeps round-tripping, and **no longer read by the interview
+    # portal**: the interviewer's name and face come from the session's stamp through
+    # `resolve_agent_config`, which is keyed on the permanent `agent_id` and overridable per
+    # project in `project_agent_config`. The default here was the literal "Avery Singh", which
+    # meant every project that had ever saved settings held it and the server could not tell a
+    # brand decision from an inheritance - so with two interviewers on the roster, half of
+    # every project's participants would have heard Laura and read Avery. No UI has ever
+    # offered either field. Task 5 decides whether they are retired outright.
     brand_interviewer_image_url: str = ""
-    brand_interviewer_name: str = "Avery Singh"
+    brand_interviewer_name: str = ""
     brand_interviewer_tagline: str = "I'll be guiding our conversation today"
+    # Which interviewer a participant meets. Resolved once per session, at creation, and
+    # stamped on the row - never re-read at interview time, so a project that changes this
+    # setting does not change who conducted an interview that has already been issued.
+    #
+    # Deliberately **not** platform-tier (`_PLATFORM_TIER_SETTINGS` in api/routers/projects.py).
+    # It decides the tone of a conversation, not where a project's material is sent, and the
+    # eight fields on that list are there because they move data across a boundary. A
+    # project_admin configuring their own engagement's interview programme is exactly the
+    # authority sp44 widened those fifteen doors for.
+    #
+    # `always_male` and `always_female` are answered from the *voices'* own ElevenLabs
+    # metadata rather than from any list in this codebase - see
+    # api/services/interviewer_selection.py. `random` is the default and needs no metadata at
+    # all, so the shipped path makes no call to ask.
+    interviewer_selection: Literal["always_male", "always_female", "random"] = "random"
+    # `interview_accent` was here and is retired (sp64). It had exactly one production reader -
+    # the voice picker's default filter - and reached no interview: the accent an interview is
+    # conducted in is a property of the voice each interviewer is given, chosen per agent in
+    # `project_agent_config` and stamped on the session at creation. Defaulting to `british`,
+    # it hid 35 of the account's 41 voices behind a setting nobody chose, because `en` is the
+    # *language* and `british` is an accent - two axes ElevenLabs keeps apart, of which only
+    # one narrows. A project whose stored config still carries the key loads and saves: this
+    # model ignores extra keys, and `tests/test_voice_catalogue.py` asserts that rather than
+    # trusting it.
     # Project context - set on Alex's setup tab to ground Maya's interview instruments, and
     # since sp56 also the participant-facing name of the engagement: `outbound_mail` heads
     # stakeholder mail with it, so a participant reads "GS Asset Management - Your interview

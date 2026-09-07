@@ -1,7 +1,7 @@
 // ui/src/pages/Dashboard.tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { PauseCircle, Trash2, ArrowRight, AlertTriangle, Clock, CalendarDays } from 'lucide-react'
+import { PauseCircle, Trash2, ArrowRight, AlertTriangle, Clock, CalendarDays, ChevronLeft, ChevronRight, ClipboardCheck } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { projectsApi, milestonesApi, commitsApi } from '../api/endpoints'
 import type { Milestone } from '../types'
@@ -28,9 +28,69 @@ function ReviewPanel({ slug, hitlReviews, outputs }: {
     qc.invalidateQueries({ queryKey: ['reviews', slug] })
   }
 
+  // Closed by default, and the queue is empty most of the time - 240px of permanent chrome
+  // for a panel that usually says "No pending reviews". The handle keeps the count visible
+  // while it is shut, which is the only thing the open panel was reliably being read for.
+  const [open, setOpen] = useState(false)
+
+  // Escape closes it. A drawer that covers content and can only be dismissed by finding its
+  // button again is a modal wearing a drawer's clothes.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
   return (
     <>
-      <div className="w-60 flex-shrink-0 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
+      {/* The handle. Always mounted, so the count is readable without opening anything, and
+          `aria-expanded` says which state it is in rather than leaving that to the icon. */}
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        aria-controls="review-queue-drawer"
+        // An explicit label, because the accessible name would otherwise be computed from
+        // the contents - and the contents change. With a pending count the badge's "2" wins
+        // over the title, so the control announces itself as "2" exactly when it matters
+        // most. The count is still conveyed, in the label rather than by accident.
+        aria-label={
+          hitlReviews.length > 0
+            ? `${open ? 'Hide' : 'Show'} the review queue, ${hitlReviews.length} pending`
+            : `${open ? 'Hide' : 'Show'} the review queue`
+        }
+        title={open ? 'Hide the review queue' : 'Show the review queue'}
+        className="absolute top-3 right-0 z-30 flex items-center gap-1.5 rounded-l-lg border border-r-0 border-gray-200 bg-white px-2 py-2 shadow-sm hover:bg-gray-50 transition-colors"
+      >
+        {open ? <ChevronRight size={14} className="text-gray-400" />
+              : <ChevronLeft size={14} className="text-gray-400" />}
+        <ClipboardCheck size={14} className="text-gray-400" />
+        {hitlReviews.length > 0 && (
+          <span className="bg-amber-500 text-white text-[10px] font-bold rounded-full px-1.5 leading-4 min-w-[18px] text-center">
+            {hitlReviews.length}
+          </span>
+        )}
+      </button>
+
+      {/* A scrim, so a click anywhere outside dismisses it. Only while open - otherwise it
+          would swallow every click on the dashboard beneath. */}
+      {open && (
+        <div
+          className="absolute inset-0 z-20 bg-black/5"
+          onClick={() => setOpen(false)}
+          data-testid="review-queue-scrim"
+        />
+      )}
+
+      <div
+        id="review-queue-drawer"
+        data-testid="review-queue-drawer"
+        aria-hidden={!open}
+        className={`absolute top-0 right-0 bottom-0 z-20 w-60 border-l border-gray-200 bg-white flex flex-col overflow-hidden shadow-xl transition-transform duration-200 ease-out ${
+          open ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
         <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2 flex-shrink-0">
           <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Review Queue</p>
           {hitlReviews.length > 0 && (
@@ -101,7 +161,26 @@ export default function Dashboard() {
   const crewFromUrl = searchParams.get('crew')
   const tabFromUrl = searchParams.get('tab') ?? undefined
 
-  const [selectedCrew, setSelectedCrew] = useState<string>(crewFromUrl || 'PAM')
+  // The crew on show and, within it, which agent's face was last clicked - so the Agents tab
+  // shows the one the reader asked about rather than always the crew's first.
+  //
+  // **One piece of state and functional updates, not two setters.** A face click deliberately
+  // bubbles: the face's own handler fires and then the card's, because a face is part of its
+  // card and clicking anywhere on a card has always selected the crew. With the agent and the
+  // crew held separately, the crew handler's unconditional `setSelectedAgent(null)` ran second
+  // and threw away the agent it had just been given - so *every* face click opened the tab on
+  // the crew's first agent, and the seam looked wired while doing nothing. Selecting the crew
+  // you are already on now keeps the agent, which makes the pair independent of the order the
+  // two events happen to arrive in rather than correct for one of the two orders.
+  const [selection, setSelection] = useState<{ crew: string; agent: string | null }>(
+    { crew: crewFromUrl || 'PAM', agent: null },
+  )
+  const { crew: selectedCrew, agent: selectedAgent } = selection
+  // A genuine change of crew still clears the agent: an agent from the previous crew is not
+  // in this one's roster, and the tab would fall back to its first agent anyway - clearing
+  // says so rather than relying on it.
+  const selectCrew = (crew: string) =>
+    setSelection(s => (s.crew === crew ? s : { crew, agent: null }))
 
   const { data: status } = useQuery({
     queryKey: ['status', slug],
@@ -237,10 +316,16 @@ export default function Dashboard() {
       </div>
 
       {/* ── Main area: left column + full-height review panel ──────────────── */}
-      <div className="flex flex-1 min-h-0">
+      {/* `relative` is the drawer's positioning context: it is absolute within this row
+          rather than fixed to the viewport, so it spans the content and not the header. */}
+      <div className="flex flex-1 min-h-0 relative">
 
         {/* Left column - carousel + detail */}
-        <div className="flex flex-col flex-1 min-w-0 min-h-0">
+        {/* `overflow-y-auto` is the other half of the detail panel's `min-h-[26rem]` below.
+            With a floor under that pane this column can now exceed the viewport, and without a
+            scroll here the overflow would simply be unreachable - which trades one unusable
+            pane for one unreachable one. */}
+        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-y-auto">
 
           {/* Pipeline error banner */}
           {orch?.status === 'failed' && orch.error_detail && (
@@ -296,13 +381,15 @@ export default function Dashboard() {
           {/* Crew carousel */}
           <div className="px-5 pt-4 pb-1 flex-shrink-0">
             <CrewCarousel
+              slug={slug}
               crewRuns={crewRuns}
               isPipelineActive={isPipelineActive}
               logs={logs}
               hitlReviews={hitlReviews}
               rejectedCrews={rejectedCrews}
               selectedCrew={selectedCrew}
-              onSelectCrew={setSelectedCrew}
+              onSelectCrew={selectCrew}
+              onSelectAgent={(crew, agent) => setSelection({ crew, agent })}
               onRunCrew={handleRunCrew}
               onRerunCrew={setRerunCrew}
               runningCrew={runningCrew}
@@ -313,8 +400,15 @@ export default function Dashboard() {
             />
           </div>
 
-          {/* Detail panel */}
-          <div className="flex flex-1 min-h-0 px-5 pb-5 pt-3">
+          {/* Detail panel.
+              `min-h-[26rem]` is a floor, and without one this pane absorbs every shortfall in
+              the column above it. The carousel is `flex-shrink-0` at a fixed ~337px, so it
+              claims the same slice at every window size; `min-h-0` here then lets this pane
+              shrink without limit, and on a laptop viewport it was measured at **86px holding
+              3364px of content** - one line of text, which is what Patrick reported on
+              7 September. The column scrolls instead now, which is the right trade: a pane
+              that has to be scrolled to is usable, and a pane compressed to a line is not. */}
+          <div className="flex flex-1 min-h-[26rem] px-5 pb-5 pt-3">
             <AgentDetailPanel
               slug={slug}
               crewKey={selectedCrew}
@@ -325,6 +419,12 @@ export default function Dashboard() {
               hitlReviews={hitlReviews}
               locale={settings?.locale}
               initialTab={tabFromUrl}
+              initialAgent={selectedAgent ?? undefined}
+              // The tab's own selector reports back, so the two ways of choosing an agent
+              // hold one answer between them. Without this a chip click would leave the
+              // carousel still believing the previous agent was on show, and clicking that
+              // agent's face again would be no change at all and move nothing.
+              onAgentSelected={(agent) => setSelection(s => ({ ...s, agent }))}
             />
           </div>
         </div>

@@ -3,25 +3,31 @@
 import { useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  AGENT_HUMAN_NAME, AGENT_AVATAR, AGENT_AVATAR_IMAGE,
-  AGENT_BACKSTORY, AGENT_SKILLS,
+  AGENT_AVATAR, AGENT_BACKSTORY, AGENT_SKILLS,
 } from './agentStatus'
+import { useAgentIdentity } from '../hooks/useAgentIdentity'
 
 interface Props {
   agentName: string   // display name key, e.g. 'Value Chain Mapper'
+  /**
+   * The project whose configuration names and pictures this agent.
+   *
+   * Optional because the card is rendered from places that have one and places that do not, and
+   * a page with no project resolves the roll's own answer rather than inventing one.
+   */
+  slug?: string
   children: React.ReactNode
 }
 
-export default function AgentHoverCard({ agentName, children }: Props) {
+export default function AgentHoverCard({ agentName, slug, children }: Props) {
   const [visible, setVisible] = useState(false)
   const [pos, setPos] = useState({ x: 0, y: 0, below: false })
   const ref = useRef<HTMLDivElement>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const humanName = AGENT_HUMAN_NAME[agentName] ?? agentName
+  const { name: humanName, imageUrl: imageSrc } = useAgentIdentity(slug)(agentName)
   const firstName  = humanName.split(' ')[0]
   const avatar     = AGENT_AVATAR[agentName] ?? { gradient: 'from-gray-400 to-gray-600' }
-  const imageSrc   = AGENT_AVATAR_IMAGE[agentName]
   const backstory  = AGENT_BACKSTORY[agentName] ?? ''
   const skills     = AGENT_SKILLS[agentName] ?? []
 

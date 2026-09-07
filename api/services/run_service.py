@@ -22,7 +22,6 @@ from api.database import (
 )
 from api.routers.ws import push_log
 from api.services.assignment_coverage import build_assignment_coverage
-from api.services.platform_settings import platform_public_url
 
 # Do not add a module-level `from agents…` import here. `agents/graph.py` imports
 # `_CREW_AGENT_NAMES` from this module and assembles at import time, and `agents/tools/_db.py`
@@ -40,7 +39,11 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
     "assessment_design":      ["interaction_designer"],
     "requirements":           ["requirements_capture", "requirements_analyst"],
     "stakeholder_management": ["stakeholder_manager"],
-    "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer", "synthesis_analyst"],
+    # Two interviewers, one interviewing task. Laura is a second voice rather than a second
+    # brief, so which of them takes the task is a project setting - not a reason to run the
+    # interviews twice.
+    "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer",
+                               "second_interviewer", "synthesis_analyst"],
     "value_design":           ["value_proposition_generator", "portfolio_manager"],
     "capabilities":           ["enterprise_architect", "initiative_identifier"],
     "delivery":               ["roadmap_generator"],
@@ -52,13 +55,18 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
 
 # Maps snake_case agent names (used in DB crew runs) to display names (used in agent_skills).
 #
-# **Every agent in `_CREW_AGENT_NAMES` must appear here**, and
-# `tests/test_skill_proposal.py::test_every_dispatched_crew_agent_resolves_to_a_skills_name`
-# fails when one does not. Absence is silent in both directions and looks like working: this
-# map is what `_fetch_skill_notes` below resolves with, so a missing agent is injected with no
-# skills however many are assigned to it, and it is what `skills_service._role_name_for`
-# resolves with, so a proposal from a missing agent could be approved and still reach no
-# prompt. `visual_illustrator` was absent from the day it was registered.
+# Every agent `_CREW_AGENT_NAMES` dispatches must appear here, and absence is silent in **both**
+# directions: `_fetch_skill_notes` skips an agent with no display name, so the agent receives no
+# library skills however many are approved for it, and a skill proposal about it can be approved
+# and still reach no prompt. `visual_illustrator` was absent from here for as long as he had
+# been dispatched, which is the second time that one agent has been missing from a map nothing
+# held against the roll. `test_every_dispatched_crew_agent_resolves_to_a_skills_name` in
+# tests/test_crew_agent_registration.py is what now makes an absence loud.
+#
+# **There are two readers, not one.** `skills_service._role_name_for` resolves against this map
+# too, so a proposal made by an agent missing from it is filed under a name no approval can
+# reach - the same silence, arriving from the other end. That reader is why the guard lives in
+# a file about registration rather than beside either of them: it is a property of the map.
 _SNAKE_TO_DISPLAY: dict[str, str] = {
     "value_chain_mapper":          "Value Chain Mapper",
     "interaction_designer":        "Interaction Designer",
@@ -68,12 +76,14 @@ _SNAKE_TO_DISPLAY: dict[str, str] = {
     "stakeholder_manager":         "Stakeholder Manager",
     "interview_coordinator":       "Interview Coordinator",
     "stakeholder_interviewer":     "Stakeholder Interviewer",
+    "second_interviewer":          "Second Interviewer",
     "synthesis_analyst":           "Synthesis Analyst",
     "value_proposition_generator": "Value Proposition Generator",
     "portfolio_manager":           "Portfolio Manager",
     "enterprise_architect":        "Enterprise Architect",
     "initiative_identifier":       "Initiative Identifier",
     "roadmap_generator":           "Roadmap Generator",
+    "visual_illustrator":          "Visual Illustrator",
     "business_plan_generator":     "Business Plan Generator",
     "visual_illustrator":          "Visual Illustrator",
     # PAM is dispatched by orchestration_service rather than by a crew, so it is in no entry
@@ -497,14 +507,12 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         )
 
     elif crew_name == "stakeholder_management":
-        # public_url was never `config.get("public_url", "")` - "public_url" is not a
-        # declared ProjectSettings field, so PATCH /{slug}/settings could never set it and
-        # this was always "". platform_public_url() is the deployment's own address (the
-        # sysadmin setting, falling back to PUBLIC_URL), which is what Jordan's invitation
-        # links need to build against.
-        public_url = platform_public_url()
-        public_interview_url_base = f"{public_url}/dashboard/interview" if public_url else ""
-
+        # No interview URL base is computed here. Jordan drafted invitations and reminders
+        # until the interview process was returned to the Interview Coordinator, and the base
+        # went with the step rather than being kept for Taylor's build: an unused value that
+        # a later, unrelated repair gives a real meaning is exactly how the fabricated-link
+        # defect armed itself. Taylor's build reinstates it where his invites are issued.
+        #
         # The mapping reaches Jordan here, and only here.
         #
         # His task has instructed him to read `stakeholder_assignments` through
@@ -532,7 +540,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             slug=slug,
             run_id=run_id,
             sector=sector,
-            public_interview_url_base=public_interview_url_base,
             coverage=coverage,
         )
 
@@ -801,15 +808,12 @@ async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
             create_stakeholder_manager,
             create_stakeholder_manager_task,
         )
-        # See the matching comment in the stakeholder_management crew branch above:
-        # config.get("public_url", "") was always "" - not a declared ProjectSettings
-        # field - so this standalone-agent path has never sent Jordan a URL either.
-        public_url = platform_public_url()
+        # See the matching comment in the stakeholder_management crew branch above: this path
+        # computed an interview URL base too, and it went the same way for the same reason.
         agent_obj = create_stakeholder_manager(slug=slug, llm=llm, tools=tools)
         task = create_stakeholder_manager_task(
             agent=agent_obj,
             project_slug=slug,
-            public_interview_url_base=f"{public_url}/dashboard/interview" if public_url else "",
         )
 
     else:

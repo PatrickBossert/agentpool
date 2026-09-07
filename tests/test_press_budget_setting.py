@@ -90,8 +90,9 @@ async def test_the_stored_budget_is_the_one_the_press_is_given(project, client, 
     asserts on the timeout the press call was actually handed.
     """
     from api.database import (
-        get_connection, fetch_project, insert_stakeholder, insert_interview_session,
+        get_connection, fetch_project, insert_stakeholder,
     )
+    from tests.support_interview_sessions import insert_interview_session
 
     r = await client.patch(
         f"/projects/{project}/settings",
