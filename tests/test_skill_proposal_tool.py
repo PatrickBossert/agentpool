@@ -8,8 +8,8 @@ Three properties, and only the first is about the tool in isolation:
 - A run that reaches the tool still completes, still closes the change request it was answering,
   and leaves the artefact the agent revised exactly as the agent wrote it. Asserted through
   `build_and_run_crew` against a stub crew, because the property is about the run and a test at
-  the tool boundary alone would be one layer away from it - CLAUDE.md records eight defects of
-  that shape.
+  the tool boundary alone would be one layer away from it - the shape CLAUDE.md's *recurring
+  failure mode* section is a list of.
 - The instruction to propose reaches the task only when something was actually sent back, and
   reaches it once however many blocks fired.
 
@@ -211,6 +211,36 @@ async def test_an_agent_no_approval_could_reach_is_refused_without_raising():
     and stubbing it would assert only that this test can raise an exception.
     """
     reply = _tool("no_such_agent")._run(rule="Some general rule about something.")
+
+    assert "could not be recorded" in reply
+    assert "carry on with your task" in reply
+
+
+class _AbruptStop(BaseException):
+    """Stands in for `KeyboardInterrupt` and `SystemExit` in the test below.
+
+    Those are the real cases - `await_sync` runs the coroutine under `asyncio.run`, on a
+    worker thread whenever a loop is already live, and `concurrent.futures` re-raises whatever
+    the work item set, `BaseException` included. Neither is usable here: pytest treats both as
+    "stop the session", so the `except Exception` mutation would abort the run rather than
+    fail a test, and an aborted run is a much weaker signal than a named failure. A plain
+    `BaseException` subclass exercises the same branch and is caught by the same `except`.
+    """
+
+
+def test_a_base_exception_from_the_proposal_is_still_swallowed():
+    """`_run` catches `BaseException`, and this is what distinguishes that from `Exception`.
+
+    Nothing did before: mutating the `except` to `Exception` left the whole backend suite
+    green, so the wider catch was an assertion made only in a comment.
+
+    It is also *not* the case the comment used to claim. A `CancelledError` from the
+    comparison's own timeout never reaches this frame: `asyncio.wait_for` converts it to
+    `TimeoutError` inside `find_duplicate_skill`, which catches it there. The catch is
+    belt-and-braces, and that is now what the comment says.
+    """
+    with patch("api.services.skills_service.propose_skill", side_effect=_AbruptStop):
+        reply = _tool()._run(rule="A general rule worth remembering.")
 
     assert "could not be recorded" in reply
     assert "carry on with your task" in reply

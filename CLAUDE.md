@@ -1646,13 +1646,24 @@ the same `Destination` in both modes, written out rather than left implicit, bec
 sameness *is* the finding). "Nothing escapes secure mode" is true of the two capabilities and of
 nothing wider.
 
-**None of those five is reachable from inside a crew run**, and that is a separate claim worth
-keeping true. `SkillProposalTool` was briefly the exception - the first tool an agent held that
-made a hosted call of its own, declared honestly in `agents/egress.py` as
-`Reach.UNGATED_INFERENCE` and routed properly a commit later, which is how the member came and
-went. If a sixth ungated path is ever added, ask whether an agent can reach it before asking
-anything else: an ungated door an administrator opens and an ungated door an agent can open on
-a client's behalf are not the same finding.
+**Two of those five are reachable from inside a crew run**, and knowing which two is the
+claim worth keeping true. `TOOL_EGRESS` in `agents/egress.py` is the table that says so:
+`value_chain_mapper` holds `TavilySearchTool` and `WebFetchTool`, `value_lever_analyst` holds
+`TavilySearchTool`. So an agent reaching an ungated path is not unprecedented, and a reader
+told otherwise would mis-weigh the next one.
+
+**No ungated *inference* path is reachable from inside a crew run**, which is the narrower
+claim and the interesting one. `SkillProposalTool` was briefly the exception - the first tool
+an agent held that made a second **model** call of its own, declared honestly in
+`agents/egress.py` as `Reach.UNGATED_INFERENCE` and routed properly a commit later, which is
+how the member came and went. If a sixth ungated path is ever added, ask whether an agent can
+reach it before asking anything else: an ungated door an administrator opens and an ungated
+door an agent can open on a client's behalf are not the same finding.
+
+The wider version of that sentence shipped here and was false on the day it was written, in
+the section about not writing false sentences, citing the table that contradicted it. A claim
+of the form "none of these is X" is worth checking against the declaration rather than against
+memory - which for this one is a three-line read of `TOOL_EGRESS`.
 
 The ElevenLabs entry covers **two shapes of request now, not one.** It was interview text
 going to `/v1/text-to-speech`; sp62 added the voice listings and the add-a-voice write

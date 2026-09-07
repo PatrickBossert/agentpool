@@ -2,8 +2,9 @@
 """A skill an agent proposes reaches the queue, and reaches no prompt.
 
 The safety property is asserted against **what is injected into the task description**, not
-against what the `skills` table holds. CLAUDE.md opens with seven defects of exactly the other
-shape - a property verified one layer away from where it holds - and the layer that matters
+against what the `skills` table holds. CLAUDE.md's *recurring failure mode* section lists
+defects of exactly the other shape - a property verified one layer away from where it holds -
+and the layer that matters
 here is `_fetch_skill_notes`, because that is the only thing that puts a skill in front of an
 agent.
 
@@ -194,6 +195,27 @@ async def test_a_proposal_is_stored_pending_with_its_provenance():
     assert row["source_ref"] == "SC-014"
     assert row["proposed_by_agent"] == AGENT
     assert row["occurrences"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_slug_that_was_routed_on_is_the_slug_that_is_filed(_fake_haiku):
+    """One spelling of one fact, all the way through.
+
+    The slug is stripped once, and the stripped form is what `find_duplicate_skill` is routed
+    by *and* what `skills` and `skill_occurrences` record. An earlier version routed on the
+    stripped one and filed the caller's original, so a slug carrying whitespace would have had
+    the mode read from one key and the provenance grouped under another. Not reachable through
+    the only production caller, which passes the run's own slug - which is exactly why nothing
+    would have failed.
+    """
+    from api.database import get_system_connection, fetch_skill_occurrences
+
+    result = await propose_skill(AGENT, RULE, "  sp-gs-am  ", "SC-014")
+
+    assert (await _stored(result["skill_id"]))["source_project"] == "sp-gs-am"
+    async with get_system_connection() as conn:
+        sightings = await fetch_skill_occurrences(conn, skill_id=result["skill_id"])
+    assert [s["source_project"] for s in sightings] == ["sp-gs-am"]
 
 
 @pytest.mark.asyncio

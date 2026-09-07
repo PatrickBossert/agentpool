@@ -666,9 +666,16 @@ function SkillsTabContent({ agents, slug }: { agents: string[]; slug: string }) 
     queryFn: () => skillsApi.list({ status: 'approved' }),
   })
 
+  // Sysadmins only, and the request is not made at all for anyone else - `enabled`, not a
+  // filter over the answer. A pending skill is a proposal an agent wrote about one named
+  // engagement, so the server refuses this to a non-sysadmin (403) and asking would surface a
+  // refusal on a panel nobody opened for that reason. The read-only "In development" list this
+  // used to show a non-admin is gone with it rather than left behind an `isAdmin` check: it
+  // printed `s.description` verbatim, which is the disclosure itself.
   const { data: pendingSkills = [] } = useQuery({
     queryKey: ['skills', 'pending'],
     queryFn: () => skillsApi.list({ status: 'pending' }),
+    enabled: isAdmin,
   })
 
   const updateMut = useMutation({
@@ -734,9 +741,9 @@ function SkillsTabContent({ agents, slug }: { agents: string[]; slug: string }) 
                 <p className="text-xs font-bold text-gray-800">{agentFirst}</p>
                 <p className="text-[10px] text-gray-400">{agentName}</p>
               </div>
-              {pending.length > 0 && (
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isAdmin ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
-                  {pending.length} {isAdmin ? 'pending' : 'in dev'}
+              {isAdmin && pending.length > 0 && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                  {pending.length} pending
                 </span>
               )}
             </div>
@@ -749,35 +756,26 @@ function SkillsTabContent({ agents, slug }: { agents: string[]; slug: string }) 
               </div>
             )}
 
-            {/* Pending skills — admins can approve/reject; non-admins see read-only "In development" */}
-            {pending.length > 0 && (
+            {/* Pending skills - the review queue, sysadmin only.
+                There is no non-admin branch, and its absence is the fix rather than an
+                omission. It rendered `s.description` verbatim under "In development", so a
+                reviewer on engagement B read, word for word, the rule an agent wrote about
+                engagement A. `pending` is empty for a non-admin because the query above is
+                disabled, so restoring a branch here would show nothing until somebody also
+                re-enabled the request - which is the wrong order for that discovery.
+
+                `isAdmin &&` as well as the disabled query, and the redundancy is deliberate:
+                the power-check that removed `enabled` failed *both* of this block's tests,
+                which meant one flag was carrying the request and the render at once. Two
+                guards, each with its own assertion, so neither failing alone discloses. */}
+            {isAdmin && pending.length > 0 && (
               <div className="space-y-1.5">
-                {isAdmin ? (
-                  <>
-                    <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">
-                      Awaiting review
-                    </p>
-                    {pending.map(s => (
-                      <PendingSkillCard key={s.id} skill={s} onApprove={approve} onReject={reject} />
-                    ))}
-                  </>
-                ) : (
-                  <>
-                    <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest flex items-center gap-1">
-                      <Wrench size={9} /> In development
-                    </p>
-                    {pending.map(s => (
-                      <div key={s.id} className="flex gap-2.5 items-start rounded-lg border border-blue-100 bg-blue-50/40 px-3 py-2">
-                        <Wrench size={12} className="flex-shrink-0 mt-0.5 text-blue-400" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-gray-800">{s.name}</p>
-                          <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{s.description}</p>
-                          <p className="text-[10px] text-blue-500 mt-1">Awaiting administrator review</p>
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                )}
+                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">
+                  Awaiting review
+                </p>
+                {pending.map(s => (
+                  <PendingSkillCard key={s.id} skill={s} onApprove={approve} onReject={reject} />
+                ))}
               </div>
             )}
 

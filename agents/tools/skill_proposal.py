@@ -111,12 +111,25 @@ class SkillProposalTool(BaseTool):
                 )
             )
         except BaseException:
-            # `BaseException`, not `Exception`. A tool whose only job is a nice-to-have must not
-            # be the thing that ends a run, and the failures worth surviving here are not all
-            # `Exception`s: a `CancelledError` reaching this frame belongs to a timeout inside
-            # the comparison, not to the crew. Loud, because a proposal path that is failing on
-            # every call is indistinguishable at every later layer from an agent that simply
-            # never proposes anything - the queue stays empty either way.
+            # `BaseException`, not `Exception`. A tool whose only job is a nice-to-have must
+            # not be the thing that ends a run, and `Exception` does not cover everything that
+            # can come back up this frame: `await_sync` runs the coroutine with `asyncio.run`,
+            # on a worker thread when a loop is already live, and a `KeyboardInterrupt` or
+            # `SystemExit` raised in there arrives here through
+            # `concurrent.futures`, which re-raises whatever the work item set.
+            #
+            # **The reason first written here was wrong and is worth keeping visible.** It said
+            # a `CancelledError` from a timeout inside the comparison would reach this frame.
+            # It cannot: `asyncio.wait_for` converts that cancellation into `TimeoutError`
+            # inside `find_duplicate_skill`, whose own `except Exception` swallows it, so
+            # nothing arrives here at all. The catch is belt-and-braces, which is the honest
+            # description, and `test_a_base_exception_from_the_proposal_is_still_swallowed` is
+            # what now distinguishes it from `except Exception` - the whole suite stayed green
+            # under that mutation until it existed.
+            #
+            # Loud, because a proposal path that is failing on every call is indistinguishable
+            # at every later layer from an agent that simply never proposes anything - the
+            # queue stays empty either way.
             log.warning(
                 "skills: proposal from %s on %s could not be recorded",
                 self.agent_name, self.slug, exc_info=True,

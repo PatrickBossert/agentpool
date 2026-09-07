@@ -240,8 +240,12 @@ async def _fetch_regeneration_requests(slug: str, crew_name: str) -> str:
 #
 # Injected on a send-back and on nothing else. An agent holding the tool can call it whenever it
 # likes - a tool an agent holds is a tool it can decide to call - but an ordinary run is not
-# asked to, which is what keeps the deduplication's hosted model call off every run that had
-# nothing corrected. `agents/egress.py` declares that call; it is ungated on mode.
+# asked to, which is what keeps the deduplication's model call off every run that had nothing
+# corrected. That call is gated on the project's mode: `find_duplicate_skill` goes through
+# `llm_client.project_completion(slug, "fast", ...)`, so a sensitive engagement compares on its
+# own model, and `agents/egress.py` declares it `Reach.INFERENCE` for that reason. This comment
+# said "hosted" and "ungated on mode" until the commit that made both false went past it
+# without it - the same shape of defect this whole feature exists to catch.
 #
 # The worked example is real: it is the note a reviewer left on interview script SC-014 on
 # 3 September 2026, and the rule Maya's revision of it actually turned on. A general

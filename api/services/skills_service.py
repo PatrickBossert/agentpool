@@ -99,6 +99,13 @@ async def propose_skill(
     caller is `SkillProposalTool`, whose whole contract is that nothing it does can fail the
     run.
 
+    It is **stripped once and the stripped form is what is both routed on and filed**. An
+    earlier version routed `find_duplicate_skill` on the stripped slug and wrote the caller's
+    original into `skills` and `skill_occurrences`, so a slug carrying stray whitespace was
+    two spellings of one fact: the key the mode was read from, and the provenance the queue
+    groups by, could disagree. Not reachable through today's only caller, which passes the
+    run's own slug - but a fact with two spellings is what this file argues against elsewhere.
+
     Returns `{"action", "skill_id", "status", "occurrences", "name", "agent"}`, where `action`
     is `"created"` or `"incremented"` - which is why this returns what happened rather than an
     id.
@@ -135,7 +142,7 @@ async def propose_skill(
                 conn,
                 skill_id=match_id,
                 description=description,
-                source_project=source_project,
+                source_project=slug,
                 source_ref=source_ref,
                 proposed_by_agent=agent_name,
                 bump=True,
@@ -171,7 +178,7 @@ async def propose_skill(
             name=skill_name,
             description=description,
             source="revision",
-            source_project=source_project,
+            source_project=slug,
             source_ref=source_ref,
             proposed_by_agent=agent_name,
             # Never anything else. An approved proposal is injected into every future run of
@@ -183,7 +190,7 @@ async def propose_skill(
             conn,
             skill_id=skill_id,
             description=description,
-            source_project=source_project,
+            source_project=slug,
             source_ref=source_ref,
             proposed_by_agent=agent_name,
             # The `skills` row already counts this one - `occurrences` defaults to 1.
