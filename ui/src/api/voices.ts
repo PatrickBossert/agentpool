@@ -49,6 +49,22 @@ export interface VoiceCatalogue {
   accent: string
   accent_source: 'project' | 'request'
   filters: { gender: string | null; language: string | null; search: string | null }
+  /**
+   * The sex of the voice named by `current_voice_id`, for a picker to open on. Answered by the
+   * server from the provider's own label on that voice - **never derived from the listings
+   * below**, which are narrowed by the accent, so a voice of another accent is simply absent
+   * and "not found" would be indistinguishable from "no label".
+   *
+   * **`null` means open unfiltered, never open empty.** Four routes collapse onto it - no voice
+   * to ask about, no label on the voice, a label that is not one of the two the listing can be
+   * filtered by, and a lookup that failed - and a picker must treat them alike. An empty picker
+   * is indistinguishable from an account holding no voices.
+   *
+   * **`string | null`, deliberately not `'male' | 'female' | null`.** The server narrows it to
+   * the two actionable labels, but a union here is a claim this codebase would then be free to
+   * switch exhaustively over, and the provider's vocabulary is not ours to declare.
+   */
+  voice_sex: string | null
   /** The union of both listings, and the only thing an accent control should offer. */
   accent_options: string[]
   /**
@@ -85,6 +101,10 @@ export const voicesApi = {
    * deliberate on the server: omitted means "use the project's `interview_accent`", empty
    * means "every accent". So `undefined` is not sent and `''` is, which is why this builds
    * the query rather than spreading an object.
+   *
+   * `current_voice_id` is **not a filter**. It names the voice the caller already has, and the
+   * door answers `voice_sex` for it; omitting it is answered `null`, so a picker that does not
+   * send it never pre-sets anything.
    */
   list: async (
     slug: string,
@@ -93,6 +113,7 @@ export const voicesApi = {
       gender?: string
       language?: string
       search?: string
+      current_voice_id?: string
     } = {},
   ): Promise<VoiceCatalogue> => {
     const query = new URLSearchParams()

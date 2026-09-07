@@ -80,6 +80,10 @@ function config(overrides: Partial<AgentConfig['overrides']> = {}): AgentConfig 
       ...DEFAULTS,
       ...Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== null)),
     },
+    // What the server answers for this agent. It is stipulated here rather than worked out
+    // from the id: the roster of who interviews lives in one place in Python, and a fixture
+    // that re-derived it would be a second copy of it on the side nothing is watching.
+    is_interviewer: true,
   }
 }
 

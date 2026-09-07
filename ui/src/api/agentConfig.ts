@@ -35,6 +35,17 @@ export interface AgentConfig {
   overrides: AgentConfigOverrides
   /** The one over the other, per field. What the interview actually uses. */
   resolved: AgentConfigFields
+  /**
+   * Whether this agent conducts interviews - `agent_config_service.is_interviewer`, which asks
+   * `interviewer_selection`'s own roster.
+   *
+   * **Read, never re-derived here.** The roster lives in one place in Python precisely so that
+   * a second list of who interviews cannot grow beside it, and a list of agent ids in
+   * TypeScript would be that second list on the one side nothing is watching. Required rather
+   * than optional for the reason CLAUDE.md records of four `ProjectSettings` fields: an
+   * optional field survives a spread that drops it, and nothing says so.
+   */
+  is_interviewer: boolean
 }
 
 /** What the upload door answers: where the portrait now lives, and what it cost to store.

@@ -53,6 +53,9 @@ function entry(agentId: string, overrides: Partial<AgentConfigOverrides> = {}): 
       ...defaults,
       ...Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== null)),
     } as AgentConfig['resolved'],
+    // Stipulated, not derived from the id: the roster of who interviews lives in one place in
+    // Python. Nothing in these cases reads it.
+    is_interviewer: false,
   }
 }
 

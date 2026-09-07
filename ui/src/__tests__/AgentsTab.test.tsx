@@ -103,6 +103,9 @@ function config(agentId: string) {
       display_name: 'Stub', image_url: null, voice_id: null,
       language: 'en', country_code: 'GB', model_id: 'eleven_turbo_v2',
     },
+    // Stipulated, not derived from the id: the roster of who interviews lives in one place in
+    // Python. Nothing in these cases reads it.
+    is_interviewer: false,
   }
 }
 

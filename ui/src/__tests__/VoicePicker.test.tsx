@@ -68,6 +68,9 @@ function catalogue(over: Partial<VoiceCatalogue> = {}): VoiceCatalogue {
     accent: 'hebridean',
     accent_source: 'project',
     filters: { gender: null, language: null, search: null },
+    // The default is the unanswerable case, so every test that says nothing about the sex of
+    // the current voice is driving the "open unfiltered" branch.
+    voice_sex: null,
     accent_options: ['hebridean', 'irish'],
     accent_options_partial: false,
     account_accents: ['hebridean'],
@@ -215,6 +218,101 @@ describe('the voice picker - nothing about a voice is declared here', () => {
     fireEvent.change(screen.getByLabelText('Accent'), { target: { value: '' } })
     await waitFor(() =>
       expect(voicesApi.list).toHaveBeenCalledWith('acme', expect.objectContaining({ accent: '' })))
+  })
+})
+
+describe('the voice picker - it opens on the interviewer\'s own sex, and lets you leave', () => {
+  /** The listing narrowed to `female` holds the account voice; unnarrowed it holds both. */
+  function listingKnowingTheVoiceIs(sex: string | null) {
+    vi.mocked(voicesApi.list).mockImplementation(async (_slug, params) =>
+      params?.gender
+        ? catalogue({ voice_sex: sex, account: [ACCOUNT_VOICE], library: [] })
+        : catalogue({ voice_sex: sex }))
+  }
+
+  it('tells the door which voice this agent already has', async () => {
+    // Without this the server answers `voice_sex: null` and the filter never pre-sets - so the
+    // whole feature fails silently, looking exactly like a provider that gave no label.
+    renderPicker({ currentVoiceId: 'acct-1' })
+    await loaded()
+    expect(vi.mocked(voicesApi.list).mock.calls[0][1])
+      .toMatchObject({ current_voice_id: 'acct-1' })
+  })
+
+  it('opens filtered to the sex of the voice it already has', async () => {
+    // The assertion is on the query the picker SENDS. A filter applied to the rendered list
+    // looks identical on screen and is a different feature - and a worse one, since the library
+    // half of the answer is one bounded page, so narrowing here would hide every voice of that
+    // sex beyond it.
+    //
+    // The sex is the server's answer about that voice, not a table in this codebase mapping an
+    // agent to a sex: `interviewer_selection.py` refuses such a table in writing, because a
+    // project that gives an interviewer a voice of the other sex has said something.
+    listingKnowingTheVoiceIs('female')
+    renderPicker({ currentVoiceId: 'acct-1' })
+
+    await waitFor(() => expect(voicesApi.list).toHaveBeenCalledWith(
+      'acme', expect.objectContaining({ gender: 'female' }),
+    ))
+    // And it shows what it asked for, rather than sitting on a spinner.
+    expect(await screen.findByTestId('voice-acct-1')).toBeInTheDocument()
+  })
+
+  it('lets the filter be cleared, and then asks for every sex', async () => {
+    // The control. Without it a picker that hardcoded a permanent filter passes the case above
+    // - and a consultant giving Laura a male voice is making a legitimate choice that this
+    // picker must not be the thing to forbid.
+    listingKnowingTheVoiceIs('female')
+    renderPicker({ currentVoiceId: 'acct-1' })
+    await waitFor(() => expect(voicesApi.list).toHaveBeenCalledWith(
+      'acme', expect.objectContaining({ gender: 'female' }),
+    ))
+    expect(screen.getByLabelText('Voice sex')).toHaveValue('female')
+
+    fireEvent.change(screen.getByLabelText('Voice sex'), { target: { value: '' } })
+
+    // The *next* request, not merely some earlier one: the assertion is that clearing reaches
+    // the wire, so the last thing sent must carry no sex at all.
+    await waitFor(() => {
+      const [, params] = vi.mocked(voicesApi.list).mock.calls.at(-1)!
+      expect(params?.gender).toBeUndefined()
+    })
+    expect(await screen.findByTestId('voice-lib-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('sex-preset')).toBeNull()
+  })
+
+  it('opens unfiltered, never empty, when the sex could not be established', async () => {
+    // `voice_sex` is null for four different reasons - no voice, no label, a label that is not
+    // one of the two the listing can be filtered by, and a lookup that failed - and all four
+    // mean the same thing here. Showing nothing because a lookup failed is the worst outcome
+    // available: it is indistinguishable from an account holding no voices, and it sends a
+    // consultant to diagnose a picker that is working.
+    listingKnowingTheVoiceIs(null)
+    renderPicker({ currentVoiceId: 'acct-1' })
+    await loaded()
+    expect(await screen.findByTestId('voice-lib-1')).toBeInTheDocument()
+
+    expect(vi.mocked(voicesApi.list).mock.calls.every(([, p]) => p?.gender === undefined))
+      .toBe(true)
+  })
+
+  it('opens unfiltered when the listing carries no voice of that sex', async () => {
+    // The same "never empty" rule reached by a route where every part is working. `voice_sex`
+    // is a fact about one voice; the listing is narrowed by the project's accent, so it may
+    // hold no voice of that sex at all - and pre-setting the filter anyway would empty the
+    // picker on a perfectly correct answer.
+    vi.mocked(voicesApi.list).mockResolvedValue(catalogue({
+      voice_sex: 'male',
+      account: [ACCOUNT_VOICE],
+      library: [{ ...LIBRARY_VOICE, gender: 'female' }],
+    }))
+    renderPicker({ currentVoiceId: 'acct-1' })
+    await loaded()
+
+    expect(vi.mocked(voicesApi.list).mock.calls.every(([, p]) => p?.gender === undefined))
+      .toBe(true)
+    expect(screen.getByLabelText('Voice sex')).toHaveValue('')
+    expect(screen.getByTestId('voice-lib-1')).toBeInTheDocument()
   })
 })
 

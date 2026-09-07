@@ -18,6 +18,15 @@
 // provider's own "there is more behind this", and they are rendered rather than dropped: a
 // bounded page presented as complete reads as "that voice does not exist" instead of "narrow
 // your filters", which sends an operator to reconfigure something that was never wrong.
+//
+// **The picker opens on the interviewer's own sex, and lets you leave.** The sex is `voice_sex`
+// on the listing - the server's answer about the voice this agent already has - so Avery's
+// picker opens on male voices because Avery's voice is male, not because anything here maps an
+// agent to a sex. `interviewer_selection.py` refuses such a table in writing, since the sex is a
+// property of the voice and the voice is a per-project setting: a project that gives Avery a
+// female voice has said something, and a table here would contradict it while looking
+// authoritative. It is a **default, not a lock** - the control clears - and an unanswerable
+// lookup opens **unfiltered, never empty**.
 import { useState, type ReactNode } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { AlertTriangle, Check, Play, Plus, X } from 'lucide-react'
@@ -158,34 +167,67 @@ export default function VoicePicker({
   // apply the project's own `interview_accent`. `''` is a different request and means every
   // accent - collapsing the two would make the project setting unclearable from here.
   const [accent, setAccent] = useState<string | undefined>(undefined)
-  const [gender, setGender] = useState('')
+  // `null` and `''` are as different here as they are for `accent`, and for the same kind of
+  // reason: `null` means the consultant has not touched this control, so the interviewer's own
+  // sex pre-sets it, and `''` means they cleared it and want every sex. Collapsing the two would
+  // make the pre-set filter permanent, which is the difference between a default and a lock.
+  const [gender, setGender] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const results = useQuery({
-    queryKey: ['voices', slug, accent ?? null, gender, search],
-    queryFn: () => voicesApi.list(slug, { accent, gender: gender || undefined, search: search || undefined }),
+  // Asked **without** the sex filter - the same argument the server makes for probing the
+  // library's accents unfiltered. A listing narrowed to `female` reports female, so both the
+  // dropdown's options and the "does this listing even offer that sex" question below have to
+  // be asked of an unnarrowed answer or the choice already made is the only one on offer.
+  // While nothing is narrowing, this shares its cache key with the query below, so the common
+  // case is one request rather than two.
+  const unfilteredByGender = useQuery({
+    queryKey: ['voices', slug, accent ?? null, '', search],
+    queryFn: () => voicesApi.list(slug, {
+      accent,
+      search: search || undefined,
+      current_voice_id: currentVoiceId ?? undefined,
+    }),
     retry: false,
   })
 
-  // The gender dropdown's options, asked **without** the gender filter - the same argument the
-  // server makes for probing the library's accents unfiltered. A listing narrowed to `female`
-  // reports female, so options derived from it would offer exactly the choice already made and
-  // there would be no way back to male. When no gender is applied this shares the query above's
-  // cache key, so it costs nothing in the common case.
-  const unfilteredByGender = useQuery({
-    queryKey: ['voices', slug, accent ?? null, '', search],
-    queryFn: () => voicesApi.list(slug, { accent, search: search || undefined }),
-    enabled: gender !== '',
+  const offeredSexes = unfilteredByGender.data
+    ? gendersIn([...unfilteredByGender.data.account, ...unfilteredByGender.data.library])
+    : []
+
+  // The sex of the voice this agent already has, from the server rather than from the listing:
+  // the listing is narrowed by the project's accent, so a voice of another accent is simply
+  // absent from it and "not found" would be indistinguishable from "no label".
+  //
+  // Pre-set only when this listing actually offers that sex. `voice_sex` is a fact about one
+  // voice, and a sex no voice here carries would narrow the picker to nothing - and an empty
+  // picker is indistinguishable from an account holding no voices, which the design names as
+  // the worst outcome available. `null` - a voice with no label, a label that is neither of the
+  // two, no voice at all, or a lookup that failed - opens unfiltered for the same reason.
+  const sexOfCurrentVoice = unfilteredByGender.data?.voice_sex ?? ''
+  const presetGender = offeredSexes.includes(sexOfCurrentVoice) ? sexOfCurrentVoice : ''
+  const appliedGender = gender ?? presetGender
+
+  const results = useQuery({
+    queryKey: ['voices', slug, accent ?? null, appliedGender, search],
+    queryFn: () => voicesApi.list(slug, {
+      accent,
+      gender: appliedGender || undefined,
+      search: search || undefined,
+      current_voice_id: currentVoiceId ?? undefined,
+    }),
     retry: false,
   })
 
   const data = results.data
-  const optionsSource = unfilteredByGender.data ?? data
-  const genderOptions = optionsSource
-    ? gendersIn([...optionsSource.account, ...optionsSource.library])
-    : []
+  // What the dropdown renders. The unfiltered listing where there is one, falling back to the
+  // narrowed answer only when the unfiltered ask itself failed - where some options beat none.
+  const genderOptions = unfilteredByGender.data
+    ? offeredSexes
+    : data
+      ? gendersIn([...data.account, ...data.library])
+      : []
 
   const add = useMutation({
     mutationFn: (voice: CatalogueVoice) =>
@@ -255,7 +297,7 @@ export default function VoicePicker({
           </label>
           <select
             id="voice-gender"
-            value={gender}
+            value={appliedGender}
             onChange={(e) => setGender(e.target.value)}
             className={selectCls}
           >
@@ -280,6 +322,14 @@ export default function VoicePicker({
           />
         </div>
       </div>
+
+      {gender === null && appliedGender !== '' && (
+        <p data-testid="sex-preset" className="text-[11px] text-gray-500">
+          Filtered to <span className="font-medium">{appliedGender}</span> voices, the sex of the
+          voice this agent already has. Choose Any to see every voice - giving an interviewer a
+          voice of another sex is a choice this project is free to make.
+        </p>
+      )}
 
       {data?.accent_source === 'project' && (
         <p className="text-[11px] text-gray-500">
