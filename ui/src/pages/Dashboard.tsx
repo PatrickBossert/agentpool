@@ -240,7 +240,11 @@ export default function Dashboard() {
       <div className="flex flex-1 min-h-0">
 
         {/* Left column - carousel + detail */}
-        <div className="flex flex-col flex-1 min-w-0 min-h-0">
+        {/* `overflow-y-auto` is the other half of the detail panel's `min-h-[26rem]` below.
+            With a floor under that pane this column can now exceed the viewport, and without a
+            scroll here the overflow would simply be unreachable - which trades one unusable
+            pane for one unreachable one. */}
+        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-y-auto">
 
           {/* Pipeline error banner */}
           {orch?.status === 'failed' && orch.error_detail && (
@@ -313,8 +317,15 @@ export default function Dashboard() {
             />
           </div>
 
-          {/* Detail panel */}
-          <div className="flex flex-1 min-h-0 px-5 pb-5 pt-3">
+          {/* Detail panel.
+              `min-h-[26rem]` is a floor, and without one this pane absorbs every shortfall in
+              the column above it. The carousel is `flex-shrink-0` at a fixed ~337px, so it
+              claims the same slice at every window size; `min-h-0` here then lets this pane
+              shrink without limit, and on a laptop viewport it was measured at **86px holding
+              3364px of content** - one line of text, which is what Patrick reported on
+              7 September. The column scrolls instead now, which is the right trade: a pane
+              that has to be scrolled to is usable, and a pane compressed to a line is not. */}
+          <div className="flex flex-1 min-h-[26rem] px-5 pb-5 pt-3">
             <AgentDetailPanel
               slug={slug}
               crewKey={selectedCrew}
