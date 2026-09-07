@@ -146,6 +146,19 @@ the next test's freshly created project silently inherits the owner. This is the
 poisoned-database trap that no `.db` unlink reaches, and it applies to every module using the
 sibling pattern: clear the registry row and the organisation too.
 
+**A fixture that never runs reports nothing, and `asyncio_mode = strict` makes that the default
+shape for an async one.** `pytest.ini` sets it, and under strict mode a plain `@pytest.fixture`
+declared `async def` is handed to the test as an un-awaited async generator: the body never runs,
+so neither the setup before the `yield` nor the clean-up after it happens, and nothing anywhere
+complains. `tests/test_skill_agent_migration.py` and `tests/test_skill_description_migration.py`
+each carried one written to stop the test leaving rows in `system.db`, and between them they had
+never removed a row - the poisoned-database trap above, arriving through the fixture written to
+prevent it. `@pytest_asyncio.fixture` is the fix, and it is sweepable **by AST rather than by
+grep**, because a decorator can be spelled several ways and only a parse can tell
+`@pytest.fixture`, `@pytest.fixture(autouse=True)` and an aliased `@fixture` apart from the right
+one. Found by a second run seeing six rows where it had written two, which is the second run
+catching what the first could not, again.
+
 **Pass the clock, never read it.** A test written against "today" passes on the day it is
 written and fails every day afterwards, and when it goes it does not announce itself as a clock
 problem. Three tests in `ui/src/__tests__/milestoneVariance.test.ts` let `today` default to
@@ -170,8 +183,8 @@ Two things that look like evidence during forensics on `data/` and are not:
 Repeatedly on this project a test has verified a property **one layer away from where it holds**.
 In every case the shipped code was correct and the test could not distinguish correct from
 incorrect (this sentence read "five times" for several sprints while the list below ran to
-eight, which is its own small instance of the lesson - it is ten now, and the word is there so
-it cannot rot again):
+eight, which is its own small instance of the lesson - it is eleven now, and the word is there
+so it cannot rot again):
 
 - `check_write` tested; the tool calling it not.
 - `staleness` tested; the endpoint assembling it not.
@@ -207,6 +220,16 @@ it cannot rot again):
   two agreed. **A URL is a promise that something answers: fetch what the door returned.** The
   branding door had carried the defect since it was written, unseen because no deployment had
   ever uploaded a header image.
+- **A budget asserted as arithmetic rather than as a deadline.** `find_duplicate_skill` bounded
+  itself with `timeout=` and `max_retries=` on an `AsyncAnthropic` it built; routing it through
+  `project_completion` left the deadline behind, because the seam accepts neither and imposes
+  none of its own, and both clients behind it are sized for a caller that is waiting - 600s x 3
+  hosted, 120s local - inside a crew run, for a nice-to-have attached to a revision that is
+  already finished. The assertion that could not see it go was
+  `_COMPARISON_TIMEOUT_SECONDS * (_COMPARISON_RETRIES + 1) <= 60`, true of two module constants
+  whether or not anything sends them anywhere. **A budget is a property of the call, and it does
+  not travel through a seam** - so it is `asyncio.wait_for` now and asserted as *behaviour*: an
+  unanswered comparison resolves to "not a duplicate", logs, and does not hold the run.
 
 When a test passes alone and fails in the suite, the isolated pass is the thing to distrust —
 it is usually the one running under state no production caller ever has.
@@ -1389,6 +1412,79 @@ event and the ledger row carries the derived state, because a script is reviewed
 several people and approved once. A send-back carries `review_return_to`: only `agent`
 enters Maya's differential, because a return to `reviewer` that regenerated the script
 would rewrite the instrument the reviewer was about to re-read.
+
+### An agent proposes the rule behind the correction it just made
+
+**An agent that can be sent work back proposes the general rule behind the correction, not the
+correction.** A requirement about every agent rather than a step in one agent's task, so the
+mechanism is a tool: `SkillProposalTool` (`agents/tools/skill_proposal.py`) is registered for all
+seventeen agents `_CREW_AGENT_NAMES` dispatches, and `_SKILL_PROPOSAL_INSTRUCTION` in
+`run_service.py` is injected on a send-back and on nothing else - once, however many of the two
+revision blocks fired, so an ordinary run pays nothing.
+
+The worked pair is in the instruction because the distinction *is* the requirement. The note left
+on interview script SC-014 was *"'not a performance review' appears twice, and the framing repeats
+the welcome"*; the rule behind it is *"the welcome carries privacy and tone, the framing carries
+the interview's purpose"*. The first is about one script and dies with it. The second is about
+every script Maya will ever write, on every engagement - and before this loop existed, 53 skills
+were assigned to agents and injected into every run with **not one of them from a review**. The
+correction was made, well, and the lesson evaporated.
+
+PAM is excluded on both halves of the rule: she orchestrates rather than producing a reviewable
+artefact, and she appears in no `_CREW_AGENT_NAMES` entry, so a proposal of hers would be queued,
+approvable, and would still reach no prompt. `test_pam_does_not_hold_it` keeps that a decision
+rather than an omission.
+
+Four properties of the queue, and the first is the whole safety argument:
+
+**Nothing proposed reaches a prompt.** `propose_skill` writes `status='pending'`;
+`_fetch_skill_notes` selects `status='approved'`. That is the whole safety argument for letting an
+agent propose freely, and it is asserted against **what reaches the prompt**, never against what
+the table holds.
+
+**A near-duplicate increments `occurrences` and accumulates provenance rather than inserting a
+second row.** A match is not noise to discard - it is the second sighting, the recurrence a
+periodic sweep over review history would have existed to find, arriving without waiting for one.
+So recurrence is the evidence a reviewer approves from: `skill_occurrences` holds one row per
+sighting including the first, which makes "how many, and where" a query rather than a blob, and
+`fetch_skills` orders the queue `occurrences DESC, created_at DESC, id DESC` with no parameter, so
+there is one answer and nothing for two callers to spell differently. `rejected` is excluded from
+the candidates a proposal is compared against - a human has already refused that rule, and
+incrementing it files the recurrence where the queue does not look. **The third sort key is not
+decoration**: `created_at` is whole seconds, so two proposals written in the same second tied on
+both of the others and the order fell to whatever SQLite happened to return, which a reviewer
+experiences as a queue that reshuffles on reload.
+
+**Approving changes that agent's behaviour on every engagement**, from its next run -
+`_fetch_skill_notes` has no project scope, and `source_project` is provenance rather than a tier.
+It is the most consequential button on `AdminSkills.tsx`, so the page says so in the copy, bound
+to the button by `aria-describedby` rather than left beside it.
+
+**`skills` is in `system.db`, so none of this took a `_SCHEMA_VERSION` bump.** The rule is stated
+under *Database conventions* and this is the direction people get backwards: `occurrences`,
+`proposed_by_agent`, `source_ref` and the `skill_occurrences` table all go into `init_system_db`
+as `CREATE TABLE IF NOT EXISTS` plus `ALTER`, which runs on every system connection and is
+therefore already enough. Bumping the constant would re-run every *project* migration on every
+deployment for a table in a database it does not govern.
+
+**Two doors onto the skills library, and they route differently** - argued in full under *Routing
+a call outside a crew*, and repeated here only as far as the decision. `find_duplicate_skill` asks
+`project_completion(slug, "fast", ...)`, so an agent's proposal on a sensitive engagement is
+compared on that project's own model and nothing leaves; the administrator's global skills page
+carries no project and stays hosted Haiku. The blanket exemption that used to cover both was
+justified on the library being global, carrying no slug, and holding reviewer feedback rather than
+client material - and `propose_skill` has a slug and carries an agent's sentence about a named
+engagement.
+
+**The generic review door's `intent='skill'` is captured and not routed, and that is deliberate.**
+`PATCH /{slug}/reviews/{id}` accepts an `intent` of `change_request`, `correction` or `skill`, and
+passes it through as `kind` on the `output_changes` row - but the only reader,
+`fetch_open_change_requests`, filters `kind='change_request'`, and `kind` has only ever held that
+and `unclassified`. So a reviewer choosing "skill" there records a row nothing acts on, and in
+particular one that never reaches the queue this section describes - `skills` is written by
+`propose_skill` and by `POST /admin/skills`, and by nothing on the review path. Left that way
+until the proposal loop is proven; **do not read the `intent` parameter as evidence the path
+works.**
 
 ### Clusters, and the edges between crews
 
