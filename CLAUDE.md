@@ -1459,13 +1459,31 @@ of these paths asks for.
 | Test-interview press (`POST /interviews/test/elaboration-press`) | Yes - slug required, 422 without it |
 | Agent Chat (`run_agent_chat`) | Yes, text and retrieved chunks |
 | Agent Chat with an **image** attached, sensitive project | **Refused** (503) - image blocks have no chat-completions equivalent here, and dropping or sending them are both wrong |
-| Skills library (`api/services/skills_service.py`, `api/routers/skill_notes.py`) | **No** - always hosted Haiku |
+| An agent's skill proposal (`skills_service.propose_skill` -> `find_duplicate_skill`) | Yes - `project_completion(source_project, "fast", ...)`, slug required, raises without it |
+| The global skills library door (`check_specificity`, `extract_skill`, `extract_skills_many`, `api/routers/skill_notes.py`) | **No** - always hosted Haiku |
 
-The skills library is the one remaining hosted *inference* path. It is a deliberate gap rather
-than an oversight: the library is global across engagements, its endpoints carry no slug, and
-the text is reviewer feedback about an agent's behaviour rather than client material. It is
-still reviewer feedback typed on a sensitive engagement, so a project-scoped skills library is
-the fix if that ever stops being acceptable - not a default slug.
+**The skills library has two doors and only one of them is the hosted gap.** The row above it
+used to say "skills library - no", one row for one file, and that was true until an agent could
+reach the library from inside a run.
+
+The remaining gap is the **administrator's skills page**, and it is deliberate rather than an
+oversight, on two facts that are both about *that door*: the library is global across
+engagements, its endpoints carry no slug, and the text is reviewer feedback about an agent's
+behaviour rather than client material. A project-scoped skills library is the fix if that ever
+stops being acceptable - not a default slug.
+
+**Both facts stopped being true of the agent's door, which is why it moved.** `propose_skill`
+takes the slug - it is the provenance the queue sorts on - so a mode was available to route by;
+and what it compares is not reviewer feedback but the agent's own generalisation from a
+correction made on a named engagement, free to name the client, its people or its systems in
+the course of stating the rule. The exemption survived the change that invalidated it because
+it had been written about the door rather than about the data. **When a path gains a slug, or
+starts carrying something a person wrote about one client, re-read the exemption it is sitting
+under** - an exemption is a claim about content, and the file it lives in is not.
+
+`find_duplicate_skill` takes the slug as its **first positional argument**, and
+`propose_skill` raises on a blank one rather than treating it as "no project". An optional
+`slug=None` falling back to the hosted branch is the shape this rule exists to forbid.
 
 ### Egress is granted, never assumed
 
@@ -1520,15 +1538,25 @@ egress **without** asking. A second sweep for direct construction - `CloudClient
 `AsyncAnthropic`, `LLM(` - is what finds those, and it is why `skills_service.py` is *known* to
 be the one remaining hosted inference path rather than assumed to be. Sweep for the question and
 for the mechanism, or the answer only ever describes the sites already doing it properly.
+`skills_service.py` still answers that second sweep, and now needs the first one too: it builds
+`AsyncAnthropic` for its global door and asks `project_completion` for the agent's.
 
 **The boundary, stated honestly.** For those two declared capabilities, nothing leaves a
 `sensitive` deployment. Five paths still send material off-premises with **no mode question
-asked at all** - the skills library, `TavilySearchTool`, `WebFetchTool`, Deepgram/ElevenLabs,
-and Resend - every one pre-existing, none widened here, and each already documented in this
-file or declared in `agents/egress.py` (where an ungated reach resolves to the same
-`Destination` in both modes, written out rather than left implicit, because that sameness *is*
-the finding). "Nothing escapes secure mode" is true of the two capabilities and of nothing
-wider.
+asked at all** - the global skills library door, `TavilySearchTool`, `WebFetchTool`,
+Deepgram/ElevenLabs, and Resend - every one pre-existing, none widened here, and each already
+documented in this file or declared in `agents/egress.py` (where an ungated reach resolves to
+the same `Destination` in both modes, written out rather than left implicit, because that
+sameness *is* the finding). "Nothing escapes secure mode" is true of the two capabilities and of
+nothing wider.
+
+**None of those five is reachable from inside a crew run**, and that is a separate claim worth
+keeping true. `SkillProposalTool` was briefly the exception - the first tool an agent held that
+made a hosted call of its own, declared honestly in `agents/egress.py` as
+`Reach.UNGATED_INFERENCE` and routed properly a commit later, which is how the member came and
+went. If a sixth ungated path is ever added, ask whether an agent can reach it before asking
+anything else: an ungated door an administrator opens and an ungated door an agent can open on
+a client's behalf are not the same finding.
 
 The ElevenLabs entry covers **two shapes of request now, not one.** It was interview text
 going to `/v1/text-to-speech`; sp62 added the voice listings and the add-a-voice write

@@ -302,14 +302,18 @@ def test_pam_does_not_hold_it():
     assert not any("pam" in agents for agents in _CREW_AGENT_NAMES.values())
 
 
-def test_the_tool_declares_the_hosted_call_it_makes_on_every_mode():
-    """`propose_skill` asks Haiku whether the rule restates one already held, through
-    `skills_service`, which builds `AsyncAnthropic` directly and consults no mode.
+def test_the_tool_declares_the_model_call_it_makes_and_declares_it_as_gated():
+    """`propose_skill` asks a model whether the rule restates one already held, and that call
+    goes through `project_completion`, so it moves with the project like every other prompt.
 
-    So this tool must resolve to Anthropic on a sensitive project as well as on a standard one.
-    Declaring it as `Reach.INFERENCE` would have had the resolver answer "the local model on
-    this host" for a call that never goes there, on the one page whose job is being right about
-    where a client's material goes. Asserted through the resolver, not against the table.
+    Both halves matter and they fail differently. A tool that made a model call and declared
+    `Reach.NOTHING` would under-report on the page whose job is being right about where a
+    client's material goes; a tool that declared an *ungated* reach - which this one did for
+    one commit, honestly, while `skills_service` built `AsyncAnthropic` directly - would tell
+    an auditor that a sensitive engagement reaches Anthropic when it no longer does.
+
+    Asserted through the resolver rather than against the table, and in both directions:
+    contained on a project without the grant, hosted on one with it.
     """
     from agents.egress import is_gated_by_grant, resolve_egress
     from api.services.deployment_modes import granted_to
@@ -317,9 +321,10 @@ def test_the_tool_declares_the_hosted_call_it_makes_on_every_mode():
     standard = resolve_egress("SkillProposalTool", granted_to("standard"))
     sensitive = resolve_egress("SkillProposalTool", granted_to("sensitive"))
 
-    assert standard == sensitive
-    assert sensitive.leaves_deployment
-    assert not is_gated_by_grant("SkillProposalTool")
+    assert standard != sensitive
+    assert standard.leaves_deployment
+    assert not sensitive.leaves_deployment
+    assert is_gated_by_grant("SkillProposalTool")
 
 
 # ── The instruction ───────────────────────────────────────────────────────────────────────

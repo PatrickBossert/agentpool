@@ -20,12 +20,15 @@ The duplicate half of the file stands on `_fake_haiku` below. Read its docstring
 trusting anything here: the comparison is a model judgement, so the stub has to stand in for
 one, and a stub that answered a constant would make half these tests vacuous.
 """
+import asyncio
 import json
+import time
 import types
 
 import pytest
 
 from api.config import get_settings
+from api.services import llm_client as _llm_client
 from api.services.run_service import _fetch_skill_notes, _SNAKE_TO_DISPLAY
 from api.services.skills_service import propose_skill
 
@@ -75,7 +78,7 @@ def _isolated_system_db(tmp_path, monkeypatch):
 def _fake_haiku(monkeypatch):
     """Stand in for the comparator's model call, and answer by meaning rather than by text.
 
-    Autouse, so no test in this file can reach the real API - `propose_skill` now asks Haiku
+    Autouse, so no test in this file can reach a provider - `propose_skill` asks a model
     whether a proposal restates a rule already held.
 
     The stub answers from `_MEANINGS`, not from the wording, which is the only way an offline
@@ -87,26 +90,31 @@ def _fake_haiku(monkeypatch):
     It reads the ids and descriptions out of the request the production code actually built,
     so a comparison that stopped sending the candidates would stop matching here too.
 
-    Yields the list of requests made, for the test that asserts what was asked. Each recorded
-    request carries the client's own construction arguments under `_client_kwargs`, so the
-    budget the call is made under is assertable alongside its content.
+    **Substituted at `project_completion`, not at a provider client.** The comparison is routed
+    by the project now, so the provider is whatever that project's mode resolves to and a stub
+    of one client class would be blind to the other. That leaves the *routing* unexercised by
+    every test in this half of the file, deliberately: routing is asserted at the bottom of
+    this file against the real `project_completion` and a fake transport, where a wrong wire
+    format is visible. A stub here that stood in for the router would have hidden it.
+
+    Yields the list of calls made - `(slug, tier, kwargs)` - so the tests below can assert what
+    was asked, of which model tier, and on whose behalf.
     """
     calls: list[dict] = []
 
-    def _client(**client_kwargs):
-        async def _create(**kwargs):
-            calls.append({**kwargs, "_client_kwargs": client_kwargs})
-            payload = json.loads(kwargs["messages"][0]["content"])
-            wanted = _meaning(payload["proposed"])
-            match = next(
-                (h["id"] for h in payload["held"] if _meaning(h["description"]) == wanted), None
-            )
-            body = json.dumps({"match_id": match, "reason": "stub"})
-            return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
+    async def _completion(slug, tier, messages, *, system=None, max_tokens=1024):
+        calls.append({"slug": slug, "tier": tier, "messages": messages,
+                      "system": system, "max_tokens": max_tokens})
+        payload = json.loads(messages[0]["content"])
+        wanted = _meaning(payload["proposed"])
+        match = next(
+            (h["id"] for h in payload["held"] if _meaning(h["description"]) == wanted), None
+        )
+        return json.dumps({"match_id": match, "reason": "stub"})
 
-        return types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
-
-    monkeypatch.setattr("api.services.skills_service.AsyncAnthropic", _client)
+    monkeypatch.setattr(
+        "api.services.llm_client.project_completion", _completion
+    )
     return calls
 
 
@@ -424,13 +432,10 @@ async def test_a_comparison_the_model_cannot_answer_creates_a_row_rather_than_fa
     """
     await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
 
-    async def _explode(**_):
+    async def _explode(*_a, **_k):
         raise RuntimeError("no route to the model")
 
-    monkeypatch.setattr(
-        "api.services.skills_service.AsyncAnthropic",
-        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_explode)),
-    )
+    monkeypatch.setattr("api.services.llm_client.project_completion", _explode)
     second = await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
 
     assert second["action"] == "created"
@@ -452,14 +457,10 @@ async def test_an_id_the_model_was_never_offered_is_refused(monkeypatch):
     stranger = await propose_skill(OTHER_AGENT, DIFFERENT_RULE, "p0", "SC-001")
     first = await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
 
-    async def _hallucinate(**_):
-        body = json.dumps({"match_id": stranger["skill_id"], "reason": "stub"})
-        return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
+    async def _hallucinate(*_a, **_k):
+        return json.dumps({"match_id": stranger["skill_id"], "reason": "stub"})
 
-    monkeypatch.setattr(
-        "api.services.skills_service.AsyncAnthropic",
-        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_hallucinate)),
-    )
+    monkeypatch.setattr("api.services.llm_client.project_completion", _hallucinate)
     second = await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
 
     assert second["action"] == "created"
@@ -529,14 +530,10 @@ async def test_a_reply_wrapped_in_a_code_fence_is_still_understood(monkeypatch):
     """
     first = await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
 
-    async def _fenced(**_):
-        body = '```json\n' + json.dumps({"match_id": first["skill_id"]}) + '\n```'
-        return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
+    async def _fenced(*_a, **_k):
+        return '```json\n' + json.dumps({"match_id": first["skill_id"]}) + '\n```'
 
-    monkeypatch.setattr(
-        "api.services.skills_service.AsyncAnthropic",
-        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_fenced)),
-    )
+    monkeypatch.setattr("api.services.llm_client.project_completion", _fenced)
     second = await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
 
     assert second["action"] == "incremented"
@@ -550,14 +547,10 @@ async def test_an_id_the_model_wrote_as_a_string_is_understood(monkeypatch):
     """
     first = await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
 
-    async def _quoted(**_):
-        body = json.dumps({"match_id": str(first["skill_id"])})
-        return types.SimpleNamespace(content=[types.SimpleNamespace(text=body)])
+    async def _quoted(*_a, **_k):
+        return json.dumps({"match_id": str(first["skill_id"])})
 
-    monkeypatch.setattr(
-        "api.services.skills_service.AsyncAnthropic",
-        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_quoted)),
-    )
+    monkeypatch.setattr("api.services.llm_client.project_completion", _quoted)
     assert (await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031"))["action"] == "incremented"
 
 
@@ -567,18 +560,17 @@ async def test_a_comparison_that_fails_says_so_in_the_log(monkeypatch, caplog):
     every later layer - `occurrences` stays 1 either way. The log line is the only thing that
     tells them apart, so it is asserted rather than assumed.
 
-    The reply here is a well-formed response object with no content block, which is a shape
-    the stub normalises away everywhere else in this file.
+    The reply here is an empty string, which is what a model that answered nothing at all
+    leaves this function holding. The response *shapes* a provider can produce - no content
+    block, an unreadable body - now belong to `project_completion`, which raises for them; both
+    arrive at the same `except` and the same line.
     """
     await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
 
-    async def _empty(**_):
-        return types.SimpleNamespace(content=[])
+    async def _empty(*_a, **_k):
+        return ""
 
-    monkeypatch.setattr(
-        "api.services.skills_service.AsyncAnthropic",
-        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_empty)),
-    )
+    monkeypatch.setattr("api.services.llm_client.project_completion", _empty)
     with caplog.at_level("WARNING", logger="api.services.skills_service"):
         second = await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
 
@@ -590,22 +582,41 @@ async def test_a_comparison_that_fails_says_so_in_the_log(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
-async def test_the_comparison_carries_its_own_time_budget(_fake_haiku):
-    """The SDK's defaults are sized for an interactive caller: anthropic 0.120.0 waits 600
-    seconds and retries twice, which is half an hour inside a crew run for a nice-to-have
-    attached to a revision that is already finished. Asserted as *sent*, on the request and on
-    the client that made it.
+async def test_the_comparison_carries_its_own_time_budget(monkeypatch, caplog):
+    """Neither client behind `project_completion` is sized for this caller, and the seam
+    imposes no deadline of its own: the Anthropic SDK waits 600 seconds and retries twice, and
+    the shared local client waits 120. This path runs inside a crew run, attached to a revision
+    that is already finished.
+
+    The budget used to be two keywords handed to a provider client, and it was asserted as
+    *sent*. It cannot be any more - the whole point of the seam is that this code does not know
+    which provider it is talking to - so it is `asyncio.wait_for` around the call, and it is
+    asserted as **behaviour**: a model that never answers resolves to "not a duplicate", says
+    so in the log, and does not hold the run. Shrinking the constant for the test is what makes
+    the assertion about the mechanism rather than about twenty seconds elapsing.
     """
-    from api.services.skills_service import _COMPARISON_RETRIES, _COMPARISON_TIMEOUT_SECONDS
+    from api.services import skills_service
 
+    real_budget = skills_service._COMPARISON_TIMEOUT_SECONDS
     await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
-    await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
 
-    assert len(_fake_haiku) == 1
-    assert _fake_haiku[0]["timeout"] == _COMPARISON_TIMEOUT_SECONDS
-    assert _fake_haiku[0]["_client_kwargs"]["max_retries"] == _COMPARISON_RETRIES
-    # A budget, not a formality: the worst case has to be a fraction of the SDK's 600s x 3.
-    assert _COMPARISON_TIMEOUT_SECONDS * (_COMPARISON_RETRIES + 1) <= 60
+    async def _never_answers(*_a, **_k):
+        await asyncio.sleep(30)
+        return json.dumps({"match_id": None})
+
+    monkeypatch.setattr(skills_service, "_COMPARISON_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("api.services.llm_client.project_completion", _never_answers)
+
+    started = time.monotonic()
+    with caplog.at_level("WARNING", logger="api.services.skills_service"):
+        second = await propose_skill(AGENT, RULE_REWORDED_B, "p2", "SC-031")
+    elapsed = time.monotonic() - started
+
+    assert second["action"] == "created", "an unanswered comparison must not lose the proposal"
+    assert elapsed < 5, "the comparison was not bounded by its own budget"
+    assert any("duplicate comparison failed" in r.message for r in caplog.records)
+    # A budget, not a formality: the real one has to be a fraction of the SDK's 600s x 3.
+    assert 0 < real_budget <= 60
 
 
 @pytest.mark.asyncio
@@ -637,18 +648,13 @@ async def test_no_database_connection_is_held_across_the_comparison(monkeypatch)
         finally:
             open_now["count"] -= 1
 
-    async def _watching(**_):
+    async def _watching(*_a, **_k):
         depth_at_comparison.append(open_now["count"])
-        return types.SimpleNamespace(
-            content=[types.SimpleNamespace(text=json.dumps({"match_id": None}))]
-        )
+        return json.dumps({"match_id": None})
 
     await propose_skill(AGENT, RULE_REWORDED_A, "p1", "SC-014")
     monkeypatch.setattr(db, "get_system_connection", _counting)
-    monkeypatch.setattr(
-        "api.services.skills_service.AsyncAnthropic",
-        lambda **_: types.SimpleNamespace(messages=types.SimpleNamespace(create=_watching)),
-    )
+    monkeypatch.setattr("api.services.llm_client.project_completion", _watching)
     await propose_skill(AGENT, DIFFERENT_RULE, "p2", "SC-031")
 
     assert depth_at_comparison == [0]
@@ -691,3 +697,175 @@ async def test_recording_an_occurrence_against_a_skill_that_has_gone_counts_noth
             orphans = (await cur.fetchone())["n"]
     assert counted == 0
     assert orphans == 0
+
+
+# ── Where the comparison actually goes ────────────────────────────────────────
+#
+# Every test above stubs `project_completion`, which is right for asking what the comparator
+# decides and blind by construction to where it sends the question. These four ask the second
+# thing, and they ask it of the **request that goes out** rather than of a swapped client
+# class: CLAUDE.md records that "route it locally" is two different wire formats, that a test
+# swapping the client cannot see a wrong one, and that `local_fast_url` already ends in `/v1`
+# so an Anthropic-shaped call becomes `/v1/v1/messages` against an Ollama that serves neither.
+#
+# The sensitive half is the load-bearing one. The standard half is its control: without it, a
+# comparator that had simply stopped calling any model would satisfy "nothing reached
+# Anthropic" perfectly.
+
+_REAL_PROJECT_COMPLETION = _llm_client.project_completion
+
+
+async def _project(slug: str, mode: str, config: dict) -> None:
+    from api.database import get_connection, insert_project
+
+    async with get_connection(slug) as conn:
+        await insert_project(
+            conn, slug=slug, llm_mode=mode, sector="rail", config_json=json.dumps(config)
+        )
+
+
+def _transports(monkeypatch):
+    """Real clients over fake transports, for both providers at once.
+
+    Both, in every test, because the assertion that matters is a *comparison*: "the local one
+    was used" says nothing on its own if the hosted one was used as well, and a test that only
+    installed the transport it expected would let the other call go to the real API.
+    """
+    import httpx
+    from anthropic import AsyncAnthropic
+    from api.services import http_clients
+
+    local: list[httpx.Request] = []
+    hosted: list[httpx.Request] = []
+
+    def _local_handler(request: httpx.Request) -> httpx.Response:
+        local.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {
+            "role": "assistant", "content": json.dumps({"match_id": None, "reason": "local"})}}]})
+
+    def _hosted_handler(request: httpx.Request) -> httpx.Response:
+        hosted.append(request)
+        return httpx.Response(200, json={
+            "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-haiku-4-5",
+            "content": [{"type": "text",
+                         "text": json.dumps({"match_id": None, "reason": "hosted"})}],
+            "stop_reason": "end_turn", "stop_sequence": None,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        })
+
+    monkeypatch.setattr(
+        http_clients, "_local_llm_client",
+        httpx.AsyncClient(transport=httpx.MockTransport(_local_handler)),
+    )
+    monkeypatch.setattr(
+        http_clients, "_anthropic_client",
+        AsyncAnthropic(
+            api_key="test-key",
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_hosted_handler)),
+        ),
+    )
+    monkeypatch.setattr(
+        "api.services.llm_client.project_completion", _REAL_PROJECT_COMPLETION
+    )
+    return local, hosted
+
+
+@pytest.mark.asyncio
+async def test_a_sensitive_project_compares_on_its_own_model_and_reaches_no_provider(
+    monkeypatch, tmp_path
+):
+    """The load-bearing half. Two proposals, so the second has a candidate to compare against -
+    a single one short-circuits on an empty candidate list and reaches no model at all, which
+    would pass this test while proving nothing.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    slug = "skills-route-sensitive"
+    await _project(slug, "sensitive", {
+        "local_fast_model": "gemma4:fast", "local_fast_url": "http://localhost:11999/v1",
+    })
+
+    local, hosted = _transports(monkeypatch)
+    await propose_skill(AGENT, RULE_REWORDED_A, slug, "SC-014")
+    second = await propose_skill(AGENT, RULE_REWORDED_B, slug, "SC-031")
+
+    assert hosted == [], "a sensitive project's proposed rule reached Anthropic"
+    assert len(local) == 1, "the comparison did not reach this project's own model"
+    assert str(local[0].url) == "http://localhost:11999/v1/chat/completions"
+    body = json.loads(local[0].content)
+    assert body["model"] == "gemma4:fast"
+    # The rule itself travels, which is the whole reason this had to move: it is the agent's
+    # own generalisation about work done on this engagement.
+    assert RULE_REWORDED_B in json.dumps(body)
+    assert second["action"] == "created"
+
+
+@pytest.mark.asyncio
+async def test_a_standard_project_still_compares_on_the_hosted_model(monkeypatch, tmp_path):
+    """The control. A comparator that had stopped calling any model would satisfy the test
+    above perfectly, and the recurrence signal would be off with nothing to show for it.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    slug = "skills-route-standard"
+    await _project(slug, "standard", {})
+
+    local, hosted = _transports(monkeypatch)
+    await propose_skill(AGENT, RULE_REWORDED_A, slug, "SC-014")
+    second = await propose_skill(AGENT, RULE_REWORDED_B, slug, "SC-031")
+
+    assert local == [], "a standard project's comparison went to a local model"
+    assert len(hosted) == 1
+    assert str(hosted[0].url) == "https://api.anthropic.com/v1/messages"
+    assert second["action"] == "created"
+
+
+@pytest.mark.asyncio
+async def test_a_project_with_no_local_model_records_the_proposal_and_sends_nothing(
+    monkeypatch, tmp_path, caplog
+):
+    """`LocalModelUnavailable` - the standing state of a sensitive project whose `deep` tier is
+    configured and whose `fast` tier is not, which runs crews and cannot compare.
+
+    Asserted as that specific failure rather than a generic one, and on all three things it
+    must do: the run is not failed, nothing is sent anywhere, and the lesson is still recorded.
+    Degrading to a hosted retry would be the one wrong answer available here.
+    """
+    from agents.model_registry import LocalModelUnavailable
+
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    slug = "skills-route-unconfigured"
+    await _project(slug, "sensitive", {"local_fast_model": "", "local_fast_url": ""})
+
+    local, hosted = _transports(monkeypatch)
+    with pytest.raises(LocalModelUnavailable):
+        await _REAL_PROJECT_COMPLETION(slug, "fast", [{"role": "user", "content": "probe"}])
+
+    await propose_skill(AGENT, RULE_REWORDED_A, slug, "SC-014")
+    with caplog.at_level("WARNING", logger="api.services.skills_service"):
+        second = await propose_skill(AGENT, RULE_REWORDED_B, slug, "SC-031")
+
+    assert local == [] and hosted == []
+    assert second["action"] == "created", "the lesson was thrown away to protect a deduplication"
+    assert any("duplicate comparison failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_proposal_with_no_project_is_refused_rather_than_routed(monkeypatch):
+    """There is no such thing as a proposal with no engagement, and a blank slug must not be
+    allowed to become one.
+
+    `project_completion` raises for a blank slug for exactly this reason, but by then the
+    refusal is three layers from the caller and inside an `except` that resolves everything to
+    "not a duplicate" - so a forgotten slug would have quietly created rows nobody compared.
+    Refused at the door instead. `SkillProposalTool` swallows it, so the run is still safe.
+    """
+    local, hosted = _transports(monkeypatch)
+
+    for missing in ("", "   ", None):
+        with pytest.raises(ValueError, match="requires the project"):
+            await propose_skill(AGENT, RULE, missing, "SC-014")
+
+    assert local == [] and hosted == []
+    assert await _count_skills(AGENT) == 0

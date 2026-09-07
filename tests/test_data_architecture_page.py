@@ -205,51 +205,6 @@ async def test_inference_is_in_the_table_although_no_tool_carries_it(client):
     assert payload["inference"]["gated_by_grant"] is True
 
 
-def _anthropic_only_via_an_ungated_tool(payload) -> None:
-    """On a project whose inference is local, an agent may name Anthropic for one reason only.
-
-    This assertion used to be `"Anthropic's API" not in labels`, and it was a **proxy** for the
-    property both callers are really about: that the per-agent summary is assembled from what
-    the project resolves to rather than from what its mode declares. The proxy held for exactly
-    as long as inference was the only route to Anthropic. `SkillProposalTool` is a second one -
-    `propose_skill` asks Haiku whether a proposed rule restates one the agent already holds,
-    through `skills_service`, which builds `AsyncAnthropic` directly and consults no mode - so
-    every agent holding it now names Anthropic on a contained project, correctly.
-
-    Stated as an equality over agents rather than relaxed to "some Anthropic is allowed": an
-    agent reports Anthropic **exactly when** it holds a tool declared `UNGATED_INFERENCE`. The
-    regression the two callers were guarding against - a graph assembled from the mode - puts
-    Anthropic on *every* agent, including PAM, who holds no such tool, so it still fails here.
-    A third ungated path added without a declaration fails here too.
-    """
-    from agents.egress import TOOL_EGRESS, Reach
-
-    ungated = {
-        tool for tool, egress in TOOL_EGRESS.items()
-        if egress.reaches is Reach.UNGATED_INFERENCE
-    }
-    assert ungated, "no tool reaches hosted inference ungated - this guard proves nothing"
-
-    naming_anthropic = {
-        agent["agent_id"] for agent in payload["agents"]
-        if any(d["label"] == "Anthropic's API" for d in agent["destinations"])
-    }
-    holding_ungated = {
-        agent["agent_id"] for agent in payload["agents"]
-        if ungated & set(agent["tools"])
-    }
-    assert naming_anthropic == holding_ungated, (
-        f"the per-agent summary names Anthropic for agents that hold no ungated tool "
-        f"({sorted(naming_anthropic - holding_ungated)}) or omits it for agents that do "
-        f"({sorted(holding_ungated - naming_anthropic)}) - the graph is assembled from the "
-        f"mode rather than from what this project resolves to, or a reach is undeclared"
-    )
-    assert holding_ungated, (
-        "no agent holds an ungated hosted-inference tool on this project - the case this "
-        "assertion was widened for no longer exists, so narrow it back"
-    )
-
-
 @pytest.mark.asyncio
 async def test_a_sensitive_project_moves_the_vector_store_and_inference_and_nothing_else(client):
     """The uncomfortable half of the egress finding, asserted as a difference.
@@ -281,7 +236,11 @@ async def test_a_sensitive_project_moves_the_vector_store_and_inference_and_noth
         for row in sensitive["tools"]
         if row["destination"] != by_tool[row["tool"]]["destination"]
     }
-    assert moved == {"ChromaQueryTool", "DocumentIngestionTool"}
+    # Three, not two. `SkillProposalTool` joined them: it asks a model whether a proposed rule
+    # restates one the agent already holds, and that question is routed by the project through
+    # `project_completion` like every other non-crew call. It reached hosted Haiku regardless of
+    # mode for one commit, and the row this test asserts is what a reviewer read to notice.
+    assert moved == {"ChromaQueryTool", "DocumentIngestionTool", "SkillProposalTool"}
 
     # The uncomfortable half, and the reason the page names it: a sensitive project still
     # reaches out through the search and fetch tools, neither of which consults `llm_mode`.
@@ -306,8 +265,8 @@ async def test_a_sensitive_project_moves_the_vector_store_and_inference_and_noth
         d["label"] for agent in sensitive["agents"] for d in agent["destinations"]
     }
     assert "the local model on this host" in labels
+    assert "Anthropic's API" not in labels
     assert "Chroma Cloud" not in " | ".join(labels)
-    _anthropic_only_via_an_ungated_tool(sensitive)
 
 
 @pytest.mark.asyncio
@@ -361,8 +320,11 @@ async def test_a_project_forcing_local_inference_reports_local_models_and_cloud_
 
     labels = {d["label"] for agent in forced["agents"] for d in agent["destinations"]}
     assert "the local model on this host" in labels
+    assert "Anthropic's API" not in labels, (
+        "the per-agent summary still reports hosted inference - the graph is assembled from "
+        "the mode rather than from what this project resolves to"
+    )
     assert "Chroma Cloud" in " | ".join(labels)
-    _anthropic_only_via_an_ungated_tool(forced)
 
     # What the page says *why* with. The mode is `standard` and the model calls are local, and
     # an auditor reading those two facts side by side needs the sentence that reconciles them.

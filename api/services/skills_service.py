@@ -1,47 +1,71 @@
 # api/services/skills_service.py
 """LLM helpers for the agent skills library.
 
-The one remaining path that is always hosted, and deliberately so - see the routing table in
-CLAUDE.md. The skills library is global across engagements, none of the endpoints that reach
-these helpers carries a slug, and there is therefore no llm_mode to route by. The text is
-reviewer feedback about an agent's behaviour rather than client material, but it is still
-feedback typed during a sensitive engagement: if that stops being acceptable, the fix is a
-project-scoped skills library, not a default slug. Everything else goes through
-api/services/llm_client.py.
+**Two doors, and they route differently. Which one a helper is on is decided by whether it has
+a project, and there is no default:**
+
+| Door | Helpers | Model |
+|------|---------|-------|
+| The global library, reached from the admin skills page | `check_specificity`, `extract_skill`, `extract_skills_many` | hosted Haiku, on every deployment |
+| An agent's proposal, made on one engagement | `propose_skill` -> `find_duplicate_skill` | whatever that project's mode binds to the `fast` tier |
+
+The first is the documented always-hosted exception, and it survives because both halves of
+its justification still hold there: the library is global across engagements, those endpoints
+carry no slug, and there is therefore no `llm_mode` to route by.
+
+**Neither half held for the second door, which is why it moved.** `propose_skill` takes the
+slug - it is the provenance a reviewer sorts the queue on - so a mode was available to route
+by all along; and the text is no longer reviewer feedback about an agent's behaviour but the
+agent's own generalisation from a correction made on a named engagement, which is free to
+name the client, its people, or its systems in the course of stating the rule. The exemption
+was written about the door rather than about the data, and it outlived the data changing.
+
+So `find_duplicate_skill` goes through `project_completion` in `api/services/llm_client.py`,
+like every other non-crew call on this codebase. It takes the slug as its first argument, not
+as a keyword with a default: CLAUDE.md's rule is that a forgotten slug must never become a
+silent hosted call, and an optional parameter falling back to hosted is exactly that. Never
+build a provider client here for a project's material.
 
 `propose_skill` is the write door onto the skills queue, used by an agent that has just
-revised its work and wants the general rule behind the correction remembered. It asks Haiku
-one question - "is this the same rule as one we already hold?" - and **everything else about
-it is deterministic**: the naming, the insert, the increment. The model is asked for a
-judgement, never for a side effect, and a model that is unreachable, slow, or incoherent
-degrades to "not a duplicate" rather than failing the run the proposal is attached to.
-
-The proposal's text therefore reaches hosted Haiku, on the same deliberate exception this
-file's other helpers run on.
+revised its work and wants the general rule behind the correction remembered. It asks the
+project's model one question - "is this the same rule as one we already hold?" - and
+**everything else about it is deterministic**: the naming, the insert, the increment. The
+model is asked for a judgement, never for a side effect, and a model that is unreachable,
+unconfigured, slow, or incoherent degrades to "not a duplicate" rather than failing the run
+the proposal is attached to.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
 from anthropic import AsyncAnthropic
 from api.config import get_settings
+from api.services import llm_client
 
 log = logging.getLogger(__name__)
 
 _MODEL = "claude-haiku-4-5-20251001"
 
-# The comparison's own budget, in place of the SDK's interactive defaults. See
-# `find_duplicate_skill`; worst case is two attempts of twenty seconds rather than three of
-# ten minutes, on a path that runs inside a crew run.
+# The comparison's own budget, imposed here because `project_completion` has none of its own
+# and both of the clients behind it are sized for a caller that is waiting: the Anthropic SDK
+# defaults to 600 seconds and two retries, and the shared local client to 120. This path runs
+# inside a crew run, attached to a revision that is already finished, so twenty seconds is the
+# whole of it - `asyncio.wait_for`, the same way the elaboration press bounds its own call.
 _COMPARISON_TIMEOUT_SECONDS = 20.0
-_COMPARISON_RETRIES = 1
+
+# A judgement about two short sentences. `deep` would put the comparison on the same model the
+# agent's own work runs on, which is a great deal of machinery for "do these say the same
+# thing", and on a sensitive project it would contend with the agent for a loaded local model -
+# see docs/runbook-local-models.md on OLLAMA_MAX_LOADED_MODELS.
+_COMPARISON_TIER = "fast"
 
 
 async def propose_skill(
     agent_name: str,
     description: str,
-    source_project: str | None,
+    source_project: str,
     source_ref: str | None,
     *,
     name: str | None = None,
@@ -66,12 +90,29 @@ async def propose_skill(
     Both the approved skills and the pending suggestions are candidates: the second occurrence
     of a rule nobody has approved yet is exactly what the queue needs to sort on.
 
+    `source_project` is the engagement the correction was made on. It is provenance a reviewer
+    sorts the queue on **and** the slug the comparison is routed by, so it is required and
+    raises when blank rather than being allowed to mean "no project". A proposal whose slug
+    went missing has no mode to honour, and the two things it could quietly become - a hosted
+    comparison, or a hosted-by-default fallback - are exactly what CLAUDE.md's seam rule
+    forbids. Raising is safe here in the way it would not be deeper down: the only production
+    caller is `SkillProposalTool`, whose whole contract is that nothing it does can fail the
+    run.
+
     Returns `{"action", "skill_id", "status", "occurrences", "name", "agent"}`, where `action`
     is `"created"` or `"incremented"` - which is why this returns what happened rather than an
     id.
     """
     from api.database import get_system_connection, insert_skill, record_skill_occurrence
 
+    slug = (source_project or "").strip()
+    if not slug:
+        raise ValueError(
+            "propose_skill requires the project the correction was made on: the rule the agent "
+            "wrote is that engagement's material, and which model may compare it is a property "
+            "of the project. Defaulting would route a sensitive project's content to a hosted "
+            "model."
+        )
     role = _role_name_for(agent_name)
     skill_name = (name or "").strip() or _derive_skill_name(description)
     # Read, compare, write - and **no connection is held across the comparison**, which is a
@@ -86,7 +127,7 @@ async def propose_skill(
     async with get_system_connection() as conn:
         candidates = await _rules_already_held(conn, role)
 
-    match_id = await find_duplicate_skill(description, candidates)
+    match_id = await find_duplicate_skill(slug, description, candidates)
 
     async with get_system_connection() as conn:
         if match_id is not None:
@@ -181,7 +222,9 @@ async def _rules_already_held(conn, role: str) -> list[dict]:
     return held
 
 
-async def find_duplicate_skill(description: str, candidates: list[dict]) -> int | None:
+async def find_duplicate_skill(
+    slug: str, description: str, candidates: list[dict]
+) -> int | None:
     """Return the id of the candidate stating the same rule as `description`, or None.
 
     By meaning, not by text. The two ways of saying "the welcome carries privacy, the framing
@@ -189,60 +232,70 @@ async def find_duplicate_skill(description: str, candidates: list[dict]) -> int 
     at which point the second occurrence is filed as a fresh guess and the evidence the queue
     sorts on never accumulates.
 
+    **Routed by the project, on `slug`.** The rule being compared was written by an agent about
+    work it did on that engagement, so it is that engagement's material and goes wherever that
+    engagement's material is allowed to go - the local model on a sensitive project, hosted
+    Haiku on a standard one. `slug` is the first positional argument and there is no default:
+    the module docstring says why an optional one would be the defect rather than the
+    convenience.
+
     Both directions of error are guarded, and they are not symmetric. Calling two distinct
     rules the same **loses a rule**, which is worse than a duplicate row a reviewer can see and
     reject, so the prompt insists on same *behaviour* rather than same subject, and every
-    failure - no key, a refusal, unparseable JSON, an id that was never offered - resolves to
-    None and a new row.
+    failure - no key, a refusal, unparseable JSON, an id that was never offered, a project with
+    no model configured for this tier, a model that will not answer inside the budget -
+    resolves to None and a new row.
+
+    `LocalModelUnavailable` is deliberately among those. It is the standing state of a
+    sensitive project whose `deep` tier is configured and whose `fast` tier is not: its crews
+    run and its comparisons cannot be made. Refusing the proposal outright would throw away the
+    lesson to protect a deduplication; degrading records it, un-deduplicated, and says so in the
+    log every time. **Nothing here ever answers by sending the text somewhere the project's
+    grants refuse** - that is the one failure this must not have, and it is why the degradation
+    is to "not a duplicate" rather than to a hosted retry.
     """
     if not candidates:
         return None
     offered = {int(c["id"]): c for c in candidates}
     try:
-        # `max_retries` and `timeout` both named, because the SDK's defaults are sized for an
-        # interactive caller and this one is inside a crew run: anthropic 0.120.0 defaults to
-        # a 600s timeout and 2 retries, which is half an hour added to a run for a
-        # nice-to-have attached to a revision that is already finished. The comparison is a
-        # few hundred tokens to Haiku; if it has not answered in twenty seconds it is not
-        # going to, and "not a duplicate" is a defined answer this path is built to take.
-        client = AsyncAnthropic(
-            api_key=get_settings().anthropic_api_key, max_retries=_COMPARISON_RETRIES
-        )
-        resp = await client.messages.create(
-            model=_MODEL,
-            max_tokens=256,
-            timeout=_COMPARISON_TIMEOUT_SECONDS,
-            system=(
-                "You compare a proposed behaviour rule for an AI agent against the rules that "
-                "agent is already held to, and decide whether the proposal states one of them "
-                "again in different words.\n\n"
-                "Two rules are the same when following either one produces the same behaviour. "
-                "Wording, length, and word choice are irrelevant - a rule restated with no "
-                "shared vocabulary is still the same rule.\n\n"
-                "Two rules about the same subject are NOT the same rule unless they instruct "
-                "the same behaviour. 'The welcome carries privacy' and 'the welcome names the "
-                "interviewer' are both about the welcome and are different rules. When in "
-                "doubt, answer null: a duplicate a reviewer can see costs less than two "
-                "distinct rules merged into one.\n\n"
-                "The input is JSON: `proposed` is the new rule, `held` is the list of rules "
-                "already held, each with an `id`.\n\n"
-                "Respond with valid JSON only, no other text:\n"
-                '{"match_id": <the id of the rule the proposal restates, or null>, '
-                '"reason": "one sentence"}'
+        reply = await asyncio.wait_for(
+            llm_client.project_completion(
+                slug,
+                _COMPARISON_TIER,
+                messages=[{
+                    "role": "user",
+                    "content": json.dumps({
+                        "proposed": description,
+                        "held": [
+                            {"id": int(c["id"]), "name": c.get("name"),
+                             "description": c.get("description")}
+                            for c in candidates
+                        ],
+                    }, indent=2),
+                }],
+                max_tokens=256,
+                system=(
+                    "You compare a proposed behaviour rule for an AI agent against the rules that "
+                    "agent is already held to, and decide whether the proposal states one of them "
+                    "again in different words.\n\n"
+                    "Two rules are the same when following either one produces the same behaviour. "
+                    "Wording, length, and word choice are irrelevant - a rule restated with no "
+                    "shared vocabulary is still the same rule.\n\n"
+                    "Two rules about the same subject are NOT the same rule unless they instruct "
+                    "the same behaviour. 'The welcome carries privacy' and 'the welcome names the "
+                    "interviewer' are both about the welcome and are different rules. When in "
+                    "doubt, answer null: a duplicate a reviewer can see costs less than two "
+                    "distinct rules merged into one.\n\n"
+                    "The input is JSON: `proposed` is the new rule, `held` is the list of rules "
+                    "already held, each with an `id`.\n\n"
+                    "Respond with valid JSON only, no other text:\n"
+                    '{"match_id": <the id of the rule the proposal restates, or null>, '
+                    '"reason": "one sentence"}'
+                ),
             ),
-            messages=[{
-                "role": "user",
-                "content": json.dumps({
-                    "proposed": description,
-                    "held": [
-                        {"id": int(c["id"]), "name": c.get("name"),
-                         "description": c.get("description")}
-                        for c in candidates
-                    ],
-                }, indent=2),
-            }],
+            timeout=_COMPARISON_TIMEOUT_SECONDS,
         )
-        answer = json.loads(_strip_code_fences(resp.content[0].text.strip()))
+        answer = json.loads(_strip_code_fences(reply.strip()))
         match_id = answer.get("match_id")
     except Exception:
         # Loud, and still "not a duplicate". The direction is right - a comparison must never

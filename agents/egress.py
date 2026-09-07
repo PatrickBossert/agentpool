@@ -107,13 +107,6 @@ class Reach(Enum):
     WEB_SEARCH = "a web search service"
     PUBLIC_WEB = "any web address the agent names"
     INFERENCE = "a language model"
-    # Hosted inference reached **without** asking whether the project is granted any, which is
-    # why it cannot be `INFERENCE`: that reach is gated on `HOSTED_INFERENCE` by `_REACH_GRANT`,
-    # so declaring it here would have the resolver answer "the local model on this host" for a
-    # sensitive engagement about a call that goes to Anthropic on every engagement. One member
-    # rather than a note beside `INFERENCE`, because the two resolve differently and the whole
-    # point of this module is that the difference is read rather than remembered.
-    UNGATED_INFERENCE = "a hosted language model, whatever the project's mode"
     # The one reach where the request is not made by this deployment at all. See
     # `PARTICIPANT_IMAGE_EGRESS` below for why that difference is worth a member of its own
     # rather than being folded into `PUBLIC_WEB`.
@@ -245,23 +238,26 @@ TOOL_EGRESS: dict[str, Egress] = {
             "user-agent. There is no allowlist, no mode check, and no record of the request"
         ),
     ),
-    # The skills library, reached from inside a crew for the first time. CLAUDE.md has recorded
-    # it as the one remaining always-hosted inference path since it existed; what is new is that
-    # an **agent** can now reach it, rather than only an administrator on the skills page, so it
-    # appears in this table and on the privacy page instead of in prose alone.
+    # --- Reaches a model, and moves with the project like every other prompt does -------------
     #
-    # The reach is `UNGATED_INFERENCE` and not `INFERENCE` deliberately: `propose_skill` asks
-    # Haiku whether the rule restates one the agent already holds, through
-    # `api/services/skills_service.py`, which builds `AsyncAnthropic` directly and consults no
-    # mode. On a sensitive engagement this is text an agent composed about that engagement's
-    # work going to Anthropic while every other prompt it builds stays on the premises, and
-    # that is exactly the sentence this table exists to make somebody read.
+    # The only tool in this table whose reach is `INFERENCE`. Inference is otherwise the reach
+    # no tool has - every agent runs on a model whether or not it holds one - but this tool
+    # makes a *second* model call of its own, to ask whether the rule the agent proposed
+    # restates one it already holds, and a call nothing declared would be a call nobody could
+    # find.
+    #
+    # It was `UNGATED_INFERENCE` for one commit, because `skills_service` built `AsyncAnthropic`
+    # directly and asked nothing about the project. That was the honest declaration of what the
+    # code then did, and the row is worth remembering rather than tidying away: it was the
+    # declaration, not the code, that made somebody read the sentence and decide the exemption
+    # had stopped being true. `find_duplicate_skill` now goes through `project_completion`, so
+    # the reach is the ordinary gated one and the member with no members went with it.
     "SkillProposalTool": Egress(
-        reaches=Reach.UNGATED_INFERENCE,
+        reaches=Reach.INFERENCE,
         sends=(
             "the behaviour rule the agent wrote and the rules already suggested for it, so "
             "whatever of the client's work the agent chose to quote in stating that rule goes "
-            "with it. Nothing is asked about the project's mode before it does"
+            "with it - to the same place every other prompt on this project goes"
         ),
     ),
 }
@@ -331,12 +327,6 @@ _PARTICIPANT_IMAGE_HOST = Destination(
 )
 _TAVILY = Destination(label="Tavily's search API", leaves_deployment=True)
 _ANY_ADDRESS = Destination(label="any address the agent names", leaves_deployment=True)
-# Deliberately equal to `(Reach.INFERENCE, True)`'s destination rather than worded differently:
-# it is the same place, and `Destination` compares by value, so an agent that reaches Anthropic
-# by both routes on a standard project reports one destination and not two near-identical ones.
-# What differs between the two reaches is whether a grant moves it, and `_is_gated` derives that
-# from the two columns below rather than from a label.
-_ANTHROPIC = Destination(label="Anthropic's API", leaves_deployment=True)
 
 # Which egress grant moves each reach. A reach absent from this table is not moved by anything
 # the project is granted, and that is the finding rather than an omission: Tavily and the open
@@ -381,15 +371,12 @@ _DESTINATION: dict[tuple[Reach, bool], Destination] = {
     (Reach.VECTOR_STORE, False): Destination(
         label="the Chroma on this host", leaves_deployment=False
     ),
-    (Reach.INFERENCE, True): _ANTHROPIC,
+    (Reach.INFERENCE, True): Destination(
+        label="Anthropic's API", leaves_deployment=True
+    ),
     (Reach.INFERENCE, False): Destination(
         label="the local model on this host", leaves_deployment=False
     ),
-    # The same object in both columns, like Tavily and the open web: no grant stands between
-    # the skills library and Anthropic, so `_is_gated` derives `False` and the privacy page
-    # lists it among the destinations this project's settings do not move.
-    (Reach.UNGATED_INFERENCE, True): _ANTHROPIC,
-    (Reach.UNGATED_INFERENCE, False): _ANTHROPIC,
     (Reach.WEB_SEARCH, True): _TAVILY,
     (Reach.WEB_SEARCH, False): _TAVILY,
     (Reach.PUBLIC_WEB, True): _ANY_ADDRESS,
