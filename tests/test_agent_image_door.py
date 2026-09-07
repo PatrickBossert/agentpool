@@ -178,6 +178,16 @@ async def doors(tmp_path, monkeypatch, client):
 
 # ── What the upload stores, and where ───────────────────────────────────────────────────
 
+
+def stored_bytes_of(tmp_path, slug, agent_id, extension):
+    """The bytes actually on disk, so a served response can be compared against them.
+
+    Named rather than inlined because the assertion it feeds - "the URL resolves AND returns
+    what was stored" - is worth reading as one line at the call site.
+    """
+    return (tmp_path / "projects" / slug / "assets" / "agents" / f"{agent_id}{extension}").read_bytes()
+
+
 @pytest.mark.asyncio
 async def test_an_uploaded_portrait_is_stored_downscaled_under_a_same_origin_url(doors, tmp_path):
     """The three properties of a successful upload, and the middle one is the point of Task 4.
@@ -199,8 +209,22 @@ async def test_an_uploaded_portrait_is_stored_downscaled_under_a_same_origin_url
     assert r.status_code == 200, r.text
     body = r.json()
 
-    assert body["url"] == f"/api/projects/{SLUG_A}/agents/{AVERY}/image"
+    # **Fetched, not spelled.** This asserted `body["url"] == f"/api/projects/..."` - the same
+    # literal the handler produced, so it could not fail however wrong the address was. It was
+    # wrong: nothing serves `/api/projects/...` (only `/api/templates` and `/api/interviews`
+    # carry that prefix), so the portrait uploaded correctly, was served correctly at its real
+    # path, and rendered as a broken image in the browser. Found by uploading through the
+    # running server on 7 September, which is the one thing the test as written could not do.
+    #
+    # A URL is a promise that something answers. Asking whether it answers is the assertion;
+    # comparing it to the string that built it is a spell-check of the handler against itself.
     assert "://" not in body["url"], "the stored address must not reach off-site"
+    served = await doors["admin_a"].get(body["url"])
+    assert served.status_code == 200, (
+        f"the URL the door returned does not resolve: {body['url']!r} answered "
+        f"{served.status_code}"
+    )
+    assert served.content == stored_bytes_of(tmp_path, SLUG_A, AVERY, ".png")
     assert body["original_bytes"] == len(original)
     assert body["bytes"] < body["original_bytes"]
 

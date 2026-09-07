@@ -440,7 +440,14 @@ async def upload_agent_image(
     stored.write_bytes(prepared)
 
     return {
-        "url": f"/api/projects/{slug}/agents/{agent_id}/image",
+        # No `/api` prefix. This router is mounted at `/projects`, and CLAUDE.md records that
+        # only `/api/templates` and `/api/interviews` carry the prefix - so `/api/projects/...`
+        # is served by nothing and 404s in the browser, while the file itself sits correctly at
+        # the path below. Copied from `upload_branding_image`, which has the same defect and has
+        # never shown it: no deployment has ever uploaded a header image, so its wrong URL has
+        # never been fetched. Both are corrected together, because two doors returning an
+        # address and only one of them resolving is how the next sweep finds the second.
+        "url": f"/projects/{slug}/agents/{agent_id}/image",
         "bytes": len(prepared),
         "original_bytes": len(data),
     }

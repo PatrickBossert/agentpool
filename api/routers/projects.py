@@ -452,7 +452,11 @@ async def upload_branding_image(
         # Update brand_header_image_url in project config. Through the narrow seam: a header
         # image upload has an opinion about one config key and none about this project's
         # mode, override or sector, so it does not name them.
-        image_url = f"/api/projects/{slug}/branding/image"
+        # No `/api` prefix - this router is mounted at `/projects`, and nothing serves
+        # `/api/projects/...`. Latent since this door was written: no deployment has ever
+        # uploaded a header image, so the URL it stores has never been fetched. Found on
+        # 7 September when the agent portrait door copied this line and its image 404'd.
+        image_url = f"/projects/{slug}/branding/image"
         await merge_project_config(
             conn, project=project, key="brand_header_image_url", value=image_url
         )

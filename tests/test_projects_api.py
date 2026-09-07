@@ -204,11 +204,22 @@ async def test_branding_image_upload_and_serve(client):
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert "url" in data
-    assert data["url"] == "/api/projects/test-rail/branding/image"
 
-    # GET the image endpoint (no auth)
-    img_resp = await client.get("/projects/test-rail/branding/image")
-    assert img_resp.status_code == 200
+    # Fetched at the URL the door RETURNED, not at a path written here.
+    #
+    # This asserted `data["url"] == "/api/projects/..."` and then fetched
+    # `/projects/test-rail/branding/image` - a different string - so it proved the file was
+    # servable somewhere and the door returned something, and never that the two agreed. They
+    # did not: nothing serves `/api/projects/...`, and this door has stored an address that
+    # 404s since it was written. It went unseen because no deployment has ever uploaded a
+    # header image, so the value was never fetched outside this test.
+    #
+    # Found on 7 September when the agent portrait door copied the line and its image came back
+    # broken in the browser. A URL is a promise that something answers; the assertion is to ask.
+    img_resp = await client.get(data["url"])
+    assert img_resp.status_code == 200, (
+        f"the URL the door returned does not resolve: {data['url']!r}"
+    )
     assert "image" in img_resp.headers.get("content-type", "")
 
 
