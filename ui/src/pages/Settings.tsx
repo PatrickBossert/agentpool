@@ -29,11 +29,10 @@ const DEFAULTS: ProjectSettings = {
   discovery_links: [],
   discovery_document_ids: [],
   interview_method: 'none',
-  // Both match api/models.py's defaults, which test_the_frontend_defaults_are_the_models_
-  // defaults holds them to. Neither is platform-tier: they decide the tone of a conversation,
-  // not where this engagement's material is sent.
+  // Matches api/models.py's default, which test_the_frontend_defaults_are_the_models_defaults
+  // holds it to. Not platform-tier: it decides the tone of a conversation, not where this
+  // engagement's material is sent. `interview_accent` sat beside it until sp64 retired it.
   interviewer_selection: 'random',
-  interview_accent: 'british',
   elaboration_press_timeout_seconds: 8,
   anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
   anthropic_deep_model: 'anthropic/claude-opus-4-6',
@@ -470,35 +469,13 @@ export default function Settings() {
           </p>
         </div>
 
-        <div>
-          <label htmlFor="interview_accent" className="text-xs text-gray-600 block mb-1">
-            Interview accent
-          </label>
-          <input
-            {...fieldProps('interview_accent')}
-            type="text"
-            value={form.interview_accent}
-            onChange={(e) => setForm({ ...form, interview_accent: e.target.value })}
-            placeholder="british"
-            className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
-          />
-          {/* Deliberately names no accent. The five this deployment happens to reach were
-              written out here in the first draft, inside the very sentence explaining that the
-              vocabulary is the provider's - a voice fact restated in TypeScript, on the one
-              side Task 4's Python guard cannot see, in the paragraph predicting it would go
-              stale. The accents that exist are `accent_options` on the voices door, and the
-              picker on each agent's Setup tab renders them; this page does not call that door
-              and should not start, so it points at the place that does rather than keeping a
-              copy that nothing compares. */}
-          <p className="text-xs text-muted mt-1">
-            The accent this project's voices are chosen from, in the voice provider's own word
-            for it. Free text rather than a list, because the vocabulary is theirs and closing
-            it here would go stale the first time they add one - the accents that actually
-            exist are offered in the voice picker on each agent's Setup tab. Leave it empty to
-            search every accent. It is not the country above: GB is the country of a Scottish
-            engagement exactly as it is of a British one.
-          </p>
-        </div>
+        {/* An "Interview accent" field stood here until sp64 and is gone with the setting
+            behind it. It decided nothing about any interview - the accent an interview is
+            conducted in is a property of the voice each interviewer is given, on their own
+            Setup tab - and its one effect was to open every voice picker filtered to
+            `british`, which showed 6 of the account's 41 voices. Accent and language are two
+            axes, and both now live on the picker itself, offering what the provider's listings
+            actually carry. */}
 
         <div>
           <label

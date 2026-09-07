@@ -7,17 +7,25 @@
 //
 //   1. **No voice fact is declared in TypeScript.** Task 4 built a Python source guard that
 //      refuses a sixth copy of "which voice is which"; it walks Python and cannot see this
-//      side. So the accent options, the sexes offered, and every voice shown are asserted to
-//      be the ones the payload carried - and for **both** dropdowns a payload naming a value
-//      this codebase has never heard of is driven through, since a hardcoded list would still
-//      pass a test built from the values that list would contain. The accent half was written
-//      that way from the start; the sex half was not, and a hardcoded `['female', 'male']`
-//      passed the whole suite until the two cases below were added.
+//      side. So the accent options, the languages offered, the sexes offered, and every voice
+//      shown are asserted to be the ones the payload carried - and for **all three** dropdowns
+//      a payload naming a value this codebase has never heard of is driven through, since a
+//      hardcoded list would still pass a test built from the values that list would contain.
+//      The accent half was written that way from the start; the sex half was not, and a
+//      hardcoded `['female', 'male']` passed the whole suite until the two cases below were
+//      added. The language half is the newest, and includes the **default**: `en` is never
+//      written here, only read off the response.
 //   2. **Preview plays the provider's own URL and synthesises nothing.** The cheap
 //      implementation and the expensive one are identical to a listener, so only a test can
 //      tell them apart.
 //   3. **A bounded page is reported as one.** `library_has_more` reaching nothing is how a
 //      picker comes to read as "that voice does not exist".
+//
+// **The picker opens on the language, unfiltered by accent** (sp64). It used to open on the
+// project's `interview_accent`, defaulting to `british`, which showed 6 of the account's 41
+// voices - an axis that should broaden used as one that narrows. Both halves are asserted on
+// what is *sent*, and the control - narrowing and then clearing again - is what separates a
+// picker that applies the accent from one that ignores it entirely.
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -65,16 +73,23 @@ const LIBRARY_VOICE = voice({
 
 function catalogue(over: Partial<VoiceCatalogue> = {}): VoiceCatalogue {
   return {
-    accent: 'hebridean',
-    accent_source: 'project',
-    filters: { gender: null, language: null, search: null },
+    accent: '',
+    // Deliberately not `en`. The server owns the default, so a fixture spelling it would
+    // agree with a picker that had hardcoded the same word - the failure this file exists to
+    // catch, on the newest axis.
+    language: 'kernowek',
+    filters: { gender: null, search: null },
     // The default is the unanswerable case, so every test that says nothing about the sex of
     // the current voice is driving the "open unfiltered" branch.
     voice_sex: null,
     accent_options: ['hebridean', 'irish'],
     accent_options_partial: false,
+    language_options: ['kernowek', 'sindarin'],
+    language_options_partial: false,
     account_accents: ['hebridean'],
     library_accents: ['irish'],
+    account_languages: ['kernowek'],
+    library_languages: ['sindarin'],
     account: [ACCOUNT_VOICE],
     account_error: null,
     library: [LIBRARY_VOICE],
@@ -205,19 +220,77 @@ describe('the voice picker - nothing about a voice is declared here', () => {
       ).toEqual(['Any', 'female', 'male']))
   })
 
-  it('does not send an accent until one is chosen, so the project\'s own applies', async () => {
-    // Omitted and empty are different requests on this door: omitted means "use the project's
-    // interview_accent", empty means every accent. Collapsing them makes the project setting
-    // unclearable from here.
+  it('offers exactly the languages the server listed, and no others', async () => {
+    // The accent dropdown's rule on the axis that arrived with it. Driven from a fixture
+    // naming two codes this codebase has never heard of, because a list hardcoded to the
+    // languages anybody would guess - `en`, `fr` - would pass a test built from those.
+    renderPicker()
+    await loaded()
+    const select = screen.getByLabelText('Language')
+    expect(within(select).getAllByRole('option').map((o) => o.textContent))
+      .toEqual(['Every language', 'kernowek', 'sindarin'])
+  })
+
+  it('opens on the language the server applied, without declaring what it is', async () => {
+    // The default lives in Python. A picker that wrote `en` here would agree with the server
+    // by coincidence and disagree the day the default moves - and it would be a voice fact
+    // restated in TypeScript, which is the one thing this file exists to refuse.
+    renderPicker()
+    await loaded()
+    expect(screen.getByLabelText('Language')).toHaveValue('kernowek')
+    expect(await screen.findByTestId('language-preset')).toHaveTextContent('kernowek')
+  })
+
+  it('sends no accent and no language of its own on the first request', async () => {
+    // sp64, asserted on what is **sent**. The picker opens unfiltered by accent - there is no
+    // project setting to inherit any more - and names no language, which is how the server is
+    // asked to apply its own default. An `accent: ''` here would be a request carrying an
+    // empty filter, and a `language: 'en'` would be this file declaring the default.
     renderPicker()
     await loaded()
     expect(vi.mocked(voicesApi.list).mock.calls[0][1]).toEqual({
-      accent: undefined, gender: undefined, search: undefined,
+      accent: undefined, language: undefined, gender: undefined, search: undefined,
     })
+  })
+
+  it('narrows to a chosen accent and broadens again when it is cleared', async () => {
+    // The control. Without it, "the first request carries no accent" is satisfied just as
+    // well by a picker that ignores the accent dropdown entirely.
+    renderPicker()
+    await loaded()
+
+    fireEvent.change(screen.getByLabelText('Accent'), { target: { value: 'irish' } })
+    await waitFor(() =>
+      expect(voicesApi.list).toHaveBeenCalledWith(
+        'acme', expect.objectContaining({ accent: 'irish' })))
 
     fireEvent.change(screen.getByLabelText('Accent'), { target: { value: '' } })
+    await waitFor(() => {
+      const last = vi.mocked(voicesApi.list).mock.calls.at(-1)?.[1]
+      expect(last?.accent).toBeUndefined()
+    })
+  })
+
+  it('narrows to a chosen language and asks for every language when cleared', async () => {
+    // The same control on the axis that has a default, where clearing means something the
+    // accent's clearing does not: `''` is a request for **every** language and is sent, while
+    // `undefined` would be a request for the server's default. Collapsing the two would make
+    // the default unclearable, which is the shape of the defect sp64 removed.
+    renderPicker()
+    await loaded()
+
+    fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'sindarin' } })
     await waitFor(() =>
-      expect(voicesApi.list).toHaveBeenCalledWith('acme', expect.objectContaining({ accent: '' })))
+      expect(voicesApi.list).toHaveBeenCalledWith(
+        'acme', expect.objectContaining({ language: 'sindarin' })))
+
+    fireEvent.change(screen.getByLabelText('Language'), { target: { value: '' } })
+    await waitFor(() => {
+      const last = vi.mocked(voicesApi.list).mock.calls.at(-1)?.[1]
+      expect(last?.language).toBe('')
+    })
+    // And the note about the applied language goes, because nothing is being applied.
+    await waitFor(() => expect(screen.queryByTestId('language-preset')).toBeNull())
   })
 })
 
@@ -333,6 +406,16 @@ describe('the voice picker - a page is not an answer', () => {
 
   it('warns that the accent list may be incomplete when the probe was truncated', async () => {
     vi.mocked(voicesApi.list).mockResolvedValue(catalogue({ accent_options_partial: true }))
+    renderPicker()
+    expect(await screen.findByText(/not the whole of it/i)).toBeInTheDocument()
+  })
+
+  it('warns on the language list too, which comes off the same walk', async () => {
+    // The server serves one truncation flag under two names. A notice gated on the accent
+    // field alone would be silently right today and silently wrong the moment they part.
+    vi.mocked(voicesApi.list).mockResolvedValue(catalogue({
+      accent_options_partial: false, language_options_partial: true,
+    }))
     renderPicker()
     expect(await screen.findByText(/not the whole of it/i)).toBeInTheDocument()
   })

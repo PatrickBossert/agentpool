@@ -44,11 +44,9 @@ from api.database import (
     insert_user,
     link_membership,
 )
+from api.models import ProjectSettings
 from api.services import voice_metadata
-from api.services.voice_settings import (
-    DEFAULT_INTERVIEW_ACCENT,
-    project_interview_accent,
-)
+from api.services.voice_catalogue import DEFAULT_LIBRARY_LANGUAGE, LIBRARY_PROBE_PAGES
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -129,7 +127,7 @@ def _catalogue_wire(
     *,
     account: dict | int = ACCOUNT_BODY,
     library: dict | int = LIBRARY_BODY,
-    library_probe: dict | int | None = None,
+    library_probe: dict | int | list[dict | int] | None = None,
     added: dict | int | None = None,
 ) -> list[httpx.Request]:
     """Point **the shared ElevenLabs client** at a `MockTransport` and record every request.
@@ -191,6 +189,13 @@ def _catalogue_wire(
     narrowing parameter, so a test using it must apply a **non-empty** accent: `?accent=`
     clears the filter and the result set then goes out unfiltered too, which is genuinely
     indistinguishable on the wire rather than a shortcoming of the stub.
+
+    **It takes a list to answer the vocabulary walk page by page.** A body or a status code
+    answers every page the same way, which cannot distinguish a probe that reads one page
+    from one that reads four - and the live defect was exactly an accent that had moved from
+    page 0 to page 1 between two readings on one day. A list is indexed by the request's own
+    `page`, and pages past its end answer empty with `has_more` false, so a walk that runs
+    past the stub's pages ends rather than repeating its last one.
     """
     seen: list[httpx.Request] = []
 
@@ -233,7 +238,20 @@ def _catalogue_wire(
         if path == "/v1/shared-voices":
             narrowing = {"accent", "gender", "language", "search"} & set(request.url.params)
             if library_probe is not None and not narrowing:
-                return _narrow(library_probe, request)
+                spec = library_probe
+                if isinstance(spec, list):
+                    # A **list** is one body per page, which is what makes the vocabulary
+                    # walk observable. A single body answers every page identically, so a
+                    # stub built that way cannot tell a probe that reads one page from one
+                    # that reads four - and that is exactly the bug: page 0 carried irish in
+                    # the morning and page 1 carried it by the afternoon.
+                    index = int(request.url.params.get("page") or 0)
+                    spec = (
+                        spec[index]
+                        if index < len(spec)
+                        else {"voices": [], "has_more": False}
+                    )
+                return _narrow(spec, request)
             return _narrow(library, request)
         if path.startswith("/v1/voices/add/"):
             return _answer(added if added is not None else {"voice_id": "acct-new"}, request)
@@ -460,73 +478,118 @@ async def test_the_wire_recorder_sees_a_synthesis_call_from_another_module(
 
 
 @pytest.mark.asyncio
-async def test_the_projects_accent_reaches_the_library_query(engagements, monkeypatch):
-    """The default filter is the project's setting, and it goes on the wire unmodified.
-
-    Nothing translates it: the word stored in `interview_accent` is the word ElevenLabs is
-    asked for. A translation would be a table, and a table of voice facts is what this branch
-    exists to end.
-    """
-    seen = _catalogue_wire(monkeypatch)
-
-    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
-    assert res.status_code == 200, res.text
-    assert res.json()["accent"] == DEFAULT_INTERVIEW_ACCENT == "british"
-    assert res.json()["accent_source"] == "project"
-
-    assert any(r.url.params.get("accent") == "british" for r in _library_calls(seen))
-
-
-@pytest.mark.asyncio
-async def test_a_saved_accent_becomes_the_default_filter(engagements, monkeypatch):
-    """A Scottish engagement's picker opens on Scottish, and it says so on the wire.
-
-    This is the decision the task had to make - where a project's locale comes from - asserted
-    end to end: `PATCH /settings` stores it, and the very next listing asks ElevenLabs for it.
-    """
-    saved = await engagements["owner"].get(f"/projects/{SLUG_A}/settings")
-    assert saved.status_code == 200, saved.text
-    body = {**saved.json(), "interview_accent": "scottish"}
-    patched = await engagements["owner"].patch(f"/projects/{SLUG_A}/settings", json=body)
-    assert patched.status_code == 200, patched.text
-    assert patched.json()["interview_accent"] == "scottish"
-
-    seen = _catalogue_wire(monkeypatch)
-    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
-    assert res.status_code == 200, res.text
-    assert res.json()["accent"] == "scottish"
-
-    assert any(r.url.params.get("accent") == "scottish" for r in _library_calls(seen))
-
-
-@pytest.mark.asyncio
-async def test_an_explicit_accent_beats_the_projects_and_an_empty_one_clears_it(
+async def test_the_door_opens_on_the_language_and_narrows_by_no_accent(
     engagements, monkeypatch
 ):
-    """Omitted and empty are different, and the picker needs both.
+    """A bare request carries `language=en` to the library and **no accent at all**.
 
-    Omitted means "you decide" and resolves to the project's setting; empty means the
-    consultant has cleared the filter and wants every accent. Collapsing them - which a
-    `default=""` on the query parameter would do - makes the project setting unclearable from
-    the picker, and makes it impossible to browse the library for an accent the project has
-    not chosen yet.
+    This is sp64's whole subject, asserted on the wire rather than on the response. The door
+    used to apply the project's `interview_accent` - `british` by default - which showed 6 of
+    41 account voices, because `en` is the language and `british` is one of four accents of
+    it. The axis that should broaden was being used as one that narrows.
+
+    Both halves are needed and neither implies the other. A door that dropped the accent and
+    sent no language would leave a consultant scrolling the library's other languages for an
+    English interviewer; a door that sent `language=en` and kept the accent default would have
+    fixed nothing at all.
+    """
+    seen = _catalogue_wire(monkeypatch)
+
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices")
+    assert res.status_code == 200, res.text
+    assert res.json()["accent"] == ""
+    assert res.json()["language"] == DEFAULT_LIBRARY_LANGUAGE == "en"
+
+    calls = _library_calls(seen)
+    narrowed = [r for r in calls if r.url.params.get("language") == "en"]
+    assert len(narrowed) == 1, _urls(seen)
+    assert all("accent" not in r.url.params for r in calls), _urls(seen)
+
+
+@pytest.mark.asyncio
+async def test_choosing_an_accent_narrows_and_clearing_it_broadens_again(
+    engagements, monkeypatch
+):
+    """The control, without which "it opens unfiltered" is satisfied by ignoring the accent.
+
+    A door that dropped the parameter on the floor would pass the test above and every
+    assertion about the response body it makes. Only driving the accent in and back out again
+    can tell that apart from a door that applies what it is asked for.
+
+    Both spellings of "no accent" are driven, because sp64 collapsed a distinction that used
+    to be load-bearing: omitted meant "the project's setting" and empty meant "every accent".
+    There is no setting now, so the two must mean the same thing - and a door that kept them
+    apart would be carrying a difference nothing can explain.
     """
     seen = _catalogue_wire(monkeypatch)
     res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=irish")
     assert res.status_code == 200, res.text
     assert res.json()["accent"] == "irish"
-    assert res.json()["accent_source"] == "request"
     assert any(r.url.params.get("accent") == "irish" for r in _library_calls(seen))
+    # And the narrowing really narrowed: the account's British and Scottish voices are gone.
+    assert res.json()["account"] == []
+
+    for cleared_query in ("accent=", ""):
+        cleared = _catalogue_wire(monkeypatch)
+        res = await engagements["owner"].get(
+            f"/projects/{SLUG_A}/voices?{cleared_query}"
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["accent"] == ""
+        calls = _library_calls(cleared)
+        assert calls, "the library was never asked, so 'no accent went out' is vacuous"
+        assert all("accent" not in r.url.params for r in calls), _urls(cleared)
+        # And the account list is not narrowed either, so clearing really does show everything.
+        assert len(res.json()["account"]) == len(ACCOUNT_BODY["voices"])
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_language_beats_the_default_and_an_empty_one_clears_it(
+    engagements, monkeypatch
+):
+    """Omitted and empty are different, and the language axis is where they have to be.
+
+    Omitted means "you decide" and resolves to `DEFAULT_LIBRARY_LANGUAGE`; empty means the
+    consultant cleared it and wants every language. Collapsing them - which a `default=""` on
+    the query parameter would do - would make the default unclearable from the picker, which
+    is the defect this change removed from the accent, reinstated one axis over.
+
+    The accent lost that distinction in the same change and it is not an inconsistency: it no
+    longer has a default to be cleared *of*, so a door keeping the two apart there would carry
+    a difference with nothing behind it.
+    """
+    seen = _catalogue_wire(monkeypatch)
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?language=fr")
+    assert res.status_code == 200, res.text
+    assert res.json()["language"] == "fr"
+    assert any(r.url.params.get("language") == "fr" for r in _library_calls(seen))
 
     cleared = _catalogue_wire(monkeypatch)
-    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")
+    res = await engagements["owner"].get(f"/projects/{SLUG_A}/voices?language=")
     assert res.status_code == 200, res.text
-    assert res.json()["accent"] == ""
+    assert res.json()["language"] == ""
     calls = _library_calls(cleared)
-    assert calls, "the library was never asked, so 'no accent went out' is vacuous"
-    assert all("accent" not in r.url.params for r in calls), _urls(cleared)
-    # And the account list is not narrowed either, so clearing really does show everything.
-    assert len(res.json()["account"]) == len(ACCOUNT_BODY["voices"])
+    assert calls, "the library was never asked, so 'no language went out' is vacuous"
+    assert all("language" not in r.url.params for r in calls), _urls(cleared)
+
+
+@pytest.mark.asyncio
+async def test_the_account_listing_is_never_narrowed_by_language(engagements, monkeypatch):
+    """The deployment's own voices are shown whole, whatever language is applied.
+
+    All 41 were deliberately added by somebody, so narrowing them by the library's default
+    would reintroduce exactly the hidden-voices defect on the listing that has no reason to
+    carry it. Structural on the door - `filter_account_voices` is not passed a language - and
+    this is what proves the structure rather than the intention.
+
+    `acct-alba` is the case that matters: the account body gives her **no**
+    `verified_languages` at all, so any implementation that filtered the account on a language
+    would drop her, and dropping a voice for saying nothing is the worst version of it.
+    """
+    for query in ("", "?language=en", "?language=fr"):
+        _catalogue_wire(monkeypatch)
+        body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices{query}")).json()
+        assert [v["voice_id"] for v in body["account"]] == ["acct-daniel", "acct-alba"], query
 
 
 @pytest.mark.asyncio
@@ -953,16 +1016,17 @@ async def test_an_accent_only_the_library_has_is_still_offered(engagements, monk
     The first version of this door derived the options from the account listing alone, so a
     picker built on it could never offer Irish - and the only routes left were to hardcode a
     list of accents, which is the sixth declaration of voice facts on a branch that exists to
-    end them, or to type it as free text, which is weight the open `interview_accent`
-    vocabulary was not chosen to carry.
+    end them, or to type it as free text.
 
-    The default filter is `british`, so the *result* is the one British library voice and the
-    Irish one is genuinely absent from it - the stub narrows exactly as the endpoint does. The
-    option is still there, which is the property: **what you can filter to is not the same
-    question as what came back.**
+    **sp64 had to leave this untouched while removing the accent default**, which is why both
+    halves are driven here. Narrowed to `british` the Irish voice is genuinely absent from the
+    result and the *option* is still offered - what you can filter to is not the same question
+    as what came back, and it is the union of both listings that answers it. Unnarrowed, which
+    is now how the picker opens, the Irish voice is simply in the result: retiring the default
+    made Irish reachable without anybody touching the union that made it *offerable*.
     """
     _catalogue_wire(monkeypatch)
-    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=british")).json()
 
     assert body["accent"] == "british"
     assert "irish" not in {v["accent"] for v in body["library"]}
@@ -971,46 +1035,252 @@ async def test_an_accent_only_the_library_has_is_still_offered(engagements, monk
     assert "irish" in body["accent_options"]
     assert body["accent_options"] == ["british", "irish", "scottish"]
 
+    opened = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
+    assert "lib-seamus" in {v["voice_id"] for v in opened["library"]}
+    assert opened["accent_options"] == ["british", "irish", "scottish"]
+
 
 @pytest.mark.asyncio
 async def test_the_accent_probe_is_unfiltered_and_the_result_set_is_not(
     engagements, monkeypatch
 ):
-    """Two questions, two requests - and the probe must carry no accent.
+    """Two questions, two requests - and the probe must carry no accent and no language.
 
     A probe that inherited the applied filter would answer "british" for a british query, and
     the dropdown would offer exactly the option already selected. That failure looks identical
     to a working picker until somebody needs a second accent, which is how Irish went missing
     the first time.
+
+    **The language axis makes it unavoidable rather than merely likely.** A bare request now
+    carries `language=en` to the result set, so a language dropdown built from that answer
+    would offer `en` alone - on the one axis whose whole purpose is to be widened. `language`
+    is in the exclusion set below for that reason: without it, a probe that had picked up the
+    default would still be counted as unfiltered here.
     """
     seen = _catalogue_wire(monkeypatch)
     await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=scottish&gender=male")
 
     calls = _library_calls(seen)
     assert len(calls) == 2, _urls(seen)
-    unfiltered = [r for r in calls if not {"accent", "gender"} & set(r.url.params)]
+    unfiltered = [
+        r for r in calls if not {"accent", "gender", "language"} & set(r.url.params)
+    ]
     narrowed = [r for r in calls if r.url.params.get("accent") == "scottish"]
     assert len(unfiltered) == 1, _urls(seen)
     assert len(narrowed) == 1, _urls(seen)
+    assert narrowed[0].url.params.get("language") == "en", _urls(seen)
+
+
+def _probe_calls(seen: list[httpx.Request]) -> list[httpx.Request]:
+    """The vocabulary walk's requests, told apart from the result set by what they carry.
+
+    Selected by the absence of every narrowing parameter, exactly as the fixture routes them,
+    rather than by index or by `page` - a walk that had picked up the applied accent would
+    still carry a `page`, and counting those would call it a probe.
+    """
+    return [
+        r
+        for r in _library_calls(seen)
+        if not {"accent", "gender", "language", "search"} & set(r.url.params)
+    ]
 
 
 @pytest.mark.asyncio
-async def test_the_projects_own_accent_is_always_among_its_options(
+async def test_the_vocabulary_walk_reaches_an_accent_that_is_not_on_the_first_page(
+    engagements, monkeypatch
+):
+    """**The live defect, reproduced.** Irish left page 0 and the dropdown lost it.
+
+    Measured on 7 September: at 04:44 `irish` was on the library's first unfiltered page and
+    by 15:00 it was not, with no change to the account, the query or this code. The page is a
+    moving selection. Cumulative distinct accents that afternoon were 22 after page 0 and 46
+    after page 1, so a one-page probe was seeing about a third of the vocabulary and a
+    different third at different hours. `?accent=irish` returned 85 library voices throughout
+    - the voices never went anywhere, only the probe's sight of them.
+
+    It matters more than a missing option usually would: Irish is reachable **only** through
+    the library half, since the account holds none, and an Irish engagement is one of the four
+    planned. So the dropdown losing the word is that engagement becoming unconfigurable.
+
+    **The stub is two pages and the accent is on the second**, which is what stops this
+    passing vacuously. A single-page stub would pass against the very bug it describes, and
+    the first assertion below says so in the test rather than in prose about the fixture.
+    """
+    page_0 = {
+        "voices": [
+            {
+                "public_owner_id": "owner-9",
+                "voice_id": "lib-page0",
+                "name": "On the first page",
+                "accent": "british",
+                "gender": "female",
+                "language": "en",
+            }
+        ],
+        "has_more": True,
+    }
+    page_1 = {"voices": LIBRARY_BODY["voices"], "has_more": False}
+    # The control on the fixture: had the walk stopped at one page, there would be no irish to
+    # find, so this is what makes the assertion below a statement about the walk.
+    assert "irish" not in {v["accent"] for v in page_0["voices"]}
+    assert "irish" in {v["accent"] for v in page_1["voices"]}
+
+    seen = _catalogue_wire(monkeypatch, library_probe=[page_0, page_1])
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=british")).json()
+
+    assert "irish" in body["library_accents"]
+    assert "irish" in body["accent_options"]
+    # The walk stopped where the provider said it had reached the end, so the ordinary case
+    # stays cheap and the vocabulary is not reported as truncated when it is not.
+    assert [r.url.params.get("page") for r in _probe_calls(seen)] == ["0", "1"]
+    assert body["accent_options_partial"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_walk_stops_at_its_bound_and_says_the_vocabulary_is_partial(
+    engagements, monkeypatch
+):
+    """Bounded, and honest about being bounded - the two halves of one decision.
+
+    Reading pages until the library runs out would make opening a picker an unbounded number
+    of requests against a third party. Reading a fixed few and presenting the result as the
+    whole vocabulary is the failure this walk exists to repair, moved four pages along. So the
+    bound is real and `partial` carries the provider's own "there is more" out to the door and
+    into the picker's notice.
+
+    **Raising `LIBRARY_PROBE_PAGES` must not make this pass by accident**, so the stub answers
+    `has_more` on more pages than the bound rather than on exactly as many.
+    """
+    endless = [{"voices": LIBRARY_BODY["voices"], "has_more": True}] * (
+        LIBRARY_PROBE_PAGES + 3
+    )
+    seen = _catalogue_wire(monkeypatch, library_probe=endless)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=british")).json()
+
+    assert len(_probe_calls(seen)) == LIBRARY_PROBE_PAGES, _urls(seen)
+    assert body["accent_options_partial"] is True
+    assert body["language_options_partial"] is True
+    # And it is a *partial* answer rather than no answer: what the walk did see is served.
+    assert body["library_accents"] == ["british", "irish"]
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_fails_mid_walk_keeps_what_arrived_and_is_not_cached(
+    engagements, monkeypatch
+):
+    """A walk has four chances to fail where one request had one, and that must not cost more.
+
+    Discarding pages 0 and 1 because page 2 timed out would make this probe **more** fragile
+    than the single-page version it replaced, and it would show up as the same symptom: an
+    accent that was there this morning and is not now. So the walk keeps what arrived, reports
+    `partial`, and - the half that a response-body assertion cannot see - **does not cache the
+    short answer**, or one bad minute becomes permanent until somebody restarts the server.
+
+    Page 0 failing is deliberately the other arm: nothing was gathered, so there is no partial
+    answer to keep and it stays the raise the door already turns into `partial`. That arm is
+    `test_a_failed_accent_probe_still_leaves_a_full_narrowed_result_set`.
+    """
+    page_0 = {"voices": LIBRARY_BODY["voices"], "has_more": True}
+    seen = _catalogue_wire(monkeypatch, library_probe=[page_0, 502])
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=british")).json()
+
+    assert body["library_accents"] == ["british", "irish"]
+    assert body["accent_options_partial"] is True
+    assert body["library_error"] is None, "the result set is unaffected by a probe failure"
+
+    # Not cached: the next listing walks again rather than serving the short answer forever.
+    # Asserted on the wire, because the body of a second identical request looks the same
+    # either way - which is how a cached failure survives every response-shaped assertion.
+    before = len(_probe_calls(seen))
+    healed = _catalogue_wire(monkeypatch, library_probe=[page_0, {"voices": [], "has_more": False}])
+    again = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=british")).json()
+    assert before == 2, _urls(seen)
+    assert len(_probe_calls(healed)) == 2, _urls(healed)
+    assert again["accent_options_partial"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_applied_accent_and_language_are_always_among_their_options(
     engagements, monkeypatch
 ):
     """A picker must not apply a filter its own control cannot show.
 
-    `library_accents` reads a *page* of the library rather than enumerating it, so an accent
-    held by few voices can be missing from the probe - and the library call can fail outright.
-    In both cases the applied accent is still the state the picker is in, and a dropdown that
+    `library_axes` reads a *page* of the library rather than enumerating it, so a value held
+    by few voices can be missing from the probe - and the library call can fail outright. In
+    both cases the applied value is still the state the picker is in, and a dropdown that
     omits it disagrees with the filter it is displaying.
+
+    **Both axes, and the language matters more.** The accent is whatever the caller asked for,
+    so a missing option is a control disagreeing with a choice somebody made. The language has
+    a *default* nobody chose, so a missing option is a filter with no way out - the shape of
+    the defect sp64 removed from the accent, waiting to be reintroduced one axis over.
+
+    **Both applied values are ones no surviving listing carries**, and that is what makes the
+    assertion mean anything. `irish` is not in the account; `fr` is not either, since both
+    account voices are English or say nothing. Driven first with `language=en` - which the
+    account *does* carry - the language half passed against a door that had stopped joining
+    `applied_language` to its own options at all: the option was there, put there by a
+    listing, and the property under test was invisible. A value the listings supply cannot
+    distinguish "the applied value is always offered" from "this value happened to be offered".
     """
     _catalogue_wire(monkeypatch, library=502)
-    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=irish")).json()
+    body = (
+        await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=irish&language=fr")
+    ).json()
 
     assert body["library_accents"] == []
+    assert body["library_languages"] == []
     assert body["library_error"]
+    assert "irish" not in body["account_accents"]
     assert "irish" in body["accent_options"]
+    assert body["language"] == "fr"
+    assert "fr" not in body["account_languages"]
+    assert "fr" in body["language_options"]
+
+
+@pytest.mark.asyncio
+async def test_the_language_options_are_read_off_both_listings(engagements, monkeypatch):
+    """Derived from the provider's answer on both endpoints, never declared here.
+
+    **Two places, because the two endpoints put it in two places** - the same absorption the
+    accent and the sex already needed. A library entry carries a top-level `language`; an
+    account voice carries `verified_languages`, a list of objects. An implementation reading
+    only one of them looks correct against whichever fixture it was written from.
+
+    Driven with a code this codebase has never heard of, for the reason the sex half of
+    `ui/src/__tests__/VoicePicker.test.tsx` was rewritten: a fixture built from the values a
+    hardcoded list would contain cannot tell a derived list from a declared one.
+    """
+    account = {
+        "voices": [
+            {
+                "voice_id": "acct-only-verified",
+                "name": "Verified only",
+                "labels": {"accent": "british", "gender": "female"},
+                "verified_languages": [{"language": "cy", "model_id": "eleven_v2"}],
+            }
+        ]
+    }
+    library = {
+        "voices": [
+            {
+                "public_owner_id": "owner-1",
+                "voice_id": "lib-top-level",
+                "name": "Top level only",
+                "accent": "irish",
+                "gender": "male",
+                "language": "gd",
+            }
+        ]
+    }
+    _catalogue_wire(monkeypatch, account=account, library=library)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?language=")).json()
+
+    assert body["account_languages"] == ["cy"]
+    assert body["library_languages"] == ["gd"]
+    # The union, and nothing else - so an implementation offering its own list *plus* what
+    # arrived fails here as well as one offering its own list instead.
+    assert body["language_options"] == ["cy", "gd"]
 
 
 @pytest.mark.asyncio
@@ -1022,10 +1292,16 @@ async def test_an_empty_accent_puts_no_empty_option_in_the_list(engagements, mon
     a voice with no accent.
     """
     _catalogue_wire(monkeypatch)
-    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=")).json()
+    body = (
+        await engagements["owner"].get(f"/projects/{SLUG_A}/voices?accent=&language=")
+    ).json()
 
     assert "" not in body["accent_options"]
     assert body["accent_options"] == ["british", "irish", "scottish"]
+    # The same on the axis that arrived with sp64, because `applied_language` joins its
+    # options by the same line and `""` is a legitimate value for it too.
+    assert "" not in body["language_options"]
+    assert body["language_options"] == ["en"]
 
 
 @pytest.mark.asyncio
@@ -1106,7 +1382,7 @@ async def test_a_bounded_page_says_whether_there_is_more(engagements, monkeypatc
     library" rather than "narrow your filters". Both directions are asserted, so a field
     hardcoded either way fails.
     """
-    from api.services.voice_catalogue import forget_library_accents
+    from api.services.voice_catalogue import forget_library_probe
 
     _catalogue_wire(monkeypatch)
     whole = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
@@ -1115,7 +1391,7 @@ async def test_a_bounded_page_says_whether_there_is_more(engagements, monkeypatc
 
     # The probe is cached per process, so its `has_more` is too - and that is correct: it
     # describes the page that was actually read. Dropped here so the second listing re-asks.
-    forget_library_accents()
+    forget_library_probe()
     _catalogue_wire(monkeypatch, library={**LIBRARY_BODY, "has_more": True})
     truncated = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
     assert truncated["library_has_more"] is True
@@ -1291,61 +1567,81 @@ async def test_an_org_admin_of_this_engagement_adds_the_voice_and_the_request_sa
     assert posts[0].headers["xi-api-key"] == "test-key"
 
 
-# --- Where a project's accent comes from -----------------------------------------------------
+# --- The retired setting, and the projects that may still be carrying it ---------------------
 
 
-@pytest.mark.asyncio
-async def test_a_project_with_no_setting_answers_the_british_default(engagements):
-    """British English is the default for a new project, and this is the control.
+def test_neither_side_declares_the_retired_interview_accent_setting():
+    """`ProjectSettings` no longer declares it, and `ui/src/types.ts` no longer declares it.
 
-    Without it, a resolver that answered `""` for everything would pass every override test
-    above by never filtering, and would silently show a French engagement the whole library.
+    **Both, in one assertion, because one without the other is the drift this project has now
+    recorded four times.** A field removed from the model and left on the type is sent on
+    every save and silently dropped; left on the model and removed from the type it is
+    overwritten with the server default by every save the page makes. Neither fails anything.
+
+    `api/services/voice_settings.py` is asserted gone rather than merely unimported: it existed
+    only to resolve this setting, and a module left behind is one a later reader wires back in
+    because it looks like an accessor somebody forgot to call.
     """
-    assert await project_interview_accent(SLUG_A) == "british"
+    assert "interview_accent" not in ProjectSettings.model_fields
+
+    types_ts = (REPO / "ui" / "src" / "types.ts").read_text()
+    declaration = re.compile(r"^\s*interview_accent\??\s*:", re.MULTILINE)
+    assert not declaration.search(types_ts), (
+        "ui/src/types.ts still declares interview_accent on a settings type while "
+        "api/models.py has retired it. The Settings page sends what the type declares, and "
+        "the server ignores what it does not model, so the field would ride every save and "
+        "reach nothing."
+    )
+
+    assert not (REPO / "api" / "services" / "voice_settings.py").exists()
 
 
 @pytest.mark.asyncio
-async def test_a_blank_slug_is_refused_rather_than_answered(engagements):
-    """The rule `project_llm_mode` was corrected to, and `resolve_agent_config` follows.
-
-    A caller that lost its slug must not be handed the defaults: the same silent answer in the
-    LLM seam sent a sensitive engagement's interview answers to a hosted model.
-    """
-    for slug in ("", "   ", "\t"):
-        with pytest.raises(ValueError):
-            await project_interview_accent(slug)
-
-
-@pytest.mark.asyncio
-async def test_an_unknown_slug_answers_the_default_and_creates_no_database(
-    engagements, tmp_path
+async def test_a_project_still_storing_an_interview_accent_loads_and_saves(
+    engagements, monkeypatch
 ):
-    """The opposite arm, and deliberately not the same one.
+    """The key is **ignored, not an error** - retiring a field must strand no configuration.
 
-    A project that genuinely does not exist has no configuration, and answering the default
-    for it is what avoids materialising one database file per guessed slug - the guard
-    `caller_roles` already carries.
+    No live project stores one, checked across every database in `data/` on 7 September. That
+    is a fact about a day rather than a property, so the hand-written config below is what
+    makes the guarantee hold for a deployment this branch has not seen - and for the operator
+    who hand-edits a `config_json`, which is the case `project_interview_accent` used to carry
+    a whole branch for.
+
+    Three doors, because a settings body travels through all three and only the third is
+    obvious: the read must not raise on the stored key, the write must accept a body carrying
+    it, and the **voices** door must still open unfiltered rather than picking it up from
+    somewhere. That last one is the assertion that would catch a resolver quietly left in
+    place - a repair that removed the field from the model and kept reading `config_json`
+    would pass the first two and reinstate the entire defect.
     """
-    assert await project_interview_accent("no-such-engagement") == "british"
-    assert not (tmp_path / "data" / "no-such-engagement.db").exists()
-
-
-@pytest.mark.asyncio
-async def test_an_empty_accent_is_a_choice_and_not_an_absent_one(engagements, monkeypatch):
-    """`''` is the project saying "every accent"; a missing key is it having said nothing.
-
-    Testing truthiness would collapse the two and quietly reinstate `british` over a decision
-    somebody made - `_override` in `agent_config_service` draws the same line for the same
-    reason.
-    """
+    # The key added to whatever the project already holds, which is the state a deployment
+    # that upgrades through this change is actually in - not a config replaced wholesale.
     async with get_connection(SLUG_A) as conn:
+        row = await fetch_project(conn, slug=SLUG_A)
+        stored = json.loads(row["config_json"] or "{}")
         await conn.execute(
             "UPDATE projects SET config_json=? WHERE slug=?",
-            (json.dumps({"interview_accent": ""}), SLUG_A),
+            (json.dumps({**stored, "interview_accent": "scottish"}), SLUG_A),
         )
         await conn.commit()
 
-    assert await project_interview_accent(SLUG_A) == ""
+    read = await engagements["owner"].get(f"/projects/{SLUG_A}/settings")
+    assert read.status_code == 200, read.text
+    assert "interview_accent" not in read.json()
+
+    # Sent back exactly as a page holding a stale copy would send it.
+    saved = await engagements["owner"].patch(
+        f"/projects/{SLUG_A}/settings", json={**read.json(), "interview_accent": "scottish"}
+    )
+    assert saved.status_code == 200, saved.text
+    assert "interview_accent" not in saved.json()
+
+    seen = _catalogue_wire(monkeypatch)
+    body = (await engagements["owner"].get(f"/projects/{SLUG_A}/voices")).json()
+    assert body["accent"] == ""
+    assert all("accent" not in r.url.params for r in _library_calls(seen)), _urls(seen)
+    assert len(body["account"]) == len(ACCOUNT_BODY["voices"])
 
 
 # --- The table is gone, and did not come back corrected --------------------------------------

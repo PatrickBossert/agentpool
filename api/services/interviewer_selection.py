@@ -118,10 +118,11 @@ async def project_interviewer_selection(slug: str) -> str:
 
     The guarded read itself is `project_service.read_project_config`, which this function
     used to carry inline. It was extracted when `voice_settings.project_interview_accent`
-    became the second accessor of exactly this shape: the blank-slug refusal, the
-    containment guard that stops a probed slug materialising a database, and the fall back
-    to `{}` on unparseable JSON are three rules that must not drift between two callers who
-    are both reading the same column.
+    became the second accessor of exactly this shape, and it stays extracted now that the
+    second one is retired (sp64): the blank-slug refusal, the containment guard that stops a
+    probed slug materialising a database, and the fall back to `{}` on unparseable JSON are
+    three rules that must not drift between callers reading the same column, and re-inlining
+    them here would mean the next accessor copies them rather than calls them.
     """
     choice = (await read_project_config(slug)).get("interviewer_selection")
     return choice if choice in _WANTED_GENDER or choice == "random" else DEFAULT_SELECTION

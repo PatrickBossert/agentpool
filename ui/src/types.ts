@@ -136,25 +136,13 @@ export interface ProjectSettings {
    * exactly the drop this closes.
    */
   interviewer_selection: 'always_male' | 'always_female' | 'random'
-  /**
-   * Which regional accent this project's voices are chosen from, held in the voice provider's
-   * own word for it and forwarded to their listing unmodified, so nothing here translates it.
-   * `''` means every accent.
-   *
-   * **Names no accent, deliberately.** The five this deployment happens to reach were written
-   * out here in the first draft - a hardcoded slice of the provider's vocabulary, in
-   * TypeScript, on the field whose whole point is that the vocabulary is not ours, and one
-   * file away from the help text the same list was deleted from. The accents that exist are
-   * `accent_options` on `GET /projects/{slug}/voices`, and the picker on each agent's Setup
-   * tab renders them.
-   *
-   * Declared required for the same reason its neighbours are, with the sharpest consequence of
-   * the three. A dropped key is `british` on the server, so saving an unrelated field on a
-   * **Scottish** engagement silently resets it - and the reset is invisible until somebody
-   * opens the voice picker and finds it filtered to the wrong country, or worse, picks from
-   * it. No error, no 403, and a system that reported success throughout.
-   */
-  interview_accent: string
+  // `interview_accent` was declared here and is retired (sp64), on the server in the same
+  // change - a field removed from one side and left on the other is the drift this project has
+  // now recorded four times, so neither half of the removal stands alone. It defaulted to
+  // `british` and its one reader was the voice picker's opening filter, which showed 6 of 41
+  // account voices: `en` is the language and `british` is an accent of it, so the axis was
+  // narrowing where it should have broadened. The accent is now an opt-in narrowing in the
+  // picker itself, alongside a language control, both offering what the listings carry.
   sector: string
   stakeholder_groups: string[]
   value_stream_labels: string[]

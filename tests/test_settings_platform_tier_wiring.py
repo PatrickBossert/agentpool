@@ -327,15 +327,16 @@ def test_every_field_the_page_promises_to_send_is_declared_required(field):
     closed and `dev_mode` was found undeclared **one field over**, and `interviewer_selection`
     and `interview_accent` were then found undeclared with no control at all - the second of
     them silently resetting a Scottish engagement to british on any unrelated save.
+    (`interview_accent` is retired as of sp64; the lesson it taught this test is not.)
 
     Optional is refused as firmly as absent, and for a sharper reason: `tsc` has nothing to say
-    about an omitted optional key, so `interview_accent?: string` looks like a declaration,
-    passes the compiler, and drops on the first typed body anybody builds. `locale` was in
-    exactly that state and is now required.
+    about an omitted optional key, so `some_field?: string` looks like a declaration, passes
+    the compiler, and drops on the first typed body anybody builds. `locale` was in exactly
+    that state and is now required.
 
     Wider than `_PLATFORM_TIER_SETTINGS`, which the test above is keyed on, and deliberately:
-    the two new fields are **not** platform-tier - they decide the tone of a conversation, not
-    where this engagement's material is sent - so that tuple could never have covered them.
+    `interviewer_selection` is **not** platform-tier - it decides the tone of a conversation,
+    not where this engagement's material is sent - so that tuple could never have covered it.
     """
     declared = _declared_settings_fields()
     assert field in declared, (
@@ -351,19 +352,25 @@ def test_every_field_the_page_promises_to_send_is_declared_required(field):
     )
 
 
-@pytest.mark.parametrize("field", ["interviewer_selection", "interview_accent"])
+@pytest.mark.parametrize("field", ["interviewer_selection"])
 def test_the_interview_programme_settings_are_carried_by_the_defaults(field):
     """Named, and the naming is the point.
 
     The test above is keyed on `DEFAULTS` itself, so it is blind to a field being taken *out*
     of `DEFAULTS` - remove the entry and the declaration together and nothing complains,
     because the parametrisation simply shrinks. That is the one direction a walk over its own
-    input cannot see, and these two are the fields that were found in exactly that state:
-    real on the server, absent from the page, absent from the type, carried only by an
-    untyped spread.
+    input cannot see, and this is a field that was found in exactly that state: real on the
+    server, absent from the page, absent from the type, carried only by an untyped spread.
 
-    They are the only two named here because they are the only two this branch found there.
-    A third belongs on this list only with the same evidence behind it.
+    `interview_accent` was named beside it and is **retired**, model and type together, in
+    sp64 - which is the one removal this list must not resist, and the reason a name comes off
+    it only alongside the `ProjectSettings` field it guards. That pairing is asserted directly
+    in `tests/test_voice_catalogue.py::
+    test_neither_side_declares_the_retired_interview_accent_setting`, so deleting a name from
+    here and leaving the field on either side still fails somewhere.
+
+    Only fields found in that state belong here. A third belongs on this list only with the
+    same evidence behind it.
     """
     assert field in _typescript_defaults(), (
         f"{field} has been removed from Settings.tsx's DEFAULTS. It is a real ProjectSettings "

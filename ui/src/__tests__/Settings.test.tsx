@@ -31,7 +31,6 @@ const BASE_SETTINGS: ProjectSettings = {
   dev_mode: true,
   interview_method: 'none',
   interviewer_selection: 'random',
-  interview_accent: 'british',
   elaboration_press_timeout_seconds: 8,
   anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
   anthropic_deep_model: 'anthropic/claude-opus-4-6',

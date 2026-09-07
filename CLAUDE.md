@@ -1037,33 +1037,38 @@ disabled input is silently ignored, which had already made one existing test rac
 failing.
 
 **Every field `Settings.tsx` promises to send is declared in `ui/src/types.ts`, and required.**
-That is the 23 fields in the page's `DEFAULTS`, out of `ProjectSettings`' **39**, and it is the
+That is the 22 fields in the page's `DEFAULTS`, out of `ProjectSettings`' **38**, and it is the
 whole of what `test_every_field_the_page_promises_to_send_is_declared_required` holds. Settings
 are saved by posting the page's whole state, assembled as `{ ...DEFAULTS, ...settings }` - an
 untyped spread, so an undeclared field survives the round-trip by luck and vanishes the moment
 anybody builds that payload field by field. It fails silently in the worst direction: a dropped
-`interview_accent` **resets a Scottish project to british**, and the next interview is conducted
-in the wrong accent by a system reporting success. No error, no 403, nothing on the screen.
-`interviewer_selection` and `interview_accent` are the third and fourth fields to need this, and
-`locale` the fifth - `force_local_inference` and `dev_mode` were already declared for exactly
-this reason, the second found undeclared *one field over* from the first, and `locale` found the
-same way again. So: **a field the page sends with no declaration here is a defect waiting for
-a typed request body, not a stylistic gap**, and optionalising one (`interview_accent?: string`)
-reopens the hazard as completely as omitting it.
+`interviewer_selection` **puts a project that chose one interviewer back on a coin toss per
+session**, by a system reporting success. No error, no 403, nothing on the screen.
+`interviewer_selection` and `interview_accent` were the third and fourth fields to need this,
+and `locale` the fifth - `force_local_inference` and `dev_mode` were already declared for
+exactly this reason, the second found undeclared *one field over* from the first, and `locale`
+found the same way again. So: **a field the page sends with no declaration here is a defect
+waiting for a typed request body, not a stylistic gap**, and optionalising one
+(`some_field?: string`) reopens the hazard as completely as omitting it.
 The walk is keyed on `DEFAULTS`, so it cannot see a field removed from *both* `DEFAULTS` and
 the type - the parametrisation simply shrinks and complains about nothing. That is why
 `test_the_interview_programme_settings_are_carried_by_the_defaults` names
-`interviewer_selection` and `interview_accent` explicitly: the two this branch actually found in
-that state, guarded by name rather than by the walk that cannot see them go.
+`interviewer_selection` explicitly: guarded by name rather than by the walk that cannot see it
+go. **`interview_accent` was named beside it and is retired in sp64**, which is the one removal
+that list must not resist - so a name comes off it only alongside the `ProjectSettings` field
+it guards, and that pairing is itself asserted, in
+`tests/test_voice_catalogue.py::test_neither_side_declares_the_retired_interview_accent_setting`.
+Every count in this section moved by one when it went - recount rather than adjusting one to
+match another, which is the instruction the platform-tier section beside it already gives.
 
 **The other sixteen fields are outside that guard, and the sentence above used to claim them.**
-It read *every `ProjectSettings` field*, which was untrue of sixteen of thirty-nine - and untrue
+It read *every `ProjectSettings` field*, which was untrue of sixteen of thirty-eight - and untrue
 of three fields **this branch itself touched**, so the commit declaring the class closed left
 three of its own inside it. Recount rather than trusting either number; they move independently:
 
 | | count | |
 |---|---|---|
-| declared **required** | 23 | exactly `DEFAULTS`, and exactly what the guard walks |
+| declared **required** | 22 | exactly `DEFAULTS`, and exactly what the guard walks |
 | declared **optional** (`?:`) | 13 | includes `brand_header_image_url`, which this section warns about by name |
 | **not declared at all** | 3 | `brand_interviewer_name`, `brand_interviewer_image_url`, `brand_interviewer_tagline` |
 
@@ -1266,18 +1271,45 @@ picker, where the *sex* options come from a second unfiltered question for the i
 presented as a complete list - a picker showing five voices where ninety exist gets diagnosed as
 "there are no Scottish voices", and somebody reconfigures a project that was never wrong.
 
-**Two notions of an engagement's locale, and nothing reconciles them.** `interview_accent` is
-per project, set on the Settings page, held in the provider's own vocabulary, and it decides
-which voices the picker offers - the **speaking** side. An agent's `language` and `country_code`
-are per agent per project, set in the agent Setup section, stamped into `voice_config` at session
-creation, and `VoiceInterview.tsx:606` joins them into `recognition.lang` for the browser's
-speech-to-text - the **listening** side. Neither field moves the other. **So an Irish engagement
-set to `interview_accent = irish` with an Irish voice still listens as `en-GB`**, until somebody
-separately edits Avery's `country_code` on a different screen. Of the four planned engagements -
-Scottish, Irish, New Zealand, Australian - this reaches the recognition side of all but the
-British default. Both halves are correct on their own terms, both are operator-editable, and
-what is missing is the **link**; whether an accent should drive the recogniser's locale is a
-design decision, not a defect to patch, so it is recorded rather than fixed. It also corrects
+**Language is the axis; accent is a narrowing (sp64).** `en` is the language; `british`,
+`irish`, `american` and `new zealand` are accents *of* it, and ElevenLabs keeps them as separate
+query parameters. The door used to open filtered to the project's `interview_accent`, `british`
+by default, which showed **6 of 41** account voices - an axis that should broaden used as one
+that narrows. So the default sits on the language (`DEFAULT_LIBRARY_LANGUAGE` in
+`voice_catalogue.py`, never in TypeScript), the accent narrows nothing until asked, and the
+picker carries a control for each. The account listing is deliberately **never** narrowed by
+language: those are the deployment's own voices, every one added on purpose, and the parameter
+is simply not passed rather than a rule to remember.
+
+`interview_accent` is **retired**, model and type together. It had one production reader - that
+default filter - and reached no interview: the accent an interview is conducted in is a property
+of the voice each interviewer is given, chosen per agent and stamped on the session.
+
+**The vocabulary probe walks several pages, and the reason is a moving target.** The library's
+first unfiltered page is a *selection*, not a prefix: on 7 September `irish` was on page 0 at
+04:44 and on page 1 by 15:00, same account, same query, no code change - so the accent dropdown
+lost Irish while `?accent=irish` still returned 85 voices. Cumulative distinct accents that
+afternoon were 22 after page 0, 46 after page 1, 54 after page 2, 64 after page 3, and
+`page_size` above 100 is a 400. `LIBRARY_PROBE_PAGES` bounds the walk at four, stopping early on
+`has_more`, cached for process life so the cost is per process rather than per keystroke. It is
+still **partial** and says so, and the repair for a missing accent is a wider window and an
+honest flag - **never naming an accent**, which would be the sixth declaration of voice facts
+and wrong the first time the provider adds one.
+
+**Two notions of an engagement's locale, and nothing reconciles them.** The picker's accent is
+chosen per agent, per project, when a voice is picked - the **speaking** side. An agent's
+`language` and `country_code` are also per agent per project, set in the agent Setup section,
+stamped into `voice_config` at session creation, and `VoiceInterview.tsx:606` joins them into
+`recognition.lang` for the browser's speech-to-text - the **listening** side. Neither moves the
+other. **So an Irish engagement given an Irish voice still listens as `en-GB`**, until somebody
+separately edits Avery's `country_code`. Of the four planned engagements - Scottish, Irish, New
+Zealand, Australian - this reaches the recognition side of all but the British default. sp64
+narrowed the gap without closing it: retiring `interview_accent` removed the *project-level*
+half of the disagreement, so both sides are now per agent per project and could in principle be
+joined, but nothing joins them. Both halves are correct on their own terms, both are
+operator-editable, and what is missing is the **link**; whether a chosen voice's accent should
+drive the recogniser's locale is a design decision, not a defect to patch, so it is recorded
+rather than fixed. It also corrects
 the design document
 (`docs/superpowers/specs/2026-09-04-agent-config-and-interviewer-selection-design.md`), which
 says *"the gap is on the speaking side, not the listening side"*. That is now incomplete: the

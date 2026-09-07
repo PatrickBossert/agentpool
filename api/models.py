@@ -85,18 +85,15 @@ class ProjectSettings(BaseModel):
     # api/services/interviewer_selection.py. `random` is the default and needs no metadata at
     # all, so the shipped path makes no call to ask.
     interviewer_selection: Literal["always_male", "always_female", "random"] = "random"
-    # Which regional accent this project's interviewer voices are picked from. Held in
-    # **ElevenLabs' own vocabulary** - british, scottish, irish, australian, new zealand -
-    # and forwarded to `GET /v1/shared-voices?accent=` unmodified, so nothing here translates
-    # it and no list of accents is maintained against theirs. A plain `str` rather than a
-    # `Literal` for that reason: closing the set would restate a vocabulary that is not ours,
-    # and an unrecognised value comes back as an empty listing with the accent named rather
-    # than as an outage. `""` means every accent.
-    #
-    # **Not derived from `locale` below**, which is the country and is `GB` for a Scottish
-    # engagement exactly as it is for a British one - the first of the four planned
-    # engagements is the case that breaks the derivation. See api/services/voice_settings.py.
-    interview_accent: str = "british"
+    # `interview_accent` was here and is retired (sp64). It had exactly one production reader -
+    # the voice picker's default filter - and reached no interview: the accent an interview is
+    # conducted in is a property of the voice each interviewer is given, chosen per agent in
+    # `project_agent_config` and stamped on the session at creation. Defaulting to `british`,
+    # it hid 35 of the account's 41 voices behind a setting nobody chose, because `en` is the
+    # *language* and `british` is an accent - two axes ElevenLabs keeps apart, of which only
+    # one narrows. A project whose stored config still carries the key loads and saves: this
+    # model ignores extra keys, and `tests/test_voice_catalogue.py` asserts that rather than
+    # trusting it.
     # Project context - set on Alex's setup tab to ground Maya's interview instruments, and
     # since sp56 also the participant-facing name of the engagement: `outbound_mail` heads
     # stakeholder mail with it, so a participant reads "GS Asset Management - Your interview
