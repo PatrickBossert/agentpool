@@ -492,7 +492,7 @@ async def test_the_revision_blocks_survive_the_reordering(crew_project):
     async def _regeneration(slug, crew_name):
         return "SCRIPTS SENT BACK FOR REVISION:\n- SC-014"
 
-    async def _skills(crew_name):
+    async def _skills(crew_name, slug):
         return "AGENT SKILLS:\n- Units: state them"
 
     with patch.object(run_service, "_fetch_validation_warnings", _warnings), \

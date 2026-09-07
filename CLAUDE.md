@@ -1455,8 +1455,11 @@ decoration**: `created_at` is whole seconds, so two proposals written in the sam
 both of the others and the order fell to whatever SQLite happened to return, which a reviewer
 experiences as a queue that reshuffles on reload.
 
-**Approving changes that agent's behaviour on every engagement**, from its next run -
-`_fetch_skill_notes` has no project scope, and `source_project` is provenance rather than a tier.
+**Approving changes that agent's behaviour on every engagement**, from its next run - an
+approved skill is the agent's published instruction everywhere, and `source_project` on a
+*skill* is provenance rather than a tier. That is not true of the other half of the same block:
+`agent_skill_notes` rows are narrowed by `_note_may_travel`, so `_fetch_skill_notes` now takes a
+slug and the two sources it assembles are treated differently on purpose.
 It is the most consequential button on `AdminSkills.tsx`, so the page says so in the copy, bound
 to the button by `aria-describedby` rather than left beside it.
 
@@ -1556,11 +1559,18 @@ of these paths asks for.
 | Agent Chat (`run_agent_chat`) | Yes, text and retrieved chunks |
 | Agent Chat with an **image** attached, sensitive project | **Refused** (503) - image blocks have no chat-completions equivalent here, and dropping or sending them are both wrong |
 | An agent's skill proposal (`skills_service.propose_skill` -> `find_duplicate_skill`) | Yes - `project_completion(source_project, "fast", ...)`, slug required, raises without it |
-| The global skills library door (`check_specificity`, `extract_skill`, `extract_skills_many`, `api/routers/skill_notes.py`) | **No** - always hosted Haiku |
+| A reviewer's rejection feedback (`POST /agent-skill-notes`) | Yes - `project_completion(slug, "fast", ...)`, slug required, 422 without it |
+| The global skills library door (`check_specificity`, `extract_skill`, `extract_skills_many`) | **No** - always hosted Haiku |
 
-**The skills library has two doors and only one of them is the hosted gap.** The row above it
-used to say "skills library - no", one row for one file, and that was true until an agent could
-reach the library from inside a run.
+**Three doors onto this table family, and only one of them is still the hosted gap.** That row
+used to say "skills library - no", one row for one file, and it was true until an agent could
+reach the library from inside a run. It was still wrong afterwards, for a second reason: it
+covered `api/routers/skill_notes.py`, which distils a reviewer's *verbatim sentence about one
+engagement* and whose one caller held the slug in its props and discarded it - the same "held the
+slug and discarded it" defect this file already records on the test-interview press. Two paths
+have now left that row for the same reason and the row was rewritten only once; **when a
+justification stops covering one member of a list, re-read it against the others rather than
+deleting the one member.**
 
 The remaining gap is the **administrator's skills page**, and it is deliberate rather than an
 oversight, on two facts that are both about *that door*: the library is global across
@@ -1653,6 +1663,24 @@ withheld, and if it is, each contribution must show its own grant. Note which wa
 halves fall - a *global* artefact travels freely (an approved skill is already in every
 engagement's prompt), and anything that cannot be attributed to an engagement is withheld,
 because "may this travel" has no answer without a project to ask about.
+
+**A prompt is a payload too, and it is the one this codebase kept forgetting.**
+`_fetch_skill_notes` in `run_service.py` had the same defect in a worse form: it took no slug
+at all, so it could not ask, and it prepended every stored `agent_skill_notes` row to every
+task of every crew on every project - a note being a model's distillation of a reviewer's
+sentence about one named engagement, injected as *instruction*, with no approval step. It now
+takes the slug `build_and_run_crew` already held and applies `_note_may_travel`, the same rule
+in the same order. **A function that assembles prompt text and takes no slug cannot be asked
+the question**, which is why the signature is the first thing to look at.
+
+Two things that rule does **not** do, so it is not mistaken for more than it is. It is about
+egress, so two engagements that both permit hosted inference still share each other's notes,
+and a wholly local deployment shares everything internally. What is meant to make that
+acceptable is the note being *general* - `_EXTRACT_SYSTEM` carries the "no client-specific
+details" clause its sibling `extract_skill` always had - and a prompt asking a model to behave
+is a second line of defence, never the guarantee. The thing that would close it is an approval
+gate of the kind `skills` has; notes have none, and that is a gap on the record rather than a
+decision that they do not need one.
 
 **The boundary, stated honestly.** For those two declared capabilities, nothing leaves a
 `sensitive` deployment. Five paths still send material off-premises with **no mode question

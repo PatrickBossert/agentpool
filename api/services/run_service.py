@@ -109,8 +109,74 @@ def missing_config_keys(config: dict, crew_name: str) -> list[str]:
     return [key for key in REQUIRED_CONFIG_KEYS.get(crew_name, ()) if not config.get(key)]
 
 
-async def _fetch_skill_notes(crew_name: str) -> str:
-    """Return stored skill notes and approved library skills for this crew's agents."""
+def _note_may_travel(slug: str, note: dict) -> bool:
+    """Whether one stored note may be injected into a run on `slug`.
+
+    The same rule as `_candidates_that_may_travel` in `skills_service.py`, and deliberately
+    the same shape rather than a call to it: that one decides about a *candidate* being sent
+    for comparison and takes the skills table's `status` exemption with it, and a shared
+    helper would have to grow a parameter saying which of the two it was being asked. Two
+    short functions that agree are cheaper to keep true than one that branches on its caller.
+
+    Asked in the same order, and through `project_permits` rather than against a mode name:
+
+    1. Is this run's inference leaving the deployment at all? If the running project is not
+       granted `HOSTED_INFERENCE` the prompt goes to a model on this host, nothing leaves, and
+       no note is withheld.
+    2. May *this note* go there? Asked of the note's own `source_project`, never the running
+       one - the running project's grants are about the running project's material.
+
+    A note with no `source_project` cannot be shown to permit anything, so it is withheld.
+    That is every row written before the column existed.
+    """
+    from api.services.deployment_modes import Capability, project_permits
+
+    if not project_permits(slug, Capability.HOSTED_INFERENCE):
+        return True
+    origin = (note.get("source_project") or "").strip()
+    if not origin:
+        return False
+    return project_permits(origin, Capability.HOSTED_INFERENCE)
+
+
+async def _fetch_skill_notes(crew_name: str, slug: str) -> str:
+    """Skill notes and approved library skills for this crew's agents, for a run on `slug`.
+
+    **`slug` is required, and it is the whole of the second half of this docstring.** This
+    block is prepended to every task of the crew, so whatever it contains becomes part of a
+    prompt routed by `get_llm_for_agent(agent, slug)` - hosted Anthropic on a `standard`
+    project. Without the slug there was no question this function could ask, and it asked
+    none: every note ever written went into every crew's tasks on every engagement.
+
+    Two sources, and they are not the same kind of thing.
+
+    - **Approved skills travel.** An approved skill is the agent's published instruction
+      everywhere by design, which is what `_candidates_that_may_travel` argues in
+      `skills_service.py` and what `list_skills` turns on. Unchanged here.
+    - **A note is one engagement's material.** It is a model's distillation of a reviewer's
+      verbatim sentence about one named engagement - *"Maya named the Q3 outage at Iberdrola
+      in the welcome for SC-014"* is the shape the input actually takes - and it has no
+      approval step between being written and being injected. So a note travels only where
+      its own engagement's material may travel, which is `_note_may_travel` below: the same
+      rule as the deduplication candidates, applied at the other end of the same table
+      family.
+
+    A note that names no engagement is withheld from a run that would send it off the
+    premises. Every row written before `source_project` existed is in that position, so on a
+    hosted project those notes stop being injected until they are written again - one row on
+    the live deployment. They are still injected on a project that keeps its inference local,
+    because nothing leaves there.
+
+    **What this does not do, stated so it is not mistaken for done.** The rule is about
+    *egress*. Two `standard` engagements both permit hosted inference, so a note written on
+    one is still injected into the other's prompts, and a sensitive deployment still shows
+    every note to every one of its own projects. That residual is meant to be handled by the
+    note being *general* - `_EXTRACT_SYSTEM` now carries the "no client-specific details"
+    clause its sibling `extract_skill` always had - and a prompt is not a guarantee. The
+    thing that would close it is an approval gate of the kind `skills` has, deliberately not
+    built here: it is a door, a queue and a reviewer's time, and inventing one silently
+    inside an egress fix is how a half-built gate ends up trusted.
+    """
     from api.database import get_system_connection, fetch_skill_notes as _fetch, fetch_skills
     agent_names = _CREW_AGENT_NAMES.get(crew_name, [])
     if not agent_names:
@@ -119,9 +185,13 @@ async def _fetch_skill_notes(crew_name: str) -> str:
         notes: list[str] = []
         skills: list[str] = []
         seen_skill_ids: set[int] = set()
+        withheld: list[str] = []
         for a in agent_names:
             rows = await _fetch(conn, agent_name=a)
             for r in rows:
+                if not _note_may_travel(slug, r):
+                    withheld.append((r["source_project"] or "").strip() or "no engagement recorded")
+                    continue
                 notes.append(f"- {r['note']}")
             display = _SNAKE_TO_DISPLAY.get(a)
             if display:
@@ -130,6 +200,15 @@ async def _fetch_skill_notes(crew_name: str) -> str:
                     if s["id"] not in seen_skill_ids:
                         seen_skill_ids.add(s["id"])
                         skills.append(f"- {s['name']}: {s['description']}")
+    if withheld:
+        # `info`: on a deployment holding engagements of different modes this is the correct
+        # outcome and will fire often. Logged because it is the only answer to "why is that
+        # lesson not being applied here", which nothing else in the product can give.
+        log.info(
+            "skills: %d note(s) withheld from a %s run on %r, which sends prompts to a hosted "
+            "model - their own engagements (%s) do not permit that.",
+            len(withheld), crew_name, slug, ", ".join(sorted(set(withheld))),
+        )
     sections: list[str] = []
     if notes:
         sections.append("SKILL IMPROVEMENT NOTES (apply these in your output):\n" + "\n".join(notes))
@@ -596,7 +675,7 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     # review_status='changes_requested' (POST /review and PATCH /reviews/{id}) also write
     # an output_changes row now, so injecting from here too would say the same thing twice.
 
-    skill_notes = await _fetch_skill_notes(crew_name)
+    skill_notes = await _fetch_skill_notes(crew_name, slug)
     change_text, change_ids = await _fetch_change_requests(slug, crew_name)
     warning_text = await _fetch_validation_warnings(slug, crew_name)
     regeneration_text = await _fetch_regeneration_requests(slug, crew_name)

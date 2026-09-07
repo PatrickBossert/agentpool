@@ -38,6 +38,15 @@ from api.services.skills_service import propose_skill
 AGENT = "interaction_designer"
 OTHER_AGENT = "value_chain_mapper"
 CREW = "assessment_design"
+
+# The engagement a `_fetch_skill_notes` call in this file is made on behalf of. The slug
+# became required when `agent_skill_notes` learned which engagement a note came from, and it
+# changes nothing here: every assertion in this file is about the **approved library skills**
+# half of that block, which is exempt by design - an approved skill is the agent's published
+# instruction on every engagement. The notes half, which is narrowed, has its own file
+# (tests/test_skill_notes_travel.py). No project database of this name exists, which is
+# deliberate: a caller passing a slug this file never creates must still get its skills.
+INJECTION_SLUG = "skills-injection-reader"
 RULE = "The welcome carries privacy and tone; the framing carries the interview's purpose"
 
 # The same rule as RULE, said twice more with almost none of its vocabulary. This is the
@@ -166,7 +175,7 @@ async def _reject(skill_id: int) -> None:
 async def test_a_pending_proposal_never_reaches_a_prompt():
     """The property the whole design rests on."""
     await propose_skill(AGENT, RULE, "sp-gs-am", "SC-014")
-    injected = await _fetch_skill_notes(CREW)
+    injected = await _fetch_skill_notes(CREW, INJECTION_SLUG)
     assert RULE not in injected
 
 
@@ -179,7 +188,7 @@ async def test_the_same_proposal_reaches_the_prompt_once_a_human_approves_it():
     """
     result = await propose_skill(AGENT, RULE, "sp-gs-am", "SC-014")
     await _approve(result["skill_id"])
-    injected = await _fetch_skill_notes(CREW)
+    injected = await _fetch_skill_notes(CREW, INJECTION_SLUG)
     assert RULE in injected
 
 
@@ -292,7 +301,7 @@ async def test_a_proposal_for_one_agent_is_not_injected_into_another_crew():
     """Approved, so the status filter cannot be what is doing the work here."""
     result = await propose_skill(AGENT, RULE, "sp-gs-am", "SC-014")
     await _approve(result["skill_id"])
-    assert RULE not in await _fetch_skill_notes("discovery_mapping")
+    assert RULE not in await _fetch_skill_notes("discovery_mapping", INJECTION_SLUG)
 
 
 # ── a duplicate is evidence, not noise ─────────────────────────────────────────
@@ -513,7 +522,7 @@ async def test_a_proposal_from_the_illustrator_is_filed_where_an_approval_can_re
         "visual_illustrator", "Render every chart in the client's own palette.", "p1", "VI-001"
     )
     await _approve(result["skill_id"])
-    assert "client's own palette" in await _fetch_skill_notes("business_plan")
+    assert "client's own palette" in await _fetch_skill_notes("business_plan", INJECTION_SLUG)
 
 
 @pytest.mark.asyncio
@@ -539,7 +548,7 @@ async def test_a_caller_holding_the_role_name_already_is_not_mangled():
     result = await propose_skill(_SNAKE_TO_DISPLAY[AGENT], RULE, "p1", "SC-014")
     assert result["agent"] == _SNAKE_TO_DISPLAY[AGENT]
     await _approve(result["skill_id"])
-    assert RULE in await _fetch_skill_notes(CREW)
+    assert RULE in await _fetch_skill_notes(CREW, INJECTION_SLUG)
 
 
 # ── the comparator's failures are loud, and its budget is its own ──────────────

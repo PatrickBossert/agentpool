@@ -3447,12 +3447,20 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             UNIQUE(user_id, project_slug)
         );
 
+        -- `source_project` is the engagement the reviewer wrote the feedback on. It is not
+        -- decoration: `_fetch_skill_notes` prepends every note for a crew's agents to every
+        -- task on every project, so a note is injected as *instruction* into engagements that
+        -- had nothing to do with it - and the note is a model's distillation of a sentence
+        -- that is free to name the client. Without a column to ask about, the injection had
+        -- no question it could ask. A note that names no engagement cannot be shown to permit
+        -- travelling, and is withheld from any run that would send it off the premises.
         CREATE TABLE IF NOT EXISTS agent_skill_notes (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent_name TEXT NOT NULL,
-            note       TEXT NOT NULL,
-            raw_input  TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name     TEXT NOT NULL,
+            note           TEXT NOT NULL,
+            raw_input      TEXT,
+            source_project TEXT,
+            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
         -- `occurrences`, `proposed_by_agent`, `source_project` and `source_ref` are the
@@ -3678,6 +3686,12 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
         ("skills", "source_ref", "TEXT"),
         ("skills", "proposed_by_agent", "TEXT"),
         ("skills", "occurrences", "INTEGER NOT NULL DEFAULT 1"),
+        # Nullable, and every row written before this is NULL: there is no engagement to
+        # backfill from, because nothing ever recorded one. NULL means "cannot be attributed"
+        # rather than "belongs to nobody", and `_fetch_skill_notes` withholds it from a run
+        # that would send it off the premises - the same answer `_candidates_that_may_travel`
+        # gives an unattributable candidate, for the same reason.
+        ("agent_skill_notes", "source_project", "TEXT"),
     ):
         cur = await conn.execute(f"PRAGMA table_info({table})")
         if column not in {row[1] for row in await cur.fetchall()}:
@@ -3729,10 +3743,25 @@ async def get_system_db():
         yield conn
 
 
-async def insert_skill_note(conn: aiosqlite.Connection, *, agent_name: str, note: str, raw_input: str) -> int:
+async def insert_skill_note(
+    conn: aiosqlite.Connection,
+    *,
+    agent_name: str,
+    note: str,
+    raw_input: str,
+    source_project: str | None = None,
+) -> int:
+    """One skill note, with the engagement its feedback was written on.
+
+    `source_project` is keyword-with-a-default rather than required, and only because this
+    helper is also driven by tests that are about something else. The **door** is where it is
+    required: `POST /agent-skill-notes` takes a non-blank slug or answers 422, because a note
+    with no engagement can never be shown to a hosted run again.
+    """
     cur = await conn.execute(
-        "INSERT INTO agent_skill_notes (agent_name, note, raw_input) VALUES (?,?,?)",
-        (agent_name, note, raw_input),
+        "INSERT INTO agent_skill_notes (agent_name, note, raw_input, source_project)"
+        " VALUES (?,?,?,?)",
+        (agent_name, note, raw_input, source_project),
     )
     await conn.commit()
     return cur.lastrowid

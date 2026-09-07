@@ -429,7 +429,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
       )
       // Save skill note alongside rejection (fire-and-forget, non-blocking)
       if (mode === 'reject' && rejectingAgentKey && skillInput.trim()) {
-        skillNotesApi.create(rejectingAgentKey, skillInput.trim()).catch(() => {})
+        skillNotesApi.create(slug, rejectingAgentKey, skillInput.trim()).catch(() => {})
       }
       qc.invalidateQueries({ queryKey: ['reviews', slug] })
       onClose()
