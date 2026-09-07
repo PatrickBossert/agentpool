@@ -439,3 +439,63 @@ and a hook that ignored the fallback passes the second.
 - [ ] **Step 8: Suites twice, frontend and `tsc` clean. Power-check each of Steps 3, 5 and 7
   separately. Commit.**
 
+
+---
+
+### Task 8: Each tab means one thing
+
+**Files:** Modify `ui/src/components/AgentDetailPanel.tsx`, `ui/src/components/tabs/CrewAgentsTab.tsx`, `ui/src/components/AgentStatusTab.tsx`, the six `*SetupTab.tsx` panels, `ui/src/router.tsx`, `ui/src/pages/Runs.tsx`; Test: extend the panel tests, new `ui/src/__tests__/TabClassification.test.tsx`
+
+Patrick's decision, 7 September, after using the tabs. Spec section: *Where a panel belongs: the
+rename test*. The classification and the reasoning are there; this is the build.
+
+- [ ] **Step 1: Report what each of the six panels renders, section by section**, before moving
+  anything. The spec's table is the decision, not the survey - confirm it against the source and
+  say where you disagree. `PamSetupTab` is 1,183 lines and splits across two tabs, so its
+  sections are the ones to enumerate most carefully.
+
+- [ ] **Step 2: Move Taylor's two.** The stakeholder list, counts and CSV import to **Status**;
+  Interview Invite Rules to **Setup**. These are the two Patrick named.
+
+- [ ] **Step 3: Write the failing test - present on the new tab AND absent from the old**
+
+```tsx
+it('shows the stakeholder summary on Status and not on Agents', async () => {
+  // Absence is the half that fails silently. A section rendered on BOTH tabs satisfies every
+  // "is it there" assertion, and that is exactly the state a careless move leaves behind.
+  renderPanel({ crew: 'discovery_interviews' })
+  expect(within(statusTab()).getByText(/Stakeholders ·/)).toBeInTheDocument()
+  expect(within(agentsTab()).queryByText(/Stakeholders ·/)).toBeNull()
+})
+```
+
+  Note the tabs render **hidden rather than unmounted**, so `queryByText` at screen level finds
+  content on an inactive tab. Scope every assertion with `within(...)` on the tab's own panel or
+  the absence half asserts nothing.
+
+- [ ] **Step 4: Move the other four**, per the spec's table: Alex and Jordan wholesale to Setup;
+  Maya splits (disciplines to Setup, programme reference to Status); Pam splits (schedule and
+  calendar to Setup, milestone statistics and the interview tracker to Status). Avery does not
+  move.
+
+- [ ] **Step 5: Keep Pam's milestones on one query.** The schedule editor and the statistics read
+  the same rows. Two components sharing one query key is right; two queries is a second fetch
+  and two answers that can disagree while one is stale. Assert the request count, not the
+  rendering - a duplicated fetch looks identical on screen.
+
+- [ ] **Step 6: Correct the deep links, for the second time.** `router.tsx`'s
+  `AssignmentRedirect` and `Runs.tsx`'s "Assign stakeholders" both went `tab=setup` →
+  `tab=agents` in Task 6, with a comment explaining why; Jordan's mapping returns to Setup, so
+  both links and that comment change again. **Drive them** - a link that lands on the right crew
+  and the wrong tab looks like working navigation that simply does not hold what was asked for.
+
+- [ ] **Step 7: The mount latch follows the content.** Whichever tab now pays for a query needs
+  the latch that `setupOpened`/`agentsOpened` provide, or a panel opened on Output fetches a
+  schedule nobody asked for. Assert it for each tab that gained fetching content.
+
+- [ ] **Step 8: Write the classification as a property**, one test per tab: Agents holds nothing
+  scoped to the engagement, Setup nothing scoped to a person, Status nothing editable. Stated as
+  a test rather than as a comment, so a seventh panel added later has something to fail against.
+
+- [ ] **Step 9: Frontend suite, `tsc` clean. Power-check Steps 3, 5, 6 and 8 separately. Commit.**
+
