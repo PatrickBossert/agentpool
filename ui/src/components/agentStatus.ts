@@ -395,6 +395,7 @@ export const AGENT_AVATAR_IMAGE: Record<string, string> = {
   'Value Lever Analyst':         _img('morgan-davis.jpg'),
   'Interview Coordinator':       _img('taylor-brooks.jpg'),
   'Stakeholder Interviewer':     _img('avery-singh.jpg'),
+  'Second Interviewer':          _img('laura-nelson.jpg'),
   'Synthesis Analyst':           _img('casey-liu.jpg'),
   'Value Proposition Generator': _img('quinn-harper.jpg'),
   'Portfolio Manager':           _img('blake-anderson.jpg'),

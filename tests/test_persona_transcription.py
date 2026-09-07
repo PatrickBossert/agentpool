@@ -84,12 +84,18 @@ def test_the_parser_reads_both_maps():
     """Guard the guard. Two empty sets are equal, and a regex that stopped matching would
     make every assertion below pass while the files diverged freely.
 
-    Eighteen names and seventeen faces: Laura Nelson has no headshot yet. The two numbers are
-    written separately rather than as one because they are now separate facts, and a single
-    count would go back to hiding whichever of them moved.
+    Eighteen names and eighteen faces. It was eighteen and seventeen until 7 September, when
+    Laura Nelson - the one agent who had no headshot - was given one.
+
+    **They stay two assertions now that they agree, and that is the whole point of the
+    split.** Collapsing them into a single count, or into `len(names) == len(images)`, would
+    read as tidier and would hide exactly the state that has already happened once: an agent
+    who has a name and no face. The next agent added will be in it again, between being
+    declared and being drawn. Two numbers, recounted independently - never one adjusted to
+    match the other.
     """
     assert len(_frontend_names()) == 18, sorted(_frontend_names())
-    assert len(_frontend_images()) == 17, sorted(_frontend_images())
+    assert len(_frontend_images()) == 18, sorted(_frontend_images())
 
 
 def test_the_two_files_name_the_same_people():
