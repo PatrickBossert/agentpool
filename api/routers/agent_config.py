@@ -98,6 +98,7 @@ from api.services.agent_config_service import (
     is_interviewer,
     resolve_agent_config_with,
 )
+from api.services.agent_default_images import promote_if_unclaimed
 from api.services.authority_service import require_project_administration
 from api.services.image_intake import (
     PORTRAIT_CONTENT_TYPES,
@@ -531,6 +532,27 @@ async def upload_agent_image(
 
     stored.write_bytes(prepared)
 
+    # **And, if this agent has no face at all, the deployment now has one.** Patrick's
+    # instruction of 7 September: portraits stay per project, but the first portrait uploaded
+    # for an agent with no default becomes the default for every later project, so the same
+    # photograph does not have to be uploaded onto every engagement in turn.
+    #
+    # After the project's own file is written, deliberately. The upload an administrator asked
+    # for is this door's job; the promotion is a consequence of it, and a promotion that failed
+    # must not cost them the portrait they came here to store.
+    #
+    # `AGENT_IDENTITY[agent_id].image is None` is the "no face at all" question, asked here
+    # because this is where the roll is already in hand. All eighteen agents carry a portrait
+    # today, so nothing on the current roll is promotable - the rule is for the next agent
+    # declared, in the window before somebody draws them.
+    promoted = await promote_if_unclaimed(
+        agent_id=agent_id,
+        slug=slug,
+        prepared=prepared,
+        extension=extension,
+        has_no_face=AGENT_IDENTITY[agent_id].image is None,
+    )
+
     return {
         # No `/api` prefix. This router is mounted at `/projects`, and CLAUDE.md records that
         # only `/api/templates` and `/api/interviews` carry the prefix - so `/api/projects/...`
@@ -542,6 +564,11 @@ async def upload_agent_image(
         "url": f"/projects/{slug}/agents/{agent_id}/image",
         "bytes": len(prepared),
         "original_bytes": len(data),
+        # Reported for the same reason `bytes` is: something happened that the administrator
+        # did not ask for and would not otherwise learn about - and this one is visible on
+        # engagements that are not theirs. Answering `false` on every ordinary upload is the
+        # point, since silence would be indistinguishable from a promotion.
+        "promoted_to_deployment_default": promoted,
     }
 
 

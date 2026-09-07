@@ -34,6 +34,11 @@ The defaults live in `agents/identity.py`, beside the permanent `agent_id` this 
 here is keyed on a display name, which is what makes renaming an agent - or running an
 engagement where it is called something else - free.
 
+**One default is not in that file.** `image_url` may resolve to a *promoted* portrait - the
+first one uploaded for an agent that had no face at all, which becomes the deployment's default
+for every later project. `agent_defaults` below is the single place that level is read, and
+`api/services/agent_default_images.py` holds the four-level precedence table and the reasoning.
+
 **One fact is derived here rather than stored.** `is_interviewer` asks
 `interviewer_agent_ids()`, the one place "who can conduct an interview" is answered, so the
 Setup section can offer a rehearsal to the agents that can conduct one. It is derived from
@@ -65,6 +70,7 @@ from api.database import (
     get_db_path,
     is_contained_slug,
 )
+from api.services.agent_default_images import promoted_default_url
 
 # The keys `resolve_agent_config` answers. Taken from the table's own column list rather than
 # restated, so a column added to `project_agent_config` cannot be one the resolver ignores -
@@ -83,13 +89,26 @@ class UnknownAgent(KeyError):
 
 
 def agent_defaults(agent_id: str) -> dict[str, Any]:
-    """The unconfigured answer for one agent - what runs today, and what an override overrides."""
+    """The unconfigured answer for one agent - what runs today, and what an override overrides.
+
+    **The one place the promoted default is read**, and that is the whole reason it is here
+    rather than in either door. `image_url` resolves through three of the four levels
+    `agent_default_images` states: a project override beats everything (`_merge`, above a
+    caller of this), a *promoted* default beats the built-in asset, and the built-in asset is
+    what nearly every agent has. Inserting level 2 at the doors instead would have meant two
+    insertions - the interview page reads `resolve_agent_config`'s `resolved`, the Setup
+    section reads `GET .../config` - and two places for them to come to disagree about an
+    agent's face.
+
+    Reading the promoted default costs nothing on a deployment that has none: the table is
+    held in a process-local dict behind one read-only open of `system.db`.
+    """
     identity = AGENT_IDENTITY.get(agent_id)
     if identity is None:
         raise UnknownAgent(agent_id)
     return {
         "display_name": identity.display_name,
-        "image_url": identity.image,
+        "image_url": promoted_default_url(agent_id) or identity.image,
         "voice_id": identity.voice_id,
         "language": identity.language,
         "country_code": identity.country_code,

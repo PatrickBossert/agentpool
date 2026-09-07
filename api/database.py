@@ -3547,6 +3547,31 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             PRIMARY KEY (project_slug, stakeholder_id)
         );
 
+        -- The deployment's default portrait for one agent, promoted from the first project
+        -- that ever uploaded one for an agent with no face of its own.
+        --
+        -- Recorded rather than inferred from the filesystem. `promoted_from_slug` is the
+        -- provenance, and it matters more here than for an ordinary asset: this is the one
+        -- write in the product where **one engagement's upload changes what a different
+        -- client's engagement displays**, so "which project did this face come from" has to
+        -- be answerable without reading file timestamps.
+        --
+        -- `agent_id` is the PRIMARY KEY because the claim is an INSERT OR IGNORE keyed on it -
+        -- see claim_agent_default_image below. First wins, and the row is what decides, so the
+        -- uniqueness has to be the table's rather than a caller's.
+        --
+        -- **No `_SCHEMA_VERSION` bump.** That constant gates *project* databases;
+        -- init_system_db has no version gate and runs on every system connection, so a
+        -- CREATE TABLE IF NOT EXISTS here is already enough - and bumping it would re-run
+        -- every project migration on every deployment for a table in a database it does not
+        -- govern. CLAUDE.md states the rule and states that it is inverted between the two.
+        CREATE TABLE IF NOT EXISTS agent_default_images (
+            agent_id           TEXT PRIMARY KEY,
+            extension          TEXT NOT NULL,
+            promoted_from_slug TEXT NOT NULL,
+            promoted_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
         -- The provider's id for a message that was actually sent to a named person.
         -- Recorded from the first send rather than when it is needed, because it cannot
         -- be recovered afterwards: if inbound routing turns out to strip the `+tag` from
@@ -4658,6 +4683,41 @@ async def store_platform_public_url(conn: aiosqlite.Connection, public_url: str)
         (public_url,),
     )
     await conn.commit()
+
+
+async def claim_agent_default_image(
+    conn: aiosqlite.Connection, *, agent_id: str, extension: str, promoted_from_slug: str
+) -> bool:
+    """Claim the deployment's default portrait for one agent. True if this call won it.
+
+    `INSERT OR IGNORE` on the primary key, and the answer is `rowcount` - deliberately the
+    same shape as `register_project_if_unregistered` above, for the same reason. The caller
+    writes the file **only** when this returns True.
+
+    A prior `SELECT` would be the check-then-write this exists to avoid: two projects
+    uploading a portrait for the same faceless agent at once would both see no row, both
+    decide to promote, and the loser would overwrite the winner's file *after* losing the
+    row - leaving `promoted_from_slug` naming one engagement and the bytes coming from
+    another. The row is what decides, so the row has to be taken first.
+    """
+    cur = await conn.execute(
+        "INSERT OR IGNORE INTO agent_default_images "
+        "(agent_id, extension, promoted_from_slug) VALUES (?,?,?)",
+        (agent_id, extension, promoted_from_slug),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def fetch_agent_default_image(
+    conn: aiosqlite.Connection, *, agent_id: str
+) -> dict | None:
+    """The promoted default recorded for one agent, or None - provenance included."""
+    async with conn.execute(
+        "SELECT * FROM agent_default_images WHERE agent_id=?", (agent_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
 
 
 async def record_scheduler_heartbeat(conn: aiosqlite.Connection, *, now_iso: str) -> None:
