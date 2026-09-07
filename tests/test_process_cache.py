@@ -307,10 +307,12 @@ _MODULE_LEVEL_STATE = {
         "later test in the process, and the production invalidator is called by "
         "promote_if_unclaimed after the file is written"
     ),
-    "api/services/voice_catalogue.py::_LIBRARY_ACCENTS": (
-        REGISTERED, "the accents the ElevenLabs Voice Library holds, asked unfiltered so the "
-        "voice picker can offer an accent the account does not have - irish, which is one of "
-        "the four planned engagements - proved by probe below. Held because it is a fact "
+    "api/services/voice_catalogue.py::_LIBRARY_PROBE": (
+        REGISTERED, "the accents and languages the ElevenLabs Voice Library holds, asked "
+        "unfiltered so the voice picker can offer an accent the account does not have - irish, "
+        "which is one of the four planned engagements - and so its language control offers "
+        "more than the one language the door applies by default, proved by probe below. Held "
+        "because it is a fact "
         "about the provider rather than about a request, and a picker that narrows as a "
         "consultant types would otherwise make one call per keystroke. The test-order trap is "
         "the ordinary one and reads badly: a test that warmed it from one stubbed library "
@@ -427,7 +429,7 @@ def _agent_default_images_probe():
     )
 
 
-def _library_accents_probe():
+def _library_probe_probe():
     """A singleton rather than a dict, so the probe reassigns the module attribute.
 
     Same shape as `_platform_url_probe`: there is no key to insert, and "warm" is simply
@@ -437,16 +439,16 @@ def _library_accents_probe():
     return (
         lambda: setattr(
             voice_catalogue,
-            "_LIBRARY_ACCENTS",
-            voice_catalogue.AccentProbe(["probe-accent"], False),
+            "_LIBRARY_PROBE",
+            voice_catalogue.LibraryProbe(["probe-accent"], ["probe-language"], False),
         ),
-        lambda: voice_catalogue._LIBRARY_ACCENTS is not None,
+        lambda: voice_catalogue._LIBRARY_PROBE is not None,
     )
 
 
 _REGISTERED_PROBES = {
     "api/services/voice_metadata.py::_GENDER_CACHE": _voice_gender_probe,
-    "api/services/voice_catalogue.py::_LIBRARY_ACCENTS": _library_accents_probe,
+    "api/services/voice_catalogue.py::_LIBRARY_PROBE": _library_probe_probe,
     "api/services/chroma_client.py::_MODE_CACHE": _mode_cache_probe,
     "api/services/chroma_client.py::_FORCE_LOCAL_CACHE": _force_local_cache_probe,
     "api/services/platform_settings.py::_CACHED_URL": _platform_url_probe,

@@ -1,13 +1,18 @@
 // ui/src/__tests__/SettingsInterviewProgramme.test.tsx
 //
-// `interviewer_selection` and `interview_accent` - the two settings that decide who conducts
-// this project's interviews and in what accent.
+// `interviewer_selection` - the setting that decides who conducts this project's interviews.
 //
-// Both were real `ProjectSettings` fields on the server with **no control anywhere and no
-// declaration in types.ts**, surviving a save only as untyped extra keys the
+// It was a real `ProjectSettings` field on the server with **no control anywhere and no
+// declaration in types.ts**, surviving a save only as an untyped extra key the
 // `{ ...DEFAULTS, ...settings }` spread happened to copy. That is exactly the state
 // `force_local_inference` was in, and then `dev_mode` one field over, so this file asserts
 // the same two properties those earned:
+//
+// `interview_accent` was the second field here and is **retired** in sp64, model and type
+// together: it decided nothing about any interview, and its one effect was to open every
+// voice picker filtered to `british`, showing 6 of the account's 41 voices. The accent now
+// lives on the picker as an opt-in narrowing beside a language control, which is where the
+// two properties below are asserted for it - on what the picker *sends*.
 //
 //   1. a stored value survives an **unrelated** save - the drop is silent and its
 //      consequence is a Scottish engagement quietly reset to british;
@@ -51,7 +56,6 @@ const BASE: ProjectSettings = {
   discovery_document_ids: [],
   interview_method: 'none',
   interviewer_selection: 'random',
-  interview_accent: 'british',
   elaboration_press_timeout_seconds: 8,
   anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
   anthropic_deep_model: 'anthropic/claude-opus-4-6',
@@ -85,7 +89,6 @@ function renderSettings() {
   )
 }
 
-const accent = () => screen.getByLabelText('Interview accent')
 const who = () => screen.getByLabelText('Who conducts the interview')
 const budget = () => screen.getByLabelText(/follow-up time limit/i)
 const save = () => screen.getByRole('button', { name: /save/i })
@@ -101,25 +104,24 @@ beforeEach(() => {
   vi.mocked(projectsApi.updateSettings).mockResolvedValue(BASE)
 })
 
-describe("the interview programme's two settings", () => {
-  it('renders the stored values rather than the shipped defaults', async () => {
+describe("the interview programme's setting", () => {
+  it('renders the stored value rather than the shipped default', async () => {
     vi.mocked(projectsApi.getSettings).mockResolvedValue({
-      ...BASE, interviewer_selection: 'always_female', interview_accent: 'scottish',
+      ...BASE, interviewer_selection: 'always_female',
     })
     renderSettings()
 
-    await waitFor(() => expect(accent()).toHaveValue('scottish'))
-    expect(who()).toHaveValue('always_female')
+    await waitFor(() => expect(who()).toHaveValue('always_female'))
   })
 
-  it('carries a stored Scottish accent through an unrelated save', async () => {
+  it('carries a stored choice of interviewer through an unrelated save', async () => {
     // The defect this closes, in the form it would actually have arrived in: nobody touches
-    // the accent, somebody edits the follow-up budget, and the next interview is conducted in
-    // the wrong accent by a system that reported success. There is no error and no 403 -
-    // neither of these fields is platform-tier - so a dropped key is simply the server's own
+    // who conducts the interview, somebody edits the follow-up budget, and the next session
+    // is assigned by a coin toss by a system that reported success. There is no error and no
+    // 403 - this field is not platform-tier - so a dropped key is simply the server's own
     // default written over the project's choice.
     vi.mocked(projectsApi.getSettings).mockResolvedValue({
-      ...BASE, interviewer_selection: 'always_female', interview_accent: 'scottish',
+      ...BASE, interviewer_selection: 'always_female',
     })
     renderSettings()
 
@@ -129,25 +131,27 @@ describe("the interview programme's two settings", () => {
     fireEvent.click(save())
 
     await waitFor(() => expect(projectsApi.updateSettings).toHaveBeenCalled())
-    expect(sent().interview_accent).toBe('scottish')
     expect(sent().interviewer_selection).toBe('always_female')
-    // Present as keys, not merely equal by coincidence: an absent key and a key holding the
+    // Present as a key, not merely equal by coincidence: an absent key and a key holding the
     // default are indistinguishable when the stored value happens to be the default, and this
     // is the assertion that stays honest if the fixture ever changes.
-    expect(Object.keys(sent())).toContain('interview_accent')
     expect(Object.keys(sent())).toContain('interviewer_selection')
   })
 
-  it('sends the accent that was typed, not the one that was rendered', async () => {
+  it('no longer sends a retired interview accent', async () => {
+    // The half of a retirement that is invisible without an assertion. A key left in
+    // `DEFAULTS` or on `ProjectSettings` here still rides every save, reaches a server that
+    // models no such field, and is silently dropped - which looks exactly like working.
+    // Asserted on what is sent, because nothing renders either way.
     vi.mocked(projectsApi.getSettings).mockResolvedValue(BASE)
     renderSettings()
 
-    await waitFor(() => expect(accent()).toBeEnabled())
-    fireEvent.change(accent(), { target: { value: 'irish' } })
+    await waitFor(() => expect(budget()).toBeEnabled())
     fireEvent.click(save())
 
     await waitFor(() => expect(projectsApi.updateSettings).toHaveBeenCalled())
-    expect(sent().interview_accent).toBe('irish')
+    expect(Object.keys(sent())).not.toContain('interview_accent')
+    expect(screen.queryByLabelText('Interview accent')).toBeNull()
   })
 
   it('sends the interviewer selection that was chosen', async () => {
@@ -162,25 +166,10 @@ describe("the interview programme's two settings", () => {
     expect(sent().interviewer_selection).toBe('always_male')
   })
 
-  it('lets the accent be cleared to every accent', async () => {
-    // `''` is a real value on the server - it means "search every accent" - so the control
-    // has to be able to reach it. A control that could not would make the empty state
-    // unreachable from the only place it is offered.
-    vi.mocked(projectsApi.getSettings).mockResolvedValue({ ...BASE, interview_accent: 'irish' })
-    renderSettings()
-
-    await waitFor(() => expect(accent()).toHaveValue('irish'))
-    fireEvent.change(accent(), { target: { value: '' } })
-    fireEvent.click(save())
-
-    await waitFor(() => expect(projectsApi.updateSettings).toHaveBeenCalled())
-    expect(sent().interview_accent).toBe('')
-  })
-
-  it('leaves both editable for a caller refused the platform-tier fields', async () => {
-    // Neither is on `_PLATFORM_TIER_SETTINGS`: they decide the tone of a conversation, not
+  it('leaves it editable for a caller refused the platform-tier fields', async () => {
+    // It is not on `_PLATFORM_TIER_SETTINGS`: it decides the tone of a conversation, not
     // where this engagement's material is sent. A project_admin configures their own
-    // interview programme, and gating these would have been a rule invented on this page that
+    // interview programme, and gating this would have been a rule invented on this page that
     // the server does not hold.
     vi.mocked(projectsApi.getSettings).mockResolvedValue(BASE)
     vi.mocked(projectsApi.getMyPermissions).mockResolvedValue({
@@ -188,8 +177,7 @@ describe("the interview programme's two settings", () => {
     })
     renderSettings()
 
-    await waitFor(() => expect(accent()).toBeEnabled())
-    expect(who()).toBeEnabled()
+    await waitFor(() => expect(who()).toBeEnabled())
     // The control that proves the fixture really is a refused caller. Without it, "these two
     // are enabled" would pass just as well against a page that locks nothing at all.
     expect(screen.getByLabelText('LLM Mode')).toBeDisabled()

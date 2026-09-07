@@ -42,16 +42,17 @@ from pydantic import BaseModel, Field
 
 from api.auth import check_project_access, require_any_auth, require_org_admin_or_above
 from api.services.voice_catalogue import (
+    DEFAULT_LIBRARY_LANGUAGE,
     VoiceCatalogueUnavailable,
     accents_present,
     add_library_voice,
     fetch_account_voices,
     fetch_library_voices,
     filter_account_voices,
-    library_accents,
+    languages_present,
+    library_axes,
 )
 from api.services.voice_metadata import resolved_voice_sex
-from api.services.voice_settings import project_interview_accent
 
 router = APIRouter(prefix="/projects/{slug}/voices", tags=["voices"])
 
@@ -59,16 +60,23 @@ router = APIRouter(prefix="/projects/{slug}/voices", tags=["voices"])
 @router.get("")
 async def list_voices(
     slug: str,
-    accent: str | None = Query(
-        default=None,
+    accent: str = Query(
+        default="",
         description=(
-            "ElevenLabs' own accent vocabulary - british, scottish, irish, australian, "
-            "new zealand. Omit to use the project's `interview_accent`; pass an empty "
-            "string to ask for every accent."
+            "ElevenLabs' own accent vocabulary, forwarded unmodified. An **opt-in narrowing**: "
+            "the default is every accent, because the accents are all of one language and "
+            "narrowing by one of them hides the rest."
         ),
     ),
     gender: str | None = Query(default=None),
-    language: str | None = Query(default=None),
+    language: str | None = Query(
+        default=None,
+        description=(
+            "ElevenLabs' own language codes, forwarded unmodified to the library query. "
+            f"Omit for the default, `{DEFAULT_LIBRARY_LANGUAGE}`; pass an empty string to ask "
+            "for every language. The account listing is never narrowed by it."
+        ),
+    ),
     search: str | None = Query(default=None),
     current_voice_id: str | None = Query(
         default=None,
@@ -80,16 +88,37 @@ async def list_voices(
     ),
     payload: dict = Depends(require_any_auth),
 ) -> dict[str, Any]:
-    """Both voice listings for this project, with the project's accent applied by default.
+    """Both voice listings for this project: English by default, every accent by default.
 
     `check_project_access` is the **first** line. The door takes a slug in its path, and the
     route sweep counts exactly that - but the floor is here because the caller has to be on
     the engagement, not because the sweep would notice if it were not.
 
-    **Omitted and empty are different**, and the difference is the whole reason `accent`
-    defaults to `None` rather than to `""`. Omitted means "you decide", and the answer is the
-    project's `interview_accent`; empty means the consultant has cleared the filter and wants
-    the lot. Collapsing them would make the project setting unclearable from the picker.
+    **Two axes, and only one of them is a narrowing.** `en` is the language; `british`,
+    `irish`, `american` and `new zealand` are accents of it, and ElevenLabs keeps them as
+    separate query parameters. This door used to apply the project's `interview_accent` -
+    `british` by default - as the filter a picker opened on, which showed **6 of 41** account
+    voices measured on 7 September. So the default moved onto the axis that broadens: the
+    library is asked for `DEFAULT_LIBRARY_LANGUAGE`, and the accent narrows nothing until
+    somebody asks it to.
+
+    `interview_accent` is retired rather than merely unread. It had this one production reader
+    and reached no interview - the accent an interview is conducted in is a property of the
+    voice each interviewer is given, chosen per agent and stamped on the session - so a
+    setting named "Interview accent" decided nothing about interviews while hiding 85% of the
+    voices in a picker.
+
+    **Omitted and empty are different for `language`, and that distinction moved with the
+    default.** Omitted means "you decide" and is answered `en`; empty means the consultant
+    wants every language. `accent` needs no such distinction any more, because it no longer
+    has a default to be cleared of - both spellings of "say nothing" mean every accent, and a
+    parameter with two ways to say one thing invites a caller to depend on the difference.
+
+    **The account listing is never narrowed by language.** These are the deployment's own
+    voices, all 41 deliberately added by somebody, and `filter_account_voices` is not offered
+    a language to filter on - structural rather than remembered. The default exists to stop a
+    consultant scrolling past the library's other languages, and the account has no such
+    problem to solve.
 
     **A partial answer is reported, never hidden.** If one listing fails and the other
     succeeds, the successful one is returned with the failure named in `account_error` or
@@ -114,7 +143,7 @@ async def list_voices(
 
     **It is asked of `ask_voice_sex`, never derived from the listing.** The obvious shortcut is
     to look the voice up in `account` and read its `gender`, and it fails silently for exactly
-    the projects that configured an accent: the listing is narrowed by `applied_accent`, so a
+    the callers that narrowed by accent: the listing is narrowed by `applied_accent`, so a
     voice of a different accent is simply not in it, and "not found" is indistinguishable from
     "no label". Asking keeps this door and the crew's `always_male`/`always_female` selection
     reading one source, which is the constraint this whole line of work turns on.
@@ -122,31 +151,47 @@ async def list_voices(
     **`accent_options` is what a picker renders, and it is the union of both listings.** The
     first version of this door derived the options from the account alone, which made **Irish
     unreachable** - irish exists only in the library, and Irish is one of the four planned
-    engagements. That left the picker two bad choices, hardcoding a list of accents or
-    offering no way to reach one of the four, and it quietly made free-text `interview_accent`
-    the only route to Irish, which is weight an open vocabulary was not chosen to carry.
+    engagements. That left the picker two bad choices: hardcoding a list of accents, or
+    offering no way to reach one of the four. Retiring the accent default disturbs none of
+    that - the union is what it always was, and the probe is still asked unfiltered.
+
+    **`language_options` is the same rule on the new axis**, and it is not decoration. A
+    control that applies `en` must be able to show `en` and to offer what else exists, or the
+    default becomes a filter with no way out - which is the defect this change exists to
+    repair, reintroduced one axis over. Derived from `verified_languages` on the account
+    listing and the library probe, never from a list in this codebase, and `applied_language`
+    joins it so a picker never applies a filter its own control cannot show.
     """
     await check_project_access(slug, payload)
 
-    applied_accent = await project_interview_accent(slug) if accent is None else accent
-    accent_source = "project" if accent is None else "request"
+    applied_accent = accent
+    applied_language = DEFAULT_LIBRARY_LANGUAGE if language is None else language
 
     account: list[dict[str, Any]] = []
     account_accents: list[str] = []
+    account_languages: list[str] = []
     account_error: str | None = None
     library: list[dict[str, Any]] = []
     library_has_more = False
     lib_accents: list[str] = []
-    # True when the probe was truncated *or* failed. Either way the option list is not the
-    # library's whole accent vocabulary, and a picker must not present it as one.
-    accent_options_partial = False
+    lib_languages: list[str] = []
+    # True when the probe was truncated *or* failed. Either way the option lists are not the
+    # library's whole vocabulary - of either axis, since one truncated page truncates both -
+    # and a picker must not present them as one.
+    options_partial = False
     library_error: str | None = None
 
     try:
         all_account = await fetch_account_voices()
-        # Derived from the **unfiltered** listing, so the picker's accent dropdown offers the
-        # accents this account actually holds rather than only the one already selected.
+        # Both derived from the **unfiltered** listing, so the picker's dropdowns offer what
+        # this account actually holds rather than only the value already selected.
         account_accents = accents_present(all_account)
+        account_languages = languages_present(all_account)
+        # **No `language=` here, and that absence is the design.** These are the deployment's
+        # own voices, every one deliberately added, and narrowing them by the language default
+        # would reintroduce on the account listing exactly the hidden-voices defect this
+        # change removed from the accent. Structural: the parameter is not passed, so there is
+        # nothing to get wrong rather than a rule to remember.
         account = filter_account_voices(all_account, accent=applied_accent, gender=gender)
         account_ids = frozenset(
             v["voice_id"] for v in all_account if isinstance(v.get("voice_id"), str)
@@ -157,11 +202,13 @@ async def list_voices(
         account_error = str(exc)
         account_ids = frozenset()
 
-    # Asked **before** the narrowed call and deliberately unfiltered - see `library_accents`.
+    # Asked **before** the narrowed call and deliberately unfiltered - see `library_axes`.
     # Both are needed: the narrowed one is the result set, and asked with `accent=british` it
     # reports british, so a dropdown derived from it would offer exactly the option already
-    # selected. Cached per process, so this is one extra request per process rather than per
-    # keystroke.
+    # selected. That argument now has a second instance the default makes unavoidable: the
+    # narrowed call carries `language=en` on a bare request, so a language dropdown derived
+    # from it would offer `en` alone. Cached per process, so this is one extra request per
+    # process rather than per keystroke.
     #
     # **Its own `try`, and the separation is the whole point.** These two shared one for a
     # single commit and the coupling ran in both directions. Sharing it made the *auxiliary*
@@ -172,7 +219,7 @@ async def list_voices(
     # probe: `accent_options` went from `['british', 'irish', 'scottish']` to
     # `['british', 'scottish']`, losing precisely the option the probe exists to add.
     try:
-        lib_accents, accent_options_partial = await library_accents()
+        lib_accents, lib_languages, options_partial = await library_axes()
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except VoiceCatalogueUnavailable:
@@ -180,13 +227,13 @@ async def list_voices(
         # picker with a short accent list and a full result set has something to show, and
         # setting it here would make an account failure plus a probe failure a 502 while a
         # perfectly good library listing sat in hand.
-        accent_options_partial = True
+        options_partial = True
 
     try:
         library, library_has_more = await fetch_library_voices(
             accent=applied_accent,
             gender=gender,
-            language=language,
+            language=applied_language,
             search=search,
             account_ids=account_ids,
         )
@@ -203,18 +250,28 @@ async def list_voices(
     # I use now" against "what could I add" - but neither alone is the option list: the account
     # has no Irish voice and the library is where Irish lives.
     #
-    # `applied_accent` joins them even when neither listing reported it, so a project whose
-    # saved accent is beyond the library page, or whose library call failed, still sees its own
-    # setting in its own picker rather than a control that silently disagrees with the filter
-    # it is applying.
+    # `applied_accent` joins them even when neither listing reported it, so a caller whose
+    # chosen accent is beyond the library page, or whose library call failed, still sees the
+    # value in the control rather than a dropdown that silently disagrees with the filter it
+    # is applying.
     accent_options = sorted(
         {a for a in account_accents + lib_accents + [applied_accent] if a}
+    )
+    # The same union and the same rule on the language axis. `applied_language` matters more
+    # here than `applied_accent` does above, because there is a **default**: a bare request
+    # applies `en`, and a control that could not show `en` would leave a filter nobody chose
+    # with no way out - which is precisely the defect on the accent axis that this change
+    # exists to repair.
+    language_options = sorted(
+        {lang for lang in account_languages + lib_languages + [applied_language] if lang}
     )
 
     return {
         "accent": applied_accent,
-        "accent_source": accent_source,
-        "filters": {"gender": gender, "language": language, "search": search},
+        # What the library was actually asked for, which is the default when the request named
+        # no language and `""` when it asked for every one.
+        "language": applied_language,
+        "filters": {"gender": gender, "search": search},
         # The sex of the voice the caller arrived with, or None where it cannot be established
         # or acted on. `None` means **open unfiltered**, never "no voices" and never an error:
         # `resolved_voice_sex` collapses four routes onto it and the picker must treat them
@@ -227,12 +284,21 @@ async def list_voices(
         # at all - `ask_voice_sex` returns without a request for an absent voice.
         "voice_sex": await resolved_voice_sex(current_voice_id),
         "accent_options": accent_options,
-        # The options came off one bounded page, or off a probe that failed. Either way the
-        # list is not the library's whole accent vocabulary, and a control that renders it as
-        # exhaustive is presenting a first page as a complete answer.
-        "accent_options_partial": accent_options_partial,
+        # The vocabulary walk stopped at its bound with the provider still saying there was
+        # more, or a page of it failed. Either way the list is not the library's whole accent
+        # vocabulary, and a control that renders it as exhaustive is presenting part of the
+        # library as all of it - which is how Irish went missing on 7 September.
+        "accent_options_partial": options_partial,
+        "language_options": language_options,
+        # The same flag under the name of the axis it qualifies. One value, deliberately
+        # served twice: both lists are read off the same walk, so whatever it did not reach
+        # was unread for both - and a consumer of `language_options` that had to know it
+        # should read a field named for the *accent* would eventually not.
+        "language_options_partial": options_partial,
         "account_accents": account_accents,
         "library_accents": lib_accents,
+        "account_languages": account_languages,
+        "library_languages": lib_languages,
         "account": account,
         "account_error": account_error,
         "library": library,

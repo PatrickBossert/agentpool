@@ -45,10 +45,18 @@ export interface CatalogueVoice {
 }
 
 export interface VoiceCatalogue {
-  /** The accent actually applied, which is the project's when the request omitted one. */
+  /** The accent actually applied. `''` - the default - is every accent. */
   accent: string
-  accent_source: 'project' | 'request'
-  filters: { gender: string | null; language: string | null; search: string | null }
+  /**
+   * The language the library was actually asked for. The server's own default when the
+   * request named none, and `''` when it asked for every language.
+   *
+   * **Read, never assumed.** The default lives in Python, and a picker that wrote the code
+   * here would be declaring a voice fact in TypeScript on the axis this file's header names
+   * first.
+   */
+  language: string
+  filters: { gender: string | null; search: string | null }
   /**
    * The sex of the voice named by `current_voice_id`, for a picker to open on. Answered by the
    * server from the provider's own label on that voice - **never derived from the listings
@@ -68,12 +76,28 @@ export interface VoiceCatalogue {
   /** The union of both listings, and the only thing an accent control should offer. */
   accent_options: string[]
   /**
-   * The options came off one bounded page of the library, or off a probe that failed. Either
-   * way the list is not the whole accent vocabulary and must not be presented as one.
+   * The vocabulary walk stopped with the library still saying there was more, or a page of
+   * it failed. Either way the list is not the whole accent vocabulary and must not be
+   * presented as one - the library's pages move, and an option that was there this morning
+   * can be behind the walk's bound this afternoon.
    */
   accent_options_partial: boolean
+  /**
+   * The union of both listings' languages, and the only thing a language control should
+   * offer. Derived on the server from `verified_languages` on the account listing and the
+   * library's unfiltered probe - the same rule as `accent_options`, on the axis that has a
+   * default and therefore needs it more: a control that cannot show the language being
+   * applied is a filter nobody chose with no way out.
+   */
+  language_options: string[]
+  /** The same claim as `accent_options_partial`, about the language list. Both lists come
+   *  off one walk of the library, so these two always agree - and a consumer of the language
+   *  options should not have to know that to find out. */
+  language_options_partial: boolean
   account_accents: string[]
   library_accents: string[]
+  account_languages: string[]
+  library_languages: string[]
   account: CatalogueVoice[]
   /** Named when the account listing failed while the library succeeded. A partial answer is
    *  reported rather than hidden: five voices shown where ninety exist is diagnosed as
@@ -97,10 +121,12 @@ export const voicesApi = {
   /**
    * Both listings for this project.
    *
-   * `accent` omitted and `accent` empty are different requests and the difference is
-   * deliberate on the server: omitted means "use the project's `interview_accent`", empty
-   * means "every accent". So `undefined` is not sent and `''` is, which is why this builds
-   * the query rather than spreading an object.
+   * `language` omitted and `language` empty are **different requests**, and the difference is
+   * deliberate on the server: omitted means "you decide" and is answered with the server's
+   * default, empty means "every language". So `undefined` is not sent and `''` is, which is
+   * why this builds the query rather than spreading an object. `accent` had that distinction
+   * until sp64 and no longer needs it - it has no default to be cleared of, so both spellings
+   * of saying nothing mean every accent.
    *
    * `current_voice_id` is **not a filter**. It names the voice the caller already has, and the
    * door answers `voice_sex` for it; omitting it is answered `null`, so a picker that does not

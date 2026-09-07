@@ -51,7 +51,6 @@ const BASE_SETTINGS: ProjectSettings = {
   dev_mode: true,
   interview_method: 'none',
   interviewer_selection: 'random',
-  interview_accent: 'british',
   // Deliberately not DEFAULTS' 8. This is the load barrier every test below waits on,
   // and a barrier whose value the form already holds is satisfied before the query
   // resolves - which lets an edit race the load and be clobbered by it. Two of these
