@@ -597,7 +597,7 @@ describe('the prose half', () => {
     renderPage()
     await screen.findByRole('heading', { name: 'Undertakings' })
     expect(screen.queryByText(/Anthropic - inference, in flight only/)).toBeNull()
-    expect(screen.getByText(/Anthropic - not this engagement's agents/)).toBeInTheDocument()
+    expect(screen.getByText(/Anthropic - not this engagement's prompts/)).toBeInTheDocument()
     // And it does not swing the other way: Anthropic is still reached by the skills library on
     // a sensitive engagement, so the terms are stated rather than dropped.
     expect(screen.getByText(/the skills library below/)).toBeInTheDocument()

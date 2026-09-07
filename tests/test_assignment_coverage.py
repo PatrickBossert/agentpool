@@ -750,6 +750,13 @@ def test_jordan_does_not_hold_the_interview_session_tool():
     registry is what `create_stakeholder_management_crew` calls. The positive control is in the
     same assertion: he must still hold `SQLiteStateTool`, or a registry that raised or returned
     nothing would satisfy the absence for the wrong reason.
+
+    Kept as an equality rather than relaxed to "InterviewSessionTool not in held" when
+    `SkillProposalTool` joined every dispatched agent's list. The equality is the half that
+    would notice a *third* tool arriving in his hands without anybody deciding it should, which
+    is the shape of the defect this test was written for; a membership check would not.
+    `SkillProposalTool` does no work on his task - it records a rule after a reviewer has sent
+    work back - so it takes nothing of the interview process back.
     """
     from agents.tools.registry import get_tools_for_agent
 
@@ -759,7 +766,7 @@ def test_jordan_does_not_hold_the_interview_session_tool():
             "stakeholder_manager", slug=SLUG, run_id=1, sector="rail"
         )
     }
-    assert held == {"SQLiteStateTool"}, held
+    assert held == {"SQLiteStateTool", "SkillProposalTool"}, held
 
 
 @pytest.mark.asyncio

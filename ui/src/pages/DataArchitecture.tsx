@@ -628,6 +628,13 @@ function PageNav({ data }: { data: DataArchitectureModel }) {
 // Anthropic is still reached on one - the skills library is hosted by decision whatever the
 // project's mode - so removing the terms altogether would under-report. The card is replaced by
 // one that says which paths do and do not reach it.
+//
+// The replacement card said "not this engagement's agents" until `SkillProposalTool` was
+// registered, at which point an agent could reach the skills library from inside a run and the
+// title had become the thing this comment is about. It names the prompts instead, which is the
+// claim the `inference` block actually supports, and the detail names the one path that is not
+// covered by it. `agents/egress.py` declares that path as `Reach.UNGATED_INFERENCE`, so the
+// generated table below lists it beside Tavily and the fetch tool without this prose.
 const UNDERTAKINGS: {
   title: string
   detail: string
@@ -640,9 +647,9 @@ const UNDERTAKINGS: {
     appliesTo: (data) => data.inference.leaves_deployment,
   },
   {
-    title: "Anthropic - not this engagement's agents",
+    title: "Anthropic - not this engagement's prompts",
     detail:
-      "This engagement's inference resolves to the local model on this host, so no agent's prompt reaches Anthropic. One path still does, whatever the mode: the skills library below. Anthropic's commercial terms - inputs and outputs neither retained beyond the call nor used for training - govern that path.",
+      "This engagement's inference resolves to the local model on this host, so no agent's task, no artefact and no interview answer reaches Anthropic. One path still does, whatever the mode: the skills library below. An agent reaches it when it proposes a general rule for itself after a reviewer has sent work back, and what travels is the rule the agent wrote. Anthropic's commercial terms - inputs and outputs neither retained beyond the call nor used for training - govern that path.",
     appliesTo: (data) => !data.inference.leaves_deployment,
   },
   {

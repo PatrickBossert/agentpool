@@ -7,42 +7,23 @@ IMPORTANT: The tool's orchestration_run_id field receives the crew_run_id from
 the registry. The tool resolves the actual orchestration_run_id from crew_runs
 at runtime, so queries against interview_sessions use the correct FK.
 """
-import asyncio
 import contextlib
 import json
 import sqlite3
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from api.config import get_settings
 
+# Extracted to agents/tools/_sync.py once a second tool needed it - see the docstring there
+# for why the live-loop arm exists. Imported under its old private name so every call site in
+# this module reads as it did.
+from agents.tools._sync import await_sync as _await_sync
+
 
 def _db_path(slug: str) -> str:
     return str(Path(get_settings().database_dir) / f"{slug}.db")
-
-
-def _await_sync(coro):
-    """Run one coroutine to completion from synchronous code, with or without a live loop.
-
-    In production there is no loop: CrewAI dispatches through `crew.kickoff_async()`, which
-    runs the crew under `asyncio.to_thread`, so a tool executes on a worker thread and
-    `asyncio.run` is exactly right. **That is not the only caller**, though - five existing
-    tests drive `_run` from inside an async test, where `asyncio.run` raises
-    "cannot be called from a running event loop". A tool that works from one calling context
-    and explodes in another is a trap laid for whoever next dispatches a crew differently, so
-    the loop case runs the coroutine on a thread of its own rather than being refused.
-
-    One coroutine, awaited once, in both arms - it is never scheduled twice, which would be a
-    second database read rather than a repeat of the first.
-    """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
 
 
 def _resolve_interviewers(slug: str):

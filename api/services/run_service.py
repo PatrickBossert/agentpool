@@ -85,7 +85,6 @@ _SNAKE_TO_DISPLAY: dict[str, str] = {
     "roadmap_generator":           "Roadmap Generator",
     "visual_illustrator":          "Visual Illustrator",
     "business_plan_generator":     "Business Plan Generator",
-    "visual_illustrator":          "Visual Illustrator",
     # PAM is dispatched by orchestration_service rather than by a crew, so it is in no entry
     # of _CREW_AGENT_NAMES and nothing injects its skills - but it holds eight of them in the
     # table under this name, and it can propose. The two names had to agree somewhere.
@@ -228,6 +227,44 @@ async def _fetch_regeneration_requests(slug: str, crew_name: str) -> str:
         "note. They already have a script, so step 4's differential would otherwise skip "
         "them - these are the exception:\n" + lines
     )
+
+
+# The instruction that turns a correction into a rule, injected only on a run that actually
+# has one to learn from.
+#
+# It belongs with the two blocks above and below it rather than in any agent's task, because
+# the requirement is about a *situation* and not about an agent: anything that can be sent work
+# back should propose the general rule behind the correction it just made. Writing it into
+# Maya's task would have made it hers, and `SkillProposalTool` is held by all seventeen agents
+# a crew dispatches.
+#
+# Injected on a send-back and on nothing else. An agent holding the tool can call it whenever it
+# likes - a tool an agent holds is a tool it can decide to call - but an ordinary run is not
+# asked to, which is what keeps the deduplication's hosted model call off every run that had
+# nothing corrected. `agents/egress.py` declares that call; it is ungated on mode.
+#
+# The worked example is real: it is the note a reviewer left on interview script SC-014 on
+# 3 September 2026, and the rule Maya's revision of it actually turned on. A general
+# instruction to "propose the rule, not the note" is the sort of thing an agent agrees with and
+# then ignores; one worked pair of the two is what makes the distinction operable.
+_SKILL_PROPOSAL_INSTRUCTION = (
+    "AFTER you have made every revision asked for above - not instead of making them - ask "
+    "whether the correction has a general rule behind it, and if it has, record that rule "
+    "with SkillProposalTool.\n"
+    "Propose the rule, not the note. The note is about the one piece of work in front of you; "
+    "the rule is what you should do differently on every future piece of work of that kind, on "
+    "this engagement and on every other. Worked example - the note left on interview script "
+    "SC-014 was: \"'not a performance review' appears twice, and the framing repeats the "
+    "welcome\". The rule behind it is: \"the welcome carries privacy and tone, the framing "
+    "carries the interview's purpose\". The first is about a script. The second is about every "
+    "script.\n"
+    "At most one proposal per correction, and none at all where the correction was particular "
+    "to this piece of work and generalises to nothing - an approved rule is applied to every "
+    "future run, so a rule that should not have been proposed costs more than a lesson left "
+    "unrecorded. Your suggestion changes nothing, on this run or any other, until a human "
+    "approves it, and whether it succeeds or fails has no bearing on the revision you have "
+    "already made."
+)
 
 
 async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[int]]:
@@ -556,23 +593,26 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     # an output_changes row now, so injecting from here too would say the same thing twice.
 
     skill_notes = await _fetch_skill_notes(crew_name)
-    if skill_notes:
-        for task in crew.tasks:
-            task.description = skill_notes + "\n\n" + task.description
-
     change_text, change_ids = await _fetch_change_requests(slug, crew_name)
-    if change_text:
-        for task in crew.tasks:
-            task.description = change_text + "\n\n" + task.description
-
     warning_text = await _fetch_validation_warnings(slug, crew_name)
-    if warning_text:
-        for task in crew.tasks:
-            task.description = warning_text + "\n\n" + task.description
-
     regeneration_text = await _fetch_regeneration_requests(slug, crew_name)
-    if regeneration_text:
-        for task in crew.tasks:
+
+    # Every block is prepended, so the code order below is the reverse of the reading order the
+    # agent gets: regeneration, warnings, changes, the proposal instruction, the skills, then
+    # the task. The proposal instruction is placed to fall immediately after the last of the
+    # blocks it refers to, and is injected **once** however many of them fired - a human sent
+    # one lot of work back, not two, and two copies of "propose at most one rule" is the
+    # fan-out defect `_fetch_change_requests` deduplicates for, arriving from a second source.
+    for task in crew.tasks:
+        if skill_notes:
+            task.description = skill_notes + "\n\n" + task.description
+        if change_text or regeneration_text:
+            task.description = _SKILL_PROPOSAL_INSTRUCTION + "\n\n" + task.description
+        if change_text:
+            task.description = change_text + "\n\n" + task.description
+        if warning_text:
+            task.description = warning_text + "\n\n" + task.description
+        if regeneration_text:
             task.description = regeneration_text + "\n\n" + task.description
 
     result = await crew.kickoff_async()
