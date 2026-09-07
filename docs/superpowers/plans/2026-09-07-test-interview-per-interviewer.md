@@ -317,3 +317,61 @@ a row too, and the test would pass against exactly the behaviour it forbids.
 **Not in scope:** a portrait asset for Laura; changing Taylor's selection; storing a sex anywhere in this repository.
 
 **One ordering note:** Task 3 could precede Task 2, but the picker is easier to test against a payload that already carries `voice_sex` than against a stub of one.
+
+---
+
+### Task 6: An Agents tab, and Setup keeps only what a crew owns
+
+**Files:** Modify `ui/src/components/AgentDetailPanel.tsx`, `ui/src/components/tabs/CrewSetupSections.tsx`; Test: extend `ui/src/__tests__/AgentDetailPanel*.test.tsx`, new `ui/src/__tests__/AgentsTab.test.tsx`
+
+Patrick's decision, 7 September. Spec section: *Separating agent setup from crew setup*. Runs
+after Task 3, which puts the rehearsal button inside `AgentConfigSection` - this task moves the
+container, not the button.
+
+- [ ] **Step 1: Report the five sites that know the tab list**, before changing any: the `Tab`
+  union (`AgentDetailPanel.tsx:95`), the `isTab` guard (:818), the saved-tab restore (:835), the
+  rendered tab array (:1008), and the mount latch (:871). Say what each does and which of them
+  fails **silently**.
+
+- [ ] **Step 2: Derive the guard and the restore from one list.** Do not add a sixth
+  restatement. A tab missing from `isTab` does not error - it falls back to `output`, so the tab
+  works until the user reloads and then forgets where they were, which no rendering test sees.
+
+- [ ] **Step 3: Write the failing test - the reload, not the render**
+
+```tsx
+it('is still the Agents tab after a reload', () => {
+  // Through the saved-tab restore, because that is the path a missing guard entry breaks.
+  // Asserting the tab renders would pass against exactly the defect being prevented.
+  localStorage.setItem(TAB_KEY, 'agents')
+  renderPanel()
+  expect(screen.getByTestId('agents-tab-panel')).toBeVisible()
+})
+```
+
+- [ ] **Step 4: Add the tab with its own mount latch**, mirroring `setupOpened`. Without it the
+  panel fetches every agent's configuration for a tab nobody opened - four requests per crew
+  rather than Setup's one, which is the sp62 defect arriving where it costs four times as much.
+
+- [ ] **Step 5: Write the failing test - and the control.** Opening a panel on Output asks for
+  no agent configuration; opening Agents asks for it. Both, or a component that never fetched
+  would pass the first.
+
+- [ ] **Step 6: The tab opens on the agent clicked in the carousel**, not always the first.
+  Assert with a crew whose clicked agent is **not** first - with `[Taylor, Avery, Laura, Casey]`
+  and Avery clicked, a component ignoring the selection and a component honouring it differ only
+  if the expected agent is not index 0.
+
+- [ ] **Step 7: Move `CrewAgentConfiguration` and `CrewSetupSections` out of Setup into Agents**,
+  and move `CREW_SETUP_OVERRIDE`'s three components - `PamSetupTab`, `AlexSetupTab`,
+  `MayaSetupTab` - beside the agent each is named after. Setup keeps the crew note, reads and
+  produces.
+
+- [ ] **Step 8: Write the failing test - Setup's ABSENCE.** Assert no agent configuration renders
+  under Setup, as well as that it renders under Agents. A test that only checks Agents passes
+  with both showing it, which is the state this task exists to end.
+
+- [ ] **Step 9: Frontend suite, `tsc` clean. Power-check Steps 3, 5, 6 and 8 separately -
+  for Step 3, delete the new entry from the `isTab` derivation and confirm the reload test fails
+  while every rendering test still passes. Commit.**
+
