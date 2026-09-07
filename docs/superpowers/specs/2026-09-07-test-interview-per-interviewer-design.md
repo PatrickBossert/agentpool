@@ -274,3 +274,66 @@ shown, not which data exists; the configurations are already keyed by agent in t
 - Setup no longer renders any agent configuration, asserted by its **absence** - a test that
   only checks the Agents tab has it would pass with both showing it.
 - An agent with a bespoke section shows it under Agents, and its crew's Setup tab does not.
+
+---
+
+# Where a panel belongs: the rename test
+
+**Decided by Patrick, 7 September**, after using the tabs. The Task 6 split put six panels on
+the Agents tab because their components are named after agents. Reading their contents, the
+naming was the only agent-ish thing about most of them.
+
+## The test
+
+**If this agent were renamed or replaced, would this content move with them?**
+
+Avery's interviewing style would - it is how *he* conducts an interview. A project's milestone
+schedule would not, and neither would its research brief. `PamSetupTab`, `AlexSetupTab` and
+`MayaSetupTab` are named after the agent that *reads* the configuration, which made
+configuration *for* an agent and configuration *of* an agent look like the same thing.
+
+## Where each panel goes
+
+| Panel | Content | Tab |
+|---|---|---|
+| Taylor | stakeholder list, counts, CSV import | **Status** |
+| Taylor | Interview Invite Rules | **Setup** |
+| Avery | interviewing behaviour - style, depth, persistence, timing | **Agents** (unchanged) |
+| Alex | research brief, links, source documents, project context, standards | **Setup** |
+| Maya | disciplines editor | **Setup** |
+| Maya | interview programme overview, section structure, design features | **Status** |
+| Pam | project start, duration, milestones, Gantt, non-working periods | **Setup** |
+| Pam | overdue / upcoming / completed stats, interview completion tracker | **Status** |
+| Jordan | stakeholder-to-value-chain-node mapping | **Setup** |
+
+Afterwards each tab means one thing: **Agents** is who the agent is and how it behaves,
+**Setup** is how the engagement is configured, **Status** is what the engagement is doing.
+
+**The Agents tab becomes thin, and that is the correct outcome** rather than a loss. What is
+left is the only content that is genuinely about the agent instead of about the engagement.
+
+## Three traps in moving them
+
+**The deep links move for the second time.** `router.tsx`'s `AssignmentRedirect` was corrected
+from `tab=setup` to `tab=agents` during Task 6 and its comment explains why; Jordan's mapping
+now returns to Setup, so the link and the comment both change again. `Runs.tsx` carries the
+same link. A link that lands on the right crew and the wrong tab fails silently - it looks
+like a working navigation that simply does not hold what was asked for.
+
+**Pam's panel splits across two tabs and must not split its data.** The schedule editor and the
+milestone statistics read the same milestones. Two components sharing one query key is right;
+two queries is a second fetch and two answers that can disagree while one of them is stale.
+
+**The mount latch follows the content, not the tab.** Task 6 latched the Agents tab because it
+fetches configuration. Moving fetching content to Status and Setup moves the cost with it -
+whichever tab now pays for a query needs the latch, or a panel opened on Output fetches a
+schedule nobody asked for.
+
+## Testing
+
+- Each moved section is asserted **present on its new tab and absent from its old one**. Absence
+  is the half that fails silently: a section rendered on both tabs satisfies every "is it there"
+  assertion.
+- The deep links are driven to the tab they now name, not merely checked for a string.
+- One test per tab that it holds nothing belonging to another - the classification stated as a
+  property rather than as a comment, so a seventh panel added later has something to fail.
