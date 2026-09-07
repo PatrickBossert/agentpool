@@ -98,6 +98,68 @@ already has access to.
 A consequence worth naming: renaming an agent in `agents/identity.py`, or giving one a
 per-project name, now changes the rehearsal too. That is the point of keying on `agent_id`.
 
+## The first upload becomes the default, when there is no default
+
+**Decided by Patrick, 7 September.** Portraits are per project. But an agent with **no default
+portrait at all** - Laura today, and every future agent before somebody draws one - should not
+need the same photograph uploaded onto every engagement in turn. So **the first portrait
+uploaded for such an agent is promoted to the deployment's default**, and every later project
+inherits it.
+
+### Four levels, and the precedence is stated once
+
+| | Where it lives | Set by |
+|---|---|---|
+| 1. Project override | `projects/<slug>/assets/agents/<agent_id>.<ext>` | uploading on that project |
+| 2. Promoted default | deployment assets, recorded in `system.db` | the first upload for an agent with no default |
+| 3. Built-in asset | `ui/public/agents/<name>.jpg`, shipped in the repository | whoever added the agent |
+| 4. Initials | nothing on disk | `AgentAvatar` |
+
+First match wins, and **the promotion only ever fills level 2** - it never overwrites a built-in
+asset and never overwrites itself. "First" means first, not latest: once a default exists, later
+uploads stay project overrides. That is what makes the rule predictable rather than a race in
+which the most recent engagement silently re-faces every other one.
+
+### It is claimed atomically, not checked and then written
+
+Two projects uploading at once for a faceless agent must not both promote. The claim is an
+`INSERT OR IGNORE` keyed on `agent_id`, which is the pattern
+`register_project_if_unregistered` already uses for exactly this shape - check-then-write has a
+window, and the window here is two clients' portraits racing.
+
+### It is recorded, not inferred from the filesystem
+
+`agent_default_images` in `system.db` holds `agent_id` (primary key), the stored extension, the
+slug it was promoted from, and when. Provenance matters more here than for an ordinary asset:
+this is the one write in the product where **one engagement's upload changes what a different
+client's engagement displays**, and "which project did this face come from" must be answerable
+without reading file timestamps.
+
+`system.db` takes **no `_SCHEMA_VERSION` bump** - `init_system_db` is idempotent, has no version
+gate, and runs on every system connection. CLAUDE.md states this rule and states that it is
+inverted from the project-database rule; this is a system table.
+
+### It is served from its own door, not from the project it came from
+
+`GET /api/agents/{agent_id}/image`, **unauthenticated**, like the branding image and for the
+same reason: the interview page has no login. Serving a promoted default from
+`/api/projects/<origin-slug>/agents/...` would tie every project's rendering to the continued
+existence of whichever engagement happened to upload first, and would leak that slug into the
+markup of unrelated clients.
+
+### What this deliberately accepts
+
+**Whoever uploads first decides that agent's face for the deployment.** That is the instruction,
+and it is safe for a persona portrait in a way it would not be for client material - but it is
+the only place in this product where an upload on one engagement is visible on another, so it is
+written down rather than left to be discovered. There is no promotion for any other asset, and
+none for an agent that already has a face.
+
+A consequence to expect rather than diagnose: replacing a promoted default is not an upload, it
+is a deletion of the recorded row. No door does that yet, deliberately - `DELETE
+/api/agents/{agent_id}/image` is the obvious shape when somebody wants it, and it is
+sysadmin-tier work because it changes every engagement at once.
+
 ## Laura has no photograph
 
 `ui/public/agents/laura-nelson.jpg` does not exist, and her resolved `image_url` is `null`.
