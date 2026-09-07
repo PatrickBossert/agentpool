@@ -137,7 +137,13 @@ async function runDialogWithPress(pressText: unknown) {
   installSpeechRecognition(EVASIVE_ANSWER)
   installAudioAndMic()
 
-  render(<TestInterviewDialog slug="smoke" onClose={() => {}} />)
+  render(<TestInterviewDialog
+      slug="smoke"
+      onClose={() => {}}
+      agentId="stakeholder_interviewer"
+      displayName="Avery Singh"
+      imageUrl="/agents/avery-singh.jpg"
+    />)
 
   const toBriefing = await screen.findByRole('button', { name: /continue|start|begin/i })
   await userEvent.click(toBriefing)

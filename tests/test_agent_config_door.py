@@ -283,6 +283,109 @@ async def test_one_projects_configuration_does_not_reach_another(doors):
     assert (await resolve_agent_config(SLUG_B, AVERY))["voice_id"] == AGENT_IDENTITY[AVERY].voice_id
 
 
+# ── Who can be offered a rehearsal, over HTTP ───────────────────────────────────────────
+#
+# `agent_config_service.is_interviewer` is where this is derived and `tests/test_agent_config.py`
+# drives the derivation. These are about the **wiring**: that the door carries it, and that the
+# door reaches no third party to answer. A derivation asserted only at the service is CLAUDE.md's
+# recurring failure mode - a property verified one layer away from where it holds.
+
+@pytest.mark.asyncio
+async def test_the_door_says_who_can_be_offered_a_rehearsal(doors):
+    """Both arms, and neither is a list written in this file.
+
+    The expected answers come from `interviewer_agent_ids()` - the one place the question is
+    answered - so a door that hardcoded a pair of ids would pass the first assertion and fail
+    the moment the roster changed, rather than silently disagreeing with the crew.
+    """
+    from agents.identity import interviewer_agent_ids
+
+    roster = interviewer_agent_ids()
+    assert AVERY in roster and "pam" not in roster, "the fixture chose the wrong two agents"
+
+    for agent_id in (AVERY, "pam"):
+        body = (
+            await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/{agent_id}/config")
+        ).json()
+        assert body["is_interviewer"] is (agent_id in roster), agent_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_id", ["stakeholder_interviewer", "pam"])
+async def test_the_configuration_door_reaches_no_third_party(doors, monkeypatch, agent_id):
+    """This door is read once per agent panel on every render, so it must ask nobody.
+
+    It did for one commit: the sex of the resolved voice was answered here, which put an
+    ElevenLabs round trip on the happy path of the most-rendered read in the section - and
+    because failed lookups are not cached, an outage was re-paid on every render, showing
+    "Loading this agent's configuration…" indefinitely. The field moved to
+    `GET /projects/{slug}/voices`; this is what stops it coming back.
+
+    Driven for a **voiced** agent as well as a voiceless one, because the version being guarded
+    against only made a request when there was a voice to ask about. The client is made to
+    explode rather than a lookup stubbed, so the property is the absence of a request rather
+    than the shape of a mock.
+
+    **The API key has to be armed for the spy to mean anything**, and that is not a detail.
+    The suite runs with a blank `ELEVENLABS_API_KEY`, and `voice_gender` raises on a blank key
+    **before** it builds a client - so without the two lines below the spy can never fire, and
+    this test would be carried entirely by the `voice_sex` key assertion while claiming to
+    assert the absence of a request. Verified by mutation: with the field restored to this
+    door, an unarmed spy failed on the key and an armed one failed on the request.
+    `tests/test_voice_catalogue.py` learned the same lesson in reverse, where a fixture arming
+    the key was what turned an assertion about synthesis into a real provider call.
+    """
+    from api.services import voice_metadata
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
+    monkeypatch.setattr(voice_metadata, "get_settings", lambda: settings)
+
+    def refuse_to_build_a_client():
+        raise AssertionError(
+            "the agent configuration door must not reach ElevenLabs - the voice sex belongs "
+            "to GET /projects/{slug}/voices, which opens on a user action"
+        )
+
+    monkeypatch.setattr(voice_metadata, "_client", refuse_to_build_a_client)
+
+    r = await doors["admin_a"].get(f"/projects/{SLUG_A}/agents/{agent_id}/config")
+    assert r.status_code == 200, r.text
+    assert "voice_sex" not in r.json(), (
+        "the voice sex is answered by the picker's own door, not by this one"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_saved_voice_does_not_make_this_door_reach_out_either(doors, monkeypatch):
+    """The same property after a `PUT`, because `_answer` serves both verbs.
+
+    A save is the other action that would have paid the provider round trip, and it is the one
+    a consultant makes while watching. Asserted with a voice this repository has no opinion
+    about, so nothing can be answered from a cache warmed by a default.
+    """
+    from api.services import voice_metadata
+
+    # Armed, for the reason the test above gives at length: a blank key raises before a client
+    # is ever built, so an unarmed spy is a spy that cannot fire.
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "test-key", raising=False)
+    monkeypatch.setattr(voice_metadata, "get_settings", lambda: settings)
+
+    def refuse_to_build_a_client():
+        raise AssertionError("saving a voice must not reach ElevenLabs")
+
+    monkeypatch.setattr(voice_metadata, "_client", refuse_to_build_a_client)
+
+    r = await doors["admin_a"].put(
+        f"/projects/{SLUG_A}/agents/{AVERY}/config",
+        json={**_all_null(), "voice_id": CHOSEN_VOICE},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["resolved"]["voice_id"] == CHOSEN_VOICE
+    assert "voice_sex" not in r.json()
+
+
 # ── The roll is closed ──────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

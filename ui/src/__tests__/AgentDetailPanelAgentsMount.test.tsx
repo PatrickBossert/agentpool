@@ -1,12 +1,12 @@
-// ui/src/__tests__/AgentDetailPanelSetupMount.test.tsx
+// ui/src/__tests__/AgentDetailPanelAgentsMount.test.tsx
 //
 // When the agent configuration section mounts, and when it does not.
 //
-// The Setup tab is rendered `hidden` rather than unmounted - deliberately, so a half-typed
+// The Agents tab is rendered `hidden` rather than unmounted - deliberately, so a half-typed
 // discovery brief survives a trip to Output - which means everything on it is mounted from the
 // moment the panel opens. The configuration block therefore asks the server for **every agent
 // in the crew** as soon as anybody opens any agent panel, on whatever tab, unless something
-// stops it. `setupOpened` is that something.
+// stops it. `agentsOpened` is that something.
 //
 // It is written here because the behaviour was correct and **held by nothing**: review drove
 // the four cases below at 393a6c7f, found all four passing, and then confirmed that removing
@@ -14,10 +14,13 @@
 // failure mode in the one shape the discipline does not name - not a test asserting one layer
 // away from the property, but a correct property with no test at all.
 //
+// It moved from Setup to Agents when the two were separated, and the latch matters more here
+// than it did there: a crew of four costs four requests for a tab nobody opened, not one.
+//
 // The third case is the one worth the file. The obvious implementation latches in the tab's
 // `onClick` handler, which passes the first two cases and fails only on a panel that *opens* on
-// Setup - a deep link from a notification, or the tab this browser last used. It is an effect on
-// `tab` for exactly that reason.
+// Agents - a deep link from a notification, or the tab this browser last used. It is an effect
+// on `tab` for exactly that reason.
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
@@ -37,7 +40,13 @@ vi.mock('../context/AuthContext', () => ({
 }))
 
 vi.mock('../api/agentConfig', () => ({
-  agentConfigApi: { get: vi.fn(), put: vi.fn() },
+  agentConfigApi: {
+    get: vi.fn(), put: vi.fn(),
+    // Task 7: every face and name on the panel resolves through `useAgentIdentity`,
+    // which reads this. An empty roll means the static map answers, which is what
+    // these tests were written against.
+    getAll: vi.fn().mockResolvedValue({ agents: {} }),
+  },
 }))
 
 vi.mock('../api/endpoints', () => ({
@@ -97,11 +106,18 @@ const CONFIG = {
     display_name: 'Alex Chen', image_url: null, voice_id: null,
     language: 'en', country_code: 'GB', model_id: 'eleven_turbo_v2',
   },
+  // Stipulated, not derived from the id: the roster of who interviews lives in one place in
+  // Python. Nothing in these cases reads it.
+  is_interviewer: false,
+  // Level 2 of the four - `null` because this agent's default is the portrait shipped in the
+  // repository, which is true of every agent on the roll today.
+  promoted_default_image_url: null,
 }
 
-// `discovery_mapping` holds two agents and takes a whole-tab CREW_SETUP_OVERRIDE, so it also
-// proves the block renders *beside* an override rather than only where there is none.
-function renderPanel(initialTab: 'output' | 'setup') {
+// `discovery_mapping` holds two agents, one of which (Alex) has a bespoke section of his own,
+// so it also proves the configuration block renders *beside* one rather than only where there
+// is none.
+function renderPanel(initialTab: 'output' | 'agents') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
@@ -130,7 +146,7 @@ beforeEach(() => {
   vi.mocked(projectsApi.getSettings).mockResolvedValue({} as never)
 })
 
-describe('the agent configuration block only mounts once Setup has been opened', () => {
+describe('the agent configuration block only mounts once Agents has been opened', () => {
   it('asks the server for nothing when the panel opens on Output', async () => {
     // The property the latch exists for. Without it, opening any agent panel fetches one
     // configuration per agent in the crew for a tab nobody looked at - and the Setup tab is
@@ -142,12 +158,12 @@ describe('the agent configuration block only mounts once Setup has been opened',
     expect(agentConfigApi.get).not.toHaveBeenCalled()
   })
 
-  it('asks once Setup is opened, for every agent in the crew', async () => {
+  it('asks once Agents is opened, for every agent in the crew', async () => {
     const user = userEvent.setup()
     renderPanel('output')
     await waitFor(() => expect(projectsApi.getMyPermissions).toHaveBeenCalled())
 
-    await user.click(tab('Setup'))
+    await user.click(tab('Agents'))
 
     // Both of discovery_mapping's agents, by their permanent ids - the bridge doing its job.
     await waitFor(() => {
@@ -156,27 +172,27 @@ describe('the agent configuration block only mounts once Setup has been opened',
     })
   })
 
-  it('asks when a deep link opens the panel straight onto Setup', async () => {
+  it('asks when a deep link opens the panel straight onto Agents', async () => {
     // The case the obvious implementation gets wrong. Latching in the tab's onClick handler
-    // passes both tests above and fails this one, and the panel can genuinely open here: a
-    // notification deep link carries `tab=setup`, and the panel otherwise restores whichever
-    // tab this browser last used.
-    renderPanel('setup')
+    // passes both tests above and fails this one, and the panel can genuinely open here: the
+    // retired assignment route redirects to `tab=agents`, and the panel otherwise restores
+    // whichever tab this browser last used.
+    renderPanel('agents')
     await waitFor(() => expect(agentConfigApi.get).toHaveBeenCalled())
   })
 
-  it('does not ask again when Setup is left and returned to', async () => {
+  it('does not ask again when Agents is left and returned to', async () => {
     // The other half of the latch: it is set once and never cleared, so the block stays
     // mounted and a half-typed display name survives a trip to Output exactly as the rest of
     // the tab's form state does. A latch that cleared on leaving would satisfy the first three
     // tests and quietly throw away the edit.
     const user = userEvent.setup()
-    renderPanel('setup')
+    renderPanel('agents')
     await waitFor(() => expect(agentConfigApi.get).toHaveBeenCalled())
     const firstPass = vi.mocked(agentConfigApi.get).mock.calls.length
 
     await user.click(tab('Output'))
-    await user.click(tab('Setup'))
+    await user.click(tab('Agents'))
 
     expect(vi.mocked(agentConfigApi.get).mock.calls.length).toBe(firstPass)
     // Mounted throughout, which is the thing the count alone cannot distinguish from a

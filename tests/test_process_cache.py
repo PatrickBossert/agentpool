@@ -299,6 +299,14 @@ _MODULE_LEVEL_STATE = {
         "differently-labelled voice pass because of the first, and the interviewer selection "
         "is exactly what reads it"
     ),
+    "api/services/agent_default_images.py::_CACHED": (
+        REGISTERED, "the promoted default portraits table, held because agent_defaults is a "
+        "plain def read eighteen times per bulk configuration request - proved by probe "
+        "below. Stale entries are the ordinary test-order trap in an unusually visible "
+        "place: a promotion in one test would keep answering an agent's face for every "
+        "later test in the process, and the production invalidator is called by "
+        "promote_if_unclaimed after the file is written"
+    ),
     "api/services/voice_catalogue.py::_LIBRARY_ACCENTS": (
         REGISTERED, "the accents the ElevenLabs Voice Library holds, asked unfiltered so the "
         "voice picker can offer an accent the account does not have - irish, which is one of "
@@ -404,6 +412,21 @@ def _voice_gender_probe():
     )
 
 
+def _agent_default_images_probe():
+    """A dict, but reassigned wholesale rather than mutated - so the probe sets the attribute.
+
+    `None` is "nothing read yet" and `{}` is "read, and no agent has a promoted default", which
+    is the ordinary state on every deployment today. The two must not be confused, which is why
+    `forget_agent_default_images` restores `None` rather than clearing in place, and why "warm"
+    here is `is not None` rather than truthiness.
+    """
+    from api.services import agent_default_images
+    return (
+        lambda: setattr(agent_default_images, "_CACHED", {"probe_agent": ".png"}),
+        lambda: agent_default_images._CACHED is not None,
+    )
+
+
 def _library_accents_probe():
     """A singleton rather than a dict, so the probe reassigns the module attribute.
 
@@ -428,6 +451,7 @@ _REGISTERED_PROBES = {
     "api/services/chroma_client.py::_FORCE_LOCAL_CACHE": _force_local_cache_probe,
     "api/services/platform_settings.py::_CACHED_URL": _platform_url_probe,
     "api/routers/interviews.py::_transcript_email_log": _transcript_log_probe,
+    "api/services/agent_default_images.py::_CACHED": _agent_default_images_probe,
 }
 
 

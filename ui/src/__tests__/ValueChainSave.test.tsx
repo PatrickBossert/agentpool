@@ -35,6 +35,10 @@ const MODEL: ValueChainModel = {
 // output and a race in anybody else's.
 vi.mock('../api/agentConfig', () => ({
   agentConfigApi: {
+    // Task 7: every face and name on the panel resolves through `useAgentIdentity`,
+    // which reads this. An empty roll means the static map answers, which is what
+    // these tests were written against.
+    getAll: vi.fn().mockResolvedValue({ agents: {} }),
     get: vi.fn().mockResolvedValue({
       agent_id: 'stub',
       configured: false,
@@ -61,7 +65,7 @@ vi.mock('../api/endpoints', () => ({
     save: vi.fn(),
     migrate: vi.fn(),
   },
-  // Needed only by the AgentDetailPanel-mounted tests below - AlexSetupTab (Alex's Setup tab)
+  // Needed only by the AgentDetailPanel-mounted tests below - DiscoveryBriefSetup
   // reads project settings and documents when the panel's Setup tab is visited.
   projectsApi: {
     getSettings: vi.fn().mockResolvedValue({}),
@@ -214,9 +218,13 @@ describe('ValueChain save', () => {
 // That switch was internal to the retired page, so they can't be moved onto StructureTab
 // itself - it has no sibling Setup/Structure toggle of its own any more. The concern they
 // guard against now sits one level up, at AgentDetailPanel's own Output/Status/Chat/Setup/
-// Skills tabs, so that is where they are re-anchored: AgentDetailPanel.tsx's Output branch
-// is kept mounted and merely hidden (`hidden={tab !== 'output'}`) rather than conditionally
-// rendered, specifically so this pair keeps passing.
+// Agents/Skills tabs, so that is where they are re-anchored: AgentDetailPanel.tsx's Output
+// branch is kept mounted and merely hidden (`hidden={tab !== 'output'}`) rather than
+// conditionally rendered, specifically so this pair keeps passing.
+//
+// The round trip goes through Setup, because that is where the discovery brief lives - it
+// describes the client, not the agent that reads it - and a tab whose content this file can
+// recognise is what proves the click navigated rather than merely not crashing.
 describe('unsaved Structure edits across an AgentDetailPanel tab change', () => {
   async function editDescriptionInThePanel() {
     render(<PanelWrapper />)
@@ -229,8 +237,8 @@ describe('unsaved Structure edits across an AgentDetailPanel tab change', () => 
     await editDescriptionInThePanel()
 
     await userEvent.click(screen.getByRole('button', { name: 'Setup' }))
-    // Proves the click actually navigated, not just that nothing crashed - Setup's own
-    // content (Alex's Research Brief section) has to be on screen before switching back.
+    // Proves the click actually navigated, not just that nothing crashed - the tab's own
+    // content (the Research Brief section) has to be on screen before switching back.
     await screen.findByText('Research Brief')
     await userEvent.click(screen.getByRole('button', { name: /^Output/ }))
 

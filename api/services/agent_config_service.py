@@ -33,12 +33,43 @@ database file per guessed slug.
 The defaults live in `agents/identity.py`, beside the permanent `agent_id` this keys on. Nothing
 here is keyed on a display name, which is what makes renaming an agent - or running an
 engagement where it is called something else - free.
+
+**One default is not in that file.** `image_url` may resolve to a *promoted* portrait - the
+first one uploaded for an agent that had no face at all, which becomes the deployment's default
+for every later project. `agent_defaults` below is the single place that level is *folded into*
+a resolution, and `api/services/agent_default_images.py` holds the four-level precedence table
+and the reasoning.
+
+`promoted_default_image_url` reports that same level **unfolded**, and the config doors answer
+it beside the resolution. The dashboard is the reason: it cannot render a resolved default
+(`/agents/avery-singh.jpg` 404s under Vite's `/dashboard` base) so it completes the same four
+levels itself, and it must be *told* which defaults are promoted rather than inferring it from
+the shape of a URL.
+
+**One fact is derived here rather than stored.** `is_interviewer` asks
+`interviewer_agent_ids()`, the one place "who can conduct an interview" is answered, so the
+Setup section can offer a rehearsal to the agents that can conduct one. It is derived from
+local data and costs nothing.
+
+**The interviewer's voice sex is deliberately not answered here**, though it was for one
+commit. It is `resolved_voice_sex` in `api/services/voice_metadata.py`, answered by
+`GET /projects/{slug}/voices` - the request the picker already makes when it opens - because
+resolving it here put a third-party round trip on the happy path of the read that *every*
+agent panel makes, to serve a value read only when somebody clicks "Change voice". Failed
+lookups are not cached, so an ElevenLabs outage was paid on every render of this door rather
+than once per process. The rule did not move: `ask_voice_sex` is still the single source, and
+still the same one `interviewer_selection`'s `always_male`/`always_female` reads, so the picker
+and the crew cannot disagree about what a voice is.
+
+**Neither fact is a table.** A map of agents to sexes is refused in writing in
+`interviewer_selection.py`, and it would be wrong the first time a project used the table above
+to give an interviewer a different voice - which is the entire point of the table.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from agents.identity import AGENT_IDENTITY
+from agents.identity import AGENT_IDENTITY, interviewer_agent_ids
 from api.database import (
     AGENT_CONFIG_COLUMNS,
     fetch_agent_config,
@@ -46,6 +77,7 @@ from api.database import (
     get_db_path,
     is_contained_slug,
 )
+from api.services.agent_default_images import promoted_default_url
 
 # The keys `resolve_agent_config` answers. Taken from the table's own column list rather than
 # restated, so a column added to `project_agent_config` cannot be one the resolver ignores -
@@ -63,14 +95,50 @@ class UnknownAgent(KeyError):
     """
 
 
+def promoted_default_image_url(agent_id: str) -> str | None:
+    """Level 2 alone - the portrait promoted for this agent across the deployment, or `None`.
+
+    **The one read of level 2 in this codebase**, and `agent_defaults` below is its one caller
+    in the resolution. Exposing it separately is not a second fold of the level: it is the same
+    value, from the same accessor, reported *beside* the resolution rather than folded into it
+    a second time.
+
+    It has to be reported, because the dashboard cannot use the folded answer. `defaults
+    ["image_url"]` is a promoted URL for a promoted agent and `AGENT_IDENTITY`'s
+    `/agents/avery-singh.jpg` for everybody else - and Vite serves `ui/public` under the
+    `/dashboard` base, so rendering that second shape 404s. The front end therefore needs to
+    know **which** default is a promoted one, and the only honest way to tell it is to say so:
+    a front end that sniffed for an `/api/` prefix would be restating this rule in TypeScript
+    and would break the moment a promoted portrait is served from anywhere else.
+
+    `None` for an id outside the roll rather than `UnknownAgent`, deliberately: this answers
+    "has anything been promoted for this id", which has an answer for any string, and the doors
+    that need the roll enforced already ask `agent_defaults`.
+    """
+    return promoted_default_url(agent_id)
+
+
 def agent_defaults(agent_id: str) -> dict[str, Any]:
-    """The unconfigured answer for one agent - what runs today, and what an override overrides."""
+    """The unconfigured answer for one agent - what runs today, and what an override overrides.
+
+    **The one place the promoted default is folded in**, and that is the whole reason it is here
+    rather than in either door. `image_url` resolves through three of the four levels
+    `agent_default_images` states: a project override beats everything (`_merge`, above a
+    caller of this), a *promoted* default beats the built-in asset, and the built-in asset is
+    what nearly every agent has. Inserting level 2 at the doors instead would have meant two
+    insertions - the interview page reads `resolve_agent_config`'s `resolved`, the Setup
+    section reads `GET .../config` - and two places for them to come to disagree about an
+    agent's face.
+
+    Reading the promoted default costs nothing on a deployment that has none: the table is
+    held in a process-local dict behind one read-only open of `system.db`.
+    """
     identity = AGENT_IDENTITY.get(agent_id)
     if identity is None:
         raise UnknownAgent(agent_id)
     return {
         "display_name": identity.display_name,
-        "image_url": identity.image,
+        "image_url": promoted_default_image_url(agent_id) or identity.image,
         "voice_id": identity.voice_id,
         "language": identity.language,
         "country_code": identity.country_code,
@@ -144,6 +212,23 @@ async def resolve_agent_config_with(conn: Any, *, slug: str, agent_id: str) -> d
         return _merge(defaults, None)
     row = await fetch_agent_config(conn, project_id=project["id"], agent_id=agent_id)
     return _merge(defaults, row)
+
+
+def is_interviewer(agent_id: str) -> bool:
+    """Whether this agent can conduct an interview.
+
+    Asked of `interviewer_agent_ids()`, which is where that question is answered - its rule is
+    "an identity with a `voice_id`", and a second `if identity.voice_id` written here would be
+    the fifth declaration of a voice fact on a branch that exists to end the first four. The
+    roster is asked on every call rather than captured at import, so improving the rule in the
+    one place improves this answer too.
+
+    **Deliberately not a new concept.** An agent that can speak is an agent that can rehearse
+    an interview, and the predicate already means exactly that. If a non-interviewing agent is
+    ever given a voice, the rehearsal button follows it, and the repair is a better rule in
+    `agents/identity.py` rather than a second list here.
+    """
+    return agent_id in interviewer_agent_ids()
 
 
 async def _fetch_overrides(slug: str, agent_id: str) -> dict[str, Any] | None:

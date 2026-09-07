@@ -142,7 +142,13 @@ describe('the smoke-test dialog and the project it was opened from', () => {
     installSpeechRecognition(EVASIVE_ANSWER)
     installAudioAndMic()
 
-    render(<TestInterviewDialog slug="secure-proj" onClose={() => {}} />)
+    render(<TestInterviewDialog
+      slug="secure-proj"
+      onClose={() => {}}
+      agentId="stakeholder_interviewer"
+      displayName="Avery Singh"
+      imageUrl="/agents/avery-singh.jpg"
+    />)
 
     const toBriefing = await screen.findByRole('button', { name: /continue|start|begin/i })
     await userEvent.click(toBriefing)
@@ -172,7 +178,13 @@ describe('the smoke-test dialog and the project it was opened from', () => {
     installSpeechRecognition(EVASIVE_ANSWER)
     installAudioAndMic()
 
-    render(<TestInterviewDialog slug="secure-proj" onClose={() => {}} />)
+    render(<TestInterviewDialog
+      slug="secure-proj"
+      onClose={() => {}}
+      agentId="stakeholder_interviewer"
+      displayName="Avery Singh"
+      imageUrl="/agents/avery-singh.jpg"
+    />)
 
     const toBriefing = await screen.findByRole('button', { name: /continue|start|begin/i })
     await userEvent.click(toBriefing)

@@ -35,6 +35,65 @@ export interface AgentConfig {
   overrides: AgentConfigOverrides
   /** The one over the other, per field. What the interview actually uses. */
   resolved: AgentConfigFields
+  /**
+   * Level 2 of the four: the portrait promoted for this agent across the whole deployment, or
+   * `null` when its default is the built-in asset shipped in the repository.
+   *
+   * **Read this, never sniff `defaults.image_url` for a prefix.** The two defaults are
+   * different kinds of address - a promoted one is `/api/agents/{id}/image`, served
+   * same-origin, while a built-in one is `/agents/avery-singh.jpg`, which 404s under Vite's
+   * `/dashboard` base - and telling them apart in TypeScript would be the server's rule
+   * restated on the one side nothing is watching. The server says which it is; this field is
+   * that answer.
+   *
+   * Required rather than optional, for the reason `is_interviewer` gives above: an optional
+   * field survives a spread that drops it, and nothing says so.
+   */
+  promoted_default_image_url: string | null
+  /**
+   * Whether this agent conducts interviews - `agent_config_service.is_interviewer`, which asks
+   * `interviewer_selection`'s own roster.
+   *
+   * **Read, never re-derived here.** The roster lives in one place in Python precisely so that
+   * a second list of who interviews cannot grow beside it, and a list of agent ids in
+   * TypeScript would be that second list on the one side nothing is watching. Required rather
+   * than optional for the reason CLAUDE.md records of four `ProjectSettings` fields: an
+   * optional field survives a spread that drops it, and nothing says so.
+   */
+  is_interviewer: boolean
+}
+
+/** What the upload door answers: where the portrait now lives, and what it cost to store.
+ *
+ *  The two sizes are not decoration. The whole point of the upload path is that a large
+ *  photograph quietly becomes a small one, and an administrator who is never told it happened
+ *  uploads the same 8 MB file again next time.
+ */
+export interface PortraitUpload {
+  /**
+   * Same-origin, always - `/projects/{slug}/agents/{agent_id}/image`.
+   *
+   * **No `/api` prefix.** This router is mounted at `/projects`, and only `/api/templates` and
+   * `/api/interviews` carry that prefix, so `/api/projects/...` is served by nothing. Store what
+   * the door answers; never assemble this address here.
+   */
+  url: string
+  /** Bytes actually stored, after the downscale. */
+  bytes: number
+  /** Bytes the browser sent. */
+  original_bytes: number
+}
+
+/**
+ * Every agent's configuration on one project, keyed by the permanent `agent_id`.
+ *
+ * Each entry is the identical object `GET .../{agent_id}/config` answers - the server builds it
+ * with the same function - so nothing here needs its own idea of what "override beats default"
+ * means. `tests/test_agent_config_bulk.py` holds the two responses equal for every agent on the
+ * roll, which is what makes reading the batch as safe as reading the door eighteen times.
+ */
+export interface AgentConfigBundle {
+  agents: Record<string, AgentConfig>
 }
 
 export const agentConfigApi = {
@@ -42,6 +101,18 @@ export const agentConfigApi = {
     const res = await apiClient.get<AgentConfig>(
       `/projects/${slug}/agents/${agentId}/config`,
     )
+    return res.data
+  },
+
+  /**
+   * Every agent's configuration on this project, in one request.
+   *
+   * The dashboard draws an agent's name and face in nine places, and each of those renders the
+   * whole roll rather than one agent, so asking the per-agent door would be a hundred and
+   * sixty-two calls to paint one screen. This is the read those sites share.
+   */
+  getAll: async (slug: string): Promise<AgentConfigBundle> => {
+    const res = await apiClient.get<AgentConfigBundle>(`/projects/${slug}/agents/config`)
     return res.data
   },
 
@@ -61,6 +132,34 @@ export const agentConfigApi = {
     const res = await apiClient.put<AgentConfig>(
       `/projects/${slug}/agents/${agentId}/config`,
       overrides,
+    )
+    return res.data
+  },
+
+  /**
+   * Store a portrait for this agent on this project, and get back the URL that serves it.
+   *
+   * **This does not save the configuration.** The server writes the file and answers a URL; the
+   * row is written by `put` above, because `upsert_agent_config` replaces the whole row and a
+   * partial write from the upload door would clear the agent's name, voice, language, country
+   * and synthesis model. So the caller uploads first and then saves with the returned URL - in
+   * that order, and never the other way round, or the row records an address for a file that
+   * may never arrive.
+   *
+   * The `Content-Type` is left unset on purpose. A multipart body needs the boundary token in
+   * the header, and only the thing assembling the body knows it - the same shape
+   * `uploadBrandingImage` has used since it existed.
+   */
+  uploadImage: async (
+    slug: string,
+    agentId: string,
+    file: File,
+  ): Promise<PortraitUpload> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await apiClient.post<PortraitUpload>(
+      `/projects/${slug}/agents/${agentId}/image`,
+      form,
     )
     return res.data
   },

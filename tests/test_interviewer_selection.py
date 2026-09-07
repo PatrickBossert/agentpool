@@ -40,6 +40,7 @@ from agents.identity import AGENT_IDENTITY, AVERY_VOICE_ID, DEFAULT_TTS_MODEL_ID
 from agents.tools.interview_session_tool import InterviewSessionTool
 from api.config import get_settings
 from api.database import get_connection, insert_project
+from api.services.voice_metadata import ACTIONABLE_VOICE_SEXES
 from api.services.interviewer_selection import (
     NoInterviewerAvailable,
     interviewer_agent_ids,
@@ -270,6 +271,53 @@ def test_no_module_maps_an_agent_to_a_sex():
             assert agent_id not in literals, (
                 f"{module} names {agent_id} as a literal - the selection must read the voices' "
                 f"own metadata, never a roster of who is which sex"
+            )
+
+
+def test_no_module_anywhere_holds_an_interviewer_id_beside_a_sex():
+    """The same rule as above, over **every** module rather than two named ones.
+
+    The test above is a strict prohibition on two files that must not name an agent at all, and
+    it is worth keeping - but it is a list, and a list is only ever a claim about the files
+    somebody thought of. It named `interviewer_selection.py` and `voice_metadata.py`;
+    `agents/identity.py` now hosts the `if identity.voice_id` rule and **already names both
+    interviewer ids as literals**, quite legitimately, so a sex constant added there would have
+    passed every guard on the branch. CLAUDE.md's rule is that a guard's reach is established
+    rather than described, and three name-keyed sweeps on this project have already missed a
+    file.
+
+    So this one enumerates nothing. It walks `api/`, `agents/` and `scripts/` and fails any
+    module holding **both** an interviewer id and a sex as string constants - the conjunction
+    being what makes it safe to run everywhere: `agents/identity.py` holds the ids and no sex,
+    `interviewer_selection.py` holds `_WANTED_GENDER`'s two sexes and no id, and neither is a
+    table. A module holding both is one asserting which interviewer is which sex, which is the
+    thing this whole line of work exists to prevent - the sex belongs to the *voice*, and the
+    voice is a per-project setting, so a table here would contradict a project's own choice
+    while looking authoritative.
+
+    Constants, not substrings, for the reason the test above gives: prose naming an agent is the
+    explanation of why the rule exists - three docstrings do exactly that - while a literal is
+    the rule being broken, and a substring search cannot tell them apart.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    sexes = set(ACTIONABLE_VOICE_SEXES)
+    for directory in ("api", "agents", "scripts"):
+        for path in sorted((root / directory).rglob("*.py")):
+            literals = {
+                node.value
+                for node in ast.walk(ast.parse(path.read_text()))
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            }
+            named_agents = literals & {AVERY, LAURA}
+            named_sexes = literals & sexes
+            assert not (named_agents and named_sexes), (
+                f"{path.relative_to(root)} names {sorted(named_agents)} and "
+                f"{sorted(named_sexes)} as literals in the same module - an agent-to-sex "
+                f"mapping is refused in writing in interviewer_selection.py, because the sex "
+                f"belongs to the voice and the voice is a per-project setting"
             )
 
 
@@ -1192,8 +1240,12 @@ def test_the_participant_reads_the_name_of_whoever_is_speaking(project_dir, monk
     """
     _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
 
+    # Laura's expectation was `""` until she was given a portrait on 7 September, and the
+    # assertion is stronger for the change rather than merely updated: an empty string is what
+    # a resolver returns when it resolves *nothing*, so it could not tell "Laura's face" from
+    # "no face at all". A real path distinguishes hers from Avery's, which is the property.
     for mode, expected_name, expected_image in (
-        ("always_female", "Laura Nelson", ""),
+        ("always_female", "Laura Nelson", "/agents/laura-nelson.jpg"),
         ("always_male", "Avery Singh", "/agents/avery-singh.jpg"),
     ):
         slug = f"who-speaks-{mode}"
@@ -1230,7 +1282,11 @@ def test_a_brand_name_left_over_from_one_interviewer_does_not_win(project_dir, m
 
     branding = _branding(token)
     assert branding["interviewer_name"] == "Laura Nelson"
-    assert branding["interviewer_image_url"] == ""
+    # The stored brand field says `/agents/avery-singh.jpg` and the stamp says Laura, so this
+    # line is the whole defect in one assertion. It only became able to say so when Laura got
+    # a portrait: against `""` it could not distinguish the stamp winning from the resolver
+    # returning nothing, and "nothing" would also have beaten the stored literal.
+    assert branding["interviewer_image_url"] == "/agents/laura-nelson.jpg"
 
 
 def test_a_projects_own_name_for_an_interviewer_is_honoured(project_dir, monkeypatch):

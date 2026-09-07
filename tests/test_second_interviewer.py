@@ -56,8 +56,15 @@ async def test_each_interviewer_resolves_their_own_default_voice_and_the_two_dif
 async def test_laura_resolves_her_own_name_and_no_borrowed_face():
     laura = await resolve_agent_config(UNCONFIGURED, LAURA)
     assert laura["display_name"] == "Laura Nelson"
-    # None rather than somebody else's headshot. `AgentFace` renders her initials instead.
-    assert laura["image_url"] is None
+    # Her own headshot, and - the half the test is named for - never Avery's.
+    #
+    # This asserted `is None` until 7 September, when she was given a portrait. The property
+    # was always "no borrowed face"; `None` was only how that could be spelled while she had
+    # none of her own, and it was the weaker spelling: `None` is also what a resolver returns
+    # when it resolves nothing, so it could not tell a correct answer from an absent one.
+    assert laura["image_url"] == "/agents/laura-nelson.jpg"
+    avery = await resolve_agent_config(UNCONFIGURED, "stakeholder_interviewer")
+    assert laura["image_url"] != avery["image_url"]
 
 
 def test_her_id_does_not_encode_the_thing_that_may_change():

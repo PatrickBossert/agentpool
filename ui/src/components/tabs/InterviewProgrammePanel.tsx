@@ -1,5 +1,15 @@
-// ui/src/components/tabs/MayaSetupTab.tsx
-// Maya's Setup tab: interview programme reference and discipline configuration.
+// ui/src/components/tabs/InterviewProgrammePanel.tsx
+//
+// The interview programme this engagement runs: eight instrument types, who each is for, how
+// long it takes, how it is structured, and what it is designed to surface.
+//
+// It was the lower half of `MayaSetupTab`, and it is reference rather than configuration -
+// nothing on it can be changed, here or anywhere. The programme is the engagement's, not the
+// Interaction Designer's: replace her and every one of these instruments still applies. That
+// puts it on Status.
+//
+// The disciplines editor and the standards banner that used to head this file are
+// configuration and moved to `InstrumentDesignSetup` on the Setup tab.
 //
 // This used to also carry value chain node coverage and manual node template assignment,
 // both read from node_template_assignments - a table whose level column said 'L2' on
@@ -7,97 +17,9 @@
 // real project (it looked up by node_label in an artefact keyed by script_id). Retired
 // along with that table. The editor it exposed - InterviewTemplateEditor - now opens from
 // ScriptReviewPanel on the Output tab, which is where a human reads the script before
-// changing it. It was unmounted for the length of this branch, which left sections,
-// questions, and probes editable nowhere at all; the note here promising "a later task"
-// was the only record that anything was missing.
+// changing it.
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Info, Plus, X } from 'lucide-react'
-import { projectsApi } from '../../api/endpoints'
-import type { ProjectSettings } from '../../types'
-
-/**
- * The vertical axis Casey groups maturity themes by, edited where the instruments are
- * designed.
- *
- * Closed on purpose: a discipline off this list is refused when Maya writes her scripts, the
- * way an unknown value chain id already is. An open field would put the project back to
- * clustering 178 distinct section titles, which is what this replaced.
- */
-function DisciplineEditor({ slug, settings }: { slug: string; settings?: ProjectSettings }) {
-  const queryClient = useQueryClient()
-  const [draft, setDraft] = useState('')
-  const disciplines = settings?.disciplines ?? []
-
-  const save = useMutation({
-    // The endpoint replaces the whole settings object, so the rest is round-tripped rather
-    // than sent as a partial - a partial would blank every field it omitted.
-    mutationFn: (next: string[]) =>
-      projectsApi.updateSettings(slug, { ...(settings as ProjectSettings), disciplines: next }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings', slug] }),
-  })
-
-  const add = () => {
-    const value = draft.trim().toLowerCase()
-    // Silently dropping a duplicate would read as the add having failed.
-    if (!value || disciplines.includes(value)) return
-    setDraft('')
-    save.mutate([...disciplines, value])
-  }
-
-  return (
-    <div>
-      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">
-        Disciplines
-      </p>
-      <p className="text-[11px] text-gray-400 mb-3">
-        Every interview section is tagged with one of these. Casey groups vertical themes -
-        maturity within a discipline - by the tag, so a discipline missing here is a theme
-        that cannot be found.
-      </p>
-
-      <ul className="flex flex-wrap gap-1.5 mb-2" data-testid="discipline-list">
-        {disciplines.map((d) => (
-          <li
-            key={d}
-            className="flex items-center gap-1.5 rounded bg-gray-50 border border-gray-100 pl-2.5 pr-1.5 py-1"
-          >
-            <span className="text-[11px] text-gray-700">{d}</span>
-            <button
-              type="button"
-              aria-label={`Remove ${d}`}
-              className="text-gray-300 hover:text-gray-600 transition-colors"
-              onClick={() => save.mutate(disciplines.filter((x) => x !== d))}
-            >
-              <X size={11} />
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      <div className="flex gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') add()
-          }}
-          placeholder="Add a discipline"
-          aria-label="Add a discipline"
-          className="flex-1 max-w-[14rem] bg-white border border-gray-200 rounded px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand"
-        />
-        <button
-          type="button"
-          onClick={add}
-          disabled={save.isPending || !settings}
-          className="flex items-center gap-1 px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-[11px] rounded transition-colors disabled:opacity-50"
-        >
-          <Plus size={11} /> Add
-        </button>
-      </div>
-    </div>
-  )
-}
+import { Info, X } from 'lucide-react'
 
 interface TypeDetail {
   approach: string
@@ -432,15 +354,8 @@ function InterviewTypeDialog({ code, onClose }: { code: string; onClose: () => v
   )
 }
 
-export default function MayaSetupTab({ slug }: { slug: string }) {
+export default function InterviewProgrammePanel() {
   const [inspectCode, setInspectCode] = useState<string | null>(null)
-
-  const { data: settings } = useQuery({
-    queryKey: ['settings', slug],
-    queryFn: () => projectsApi.getSettings(slug),
-  })
-
-  const standardsRefs = settings?.standards_references
 
   return (
     <div className="space-y-5">
@@ -449,22 +364,10 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
         <InterviewTypeDialog code={inspectCode} onClose={() => setInspectCode(null)} />
       )}
 
-      {/* Standards context */}
-      {standardsRefs && (
-        <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
-          <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-1">Standards &amp; Frameworks</p>
-          <p className="text-[11px] text-blue-700 leading-relaxed">{standardsRefs}</p>
-          <p className="text-[10px] text-blue-500 mt-1">Edit in Alex's Setup tab.</p>
-        </div>
-      )}
-
-      <DisciplineEditor slug={slug} settings={settings} />
-
-      {/* Interview Programme overview */}
       <div>
         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Interview Programme</p>
         <p className="text-[11px] text-gray-400 mb-3">
-          Eight instrument types cover every organisational tier and external perspective. All templates are tailored to the project and value chain context — no manual assignment required.
+          Eight instrument types cover every organisational tier and external perspective. All templates are tailored to the project and value chain context - no manual assignment required.
         </p>
         <div className="space-y-1.5">
           {INTERVIEW_TYPES.map(t => (
@@ -484,7 +387,7 @@ export default function MayaSetupTab({ slug }: { slug: string }) {
                 <button
                   onClick={() => setInspectCode(t.code)}
                   title="View interview approach and sections"
-                  className="flex-shrink-0 text-gray-300 hover:text-gray-500 mt-0.5 transition-colors"
+                  className="flex-shrink-0 text-gray-300 hover:text-gray-500 transition-colors"
                 >
                   <Info size={13} />
                 </button>

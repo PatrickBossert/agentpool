@@ -6,6 +6,13 @@ provider, because the provider is where the fact lives. `GET /v1/voices/{voice_i
 `labels` object carrying `gender`, `accent`, `age` and `description`, and `labels.gender` is
 the authority the interviewer selection reads.
 
+Two callers ask it and they need different answers, so there are two functions rather than one
+with a flag. `ask_voice_sex` reports **whether the provider answered** as well as what, because
+the interviewer selection refuses a batch of sessions on the difference and has to say which of
+three things went wrong. `resolved_voice_sex` narrows the same answer to the single value a
+voice picker can pre-set a filter from, and answers `None` for everything else. Both read one
+lookup; neither is a second source.
+
 **Why this is not a table.** The obvious implementation of "always female" is two lines mapping
 `stakeholder_interviewer` to male and `second_interviewer` to female. That table would be the
 sixth declaration of voice facts on a branch that exists to end the first five, and it would be
@@ -51,6 +58,18 @@ VOICES_URL = f"{ELEVENLABS_V1}/voices"
 
 # voice_id -> what the provider answered about it, cached only when it answered.
 _GENDER_CACHE: dict[str, str | None] = {}
+
+# The sexes this product can act on. **Not a vocabulary this repository owns** - it is the
+# subset of ElevenLabs' `labels.gender` that anything here can do something with, and the two
+# places that act on a sex both handle exactly these: `interviewer_selection`'s `always_male`
+# and `always_female`, and the voice picker's own gender filter. A voice labelled anything else
+# is a voice whose sex is not actionable, which `resolved_voice_sex` reports as no answer.
+#
+# It is deliberately **not** used to narrow `voice_gender`, which reports what the provider
+# said. "What ElevenLabs holds for this voice" and "what this product can filter on" are two
+# questions, and collapsing them would make an unrecognised label indistinguishable from an
+# unlabelled voice at the one seam that still has both facts in hand.
+ACTIONABLE_VOICE_SEXES = frozenset({"male", "female"})
 
 
 def _client() -> httpx.AsyncClient:
@@ -168,3 +187,69 @@ async def ask_voice_sex(voice_id: str | None) -> VoiceSexAnswer:
         return VoiceSexAnswer(label=await voice_gender(voice_id), answered=True)
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError):
         return VoiceSexAnswer(label=None, answered=False)
+
+
+async def resolved_voice_sex(voice_id: str | None) -> str | None:
+    """One voice's sex where it can be established **and acted on**, for a picker to pre-set.
+
+    `ask_voice_sex` reports whether the provider answered as well as what; this narrows that to
+    the single value a filter can be pre-set from, and answers `None` for everything else. Four
+    routes in, two answers out:
+
+    | Route | Answer | What a picker does |
+    |---|---|---|
+    | the provider gave `male` or `female` | that sex | opens on voices of that sex |
+    | the provider gave some other label | None | opens unfiltered |
+    | the provider carries no `gender` label, or there is no voice to ask about | None | opens unfiltered |
+    | the provider could not be asked, including for want of an API key | None | opens unfiltered |
+
+    **Only the first pre-sets a filter, and the rest open unfiltered rather than empty.**
+    Showing nothing because a lookup failed is the worst outcome available - it is
+    indistinguishable from an account with no voices, and it sends a consultant to diagnose a
+    picker that is working.
+
+    **The third row is why the label is narrowed here rather than passed through.** A voice
+    labelled `Non-Binary` is a real answer from the provider, and `non-binary` is not among the
+    options the listing offers - so pre-setting it would send `gender=non-binary` to the
+    listing, which answers nothing, and the picker would open **empty**: the one outcome the
+    design forbids, reached by way of a perfectly correct provider answer.
+
+    **It is a default, not a lock.** A project that gives an interviewer a voice of the other
+    sex has said something, and `interviewer_selection` says so in writing; nothing here
+    refuses anything, it only reports what the voice already is.
+
+    **A missing API key is answered here and not swallowed in `ask_voice_sex`.** That function
+    lets `ValueError` out on purpose, because for the session stamp a deployment with no key
+    would otherwise turn "always female" into whoever the shuffle produced - permanently, since
+    the choice is stamped. This caller has the opposite obligation: it decorates a listing a
+    consultant asked for, and a 503 for want of a sex would take the whole voice picker down
+    over a field that only pre-sets a default. The refusal is right where it is raised and
+    wrong here, so it is caught at this call site rather than removed from that one. It is
+    caught narrowly - `ValueError` is a wide net, `json.JSONDecodeError` is one of its
+    subclasses, and only the missing-key sentence belongs to this branch.
+
+    Callers monkeypatching `ask_voice_sex` should patch it **on this module**, which is where
+    this function looks it up.
+    """
+    try:
+        answer = await ask_voice_sex(voice_id)
+    except ValueError as exc:
+        if "ELEVENLABS_API_KEY" not in str(exc):
+            raise
+        # No key configured. Nothing was asked, so nothing is known - the same answer as a
+        # lookup that failed, and for the same reason.
+        return None
+    if not answer.answered:
+        # Unreachable, refused, or unparseable. This says nothing about the voice, so it must
+        # not be reported as a fact about it.
+        return None
+    if answer.label is None:
+        # Asked and answered: either this voice carries no `gender` label, or there was no
+        # voice to ask about - "an agent with no voice has no sex, which is a fact rather than
+        # an outage". Neither is a sex, and neither is a filter.
+        return None
+    if answer.label not in ACTIONABLE_VOICE_SEXES:
+        # A real answer this product cannot act on. Reported as no answer rather than passed
+        # through, so it opens the picker unfiltered instead of filtering it to nothing.
+        return None
+    return answer.label

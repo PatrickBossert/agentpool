@@ -29,9 +29,11 @@ function RunRow({ run, slug, locale = 'GB' }: { run: OrchestrationRunHistory; sl
           <StatusBadge status={run.status} />
           {run.status === 'awaiting_assignment' && (
             <Link
-              // Jordan's Setup tab, which is where the mapping is made - and can be made
-              // before any run exists at all. The old /:slug/assignment page redirects
-              // here; this link goes direct so it does not depend on the redirect.
+              // The stakeholder-to-activity mapping, on the Setup tab, which is where it is
+              // made - and can be made before any run exists at all. The old
+              // /:slug/assignment page redirects to the same place; this link goes direct so
+              // it does not depend on the redirect. Keep the tab in step with
+              // AssignmentRedirect in router.tsx: two links, one destination.
               to={`/${slug}?crew=stakeholder_management&tab=setup`}
               onClick={(e) => e.stopPropagation()}
               className="text-xs text-brand hover:text-brand-dark underline underline-offset-2"

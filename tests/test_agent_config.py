@@ -37,6 +37,7 @@ from api.database import (
     insert_project_registry,
     upsert_agent_config,
 )
+from api.services import agent_config_service
 from api.services.agent_config_service import (
     CONFIG_FIELDS,
     UnknownAgent,
@@ -421,6 +422,50 @@ async def test_no_row_and_a_row_of_nulls_are_distinguishable_at_the_helper(proje
         assert await fetch_agent_config(conn, project_id=project_id, agent_id=AVERY) is None
         await upsert_agent_config(conn, project_id=project_id, agent_id=AVERY, **_only())
         assert await fetch_agent_config(conn, project_id=project_id, agent_id=AVERY) is not None
+
+
+# --- Who can be offered a rehearsal ---------------------------------------------------------
+#
+# `is_interviewer` is answered by the configuration door so the Setup section can offer a Test
+# interview to the agents that can conduct one. It is derived from local data and costs
+# nothing, which is why it stayed here when the voice sex moved to the picker's own door - see
+# `tests/test_voice_catalogue.py` for that half, and `tests/test_interviewer_selection.py` for
+# the guard that no module anywhere maps an agent to a sex.
+
+
+def test_is_interviewer_follows_the_roster_rather_than_a_list_here(monkeypatch):
+    """Asserted against a **monkeypatched** roster, not against Avery and Laura.
+
+    A test naming the two real interviewers passes against a hardcoded pair, which is the thing
+    being avoided - so the roster is replaced with one that holds neither of them, and the
+    answer has to move with it. Both directions, because "always False" satisfies the first
+    assertion on its own and "always True" satisfies the second.
+    """
+    monkeypatch.setattr(agent_config_service, "interviewer_agent_ids", lambda: ["pam"])
+
+    assert agent_config_service.is_interviewer(AVERY) is False
+    assert agent_config_service.is_interviewer("pam") is True
+
+
+def test_the_roster_the_configuration_reads_is_the_one_the_selection_reads():
+    """One rule, one place - asserted as an identity between the two readers.
+
+    `interviewer_selection` decides who takes a session and `agent_config_service` decides who
+    is offered a rehearsal, and the two answering differently is the defect this shape exists
+    to make impossible. Held as an equality between the *functions the two modules call*, so a
+    copy made in either module fails here rather than being discovered by a consultant.
+    """
+    from api.services import interviewer_selection
+
+    assert (
+        agent_config_service.interviewer_agent_ids
+        is interviewer_selection.interviewer_agent_ids
+    )
+    assert set(interviewer_selection.interviewer_agent_ids()) == {
+        agent_id
+        for agent_id in AGENT_IDENTITY
+        if agent_config_service.is_interviewer(agent_id)
+    }
 
 
 # --- The defaults themselves ----------------------------------------------------------------

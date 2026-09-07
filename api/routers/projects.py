@@ -386,6 +386,15 @@ _IMAGE_CONTENT_TYPES = {
 
 _MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2 MB
 
+# The first bytes each declared type must start with. Keyed on the same three
+# `_IMAGE_CONTENT_TYPES` declares, and held equal to it by a test - see the note at the use site
+# for why the lookup below is a subscript.
+_MAGIC_BYTES = {
+    "image/png": b"\x89PNG",
+    "image/jpeg": b"\xff\xd8",
+    "image/webp": b"RIFF",
+}
+
 
 @router.post("/{slug}/branding/image")
 async def upload_branding_image(
@@ -426,13 +435,15 @@ async def upload_branding_image(
                 detail="Image exceeds maximum allowed size of 2 MB.",
             )
 
-        # Magic-byte content-type verification
-        MAGIC_BYTES = {
-            "image/png": b"\x89PNG",
-            "image/jpeg": b"\xff\xd8",
-            "image/webp": b"RIFF",
-        }
-        if not data[:4].startswith(MAGIC_BYTES.get(file.content_type, b"")):
+        # Magic-byte content-type verification.
+        #
+        # A **subscript, not a `.get(..., b"")`**, and the validated `content_type` rather than
+        # the raw `file.content_type`. `b""` is a prefix of every payload, so a defaulting
+        # lookup would give a fourth type added to `_IMAGE_CONTENT_TYPES` a check that refuses
+        # nothing and says nothing - a guard that reads as working while covering none of it.
+        # `test_every_branding_content_type_has_a_magic_prefix` holds the two tables equal, so
+        # the cost of forgetting is a red suite rather than a 500 on somebody's upload.
+        if not data[:4].startswith(_MAGIC_BYTES[content_type]):
             raise HTTPException(status_code=422, detail="File content does not match declared content type")
 
         # Save file
@@ -452,7 +463,11 @@ async def upload_branding_image(
         # Update brand_header_image_url in project config. Through the narrow seam: a header
         # image upload has an opinion about one config key and none about this project's
         # mode, override or sector, so it does not name them.
-        image_url = f"/api/projects/{slug}/branding/image"
+        # No `/api` prefix - this router is mounted at `/projects`, and nothing serves
+        # `/api/projects/...`. Latent since this door was written: no deployment has ever
+        # uploaded a header image, so the URL it stores has never been fetched. Found on
+        # 7 September when the agent portrait door copied this line and its image 404'd.
+        image_url = f"/projects/{slug}/branding/image"
         await merge_project_config(
             conn, project=project, key="brand_header_image_url", value=image_url
         )

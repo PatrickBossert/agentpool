@@ -11,6 +11,13 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { AuthProvider } from '../context/AuthContext'
 import { routes } from '../router'
 
+// Task 7: the carousel resolves each agent's name and face against the project's
+// configuration. Mocked to an empty roll so the static map answers - which is what these
+// tests were written against - and so nothing here reaches the network.
+vi.mock('../api/agentConfig', () => ({
+  agentConfigApi: { getAll: vi.fn().mockResolvedValue({ agents: {} }) },
+}))
+
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
     list: vi.fn().mockResolvedValue([]),

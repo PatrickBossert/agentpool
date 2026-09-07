@@ -1,5 +1,15 @@
-// ui/src/components/tabs/PamSetupTab.tsx
-// PAM's Setup tab: full project schedule (milestones, Gantt, non-working periods)
+// ui/src/components/tabs/ProjectScheduleSetup.tsx
+//
+// How the engagement is scheduled: project start, duration, the milestone schedule, the Gantt,
+// and the non-working calendar. Everything on it is an edit.
+//
+// It was `PamSetupTab`, and the filename was the whole reason it sat on the Agents tab: it is
+// named after the agent that *reads* the schedule, which made configuration for an agent look
+// like configuration of one. Apply the rename test - if PAM were renamed or replaced, would a
+// project's milestone dates move with her? - and it belongs to the engagement.
+//
+// The statistics over these same rows are on the Status tab (`MilestoneStatusPanel`), sharing
+// the `['milestones', slug]` query rather than fetching a second copy.
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -14,47 +24,10 @@ import {
   buildExcludedDateSet, workingDaysBetween as libWorkingDaysBetween,
 } from '../../utils/holidays'
 import type { PublicHoliday } from '../../utils/holidays'
-
-// ── Date helpers ──────────────────────────────────────────────────────────────
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  d.setDate(d.getDate() + Math.round(days))
-  return d.toISOString().slice(0, 10)
-}
-
-function daysBetween(a: string, b: string): number {
-  return Math.round(
-    (new Date(b + 'T00:00:00').getTime() - new Date(a + 'T00:00:00').getTime()) / 86_400_000,
-  )
-}
-
-type MilestoneRAG = 'complete' | 'overdue' | 'due_soon' | 'on_track' | 'unscheduled'
-
-function milestoneState(m: Pick<Milestone, 'status' | 'due_date'>): MilestoneRAG {
-  if (m.status === 'complete') return 'complete'
-  if (!m.due_date) return 'unscheduled'
-  const diff = daysBetween(todayStr(), m.due_date)
-  if (diff < 0) return 'overdue'
-  if (diff <= 3) return 'due_soon'
-  return 'on_track'
-}
-
-function countdownLabel(m: Milestone, excludedDates?: Set<string>): string {
-  if (!m.due_date) return ''
-  const calDiff = daysBetween(todayStr(), m.due_date)
-  if (calDiff === 0) return 'Due today'
-  if (calDiff > 0) {
-    const wd = excludedDates ? libWorkingDaysBetween(todayStr(), m.due_date, excludedDates) : calDiff
-    return `${wd} working day${wd !== 1 ? 's' : ''} remaining`
-  }
-  const wd = excludedDates ? libWorkingDaysBetween(m.due_date, todayStr(), excludedDates) : Math.abs(calDiff)
-  return wd <= 1 ? '1 working day overdue' : `${wd} working days overdue`
-}
+import {
+  addDays, countdownLabel, daysBetween, milestoneState, todayStr,
+  type MilestoneRAG,
+} from './scheduleDates'
 
 const STATE_BADGE: Record<MilestoneRAG, string> = {
   complete:    'bg-teal-50 text-teal-700 border-teal-200',
@@ -136,50 +109,6 @@ function buildDateMap(
     result[m.id] = addDays(start, (0.90 + 0.10 * (i + 1) / (custom.length + 1)) * totalDays)
   })
   return result
-}
-
-// ── Interview completion tracker ──────────────────────────────────────────────
-
-interface SessionRow { session_token: string; stakeholder_name: string; status: string }
-
-function InterviewCompletionPanel({ slug }: { slug: string }) {
-  const { data: sessions = [] } = useQuery({
-    queryKey: ['interview-sessions', slug],
-    queryFn: () =>
-      fetch(`/api/interviews/sessions/${slug}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-      }).then(r => r.ok ? r.json() as Promise<SessionRow[]> : Promise.resolve([])),
-    refetchInterval: 60_000,
-  })
-  if (!sessions.length) return null
-  const complete    = sessions.filter(s => s.status === 'completed')
-  const outstanding = sessions.filter(s => s.status !== 'completed')
-  return (
-    <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-xs font-semibold text-gray-600">Interview completion</p>
-        <span className="text-xs text-gray-500">{complete.length} / {sessions.length} complete</span>
-      </div>
-      <div className="w-full bg-gray-200 rounded-full h-1.5 mb-3">
-        <div className="h-1.5 rounded-full bg-teal-500 transition-all"
-          style={{ width: `${Math.round((complete.length / sessions.length) * 100)}%` }} />
-      </div>
-      {outstanding.length > 0 && (
-        <ul className="space-y-1">
-          {outstanding.map(s => (
-            <li key={s.session_token} className="flex items-center justify-between text-xs">
-              <span className="text-gray-700">{s.stakeholder_name}</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                s.status === 'active'
-                  ? 'bg-brand/10 text-brand border-brand/20'
-                  : 'bg-gray-100 text-gray-500 border-gray-200'
-              }`}>{s.status === 'active' ? 'In progress' : 'Not started'}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
 }
 
 // ── Gantt chart ───────────────────────────────────────────────────────────────
@@ -701,12 +630,11 @@ function DateControls({
 // ── Milestone row ─────────────────────────────────────────────────────────────
 
 function MilestoneRow({
-  m, idx, slug, showInterviews, prevDueDate, excludedDates,
+  m, idx, slug, prevDueDate, excludedDates,
 }: {
-  m: Milestone; idx: number; slug: string; showInterviews: boolean
+  m: Milestone; idx: number; slug: string
   prevDueDate: string | null; excludedDates: Set<string>
 }) {
-  const [expanded, setExpanded] = useState(false)
   const qc = useQueryClient()
 
   const patch = useMutation({
@@ -843,17 +771,7 @@ function MilestoneRow({
                 />
               </div>
             )}
-            {showInterviews && (
-              <button
-                onClick={() => setExpanded(v => !v)}
-                className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-0.5 transition-colors"
-              >
-                {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                {expanded ? 'Hide tracker' : 'View completion tracker'}
-              </button>
-            )}
           </div>
-          {expanded && showInterviews && <InterviewCompletionPanel slug={slug} />}
         </div>
 
         <button
@@ -904,45 +822,9 @@ function AddMilestoneForm({ slug, onDone }: { slug: string; onDone: () => void }
   )
 }
 
-// ── Summary stats ─────────────────────────────────────────────────────────────
+// ── The Setup section ─────────────────────────────────────────────────────────
 
-function ScheduleSummary({ milestones }: { milestones: Milestone[] }) {
-  const overdue  = milestones.filter(m => milestoneState(m) === 'overdue')
-  const dueSoon  = milestones.filter(m => milestoneState(m) === 'due_soon')
-  const complete = milestones.filter(m => m.status === 'complete')
-  const next     = milestones
-    .filter(m => m.status === 'pending' && m.due_date && daysBetween(todayStr(), m.due_date) >= 0)
-    .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))[0]
-
-  return (
-    <div className="grid grid-cols-4 gap-3 mb-4">
-      {[
-        { label: 'Complete', value: complete.length, color: 'text-teal-600', bg: 'bg-teal-50 border-teal-100' },
-        { label: 'Overdue',  value: overdue.length,  color: overdue.length  ? 'text-red-600'   : 'text-gray-400', bg: overdue.length  ? 'bg-red-50 border-red-100'     : 'bg-gray-50 border-gray-100' },
-        { label: 'Due soon', value: dueSoon.length,  color: dueSoon.length  ? 'text-amber-600' : 'text-gray-400', bg: dueSoon.length  ? 'bg-amber-50 border-amber-100' : 'bg-gray-50 border-gray-100' },
-        { label: 'Total',    value: milestones.length, color: 'text-gray-600', bg: 'bg-gray-50 border-gray-100' },
-      ].map(({ label, value, color, bg }) => (
-        <div key={label} className={`rounded-xl border p-3 ${bg}`}>
-          <p className={`text-xl font-bold ${color}`}>{value}</p>
-          <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-        </div>
-      ))}
-      {next && (
-        <div className="col-span-4 rounded-xl border border-gray-100 bg-gray-50 p-3 flex items-center gap-2">
-          <Clock size={14} className="text-gray-400 flex-shrink-0" />
-          <p className="text-xs text-gray-600">
-            <span className="font-semibold">Next: </span>{next.title}
-            {next.due_date && <span className="text-gray-400 ml-1">— {countdownLabel(next)}</span>}
-          </p>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── PAM Setup Tab ─────────────────────────────────────────────────────────────
-
-export default function PamSetupTab({ slug }: { slug: string }) {
+export default function ProjectScheduleSetup({ slug }: { slug: string }) {
   const [adding, setAdding]               = useState(false)
   const [schedStart, setSchedStart]       = useState(todayStr())
   const [durationWeeks, setDurationWeeks] = useState(8)
@@ -1068,8 +950,6 @@ export default function PamSetupTab({ slug }: { slug: string }) {
         <p className="text-sm text-gray-400">Loading schedule…</p>
       ) : (
         <>
-          <ScheduleSummary milestones={milestones} />
-
           <DateControls
             startDate={schedStart}
             durationWeeks={durationWeeks}
@@ -1116,7 +996,6 @@ export default function PamSetupTab({ slug }: { slug: string }) {
                       const si = sorted.indexOf(m)
                       return (
                         <MilestoneRow key={m.id} m={m} idx={si} slug={slug}
-                          showInterviews={m.milestone_key === 'interviews_complete'}
                           prevDueDate={prevDateByIndex[si]}
                           excludedDates={excludedDates} />
                       )
@@ -1136,7 +1015,6 @@ export default function PamSetupTab({ slug }: { slug: string }) {
                       const si = sorted.indexOf(m)
                       return (
                         <MilestoneRow key={m.id} m={m} idx={si} slug={slug}
-                          showInterviews={m.milestone_key === 'interviews_complete'}
                           prevDueDate={prevDateByIndex[si]}
                           excludedDates={excludedDates} />
                       )
@@ -1156,7 +1034,6 @@ export default function PamSetupTab({ slug }: { slug: string }) {
                       const si = sorted.indexOf(m)
                       return (
                         <MilestoneRow key={m.id} m={m} idx={si} slug={slug}
-                          showInterviews={false}
                           prevDueDate={prevDateByIndex[si]}
                           excludedDates={excludedDates} />
                       )

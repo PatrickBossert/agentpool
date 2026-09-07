@@ -10,11 +10,27 @@ from api.config import get_settings
 
 @pytest.fixture(autouse=True)
 def clean_test_state():
-    """Remove any leftover test-rail state before each test."""
+    """Remove any leftover test-rail state before each test, **where the app actually looks**.
+
+    This asked `get_settings` to forget its cache and then cleaned two hardcoded paths, which
+    is only the same directory while nobody overrides the environment. `tests/conftest.py`
+    sets `DATABASE_DIR` with `os.environ.setdefault`, so exporting it - which is how two
+    sessions run pytest at once without deleting each other's databases - made this fixture
+    scrub a directory nothing was using while the real one kept its rows.
+
+    Three tests failed that way and were catalogued for weeks as "fail against a fresh
+    database": `test_portfolio_register_returns_data` wrote its fixture file to the hardcoded
+    projects directory and the endpoint read the configured one, so it asserted `0 == 1` and
+    read as a product defect. It was a path disagreement inside the test.
+
+    The wider consequence is worth stating because it made every count on this project
+    provisional: **the suite's green depended on those two paths coinciding**, so a clean
+    checkout, a new machine or CI did not reproduce it. Read the directories off the settings
+    the code under test reads, and the question of which run poisoned which stops existing.
+    """
     get_settings.cache_clear()
-    db_dir = Path("/tmp/agentpool_test")
-    proj_dir = Path("/tmp/agentpool_test_projects")
-    for d in (db_dir, proj_dir):
+    settings = get_settings()
+    for d in (Path(settings.database_dir), Path(settings.projects_dir)):
         if d.exists():
             shutil.rmtree(d)
         d.mkdir(parents=True, exist_ok=True)
@@ -146,7 +162,9 @@ async def test_portfolio_register_returns_data(client):
             },
         }
     ]
-    outputs_dir = Path("/tmp/agentpool_test_projects/test-rail/outputs")
+    # Written where the endpoint reads, not where it used to. This line asserting 0 == 1 was
+    # catalogued as a fresh-database failure for weeks; it was this path.
+    outputs_dir = Path(get_settings().projects_dir) / "test-rail" / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
     (outputs_dir / "portfolio_register.json").write_text(
         json.dumps(register), encoding="utf-8"
@@ -204,12 +222,86 @@ async def test_branding_image_upload_and_serve(client):
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert "url" in data
-    assert data["url"] == "/api/projects/test-rail/branding/image"
 
-    # GET the image endpoint (no auth)
-    img_resp = await client.get("/projects/test-rail/branding/image")
-    assert img_resp.status_code == 200
+    # Fetched at the URL the door RETURNED, not at a path written here.
+    #
+    # This asserted `data["url"] == "/api/projects/..."` and then fetched
+    # `/projects/test-rail/branding/image` - a different string - so it proved the file was
+    # servable somewhere and the door returned something, and never that the two agreed. They
+    # did not: nothing serves `/api/projects/...`, and this door has stored an address that
+    # 404s since it was written. It went unseen because no deployment has ever uploaded a
+    # header image, so the value was never fetched outside this test.
+    #
+    # Found on 7 September when the agent portrait door copied the line and its image came back
+    # broken in the browser. A URL is a promise that something answers; the assertion is to ask.
+    img_resp = await client.get(data["url"])
+    assert img_resp.status_code == 200, (
+        f"the URL the door returned does not resolve: {data['url']!r}"
+    )
     assert "image" in img_resp.headers.get("content-type", "")
+
+
+def test_every_branding_content_type_has_a_magic_prefix():
+    """The allowlist and the prefix table are held equal, because the failure is silent.
+
+    `data[:4].startswith(b"")` is `True` for every payload, so a fourth type added to
+    `_IMAGE_CONTENT_TYPES` with no entry in `_MAGIC_BYTES` would get a **vacuous** check and
+    nothing on screen would say the door had stopped verifying it. That was live here until the
+    lookup became a subscript: it was `.get(file.content_type, b"")`, keyed on the *raw* header
+    rather than the validated value, so the default was one type away from being reachable.
+
+    The same guard as `test_every_accepted_content_type_has_a_magic_prefix` on the agent
+    portrait door, which is the neighbour this one was found beside - two doors doing the same
+    check and only one of them holding it is how the next sweep finds the second.
+    """
+    from api.routers.projects import _IMAGE_CONTENT_TYPES, _MAGIC_BYTES
+
+    assert set(_MAGIC_BYTES) == set(_IMAGE_CONTENT_TYPES)
+    assert all(prefix for prefix in _MAGIC_BYTES.values()), (
+        "an empty prefix is a prefix of everything, which is no check at all"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_branding_payload_that_is_not_the_type_it_declares_is_refused(
+    client, tmp_path, monkeypatch
+):
+    """The prefix check itself, which had no test of its own at all.
+
+    Without this, the subscript above could be deleted along with the whole check and the suite
+    would stay green - the table-equality test proves the tables agree and says nothing about
+    the door consulting them.
+
+    **On its own slug, under its own DATABASE_DIR**, and both halves are load-bearing. Written
+    first as a re-POST of `PROJECT_PAYLOAD`, it left `test-rail` created and made
+    `test_create_project_returns_201` answer 200 on **the next run** - passing once and failing
+    for ever afterwards, which is precisely the trap CLAUDE.md says shipped through eight
+    reviews. `clean_test_state` above does not save it: that fixture rmtrees the hardcoded
+    `/tmp/agentpool_test`, so under an exported DATABASE_DIR it cleans a directory nothing is
+    using. Two of the five pre-existing failures in this suite have the same root cause.
+    """
+    monkeypatch.setenv("DATABASE_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+
+    slug = "branding-magic-byte-check"
+    created = await client.post("/projects", json={**PROJECT_PAYLOAD, "client_slug": slug})
+    assert created.status_code in (200, 201), created.text
+
+    login = await client.post(
+        "/auth/login", data={"username": "admin", "password": "test-admin-pw"}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    resp = await client.post(
+        f"/projects/{slug}/branding/image",
+        headers=headers,
+        files={"file": ("header.png", b"\xff\xd8\xff\xe0 not a png", "image/png")},
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "File content does not match declared content type"
+
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
