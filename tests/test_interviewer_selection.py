@@ -1240,8 +1240,12 @@ def test_the_participant_reads_the_name_of_whoever_is_speaking(project_dir, monk
     """
     _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
 
+    # Laura's expectation was `""` until she was given a portrait on 7 September, and the
+    # assertion is stronger for the change rather than merely updated: an empty string is what
+    # a resolver returns when it resolves *nothing*, so it could not tell "Laura's face" from
+    # "no face at all". A real path distinguishes hers from Avery's, which is the property.
     for mode, expected_name, expected_image in (
-        ("always_female", "Laura Nelson", ""),
+        ("always_female", "Laura Nelson", "/agents/laura-nelson.jpg"),
         ("always_male", "Avery Singh", "/agents/avery-singh.jpg"),
     ):
         slug = f"who-speaks-{mode}"
@@ -1278,7 +1282,11 @@ def test_a_brand_name_left_over_from_one_interviewer_does_not_win(project_dir, m
 
     branding = _branding(token)
     assert branding["interviewer_name"] == "Laura Nelson"
-    assert branding["interviewer_image_url"] == ""
+    # The stored brand field says `/agents/avery-singh.jpg` and the stamp says Laura, so this
+    # line is the whole defect in one assertion. It only became able to say so when Laura got
+    # a portrait: against `""` it could not distinguish the stamp winning from the resolver
+    # returning nothing, and "nothing" would also have beaten the stored literal.
+    assert branding["interviewer_image_url"] == "/agents/laura-nelson.jpg"
 
 
 def test_a_projects_own_name_for_an_interviewer_is_honoured(project_dir, monkeypatch):
