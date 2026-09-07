@@ -18,7 +18,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, it, expect } from 'vitest'
 
 import JordanSetupTab, { buildTree } from '../components/tabs/JordanSetupTab'
-import { AGENT_SETUP_SECTION } from '../components/tabs/CrewSetupSections'
+import { AGENT_SETUP_SECTION } from '../components/tabs/CrewAgentsTab'
 import { apiClient } from '../api/client'
 import type { Stakeholder, ValueChainRegistryActivity } from '../types'
 

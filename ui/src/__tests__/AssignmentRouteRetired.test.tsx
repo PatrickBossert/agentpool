@@ -93,7 +93,7 @@ afterAll(() => vi.unstubAllGlobals())
 beforeEach(() => localStorage.clear())
 
 describe('the retired /:slug/assignment route', () => {
-  it('sends a bookmark to Jordan, on his Setup tab', async () => {
+  it('sends a bookmark to Jordan, on the Agents tab where his settings live', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const router = createMemoryRouter(routes, { initialEntries: ['/acme/assignment'] })
     render(
@@ -103,7 +103,9 @@ describe('the retired /:slug/assignment route', () => {
     )
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/acme'))
-    expect(router.state.location.search).toBe('?crew=stakeholder_management&tab=setup')
+    // `tab=agents`, and the assertion below is why it matters: a redirect left pointing at
+    // Setup still lands, still selects the right crew, and simply does not hold the mapping.
+    expect(router.state.location.search).toBe('?crew=stakeholder_management&tab=agents')
 
     // And the destination really holds the surface: Jordan's crew is selected, his section
     // is mounted under his own name, and it is the assignment mapping that is on it.

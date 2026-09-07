@@ -54,12 +54,17 @@ function ValueChainRedirect() {
 }
 
 // The assignment page was retired - the mapping is configuration, and it lives in Jordan's
-// Setup tab now rather than on a page reachable only from a run parked in
+// own settings now rather than on a page reachable only from a run parked in
 // `awaiting_assignment`. Runs.tsx links straight to the tab, but bookmarks and the links in
 // runs already listed still point here, so this redirects rather than 404s.
+//
+// `tab=agents`, not `tab=setup`: Jordan's section moved with every other agent-scoped panel
+// when Setup was narrowed to what a crew owns. A redirect left pointing at Setup would still
+// land, still select the right crew, and simply not hold the mapping - which is the shape of
+// silent failure this whole split exists to stop.
 function AssignmentRedirect() {
   const { slug } = useParams<{ slug: string }>()
-  return <Navigate to={`/${slug}?crew=stakeholder_management&tab=setup`} replace />
+  return <Navigate to={`/${slug}?crew=stakeholder_management&tab=agents`} replace />
 }
 
 // The route array, exported so it can be mounted inside a MemoryRouter/createMemoryRouter in

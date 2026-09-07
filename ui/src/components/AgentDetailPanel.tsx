@@ -28,16 +28,11 @@ import { projectsApi, valueChainApi } from '../api/endpoints'
 import { describeError } from '../utils/describeError'
 import type { CrewRun, AgentOutput, HumanReview } from '../types'
 import StructureTab from './StructureTab'
-import AlexSetupTab from './tabs/AlexSetupTab'
-import MayaSetupTab from './tabs/MayaSetupTab'
-import {
-  CrewAgentConfiguration, CrewSetupSections, AGENT_SETUP_SECTION,
-} from './tabs/CrewSetupSections'
+import { CrewAgentsTab } from './tabs/CrewAgentsTab'
 import AveryOutputExtra from './tabs/AveryOutputExtra'
 import JordanOutputExtra from './tabs/JordanOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
 import MayaOutputExtra from './tabs/MayaOutputExtra'
-import PamSetupTab from './tabs/PamSetupTab'
 
 // ── Chat attachments: the tier picker ───────────────────────────────────────────
 //
@@ -57,19 +52,11 @@ const KNOWLEDGE_TIER_LABEL: Record<string, string> = {
 
 export type SlotFC = FC<{ slug: string }>
 
-// Replaces the default Setup tab reads/produces panel for these crews
-// Whole-tab overrides, for crews that hold exactly one agent - the tab and the agent are
-// then the same scope and naming it after them is correct.
-//
-// stakeholder_management and discovery_interviews are NOT here any more. The first held
-// TaylorSetupTab, which is Taylor's configuration under Jordan's crew - an agent Taylor is
-// not. The second held AverySetupTab for a crew of three. Both are now assembled from
-// per-agent sections; see CrewSetupSections.
-const CREW_SETUP_OVERRIDE: Partial<Record<string, SlotFC>> = {
-  PAM:                    PamSetupTab,
-  discovery_mapping:      AlexSetupTab,
-  assessment_design:      MayaSetupTab,
-}
+// `CREW_SETUP_OVERRIDE` used to sit here, replacing the whole Setup tab for three crews with
+// PamSetupTab, AlexSetupTab and MayaSetupTab. Those are named after *agents* and configure
+// agents, so they are entries in AGENT_SETUP_SECTION now - see tabs/CrewAgentsTab.tsx - and
+// this map is gone rather than emptied. Setup holds what a crew owns; the Agents tab holds
+// everything scoped to a person.
 
 // Rendered after the primary artefact in the Output tab. Exported because AgentOutputTab's
 // empty state has to know a crew has one of these: "No outputs yet" printed directly above a
@@ -92,7 +79,30 @@ export const CREW_OUTPUT_EDITOR: Partial<Record<string, SlotFC>> = {
 
 marked.use({ async: false, gfm: true, breaks: true })
 
-type Tab = 'output' | 'status' | 'chat' | 'setup' | 'skills'
+// ── The panel's tabs ───────────────────────────────────────────────────────────
+//
+// **One list, in the order they are shown.** It used to be written out three times - the
+// union, the `isTab` guard, and the saved-tab restore's own chain of comparisons - plus the
+// rendered array below. A tab missing from the guard or the restore does not error and
+// nothing on the screen changes: the restore falls through to `output`, so the tab works
+// perfectly until the reader reloads and then silently forgets where they were. No rendering
+// test can see that, so the guard, the restore and the rendered row are all derived from
+// here instead.
+const TAB_KEYS = ['output', 'status', 'chat', 'setup', 'agents', 'skills'] as const
+
+type Tab = (typeof TAB_KEYS)[number]
+
+// Exhaustive over Tab by construction, so a key added above with no label here fails the
+// build rather than rendering a nameless tab. `output` is 'Overview' on PAM alone, which is
+// applied where the row is built - it is the only label that depends on the crew.
+const TAB_LABEL: Record<Tab, string> = {
+  output: 'Output',
+  status: 'Status',
+  chat:   'Chat',
+  setup:  'Setup',
+  agents: 'Agents',
+  skills: 'Role & Skills',
+}
 
 // ── Static crew metadata ───────────────────────────────────────────────────────
 
@@ -108,8 +118,8 @@ const CREW_META: Record<string, CrewMeta> = {
   discovery_mapping: {
     reads: ['Uploaded documents', 'Discovery settings (sector, standards)', 'Existing registry (for iteration)'],
     produces: ['value_chain_registry.json', 'value_chain_tree.json', 'value_chain_summary.txt'],
-    // No configPage: it pointed at the retired /:slug/value-chain page, and this crew has a
-    // CREW_SETUP_OVERRIDE (AlexSetupTab) that replaces the block the button lives in anyway.
+    // No configPage: it pointed at the retired /:slug/value-chain page, and Alex's own
+    // discovery brief - which is what a reader would go looking for - is on the Agents tab.
     note: 'Re-running will preserve existing IDs and extend the registry - existing downstream artefacts reference these IDs.',
   },
   assessment_design: {
@@ -812,15 +822,25 @@ export interface AgentDetailPanelProps {
   // browser last had saved, or an approver whose last visit ended on Chat lands on Chat no
   // matter what the email said.
   initialTab?: string
+  // Which agent the Agents tab opens on. The tab shows one agent at a time, and a reader who
+  // arrived by way of a particular agent should not have to find them again.
+  //
+  // **Nothing passes it yet, and that is a known gap rather than a spare parameter.** The
+  // carousel selects a *crew* - its agent faces are decoration, not controls - so the
+  // selection this is meant to carry does not exist to be handed over, and wiring one needs
+  // state in Dashboard.tsx that this change deliberately did not touch. Absent, the tab opens
+  // on the crew's first agent, which is the path every test here drives; when the carousel
+  // learns to select a face, this is the seam it arrives on rather than a new one.
+  initialAgent?: string
 }
 
-function isTab(value: string | undefined): value is Tab {
-  return value === 'output' || value === 'status' || value === 'chat' || value === 'setup' || value === 'skills'
+function isTab(value: string | null | undefined): value is Tab {
+  return TAB_KEYS.includes(value as Tab)
 }
 
 export default function AgentDetailPanel({
   slug, crewKey, crewRun, outputs, logs, isPipelineActive, hitlReviews = [], locale = 'GB',
-  initialTab,
+  initialTab, initialAgent,
 }: AgentDetailPanelProps) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -832,17 +852,17 @@ export default function AgentDetailPanel({
     if (isTab(initialTab)) return initialTab
     if (tabKey) {
       const saved = localStorage.getItem(tabKey)
-      if (saved === 'output' || saved === 'status' || saved === 'chat' || saved === 'setup' || saved === 'skills') return saved
+      if (isTab(saved)) return saved
     }
     return 'output'
   })
-  // Whether Setup has ever been opened on this panel. The agent configuration block below
-  // mounts on the first visit and stays mounted, so a half-typed display name survives a trip
-  // to Output exactly as the rest of the tab's form state does - and a panel opened on Output
-  // and closed again asks the server for nothing. The tab is rendered `hidden` rather than
-  // unmounted, so without this it would fetch every agent's configuration for a tab nobody
-  // looked at.
-  const [setupOpened, setSetupOpened] = useState(false)
+  // Whether Agents has ever been opened on this panel. The tab mounts on the first visit and
+  // stays mounted, so a half-typed display name survives a trip to Output exactly as the rest
+  // of the tab's form state does - and a panel opened on Output and closed again asks the
+  // server for nothing. The tab is rendered `hidden` rather than unmounted, so without this it
+  // would fetch a configuration for *every agent in the crew* for a tab nobody looked at -
+  // four requests on discovery_interviews, where the Setup tab this replaces cost one.
+  const [agentsOpened, setAgentsOpened] = useState(false)
   const [messages, setMessages] = useState<{ role: 'user' | 'agent'; content: string; agentName?: string }[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
@@ -865,10 +885,10 @@ export default function AgentDetailPanel({
   })
   const writableTiers = permissions?.writable_knowledge_tiers ?? []
 
-  // Latched, never cleared. The panel can *open* on Setup - a deep link, or the tab this
+  // Latched, never cleared. The panel can *open* on Agents - a deep link, or the tab this
   // browser last used - so this cannot be set from the tab click alone.
   useEffect(() => {
-    if (tab === 'setup') setSetupOpened(true)
+    if (tab === 'agents') setAgentsOpened(true)
   }, [tab])
 
   useEffect(() => {
@@ -1001,13 +1021,12 @@ export default function AgentDetailPanel({
     }
   }
 
-  const TABS: { key: Tab; label: string }[] = [
-    { key: 'output', label: crewKey === 'PAM' ? 'Overview' : 'Output' },
-    { key: 'status', label: 'Status' },
-    { key: 'chat',   label: 'Chat' },
-    { key: 'setup',  label: 'Setup' },
-    { key: 'skills', label: 'Role & Skills' },
-  ]
+  // Derived from TAB_KEYS, like the guard and the restore, so the row and the tabs the panel
+  // will actually accept back cannot disagree.
+  const TABS: { key: Tab; label: string }[] = TAB_KEYS.map((key) => ({
+    key,
+    label: key === 'output' && crewKey === 'PAM' ? 'Overview' : TAB_LABEL[key],
+  }))
 
   return (
     <div
@@ -1273,23 +1292,15 @@ export default function AgentDetailPanel({
       )}
 
       {/* ── SETUP TAB ──────────────────────────────────────────────────────────── */}
-      {/* Hidden rather than unmounted, for the same reason the Output tab is. Every
-          CREW_SETUP_OVERRIDE is a form whose fields are React state committed only by an
-          explicit Save - AlexSetupTab alone holds ten pieces of it - so rendering this branch
-          on `tab === 'setup'` threw away a half-typed discovery brief the moment the user
-          clicked Output to check something, silently and with nothing to catch it. */}
-      <div hidden={tab !== 'setup'} className="flex-1 overflow-y-auto p-4 space-y-4">
-        {(() => {
-          const SetupOverride = CREW_SETUP_OVERRIDE[crewKey]
-          if (SetupOverride) return <SetupOverride slug={slug} />
-
-          // A crew's own agents, each with their own configuration under their own name.
-          // Renders null when none of them has any, so the default below still shows.
-          const sections = <CrewSetupSections crewKey={crewKey} slug={slug} />
-          if (CREW_AGENTS[crewKey]?.some((a) => a in AGENT_SETUP_SECTION)) return sections
-
-          // Default: reads/produces metadata
-          return crewMeta ? (
+      {/* What this *crew* is for on this engagement, and nothing keyed to a person. The note,
+          the reads and the produces are all it holds now; name, image, voice, synthesis model
+          and every bespoke agent panel are on the Agents tab beside the agent that owns them.
+          A crew with no crew-level configuration therefore shows metadata alone, which is
+          honest - the previous arrangement concealed it by filling the space with four agent
+          panels. Conditional rather than hidden: nothing on it is a draft. */}
+      {tab === 'setup' && (
+        <div data-testid="setup-tab-panel" className="flex-1 overflow-y-auto p-4 space-y-4">
+          {crewMeta ? (
             <>
               {crewMeta.note && (
                 <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
@@ -1332,15 +1343,25 @@ export default function AgentDetailPanel({
             </>
           ) : (
             <p className="text-xs text-gray-400 text-center py-12">No setup information available.</p>
-          )
-        })()}
+          )}
+        </div>
+      )}
 
-        {/* Every agent in this crew, whatever else the tab holds above. Name, image and
-            voice belong to all eighteen by the same rule, so this is not registered against
-            anything and has no empty case to fall through to - which is exactly why it sits
-            outside the branch above rather than inside it. It renders last so that nothing
-            already on the tab moves. */}
-        {setupOpened && <CrewAgentConfiguration crewKey={crewKey} slug={slug} />}
+      {/* ── AGENTS TAB ─────────────────────────────────────────────────────────── */}
+      {/* Hidden rather than unmounted, for the same reason the Output tab is. Every block on
+          it is a form whose fields are React state committed only by an explicit Save - the
+          configuration section holds a draft and a chosen-but-unsent portrait, and Alex's own
+          settings alone hold ten more pieces - so rendering this branch on `tab === 'agents'`
+          would throw away a half-typed discovery brief the moment the reader clicked Output to
+          check something, silently and with nothing to catch it.
+          `agentsOpened` is the other half: hidden is still mounted, so without the latch the
+          panel would fetch every agent's configuration for a tab nobody opened. */}
+      <div hidden={tab !== 'agents'} data-testid="agents-tab-panel" className="flex-1 overflow-y-auto p-4">
+        {agentsOpened && (
+          // Keyed on the crew: selecting another crew is a different set of agents and a
+          // different set of drafts, so the selection must not survive the change.
+          <CrewAgentsTab key={crewKey} crewKey={crewKey} slug={slug} initialAgent={initialAgent} />
+        )}
       </div>
 
       {/* ── ROLE & SKILLS TAB ──────────────────────────────────────────────────── */}
