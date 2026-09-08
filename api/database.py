@@ -3476,6 +3476,14 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
         -- `source_project` and `source_ref` are the **first** occurrence's provenance, not
         -- an accumulating list. Accumulating provenance across later occurrences needs a
         -- shape of its own and is deliberately not decided here.
+        --
+        -- `scope` says **where an approved rule applies**, and it is a different question
+        -- from `source_project`, which says where it came from. `_fetch_skill_notes` reads
+        -- both: a `global` skill is injected into every engagement's prompts, a `project`
+        -- one only into runs on the engagement named by its `source_project`. The default
+        -- is `project` because widening a rule changes an agent's behaviour on engagements
+        -- the reviewer has never seen, so widening is the deliberate act - see the backfill
+        -- below, which is a separate decision and deliberately a different value.
         CREATE TABLE IF NOT EXISTS skills (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             name              TEXT NOT NULL,
@@ -3485,6 +3493,8 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             source_ref        TEXT,
             proposed_by_agent TEXT,
             occurrences       INTEGER NOT NULL DEFAULT 1,
+            scope             TEXT NOT NULL DEFAULT 'project'
+                                  CHECK(scope IN ('project', 'global')),
             status            TEXT NOT NULL DEFAULT 'pending'
                                   CHECK(status IN ('pending', 'approved', 'rejected')),
             flag_reason       TEXT,
@@ -3643,18 +3653,60 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
     """)
     await conn.commit()
 
+    # `skills.scope`, and it is **two decisions rather than one**.
+    #
+    # The column default is `project`: from now on a rule applies to the engagement it was
+    # corrected on until a reviewer deliberately widens it, because widening changes an
+    # agent's behaviour on engagements the reviewer has never seen.
+    #
+    # The rows that predate the column become `global`, once, at the moment it is added -
+    # fifty-three on the live deployment. They were written when global was the only thing a
+    # skill could be, so global is the honest reading of what their authors intended. Worth
+    # saying plainly rather than leaving to be inferred later: **this affirms fifty-three
+    # rules as universal without anybody re-reading them.** A reviewer who finds one that was
+    # really about a single engagement demotes it; the migration does not judge for them.
+    #
+    # A column that simply defaulted to `global` would satisfy the second decision and
+    # silently make every future proposal universal, which is the whole thing the scope
+    # exists to prevent. So the backfill is an explicit UPDATE inside the branch that adds
+    # the column, and it can never run twice: the next connection finds the column present.
+    #
+    # Before the `agent_skills` migration below, so the column exists by the time that INSERT
+    # names it - on a database old enough to hold `agent_skills` but new enough for
+    # CREATE TABLE IF NOT EXISTS to have just created `skills` with a `scope`, the backfill
+    # would otherwise not run and those rows would arrive `project` with no `source_project`,
+    # which reaches nothing.
+    #
+    # **No `_SCHEMA_VERSION` bump.** That constant gates *project* databases; init_system_db
+    # is idempotent, has no version gate and runs on every system connection, so this is the
+    # whole mechanism - and bumping it would re-run every project migration on every
+    # deployment for a table in a database it does not govern. CLAUDE.md states the rule and
+    # states that it is inverted between the two.
+    async with conn.execute("PRAGMA table_info(skills)") as cur:
+        skill_cols = {row[1] async for row in cur}
+    if "scope" not in skill_cols:
+        await conn.execute(
+            "ALTER TABLE skills ADD COLUMN scope TEXT NOT NULL DEFAULT 'project' "
+            "CHECK(scope IN ('project', 'global'))"
+        )
+        await conn.execute("UPDATE skills SET scope = 'global'")
+        await conn.commit()
+
     # Migrate old agent_skills table (pre-relational schema) if it still exists
     async with conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_skills'"
     ) as cur:
         has_old = await cur.fetchone() is not None
     if has_old:
+        # `'global'` for the same reason the backfill above uses it: these rows predate the
+        # scope entirely, and the pre-relational table has no column that could have held one.
         await conn.execute(
             """INSERT OR IGNORE INTO skills
                (id, name, description, source, source_project, status,
-                flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by)
+                flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by, scope)
                SELECT id, name, description, source, source_project, status,
-                      flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by
+                      flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by,
+                      'global'
                FROM agent_skills"""
         )
         await conn.execute(
@@ -3792,6 +3844,7 @@ async def insert_skill(
     source_ref: str | None = None,
     proposed_by_agent: str | None = None,
     status: str = "pending",
+    scope: str = "project",
     agents: list[str] | None = None,
     flag_reason: str | None = None,
     flag_suggestion: str | None = None,
@@ -3799,13 +3852,19 @@ async def insert_skill(
     """Insert one skill. `status` is written explicitly rather than left to the column
     default, so the value a caller intends is visible at the call site - a skill proposed by
     an agent must be `pending`, and that is the property `_fetch_skill_notes` rests on.
+
+    `scope` is written the same way and for the same reason, and its default is the narrow
+    one: a rule reaches only the engagement its `source_project` names until somebody says
+    otherwise. The one caller that names `global` is the baseline seed, which approves its
+    rows outright and so has no reviewer to decide for it; every other writer here files a
+    `pending` row, where the reviewer chooses the scope at approval.
     """
     cur = await conn.execute(
         """INSERT INTO skills (name, description, source, source_project, source_ref,
-                               proposed_by_agent, status, flag_reason, flag_suggestion)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                               proposed_by_agent, status, scope, flag_reason, flag_suggestion)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (name, description, source, source_project, source_ref,
-         proposed_by_agent, status, flag_reason, flag_suggestion),
+         proposed_by_agent, status, scope, flag_reason, flag_suggestion),
     )
     skill_id = cur.lastrowid
     if agents:

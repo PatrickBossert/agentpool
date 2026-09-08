@@ -39,14 +39,22 @@ AGENT = "interaction_designer"
 OTHER_AGENT = "value_chain_mapper"
 CREW = "assessment_design"
 
-# The engagement a `_fetch_skill_notes` call in this file is made on behalf of. The slug
-# became required when `agent_skill_notes` learned which engagement a note came from, and it
-# changes nothing here: every assertion in this file is about the **approved library skills**
-# half of that block, which is exempt by design - an approved skill is the agent's published
-# instruction on every engagement. The notes half, which is narrowed, has its own file
+# The engagement every proposal in this file is made on, and the engagement every
+# `_fetch_skill_notes` call in it runs on. **They are the same slug on purpose.**
+#
+# The slug became required when `agent_skill_notes` learned which engagement a note came
+# from, and for a while it changed nothing here, because an approved skill was the agent's
+# published instruction on every engagement. Since sp65 it is not: an approved skill is
+# scoped `project` until a reviewer widens it, so a run on some *other* engagement would not
+# be shown one - and every assertion below about the approval gate, the crew filter and the
+# agent-name resolution would be answered by the scope filter instead, which is CLAUDE.md's
+# "a test that verifies a property one layer away from where it holds" exactly.
+#
+# So this file holds the scope constant and tests what it is named for. The scope itself has
+# a file of its own (tests/test_skill_scope.py), and the notes narrowing has another
 # (tests/test_skill_notes_travel.py). No project database of this name exists, which is
-# deliberate: a caller passing a slug this file never creates must still get its skills.
-INJECTION_SLUG = "skills-injection-reader"
+# still deliberate: a caller passing a slug this file never creates must still get its skills.
+INJECTION_SLUG = "sp-gs-am"
 RULE = "The welcome carries privacy and tone; the framing carries the interview's purpose"
 
 # The same rule as RULE, said twice more with almost none of its vocabulary. This is the
@@ -519,7 +527,8 @@ async def test_a_proposal_from_the_illustrator_is_filed_where_an_approval_can_re
     at the injection, because that is the only layer where the difference shows.
     """
     result = await propose_skill(
-        "visual_illustrator", "Render every chart in the client's own palette.", "p1", "VI-001"
+        "visual_illustrator", "Render every chart in the client's own palette.",
+        INJECTION_SLUG, "VI-001",
     )
     await _approve(result["skill_id"])
     assert "client's own palette" in await _fetch_skill_notes("business_plan", INJECTION_SLUG)
@@ -545,7 +554,7 @@ async def test_a_caller_holding_the_role_name_already_is_not_mangled():
     """The admin door's vocabulary. `agent_skill_assignments` is keyed by these, so a name
     that is already one must pass through unchanged rather than be refused with the ids.
     """
-    result = await propose_skill(_SNAKE_TO_DISPLAY[AGENT], RULE, "p1", "SC-014")
+    result = await propose_skill(_SNAKE_TO_DISPLAY[AGENT], RULE, INJECTION_SLUG, "SC-014")
     assert result["agent"] == _SNAKE_TO_DISPLAY[AGENT]
     await _approve(result["skill_id"])
     assert RULE in await _fetch_skill_notes(CREW, INJECTION_SLUG)

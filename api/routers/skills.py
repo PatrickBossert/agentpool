@@ -346,6 +346,14 @@ async def seed_baseline(
             name=item["name"],
             description=item["description"],
             source="baseline",
+            # The one writer that names a scope, because it is the one that approves its own
+            # rows. Everything else here files `pending` and the reviewer decides the scope
+            # at approval; a baseline skill has no reviewer and no `source_project`, so left
+            # at the narrow default it would be a rule that reaches no engagement at all -
+            # and `force=True` would silently retire the whole factory library it had just
+            # deleted. The factory baseline is universal by definition, which is the same
+            # judgement the migration in `init_system_db` makes about these very rows.
+            scope="global",
         )
         await update_skill(conn, skill_id=skill_id, status="approved", reviewed_by="system")
         existing_names[key] = {"id": skill_id, "agents": item["agents"]}

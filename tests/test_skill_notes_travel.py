@@ -153,9 +153,17 @@ async def test_a_note_naming_no_engagement_is_withheld_from_a_hosted_run(caplog)
 async def test_an_approved_library_skill_is_unaffected_by_any_of_this():
     """The two sources in that block are different kinds of thing and only one is narrowed.
 
-    An approved skill is the agent's published instruction on every engagement by design -
-    the exemption `_candidates_that_may_travel` argues for and `list_skills` turns on. If the
-    narrowing ever reached it, the agent would silently lose its library on hosted projects.
+    A `global` approved skill is the agent's published instruction on every engagement by
+    design - the exemption `_candidates_that_may_travel` argues for and `list_skills` turns
+    on. If the *egress* narrowing ever reached it, the agent would silently lose its library
+    on hosted projects.
+
+    `scope="global"` is written explicitly since sp65, and it is what keeps this test about
+    egress. A skill also carries a scope now, and a project-scoped one would fail to reach
+    this run for an entirely different and correct reason - the two filters would be
+    indistinguishable here, and this file is not the one that tests the scope
+    (tests/test_skill_scope.py is). The origin stays a *sensitive* engagement on purpose:
+    that is the case the egress rule would withhold if it applied to skills, and it does not.
     """
     from api.database import get_system_connection, insert_skill
     from api.services.run_service import _SNAKE_TO_DISPLAY
@@ -164,7 +172,7 @@ async def test_an_approved_library_skill_is_unaffected_by_any_of_this():
     async with get_system_connection() as conn:
         await insert_skill(
             conn, name="Units", description=_SHAREABLE, source="revision",
-            source_project="notes-sensitive-origin", status="approved",
+            source_project="notes-sensitive-origin", status="approved", scope="global",
             agents=[_SNAKE_TO_DISPLAY[AGENT]],
         )
 

@@ -139,6 +139,37 @@ def _note_may_travel(slug: str, note: dict) -> bool:
     return project_permits(origin, Capability.HOSTED_INFERENCE)
 
 
+def _skill_applies_here(slug: str, skill: dict) -> bool:
+    """Whether one approved skill is injected into a run on `slug`.
+
+    The scope question, and it is **not** the egress question `_note_may_travel` above asks.
+    That one is about where a project's material may be sent; this one is about where a rule
+    was decided to apply. A reviewer's answer, recorded on the row at approval, read here.
+
+    - `global` reaches every engagement. That is what a reviewer widening a rule means, and
+      it is what the fifty-three skills written before the column existed were migrated to.
+    - `project` reaches only the engagement its own `source_project` names. Patrick's worked
+      example is the whole of it: *"do not include specific investment figures"* is global,
+      and *"this client calls it the renewals programme"* is not - the same reviewer, the
+      same control, and nothing in the text from which either could be derived.
+
+    A row that names neither - `project` with no `source_project` - reaches nothing, and that
+    is the safe direction rather than an oversight: an unattributable rule cannot be shown to
+    belong to the engagement being run, and the alternative default is the universal one this
+    whole column exists to stop being automatic. `scope` missing from the row entirely (a
+    hand-built fixture, a caller reading a table older than this column) falls the same way.
+
+    Nothing is logged when a skill is withheld, unlike the note narrowing beside it. A
+    project-scoped rule not appearing on another engagement is the designed, overwhelmingly
+    common case rather than a surprise worth explaining, and a line per skill per agent per
+    run would bury the withholding that is worth reading.
+    """
+    if (skill.get("scope") or "").strip() == "global":
+        return True
+    origin = (skill.get("source_project") or "").strip()
+    return bool(origin) and origin == (slug or "").strip()
+
+
 async def _fetch_skill_notes(crew_name: str, slug: str) -> str:
     """Skill notes and approved library skills for this crew's agents, for a run on `slug`.
 
@@ -150,9 +181,12 @@ async def _fetch_skill_notes(crew_name: str, slug: str) -> str:
 
     Two sources, and they are not the same kind of thing.
 
-    - **Approved skills travel.** An approved skill is the agent's published instruction
-      everywhere by design, which is what `_candidates_that_may_travel` argues in
-      `skills_service.py` and what `list_skills` turns on. Unchanged here.
+    - **An approved skill travels as far as its `scope` says**, and no further. A `global`
+      one is the agent's published instruction everywhere by design, which is what
+      `_candidates_that_may_travel` argues in `skills_service.py` and what `list_skills`
+      turns on; a `project` one reaches only the engagement it was decided on.
+      `_skill_applies_here` above is that filter, and the scope is a reviewer's judgement
+      recorded at approval rather than anything derivable from the rule's text.
     - **A note is one engagement's material.** It is a model's distillation of a reviewer's
       verbatim sentence about one named engagement - *"Maya named the Q3 outage at Iberdrola
       in the welcome for SC-014"* is the shape the input actually takes - and it has no
@@ -197,9 +231,10 @@ async def _fetch_skill_notes(crew_name: str, slug: str) -> str:
             if display:
                 skill_rows = await fetch_skills(conn, agent_name=display, status="approved")
                 for s in skill_rows:
-                    if s["id"] not in seen_skill_ids:
-                        seen_skill_ids.add(s["id"])
-                        skills.append(f"- {s['name']}: {s['description']}")
+                    if s["id"] in seen_skill_ids or not _skill_applies_here(slug, s):
+                        continue
+                    seen_skill_ids.add(s["id"])
+                    skills.append(f"- {s['name']}: {s['description']}")
     if withheld:
         # `info`: on a deployment holding engagements of different modes this is the correct
         # outcome and will fire often. Logged because it is the only answer to "why is that
