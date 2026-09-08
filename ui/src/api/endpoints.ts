@@ -214,20 +214,14 @@ export const projectsApi = {
     apiClient.get(`/projects/${slug}/my-permissions`).then((r) => r.data),
 }
 
-export const skillNotesApi = {
-  // `slug` is required and first, so a caller cannot forget it by omission. The note is a
-  // model's distillation of the reviewer's own sentence about one engagement: the slug decides
-  // which model may read that sentence, and is stored so later runs can tell whose lesson the
-  // note is. The server answers 422 without it - ReviewDialog held it in props and discarded
-  // it, which is the same defect CLAUDE.md records on the test-interview press.
-  create: (slug: string, agentName: string, rawInput: string) =>
-    apiClient.post('/agent-skill-notes', { slug, agent_name: agentName, raw_input: rawInput })
-      .then(r => r.data as { id: number; agent_name: string; note: string }),
-
-  list: (agentName?: string) =>
-    apiClient.get('/agent-skill-notes', { params: agentName ? { agent_name: agentName } : {} })
-      .then(r => r.data as Array<{ id: number; agent_name: string; note: string; raw_input: string; created_at: string }>),
-}
+// A client for the agent skill notes stood here, against a router that no longer exists. The
+// mechanism it reached - a reviewer's sentence distilled by a model and injected into every
+// engagement's prompts with no approval step - was never intended. A reviewer who wants a
+// standing rule now chooses it on the review dialog itself, and
+// `PATCH /projects/{slug}/reviews/{id}` files it on the skills queue for a human to approve
+// and scope. Neither the client nor the path it called is named here on purpose:
+// tests/test_review_intent_proposes.py asserts the retirement over the source, and a
+// tombstone that spells the name out would keep failing it for ever.
 
 // What a stakeholder write may carry: the whole record bar its identity, with the two
 // grantable role flags optional rather than required.

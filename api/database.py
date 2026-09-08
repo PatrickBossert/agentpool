@@ -2210,6 +2210,23 @@ async def fetch_agent_outputs(conn: aiosqlite.Connection, *, project_id: int) ->
         return [dict(r) async for r in cur]
 
 
+async def fetch_output_agent_name(
+    conn: aiosqlite.Connection, *, output_id: int
+) -> str | None:
+    """Which agent produced this output, or None if there is no such row.
+
+    The snake id the crews dispatch by - `value_chain_mapper` - which is what
+    `skills_service._role_name_for` resolves to the role name the skills library is keyed by.
+    A single row by id rather than `fetch_agent_outputs`, whose correlated subquery for the
+    latest reviewer notes is a great deal of work for one column.
+    """
+    async with conn.execute(
+        "SELECT agent_name FROM agent_outputs WHERE id=?", (output_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return row["agent_name"] if row else None
+
+
 async def insert_document(
     conn: aiosqlite.Connection, *,
     project_id: int,
@@ -3447,22 +3464,15 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             UNIQUE(user_id, project_slug)
         );
 
-        -- `source_project` is the engagement the reviewer wrote the feedback on. It is not
-        -- decoration: `_fetch_skill_notes` prepends every note for a crew's agents to every
-        -- task on every project, so a note is injected as *instruction* into engagements that
-        -- had nothing to do with it - and the note is a model's distillation of a sentence
-        -- that is free to name the client. Without a column to ask about, the injection had
-        -- no question it could ask. A note that names no engagement cannot be shown to permit
-        -- travelling, and is withheld from any run that would send it off the premises.
-        CREATE TABLE IF NOT EXISTS agent_skill_notes (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent_name     TEXT NOT NULL,
-            note           TEXT NOT NULL,
-            raw_input      TEXT,
-            source_project TEXT,
-            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
+        -- A retired table stood here: a model's distillation of a reviewer's rejection
+        -- feedback, injected into every engagement's prompts with no approval step at all. It
+        -- was never intended - feedback was always meant to improve the output in hand and
+        -- then be evaluated as a project-level or global skill through the skills review -
+        -- and `intent='skill'` on the review door now files exactly that, into the queue
+        -- below. **It is not dropped here.** The statement is gone, so a fresh deployment
+        -- never creates it; an existing one keeps an inert table nothing reads, which is the
+        -- cheaper of the two mistakes and leaves its one row of test data recoverable.
+        --
         -- `occurrences`, `proposed_by_agent`, `source_project` and `source_ref` are the
         -- provenance an agent's proposal arrives with. A proposal is written `pending` and
         -- `_fetch_skill_notes` (api/services/run_service.py) reads `status='approved'`, so
@@ -3738,12 +3748,11 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
         ("skills", "source_ref", "TEXT"),
         ("skills", "proposed_by_agent", "TEXT"),
         ("skills", "occurrences", "INTEGER NOT NULL DEFAULT 1"),
-        # Nullable, and every row written before this is NULL: there is no engagement to
-        # backfill from, because nothing ever recorded one. NULL means "cannot be attributed"
-        # rather than "belongs to nobody", and `_fetch_skill_notes` withholds it from a run
-        # that would send it off the premises - the same answer `_candidates_that_may_travel`
-        # gives an unattributable candidate, for the same reason.
-        ("agent_skill_notes", "source_project", "TEXT"),
+        # The retired notes table had an entry here too, and it had to go with the CREATE
+        # above rather than be left as a harmless leftover: PRAGMA table_info answers nothing
+        # for a table that does not exist, so the guard below would read "the column is
+        # missing" and the ALTER would raise on every fresh deployment - taking every later
+        # statement in init_system_db with it.
     ):
         cur = await conn.execute(f"PRAGMA table_info({table})")
         if column not in {row[1] for row in await cur.fetchall()}:
@@ -3793,43 +3802,6 @@ async def get_system_db():
         conn.row_factory = aiosqlite.Row
         await init_system_db(conn)
         yield conn
-
-
-async def insert_skill_note(
-    conn: aiosqlite.Connection,
-    *,
-    agent_name: str,
-    note: str,
-    raw_input: str,
-    source_project: str | None = None,
-) -> int:
-    """One skill note, with the engagement its feedback was written on.
-
-    `source_project` is keyword-with-a-default rather than required, and only because this
-    helper is also driven by tests that are about something else. The **door** is where it is
-    required: `POST /agent-skill-notes` takes a non-blank slug or answers 422, because a note
-    with no engagement can never be shown to a hosted run again.
-    """
-    cur = await conn.execute(
-        "INSERT INTO agent_skill_notes (agent_name, note, raw_input, source_project)"
-        " VALUES (?,?,?,?)",
-        (agent_name, note, raw_input, source_project),
-    )
-    await conn.commit()
-    return cur.lastrowid
-
-
-async def fetch_skill_notes(conn: aiosqlite.Connection, *, agent_name: str | None = None) -> list[dict]:
-    if agent_name:
-        async with conn.execute(
-            "SELECT * FROM agent_skill_notes WHERE agent_name=? ORDER BY created_at DESC",
-            (agent_name,),
-        ) as cur:
-            return [dict(r) async for r in cur]
-    async with conn.execute(
-        "SELECT * FROM agent_skill_notes ORDER BY agent_name, created_at DESC"
-    ) as cur:
-        return [dict(r) async for r in cur]
 
 
 # ── skills library ─────────────────────────────────────────────────────────────

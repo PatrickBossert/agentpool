@@ -16,7 +16,6 @@ export default defineConfig({
       '/auth': 'http://localhost:8000',
       '/admin': 'http://localhost:8000',
       '/system': 'http://localhost:8000',
-      '/agent-skill-notes': 'http://localhost:8000',
       // The two routers that carry an /api prefix of their own - templates and interviews.
       '/api': 'http://localhost:8000',
       // The agent log stream. useWebSocket derives its URL from the page origin, so in dev

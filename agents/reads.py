@@ -439,19 +439,18 @@ UNRESOLVABLE_READS: tuple[UnresolvableRead, ...] = (
 # other dispatch, reachable from the API - performs none of it, so an agent run that way reads
 # none of this.
 CREW_DISPATCH_READS: tuple[Read, ...] = (
-    Read(
-        "agent_skill_notes",
-        Medium.DATABASE_TABLE,
-        VIA_DISPATCH,
-        "reviewer feedback about how each agent in the crew behaves. In the SYSTEM database - "
-        "global across engagements, not scoped to this project",
-    ),
+    # A second system table was declared here: a model's distillation of a reviewer's
+    # rejection feedback, injected into every engagement's prompts with no approval step. The
+    # mechanism is retired - `intent='skill'` on the review door now files the reviewer's rule
+    # on the skills queue instead - so the declaration goes with it rather than describing a
+    # read the dispatch path no longer performs.
     Read(
         "skills",
         Medium.DATABASE_TABLE,
         VIA_DISPATCH,
         "the approved capabilities in the shared library, selected through "
-        "agent_skill_assignments. In the SYSTEM database, and global for the same reason",
+        "agent_skill_assignments. In the SYSTEM database - global across engagements, not "
+        "scoped to this project - and a rule reaches this run only if its scope says so",
     ),
     Read(
         "output_changes",

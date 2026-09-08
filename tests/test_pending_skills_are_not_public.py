@@ -160,78 +160,13 @@ async def test_a_sysadmin_still_reads_the_queue(client):
     assert proposal["source_project"] == _ORIGIN_SLUG
 
 
-# ── the same finding, one table over ───────────────────────────────────────────────────────
-
-_FEEDBACK = (
-    "Maya named the Q3 outage at Iberdrola in the welcome for SC-014 - never do that again."
-)
-_NOTE = "Do not name incidents in a welcome."
-
-
-async def _store_skill_note() -> int:
-    from api.database import get_system_connection, insert_skill_note
-
-    async with get_system_connection() as conn:
-        return await insert_skill_note(
-            conn, agent_name=_AGENT, note=_NOTE, raw_input=_FEEDBACK,
-        )
-
-
-@pytest_asyncio.fixture
-async def _a_skill_note():
-    note_id = await _store_skill_note()
-    yield note_id
-    from api.database import get_system_connection
-
-    async with get_system_connection() as conn:
-        await conn.execute("DELETE FROM agent_skill_notes WHERE id = ?", (note_id,))
-        await conn.commit()
-
-
-@pytest.mark.parametrize("role", ["reviewer", "org_admin"])
-@pytest.mark.asyncio
-async def test_a_non_sysadmin_may_not_read_the_skill_notes(client, _a_skill_note, role):
-    """`agent_skill_notes` is `skills` one table over, and had the same shape of hole.
-
-    `fetch_skill_notes` is a `SELECT *`, so the door returned `raw_input` - the reviewer's own
-    sentence about one engagement, written from `ReviewDialog` - to any login. `note` is the
-    distilled imperative and is genuinely global, being injected into every engagement's
-    prompts; `raw_input` is not, and both came back together.
-    """
-    res = await client.get("/agent-skill-notes", headers=_auth(role))
-
-    assert res.status_code == 403
-    assert _FEEDBACK not in res.text
-
-
-@pytest.mark.asyncio
-async def test_a_sysadmin_still_reads_the_skill_notes(client, _a_skill_note):
-    """The control. A fix that refused everybody would pass the test above."""
-    res = await client.get("/agent-skill-notes")
-
-    assert res.status_code == 200
-    stored = next(n for n in res.json() if n["id"] == _a_skill_note)
-    assert stored["raw_input"] == _FEEDBACK
-    assert stored["note"] == _NOTE
-
-
-@pytest.mark.asyncio
-async def test_a_reviewer_may_still_leave_feedback(client):
-    """Writing your own sentence is not reading somebody else's, so `POST` is unchanged.
-
-    Narrowing it would take the review loop's own door with it - `ReviewDialog` posts here as
-    a reviewer - so this asserts the write is still reachable rather than leaving the
-    asymmetry to be inferred from the absence of a test. It is refused at the validation step
-    rather than the auth one, which is the distinction being made: 422, never 403.
-    """
-    res = await client.post(
-        "/agent-skill-notes",
-        json={"agent_name": _AGENT, "raw_input": "   "},
-        headers=_auth("reviewer"),
-    )
-
-    assert res.status_code == 422
-
+# ── the same finding, one table over, and the table has gone ───────────────────────────────
+#
+# Three tests stood here against `GET`/`POST /agent-skill-notes`, which had the same shape of
+# hole as the queue above and was closed the same way. The whole mechanism retired in sp65 -
+# it was never intended, and `intent='skill'` on the review door files a proposal onto the
+# queue this file is about instead - so the door they drove no longer exists. The finding they
+# recorded is not lost: it is the same one the tests above make, on the table that survived.
 
 @pytest.mark.asyncio
 async def test_the_derived_name_really_does_carry_the_rule(client):
