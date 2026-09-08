@@ -236,7 +236,11 @@ async def test_a_sensitive_project_moves_the_vector_store_and_inference_and_noth
         for row in sensitive["tools"]
         if row["destination"] != by_tool[row["tool"]]["destination"]
     }
-    assert moved == {"ChromaQueryTool", "DocumentIngestionTool"}
+    # Three, not two. `SkillProposalTool` joined them: it asks a model whether a proposed rule
+    # restates one the agent already holds, and that question is routed by the project through
+    # `project_completion` like every other non-crew call. It reached hosted Haiku regardless of
+    # mode for one commit, and the row this test asserts is what a reviewer read to notice.
+    assert moved == {"ChromaQueryTool", "DocumentIngestionTool", "SkillProposalTool"}
 
     # The uncomfortable half, and the reason the page names it: a sensitive project still
     # reaches out through the search and fetch tools, neither of which consults `llm_mode`.

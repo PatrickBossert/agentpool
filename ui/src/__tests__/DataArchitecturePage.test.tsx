@@ -585,7 +585,7 @@ describe('the prose half', () => {
     expect(screen.getByText(/ElevenLabs - speech synthesis, nothing kept/)).toBeInTheDocument()
     expect(screen.getByText(/Deepgram - transcription, nothing kept/)).toBeInTheDocument()
     expect(
-      screen.getByText(/The skills library is deliberately always hosted/),
+      screen.getByText(/The skills library has one hosted door, and it is not this project/),
     ).toBeInTheDocument()
   })
 

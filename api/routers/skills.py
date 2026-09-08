@@ -11,6 +11,7 @@ from api.database import (
     get_system_db,
     insert_skill,
     fetch_skills,
+    fetch_skill_occurrences,
     update_skill,
     delete_skill,
 )
@@ -133,10 +134,71 @@ async def list_skills(
     payload: dict = Depends(require_any_auth),
     conn=Depends(get_system_db),
 ):
-    """List skills. Non-sysadmins may see approved and pending; rejected is sysadmin-only."""
-    if payload.get("role") != "sysadmin" and status not in ("approved", "pending"):
+    """List skills. A non-sysadmin sees the approved library and nothing else.
+
+    **`approved` and `pending` are two different kinds of thing, and only one of them is
+    global.** An approved skill is an agent's published instruction - it is injected into
+    that agent's prompt on every engagement, which is precisely what makes it not one
+    client's material, and it stays readable by any login. A `pending` row is a *proposal*,
+    and since sp61 a proposal is the agent's own sentence about the engagement it was
+    corrected on, filed with that engagement's slug beside it. "When interviewing X's
+    migration staff, never name the Q3 outage in the welcome" is a natural thing for it to
+    write, and `_derive_skill_name` makes the *name* the first five words of the rule - so
+    the name discloses as much as the description and hiding one without the other is not a
+    fix.
+
+    Until sp61 a `pending` row was something an administrator had typed into the review
+    queue, which is why this door was open to every login and why nothing failed when the
+    material behind it changed. That is CLAUDE.md's own rule arriving from the other side:
+    *when a path starts carrying something written about one client, re-read the exemption
+    it is sitting under*.
+
+    A refusal rather than a silent narrowing to `approved`. A caller who explicitly asked
+    for the queue and was handed the library would render the library **as** the queue - the
+    two renderers on this API label whatever comes back "in development" - so the quiet
+    answer is a wrong answer, not a safe one. A caller expressing no preference is a
+    different case and still defaults to `approved`.
+    """
+    if payload.get("role") != "sysadmin":
+        if status is not None and status != "approved":
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Only a sysadmin may list skills that are not approved. A pending skill is "
+                    "a proposal an agent made about one engagement, and it names that "
+                    "engagement; an approved skill is that agent's instruction everywhere, and "
+                    "is readable by any login."
+                ),
+            )
         status = "approved"
     return await fetch_skills(conn, agent_name=agent_name, status=status)
+
+
+@router.get("/admin/skills/{skill_id}/occurrences")
+async def list_skill_occurrences(
+    skill_id: int,
+    _payload: dict = Depends(require_sysadmin),
+    conn=Depends(get_system_db),
+):
+    """Every recorded sighting of one skill's rule, oldest first (sysadmin only).
+
+    The evidence behind the count the queue sorts on. `skills.occurrences` says how many
+    times an agent proposed the same rule; this says *where* - the engagement, the output it
+    was corrected on, and the wording used that time - which is what a reviewer needs before
+    approving a change to an agent's behaviour on every engagement.
+
+    Sysadmin, matching the PATCH that acts on the queue rather than the GET that lists it:
+    only a sysadmin can approve, so only a sysadmin needs the evidence, and these rows name
+    client engagements and quote the agent's own words about them.
+
+    An empty list is a legitimate answer, not a miss - the fifty-three skills that predate
+    the proposal path have no occurrence rows at all. A skill that does not exist is 404, so
+    the two are told apart.
+    """
+    rows = await fetch_skills(conn)
+    if not any(s["id"] == skill_id for s in rows):
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return await fetch_skill_occurrences(conn, skill_id=skill_id)
 
 
 @router.patch("/admin/skills/{skill_id}")

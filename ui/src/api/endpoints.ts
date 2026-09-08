@@ -215,8 +215,13 @@ export const projectsApi = {
 }
 
 export const skillNotesApi = {
-  create: (agentName: string, rawInput: string) =>
-    apiClient.post('/agent-skill-notes', { agent_name: agentName, raw_input: rawInput })
+  // `slug` is required and first, so a caller cannot forget it by omission. The note is a
+  // model's distillation of the reviewer's own sentence about one engagement: the slug decides
+  // which model may read that sentence, and is stored so later runs can tell whose lesson the
+  // note is. The server answers 422 without it - ReviewDialog held it in props and discarded
+  // it, which is the same defect CLAUDE.md records on the test-interview press.
+  create: (slug: string, agentName: string, rawInput: string) =>
+    apiClient.post('/agent-skill-notes', { slug, agent_name: agentName, raw_input: rawInput })
       .then(r => r.data as { id: number; agent_name: string; note: string }),
 
   list: (agentName?: string) =>

@@ -238,6 +238,28 @@ TOOL_EGRESS: dict[str, Egress] = {
             "user-agent. There is no allowlist, no mode check, and no record of the request"
         ),
     ),
+    # --- Reaches a model, and moves with the project like every other prompt does -------------
+    #
+    # The only tool in this table whose reach is `INFERENCE`. Inference is otherwise the reach
+    # no tool has - every agent runs on a model whether or not it holds one - but this tool
+    # makes a *second* model call of its own, to ask whether the rule the agent proposed
+    # restates one it already holds, and a call nothing declared would be a call nobody could
+    # find.
+    #
+    # It was `UNGATED_INFERENCE` for one commit, because `skills_service` built `AsyncAnthropic`
+    # directly and asked nothing about the project. That was the honest declaration of what the
+    # code then did, and the row is worth remembering rather than tidying away: it was the
+    # declaration, not the code, that made somebody read the sentence and decide the exemption
+    # had stopped being true. `find_duplicate_skill` now goes through `project_completion`, so
+    # the reach is the ordinary gated one and the member with no members went with it.
+    "SkillProposalTool": Egress(
+        reaches=Reach.INFERENCE,
+        sends=(
+            "the behaviour rule the agent wrote and the rules already suggested for it, so "
+            "whatever of the client's work the agent chose to quote in stating that rule goes "
+            "with it - to the same place every other prompt on this project goes"
+        ),
+    ),
 }
 
 

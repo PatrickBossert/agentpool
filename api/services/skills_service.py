@@ -1,21 +1,490 @@
 # api/services/skills_service.py
 """LLM helpers for the agent skills library.
 
-The one remaining path that is always hosted, and deliberately so - see the routing table in
-CLAUDE.md. The skills library is global across engagements, none of the endpoints that reach
-these helpers carries a slug, and there is therefore no llm_mode to route by. The text is
-reviewer feedback about an agent's behaviour rather than client material, but it is still
-feedback typed during a sensitive engagement: if that stops being acceptable, the fix is a
-project-scoped skills library, not a default slug. Everything else goes through
-api/services/llm_client.py.
+**Two doors, and they route differently. Which one a helper is on is decided by whether it has
+a project, and there is no default:**
+
+| Door | Helpers | Model |
+|------|---------|-------|
+| The global library, reached from the admin skills page | `check_specificity`, `extract_skill`, `extract_skills_many` | hosted Haiku, on every deployment |
+| An agent's proposal, made on one engagement | `propose_skill` -> `find_duplicate_skill` | whatever that project's mode binds to the `fast` tier |
+
+The first is the documented always-hosted exception, and it survives because both halves of
+its justification still hold there: the library is global across engagements, those endpoints
+carry no slug, and there is therefore no `llm_mode` to route by.
+
+**Neither half held for the second door, which is why it moved.** `propose_skill` takes the
+slug - it is the provenance a reviewer sorts the queue on - so a mode was available to route
+by all along; and the text is no longer reviewer feedback about an agent's behaviour but the
+agent's own generalisation from a correction made on a named engagement, which is free to
+name the client, its people, or its systems in the course of stating the rule. The exemption
+was written about the door rather than about the data, and it outlived the data changing.
+
+So `find_duplicate_skill` goes through `project_completion` in `api/services/llm_client.py`,
+like every other non-crew call on this codebase. It takes the slug as its first argument, not
+as a keyword with a default: CLAUDE.md's rule is that a forgotten slug must never become a
+silent hosted call, and an optional parameter falling back to hosted is exactly that. Never
+build a provider client here for a project's material.
+
+`propose_skill` is the write door onto the skills queue, used by an agent that has just
+revised its work and wants the general rule behind the correction remembered. It asks the
+project's model one question - "is this the same rule as one we already hold?" - and
+**everything else about it is deterministic**: the naming, the insert, the increment. The
+model is asked for a judgement, never for a side effect, and a model that is unreachable,
+unconfigured, slow, or incoherent degrades to "not a duplicate" rather than failing the run
+the proposal is attached to.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+
 from anthropic import AsyncAnthropic
 from api.config import get_settings
+from api.services import llm_client
+
+log = logging.getLogger(__name__)
 
 _MODEL = "claude-haiku-4-5-20251001"
+
+# The comparison's own budget, imposed here because `project_completion` has none of its own
+# and both of the clients behind it are sized for a caller that is waiting: the Anthropic SDK
+# defaults to 600 seconds and two retries, and the shared local client to 120. This path runs
+# inside a crew run, attached to a revision that is already finished, so twenty seconds is the
+# whole of it - `asyncio.wait_for`, the same way the elaboration press bounds its own call.
+_COMPARISON_TIMEOUT_SECONDS = 20.0
+
+# A judgement about two short sentences. `deep` would put the comparison on the same model the
+# agent's own work runs on, which is a great deal of machinery for "do these say the same
+# thing", and on a sensitive project it would contend with the agent for a loaded local model -
+# see docs/runbook-local-models.md on OLLAMA_MAX_LOADED_MODELS.
+_COMPARISON_TIER = "fast"
+
+
+async def propose_skill(
+    agent_name: str,
+    description: str,
+    source_project: str,
+    source_ref: str | None,
+    *,
+    name: str | None = None,
+) -> dict:
+    """Record a skill an agent proposes, and return what happened.
+
+    The queue an agent writes into. The proposal is stored `status='pending'`, and
+    `_fetch_skill_notes` in `api/services/run_service.py` injects `status='approved'` skills
+    alone - so nothing proposed here reaches any prompt until a human approves it. That is
+    the whole safety argument for letting an agent propose freely, and it is asserted against
+    what reaches the prompt rather than against what the table holds
+    (`tests/test_skill_proposal.py`).
+
+    `agent_name` is the snake id the crews dispatch by - `interaction_designer`. It is
+    resolved to the role name `agent_skill_assignments` is keyed by before the assignment is
+    written, because that is the name `_fetch_skill_notes` looks the skill up under; storing
+    the snake id would file a proposal that no approval could ever inject.
+
+    A near-duplicate of a rule this agent already holds is **not** a second row. A match is the
+    second occurrence of the same rule, which is the evidence a reviewer approves from, so it
+    increments `occurrences` on the row already there and records the new provenance beside it.
+    Both the approved skills and the pending suggestions are candidates: the second occurrence
+    of a rule nobody has approved yet is exactly what the queue needs to sort on.
+
+    `source_project` is the engagement the correction was made on. It is provenance a reviewer
+    sorts the queue on **and** the slug the comparison is routed by, so it is required and
+    raises when blank rather than being allowed to mean "no project". A proposal whose slug
+    went missing has no mode to honour, and the two things it could quietly become - a hosted
+    comparison, or a hosted-by-default fallback - are exactly what CLAUDE.md's seam rule
+    forbids. Raising is safe here in the way it would not be deeper down: the only production
+    caller is `SkillProposalTool`, whose whole contract is that nothing it does can fail the
+    run.
+
+    It is **stripped once and the stripped form is what is both routed on and filed**. An
+    earlier version routed `find_duplicate_skill` on the stripped slug and wrote the caller's
+    original into `skills` and `skill_occurrences`, so a slug carrying stray whitespace was
+    two spellings of one fact: the key the mode was read from, and the provenance the queue
+    groups by, could disagree. Not reachable through today's only caller, which passes the
+    run's own slug - but a fact with two spellings is what this file argues against elsewhere.
+
+    Returns `{"action", "skill_id", "status", "occurrences", "name", "agent"}`, where `action`
+    is `"created"` or `"incremented"` - which is why this returns what happened rather than an
+    id.
+    """
+    from api.database import get_system_connection, insert_skill, record_skill_occurrence
+
+    slug = (source_project or "").strip()
+    if not slug:
+        raise ValueError(
+            "propose_skill requires the project the correction was made on: the rule the agent "
+            "wrote is that engagement's material, and which model may compare it is a property "
+            "of the project. Defaulting would route a sensitive project's content to a hosted "
+            "model."
+        )
+    role = _role_name_for(agent_name)
+    skill_name = (name or "").strip() or _derive_skill_name(description)
+    # Read, compare, write - and **no connection is held across the comparison**, which is a
+    # network call. An earlier version held one and justified it as closing the window in
+    # which two proposals of the same rule each find no duplicate and each create a row.
+    # That justification was false: `get_system_connection` opens a fresh connection per
+    # call, so two overlapping proposals hold two of them and no transaction spans the read
+    # and the write either way. The window is real, it is open, and it is accepted - the
+    # failure is a second pending row a reviewer can see and merge, and closing it properly
+    # would mean re-reading the candidates under `BEGIN IMMEDIATE` and re-running the model
+    # call when they have changed, which is a second network call to avoid a benign row.
+    async with get_system_connection() as conn:
+        candidates = await _rules_already_held(conn, role)
+
+    match_id = await find_duplicate_skill(slug, description, candidates)
+
+    async with get_system_connection() as conn:
+        if match_id is not None:
+            occurrences = await record_skill_occurrence(
+                conn,
+                skill_id=match_id,
+                description=description,
+                source_project=slug,
+                source_ref=source_ref,
+                proposed_by_agent=agent_name,
+                bump=True,
+            )
+            # `next(..., None)`, never a bare `next`. A generator that finds nothing raises
+            # StopIteration, which inside an async function surfaces as `RuntimeError:
+            # coroutine raised StopIteration` - **after** the row above has already been
+            # incremented, so the run dies having half-done the write. A proposal must never
+            # be able to fail the revision it is attached to, and that includes the paths
+            # nothing can currently reach.
+            held = next((c for c in candidates if int(c["id"]) == match_id), None)
+            if occurrences and held is not None:
+                return {
+                    "action": "incremented",
+                    "skill_id": match_id,
+                    "status": held["status"],
+                    "occurrences": occurrences,
+                    "name": held["name"],
+                    "agent": role,
+                }
+            # Either the row went between the read and the write - a delete from another
+            # process, genuinely reachable now the comparison no longer runs inside the
+            # read's connection - or the match was not among the candidates that were read,
+            # which the guard in `find_duplicate_skill` should already have refused. Both are
+            # worth a line: the second means that guard has been bypassed.
+            log.warning(
+                "skills: matched skill %s could not be counted (row gone, or not among the "
+                "candidates read); creating a proposal for %s instead", match_id, role,
+            )
+
+        skill_id = await insert_skill(
+            conn,
+            name=skill_name,
+            description=description,
+            source="revision",
+            source_project=slug,
+            source_ref=source_ref,
+            proposed_by_agent=agent_name,
+            # Never anything else. An approved proposal is injected into every future run of
+            # this agent, on every engagement.
+            status="pending",
+            agents=[role],
+        )
+        occurrences = await record_skill_occurrence(
+            conn,
+            skill_id=skill_id,
+            description=description,
+            source_project=slug,
+            source_ref=source_ref,
+            proposed_by_agent=agent_name,
+            # The `skills` row already counts this one - `occurrences` defaults to 1.
+            bump=False,
+        )
+    return {
+        "action": "created",
+        "skill_id": skill_id,
+        "status": "pending",
+        "occurrences": occurrences or 1,
+        "name": skill_name,
+        "agent": role,
+    }
+
+
+# The statuses a proposal is compared against. `rejected` is deliberately absent: a human has
+# already refused that rule, and incrementing a rejected row would file the evidence where the
+# queue does not look - the recurrence would be recorded and invisible. A re-proposal of a
+# refused rule becomes a fresh pending row, which is the only place a reviewer will see it.
+_DEDUP_STATUSES = ("pending", "approved")
+
+
+async def _rules_already_held(conn, role: str) -> list[dict]:
+    """The candidate rules a proposal is compared against, for one agent.
+
+    Keyed on the **role name** (`Interaction Designer`), never the snake id, because that is
+    what `agent_skill_assignments` holds - a lookup by snake id would find no candidates
+    ever, and the recurrence signal would silently never fire while proposals kept
+    accumulating and the feature kept appearing to work.
+    """
+    from api.database import fetch_skills
+
+    held: list[dict] = []
+    for status in _DEDUP_STATUSES:
+        held.extend(await fetch_skills(conn, agent_name=role, status=status))
+    return held
+
+
+def _candidates_that_may_travel(slug: str, candidates: list[dict]) -> list[dict]:
+    """The candidates it is permissible to send with a comparison routed on `slug`.
+
+    **A candidate travels only where its own project's material may travel.** The routing one
+    function down decides where the *proposed* rule goes, and says nothing about the list it
+    goes with - so a `sensitive` engagement's pending rule was being posted to hosted Haiku
+    the moment any *other* engagement made a proposal for the same agent, because the payload
+    is routed by the proposing project alone. Same material, same reasoning that made the
+    queue sysadmin-only in `list_skills`, leaving the deployment entirely.
+
+    Two questions, asked in this order, and both through `project_permits` rather than against
+    a mode name:
+
+    1. **Is this comparison going off the premises at all?** If the proposing project is not
+       granted `HOSTED_INFERENCE`, the payload goes to a model on this deployment and nothing
+       leaves, so every candidate may travel. A sensitive project therefore still compares
+       against everything, which is where recurrence accumulates best and costs nothing.
+    2. **May *this* candidate go there?** Asked of the candidate's own `source_project`, never
+       of the proposing one - the proposing project's grants are about the proposing
+       project's material.
+
+    `approved` is exempt, and that is not a loophole. An approved skill is already injected
+    into that agent's prompt on **every** engagement by `_fetch_skill_notes`, including the
+    standard ones whose prompts go to hosted Anthropic; it is the agent's published
+    instruction rather than one client's material, which is the same distinction `list_skills`
+    turns on. Excluding it would lose deduplication with nothing gained.
+
+    The exemption is an allow-list of that one status rather than a "not pending" test, so a
+    third status added to `_DEDUP_STATUSES` later has to prove itself rather than inherit the
+    exemption by not being named.
+
+    A pending candidate with no `source_project` is **dropped**, because it cannot be
+    attributed and "may this travel" has no answer without an engagement to ask about. Today
+    that is only a row an administrator typed on the global skills page - `propose_skill`
+    requires a non-blank slug - so the cost is that a hand-typed pending rule does not
+    deduplicate against a hosted comparison. That is a quality loss in an edge case; the other
+    default is a disclosure.
+
+    **Known, accepted, and inherited:** `project_llm_mode` answers `standard` for a slug whose
+    database does not exist, and `standard` grants hosted inference. So a candidate whose
+    project has been deleted since the proposal was made would travel. That is this codebase's
+    stated policy - a genuinely absent project has no secrets - and changing it belongs on
+    that seam rather than here.
+    """
+    from api.services.deployment_modes import Capability, project_permits
+
+    if not project_permits(slug, Capability.HOSTED_INFERENCE):
+        return candidates
+
+    may_travel: list[dict] = []
+    withheld: list[str] = []
+    by_origin: dict[str, bool] = {}
+    for candidate in candidates:
+        if candidate.get("status") == "approved":
+            may_travel.append(candidate)
+            continue
+        origin = (candidate.get("source_project") or "").strip()
+        if origin and origin not in by_origin:
+            by_origin[origin] = project_permits(origin, Capability.HOSTED_INFERENCE)
+        if origin and by_origin[origin]:
+            may_travel.append(candidate)
+        else:
+            withheld.append(origin or "no engagement recorded")
+    if withheld:
+        # `info`, not `warning`: on a deployment holding engagements of different modes this is
+        # the correct outcome and will fire often. It is logged at all because it is the answer
+        # to "why did this recurrence not accumulate", which is otherwise unanswerable from
+        # anything the queue shows.
+        log.info(
+            "skills: %d candidate(s) withheld from a comparison routed on %r, which is granted "
+            "hosted inference - their own engagements (%s) are not. The proposal is compared "
+            "against the rest.",
+            len(withheld), slug, ", ".join(sorted(set(withheld))),
+        )
+    return may_travel
+
+
+async def find_duplicate_skill(
+    slug: str, description: str, candidates: list[dict]
+) -> int | None:
+    """Return the id of the candidate stating the same rule as `description`, or None.
+
+    By meaning, not by text. The two ways of saying "the welcome carries privacy, the framing
+    carries purpose" share barely a word, and a string comparison would call them distinct -
+    at which point the second occurrence is filed as a fresh guess and the evidence the queue
+    sorts on never accumulates.
+
+    **Routed by the project, on `slug`.** The rule being compared was written by an agent about
+    work it did on that engagement, so it is that engagement's material and goes wherever that
+    engagement's material is allowed to go - the local model on a sensitive project, hosted
+    Haiku on a standard one. `slug` is the first positional argument and there is no default:
+    the module docstring says why an optional one would be the defect rather than the
+    convenience.
+
+    Both directions of error are guarded, and they are not symmetric. Calling two distinct
+    rules the same **loses a rule**, which is worse than a duplicate row a reviewer can see and
+    reject, so the prompt insists on same *behaviour* rather than same subject, and every
+    failure - no key, a refusal, unparseable JSON, an id that was never offered, a project with
+    no model configured for this tier, a model that will not answer inside the budget -
+    resolves to None and a new row.
+
+    `LocalModelUnavailable` is deliberately among those. It is the standing state of a
+    sensitive project whose `deep` tier is configured and whose `fast` tier is not: its crews
+    run and its comparisons cannot be made. Refusing the proposal outright would throw away the
+    lesson to protect a deduplication; degrading records it, un-deduplicated, and says so in the
+    log every time. **Nothing here ever answers by sending the text somewhere the project's
+    grants refuse** - that is the one failure this must not have, and it is why the degradation
+    is to "not a duplicate" rather than to a hosted retry.
+
+    That sentence used to be true of the proposed rule and false of the **candidates**, which
+    travel with it. `_candidates_that_may_travel` is what makes it true of both, and it is
+    called here rather than where the list is read because this is the function that sends:
+    the check belongs before the send, and a caller assembling candidates some other way gets
+    it too. `offered` is built from the narrowed list, so the model can only name something
+    that actually left.
+    """
+    candidates = _candidates_that_may_travel(slug, candidates)
+    if not candidates:
+        return None
+    offered = {int(c["id"]): c for c in candidates}
+    try:
+        reply = await asyncio.wait_for(
+            llm_client.project_completion(
+                slug,
+                _COMPARISON_TIER,
+                messages=[{
+                    "role": "user",
+                    "content": json.dumps({
+                        "proposed": description,
+                        "held": [
+                            {"id": int(c["id"]), "name": c.get("name"),
+                             "description": c.get("description")}
+                            for c in candidates
+                        ],
+                    }, indent=2),
+                }],
+                max_tokens=256,
+                system=(
+                    "You compare a proposed behaviour rule for an AI agent against the rules that "
+                    "agent is already held to, and decide whether the proposal states one of them "
+                    "again in different words.\n\n"
+                    "Two rules are the same when following either one produces the same behaviour. "
+                    "Wording, length, and word choice are irrelevant - a rule restated with no "
+                    "shared vocabulary is still the same rule.\n\n"
+                    "Two rules about the same subject are NOT the same rule unless they instruct "
+                    "the same behaviour. 'The welcome carries privacy' and 'the welcome names the "
+                    "interviewer' are both about the welcome and are different rules. When in "
+                    "doubt, answer null: a duplicate a reviewer can see costs less than two "
+                    "distinct rules merged into one.\n\n"
+                    "The input is JSON: `proposed` is the new rule, `held` is the list of rules "
+                    "already held, each with an `id`.\n\n"
+                    "Respond with valid JSON only, no other text:\n"
+                    '{"match_id": <the id of the rule the proposal restates, or null>, '
+                    '"reason": "one sentence"}'
+                ),
+            ),
+            timeout=_COMPARISON_TIMEOUT_SECONDS,
+        )
+        answer = json.loads(_strip_code_fences(reply.strip()))
+        match_id = answer.get("match_id")
+    except Exception:
+        # Loud, and still "not a duplicate". The direction is right - a comparison must never
+        # fail the revision it is attached to - but silence is not, because a comparator that
+        # is failing on every call is indistinguishable at every later layer from one that is
+        # working and finding nothing: `occurrences` stays 1 either way, which is also what a
+        # healthy new queue looks like. This line is the only thing that can tell them apart.
+        log.warning("skills: duplicate comparison failed, treating as new", exc_info=True)
+        return None
+    if match_id is None:
+        return None
+    try:
+        match_id = int(match_id)
+    except (TypeError, ValueError):
+        log.warning("skills: duplicate comparison answered a non-numeric id %r", match_id)
+        return None
+    # Never an id that was not offered. A hallucinated one would increment an unrelated
+    # skill - the one failure of this comparison that is silent at every later layer.
+    if match_id not in offered:
+        log.warning(
+            "skills: duplicate comparison answered id %s, which was not among the %d offered",
+            match_id, len(offered),
+        )
+        return None
+    return match_id
+
+
+def _strip_code_fences(raw_text: str) -> str:
+    """Unwrap ```` ```json ```` fencing, if the model wrapped its JSON in it.
+
+    One copy, two callers. `extract_skills_many` has defended against this since it was
+    written, because this model does it; `find_duplicate_skill` asks for bare JSON in exactly
+    the same way and needs exactly the same defence. A second copy would be free to drift, and
+    the drift is invisible: a fenced reply the comparator cannot parse turns recurrence - the
+    whole point of the duplicate check - off permanently, and looks like a queue with no
+    duplicates in it.
+    """
+    if not raw_text.startswith("```"):
+        return raw_text
+    inner = raw_text.split("```")[1]
+    if inner.startswith("json"):
+        inner = inner[4:]
+    return inner.strip()
+
+
+class UnknownProposingAgent(ValueError):
+    """A proposal named an agent that resolves to no skills-table name.
+
+    Raised rather than guessed, and a caller that must not fail - `SkillProposalTool` - is the
+    right place to swallow it. See `_role_name_for`.
+    """
+
+
+def _role_name_for(agent_name: str) -> str:
+    """Map a snake agent id to the role name `agent_skill_assignments` is keyed by.
+
+    Imported from `run_service` rather than restated, because that map is what
+    `_fetch_skill_notes` reads with - a second copy here would be free to drift, and a
+    proposal filed under a name the injection does not look up is invisible rather than
+    wrong. The import is function-local for the reason `run_service`'s own imports are:
+    everything downstream of the crew graph is import-order sensitive.
+
+    **Three cases, and the third refuses.** A known snake id resolves; a name that is already
+    a role name is returned unchanged, which is the admin door's vocabulary and must not be
+    mangled; anything else raises `UnknownProposingAgent`.
+
+    The passthrough used to cover the third case too, and it re-opened the exact trap this
+    design devotes a section to. `visual_illustrator` is dispatched by the `business_plan`
+    crew and was in no map, so its proposal was filed under the snake id, reported `created`
+    with an id, approvable in the queue, approved - and injected into nothing, for ever. An id
+    that cannot be resolved is one whose proposal nobody can ever action, and inventing a name
+    for it produces a row that looks exactly like a working one. Refusing is loud; guessing is
+    not.
+    """
+    from api.services.run_service import _SNAKE_TO_DISPLAY
+
+    if agent_name in _SNAKE_TO_DISPLAY:
+        return _SNAKE_TO_DISPLAY[agent_name]
+    if agent_name in set(_SNAKE_TO_DISPLAY.values()):
+        return agent_name
+    raise UnknownProposingAgent(
+        f"{agent_name!r} is neither an agent id nor a skills-library role name, so a proposal "
+        f"filed under it could never be injected into any prompt. Add it to _SNAKE_TO_DISPLAY "
+        f"in api/services/run_service.py."
+    )
+
+
+def _derive_skill_name(description: str) -> str:
+    """A title for a proposal that arrived with a rule and no name.
+
+    Deterministic on purpose: naming is not worth a model call on a path that must not fail
+    the run it is attached to. A caller with a better title passes `name`.
+    """
+    first_line = description.strip().split("\n")[0]
+    words = first_line.split()[:5]
+    derived = " ".join(words).rstrip(".,;:-").strip()
+    return derived or "Proposed Agent Skill"
 
 
 async def check_specificity(description: str) -> dict:
@@ -70,13 +539,9 @@ async def extract_skills_many(raw_input: str) -> list[dict]:
         ),
         messages=[{"role": "user", "content": f"Extract skills from this input:\n\n{raw_input}"}],
     )
-    raw_text = resp.content[0].text.strip()
-    # Strip markdown code fences if the model wraps the JSON
-    if raw_text.startswith("```"):
-        raw_text = raw_text.split("```")[1]
-        if raw_text.startswith("json"):
-            raw_text = raw_text[4:]
-        raw_text = raw_text.strip()
+    # Strip markdown code fences if the model wraps the JSON. `find_duplicate_skill` calls the
+    # same helper - this defence was written here first and belongs to both.
+    raw_text = _strip_code_fences(resp.content[0].text.strip())
     try:
         result = json.loads(raw_text)
         if isinstance(result, list):

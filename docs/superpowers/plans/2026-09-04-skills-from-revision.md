@@ -27,7 +27,7 @@
 **Interfaces:**
 - Produces: `propose_skill(agent_name, description, source_project, source_ref) -> dict` returning what happened - created, or matched an existing row and incremented it. Tasks 2 and 3 consume it.
 
-- [ ] **Step 1: Report the current shape.** `skills` holds 54 rows, all `status='approved'`, `source` of `baseline` (43) or `manual` (11), and `source_project` NULL on every one. Confirm, and report every reader of the table - `_fetch_skill_notes` in `run_service.py` is the one that matters.
+- [ ] **Step 1: Report the current shape.** `skills` holds 53 rows, all `status='approved'`, `source` of `baseline` (43) or `manual` (10), and `source_project` NULL on every one. Confirm, and report every reader of the table - `_fetch_skill_notes` in `run_service.py` is the one that matters.
 
 - [ ] **Step 2: Add the columns** in `init_system_db`: `occurrences INTEGER NOT NULL DEFAULT 1` and `proposed_by_agent TEXT`. `source_project` already exists - populate it rather than adding another.
 
@@ -105,7 +105,7 @@ The reviewer asked for a revision, not a skill. Assert the artefact, not only th
 
 **Files:** Modify the admin skills page and its API; Test: frontend
 
-- [ ] **Step 1: Report what the admin skills page shows today**, and whether it can display a `pending` row at all - all 54 existing rows are `approved`, so the pending path has never been exercised.
+- [ ] **Step 1: Report what the admin skills page shows today**, and whether it can display a `pending` row at all - all 53 existing rows are `approved`, so the pending path has never been exercised.
 
 - [ ] **Step 2: Pending suggestions sort by `occurrences`, descending.** A rule seen three times sits above one seen once. Show the count and the provenance - a reviewer approving a global behaviour change should see what evidence it rests on.
 

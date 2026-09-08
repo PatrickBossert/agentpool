@@ -8,12 +8,29 @@ export interface AgentSkill {
   description: string
   source: string
   source_project: string | null
+  source_ref: string | null
+  proposed_by_agent: string | null
+  // How many times an agent has proposed this same rule. The review queue is sent
+  // occurrences-descending by the server, so a rule seen three times arrives above one seen
+  // once - the page renders what it is given and never re-sorts.
+  occurrences: number
   status: 'pending' | 'approved' | 'rejected'
   flag_reason: string | null
   flag_suggestion: string | null
   created_at: string
   reviewed_at: string | null
   reviewed_by: string | null
+}
+
+/** One recorded sighting of a skill's rule - the evidence behind `occurrences`. */
+export interface SkillOccurrence {
+  id: number
+  skill_id: number
+  description: string
+  source_project: string | null
+  source_ref: string | null
+  proposed_by_agent: string | null
+  created_at: string
 }
 
 export interface SkillExtract {
@@ -51,6 +68,11 @@ export const skillsApi = {
     data: { status?: string; name?: string; description?: string; agents?: string[] },
   ): Promise<AgentSkill> => {
     const res = await apiClient.patch(`/admin/skills/${id}`, data)
+    return res.data
+  },
+
+  occurrences: async (id: number): Promise<SkillOccurrence[]> => {
+    const res = await apiClient.get(`/admin/skills/${id}/occurrences`)
     return res.data
   },
 

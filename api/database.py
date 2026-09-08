@@ -3447,27 +3447,51 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             UNIQUE(user_id, project_slug)
         );
 
+        -- `source_project` is the engagement the reviewer wrote the feedback on. It is not
+        -- decoration: `_fetch_skill_notes` prepends every note for a crew's agents to every
+        -- task on every project, so a note is injected as *instruction* into engagements that
+        -- had nothing to do with it - and the note is a model's distillation of a sentence
+        -- that is free to name the client. Without a column to ask about, the injection had
+        -- no question it could ask. A note that names no engagement cannot be shown to permit
+        -- travelling, and is withheld from any run that would send it off the premises.
         CREATE TABLE IF NOT EXISTS agent_skill_notes (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent_name TEXT NOT NULL,
-            note       TEXT NOT NULL,
-            raw_input  TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name     TEXT NOT NULL,
+            note           TEXT NOT NULL,
+            raw_input      TEXT,
+            source_project TEXT,
+            created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- `occurrences`, `proposed_by_agent`, `source_project` and `source_ref` are the
+        -- provenance an agent's proposal arrives with. A proposal is written `pending` and
+        -- `_fetch_skill_notes` (api/services/run_service.py) reads `status='approved'`, so
+        -- nothing an agent proposes reaches a prompt until a human approves it - that filter
+        -- is the whole safety argument for letting agents propose freely.
+        --
+        -- `occurrences` counts how many times the same rule has been proposed, so a queue
+        -- can sort evidence above guesswork. It defaults to 1 because every existing row
+        -- was proposed by a person exactly once.
+        --
+        -- `source_project` and `source_ref` are the **first** occurrence's provenance, not
+        -- an accumulating list. Accumulating provenance across later occurrences needs a
+        -- shape of its own and is deliberately not decided here.
         CREATE TABLE IF NOT EXISTS skills (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            name            TEXT NOT NULL,
-            description     TEXT NOT NULL,
-            source          TEXT NOT NULL DEFAULT 'manual',
-            source_project  TEXT,
-            status          TEXT NOT NULL DEFAULT 'pending'
-                                CHECK(status IN ('pending', 'approved', 'rejected')),
-            flag_reason     TEXT,
-            flag_suggestion TEXT,
-            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-            reviewed_at     DATETIME,
-            reviewed_by     TEXT
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            name              TEXT NOT NULL,
+            description       TEXT NOT NULL,
+            source            TEXT NOT NULL DEFAULT 'manual',
+            source_project    TEXT,
+            source_ref        TEXT,
+            proposed_by_agent TEXT,
+            occurrences       INTEGER NOT NULL DEFAULT 1,
+            status            TEXT NOT NULL DEFAULT 'pending'
+                                  CHECK(status IN ('pending', 'approved', 'rejected')),
+            flag_reason       TEXT,
+            flag_suggestion   TEXT,
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at       DATETIME,
+            reviewed_by       TEXT
         );
 
         CREATE TABLE IF NOT EXISTS agent_skill_assignments (
@@ -3475,6 +3499,39 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             agent_name  TEXT NOT NULL,
             PRIMARY KEY (skill_id, agent_name)
         );
+
+        -- One row per time an agent proposed a rule, including the first, so on a proposal
+        -- `skills.occurrences` is a denormalised COUNT(*) over this table - kept in step by
+        -- `record_skill_occurrence`, which writes both halves in one call for that reason.
+        --
+        -- Only proposals appear here. A `baseline` or `manual` skill has `occurrences` 1 and
+        -- no rows at all, which is honest rather than missing: nobody recorded where those
+        -- came from, and inventing an occurrence to make the count total would assert a
+        -- provenance the table has never held.
+        --
+        -- A table rather than a second `source_project` column, and rather than a JSON blob,
+        -- because of the question a reviewer actually asks at the queue: not "which project
+        -- first said this" but "how many, and where". A rule seen three times on one project
+        -- is weaker evidence than one seen once each on three, and only rows answer that -
+        -- COUNT(DISTINCT source_project) is a query here and is nothing a blob or a second
+        -- column can express. `skills.source_project`/`source_ref` stay the **first**
+        -- occurrence's, which is the row's own origin.
+        --
+        -- `description` is kept per occurrence because a near-duplicate is worded
+        -- differently by construction: how the rule was said the second and third time is
+        -- the evidence that the match was a fair one, and it is unrecoverable afterwards.
+        CREATE TABLE IF NOT EXISTS skill_occurrences (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            skill_id          INTEGER NOT NULL,
+            description       TEXT    NOT NULL,
+            source_project    TEXT,
+            source_ref        TEXT,
+            proposed_by_agent TEXT,
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_occurrences_skill
+            ON skill_occurrences(skill_id);
 
         CREATE TABLE IF NOT EXISTS scheduled_jobs (
             job_name     TEXT NOT NULL,
@@ -3618,9 +3675,23 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
 
     # Column upgrades for existing system databases: CREATE TABLE IF NOT EXISTS above does
     # nothing once the table already exists, so new columns need an explicit ALTER TABLE.
+    #
+    # skills gains four here rather than through a _migrate_* function and a _SCHEMA_VERSION
+    # bump: that constant gates *project* databases, and bumping it would re-run every project
+    # migration for a table in a database it does not govern. init_system_db is idempotent and
+    # runs on every system connection, so this loop is the whole mechanism.
     for table, column, decl in (
         ("users", "is_sys_admin", "INTEGER NOT NULL DEFAULT 0"),
         ("project_memberships", "stakeholder_id", "INTEGER"),
+        ("skills", "source_ref", "TEXT"),
+        ("skills", "proposed_by_agent", "TEXT"),
+        ("skills", "occurrences", "INTEGER NOT NULL DEFAULT 1"),
+        # Nullable, and every row written before this is NULL: there is no engagement to
+        # backfill from, because nothing ever recorded one. NULL means "cannot be attributed"
+        # rather than "belongs to nobody", and `_fetch_skill_notes` withholds it from a run
+        # that would send it off the premises - the same answer `_candidates_that_may_travel`
+        # gives an unattributable candidate, for the same reason.
+        ("agent_skill_notes", "source_project", "TEXT"),
     ):
         cur = await conn.execute(f"PRAGMA table_info({table})")
         if column not in {row[1] for row in await cur.fetchall()}:
@@ -3672,10 +3743,25 @@ async def get_system_db():
         yield conn
 
 
-async def insert_skill_note(conn: aiosqlite.Connection, *, agent_name: str, note: str, raw_input: str) -> int:
+async def insert_skill_note(
+    conn: aiosqlite.Connection,
+    *,
+    agent_name: str,
+    note: str,
+    raw_input: str,
+    source_project: str | None = None,
+) -> int:
+    """One skill note, with the engagement its feedback was written on.
+
+    `source_project` is keyword-with-a-default rather than required, and only because this
+    helper is also driven by tests that are about something else. The **door** is where it is
+    required: `POST /agent-skill-notes` takes a non-blank slug or answers 422, because a note
+    with no engagement can never be shown to a hosted run again.
+    """
     cur = await conn.execute(
-        "INSERT INTO agent_skill_notes (agent_name, note, raw_input) VALUES (?,?,?)",
-        (agent_name, note, raw_input),
+        "INSERT INTO agent_skill_notes (agent_name, note, raw_input, source_project)"
+        " VALUES (?,?,?,?)",
+        (agent_name, note, raw_input, source_project),
     )
     await conn.commit()
     return cur.lastrowid
@@ -3703,14 +3789,23 @@ async def insert_skill(
     description: str,
     source: str = "manual",
     source_project: str | None = None,
+    source_ref: str | None = None,
+    proposed_by_agent: str | None = None,
+    status: str = "pending",
     agents: list[str] | None = None,
     flag_reason: str | None = None,
     flag_suggestion: str | None = None,
 ) -> int:
+    """Insert one skill. `status` is written explicitly rather than left to the column
+    default, so the value a caller intends is visible at the call site - a skill proposed by
+    an agent must be `pending`, and that is the property `_fetch_skill_notes` rests on.
+    """
     cur = await conn.execute(
-        """INSERT INTO skills (name, description, source, source_project, flag_reason, flag_suggestion)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (name, description, source, source_project, flag_reason, flag_suggestion),
+        """INSERT INTO skills (name, description, source, source_project, source_ref,
+                               proposed_by_agent, status, flag_reason, flag_suggestion)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (name, description, source, source_project, source_ref,
+         proposed_by_agent, status, flag_reason, flag_suggestion),
     )
     skill_id = cur.lastrowid
     if agents:
@@ -3728,6 +3823,33 @@ async def fetch_skills(
     agent_name: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
+    """Skills with their agent assignments, most-evidenced first and then most recent.
+
+    The ordering is here and takes no parameter, so there is nothing for a caller to get
+    wrong and nothing for two callers to spell differently. It is what the review queue
+    rests on: `occurrences` counts how many times an agent has proposed the same rule, so a
+    rule seen three times sits above one seen once, and a reviewer approving a change to an
+    agent's behaviour on every engagement reads the evidence before the prose. `created_at`
+    breaks the tie, which leaves the fifty-three pre-existing rows - all `occurrences` 1 -
+    in exactly the order they were in before.
+
+    `id` breaks the tie after that, and it is not decoration: `created_at` is
+    `CURRENT_TIMESTAMP`, whole seconds, so any two rows written in the same second tie on
+    both of the first two keys and the order falls to whatever SQLite happens to return. A
+    reviewer reloading the queue would see the same rows in a different order for no reason
+    they could name. Three keys make the ordering total.
+
+    **`status=None` means no filter, so the approved-only guarantee lives in the callers and
+    not here.** Six of the nine call sites pass no status, and each is safe for a reason of its
+    own: `/export` hardcodes `approved`, `/import` and `/seed` deduplicate by name and answer
+    counts, `POST` and `PATCH` select only the row the caller just touched. The two that read
+    for a purpose - `_fetch_skill_notes` and `_rules_already_held` - name their statuses. The
+    safe default is the other way round, and this signature is the wrong shape to express it
+    without silently narrowing those six, so the honest thing is to say where the guarantee
+    sits: **a new caller writing `fetch_skills(conn)` inherits a read of pending rows**, and a
+    pending row is one engagement's material rather than the agent's published instruction -
+    `list_skills` in `api/routers/skills.py` has the argument.
+    """
     where: list[str] = []
     params: list = []
     if status is not None:
@@ -3743,7 +3865,7 @@ async def fetch_skills(
         LEFT JOIN agent_skill_assignments asa ON asa.skill_id = s.id
         {where_sql}
         GROUP BY s.id
-        ORDER BY s.created_at DESC
+        ORDER BY s.occurrences DESC, s.created_at DESC, s.id DESC
     """
     rows: list[dict] = []
     async with conn.execute(query, params) as cur:
@@ -3793,8 +3915,64 @@ async def update_skill(
     return changed
 
 
+async def record_skill_occurrence(
+    conn: aiosqlite.Connection,
+    *,
+    skill_id: int,
+    description: str,
+    source_project: str | None = None,
+    source_ref: str | None = None,
+    proposed_by_agent: str | None = None,
+    bump: bool = False,
+) -> int:
+    """Record one occurrence of a skill's rule, and return the skill's occurrence count.
+
+    Both halves in one call deliberately. On a proposed skill `skills.occurrences` is a
+    denormalised count of the rows this writes, and the queue sorts by it - so a caller that
+    wrote the provenance row and forgot the increment would leave the ordering saying
+    something the evidence does not. `bump` is False for the first occurrence, whose count the
+    `skills` row already carries as the column default.
+
+    Returns 0 when the skill row has gone, so a caller can tell "counted" from "nothing to
+    count against" rather than reading a silent no-op as success.
+    """
+    async with conn.execute("SELECT occurrences FROM skills WHERE id = ?", (skill_id,)) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return 0
+    await conn.execute(
+        """INSERT INTO skill_occurrences
+               (skill_id, description, source_project, source_ref, proposed_by_agent)
+           VALUES (?, ?, ?, ?, ?)""",
+        (skill_id, description, source_project, source_ref, proposed_by_agent),
+    )
+    count = int(row["occurrences"])
+    if bump:
+        count += 1
+        await conn.execute(
+            "UPDATE skills SET occurrences = occurrences + 1 WHERE id = ?", (skill_id,)
+        )
+    await conn.commit()
+    return count
+
+
+async def fetch_skill_occurrences(conn: aiosqlite.Connection, *, skill_id: int) -> list[dict]:
+    """Every recorded occurrence of one skill's rule, oldest first.
+
+    Oldest first because the first row is the origin `skills.source_project` also carries,
+    and a reviewer reads the provenance as a history.
+    """
+    async with conn.execute(
+        "SELECT * FROM skill_occurrences WHERE skill_id = ? ORDER BY id", (skill_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
 async def delete_skill(conn: aiosqlite.Connection, *, skill_id: int) -> bool:
     await conn.execute("DELETE FROM agent_skill_assignments WHERE skill_id = ?", (skill_id,))
+    # Explicitly, not by cascade: nothing turns foreign keys on for this connection, so a
+    # declared ON DELETE CASCADE would be decoration. Its sibling above is deleted the same way.
+    await conn.execute("DELETE FROM skill_occurrences WHERE skill_id = ?", (skill_id,))
     cur = await conn.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
     await conn.commit()
     return cur.rowcount > 0
