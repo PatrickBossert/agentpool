@@ -3945,13 +3945,26 @@ async def update_skill(
     description: str | None = None,
     reviewed_by: str | None = None,
     agents: list[str] | None = None,
+    scope: str | None = None,
 ) -> bool:
+    """Update one skill. Every field is optional and `None` means *leave it alone*.
+
+    `scope` follows that rule rather than carrying a default of its own, and the difference is
+    the whole of the reviewer's choice: an approval that names no scope must leave the row at
+    whatever it already holds - `project` for a proposal, because that is what `insert_skill`
+    writes - rather than restate a value the caller had no opinion about. CLAUDE.md records
+    what a writer that obliges its callers to restate state they do not own costs, in the six
+    carry-through lines of `update_project_config`; the seed and the import both call this
+    function to merge agents, and neither has anything to say about where a rule applies.
+    """
     updates: list[str] = []
     params: list = []
     if name is not None:
         updates.append("name = ?"); params.append(name)
     if description is not None:
         updates.append("description = ?"); params.append(description)
+    if scope is not None:
+        updates.append("scope = ?"); params.append(scope)
     if status is not None:
         updates.append("status = ?"); params.append(status)
         updates.append("reviewed_at = CURRENT_TIMESTAMP")

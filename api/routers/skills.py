@@ -67,6 +67,12 @@ class SkillUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     agents: list[str] | None = None
+    # Where the rule applies, decided by the reviewer at approval. Optional, and its absence
+    # is not `project` - it is "leave the stored value alone", which for a proposal is the
+    # `project` that `insert_skill` wrote. Sending `"project"` and omitting the key are
+    # therefore two different requests that must reach the same row, which is the property
+    # `tests/test_skill_proposal.py` asserts on the row rather than on the body.
+    scope: str | None = None
 
 
 class SkillExtractRequest(BaseModel):
@@ -208,9 +214,25 @@ async def update_skill_endpoint(
     payload: dict = Depends(require_sysadmin),
     conn=Depends(get_system_db),
 ):
-    """Approve, reject, edit a skill, or update agent assignments (sysadmin only)."""
+    """Approve, reject, edit a skill, or update agent assignments (sysadmin only).
+
+    **This is where a rule's reach is decided.** `scope` is the reviewer's judgement and cannot
+    be derived from the text - the spec's worked example is one correction box producing either
+    *do not name specific investment figures* (true of every client) or *this client calls it
+    the renewals programme* (true of one). So the door accepts it, refuses a value that is
+    neither, and writes nothing when the key is absent: an approval that says nothing about
+    scope leaves the proposal at the narrow value it was filed with, and widening stays the
+    deliberate act.
+
+    The refusal is a 422 naming both values, matching `status` above rather than being silently
+    coerced. `skills.scope` carries a CHECK constraint, so an unchecked value would raise an
+    `IntegrityError` and answer 500 - a reviewer told the server broke rather than that they
+    sent a word it does not have.
+    """
     if body.status and body.status not in ("pending", "approved", "rejected"):
         raise HTTPException(status_code=422, detail="status must be pending, approved, or rejected")
+    if body.scope is not None and body.scope not in ("project", "global"):
+        raise HTTPException(status_code=422, detail="scope must be project or global")
     updated = await update_skill(
         conn,
         skill_id=skill_id,
@@ -219,6 +241,7 @@ async def update_skill_endpoint(
         description=body.description,
         reviewed_by=payload.get("sub"),
         agents=body.agents,
+        scope=body.scope,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Skill not found")
@@ -244,7 +267,30 @@ async def export_skills(
     _payload: dict = Depends(require_sysadmin),
     conn=Depends(get_system_db),
 ):
-    """Export all approved skills as a JSON bundle."""
+    """Export all approved skills as a JSON bundle.
+
+    **The bundle deliberately carries no `scope`, and `import` deliberately ignores one.** A
+    re-imported bundle is re-scoped by a human, and that is the answer rather than an omission:
+
+    - `scope='project'` means "the engagement `source_project` names", and this bundle carries
+      no `source_project` either, because a slug on the exporting deployment names no
+      engagement on the importing one. A scope that travels without the thing it points at is
+      not a scope.
+    - `scope='global'` means "every engagement **this** deployment runs", and that is a claim
+      about clients the exporting reviewer has never seen. It is exactly the claim the design
+      makes a human take deliberately.
+    - Nothing is lost by dropping it. `import` files every row `pending`, so the bundle lands
+      in the review queue, and `PATCH /admin/skills/{id}` is where the scope is chosen. The
+      importing deployment's reviewer makes the same decision the exporting one did, about
+      their own engagements.
+
+    Carrying it would be worse than useless: an imported row arriving pre-set to `global` would
+    let a reviewer clicking through the queue without reading widen a rule onto every
+    engagement, which is the single thing the narrow default exists to prevent.
+
+    Asserted in `tests/test_skill_proposal.py`, both halves - the bundle has no `scope` key,
+    and a hand-edited bundle that carries one is stored `project` and `pending` anyway.
+    """
     skills = await fetch_skills(conn, status="approved")
     export = [
         {"agents": s["agents"], "name": s["name"], "description": s["description"], "source": "import"}
@@ -262,7 +308,14 @@ async def import_skills(
     _payload: dict = Depends(require_sysadmin),
     conn=Depends(get_system_db),
 ):
-    """Import a JSON bundle of skills (idempotent — deduplicates by name)."""
+    """Import a JSON bundle of skills (idempotent — deduplicates by name).
+
+    Every new row is filed `pending` at the narrow scope `insert_skill` defaults to, whatever
+    the bundle says - `SkillImportItem` declares no `scope`, so a key naming one is dropped
+    rather than honoured. The reasoning is in `export_skills` above; the short form is that a
+    scope is a statement about *this* deployment's engagements, and the queue is where it gets
+    made.
+    """
     existing = await fetch_skills(conn)
     existing_names = {s["name"].lower(): s for s in existing}
     imported = 0

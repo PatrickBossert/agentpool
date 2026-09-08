@@ -45,6 +45,9 @@ function skill(over: Partial<AgentSkill>): AgentSkill {
     proposed_by_agent: 'interaction_designer',
     occurrences: 1,
     status: 'pending',
+    // The value `insert_skill` writes on every proposal. Spelled out rather than defaulted in
+    // the factory, so a test wanting the other one has to say so.
+    scope: 'project',
     flag_reason: null,
     flag_suggestion: null,
     created_at: '2026-09-01T09:00:00',
@@ -53,6 +56,17 @@ function skill(over: Partial<AgentSkill>): AgentSkill {
     ...over,
   }
 }
+
+/**
+ * The Approve button, found by what it starts with rather than by its whole label.
+ *
+ * The label is not constant any more: it reads "Approve for this engagement" or "Approve
+ * everywhere" according to the scope selected, because a button that said "everywhere" while
+ * filing a rule for one engagement would be wrong in a way nobody reports. A locator is not an
+ * assertion, so it deliberately matches both - the label itself is asserted below, where it
+ * can fail for the right reason.
+ */
+const APPROVE = /^Approve/
 
 const THRICE = skill({
   id: 31, name: 'Welcome carries privacy', occurrences: 3,
@@ -209,7 +223,7 @@ describe('the skills review queue', () => {
     await screen.findByText('Welcome carries privacy')
 
     await userEvent.click(
-      within(cardFor('Welcome carries privacy')).getByRole('button', { name: /Approve everywhere/ }),
+      within(cardFor('Welcome carries privacy')).getByRole('button', { name: APPROVE }),
     )
 
     await waitFor(() => expect(sent.some(s => s.method === 'PATCH')).toBe(true))
@@ -252,7 +266,7 @@ describe('the skills review queue', () => {
     const nameField = card.getByDisplayValue('Welcome carries privacy')
     await userEvent.clear(nameField)
     await userEvent.type(nameField, 'Welcome carries privacy and tone')
-    await userEvent.click(card.getByRole('button', { name: /Approve everywhere/ }))
+    await userEvent.click(card.getByRole('button', { name: APPROVE }))
 
     await waitFor(() => expect(sent.some(s => s.method === 'PATCH')).toBe(true))
     expect(sent.find(s => s.method === 'PATCH')!.body).toMatchObject({
@@ -261,25 +275,136 @@ describe('the skills review queue', () => {
     })
   })
 
-  it('binds the approve button to a note saying the change reaches every engagement', async () => {
+  it('binds the approve button to a note, and by default it says this engagement alone', async () => {
     // Reached through aria-describedby, so the association is something the DOM holds. A note
     // asserted by proximity is satisfied by any note anywhere in the card - the failure mode
     // CLAUDE.md records for the "why is this greyed out" explanation asserted per section.
+    //
+    // The binding is what this test used to assert on its own, and it still does. What has
+    // changed is that the consequence is no longer one sentence: an approval means different
+    // things at the two scopes, so a note that said "every engagement" whatever was selected
+    // would be false half the time. Its pair below asserts the other half.
     installTransport([THRICE])
     renderPage()
     await screen.findByText('Welcome carries privacy')
 
     const approve = within(cardFor('Welcome carries privacy'))
-      .getByRole('button', { name: /Approve everywhere/ })
+      .getByRole('button', { name: APPROVE })
     const noteId = approve.getAttribute('aria-describedby')
     expect(noteId).toBeTruthy()
 
     const note = document.getElementById(noteId!)
     expect(note).not.toBeNull()
-    expect(note!.textContent).toContain('every engagement')
-    expect(note!.textContent).toContain('Interaction Designer')
-    // Names the engagement it came from, so "not only there" is a statement about something.
+    // Names the engagement, so "and nothing else changes" is a statement about something.
     expect(note!.textContent).toContain('acme-rail')
+    expect(note!.textContent).toContain('Interaction Designer')
+    expect(note!.textContent).toContain('alone')
+    // The words the widened note carries, which this one must not: a reviewer who has widened
+    // nothing must not be told their click reaches everywhere.
+    expect(note!.textContent).not.toContain('every engagement')
+  })
+
+  it('says what widening means once the reviewer widens it', async () => {
+    // The same note, the same binding, the other scope. Approving a global rule changes that
+    // agent on engagements this reviewer has never seen, and the sentence saying so has to
+    // arrive with the choice rather than sit in the release notes.
+    installTransport([THRICE])
+    renderPage()
+    await screen.findByText('Welcome carries privacy')
+
+    const card = within(cardFor('Welcome carries privacy'))
+    await userEvent.click(card.getByRole('radio', { name: 'Applies everywhere' }))
+
+    const approve = card.getByRole('button', { name: APPROVE })
+    const note = document.getElementById(approve.getAttribute('aria-describedby')!)
+    expect(note!.textContent).toContain('every engagement')
+    expect(note!.textContent).toContain('never seen')
+    expect(note!.textContent).toContain('Interaction Designer')
+    expect(note!.textContent).toContain('acme-rail')
+  })
+
+  it('tells a reviewer when a narrow approval would reach no engagement at all', async () => {
+    // A proposal with no `source_project` - what `POST /admin/skills` and the import door
+    // write. Approved narrowly it is a rule that reaches nothing: present in the library,
+    // correct-looking, injected nowhere. The reviewer is the only person who can tell that
+    // from a working approval, so the note says it rather than leaving them to find out.
+    installTransport([skill({ id: 44, name: 'A rule from nowhere', source_project: null })])
+    renderPage()
+    await screen.findByText('A rule from nowhere')
+
+    const approve = within(cardFor('A rule from nowhere')).getByRole('button', { name: APPROVE })
+    const note = document.getElementById(approve.getAttribute('aria-describedby')!)
+    expect(note!.textContent).toContain('names no engagement')
+    expect(note!.textContent).toContain('reaches none')
+  })
+
+  it('labels the approve button with what the click will actually do', async () => {
+    // "Approve everywhere" was true of every approval until a rule had a scope. A button that
+    // keeps saying it while filing a narrow rule is wrong in the direction nobody reports -
+    // the reviewer believes they have published a rule to the library and they have not.
+    installTransport([THRICE])
+    renderPage()
+    await screen.findByText('Welcome carries privacy')
+
+    const card = within(cardFor('Welcome carries privacy'))
+    expect(card.getByRole('button', { name: APPROVE })).toHaveTextContent(
+      'Approve for this engagement',
+    )
+
+    await userEvent.click(card.getByRole('radio', { name: 'Applies everywhere' }))
+
+    expect(card.getByRole('button', { name: APPROVE })).toHaveTextContent('Approve everywhere')
+  })
+
+  it('sends the scope the reviewer chose', async () => {
+    // What is **sent**, not what the radio renders. CLAUDE.md records a radio asserted as
+    // rendered rather than as sent, among eleven assertions on this project that passed while
+    // testing something one layer away from what they were named for. The body that leaves
+    // the browser is the only thing that widens a rule.
+    const sent = installTransport([THRICE])
+    renderPage()
+    await screen.findByText('Welcome carries privacy')
+
+    const card = within(cardFor('Welcome carries privacy'))
+    await userEvent.click(card.getByRole('radio', { name: 'Applies everywhere' }))
+    await userEvent.click(card.getByRole('button', { name: APPROVE }))
+
+    await waitFor(() => expect(sent.some(s => s.method === 'PATCH')).toBe(true))
+    const patch = sent.find(s => s.method === 'PATCH')!
+    expect(patch.url).toBe('/admin/skills/31')
+    expect(patch.body).toMatchObject({ status: 'approved', scope: 'global' })
+  })
+
+  it('sends the narrow scope when the reviewer touches nothing', async () => {
+    // The control on the test above, and the one that catches the opposite defect: a form
+    // that always sent `global` would pass it perfectly. Between them the two say the request
+    // follows the control rather than a constant.
+    const sent = installTransport([THRICE])
+    renderPage()
+    await screen.findByText('Welcome carries privacy')
+
+    await userEvent.click(
+      within(cardFor('Welcome carries privacy')).getByRole('button', { name: APPROVE }),
+    )
+
+    await waitFor(() => expect(sent.some(s => s.method === 'PATCH')).toBe(true))
+    expect(sent.find(s => s.method === 'PATCH')!.body).toMatchObject({
+      status: 'approved', scope: 'project',
+    })
+  })
+
+  it('starts from the scope the row already carries', async () => {
+    // A rule that is already global - one of the fifty-three, sent back to the queue - shows
+    // global, so a reviewer re-approving it does not silently demote it. The control is
+    // narrow because the *stored value* is narrow on a proposal, not because the page picks a
+    // side, and a page that hardcoded either would fail one of these two.
+    installTransport([skill({ id: 55, name: 'An already global rule', scope: 'global' })])
+    renderPage()
+    await screen.findByText('An already global rule')
+
+    const card = within(cardFor('An already global rule'))
+    expect(card.getByRole('radio', { name: 'Applies everywhere' })).toBeChecked()
+    expect(card.getByRole('radio', { name: 'Applies to this engagement' })).not.toBeChecked()
   })
 
   it('names the proposal path rather than showing the raw column value', async () => {
@@ -318,7 +443,7 @@ describe('the skills review queue', () => {
     await screen.findByText('Welcome carries privacy')
 
     await userEvent.click(
-      within(cardFor('Welcome carries privacy')).getByRole('button', { name: /Approve everywhere/ }),
+      within(cardFor('Welcome carries privacy')).getByRole('button', { name: APPROVE }),
     )
 
     expect(await screen.findByRole('alert')).toHaveTextContent(

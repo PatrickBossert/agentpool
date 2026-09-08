@@ -1120,3 +1120,216 @@ async def test_withholding_every_candidate_asks_no_model_at_all(monkeypatch, tmp
 
     assert local == [] and hosted == []
     assert result["action"] == "created"
+
+
+# ── the reviewer decides the scope, at the door ────────────────────────────────
+#
+# The header of this file says it holds the scope constant so that the tests above are about
+# what they are named for. **This section is the exception, and it is the only one**: these
+# tests are about the scope itself, so they vary it deliberately and drive
+# `PATCH /admin/skills/{skill_id}` over HTTP rather than calling `update_skill`.
+#
+# Everything here is asserted on the **stored row**, and where the row's consequence is what
+# matters, on the text `_fetch_skill_notes` injects. A body that omits `scope` and a body that
+# sends `"project"` are two different requests that must reach the same row, and no assertion
+# on a request can tell whether they did. `tests/test_skill_scope.py` owns the filter; this
+# section owns the door in front of it.
+
+# An engagement other than the one every proposal below is made on, so "did widening actually
+# widen" is a question about a prompt rather than about a column.
+ELSEWHERE = "sp65-some-other-engagement"
+
+
+async def _scope_of(skill_id: int) -> str:
+    return (await _stored(skill_id))["scope"]
+
+
+async def _a_pending_proposal() -> int:
+    result = await propose_skill(AGENT, RULE, INJECTION_SLUG, "SC-014")
+    assert await _scope_of(result["skill_id"]) == "project", "the narrow default was not written"
+    return result["skill_id"]
+
+
+@pytest.mark.asyncio
+async def test_an_approval_that_says_nothing_about_scope_leaves_the_rule_narrow(client):
+    """The default, asserted where it is stored.
+
+    A reviewer who clicks Approve without touching the scope control must not widen anything.
+    The body genuinely omits the key here - it is not `scope: null` and not `scope: "project"` -
+    because `SkillUpdate`'s optional fields mean *leave it alone*, and "leave it alone" is only
+    the same as "project" while nothing else has ever written the column.
+    """
+    skill_id = await _a_pending_proposal()
+
+    res = await client.patch(f"/admin/skills/{skill_id}", json={"status": "approved"})
+
+    assert res.status_code == 200
+    row = await _stored(skill_id)
+    assert row["status"] == "approved"
+    assert row["scope"] == "project"
+
+
+@pytest.mark.asyncio
+async def test_naming_the_narrow_scope_reaches_the_same_row_as_omitting_it(client):
+    """Two requests, one row. The pair is the point: the form sends the scope it is showing,
+    and an approval assembled by hand - or by a caller written before this column existed -
+    sends nothing. Both are approvals of a rule for one engagement, and a door where only one
+    of them lands narrow is a door that widens by accident.
+    """
+    omitted = await _a_pending_proposal()
+    named = (await propose_skill(AGENT, DIFFERENT_RULE, INJECTION_SLUG, "SC-031"))["skill_id"]
+
+    assert (await client.patch(
+        f"/admin/skills/{omitted}", json={"status": "approved"}
+    )).status_code == 200
+    assert (await client.patch(
+        f"/admin/skills/{named}", json={"status": "approved", "scope": "project"}
+    )).status_code == 200
+
+    assert await _scope_of(omitted) == await _scope_of(named) == "project"
+
+
+@pytest.mark.asyncio
+async def test_a_narrowly_approved_rule_reaches_its_own_engagement_and_no_other(client):
+    """What the narrow default *means*, asserted at the prompt.
+
+    The column is only a column. This is the half a reviewer is actually promised: approving
+    without widening puts the rule in front of the agent on the engagement it came from, and
+    in front of nobody else. Both halves, because the absence is the one that fails silently -
+    an approval that stored nothing at all would satisfy the second assertion perfectly.
+    """
+    skill_id = await _a_pending_proposal()
+
+    await client.patch(f"/admin/skills/{skill_id}", json={"status": "approved"})
+
+    assert RULE in await _fetch_skill_notes(CREW, INJECTION_SLUG)
+    assert RULE not in await _fetch_skill_notes(CREW, ELSEWHERE)
+
+
+@pytest.mark.asyncio
+async def test_a_reviewer_can_widen_a_rule_to_every_engagement(client):
+    """The control, and the plan calls it not optional: a form that hardcoded `project` - or a
+    door that dropped the key on the floor - would pass every test above.
+
+    Driven to the prompt on an engagement the rule has never been near, which is the only place
+    "applies everywhere" is a statement about anything.
+    """
+    skill_id = await _a_pending_proposal()
+
+    res = await client.patch(
+        f"/admin/skills/{skill_id}", json={"status": "approved", "scope": "global"}
+    )
+
+    assert res.status_code == 200
+    assert await _scope_of(skill_id) == "global"
+    assert RULE in await _fetch_skill_notes(CREW, ELSEWHERE)
+
+
+@pytest.mark.asyncio
+async def test_widening_is_reversible_and_the_prompt_follows(client):
+    """A reviewer who finds one of the fifty-three that belonged to a single engagement demotes
+    it - the spec says so in as many words, and this is the door that has to let them.
+
+    Asserted at the prompt as well as the column, because a demotion that changed the row and
+    not the injection would leave the rule in force everywhere with the queue saying otherwise.
+    """
+    skill_id = await _a_pending_proposal()
+    await client.patch(f"/admin/skills/{skill_id}", json={"status": "approved", "scope": "global"})
+    assert RULE in await _fetch_skill_notes(CREW, ELSEWHERE)
+
+    res = await client.patch(f"/admin/skills/{skill_id}", json={"scope": "project"})
+
+    assert res.status_code == 200
+    assert await _scope_of(skill_id) == "project"
+    assert RULE not in await _fetch_skill_notes(CREW, ELSEWHERE)
+    assert RULE in await _fetch_skill_notes(CREW, INJECTION_SLUG)
+
+
+@pytest.mark.asyncio
+async def test_a_scope_that_is_neither_is_refused_and_changes_nothing(client):
+    """422 with both values named, not a 500.
+
+    `skills.scope` carries a CHECK constraint, so an unvalidated word raises an `IntegrityError`
+    inside the write and the reviewer is told the server broke. The row is re-read afterwards
+    because a refusal that had already applied the `status` in the same body would be a partial
+    write dressed as a rejection.
+    """
+    skill_id = await _a_pending_proposal()
+
+    res = await client.patch(
+        f"/admin/skills/{skill_id}", json={"status": "approved", "scope": "everywhere"}
+    )
+
+    assert res.status_code == 422
+    assert "project" in res.json()["detail"] and "global" in res.json()["detail"]
+    row = await _stored(skill_id)
+    assert (row["scope"], row["status"]) == ("project", "pending")
+
+
+# ── a bundle crossing deployments is re-scoped by a human ─────────────────────
+#
+# Task 1 handed this over as an open edge: `export` emits no `scope`, so a round-trip through
+# `import` narrows every skill to `project`. **Settled as deliberate**, and the reasoning is
+# written out on `export_skills`. The short form: `scope='project'` points at a `source_project`
+# the bundle does not carry and a slug the importing deployment does not have, and
+# `scope='global'` is a claim about engagements the exporting reviewer has never seen. Import
+# files everything `pending`, so the bundle lands in the queue, which is where the decision
+# belongs.
+#
+# Two halves, because either alone is satisfied by the wrong thing: the first would pass
+# against an export that emitted nothing at all, and the second against an import that wrote
+# nothing at all.
+
+
+@pytest.mark.asyncio
+async def test_the_export_bundle_carries_no_scope(client):
+    """The rule travels; where it applies does not."""
+    skill_id = await _a_pending_proposal()
+    await client.patch(f"/admin/skills/{skill_id}", json={"status": "approved", "scope": "global"})
+
+    bundle = (await client.get("/admin/skills/export")).json()
+
+    entry = next(e for e in bundle if e["description"] == RULE)
+    assert "scope" not in entry
+    # Nor the engagement a narrow scope would have pointed at, which is the other half of why
+    # a scope cannot travel: it names a slug the importing deployment has never heard of.
+    assert "source_project" not in entry
+    assert entry["agents"] == [_SNAKE_TO_DISPLAY[AGENT]]
+
+
+@pytest.mark.asyncio
+async def test_a_bundle_naming_a_scope_is_still_imported_narrow_and_pending(client, monkeypatch):
+    """The hand-edited bundle, and the one a later version of this product might emit.
+
+    `SkillImportItem` declares no `scope`, so pydantic drops the key - asserted rather than
+    assumed, because "ignored by default" is a framework behaviour that a `model_config` on
+    some shared base could change without anybody here noticing. The row must reach the queue,
+    at the narrow scope, for a human to decide.
+
+    `check_specificity` is stubbed at the name the router *looks up*, not where it is defined -
+    `skills.py` binds its own reference with `from ... import`, and CLAUDE.md records four crew
+    tests that patched the definition and silently tested nothing. It is the one call on this
+    path that goes to hosted Anthropic (the skills library is the deliberate hosted gap), and
+    it is not what this test is about.
+    """
+    async def _not_specific(_description: str) -> dict:
+        return {"is_specific": False, "reason": None, "suggestion": None}
+
+    monkeypatch.setattr("api.routers.skills.check_specificity", _not_specific)
+
+    res = await client.post("/admin/skills/import", json=[{
+        "agents": [_SNAKE_TO_DISPLAY[AGENT]],
+        "name": "An imported rule",
+        "description": DIFFERENT_RULE,
+        "scope": "global",
+        "source_project": "some-other-deployments-slug",
+    }])
+
+    assert res.status_code == 200
+    assert res.json()["imported"] == 1
+    from api.database import fetch_skills, get_system_connection
+    async with get_system_connection() as conn:
+        row = next(s for s in await fetch_skills(conn) if s["name"] == "An imported rule")
+    assert (row["scope"], row["status"]) == ("project", "pending")
+    # And so it reaches no prompt anywhere, which is what "the reviewer decides" has to mean.
+    assert DIFFERENT_RULE not in await _fetch_skill_notes(CREW, INJECTION_SLUG)

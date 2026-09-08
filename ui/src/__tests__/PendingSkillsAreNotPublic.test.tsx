@@ -114,6 +114,7 @@ const PROPOSAL: AgentSkill = {
   proposed_by_agent: 'interaction_designer',
   occurrences: 2,
   status: 'pending',
+  scope: 'project',
   flag_reason: null,
   flag_suggestion: null,
   created_at: '2026-09-01T09:00:00',
