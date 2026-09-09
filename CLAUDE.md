@@ -183,7 +183,7 @@ Two things that look like evidence during forensics on `data/` and are not:
 Repeatedly on this project a test has verified a property **one layer away from where it holds**.
 In every case the shipped code was correct and the test could not distinguish correct from
 incorrect (this sentence read "five times" for several sprints while the list below ran to
-eight, which is its own small instance of the lesson - it is eleven now, and the word is there
+eight, which is its own small instance of the lesson - it is twelve now, and the word is there
 so it cannot rot again):
 
 - `check_write` tested; the tool calling it not.
@@ -230,6 +230,13 @@ so it cannot rot again):
   whether or not anything sends them anywhere. **A budget is a property of the call, and it does
   not travel through a seam** - so it is `asyncio.wait_for` now and asserted as *behaviour*: an
   unanswered comparison resolves to "not a duplicate", logs, and does not hold the run.
+- **A default and a write are indistinguishable until something chooses the other value.**
+  Deleting `update_skill`'s `scope` write left every test of "a reviewer who approves without
+  choosing stores `project`" green, because `insert_skill`'s default had already put `project`
+  on the row and a handler that writes nothing satisfies that assertion perfectly. Only the
+  widening control - the reviewer choosing `global` - could see the write had gone, and the
+  margin was total: every one of the narrow-default tests passed, and the one control failed.
+  **Assert a default and its opposite, or the test is about the schema rather than the code.**
 
 When a test passes alone and fails in the suite, the isolated pass is the thing to distrust —
 it is usually the one running under state no production caller ever has.
@@ -629,8 +636,8 @@ Three sets of writes have neither gate, and all three are deliberate:
   the caller's own `username` - a personal scratchpad attached to read access, not authority.
 - `/api/interviews/{session_token}/...` authenticates by the session token itself; a
   participant has no login for the walk to start from.
-- `/auth/*`, `/admin/skills/*`, templates and skill notes carry no slug, so there is nothing
-  to walk. They take login-role dependencies instead.
+- `/auth/*`, `/admin/skills/*` and templates carry no slug, so there is nothing to walk. They
+  take login-role dependencies instead.
 
 **A third question, and it is not one of the two axes.** Both axes ask who the caller is on
 this engagement. Neither asks **which store the write reaches**, and since sp57 that is a
@@ -955,7 +962,8 @@ production. It was the literal `http://localhost:8000` until sp43, which sent ev
 `window.location` because `new WebSocket` refuses a relative URL.
 
 The other half is that both proxies must forward **every** top-level prefix the API mounts:
-`/projects`, `/auth`, `/admin`, `/system`, `/agent-skill-notes`, `/api`, and `/ws`. A prefix
+`/projects`, `/auth`, `/admin`, `/system`, `/api`, and `/ws` - six since sp65 deleted the
+`/agent-skill-notes` router, and the count moves whenever a router does. A prefix
 missing from the `Caddyfile` does not 404 - it falls through to the static file server and
 answers the landing page with a **200**, and a prefix missing from `vite.config.ts` is answered
 by the SPA fallback. Both failures look like a frontend bug. `tests/test_proxy_prefix_coverage.py`
@@ -1413,7 +1421,81 @@ several people and approved once. A send-back carries `review_return_to`: only `
 enters Maya's differential, because a return to `reviewer` that regenerated the script
 would rewrite the instrument the reviewer was about to re-read.
 
-### An agent proposes the rule behind the correction it just made
+### One mechanism: a correction becomes a proposal, and the approval carries a scope
+
+**There is one way a reviewer's correction becomes standing behaviour, and it has four steps.**
+The correction improves the output in hand; the general rule behind it is *proposed*; a human
+approves it; and the approval carries a **scope**. `project` is the default and `global` is the
+deliberate act, because widening a rule to engagements the reviewer has never seen should be
+something they chose rather than something they got by clicking through.
+
+There used to be two ways, and only one of them was designed. `agent_skill_notes` took a
+reviewer's sentence, had a model distil it, and prepended the result to every task of every crew
+on every engagement - no queue, no approval, no scope. **Patrick's account, 8 September: there
+was never any intent for a notes mechanism.** Feedback was always meant to improve the output in
+hand and then be *evaluated* as a project-level or global skill for that agent through the skills
+review. sp65 deleted it - the table's `CREATE`, `create_skill_note`, `_note_may_travel`, the
+router, its API client and the rejection-path box that fed it - and nothing was lost. The
+immediate half already reached the agent through `_fetch_change_requests`, which
+`run_service.py` said in its own comment throughout; the standing half is what a scoped,
+approved skill does properly.
+
+**The worked example is the whole design in one case, and it belongs in the product's copy
+rather than only here.** A correction on one engagement of *"$350m CapEx allocation"* to
+*"renewals CapEx allocation"* yields a rule for Maya - *do not include specific investment
+figures; the number may change and not every interviewee knows the full amount, so refer to
+investments by their purpose*. That is **global**: it is about how to write an instrument, and
+it is true of every client. The same box on the same day might instead produce *"this client
+calls it the renewals programme, not the CapEx allocation"*, which is **project**, and would be
+wrong somewhere else. Same reviewer, same control, different answers. **The scope cannot be
+derived from the text**, which is why a human chooses it and why no default can be right for
+both.
+
+**sp61's four Critical findings were not four leaks. They were one absence seen from four
+directions** - material with no scope defaulting to the widest scope. Each was patched where it
+surfaced and each patch was correct, but the class stayed open, because nothing in the system
+could say where a rule applied and so the answer was always "everywhere". `skills.scope` is what
+closes the class; the four guards were the symptom being treated. **When several findings in one
+sprint share a shape, the shape is the finding** - and this file recorded the four separately
+for a sprint, which is how the shape stayed unnamed.
+
+`skills.scope` is `project` or `global`, NOT NULL under a `CHECK`, beside the `source_project`
+that already recorded where a rule came *from*. Provenance and reach are two questions, and this
+file conflated them until sp65 because there had only ever been one answer.
+`_skill_applies_here` in `run_service.py` is the filter and `_fetch_skill_notes` applies it: a
+`global` skill reaches every engagement, a `project` one reaches only the engagement its own
+`source_project` names, and a row that names neither reaches nothing - the safe direction, since
+an unattributable rule cannot be shown to belong to the engagement being run. `PATCH
+/admin/skills/{id}` is where the reviewer decides, from the "Where this rule applies" radios on
+`AdminSkills.tsx`, and the Approve button reads *Approve everywhere* or *Approve for this
+engagement* so its label names what it will do. **`scope` absent from the PATCH body means
+"leave the row alone", not `project`** - the two are the same today only because nothing else
+writes the column, and the difference is what lets a reviewer *demote* a global rule.
+
+**The existing 53 are `global`.** Patrick's decision, 8 September, and it is the honest reading
+of what their authors intended when global was the only thing a skill could be. Said plainly:
+**this affirms 53 rules as universal without anybody re-reading them.** They are demotable one
+at a time by a reviewer who finds one that was really about a single engagement, and the
+migration does not make that judgement for them. The backfill sits *inside* the add-column
+branch in `init_system_db` so it can never run twice, and it is a different fact from the
+column's default: a column declared `DEFAULT 'global'` would satisfy the migration's test and
+silently make every future proposal universal, which is the one thing this column exists to stop
+being automatic.
+
+**A narrow default bites the one writer that legitimately means "everywhere".** The baseline
+seed approves its own rows and gives them no `source_project`, so at `scope='project'` every one
+of `BASELINE_SKILLS` would have reached no engagement, and `POST /admin/skills/seed?force=true`
+would have rebuilt the factory library **dead** - every row present, every row correct-looking,
+none of them injected anywhere. It passes `scope="global"` explicitly for that reason, and it is
+the only writer that names a scope; everything else files `pending` and lets the reviewer
+decide. When a default is narrowed for safety, the writer to go and read is the one whose whole
+purpose is the other value.
+
+A number worth not quoting from memory: the live library holds **53** rows, 43 of them `source =
+'baseline'`, while `BASELINE_SKILLS` holds **42** today. The list has moved since the deployment
+was seeded, which is exactly the drift `force=true`'s own comment warns about - it would retire
+the row the list no longer carries. The 53 are what the migration made global; 42 is what a
+re-seed would write.
 
 **An agent that can be sent work back proposes the general rule behind the correction, not the
 correction.** A requirement about every agent rather than a step in one agent's task, so the
@@ -1455,13 +1537,13 @@ decoration**: `created_at` is whole seconds, so two proposals written in the sam
 both of the others and the order fell to whatever SQLite happened to return, which a reviewer
 experiences as a queue that reshuffles on reload.
 
-**Approving changes that agent's behaviour on every engagement**, from its next run - an
-approved skill is the agent's published instruction everywhere, and `source_project` on a
-*skill* is provenance rather than a tier. That is not true of the other half of the same block:
-`agent_skill_notes` rows are narrowed by `_note_may_travel`, so `_fetch_skill_notes` now takes a
-slug and the two sources it assembles are treated differently on purpose.
-It is the most consequential button on `AdminSkills.tsx`, so the page says so in the copy, bound
-to the button by `aria-describedby` rather than left beside it.
+**Approving a `global` skill changes that agent's behaviour on every engagement**, from its next
+run, including engagements the reviewer has never seen; approving a `project` one changes it on
+the engagement the rule came from and nowhere else. It is the most consequential button on
+`AdminSkills.tsx`, so the page says which of the two it is about to do, bound to the button by
+`aria-describedby` rather than left beside it. "Approving changes that agent's behaviour on
+every engagement" was true of every approval until a rule had a scope, and is now true of one of
+the two.
 
 **`skills` is in `system.db`, so none of this took a `_SCHEMA_VERSION` bump.** The rule is stated
 under *Database conventions* and this is the direction people get backwards: `occurrences`,
@@ -1479,15 +1561,56 @@ justified on the library being global, carrying no slug, and holding reviewer fe
 client material - and `propose_skill` has a slug and carries an agent's sentence about a named
 engagement.
 
-**The generic review door's `intent='skill'` is captured and not routed, and that is deliberate.**
-`PATCH /{slug}/reviews/{id}` accepts an `intent` of `change_request`, `correction` or `skill`, and
-passes it through as `kind` on the `output_changes` row - but the only reader,
-`fetch_open_change_requests`, filters `kind='change_request'`, and `kind` has only ever held that
-and `unclassified`. So a reviewer choosing "skill" there records a row nothing acts on, and in
-particular one that never reaches the queue this section describes - `skills` is written by
-`propose_skill` and by `POST /admin/skills`, and by nothing on the review path. Left that way
-until the proposal loop is proven; **do not read the `intent` parameter as evidence the path
-works.**
+**The generic review door's `intent='skill'` is routed now, and the sentence it replaces was
+wrong in both halves.** `PATCH /{slug}/reviews/{id}` accepts an `intent` of `change_request`,
+`correction` or `skill`. This file used to say the third was *captured and not routed* because
+nothing read `kind` - and `kind` **is** read: `fetch_open_change_requests` selects
+`kind='change_request'` alone, so a `'skill'` row was written to `output_changes`, counted in the
+reviewer's change count, shown in the change log, and delivered to nothing. Captured, counted,
+and routed nowhere is a different claim from captured and unread, and it is the worse one,
+because the reviewer was shown a number that said their rule had landed. It now calls
+`propose_skill` with the reviewer's text, the slug from the path and the agent whose output was
+reviewed, and files `pending` for the queue this section describes. The `output_changes` row is
+still written unchanged: the change log is the record of what a reviewer asked of an output, and
+a rule on the queue is not that record. `intent='change_request'` is untouched and still reaches
+the agent through `_fetch_change_requests` - the half a careless routing change breaks in
+silence, so it is asserted on what that function returns rather than on the request being
+accepted.
+
+**A side effect must not veto the thing it is a side effect of.** A proposal that cannot be
+filed - a locked system database, a model that will not answer, an agent id `_SNAKE_TO_DISPLAY`
+has no entry for - does **not** fail the PATCH. That door is what releases a paused crew:
+`HumanInputTool` polls `human_reviews` for up to twenty-four hours and this write is what ends
+the wait, so refusing it to protect a suggestion would hold the crew shut. `_propose_from_review`
+in `api/routers/reviews.py` logs loudly and returns the outcome in `skill_proposal`, the same
+contract `SkillProposalTool` states for itself one door over. **The cost is on the record**:
+nothing in the UI reads `skill_proposal` yet, so a reviewer whose rule was not filed is not told.
+
+The rejection path lost its second box with the notes mechanism - *"What should Maya do
+differently next time?"* was the only caller of the notes door - and that question is asked on
+Request revision instead. A reviewer who rejects outright records a reason and no rule.
+
+**Adding the column falsified two exemptions that were justified on "approved means
+everywhere", and neither was re-read.** Both are live, both are pre-existing code the branch
+did not touch, and both need a change rather than a paragraph:
+
+| Exemption | What justified it | What the scope column did to it |
+|---|---|---|
+| `list_skills` returns every `approved` row to any login | "an approved skill is that agent's instruction everywhere, which is what makes it not one client's material" | an approved `project`-scoped rule **is** one client's material, and `_derive_skill_name` puts the first five words of the rule in the name |
+| `_candidates_that_may_travel` exempts every `approved` candidate from the egress test | "it is already injected into that agent's prompt on every engagement" | a `sensitive` engagement's approved `project`-scoped rule now travels to hosted Haiku the moment a `standard` engagement proposes for the same agent |
+
+This is this file's own rule arriving again - **an exemption is a claim about content, and the
+file it lives in is not** - and the first time it has arrived because a *new column* changed
+what the content could be. When a change gives a row a way to mean something narrower, every
+exemption phrased "this kind of row is global" is a caller of it, and `status='approved'` was
+the spelling of "global" in both places.
+
+The design's related decision - **an approved `project`-scoped skill is not offered as a
+deduplication candidate to another project** - is **not implemented**. The plan expected it to
+fall out of the injection filter and it does not: `_rules_already_held` reads `_DEDUP_STATUSES`
+and never looks at `scope`. *Pending* proposals are deliberately still offered across
+engagements, and that half is right - two engagements independently proposing the same rule is
+exactly the evidence that it is global, and a pending proposal is not yet scoped.
 
 ### Clusters, and the edges between crews
 
@@ -1559,18 +1682,18 @@ of these paths asks for.
 | Agent Chat (`run_agent_chat`) | Yes, text and retrieved chunks |
 | Agent Chat with an **image** attached, sensitive project | **Refused** (503) - image blocks have no chat-completions equivalent here, and dropping or sending them are both wrong |
 | An agent's skill proposal (`skills_service.propose_skill` -> `find_duplicate_skill`) | Yes - `project_completion(source_project, "fast", ...)`, slug required, raises without it |
-| A reviewer's rejection feedback (`POST /agent-skill-notes`) | Yes - `project_completion(slug, "fast", ...)`, slug required, 422 without it |
 | The global skills library door (`check_specificity`, `extract_skill`, `extract_skills_many`) | **No** - always hosted Haiku |
 
-**Three doors onto this table family, and only one of them is still the hosted gap.** That row
-used to say "skills library - no", one row for one file, and it was true until an agent could
-reach the library from inside a run. It was still wrong afterwards, for a second reason: it
-covered `api/routers/skill_notes.py`, which distils a reviewer's *verbatim sentence about one
+**Two doors onto this table family now, and one of them is still the hosted gap.** That row used
+to say "skills library - no", one row for one file, and it was true until an agent could reach
+the library from inside a run. It was still wrong afterwards, for a second reason: it also
+covered `api/routers/skill_notes.py`, which distilled a reviewer's *verbatim sentence about one
 engagement* and whose one caller held the slug in its props and discarded it - the same "held the
-slug and discarded it" defect this file already records on the test-interview press. Two paths
-have now left that row for the same reason and the row was rewritten only once; **when a
-justification stops covering one member of a list, re-read it against the others rather than
-deleting the one member.**
+slug and discarded it" defect this file already records on the test-interview press. sp61 routed
+that door; sp65 deleted it with the mechanism behind it, which is why the list is two and not
+three. Three separate paths have left that one justification in three sprints, and it was
+rewritten once each time: **when a justification stops covering one member of a list, re-read it
+against the others rather than editing the one member.**
 
 The remaining gap is the **administrator's skills page**, and it is deliberate rather than an
 oversight, on two facts that are both about *that door*: the library is global across
@@ -1660,27 +1783,40 @@ So when a payload is assembled from more than one project, **ask `project_permit
 contributor's own slug, not of the caller's**. `_candidates_that_may_travel` in
 `skills_service.py` is the shape: if the call is not leaving the deployment nothing is
 withheld, and if it is, each contribution must show its own grant. Note which way the two
-halves fall - a *global* artefact travels freely (an approved skill is already in every
-engagement's prompt), and anything that cannot be attributed to an engagement is withheld,
-because "may this travel" has no answer without a project to ask about.
+halves fall - an artefact that applies to every engagement travels freely, and anything that
+cannot be attributed to an engagement is withheld, because "may this travel" has no answer
+without a project to ask about.
+
+**The first of those halves is now a premise the code no longer establishes**, and it is worth
+knowing before reading the function as sound. The exemption is keyed on `status='approved'`,
+which *meant* "applies everywhere" until `skills.scope` existed and no longer does, so an
+approved `project`-scoped rule from a `sensitive` engagement travels with a comparison routed on
+a `standard` one. See *One mechanism* above, where it is recorded with the second exemption the
+same column falsified. It needs a code change, and the fix is a scope test rather than a wider
+status test: `scope='global'` is what the exemption was always trying to say.
 
 **A prompt is a payload too, and it is the one this codebase kept forgetting.**
 `_fetch_skill_notes` in `run_service.py` had the same defect in a worse form: it took no slug
 at all, so it could not ask, and it prepended every stored `agent_skill_notes` row to every
 task of every crew on every project - a note being a model's distillation of a reviewer's
-sentence about one named engagement, injected as *instruction*, with no approval step. It now
-takes the slug `build_and_run_crew` already held and applies `_note_may_travel`, the same rule
-in the same order. **A function that assembles prompt text and takes no slug cannot be asked
-the question**, which is why the signature is the first thing to look at.
+sentence about one named engagement, injected as *instruction*, with no approval step. sp61 gave
+it the slug `build_and_run_crew` already held; sp65 deleted the notes half outright, and the
+slug it was handed is what `_skill_applies_here` now reads the scope against. **A function that
+assembles prompt text and takes no slug cannot be asked the question**, which is why the
+signature is the first thing to look at - and the repair that made the signature right outlived
+the mechanism that forced it.
 
-Two things that rule does **not** do, so it is not mistaken for more than it is. It is about
-egress, so two engagements that both permit hosted inference still share each other's notes,
-and a wholly local deployment shares everything internally. What is meant to make that
-acceptable is the note being *general* - `_EXTRACT_SYSTEM` carries the "no client-specific
-details" clause its sibling `extract_skill` always had - and a prompt asking a model to behave
-is a second line of defence, never the guarantee. The thing that would close it is an approval
-gate of the kind `skills` has; notes have none, and that is a gap on the record rather than a
-decision that they do not need one.
+That paragraph used to end on a gap: notes had no approval gate of the kind `skills` has, and
+that was on the record rather than accepted. It is closed, and by **removal** rather than by the
+gate it asked for - a note could not have been given one without becoming a skill, which is what
+this branch concluded and acted on. Two things that survive, so the rule is not mistaken for
+more than it is. **Egress is not scope**: two engagements that both permit hosted inference
+still share whatever the *scope* rule lets them, and a wholly local deployment shares everything
+internally, so `_candidates_that_may_travel` answers "may this leave the premises" and
+`_skill_applies_here` answers "does this rule apply here" - neither substitutes for the other,
+and the same row can pass one and fail the other. And a prompt asking a model to behave -
+`_EXTRACT_SYSTEM`'s "no client-specific details" clause, which its sibling `extract_skill` still
+carries - is a second line of defence, never the guarantee.
 
 **The boundary, stated honestly.** For those two declared capabilities, nothing leaves a
 `sensitive` deployment. Five paths still send material off-premises with **no mode question
@@ -2051,7 +2187,7 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   makes them evict each other on every alternation regardless of free memory - see
   `docs/runbook-local-models.md` before diagnosing local models as slow.
 - `build_and_run_agent` - the standalone "run this one agent" dispatch - fetches no validation
-  warnings, skill notes, or change requests, so an agent dispatched that way is missing all
+  warnings, library skills, or change requests, so an agent dispatched that way is missing all
   three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
   `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
   re-run goes through the crew path. It is reachable from the API.
@@ -2147,6 +2283,24 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   `("deep", "standard")` and the key becomes
   actively misleading rather than merely dated. Not renamed already because `llm_client.py`
   imports the table.
+- **Two exemptions keyed on `status='approved'` still read it as "applies everywhere".**
+  `list_skills` returns every approved row to any login, and `_candidates_that_may_travel`
+  exempts every approved candidate from the egress test - both correct until sp65 gave a skill
+  a `scope`, both now wrong for an approved `project`-scoped rule, and the second one moves a
+  `sensitive` engagement's material to hosted Haiku. Argued in full under *One mechanism*. The
+  fix in both places is to test `scope='global'`, which is what the word "approved" was standing
+  in for.
+- **The design's "an approved project-scoped skill is not offered as a deduplication candidate
+  to another project" was never built.** The plan expected it to fall out of the injection
+  filter; it does not, because `_rules_already_held` reads `_DEDUP_STATUSES` and never looks at
+  `scope`. Same one-line repair as the entry above, in the same function family.
+- `_fetch_skill_notes` in `run_service.py` **fetches no notes** - the mechanism it was named for
+  is deleted and it returns library skills. The name is kept because every caller, test and
+  paragraph in this file refers to it; renaming touches eight files including this one. Its
+  docstring says so, which is the least a misnamed function can do.
+- `tests/test_proxy_prefix_coverage.py`'s module docstring still names `/agent-skill-notes` as a
+  prefix the API mounts. The test itself enumerates `app.routes` and is correct; only the prose
+  is stale.
 
 ---
 
