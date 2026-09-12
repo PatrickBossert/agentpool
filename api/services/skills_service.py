@@ -250,22 +250,34 @@ def _candidates_that_may_travel(slug: str, candidates: list[dict]) -> list[dict]
        of the proposing one - the proposing project's grants are about the proposing
        project's material.
 
-    `approved` is exempt, and that is not a loophole. An approved skill is already injected
-    into that agent's prompt on **every** engagement by `_fetch_skill_notes`, including the
-    standard ones whose prompts go to hosted Anthropic; it is the agent's published
-    instruction rather than one client's material, which is the same distinction `list_skills`
-    turns on. Excluding it would lose deduplication with nothing gained.
+    **`scope='global'` is exempt, and it is the exemption `approved` used to be.** A global
+    skill is injected into that agent's prompt on **every** engagement by `_fetch_skill_notes`,
+    including the standard ones whose prompts go to hosted Anthropic; it is the agent's
+    published instruction rather than one client's material, which is the same distinction
+    `list_skills` turns on. Excluding it would lose deduplication with nothing gained.
 
-    The exemption is an allow-list of that one status rather than a "not pending" test, so a
-    third status added to `_DEDUP_STATUSES` later has to prove itself rather than inherit the
-    exemption by not being named.
+    Until sp65 the exemption was spelled `status == 'approved'`, and that spelling was correct
+    for exactly as long as approval *meant* everywhere. `scope` falsified it: an approved rule
+    scoped to one engagement is withheld from every other engagement's prompt by
+    `_skill_applies_here` - and then travelled anyway, inside a deduplication payload routed on
+    some other project that happens to be granted hosted inference. A `sensitive` engagement's
+    approved rule, off the premises, through a door nothing was watching. **The test to ask of
+    an exemption is "what makes this material already-public", and the answer moved to another
+    column**; the status is now irrelevant here, because a pending global proposal is not
+    published either and a `project` rule is one client's material whether or not a human has
+    ruled on it.
 
-    A pending candidate with no `source_project` is **dropped**, because it cannot be
+    The exemption names `global` positively rather than testing "not project", so a third scope
+    value added later has to prove itself rather than inherit the exemption by not being named -
+    which is also why the read is compared to the literal rather than to `!= 'project'`.
+
+    A project-scoped candidate with no `source_project` is **dropped**, because it cannot be
     attributed and "may this travel" has no answer without an engagement to ask about. Today
     that is only a row an administrator typed on the global skills page - `propose_skill`
-    requires a non-blank slug - so the cost is that a hand-typed pending rule does not
-    deduplicate against a hosted comparison. That is a quality loss in an edge case; the other
-    default is a disclosure.
+    requires a non-blank slug - so the cost is that a hand-typed rule does not deduplicate
+    against a hosted comparison. That is a quality loss in an edge case; the other default is a
+    disclosure. Note that such a row reaches no prompt either, for the same reason and by the
+    same test in `_skill_applies_here`.
 
     **Known, accepted, and inherited:** `project_llm_mode` answers `standard` for a slug whose
     database does not exist, and `standard` grants hosted inference. So a candidate whose
@@ -282,7 +294,7 @@ def _candidates_that_may_travel(slug: str, candidates: list[dict]) -> list[dict]
     withheld: list[str] = []
     by_origin: dict[str, bool] = {}
     for candidate in candidates:
-        if candidate.get("status") == "approved":
+        if candidate.get("scope") == "global":
             may_travel.append(candidate)
             continue
         origin = (candidate.get("source_project") or "").strip()

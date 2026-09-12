@@ -132,9 +132,15 @@ def _system_db_as_it_stood_before_the_column(path, rows: list[tuple[str, str]]) 
 async def test_the_existing_skills_are_global_and_a_new_one_is_not(tmp_path):
     """Two assertions because they are two decisions.
 
-    A column that simply defaulted to `global` would satisfy the first perfectly and make
-    every future proposal universal without anybody choosing it - which is the whole failure
-    this task exists to prevent, and it would leave no trace anywhere else.
+    **What this test actually pins, stated precisely, because it used to be described wrongly.**
+    The new row below is written through `insert_skill` without naming a scope, so the second
+    assertion holds `insert_skill`'s **Python parameter default** to `project`. It says nothing
+    about the DDL default - sp65's review flipped `CREATE TABLE ... DEFAULT 'global'` and ran
+    the entire backend suite green, while this test and its docstring claimed to catch exactly
+    that. `test_a_raw_insert_that_omits_the_scope_still_gets_the_narrow_one` below is the
+    assertion that closes it, on both the created and the migrated column. CLAUDE.md's own rule
+    arriving on the guard written to enforce it: *a guard's reach must be established, not
+    described*.
 
     The fifty-three rows on the live deployment all carry a NULL `source_project`, which the
     fixture reproduces: had they been left at the narrow default they would reach no
@@ -164,8 +170,52 @@ async def test_the_existing_skills_are_global_and_a_new_one_is_not(tmp_path):
         "the fixture no longer reproduces the live shape, so the test above proves less"
     )
     assert await _scope_of(new_id) == "project", (
-        "a skill written after the column exists must earn its reach; a `global` default here "
-        "would make every future proposal universal silently"
+        "a skill written after the column exists must earn its reach; a `global` default in "
+        "`insert_skill` would make every future proposal universal silently"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("migrated", [False, True], ids=["created", "migrated"])
+async def test_a_raw_insert_that_omits_the_scope_still_gets_the_narrow_one(tmp_path, migrated):
+    """The **column's** default, which nothing asserted until sp65's review flipped it green.
+
+    This is defence in depth and it is the layer that catches what `insert_skill` cannot: a
+    writer that reaches `skills` with raw SQL and no `scope`. None exists today, which is
+    exactly why nothing failed when the DDL was mutated - and exactly why the assertion has to
+    be written against the column rather than against a caller. The design's sentence is that a
+    rule must never be universal without somebody choosing it, and a Python keyword default is
+    only one of the two places that promise is kept.
+
+    Both paths, because they are two separate pieces of DDL and only one of them was reported.
+    A fresh deployment gets the `CREATE TABLE` default; every existing deployment - including
+    the live one, which still has no `scope` column - gets the `ALTER TABLE` one, and the two
+    are written out independently in `init_system_db` and free to disagree.
+
+    The insert names only the two NOT NULL columns with no defaults, so the scope arrives from
+    the schema and from nothing else.
+    """
+    from api.database import get_system_connection
+
+    if migrated:
+        # Meet the migration from the real prior shape, as the live deployment will.
+        _system_db_as_it_stood_before_the_column(
+            tmp_path / "system.db", [("Phase Gating", "Pause at the end of every phase.")],
+        )
+
+    async with get_system_connection() as conn:
+        await conn.execute(
+            "INSERT INTO skills (name, description) VALUES ('A raw row', 'Written by hand.')"
+        )
+        await conn.commit()
+        async with conn.execute(
+            "SELECT scope FROM skills WHERE name = 'A raw row'"
+        ) as cur:
+            row = await cur.fetchone()
+
+    assert row["scope"] == "project", (
+        "the scope column's own default is `global`, so a writer that omits the column files a "
+        "rule that applies to every engagement without anybody choosing it"
     )
 
 

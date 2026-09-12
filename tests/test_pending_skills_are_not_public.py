@@ -37,6 +37,17 @@ _RULE = (
 _ORIGIN_SLUG = "confidential-client-engagement"
 _PROPOSAL_NAME = _derive_skill_name(_RULE)
 _APPROVED_NAME = "sp61-public-check approved library rule"
+# Approved - a human ruled on it - and still one engagement's material, which is the pair
+# sp65's I2 is about. Its own sentence names the client, so it discloses on sight.
+_NARROW_RULE = (
+    "Iberdrola's steering group reads the summary before the board pack, so lead with it."
+)
+_NARROW_NAME = "sp65-public-check approved narrow rule"
+# Its own slug, not `_ORIGIN_SLUG`. The global control row legitimately carries the origin it
+# was proposed on and is legitimately readable, so asserting the shared slug is absent from the
+# body would fail against correct behaviour - and, worse, would have passed for the wrong
+# reason had the two rows been filtered together.
+_NARROW_ORIGIN = "sp65-narrow-client-engagement"
 _AGENT = "Interaction Designer"
 
 
@@ -49,7 +60,10 @@ def _auth(role: str) -> dict:
     return {"Authorization": f"Bearer {_token(role)}"}
 
 
-async def _insert(name: str, description: str, *, status: str) -> int:
+async def _insert(
+    name: str, description: str, *, status: str, scope: str = "project",
+    source_project: str = _ORIGIN_SLUG,
+) -> int:
     from api.database import get_system_connection, insert_skill
 
     async with get_system_connection() as conn:
@@ -58,17 +72,24 @@ async def _insert(name: str, description: str, *, status: str) -> int:
             name=name,
             description=description,
             source="revision",
-            source_project=_ORIGIN_SLUG,
+            source_project=source_project,
             source_ref="SC-014",
             proposed_by_agent="interaction_designer",
             status=status,
+            scope=scope,
             agents=[_AGENT],
         )
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def _rows():
-    """The proposal and an approved sibling, removed afterwards whatever happened.
+    """Three rows - the proposal, a published rule, and the one in between - removed afterwards
+    whatever happened.
+
+    The third is what sp65's review (I2) found. It is `approved`, so the status test lets it
+    through, and it is scoped to one engagement, so it reaches only that engagement's prompt -
+    a human has signed off a sentence about one client, which is not the same thing as
+    publishing it. Two rows could not tell the two questions apart.
 
     `@pytest_asyncio.fixture`, never a plain `@pytest.fixture`: `asyncio_mode = strict` hands
     a plain async fixture over as an un-awaited generator, so setup and teardown both silently
@@ -76,13 +97,16 @@ async def _rows():
     """
     await _insert(_PROPOSAL_NAME, _RULE, status="pending")
     await _insert(_APPROVED_NAME, "Always state the units on a figure you carry forward.",
-                  status="approved")
+                  status="approved", scope="global")
+    await _insert(_NARROW_NAME, _NARROW_RULE, status="approved", scope="project",
+                  source_project=_NARROW_ORIGIN)
     yield
     from api.database import get_system_connection, delete_skill
 
     async with get_system_connection() as conn:
         async with conn.execute(
-            "SELECT id FROM skills WHERE name IN (?, ?)", (_PROPOSAL_NAME, _APPROVED_NAME),
+            "SELECT id FROM skills WHERE name IN (?, ?, ?)",
+            (_PROPOSAL_NAME, _APPROVED_NAME, _NARROW_NAME),
         ) as cur:
             ids = [r["id"] for r in await cur.fetchall()]
     for skill_id in ids:
@@ -109,13 +133,57 @@ async def test_a_non_sysadmin_may_not_list_the_pending_queue(client, role):
 async def test_the_approved_library_is_still_readable_by_the_same_callers(client, role):
     """The control. Without it, a fix that refused the whole endpoint would pass above.
 
-    An approved skill is already in that agent's prompt on every engagement; there is nothing
-    to protect and a good deal to explain by showing it.
+    A **global** skill is already in that agent's prompt on every engagement; there is nothing
+    to protect and a good deal to explain by showing it. The row this reads is explicitly
+    `scope="global"` since sp65 - it was merely `approved` before, and that was the whole of
+    finding I2: the status was standing in for the scope.
     """
     res = await client.get("/admin/skills?status=approved", headers=_auth(role))
 
     assert res.status_code == 200
     assert any(s["name"] == _APPROVED_NAME for s in res.json())
+
+
+@pytest.mark.parametrize("role", ["reviewer", "org_admin"])
+@pytest.mark.asyncio
+async def test_an_approved_rule_scoped_to_one_engagement_is_not_in_the_library(client, role):
+    """I2. Approval is not publication, and until sp65 this door treated it as though it were.
+
+    The row is `approved`, so the status test lets it through; it is scoped to one engagement,
+    so `_skill_applies_here` puts it in front of that engagement's agents and nobody else's.
+    Handing it - with the `source_project` naming the client - to a `reviewer` on an unrelated
+    project disclosed the sentence, the client, and the engagement's slug.
+
+    Asserted against the whole response body as well as the parsed names, because the rule, the
+    name and the slug each leak independently and a check on one of the three is a check on
+    none of the others.
+    """
+    res = await client.get("/admin/skills?status=approved", headers=_auth(role))
+
+    assert res.status_code == 200
+    names = [s["name"] for s in res.json()]
+    assert _NARROW_NAME not in names
+    assert _NARROW_RULE not in res.text
+    assert _NARROW_ORIGIN not in res.text
+    # The control, in the same request: the global library still came back, so this is not a
+    # door that started answering an empty list.
+    assert _APPROVED_NAME in names
+
+
+@pytest.mark.asyncio
+async def test_a_sysadmin_still_reads_an_approved_rule_scoped_to_one_engagement(client):
+    """The control on the test above, and the one that keeps demotion possible.
+
+    A reviewer who finds a rule that was really about a single engagement has to be able to see
+    it in order to change it - `LibrarySkillCard` reads this door - so the narrowing is about
+    who asks, not about the row disappearing from the product.
+    """
+    res = await client.get("/admin/skills?status=approved")
+
+    assert res.status_code == 200
+    row = next(s for s in res.json() if s["name"] == _NARROW_NAME)
+    assert row["scope"] == "project"
+    assert row["source_project"] == _NARROW_ORIGIN
 
 
 @pytest.mark.parametrize("role", ["reviewer", "org_admin"])
@@ -133,6 +201,11 @@ async def test_asking_for_no_status_at_all_answers_the_approved_library_only(cli
     assert _APPROVED_NAME in names
     assert _PROPOSAL_NAME not in names
     assert _RULE not in res.text
+    # And the scope narrowing applies to the defaulted read as well as the explicit one. They
+    # are two branches of one `if` today; a later refactor that moves the filter into the
+    # explicit arm alone would be invisible without this line.
+    assert _NARROW_NAME not in names
+    assert _NARROW_RULE not in res.text
 
 
 @pytest.mark.parametrize("role", ["reviewer", "org_admin"])

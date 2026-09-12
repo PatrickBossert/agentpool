@@ -6,7 +6,10 @@ none of them was visible to a unit suite or to a local `vite dev`:
 1. ``ui/src/api/client.ts`` used an absolute ``http://localhost:8000`` base, so every call went
    to the viewer's own machine and bypassed both proxies.
 2. The ``Caddyfile`` forwarded ``/api/*`` and ``/ws/*`` only, while twenty of twenty-two routers
-   mount under ``/projects``, ``/auth``, ``/admin``, ``/system``, or ``/agent-skill-notes``.
+   mount under ``/projects``, ``/auth``, ``/admin``, ``/system``, ``/agent-skill-notes``, or
+   ``/api``. (``/agent-skill-notes`` retired with the notes mechanism in sp65; the prefix list
+   this test enforces is derived from ``app.routes`` rather than from this sentence, which is
+   why the sentence could go stale without the guard noticing.)
 3. Those two conventions disagree, so no single rewrite could serve both.
 
 Faults 1 and 3 are one-time repairs. Fault 2 recurs on its own: mounting a router under a new

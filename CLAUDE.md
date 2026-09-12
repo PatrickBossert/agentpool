@@ -1476,11 +1476,25 @@ writes the column, and the difference is what lets a reviewer *demote* a global 
 of what their authors intended when global was the only thing a skill could be. Said plainly:
 **this affirms 53 rules as universal without anybody re-reading them.** They are demotable one
 at a time by a reviewer who finds one that was really about a single engagement, and the
-migration does not make that judgement for them. The backfill sits *inside* the add-column
-branch in `init_system_db` so it can never run twice, and it is a different fact from the
-column's default: a column declared `DEFAULT 'global'` would satisfy the migration's test and
-silently make every future proposal universal, which is the one thing this column exists to stop
-being automatic.
+migration does not make that judgement for them. The route is the library tab of
+`AdminSkills.tsx`: every approved card carries a badge saying where the rule applies - *Applies
+everywhere*, or *Applies to `<slug>`* naming the engagement - and Edit opens the same "Where
+this rule applies" control the queue uses, with the consequence sentence bound to **Save**.
+Until sp65's review that action existed only as a hand-made `PATCH` while two documents
+described it as a thing a reviewer does.
+
+The backfill sits *inside* the add-column branch in `init_system_db` so it can never run twice,
+and it is a different fact from the column's default. **Two different defaults, and they are
+asserted separately** - stated precisely here because this file previously said something false
+about them. A column declared `DEFAULT 'global'` would silently make every future raw insert
+universal, and `test_the_existing_skills_are_global_and_a_new_one_is_not` does *not* catch that:
+it writes its new row through `insert_skill`, so what it pins is that function's **Python
+parameter default**. sp65's review flipped the DDL default and ran the whole backend suite
+green. `test_a_raw_insert_that_omits_the_scope_still_gets_the_narrow_one` is the assertion that
+closes it, parametrised over both pieces of DDL - the `CREATE TABLE` a fresh deployment gets and
+the `ALTER TABLE` every existing one gets - because they are written out independently and are
+free to disagree. *A guard's reach must be established, not described*, and that rule has now
+caught a guard on this very column.
 
 **A narrow default bites the one writer that legitimately means "everywhere".** The baseline
 seed approves its own rows and gives them no `source_project`, so at `scope='project'` every one
@@ -1591,19 +1605,32 @@ differently next time?"* was the only caller of the notes door - and that questi
 Request revision instead. A reviewer who rejects outright records a reason and no rule.
 
 **Adding the column falsified two exemptions that were justified on "approved means
-everywhere", and neither was re-read.** Both are live, both are pre-existing code the branch
-did not touch, and both need a change rather than a paragraph:
+everywhere".** Both were pre-existing code the branch did not otherwise touch, both were
+diagnosed correctly in this file before they were repaired, and both were then *left* that way
+for a whole branch until sp65's review reproduced them. **They are now closed, and the repair
+is one substitution made twice:**
 
 | Exemption | What justified it | What the scope column did to it |
 |---|---|---|
-| `list_skills` returns every `approved` row to any login | "an approved skill is that agent's instruction everywhere, which is what makes it not one client's material" | an approved `project`-scoped rule **is** one client's material, and `_derive_skill_name` puts the first five words of the rule in the name |
-| `_candidates_that_may_travel` exempts every `approved` candidate from the egress test | "it is already injected into that agent's prompt on every engagement" | a `sensitive` engagement's approved `project`-scoped rule now travels to hosted Haiku the moment a `standard` engagement proposes for the same agent |
+| `list_skills` returned every `approved` row to any login | "an approved skill is that agent's instruction everywhere, which is what makes it not one client's material" | an approved `project`-scoped rule **is** one client's material, and `_derive_skill_name` puts the first five words of the rule in the name. It now answers a non-sysadmin `approved` **and** `scope='global'`. |
+| `_candidates_that_may_travel` exempted every `approved` candidate from the egress test | "it is already injected into that agent's prompt on every engagement" | a `sensitive` engagement's approved `project`-scoped rule travelled to hosted Haiku the moment a `standard` engagement proposed for the same agent. It now exempts `scope='global'`, and the status is not read at all. |
+
+**One sentence covers both: what may be seen follows what may travel, and both follow the
+scope.** The status is now irrelevant to either question - a *pending* global proposal is
+exempt from the egress test, asserted deliberately, because the test is "what makes this
+material already shared" and a scope is the answer to it while a status is not.
 
 This is this file's own rule arriving again - **an exemption is a claim about content, and the
 file it lives in is not** - and the first time it has arrived because a *new column* changed
 what the content could be. When a change gives a row a way to mean something narrower, every
 exemption phrased "this kind of row is global" is a caller of it, and `status='approved'` was
-the spelling of "global" in both places.
+the spelling of "global" in both places. The second lesson is cheaper to state than it was to
+learn: **diagnosing an exemption in this file is not closing it.** Both entries above were
+written as prose, accurately, a week before either line of code changed.
+
+Both exemptions are now allow-lists on the exact string `global` rather than tests for "not
+project", so a third scope value has to prove itself rather than inherit the exemption by not
+being named - and that shape is asserted, parametrised over scope values that do not exist.
 
 The design's related decision - **an approved `project`-scoped skill is not offered as a
 deduplication candidate to another project** - is **not implemented**. The plan expected it to
@@ -1787,13 +1814,13 @@ halves fall - an artefact that applies to every engagement travels freely, and a
 cannot be attributed to an engagement is withheld, because "may this travel" has no answer
 without a project to ask about.
 
-**The first of those halves is now a premise the code no longer establishes**, and it is worth
-knowing before reading the function as sound. The exemption is keyed on `status='approved'`,
-which *meant* "applies everywhere" until `skills.scope` existed and no longer does, so an
-approved `project`-scoped rule from a `sensitive` engagement travels with a comparison routed on
-a `standard` one. See *One mechanism* above, where it is recorded with the second exemption the
-same column falsified. It needs a code change, and the fix is a scope test rather than a wider
-status test: `scope='global'` is what the exemption was always trying to say.
+**The first of those halves had a premise the code stopped establishing, and the gap between
+noticing and repairing it is the thing to take from this entry.** The exemption was keyed on
+`status='approved'`, which *meant* "applies everywhere" until `skills.scope` existed. For the
+length of a branch it did not, so an approved `project`-scoped rule from a `sensitive`
+engagement travelled with a comparison routed on a `standard` one - written up accurately here,
+in two places, and not fixed in either. It now reads `scope='global'`, which is what the
+exemption was always trying to say, and the status is not consulted at all.
 
 **A prompt is a payload too, and it is the one this codebase kept forgetting.**
 `_fetch_skill_notes` in `run_service.py` had the same defect in a worse form: it took no slug
@@ -2283,24 +2310,22 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   `("deep", "standard")` and the key becomes
   actively misleading rather than merely dated. Not renamed already because `llm_client.py`
   imports the table.
-- **Two exemptions keyed on `status='approved'` still read it as "applies everywhere".**
-  `list_skills` returns every approved row to any login, and `_candidates_that_may_travel`
-  exempts every approved candidate from the egress test - both correct until sp65 gave a skill
-  a `scope`, both now wrong for an approved `project`-scoped rule, and the second one moves a
-  `sensitive` engagement's material to hosted Haiku. Argued in full under *One mechanism*. The
-  fix in both places is to test `scope='global'`, which is what the word "approved" was standing
-  in for.
 - **The design's "an approved project-scoped skill is not offered as a deduplication candidate
-  to another project" was never built.** The plan expected it to fall out of the injection
-  filter; it does not, because `_rules_already_held` reads `_DEDUP_STATUSES` and never looks at
-  `scope`. Same one-line repair as the entry above, in the same function family.
+  to another project" is built only for comparisons that leave the deployment.**
+  `_candidates_that_may_travel` withholds a `project`-scoped candidate from any payload going
+  off-premises, which closes the disclosure; `_rules_already_held`, which assembles the list in
+  the first place, still reads `_DEDUP_STATUSES` and never looks at `scope`. So on a deployment
+  where every engagement is `standard`, one client's approved rule is still *compared against*
+  another's. That is a separation the spec asked for rather than a leak - the comparison happens
+  inside the trust boundary the deployment already accepts for both projects - but it is not
+  what the design says, and the fix belongs in `_rules_already_held` rather than in the egress
+  narrowing, which is answering a different question.
+  (The two exemptions that read `status='approved'` as "applies everywhere" **are** closed -
+  see *One mechanism* above. They were on this list for a whole branch first.)
 - `_fetch_skill_notes` in `run_service.py` **fetches no notes** - the mechanism it was named for
   is deleted and it returns library skills. The name is kept because every caller, test and
   paragraph in this file refers to it; renaming touches eight files including this one. Its
   docstring says so, which is the least a misnamed function can do.
-- `tests/test_proxy_prefix_coverage.py`'s module docstring still names `/agent-skill-notes` as a
-  prefix the API mounts. The test itself enumerates `app.routes` and is correct; only the prose
-  is stale.
 
 ---
 

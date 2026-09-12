@@ -80,6 +80,85 @@ function FlagCard({ reason, suggestion }: { reason: string; suggestion: string |
   )
 }
 
+/**
+ * Where the rule applies - the one control, used by the queue and by the library.
+ *
+ * The scope cannot be derived from the text: the same correction box yields "do not include
+ * specific investment figures", which is true of every client, or "this client calls it the
+ * renewals programme", which is true of one. It is a reviewer's judgement and has to be asked
+ * for, at approval and again whenever somebody finds a rule in the library that is wider than
+ * it should be.
+ *
+ * One component rather than two, because the two cards ask the same question and the labels
+ * are what a reviewer matches against the note beside them. Two copies would be two wordings
+ * within a sprint.
+ */
+function ScopeChooser({
+  name,
+  value,
+  onChange,
+  describedBy,
+}: {
+  name: string
+  value: SkillScope
+  onChange: (scope: SkillScope) => void
+  describedBy?: string
+}) {
+  return (
+    <fieldset
+      aria-describedby={describedBy}
+      className="rounded-lg border border-gray-200 px-3 py-2 space-y-1"
+    >
+      <legend className="text-[10px] font-semibold text-gray-700 uppercase tracking-widest px-1">
+        Where this rule applies
+      </legend>
+      {([
+        ['project', 'Applies to this engagement'],
+        ['global', 'Applies everywhere'],
+      ] as const).map(([option, label]) => (
+        <label key={option} className="flex items-center gap-2 cursor-pointer text-xs text-gray-700">
+          <input
+            type="radio"
+            name={name}
+            value={option}
+            checked={value === option}
+            onChange={() => onChange(option)}
+            className="border-gray-300 text-teal-600 focus:ring-teal-500"
+          />
+          {label}
+        </label>
+      ))}
+    </fieldset>
+  )
+}
+
+/**
+ * What an approved rule's reach is, at a glance, in the library.
+ *
+ * Without it the fifty-three rows the migration affirmed `global` are indistinguishable from a
+ * rule scoped to one engagement, and "a reviewer demotes the ones that were really about a
+ * single engagement" is an instruction with nothing to act on. The narrow badge names the
+ * engagement, because "this engagement" means nothing on a page listing every engagement's
+ * rules at once.
+ */
+function ScopeBadge({ skill }: { skill: AgentSkill }) {
+  const global = skill.scope === 'global'
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+        global
+          ? 'border-brand/40 bg-brand/15 text-gray-800'
+          : 'border-amber-200 bg-amber-50 text-amber-800'
+      }`}
+    >
+      {global ? <Globe size={10} /> : <MapPin size={10} />}
+      {global
+        ? 'Applies everywhere'
+        : `Applies to ${skill.source_project || 'no engagement'}`}
+    </span>
+  )
+}
+
 /** "Seen once" / "Seen 3 times" - the count the queue is ordered by, in words. */
 function occurrenceLabel(occurrences: number): string {
   const n = Math.max(1, occurrences || 1)
@@ -240,36 +319,7 @@ function EditableSkillCard({
 
       {!editing && <EvidencePanel skill={skill} />}
 
-      {/* Where the rule applies, chosen before it is approved. The scope cannot be derived
-          from the text - the same correction box yields "do not name specific investment
-          figures", which is true of every client, or "this client calls it the renewals
-          programme", which is true of one - so it is a reviewer's judgement and has to be
-          asked for. Described by the same note as the Approve button, because the note is
-          what the choice means. */}
-      <fieldset
-        aria-describedby={noteId}
-        className="rounded-lg border border-gray-200 px-3 py-2 space-y-1"
-      >
-        <legend className="text-[10px] font-semibold text-gray-700 uppercase tracking-widest px-1">
-          Where this rule applies
-        </legend>
-        {([
-          ['project', 'Applies to this engagement'],
-          ['global', 'Applies everywhere'],
-        ] as const).map(([value, label]) => (
-          <label key={value} className="flex items-center gap-2 cursor-pointer text-xs text-gray-700">
-            <input
-              type="radio"
-              name={scopeName}
-              value={value}
-              checked={scope === value}
-              onChange={() => setScope(value)}
-              className="border-gray-300 text-teal-600 focus:ring-teal-500"
-            />
-            {label}
-          </label>
-        ))}
-      </fieldset>
+      <ScopeChooser name={scopeName} value={scope} onChange={setScope} describedBy={noteId} />
 
       <p
         id={noteId}
@@ -343,13 +393,20 @@ function LibrarySkillCard({
   onDelete,
 }: {
   skill: AgentSkill
-  onEdit: (id: number, name: string, description: string, agents: string[]) => void
+  onEdit: (
+    id: number, name: string, description: string, agents: string[], scope: SkillScope,
+  ) => void
   onDelete: (id: number) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(skill.name)
   const [description, setDescription] = useState(skill.description)
   const [agents, setAgents] = useState(skill.agents)
+  const [scope, setScope] = useState<SkillScope>(skill.scope)
+
+  // The same note the queue binds to Approve, saying what Save is about to do. Bound rather
+  // than placed beside, for the reason the queue's is: proximity is not association.
+  const noteId = `library-skill-${skill.id}-scope-consequence`
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-2.5">
@@ -360,6 +417,7 @@ function LibrarySkillCard({
             {(editing ? agents : skill.agents).length === 0 && (
               <span className="text-[10px] text-gray-500 italic">Unassigned</span>
             )}
+            {!editing && <ScopeBadge skill={skill} />}
           </div>
           {editing ? (
             <input
@@ -395,17 +453,60 @@ function LibrarySkillCard({
         <p className="text-xs text-gray-600 leading-relaxed">{description}</p>
       )}
 
+      {/* Demotion, which is the action CLAUDE.md and the spec both describe and which the
+          product offered no route to until now: the fifty-three rows the migration affirmed
+          `global` were affirmed without anybody re-reading them, and a reviewer who finds one
+          that was really about a single engagement narrows it here. Widening from here is the
+          same control read the other way - a rule that has proved itself on one engagement is
+          exactly the kind somebody decides is general. */}
+      {editing && (
+        <>
+          <ScopeChooser
+            name={`library-skill-${skill.id}-scope`}
+            value={scope}
+            onChange={setScope}
+            describedBy={noteId}
+          />
+          <p
+            id={noteId}
+            className="flex items-start gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-[11px] text-gray-800 leading-relaxed"
+          >
+            {scope === 'global'
+              ? <Globe size={12} className="mt-0.5 flex-shrink-0 text-brand-dark" />
+              : <MapPin size={12} className="mt-0.5 flex-shrink-0 text-brand-dark" />}
+            {scope === 'global' ? (
+              <span>
+                Saving keeps this rule in force on <strong>every engagement</strong>, including
+                ones you have never seen.
+              </span>
+            ) : skill.source_project ? (
+              <span>
+                Saving narrows this rule to <strong>{skill.source_project}</strong>. It leaves
+                the other engagements&rsquo; agents on their next run there, and this is the
+                demotion to reach for when a rule turns out to have been about one client.
+              </span>
+            ) : (
+              <span>
+                This rule names no engagement, so narrowing it would leave it applying to{' '}
+                <strong>none</strong>. Delete it instead if it should not be in the library.
+              </span>
+            )}
+          </p>
+        </>
+      )}
+
       <div className="flex items-center gap-2 justify-end">
         {editing ? (
           <>
             <button
-              onClick={() => { setEditing(false); setName(skill.name); setDescription(skill.description); setAgents(skill.agents) }}
+              onClick={() => { setEditing(false); setName(skill.name); setDescription(skill.description); setAgents(skill.agents); setScope(skill.scope) }}
               className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded"
             >
               Cancel
             </button>
             <button
-              onClick={() => { onEdit(skill.id, name, description, agents); setEditing(false) }}
+              onClick={() => { onEdit(skill.id, name, description, agents, scope); setEditing(false) }}
+              aria-describedby={noteId}
               className="text-xs text-white bg-teal-600 hover:bg-teal-700 px-3 py-1 rounded font-semibold"
             >
               Save
@@ -485,8 +586,16 @@ export default function AdminSkills() {
     updateMut.mutate({ id, data: { status: 'rejected' } })
   }
 
-  function handleEdit(id: number, name: string, description: string, agents: string[]) {
-    updateMut.mutate({ id, data: { name, description, agents } })
+  // Sends `scope`, and it is not the exception to the rule one file up - it is the rule.
+  // The reason `update`'s `scope` is optional is that a caller with **no opinion** must not
+  // restate a reach it cannot see. This caller can see it: the library card renders the stored
+  // scope as a badge and, while editing, as a control seeded from the row. Once the value is
+  // in front of the person pressing Save, omitting it would mean a reviewer selecting "applies
+  // to this engagement", saving, and being shown the rule still in force everywhere.
+  function handleEdit(
+    id: number, name: string, description: string, agents: string[], scope: SkillScope,
+  ) {
+    updateMut.mutate({ id, data: { name, description, agents, scope } })
   }
 
   async function handleExport() {

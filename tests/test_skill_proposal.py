@@ -51,9 +51,10 @@ CREW = "assessment_design"
 # "a test that verifies a property one layer away from where it holds" exactly.
 #
 # So this file holds the scope constant and tests what it is named for. The scope itself has
-# a file of its own (tests/test_skill_scope.py), and the notes narrowing has another
-# (tests/test_skill_notes_travel.py). No project database of this name exists, which is
-# still deliberate: a caller passing a slug this file never creates must still get its skills.
+# a file of its own (tests/test_skill_scope.py), and the candidate-egress narrowing has
+# another (tests/test_skill_candidates_travel.py). No project database of this name exists,
+# which is still deliberate: a caller passing a slug this file never creates must still get
+# its skills.
 INJECTION_SLUG = "sp-gs-am"
 RULE = "The welcome carries privacy and tone; the framing carries the interview's purpose"
 
@@ -924,11 +925,18 @@ async def test_a_proposal_with_no_project_is_refused_rather_than_routed(monkeypa
 # pass all four of the negative ones and silently end deduplication.
 
 
-async def _pending_rule_from(slug: str, description: str, *, status: str = "pending") -> int:
+async def _pending_rule_from(
+    slug: str, description: str, *, status: str = "pending", scope: str = "project",
+) -> int:
     """One row assigned to this file's agent, attributed to `slug`.
 
     Written directly rather than by proposing on `slug`, so the test does not need that
     project's model to answer before the case it is about can begin.
+
+    `scope` defaults to the narrow value `insert_skill` writes rather than being passed through
+    silently, because since sp65 it is the column the egress exemption reads: a caller here
+    that wants the exempt case has to say so, and one that says nothing gets the case where the
+    material is one client's.
     """
     from api.database import get_system_connection, insert_skill
 
@@ -942,6 +950,7 @@ async def _pending_rule_from(slug: str, description: str, *, status: str = "pend
             source_ref="SC-014",
             proposed_by_agent=AGENT,
             status=status,
+            scope=scope,
             agents=[_SNAKE_TO_DISPLAY[AGENT]],
         )
 
@@ -1047,13 +1056,17 @@ async def test_a_sensitive_project_is_still_compared_against_everything(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_an_approved_rule_travels_whatever_engagement_it_came_from(monkeypatch, tmp_path):
+async def test_a_global_rule_travels_whatever_engagement_it_came_from(monkeypatch, tmp_path):
     """The exemption, and it is not a loophole.
 
-    An approved skill is already injected into this agent's prompt on every engagement by
+    A **global** skill is already injected into this agent's prompt on every engagement by
     `_fetch_skill_notes`, including the standard ones whose prompts go to Anthropic. It is the
     agent's published instruction rather than one client's material - the same distinction
     `list_skills` turns on - so withholding it would lose deduplication and protect nothing.
+
+    This test used to say `approved` in both its name and its row, and the difference is C1: an
+    approval was the spelling of "everywhere" until this branch gave everywhere a column. The
+    row below is explicitly `scope="global"` now, and its negative pair is directly beneath.
     """
     monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
     get_settings.cache_clear()
@@ -1062,13 +1075,64 @@ async def test_an_approved_rule_travels_whatever_engagement_it_came_from(monkeyp
     })
     await _project("c2-standard-proposer", "standard", {})
     published = "State the units on every figure you carry forward."
-    await _pending_rule_from("c2-sensitive-origin", published, status="approved")
+    await _pending_rule_from(
+        "c2-sensitive-origin", published, status="approved", scope="global",
+    )
 
     local, hosted = _transports(monkeypatch)
     await propose_skill(AGENT, DIFFERENT_RULE, "c2-standard-proposer", "SC-031")
 
     assert len(hosted) == 1
     assert published in hosted[0].content.decode()
+
+
+@pytest.mark.asyncio
+async def test_a_sensitive_engagements_approved_project_rule_does_not_travel_either(
+    monkeypatch, tmp_path
+):
+    """C1, driven the whole way as the review drove it.
+
+    The rule is a sensitive engagement's, it is **approved**, and it is scoped to that
+    engagement. `_skill_applies_here` correctly keeps it out of every other engagement's
+    prompt - and until this fix it left the deployment anyway, inside the deduplication payload
+    the moment any hosted-inference project proposed a rule for the same agent. Approval was the
+    spelling of "everywhere", and this branch is what stopped it being that.
+
+    Asserted on the **bytes that left**, not on which client was constructed: `_transports`
+    installs a fake transport for both providers at once, so "it went to the local one instead"
+    is visible rather than assumed.
+
+    The second row is the control *inside* this test and it is not optional - without a
+    candidate that may travel, the list narrows to nothing, `find_duplicate_skill`
+    short-circuits, and no request is sent at all. "The secret did not travel" would then be
+    true of a fix that simply stopped comparing, which is a different test one screen up.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    await _project("c1-sensitive-origin", "sensitive", {
+        "local_fast_model": "gemma4:fast", "local_fast_url": "http://localhost:11999/v1",
+    })
+    await _project("c1-standard-proposer", "standard", {})
+    secret = "When interviewing Iberdrola's SAP migration staff, never name the Q3 outage."
+    await _pending_rule_from(
+        "c1-sensitive-origin", secret, status="approved", scope="project",
+    )
+    permitted = "State the units on every figure you carry forward."
+    await _pending_rule_from(
+        "c1-standard-proposer", permitted, status="approved", scope="global",
+    )
+
+    local, hosted = _transports(monkeypatch)
+    await propose_skill(AGENT, DIFFERENT_RULE, "c1-standard-proposer", "SC-031")
+
+    assert len(hosted) == 1, "the standard project's own comparison did not happen"
+    body = hosted[0].content.decode()
+    assert secret not in body, (
+        "a sensitive engagement's approved project-scoped rule reached Anthropic inside "
+        "another project's comparison"
+    )
+    assert permitted in body, "the narrowing took the global library with it"
+    assert local == []
 
 
 @pytest.mark.asyncio

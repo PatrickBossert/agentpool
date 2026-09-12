@@ -140,30 +140,39 @@ async def list_skills(
     payload: dict = Depends(require_any_auth),
     conn=Depends(get_system_db),
 ):
-    """List skills. A non-sysadmin sees the approved library and nothing else.
+    """List skills. A non-sysadmin sees the **global** approved library and nothing else.
 
-    **`approved` and `pending` are two different kinds of thing, and only one of them is
-    global.** An approved skill is an agent's published instruction - it is injected into
-    that agent's prompt on every engagement, which is precisely what makes it not one
-    client's material, and it stays readable by any login. A `pending` row is a *proposal*,
-    and since sp61 a proposal is the agent's own sentence about the engagement it was
-    corrected on, filed with that engagement's slug beside it. "When interviewing X's
-    migration staff, never name the Q3 outage in the welcome" is a natural thing for it to
-    write, and `_derive_skill_name` makes the *name* the first five words of the rule - so
-    the name discloses as much as the description and hiding one without the other is not a
-    fix.
+    **Two tests, not one, and the second is the one sp65 added.** A row is readable by an
+    ordinary login when it is `approved` *and* `scope='global'`, because those are the two
+    halves of "this is the agent's published instruction rather than one client's material".
+    A `pending` row is a *proposal* - since sp61 it is the agent's own sentence about the
+    engagement it was corrected on, filed with that engagement's slug beside it. "When
+    interviewing X's migration staff, never name the Q3 outage in the welcome" is a natural
+    thing for it to write, and `_derive_skill_name` makes the *name* the first five words of
+    the rule, so the name discloses as much as the description and hiding one without the
+    other is not a fix.
+
+    An approved `project`-scoped row is the same material with a human's signature on it. It
+    reaches one engagement's prompt and no other (`_skill_applies_here`), it carries the
+    `source_project` naming that engagement, and until sp65 this door handed it, and the slug,
+    to any login that asked - including a `reviewer` on an unrelated project. **The status was
+    the spelling of "global" and this branch gave `global` a column of its own**; the same
+    substitution closes the sibling exemption in `_candidates_that_may_travel`, and the rule
+    across both is one sentence: *what may be seen follows what may travel*.
 
     Until sp61 a `pending` row was something an administrator had typed into the review
     queue, which is why this door was open to every login and why nothing failed when the
     material behind it changed. That is CLAUDE.md's own rule arriving from the other side:
     *when a path starts carrying something written about one client, re-read the exemption
-    it is sitting under*.
+    it is sitting under*. It has now arrived from that side twice.
 
-    A refusal rather than a silent narrowing to `approved`. A caller who explicitly asked
-    for the queue and was handed the library would render the library **as** the queue - the
-    two renderers on this API label whatever comes back "in development" - so the quiet
-    answer is a wrong answer, not a safe one. A caller expressing no preference is a
-    different case and still defaults to `approved`.
+    **The status is refused and the scope is filtered, and the asymmetry is deliberate.** A
+    caller who explicitly asked for the queue and was handed the library would render the
+    library **as** the queue - the two renderers on this API label whatever comes back "in
+    development" - so the quiet answer is a wrong answer there, not a safe one. Nobody asks
+    for a scope: the library is what this door is for, and a shorter library is the library.
+    A refusal would break the Team page for every non-sysadmin to say nothing they could act
+    on.
     """
     if payload.get("role") != "sysadmin":
         if status is not None and status != "approved":
@@ -172,11 +181,13 @@ async def list_skills(
                 detail=(
                     "Only a sysadmin may list skills that are not approved. A pending skill is "
                     "a proposal an agent made about one engagement, and it names that "
-                    "engagement; an approved skill is that agent's instruction everywhere, and "
-                    "is readable by any login."
+                    "engagement; an approved skill that applies everywhere is that agent's "
+                    "published instruction, and is readable by any login."
                 ),
             )
         status = "approved"
+        rows = await fetch_skills(conn, agent_name=agent_name, status=status)
+        return [r for r in rows if r.get("scope") == "global"]
     return await fetch_skills(conn, agent_name=agent_name, status=status)
 
 

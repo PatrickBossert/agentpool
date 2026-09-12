@@ -98,7 +98,7 @@ interface Sent { method: string; url: string; body: unknown }
  * `pending` is served in the order given, so a caller can hand the page an order and assert
  * the page kept it.
  */
-function makeAdapter(pending: AgentSkill[], sent: Sent[]) {
+function makeAdapter(pending: AgentSkill[], sent: Sent[], approved: AgentSkill[] = []) {
   return (config: AxiosRequestConfig): Promise<AxiosResponse> => {
     const url = apiClient.getUri(config)
     const method = (config.method || 'get').toUpperCase()
@@ -110,7 +110,7 @@ function makeAdapter(pending: AgentSkill[], sent: Sent[]) {
 
     let data: unknown = []
     if (method === 'GET' && url.includes('status=pending')) data = pending
-    else if (method === 'GET' && url.includes('status=approved')) data = []
+    else if (method === 'GET' && url.includes('status=approved')) data = approved
     else if (method === 'GET' && url.includes('/occurrences')) data = EVIDENCE
     else if (method === 'PATCH') data = { ...pending[0], status: 'approved' }
 
@@ -120,9 +120,9 @@ function makeAdapter(pending: AgentSkill[], sent: Sent[]) {
   }
 }
 
-function installTransport(pending: AgentSkill[]): Sent[] {
+function installTransport(pending: AgentSkill[], approved: AgentSkill[] = []): Sent[] {
   const sent: Sent[] = []
-  apiClient.defaults.adapter = makeAdapter(pending, sent)
+  apiClient.defaults.adapter = makeAdapter(pending, sent, approved)
   return sent
 }
 
@@ -449,5 +449,143 @@ describe('the skills review queue', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Only a sysadmin may approve a skill',
     )
+  })
+})
+
+describe('the approved library', () => {
+  // Finding I4 of the sp65 review: CLAUDE.md and the spec both say a reviewer demotes a rule
+  // that turns out to have been about one engagement, and the library offered no way to see a
+  // rule's reach, let alone change it. The fifty-three rows the migration affirmed `global`
+  // were affirmed without anybody re-reading them, so this is the control that makes the
+  // re-reading actionable.
+  const realAdapter = apiClient.defaults.adapter
+
+  afterEach(() => {
+    apiClient.defaults.adapter = realAdapter
+  })
+
+  const WIDE = skill({
+    id: 71, name: 'State the units', status: 'approved', scope: 'global',
+    source_project: 'acme-rail', source: 'baseline',
+  })
+  const NARROW = skill({
+    id: 72, name: 'The renewals programme', status: 'approved', scope: 'project',
+    source_project: 'borough-water',
+  })
+
+  async function openLibrary(approved: AgentSkill[]): Promise<Sent[]> {
+    const sent = installTransport([], approved)
+    renderPage()
+    await userEvent.click(screen.getByRole('button', { name: /Library/ }))
+    await screen.findByText(approved[0].name)
+    return sent
+  }
+
+  it('shows each rule\u2019s reach, and names the engagement a narrow one is held to', async () => {
+    // A badge saying only "project" would be no help on a page listing every engagement's
+    // rules at once - the question a reviewer is asking is *which* engagement.
+    await openLibrary([WIDE, NARROW])
+
+    expect(within(cardFor('State the units')).getByText('Applies everywhere')).toBeInTheDocument()
+    expect(
+      within(cardFor('The renewals programme')).getByText('Applies to borough-water'),
+    ).toBeInTheDocument()
+  })
+
+  it('demotes a global rule to the engagement it came from, and sends the narrowing', async () => {
+    // The action both documents describe. Asserted on the body that leaves the browser: a
+    // radio that changed a local variable and a radio that changed the rule look identical on
+    // screen, and only one of them is the feature.
+    const sent = await openLibrary([WIDE])
+
+    const card = within(cardFor('State the units'))
+    await userEvent.click(card.getByRole('button', { name: 'Edit' }))
+    await userEvent.click(card.getByRole('radio', { name: 'Applies to this engagement' }))
+    await userEvent.click(card.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(sent.some(s => s.method === 'PATCH')).toBe(true))
+    const patch = sent.find(s => s.method === 'PATCH')!
+    expect(patch.url).toBe('/admin/skills/71')
+    expect(patch.body).toMatchObject({ scope: 'project', name: 'State the units' })
+    // Not an approval, and not a deletion. The library edit changes what the rule says and
+    // where it applies; it must not restate a status it was not asked about.
+    expect(patch.body).not.toHaveProperty('status')
+  })
+
+  it('keeps the reach a wording edit did not ask to change', async () => {
+    // The control. A form that always sent `project` would pass the test above perfectly and
+    // would silently demote all fifty-three the first time anybody fixed a typo.
+    const sent = await openLibrary([WIDE])
+
+    const card = within(cardFor('State the units'))
+    await userEvent.click(card.getByRole('button', { name: 'Edit' }))
+    const field = card.getByDisplayValue('State the units')
+    await userEvent.clear(field)
+    await userEvent.type(field, 'State the units on every figure')
+    await userEvent.click(card.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(sent.some(s => s.method === 'PATCH')).toBe(true))
+    expect(sent.find(s => s.method === 'PATCH')!.body).toMatchObject({
+      name: 'State the units on every figure', scope: 'global',
+    })
+  })
+
+  it('does not widen a narrow rule when somebody edits its wording', async () => {
+    // The control the first round of this file was missing, and the gap was found by mutation
+    // rather than by reading: seeding the library's scope control from the literal 'global'
+    // instead of from `skill.scope` passed every other test here, because every other row in
+    // this block happens to be global. So the only case that can catch it is the narrow one,
+    // and it is the dangerous direction - a typo fix silently publishing one client's rule to
+    // every engagement, with a green suite and a correct-looking card.
+    const sent = await openLibrary([NARROW])
+
+    const card = within(cardFor('The renewals programme'))
+    await userEvent.click(card.getByRole('button', { name: 'Edit' }))
+    expect(card.getByRole('radio', { name: 'Applies to this engagement' })).toBeChecked()
+
+    const field = card.getByDisplayValue('The renewals programme')
+    await userEvent.clear(field)
+    await userEvent.type(field, 'The renewals programme, not the CapEx allocation')
+    await userEvent.click(card.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(sent.some(s => s.method === 'PATCH')).toBe(true))
+    expect(sent.find(s => s.method === 'PATCH')!.body).toMatchObject({ scope: 'project' })
+  })
+
+  it('binds Save to a note saying what the reach about to be saved means', async () => {
+    // The same association the queue holds, for the same reason: proximity is not association.
+    const sent = await openLibrary([WIDE])
+    expect(sent).toBeTruthy()
+
+    const card = within(cardFor('State the units'))
+    await userEvent.click(card.getByRole('button', { name: 'Edit' }))
+
+    const save = card.getByRole('button', { name: 'Save' })
+    const wide = document.getElementById(save.getAttribute('aria-describedby')!)
+    expect(wide!.textContent).toContain('every engagement')
+
+    await userEvent.click(card.getByRole('radio', { name: 'Applies to this engagement' }))
+    const narrow = document.getElementById(save.getAttribute('aria-describedby')!)
+    expect(narrow!.textContent).toContain('acme-rail')
+    expect(narrow!.textContent).not.toContain('every engagement')
+  })
+
+  it('warns that narrowing a rule with no engagement would leave it applying to none', async () => {
+    // The imported and hand-typed rows. Narrowing one of these is not a demotion, it is a
+    // retirement with no record that it happened.
+    const orphan = skill({
+      id: 73, name: 'A rule from nowhere', status: 'approved', scope: 'global',
+      source_project: null,
+    })
+    await openLibrary([orphan])
+
+    const card = within(cardFor('A rule from nowhere'))
+    await userEvent.click(card.getByRole('button', { name: 'Edit' }))
+    await userEvent.click(card.getByRole('radio', { name: 'Applies to this engagement' }))
+
+    const save = card.getByRole('button', { name: 'Save' })
+    const note = document.getElementById(save.getAttribute('aria-describedby')!)
+    expect(note!.textContent).toContain('names no engagement')
+    expect(note!.textContent).toContain('none')
   })
 })

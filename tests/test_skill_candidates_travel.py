@@ -178,55 +178,102 @@ def test_the_narrowing_is_applied_wherever_candidates_are_sent():
     )
 
 
-@pytest.mark.parametrize(
-    "status",
-    ["pending", "rejected", "banana", "Approved", "APPROVED", "", None],
-    ids=["pending", "rejected", "unknown", "title-case", "upper-case", "empty", "null"],
-)
-def test_only_the_exact_status_approved_is_exempt_from_the_candidate_narrowing(
-    monkeypatch, status
-):
-    """M2. The exemption is an allow-list, and nothing asserted that until now.
+def _only_the_exemption_can_let_it_through(monkeypatch):
+    """Grant the proposer hosted inference and refuse it to everybody else.
 
-    Mutating `== "approved"` to `!= "pending"` passed the entire suite, because the two are
-    behaviourally identical for the two statuses `_DEDUP_STATUSES` holds today. The protection
-    is forward-looking - whoever adds a third status is exactly the person a passing suite
-    would fail to warn - so it is asserted against the statuses that do not exist yet.
+    So a candidate attributed to any other engagement reaches the payload only by being
+    exempt - which is what every test below is about, in one direction or the other.
     """
-    from api.services import skills_service
     from api.services.deployment_modes import Capability
 
-    # The proposer is granted hosted inference; the candidate's engagement is not. So the only
-    # thing that can let this candidate through is the status exemption.
     def _permits(slug, capability):
         assert capability is Capability.HOSTED_INFERENCE
         return slug == "proposer"
 
     monkeypatch.setattr("api.services.deployment_modes.project_permits", _permits)
 
-    candidate = {"id": 1, "source_project": "elsewhere", "name": "n", "description": "d"}
-    if status is not None:
-        candidate["status"] = status
+
+@pytest.mark.parametrize(
+    "scope",
+    ["project", "Global", "GLOBAL", " global ", "banana", "", None],
+    ids=["project", "title-case", "upper-case", "padded", "unknown", "empty", "null"],
+)
+def test_only_the_exact_scope_global_is_exempt_from_the_candidate_narrowing(monkeypatch, scope):
+    """The exemption is an allow-list, and it is asserted against values that do not exist yet.
+
+    It began life as M2 about `status`, and the *shape* of the protection is why it survived
+    the finding that replaced it: mutating `== "approved"` to `!= "pending"` once passed the
+    entire suite because the two were behaviourally identical for the statuses in force. The
+    same is true now of `== "global"` against `!= "project"`, so the same allow-list reasoning
+    applies to the column that replaced it - whoever adds a third scope is exactly the person a
+    passing suite would fail to warn.
+
+    Every row carries `status="approved"`, which is the point: until sp65 the status was the
+    exemption, so each of these would have travelled.
+    """
+    from api.services import skills_service
+
+    _only_the_exemption_can_let_it_through(monkeypatch)
+    candidate = {"id": 1, "source_project": "elsewhere", "status": "approved",
+                 "name": "n", "description": "d"}
+    if scope is not None:
+        candidate["scope"] = scope
 
     assert skills_service._candidates_that_may_travel("proposer", [candidate]) == []
 
 
-def test_a_candidate_that_is_approved_is_exempt(monkeypatch):
-    """The control on the parametrised test above.
+def test_an_approved_candidate_scoped_to_one_engagement_is_not_exempt(monkeypatch):
+    """C1, as a unit. The exemption this branch falsified and had not yet carried into code.
 
-    Without it, a narrowing that withheld every candidate regardless of status would pass all
-    seven cases and end deduplication against the library.
+    `status='approved'` was the spelling of "applies everywhere", and it stopped being that the
+    moment a skill had a scope. An approved rule scoped to one engagement is withheld from
+    every *other* engagement's prompt by `_skill_applies_here` - and used to travel anyway
+    inside a deduplication payload routed on some unrelated project that happens to be granted
+    hosted inference. A sensitive engagement's material off the premises, through the one door
+    the scope filter does not stand in front of.
+
+    Stated positively so it cannot be satisfied by the parametrised test above: the status here
+    is the one that used to buy the exemption, and the only thing refusing it now is the scope.
     """
     from api.services import skills_service
-    from api.services.deployment_modes import Capability
 
-    def _permits(slug, capability):
-        assert capability is Capability.HOSTED_INFERENCE
-        return slug == "proposer"
-
-    monkeypatch.setattr("api.services.deployment_modes.project_permits", _permits)
-
+    _only_the_exemption_can_let_it_through(monkeypatch)
     candidate = {"id": 1, "source_project": "elsewhere", "status": "approved",
-                 "name": "n", "description": "d"}
+                 "scope": "project", "name": "n", "description": "d"}
+
+    assert skills_service._candidates_that_may_travel("proposer", [candidate]) == []
+
+
+def test_a_candidate_that_applies_everywhere_is_exempt(monkeypatch):
+    """The control on both tests above.
+
+    Without it a narrowing that withheld every candidate regardless of scope would pass all
+    eight cases and end deduplication against the library - the fifty-three rows the migration
+    affirmed global are exactly the ones a proposal is most usefully compared against.
+    """
+    from api.services import skills_service
+
+    _only_the_exemption_can_let_it_through(monkeypatch)
+    candidate = {"id": 1, "source_project": "elsewhere", "status": "approved",
+                 "scope": "global", "name": "n", "description": "d"}
+
+    assert skills_service._candidates_that_may_travel("proposer", [candidate]) == [candidate]
+
+
+def test_a_global_candidate_travels_before_a_human_has_ruled_on_it(monkeypatch):
+    """The status really is irrelevant here now, rather than merely unread.
+
+    A `pending` global row is not published either, so it could have been argued the other way.
+    It is not: the exemption asks what makes the material *already shared with hosted models*,
+    and a rule a reviewer has marked as applying to every engagement is about how the agent
+    writes rather than about one client - which is the same test `list_skills` turns on. Stated
+    as an assertion so that "scope alone decides" is a property rather than an implementation
+    detail somebody restores a status test beside.
+    """
+    from api.services import skills_service
+
+    _only_the_exemption_can_let_it_through(monkeypatch)
+    candidate = {"id": 1, "source_project": "elsewhere", "status": "pending",
+                 "scope": "global", "name": "n", "description": "d"}
 
     assert skills_service._candidates_that_may_travel("proposer", [candidate]) == [candidate]

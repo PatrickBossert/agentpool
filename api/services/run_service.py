@@ -130,6 +130,15 @@ def _skill_applies_here(slug: str, skill: dict) -> bool:
     whole column exists to stop being automatic. `scope` missing from the row entirely (a
     hand-built fixture, a caller reading a table older than this column) falls the same way.
 
+    **The slug comparison is exact, and case-sensitively so.** Whitespace is stripped on both
+    sides, because that only ever collapses two spellings onto the *same* engagement; case is
+    not folded, so a rule filed on `proj-a` does not reach a run on `PROJ-A`. That direction
+    is deliberate and it is the safe one - the failure is a rule that does not appear, not a
+    rule that appears somewhere nobody chose - and it costs nothing in practice, since a slug
+    is generated lower-case and both sides of this comparison come from the same column
+    family. Said here because "compared exactly" is invisible in the expression below, and a
+    reader who assumed normalisation would be wrong in the direction that matters.
+
     Nothing is logged when a skill is withheld. A project-scoped rule not appearing on another
     engagement is the designed, overwhelmingly common case rather than a surprise worth
     explaining, and a line per skill per agent per run would bury anything worth reading.
