@@ -503,4 +503,11 @@ CREW_DISPATCH_READS: tuple[Read, ...] = (
         "value levers a reviewer sent back to the Value Lever Analyst rather than to another "
         "reviewer, by lever id",
     ),
+    Read(
+        "item_reviews",
+        Medium.DATABASE_TABLE,
+        VIA_DISPATCH,
+        "the note that came with each node or lever send-back, in the reviewer's own words - "
+        "the `script_reviews` of the two ledgers above",
+    ),
 )

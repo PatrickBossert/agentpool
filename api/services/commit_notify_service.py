@@ -194,6 +194,34 @@ async def notify_script_sent_back(
     )
 
 
+async def notify_item_sent_back(
+    slug: str, kind: str, item_id: str, return_to: str, notes: str
+) -> None:
+    """Tell the right audience that one value chain node or one value lever was sent back.
+
+    The same audience and the same reasoning as `notify_script_sent_back` above, and written
+    beside it rather than inside it because the subject line names what the item is: "value
+    chain node 3.3.3" and "value lever LV-001" are what a reviewer recognises, and a shared
+    function would have had to say "item" to both of them.
+
+    A send-back to the agent notifies reviewers, because the agent will regenerate it and
+    they will need to read it again; a send-back to reviewers notifies reviewers because they
+    are the people it was sent to. The audience is the same either way.
+
+    Never raises - `_notify` swallows its own body, and the caller defends locally as well.
+    """
+    label = {"node": "value chain node", "lever": "value lever"}.get(kind, kind)
+    sent = f"{item_id} has been sent back to the {return_to}."
+    await _notify(
+        slug, item_id,
+        flags=("is_reviewer",),
+        fallback_flags=("is_approver",),
+        subject=f"{slug}: {label} {item_id} was sent back",
+        intro=f"{sent} Note: {notes}" if notes else sent,
+        audience_label="reviewers",
+    )
+
+
 async def notify_crew_failed(
     slug: str, crew_name: str, *, triggered_by: str | None
 ) -> None:

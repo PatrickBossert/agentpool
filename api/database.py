@@ -1282,6 +1282,54 @@ async def _migrate_item_ledger_reviewed_at_version(conn: aiosqlite.Connection) -
     await conn.commit()
 
 
+async def _migrate_item_reviews(conn: aiosqlite.Connection) -> None:
+    """One row per review event on one value chain node or one value lever.
+
+    The third table of the shape script_reviews already has, and it exists for the reason
+    that one does: "reviewed several times by different people, approved once" is a history
+    plus a current state, and collapsing them loses who said what. The ledger row carries the
+    derived state; this carries the events. Nothing here is ever updated or deleted.
+
+    **One table with item_kind, not one table per ledger.** A node id and a lever id are
+    different namespaces - 3.3.3 and LV-001 - so a shared table needs the kind to keep them
+    apart, and it is stored rather than inferred from the id's shape. Two tables would be two
+    copies of one recorder, and CLAUDE.md records what happens to a rule that exists twice:
+    register_scripts_sync and scripts_awaiting_regeneration already hold one condition in two
+    places and have already diverged. item_kind is the discriminator record_item_review
+    validates against its own ITEM_LEDGERS map, so an unknown kind is refused at the door
+    rather than stored and read back by nothing.
+
+    notes is what discovery_review_service joins onto the awaiting-the-agent query - the
+    reviewer's own words, carried into the next discovery_mapping run beside the id. Before
+    this table existed that SELECT had nowhere to join a note from and said so.
+
+    at_version records the last_version the item was AT when the review was recorded, the
+    same fact the ledger's reviewed_at_version carries for the most recent one. Kept on the
+    event too because the ledger holds only the latest and the history is what says a
+    reviewer read v3 and another read v7.
+
+    CREATE TABLE IF NOT EXISTS and no PRAGMA guard: this creates its own table and names no
+    other, so there is nothing here that can raise on a hand-built database and nothing to
+    skip. The two migrations above guard because they ALTER tables that may be absent.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS item_reviews (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            item_kind   TEXT    NOT NULL,
+            item_id     TEXT    NOT NULL,
+            reviewer    TEXT    NOT NULL DEFAULT '',
+            decision    TEXT    NOT NULL,
+            notes       TEXT    NOT NULL DEFAULT '',
+            at_version  INTEGER,
+            return_to   TEXT,
+            forced      INTEGER NOT NULL DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
 async def _migrate_blocked_writes(conn: aiosqlite.Connection) -> None:
     """Writes an agent attempted and was not permitted to make.
 
@@ -2068,7 +2116,12 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # with no bump at all and only the databases already opened at 19 are left behind.
 # tests/test_discovery_revision_injection.py::test_a_database_at_version_19_gains_reviewed_at_
 # version_on_both_ledgers fails on 19 and passes on 20.
-_SCHEMA_VERSION = 20
+#
+# 20 -> 21 adds `_migrate_item_reviews`, the review *event* table for nodes and levers - the
+# recorder the two ledgers were waiting for, and what puts the reviewer's note into the next
+# run's prompt. tests/test_item_reviews.py::test_a_database_at_version_20_gains_the_item_
+# reviews_table fails on 20 and passes on 21.
+_SCHEMA_VERSION = 21
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -2179,6 +2232,7 @@ async def get_connection(slug: str):
             await _migrate_value_chain_ledger(conn)
             await _migrate_value_lever_ledger(conn)
             await _migrate_item_ledger_reviewed_at_version(conn)
+            await _migrate_item_reviews(conn)
             await _migrate_interview_sessions_script_id(conn)
             await _migrate_interview_sessions_interviewer(conn)
             await _migrate_stakeholder_roles(conn)

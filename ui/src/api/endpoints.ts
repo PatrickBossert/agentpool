@@ -204,6 +204,25 @@ export const projectsApi = {
                  body: { decision: string; notes?: string; return_to?: string }) =>
     apiClient.post(`/projects/${slug}/script-ledger/${scriptId}/review`, body).then((r) => r.data),
 
+  // The two per-item review ledgers `discovery_mapping` runs on. Four functions and not two
+  // parameterised on a kind: the kind reaches the server as part of the *path*, and a single
+  // `reviewItem(kind, ...)` would put the two paths behind one call that a test can drive
+  // once and believe it has covered both. ItemReviewClient.test.ts asserts the URL each of
+  // these actually hands the transport.
+  getNodeLedger: (slug: string): Promise<import('../types').NodeLedgerRow[]> =>
+    apiClient.get(`/projects/${slug}/node-ledger`).then((r) => r.data),
+
+  getLeverLedger: (slug: string): Promise<import('../types').LeverLedgerRow[]> =>
+    apiClient.get(`/projects/${slug}/lever-ledger`).then((r) => r.data),
+
+  reviewNode: (slug: string, nodeId: string,
+               body: { decision: string; notes?: string; return_to?: string }) =>
+    apiClient.post(`/projects/${slug}/node-ledger/${nodeId}/review`, body).then((r) => r.data),
+
+  reviewLever: (slug: string, leverId: string,
+                body: { decision: string; notes?: string; return_to?: string }) =>
+    apiClient.post(`/projects/${slug}/lever-ledger/${leverId}/review`, body).then((r) => r.data),
+
   // Carries base_version so the server can refuse a save made against a version someone
   // else has already superseded - see PATCH /interview-scripts/{script_id}'s 409.
   patchInterviewScript: (slug: string, scriptId: string,

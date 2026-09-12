@@ -348,6 +348,7 @@ async def _pending_discovery_revisions(slug: str, agent_name: str) -> str:
                 return ""
             lines = "\n".join(
                 f"- {p['node_id']} ({p['level'] or 'level unrecorded'}): {p['label']}"
+                + (f" - {p['notes']}" if p.get("notes") else "")
                 for p in pending
             )
             return (
@@ -360,7 +361,9 @@ async def _pending_discovery_revisions(slug: str, agent_name: str) -> str:
         if not pending:
             return ""
         lines = "\n".join(
-            f"- {p['lever_id']} ({p['status']}): {p['title']}" for p in pending
+            f"- {p['lever_id']} ({p['status']}): {p['title']}"
+            + (f" - {p['notes']}" if p.get("notes") else "")
+            for p in pending
         )
         return (
             "VALUE LEVERS SENT BACK FOR REVISION. A reviewer disagreed with each of these "
