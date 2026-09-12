@@ -2314,12 +2314,21 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   to another project" is built only for comparisons that leave the deployment.**
   `_candidates_that_may_travel` withholds a `project`-scoped candidate from any payload going
   off-premises, which closes the disclosure; `_rules_already_held`, which assembles the list in
-  the first place, still reads `_DEDUP_STATUSES` and never looks at `scope`. So on a deployment
-  where every engagement is `standard`, one client's approved rule is still *compared against*
-  another's. That is a separation the spec asked for rather than a leak - the comparison happens
-  inside the trust boundary the deployment already accepts for both projects - but it is not
-  what the design says, and the fix belongs in `_rules_already_held` rather than in the egress
-  narrowing, which is answering a different question.
+  the first place, still reads `_DEDUP_STATUSES` and never looks at `scope`.
+
+  **Two corrections to the obvious reading of that, both driven rather than reasoned.** It is
+  **not** confined to an all-`standard` deployment: `_candidates_that_may_travel` returns early
+  when the *proposer* lacks `HOSTED_INFERENCE`, so a `sensitive` engagement is compared against
+  other clients' narrow rules **on its own model** - nothing leaves, and the separation is still
+  absent. And *compared against* does not mean nothing comes back: on a match `propose_skill`
+  answers `held["name"]`, which for an auto-named row is the first five words of the other
+  engagement's rule, into `PATCH /reviews/{id}`'s `skill_proposal.name`. That is latent rather
+  than live - `_describe` drops it and no UI reads it - and it is pre-existing, but a follow-up
+  scoped from the shorter description would fix the wrong half.
+
+  It remains a separation the spec asked for rather than a leak: the comparison happens inside a
+  trust boundary the deployment already accepts for both projects. The fix belongs in
+  `_rules_already_held`, not in the egress narrowing, which answers a different question.
   (The two exemptions that read `status='approved'` as "applies everywhere" **are** closed -
   see *One mechanism* above. They were on this list for a whole branch first.)
 - `_fetch_skill_notes` in `run_service.py` **fetches no notes** - the mechanism it was named for
