@@ -155,6 +155,11 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
     ),
     "value_lever_analyst": (
         _artefact(
+            "value_levers",
+            "her own, for the lever_ids already on record - a lever she restates or rewords "
+            "keeps the id it already has, and she cannot honour that without reading it",
+        ),
+        _artefact(
             "value_chain_model",
             "so each lever can name the activities it bears on; she leaves the references empty "
             "rather than inventing ids if it is not written yet",

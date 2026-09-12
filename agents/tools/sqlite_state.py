@@ -13,8 +13,10 @@ from agents.tools._db import (
     record_blocked_write_sync,
     record_run_input_sync,
     record_validation_warnings_sync,
+    register_levers_sync,
     register_nodes_sync,
     register_scripts_sync,
+    levers_without_ids,
     _output_version_sync,
 )
 from agents.tools.ownership import OUTPUT_OWNERS, check_write
@@ -485,6 +487,44 @@ class SQLiteStateTool(BaseTool):
                         "this registry is unregistered, so a later write could re-anchor "
                         "one unrefused. Write it again."
                     )
+
+            if key == "value_levers" and isinstance(parsed, list):
+                # A list, not a dict - value_levers is a JSON array, which is also why it
+                # has no _VALIDATORS entry (that map refuses anything that is not a dict).
+                # One door only: SQLiteStateTool is the sole writer of this key, unlike
+                # value_chain_registry's two.
+                try:
+                    register_levers_sync(
+                        self.slug,
+                        parsed,
+                        _output_version_sync(self.slug, new_output_id),
+                        identity,
+                    )
+                except Exception as e:
+                    # Never fail a durable write over the ledger, and never lose it
+                    # silently. register_levers_sync commits once for the whole call, so
+                    # one entry it cannot bind discards its batchmates' registrations too -
+                    # hence "every lever in this write" rather than naming one id.
+                    registration_note = (
+                        f" — WARNING: the lever ledger was not updated ({e}). Every lever "
+                        "in this write is unregistered, so a later write could re-anchor "
+                        "one unrefused. Write it again."
+                    )
+                else:
+                    # Registration is impossible without an id, and an agent that omits one
+                    # must hear so in the run that omitted it. Reported after a successful
+                    # call rather than instead of one: the levers that DO carry ids are
+                    # registered, and this names only what was left out.
+                    unidentified = levers_without_ids(parsed)
+                    if unidentified:
+                        positions = ", ".join(str(p) for p in unidentified)
+                        registration_note = (
+                            f" — WARNING: {len(unidentified)} lever(s) carry no 'lever_id' "
+                            f"(position {positions} in the array) and are unregistered, so "
+                            "review state cannot be kept for them. Write them again, each "
+                            "with the lever_id it already had, or the next unused LV-nnn "
+                            "for a genuinely new lever."
+                        )
 
             if key == "interview_scripts" and isinstance(parsed, dict):
                 # Registration is a side effect of the write, exactly as

@@ -1177,6 +1177,69 @@ async def _migrate_value_chain_ledger(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_value_lever_ledger(conn: aiosqlite.Connection) -> None:
+    """Create the value lever ledger if it does not exist.
+
+    The third ledger of the same shape, after interview_script_ledger and
+    value_chain_ledger, and it exists for the reason the other two do: review state cannot
+    hang off something regeneration is free to change. A script has SC-014 and a node has
+    3.3.3; a lever had nothing at all. `value_levers` is a JSON list whose only identifying
+    field is `lever` - a full sentence - and Morgan rewords every one of them on every run.
+    Across five live versions on sp-gs-am, v3 -> v4 reordered the same ten titles and v4 ->
+    v5 reworded all ten, so neither position nor title survives a regeneration, and the two
+    together do not either.
+
+    lever_id is the PRIMARY KEY for the same reason node_id is: one id means one lever for
+    the life of the project, enforced by the database rather than by an instruction an agent
+    must remember.
+
+    title is NOT NULL with no default, exactly as value_chain_ledger.label is, and
+    register_levers_sync binds it straight through so a null one raises rather than being
+    coerced to ''. A lever's title is what its id MEANS - it is what a reviewer reads when
+    deciding whether LV-003 is the one they want sent back.
+
+    status is the lever's own hypothesis state - untested, contradicted, confirmed_prompted,
+    confirmed_unprompted - and is NOT the review state. The two are deliberately separate
+    columns: the interviews decide the first and a human decides the second, and collapsing
+    them would let an interview overwrite a reviewer. It is the one field a later write may
+    move, which is the same carve-out `active` has on value_chain_ledger and for the same
+    reason: 'the interviews decided this hypothesis was contradicted' neither redefines the
+    id nor drops it.
+
+    **No `active` column, deliberately.** The design's DDL for this table does not name one,
+    nothing Morgan writes carries one, and nothing would read it - the speculative half of
+    mirroring, which Task 1 declined for `reviewed_at_version` on exactly this reasoning. A
+    row is never deleted, so "may never forget" holds by construction; what is not
+    expressible yet is retiring a lever Morgan has dropped from a later version. That is a
+    column plus a `_SCHEMA_VERSION` bump for whichever task builds the review surface and
+    knows what it wants to show.
+
+    PRAGMA table_info first, and an early return rather than a raise, for the reason
+    _migrate_value_chain_ledger gives: a migration that raises takes every later migration in
+    the block down with it, and "skip myself" must be the shape of the function rather than a
+    property of its current body.
+    """
+    async with conn.execute("PRAGMA table_info(value_lever_ledger)") as cur:
+        existing = [row async for row in cur]
+    if existing:
+        return
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS value_lever_ledger (
+            lever_id          TEXT PRIMARY KEY,
+            project_id        INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            title             TEXT NOT NULL,
+            status            TEXT NOT NULL DEFAULT 'untested',
+            review_status     TEXT NOT NULL DEFAULT 'pending',
+            review_return_to  TEXT,
+            last_version      INTEGER,
+            last_author       TEXT NOT NULL DEFAULT '',
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
 async def _migrate_blocked_writes(conn: aiosqlite.Connection) -> None:
     """Writes an agent attempted and was not permitted to make.
 
@@ -1938,7 +2001,9 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_interviewer_selection.py::test_a_database_at_version_16_gains_the_interviewer_
 # column, which fails on 16 and passes on 17; and
 # tests/test_value_chain_ledger.py::test_a_database_at_version_17_gains_the_value_chain_ledger,
-# which fails on 17 and passes on 18.
+# which fails on 17 and passes on 18; and
+# tests/test_value_lever_ledger.py::test_a_database_at_version_18_gains_the_value_lever_ledger,
+# which fails on 18 and passes on 19.
 #
 # Note that 15 -> 16 adds a column to an *existing* migration rather than a new function, which
 # the comment above already covers and which is the easier bump to forget: the migration is
@@ -1951,7 +2016,9 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # which is what "take the newer number" looks like - would have left the ledger migration in the
 # block below with no bump covering it, so it would never have run on any database already
 # opened at 17. Every existing deployment, unmigrated for ever, with nothing raised.
-_SCHEMA_VERSION = 18
+#
+# 18 -> 19 adds `_migrate_value_lever_ledger`, the lever half of the same review loop.
+_SCHEMA_VERSION = 19
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -2060,6 +2127,7 @@ async def get_connection(slug: str):
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
             await _migrate_value_chain_ledger(conn)
+            await _migrate_value_lever_ledger(conn)
             await _migrate_interview_sessions_script_id(conn)
             await _migrate_interview_sessions_interviewer(conn)
             await _migrate_stakeholder_roles(conn)

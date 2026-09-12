@@ -750,6 +750,164 @@ def register_nodes_sync(
     return added
 
 
+def current_lever_ledger_sync(slug: str) -> dict:
+    """The value lever ledger in force, keyed by lever id.
+
+    A mapping rather than a list for the reason current_node_ledger_sync gives: every
+    consumer asks "what does the ledger hold for this id", and a list makes each of them
+    build the same index.
+    """
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        rows = conn.execute(
+            "SELECT lever_id, title, status, review_status, review_return_to,"
+            "       last_version, last_author"
+            "  FROM value_lever_ledger"
+        ).fetchall()
+    return {
+        r[0]: {
+            "lever_id": r[0],
+            "title": r[1],
+            "status": r[2],
+            "review_status": r[3],
+            "review_return_to": r[4],
+            "last_version": r[5],
+            "last_author": r[6],
+        }
+        for r in rows
+    }
+
+
+def _usable_lever_id(lever: object) -> str | None:
+    """The lever_id this entry carries, or None when it carries none worth registering.
+
+    One definition, used by both the registration below and the door's "these levers have
+    no id" note, so the two can never disagree about what counts as an id. Whitespace is
+    stripped because ' LV-001' and 'LV-001' are the same lever to every human who reads
+    them and two different primary keys to SQLite - which is the one way this table could
+    still end up holding one lever twice.
+    """
+    if not isinstance(lever, dict):
+        return None
+    lever_id = lever.get("lever_id")
+    if not isinstance(lever_id, str):
+        return None
+    lever_id = lever_id.strip()
+    return lever_id or None
+
+
+def levers_without_ids(levers: list) -> list[int]:
+    """The 1-based positions of levers carrying no usable lever_id.
+
+    Positions rather than titles: the whole point of this task is that a title does not
+    identify a lever, so naming one in the message that says "this has no identity" would
+    be using the thing being replaced. A position is at least unambiguous within the one
+    artefact the agent has in front of it.
+    """
+    return [
+        index
+        for index, lever in enumerate(levers or [], start=1)
+        if _usable_lever_id(lever) is None
+    ]
+
+
+def register_levers_sync(
+    slug: str, levers: list, version: int, author: str
+) -> int:
+    """Register any value lever id not already held. Returns how many were added.
+
+    The third of these, after register_scripts_sync and register_nodes_sync, and the
+    reasoning transfers whole: the ledger may grow and may retire, but may never redefine
+    or forget. What is different about levers is that they had no id at all. `value_levers`
+    is a list of ten objects keyed on `lever`, a full sentence, and across the five live
+    versions on sp-gs-am v3 -> v4 reordered the same ten titles while v4 -> v5 reworded
+    every one of them. A reviewer sends back a lever, Morgan rephrases the title while
+    addressing the note, and review state keyed on either the title or the position no
+    longer matches anything.
+
+    ON CONFLICT(lever_id) DO NOTHING, never UPDATE of the anchor, and never INSERT OR
+    IGNORE - the clause register_scripts_sync sets out at length. INSERT OR IGNORE swallows
+    every constraint violation on the row rather than only the key conflict it is reached
+    for, so a lever whose title is null, or a dict, or anything else sqlite3 will not bind
+    to TEXT, hits title's NOT NULL or fails to bind and is dropped from the whole batch with
+    no error, no row, and no signal to the caller - after which the next write finds the id
+    unregistered and free to hand to a different lever.
+
+    title is bound straight through rather than coalesced to '', so that raise is the
+    wanted outcome rather than a last resort. A lever with no title is a defect in the
+    artefact, not a row worth storing empty: the title is the only thing that tells a
+    reviewer which hypothesis LV-003 is.
+
+    One commit for the whole call. A batch where one entry cannot bind registers none of
+    the others either, because nothing before the failing row was ever committed - so the
+    caller must report the whole write as unregistered rather than naming the one id that
+    raised.
+
+    A title is not an anchor, and the rules differ accordingly. An id already held keeps
+    the title it carries; an empty held title is filled rather than restated. That
+    asymmetry is what lets the backfill register a row and a later real write give it its
+    wording, while stopping a regeneration from rewriting the ledger as a side effect of
+    running - which, given Morgan rewords everything every run, it otherwise would.
+
+    status is the one field a later write may move. It is the lever's own hypothesis state
+    (untested until the interviews decide it), not its review state, and an interview
+    deciding a lever was contradicted neither redefines the id nor drops it. An entry that
+    does not name status leaves the held value alone; that is a different thing from naming
+    it, and only a row whose held status is not the incoming one can tell the two apart.
+
+    An entry with no usable lever_id is skipped rather than raised on, exactly as
+    register_nodes_sync skips an entry with no id: a ledger write is not the place to
+    re-adjudicate the artefact's shape, and raising would cost the whole batch over an
+    entry nothing can register anyway. It is not silent - levers_without_ids above is what
+    the door reports to the agent in the same run.
+
+    last_version and last_author are stamped on every id the call names, fresh or held.
+
+    A slug with no database file is refused before the connection is opened, not after:
+    sqlite3.connect creates the file it is pointed at, so a projects-row check alone
+    answers "Project not found" having just materialised an empty database for the slug it
+    is denying.
+    """
+    if not Path(_db_path(slug)).exists():
+        raise ValueError(f"Project not found: {slug}")
+    with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
+        row = conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            raise ValueError(f"Project not found: {slug}")
+        project_id = row[0]
+        added = 0
+        for lever in levers or []:
+            lever_id = _usable_lever_id(lever)
+            if lever_id is None:
+                continue
+            title = lever.get("lever")
+            # None when the entry does not name status at all, which is distinct from
+            # naming it - the first leaves the held value alone.
+            status_value = lever.get("status")
+            cur = conn.execute(
+                "INSERT INTO value_lever_ledger"
+                " (lever_id, project_id, title, last_version, last_author)"
+                " VALUES (?,?,?,?,?)"
+                " ON CONFLICT(lever_id) DO NOTHING",
+                (lever_id, project_id, title, version, author),
+            )
+            added += cur.rowcount
+            conn.execute(
+                "UPDATE value_lever_ledger"
+                "   SET title=CASE WHEN COALESCE(title,'')='' THEN ? ELSE title END,"
+                "       last_version=?, last_author=?, updated_at=CURRENT_TIMESTAMP"
+                " WHERE lever_id=?",
+                (title or "", version, author, lever_id),
+            )
+            if status_value is not None:
+                conn.execute(
+                    "UPDATE value_lever_ledger"
+                    "   SET status=?, updated_at=CURRENT_TIMESTAMP WHERE lever_id=?",
+                    (status_value, lever_id),
+                )
+        conn.commit()
+    return added
+
+
 def _output_version_sync(slug: str, output_id: int) -> int:
     """The version of one agent_outputs row, or 0 if it has gone."""
     with contextlib.closing(sqlite3.connect(_db_path(slug))) as conn:
