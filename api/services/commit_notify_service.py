@@ -29,6 +29,28 @@ from api.services.platform_settings import platform_public_url
 
 log = logging.getLogger(__name__)
 
+# The crew whose Output tab renders each per-item review ledger.
+#
+# **This is what the emailed link must name, and it is not the item.** `_notify`'s second
+# positional argument goes into `?crew=` and `Dashboard.tsx` seeds the selected crew from it,
+# so both send-back notifiers used to mail `?crew=SC-014` and `?crew=3.3.3` - a reviewer told
+# a script had been sent back landed on a crew that does not exist, one click away from the
+# ledger they were notified about and with no way to tell they were on the wrong page. It
+# survived because both tests of the notifier patched the notifier out, so the line that
+# builds the link had never run. A mock is the right tool for "did we notify?" and it is
+# exactly why nobody had run it.
+#
+# Declared here and held against `OUTPUT_OWNERS` and `_CREW_AGENT_NAMES` by
+# tests/test_send_back_notifications.py, which derives the expected value rather than
+# restating it - so a ledger whose agent moves to another crew fails there instead of
+# quietly mailing a dead link. Keyed on the ledger, not on the agent: `discovery_mapping`
+# holds two agents and both of its ledgers render on the one tab.
+LEDGER_CREW: dict[str, str] = {
+    "script": "assessment_design",
+    "node": "discovery_mapping",
+    "lever": "discovery_mapping",
+}
+
 
 async def _notify(
     slug: str, crew_name: str, *, flags: tuple[str, ...], subject: str, intro: str,
@@ -95,7 +117,13 @@ async def _notify(
             subject=subject, body="\n".join(lines),
         )
     except Exception:
-        log.exception("could not notify %s about %s", audience_label, crew_name)
+        # The subject is logged as well as the crew, because since the send-back notifiers
+        # started passing a crew rather than an item id - which is the fix that stopped the
+        # link pointing at `?crew=SC-014` - the crew alone no longer says which thing failed
+        # to be announced. The subject names it.
+        log.exception(
+            "could not notify %s about %s (%s)", audience_label, crew_name, subject
+        )
 
 
 async def notify_crew_ready_for_approval(slug: str, crew_name: str) -> None:
@@ -182,14 +210,52 @@ async def notify_script_sent_back(
     deliberately: a project whose governing stakeholders are all approvers and none
     reviewers would otherwise hear nothing. The reverse fallback is not applied anywhere,
     because with no approvers there is genuinely nobody who can approve.
+
+    The crew is `LEDGER_CREW["script"]` and not `script_id`. The script id belongs in the
+    subject and the intro, which is where it is; putting it where the link's `?crew=` is
+    built sent every one of these notifications to a crew that does not exist.
     """
     await _notify(
-        slug, script_id,
+        slug, LEDGER_CREW["script"],
         flags=("is_reviewer",),
         fallback_flags=("is_approver",),
         subject=f"{slug}: interview script {script_id} was sent back",
         intro=(f"{script_id} has been sent back to the {return_to}. "
                f"Note: {notes}" if notes else f"{script_id} has been sent back to the {return_to}."),
+        audience_label="reviewers",
+    )
+
+
+async def notify_item_sent_back(
+    slug: str, kind: str, item_id: str, return_to: str, notes: str
+) -> None:
+    """Tell the right audience that one value chain node or one value lever was sent back.
+
+    The same audience and the same reasoning as `notify_script_sent_back` above, and written
+    beside it rather than inside it because the subject line names what the item is: "value
+    chain node 3.3.3" and "value lever LV-001" are what a reviewer recognises, and a shared
+    function would have had to say "item" to both of them.
+
+    A send-back to the agent notifies reviewers, because the agent will regenerate it and
+    they will need to read it again; a send-back to reviewers notifies reviewers because they
+    are the people it was sent to. The audience is the same either way.
+
+    Never raises - `_notify` swallows its own body, and the caller defends locally as well.
+
+    The crew comes from `LEDGER_CREW`, so the link lands on the tab that renders the ledger.
+    An unrecognised kind falls back to `discovery_mapping` rather than to `item_id`: both are
+    wrong, and one of them is wrong in the way that produced `?crew=3.3.3`. The kind is
+    refused long before this by `record_item_review`, so the fallback is defence and not a
+    live path.
+    """
+    label = {"node": "value chain node", "lever": "value lever"}.get(kind, kind)
+    sent = f"{item_id} has been sent back to the {return_to}."
+    await _notify(
+        slug, LEDGER_CREW.get(kind, "discovery_mapping"),
+        flags=("is_reviewer",),
+        fallback_flags=("is_approver",),
+        subject=f"{slug}: {label} {item_id} was sent back",
+        intro=f"{sent} Note: {notes}" if notes else sent,
         audience_label="reviewers",
     )
 

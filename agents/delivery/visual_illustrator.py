@@ -129,6 +129,7 @@ def create_visual_illustrator_task(
             '     "sector": "<sector>",\n'
             '     "briefs": [\n'
             "       {\n"
+            '         "id": "IB-001",\n'
             '         "type": "vision|value_proposition_vignette|architecture_schematic'
             '|roadmap|operating_model_change|future_state",\n'
             '         "title": "descriptive title (e.g. \'Property Value Chain Vision\')",\n'
@@ -138,6 +139,11 @@ def create_visual_illustrator_task(
             "       }\n"
             "     ]\n"
             "   }\n"
+            "   `id` identifies the brief itself - IB-001, IB-002, sequential across the "
+            "whole set and not restarted per type. It is not `reference_id`, which names "
+            "something in another artefact: a brief about VP-001 is still a brief with its "
+            "own name. A brief that is regenerated keeps the id it already had, so a "
+            "reviewer who asked for IB-004 to be redrawn gets IB-004 back.\n"
             "8. Use SQLiteStateTool with operation='write', key='illustration_briefs', "
             "agent_name='visual_illustrator' to save the JSON object. This writes the file "
             "to outputs/ and records it as the current version - there is no second step.\n"

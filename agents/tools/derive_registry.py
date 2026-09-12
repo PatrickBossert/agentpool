@@ -11,7 +11,12 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 from api.config import get_settings
-from agents.tools._db import current_output_path, insert_agent_output_sync
+from agents.tools._db import (
+    _output_version_sync,
+    current_output_path,
+    insert_agent_output_sync,
+    register_nodes_sync,
+)
 
 _REGISTRY_STEM = "value_chain_registry"
 
@@ -156,7 +161,7 @@ class DeriveRegistryTool(BaseTool):
 
         try:
             registry_path.write_text(json.dumps(registry, indent=2))
-            insert_agent_output_sync(
+            output_id = insert_agent_output_sync(
                 slug=self.slug,
                 agent_name=agent_name,
                 # Not "state". This tool and SQLiteStateTool both write the
@@ -170,6 +175,33 @@ class DeriveRegistryTool(BaseTool):
         except (OSError, ValueError) as e:
             return f"Error: failed to write registry — {e}"
 
+        # Registration is a side effect of the write, exactly as insert_agent_output_sync
+        # maintains is_current and register_scripts_sync maintains the script ledger, and
+        # for the same reason: a correctness record whose maintenance is an agent's last
+        # instruction is a record that goes missing when a run stops early. Run 32 wrote
+        # 41 scripts, hit the iteration ceiling before its ledger write, and reported
+        # completed. Both doors onto value_chain_registry register, so neither depends on
+        # the other having run.
+        registration_note = ""
+        try:
+            register_nodes_sync(
+                self.slug,
+                new_activities,
+                _output_version_sync(self.slug, output_id),
+                agent_name,
+            )
+        except Exception as e:
+            # Never fail a durable write over the ledger - the file and its agent_outputs
+            # row are already committed, and telling the agent the write failed would make
+            # it derive again and version a duplicate. The loss must not be silent either,
+            # so it is named in the string CrewAI hands straight back to the agent, in the
+            # same run that caused it.
+            registration_note = (
+                f" — WARNING: the node ledger was not updated ({e}). Every id in this "
+                "registry is unregistered, so a later write could re-anchor one unrefused. "
+                "Derive again."
+            )
+
         active_count = sum(1 for a in new_activities if a.get("active", True))
         inactive_count = len(new_activities) - active_count
         msg = f"Registry derived from tree: {active_count} active activities"
@@ -178,4 +210,4 @@ class DeriveRegistryTool(BaseTool):
         # Report where the file actually landed — insert_agent_output_sync has
         # renamed it to a versioned path by this point.
         saved = _latest_registry(self.slug) or registry_path
-        return msg + f" — saved to {saved}"
+        return msg + f" — saved to {saved}" + registration_note

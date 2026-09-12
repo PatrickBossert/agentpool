@@ -155,6 +155,11 @@ AGENT_READS: dict[str, tuple[Read, ...]] = {
     ),
     "value_lever_analyst": (
         _artefact(
+            "value_levers",
+            "her own, for the lever_ids already on record - a lever she restates or rewords "
+            "keeps the id it already has, and she cannot honour that without reading it",
+        ),
+        _artefact(
             "value_chain_model",
             "so each lever can name the activities it bears on; she leaves the references empty "
             "rather than inventing ids if it is not written yet",
@@ -433,11 +438,18 @@ UNRESOLVABLE_READS: tuple[UnresolvableRead, ...] = (
 )
 
 
-# Read on every agent's behalf by `build_and_run_crew`, and prepended to every task description
-# in the crew before it starts. Declared once, and deliberately not folded into `AGENT_READS`:
-# it is a property of the dispatch path rather than of any agent, and `build_and_run_agent` - the
-# other dispatch, reachable from the API - performs none of it, so an agent run that way reads
-# none of this.
+# Read on an agent's behalf by `build_and_run_crew` before the crew starts. Declared once, and
+# deliberately not folded into `AGENT_READS`: it is a property of the dispatch path rather than
+# of any agent, and `build_and_run_agent` - the other dispatch, reachable from the API -
+# performs none of it, so an agent run that way reads none of this.
+#
+# **Not all of it reaches every task, and the difference is not visible from this list.** The
+# first three are gathered per crew and prepended to every task in it. The last four are
+# per-item ledgers gathered for one agent: the two script tables reach `assessment_design`,
+# which holds one agent anyway, and the two below them reach exactly one of `discovery_mapping`'s
+# two agents each - a node sent back to Alex is not Morgan's to answer. The row on the privacy
+# page is the same either way, because what an auditor is asking is which tables a crew run
+# reads, and the answer to that does not turn on which task the text landed on.
 CREW_DISPATCH_READS: tuple[Read, ...] = (
     # A second system table was declared here: a model's distillation of a reviewer's
     # rejection feedback, injected into every engagement's prompts with no approval step. The
@@ -476,5 +488,26 @@ CREW_DISPATCH_READS: tuple[Read, ...] = (
         Medium.DATABASE_TABLE,
         VIA_DISPATCH,
         "the note that came with each send-back",
+    ),
+    Read(
+        "value_chain_ledger",
+        Medium.DATABASE_TABLE,
+        VIA_DISPATCH,
+        "value chain nodes a reviewer sent back to the Value Chain Mapper rather than to "
+        "another reviewer, by node id",
+    ),
+    Read(
+        "value_lever_ledger",
+        Medium.DATABASE_TABLE,
+        VIA_DISPATCH,
+        "value levers a reviewer sent back to the Value Lever Analyst rather than to another "
+        "reviewer, by lever id",
+    ),
+    Read(
+        "item_reviews",
+        Medium.DATABASE_TABLE,
+        VIA_DISPATCH,
+        "the note that came with each node or lever send-back, in the reviewer's own words - "
+        "the `script_reviews` of the two ledgers above",
     ),
 )

@@ -31,6 +31,7 @@ import type { CrewRun, AgentOutput, HumanReview } from '../types'
 import StructureTab from './StructureTab'
 import { CrewAgentsTab } from './tabs/CrewAgentsTab'
 import AveryOutputExtra from './tabs/AveryOutputExtra'
+import DiscoveryReviewExtra from './tabs/DiscoveryReviewExtra'
 import JordanOutputExtra from './tabs/JordanOutputExtra'
 import LucaOutputExtra from './tabs/LucaOutputExtra'
 import MayaOutputExtra from './tabs/MayaOutputExtra'
@@ -106,6 +107,11 @@ export const CREW_STATUS_SECTION: Partial<Record<string, SlotFC>> = {
 // populated interview-sessions or scripts panel is wrong on its face.
 export const CREW_OUTPUT_EXTRA: Partial<Record<string, SlotFC>> = {
   assessment_design:      MayaOutputExtra,
+  // The node and lever review ledgers, rendered under StructureTab - which is this crew's
+  // registered CREW_OUTPUT_EDITOR, so discovery_mapping is the one crew with both. That is
+  // the correct pairing rather than a conflict: the editor is where the value chain is read
+  // and changed, and this is where a conclusion about one node or one lever is recorded.
+  discovery_mapping:      DiscoveryReviewExtra,
   discovery_interviews:   AveryOutputExtra,
   delivery:               LucaOutputExtra,
   // What participants wrote back. The correspondent owns the conversation - engagement mail

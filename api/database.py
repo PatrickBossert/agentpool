@@ -1121,6 +1121,215 @@ async def _migrate_script_reviews(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+async def _migrate_value_chain_ledger(conn: aiosqlite.Connection) -> None:
+    """Create the value chain node ledger if it does not exist.
+
+    The same table interview_script_ledger is, for the same reason, and the columns are
+    named the same where they mean the same thing so a reader who knows one does not have
+    to learn the other. Alex's value chain is a single artefact holding 89 activities, so
+    a reviewer who disagrees with node 3.3.3 has nothing to send back but the whole tree.
+    A node is a row here, with its own review state, exactly as a script is.
+
+    node_id is the PRIMARY KEY rather than an indexed column: "one id means one activity
+    for the life of the project" becomes a constraint the database enforces instead of a
+    rule an agent must honour. Rows are retired with active = 0 and never deleted - the
+    registry artefact already carries retired ids as active=false and every theme,
+    requirement and interview script anchored to one resolves through the id.
+
+    label is NOT NULL with no default, deliberately unlike interview_script_ledger's
+    node_label. A script's label is display text the ledger backfilled empty and fills in
+    later; a node's label IS the thing the id means, and register_nodes_sync binds it
+    straight through so a null one raises rather than being coerced to ''. See that
+    function for why a raise is the wanted outcome.
+
+    last_author is not in the design's DDL. It is here because register_nodes_sync's
+    signature takes an author, and a parameter with nowhere to land is a parameter that
+    silently does nothing.
+
+    PRAGMA table_info first, and an early return rather than a raise: a migration that
+    raises takes every later migration in the block down with it, and several test
+    fixtures build projects and its siblings by hand. There is nothing here that can
+    raise on a hand-built database - CREATE TABLE names no other table's columns and a
+    foreign key is not resolved at create time - but the check makes "skip myself" the
+    shape of this function rather than a property of its current body, and it says out
+    loud that a table already present in some other shape is left alone rather than
+    half-altered.
+    """
+    async with conn.execute("PRAGMA table_info(value_chain_ledger)") as cur:
+        existing = [row async for row in cur]
+    if existing:
+        return
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS value_chain_ledger (
+            node_id           TEXT PRIMARY KEY,
+            project_id        INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            label             TEXT NOT NULL,
+            level             TEXT,
+            active            INTEGER NOT NULL DEFAULT 1,
+            review_status     TEXT NOT NULL DEFAULT 'pending',
+            review_return_to  TEXT,
+            reviewed_at_version INTEGER,
+            last_version      INTEGER,
+            last_author       TEXT NOT NULL DEFAULT '',
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
+async def _migrate_value_lever_ledger(conn: aiosqlite.Connection) -> None:
+    """Create the value lever ledger if it does not exist.
+
+    The third ledger of the same shape, after interview_script_ledger and
+    value_chain_ledger, and it exists for the reason the other two do: review state cannot
+    hang off something regeneration is free to change. A script has SC-014 and a node has
+    3.3.3; a lever had nothing at all. `value_levers` is a JSON list whose only identifying
+    field is `lever` - a full sentence - and Morgan rewords every one of them on every run.
+    Across five live versions on sp-gs-am, v3 -> v4 reordered the same ten titles and v4 ->
+    v5 reworded all ten, so neither position nor title survives a regeneration, and the two
+    together do not either.
+
+    lever_id is the PRIMARY KEY for the same reason node_id is: one id means one lever for
+    the life of the project, enforced by the database rather than by an instruction an agent
+    must remember.
+
+    title is NOT NULL with no default, exactly as value_chain_ledger.label is, and
+    register_levers_sync binds it straight through so a null one raises rather than being
+    coerced to ''. A lever's title is what its id MEANS - it is what a reviewer reads when
+    deciding whether LV-003 is the one they want sent back.
+
+    status is the lever's own hypothesis state - untested, contradicted, confirmed_prompted,
+    confirmed_unprompted - and is NOT the review state. The two are deliberately separate
+    columns: the interviews decide the first and a human decides the second, and collapsing
+    them would let an interview overwrite a reviewer. It is the one field a later write may
+    move, which is the same carve-out `active` has on value_chain_ledger and for the same
+    reason: 'the interviews decided this hypothesis was contradicted' neither redefines the
+    id nor drops it.
+
+    **No `active` column, deliberately.** The design's DDL for this table does not name one,
+    nothing Morgan writes carries one, and nothing would read it - the speculative half of
+    mirroring, which Task 1 declined for `reviewed_at_version` on exactly this reasoning. A
+    row is never deleted, so "may never forget" holds by construction; what is not
+    expressible yet is retiring a lever Morgan has dropped from a later version. That is a
+    column plus a `_SCHEMA_VERSION` bump for whichever task builds the review surface and
+    knows what it wants to show.
+
+    PRAGMA table_info first, and an early return rather than a raise, for the reason
+    _migrate_value_chain_ledger gives: a migration that raises takes every later migration in
+    the block down with it, and "skip myself" must be the shape of the function rather than a
+    property of its current body.
+    """
+    async with conn.execute("PRAGMA table_info(value_lever_ledger)") as cur:
+        existing = [row async for row in cur]
+    if existing:
+        return
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS value_lever_ledger (
+            lever_id          TEXT PRIMARY KEY,
+            project_id        INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            title             TEXT NOT NULL,
+            status            TEXT NOT NULL DEFAULT 'untested',
+            review_status     TEXT NOT NULL DEFAULT 'pending',
+            review_return_to  TEXT,
+            reviewed_at_version INTEGER,
+            last_version      INTEGER,
+            last_author       TEXT NOT NULL DEFAULT '',
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
+async def _migrate_item_ledger_reviewed_at_version(conn: aiosqlite.Connection) -> None:
+    """Add reviewed_at_version to the node and lever ledgers.
+
+    The same column interview_script_ledger already carries, named the same because it means
+    the same thing: the last_version an item was AT when a reviewer recorded the send-back.
+    It is the difference between "a reviewer has asked for this" and "the agent has written
+    since they asked", and without it a send-back is injected into every subsequent run for
+    ever - the agent is told to revise a node it revised three runs ago.
+
+    Tasks 1 and 2 both declined this column deliberately, on the grounds that nothing read
+    it yet. `register_nodes_sync`'s docstring names the reader - "the staleness signal Tasks
+    3 and 4 read" - and this is that task: `nodes_awaiting_regeneration` and
+    `levers_awaiting_regeneration` in `api/services/discovery_review_service.py` are the
+    reader, and they land in the same change as the column.
+
+    **Nothing writes it yet, and the read is shaped so that that is safe.** The recorder is
+    the review surface's, exactly as `record_script_review` is the script ledger's, and it
+    must stamp this column in the same statement that sets review_status='changes_requested'.
+    A NULL here therefore means "no recorder has ever stamped this row", which is a different
+    fact from the script ledger's NULL (a backfill that predates per-batch versioning), and
+    the two reads treat it differently for that reason - see the COALESCE in
+    `discovery_review_service`, which falls towards injecting rather than towards silence.
+
+    PRAGMA table_info per table, and each half skips **itself**: a migration that raises takes
+    every later migration in the block down with it, and these two tables are absent from
+    every hand-built fixture that builds `projects` by hand. An empty table_info means the
+    table does not exist here at all, which is the skip - not an error, and not a reason to
+    create it, since the two functions above own creation.
+    """
+    for table in ("value_chain_ledger", "value_lever_ledger"):
+        async with conn.execute(f"PRAGMA table_info({table})") as cur:
+            columns = {row[1] async for row in cur}
+        if not columns or "reviewed_at_version" in columns:
+            continue
+        await conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN reviewed_at_version INTEGER"
+        )
+    await conn.commit()
+
+
+async def _migrate_item_reviews(conn: aiosqlite.Connection) -> None:
+    """One row per review event on one value chain node or one value lever.
+
+    The third table of the shape script_reviews already has, and it exists for the reason
+    that one does: "reviewed several times by different people, approved once" is a history
+    plus a current state, and collapsing them loses who said what. The ledger row carries the
+    derived state; this carries the events. Nothing here is ever updated or deleted.
+
+    **One table with item_kind, not one table per ledger.** A node id and a lever id are
+    different namespaces - 3.3.3 and LV-001 - so a shared table needs the kind to keep them
+    apart, and it is stored rather than inferred from the id's shape. Two tables would be two
+    copies of one recorder, and CLAUDE.md records what happens to a rule that exists twice:
+    register_scripts_sync and scripts_awaiting_regeneration already hold one condition in two
+    places and have already diverged. item_kind is the discriminator record_item_review
+    validates against its own ITEM_LEDGERS map, so an unknown kind is refused at the door
+    rather than stored and read back by nothing.
+
+    notes is what discovery_review_service joins onto the awaiting-the-agent query - the
+    reviewer's own words, carried into the next discovery_mapping run beside the id. Before
+    this table existed that SELECT had nowhere to join a note from and said so.
+
+    at_version records the last_version the item was AT when the review was recorded, the
+    same fact the ledger's reviewed_at_version carries for the most recent one. Kept on the
+    event too because the ledger holds only the latest and the history is what says a
+    reviewer read v3 and another read v7.
+
+    CREATE TABLE IF NOT EXISTS and no PRAGMA guard: this creates its own table and names no
+    other, so there is nothing here that can raise on a hand-built database and nothing to
+    skip. The two migrations above guard because they ALTER tables that may be absent.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS item_reviews (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            item_kind   TEXT    NOT NULL,
+            item_id     TEXT    NOT NULL,
+            reviewer    TEXT    NOT NULL DEFAULT '',
+            decision    TEXT    NOT NULL,
+            notes       TEXT    NOT NULL DEFAULT '',
+            at_version  INTEGER,
+            return_to   TEXT,
+            forced      INTEGER NOT NULL DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await conn.commit()
+
+
 async def _migrate_blocked_writes(conn: aiosqlite.Connection) -> None:
     """Writes an agent attempted and was not permitted to make.
 
@@ -1880,13 +2089,39 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # tests/test_agent_config.py::test_a_database_at_version_15_gains_the_model_id_column, which
 # fails on 15 and passes on 16; and
 # tests/test_interviewer_selection.py::test_a_database_at_version_16_gains_the_interviewer_
-# column, which fails on 16 and passes on 17.
+# column, which fails on 16 and passes on 17; and
+# tests/test_value_chain_ledger.py::test_a_database_at_version_17_gains_the_value_chain_ledger,
+# which fails on 17 and passes on 18; and
+# tests/test_value_lever_ledger.py::test_a_database_at_version_18_gains_the_value_lever_ledger,
+# which fails on 18 and passes on 19.
 #
-# Note that 15 → 16 adds a column to an *existing* migration rather than a new function, which
+# Note that 15 -> 16 adds a column to an *existing* migration rather than a new function, which
 # the comment above already covers and which is the easier bump to forget: the migration is
 # already in the block, already runs on a fresh database, and only the databases that have
 # already been opened at 15 are left behind.
-_SCHEMA_VERSION = 17
+#
+# **17 -> 18 is the number this branch nearly got wrong, and the mistake would have been
+# silent.** `_migrate_value_chain_ledger` was written when the constant was 14 and bumped it to
+# 15; master reached 17 while the branch was parked. Resolving the constant in master's favour -
+# which is what "take the newer number" looks like - would have left the ledger migration in the
+# block below with no bump covering it, so it would never have run on any database already
+# opened at 17. Every existing deployment, unmigrated for ever, with nothing raised.
+#
+# 18 -> 19 adds `_migrate_value_lever_ledger`, the lever half of the same review loop.
+#
+# 19 -> 20 adds `_migrate_item_ledger_reviewed_at_version`, which puts one column on **both**
+# of those ledgers. It is an ALTER rather than a new table, which is the easier bump to forget
+# for the reason 15 -> 16 gives: the two tables are already created on a fresh database by the
+# CREATE TABLE statements above, which now name the column, so a fresh deployment is correct
+# with no bump at all and only the databases already opened at 19 are left behind.
+# tests/test_discovery_revision_injection.py::test_a_database_at_version_19_gains_reviewed_at_
+# version_on_both_ledgers fails on 19 and passes on 20.
+#
+# 20 -> 21 adds `_migrate_item_reviews`, the review *event* table for nodes and levers - the
+# recorder the two ledgers were waiting for, and what puts the reviewer's note into the next
+# run's prompt. tests/test_item_reviews.py::test_a_database_at_version_20_gains_the_item_
+# reviews_table fails on 20 and passes on 21.
+_SCHEMA_VERSION = 21
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1994,6 +2229,10 @@ async def get_connection(slug: str):
             await _migrate_agent_chat_history(conn)
             await _migrate_interview_script_ledger(conn)
             await _migrate_script_reviews(conn)
+            await _migrate_value_chain_ledger(conn)
+            await _migrate_value_lever_ledger(conn)
+            await _migrate_item_ledger_reviewed_at_version(conn)
+            await _migrate_item_reviews(conn)
             await _migrate_interview_sessions_script_id(conn)
             await _migrate_interview_sessions_interviewer(conn)
             await _migrate_stakeholder_roles(conn)

@@ -13,7 +13,10 @@ from agents.tools._db import (
     record_blocked_write_sync,
     record_run_input_sync,
     record_validation_warnings_sync,
+    register_levers_sync,
+    register_nodes_sync,
     register_scripts_sync,
+    levers_without_ids,
     _output_version_sync,
 )
 from agents.tools.ownership import OUTPUT_OWNERS, check_write
@@ -461,6 +464,91 @@ class SQLiteStateTool(BaseTool):
             except (OSError, ValueError) as e:
                 return f"Error: write failed — {e}"
 
+            registration_note = ""
+            if key == "value_chain_registry" and isinstance(parsed, dict):
+                # The registry's other door, DeriveRegistryTool, registers too. Both do,
+                # so neither depends on the other having run - this is Alex's own key and
+                # he can write it without deriving.
+                try:
+                    register_nodes_sync(
+                        self.slug,
+                        parsed.get("activities") or [],
+                        _output_version_sync(self.slug, new_output_id),
+                        identity,
+                    )
+                except Exception as e:
+                    # Never fail a durable write over the ledger, and never lose it
+                    # silently either. register_nodes_sync commits once for the whole
+                    # call, so one entry it cannot bind discards its batchmates'
+                    # registrations too - the note therefore says the whole write is
+                    # unregistered rather than naming one id.
+                    registration_note = (
+                        f" — WARNING: the node ledger was not updated ({e}). Every id in "
+                        "this registry is unregistered, so a later write could re-anchor "
+                        "one unrefused. Write it again."
+                    )
+
+            if key == "value_levers" and not isinstance(parsed, list):
+                # **The silent half of this branch, made loud.** `value_levers` is a JSON
+                # array, so a write that is an object - `{"value_levers": [...]}`, which is
+                # the shape every other key on this tool takes and therefore the mistake to
+                # expect - simply fell past the `isinstance` below, registered nothing, and
+                # answered a plain "Written to ...". Every other loss path here announces
+                # itself in the string CrewAI hands back: a failed registration says so, a
+                # lever with no id says so. This one did not, and a type guard that is silent
+                # where its two neighbours are loud is the one an agent learns nothing from.
+                #
+                # The write itself still stands. Refusing it would discard work over a
+                # container, and `_VALIDATORS` - which is where an outright refusal belongs -
+                # deliberately has no entry for this key precisely because it refuses anything
+                # that is not a dict.
+                registration_note = (
+                    f" — WARNING: value_levers must be a JSON array of lever objects and "
+                    f"this write was a {type(parsed).__name__}. It has been stored, and "
+                    "NOTHING was registered: every lever in it is outside the ledger, so no "
+                    "review state can be kept for any of them and a later write could "
+                    "re-anchor an id unrefused. Write the array itself, not an object "
+                    "wrapping it."
+                )
+
+            if key == "value_levers" and isinstance(parsed, list):
+                # A list, not a dict - value_levers is a JSON array, which is also why it
+                # has no _VALIDATORS entry (that map refuses anything that is not a dict).
+                # One door only: SQLiteStateTool is the sole writer of this key, unlike
+                # value_chain_registry's two.
+                try:
+                    register_levers_sync(
+                        self.slug,
+                        parsed,
+                        _output_version_sync(self.slug, new_output_id),
+                        identity,
+                    )
+                except Exception as e:
+                    # Never fail a durable write over the ledger, and never lose it
+                    # silently. register_levers_sync commits once for the whole call, so
+                    # one entry it cannot bind discards its batchmates' registrations too -
+                    # hence "every lever in this write" rather than naming one id.
+                    registration_note = (
+                        f" — WARNING: the lever ledger was not updated ({e}). Every lever "
+                        "in this write is unregistered, so a later write could re-anchor "
+                        "one unrefused. Write it again."
+                    )
+                else:
+                    # Registration is impossible without an id, and an agent that omits one
+                    # must hear so in the run that omitted it. Reported after a successful
+                    # call rather than instead of one: the levers that DO carry ids are
+                    # registered, and this names only what was left out.
+                    unidentified = levers_without_ids(parsed)
+                    if unidentified:
+                        positions = ", ".join(str(p) for p in unidentified)
+                        registration_note = (
+                            f" — WARNING: {len(unidentified)} lever(s) carry no 'lever_id' "
+                            f"(position {positions} in the array) and are unregistered, so "
+                            "review state cannot be kept for them. Write them again, each "
+                            "with the lever_id it already had, or the next unused LV-nnn "
+                            "for a genuinely new lever."
+                        )
+
             if key == "interview_scripts" and isinstance(parsed, dict):
                 # Registration is a side effect of the write, exactly as
                 # insert_agent_output_sync maintains is_current, and for the same reason:
@@ -513,7 +601,7 @@ class SQLiteStateTool(BaseTool):
                 # failed when it didn't, and it would write again, versioning a duplicate.
                 # A missing lineage edge is a smaller loss than that.
                 pass
-            return f"Written to {file_path}"
+            return f"Written to {file_path}{registration_note}"
 
         if operation == "read":
             # Resolve through the ledger: the write above is renamed to a _vN suffix by

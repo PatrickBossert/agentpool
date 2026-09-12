@@ -916,6 +916,44 @@ export interface ScriptLedgerRow {
   review_count: number
 }
 
+// ── The per-item review ledgers: one value chain node, one value lever ────────────────
+//
+// Three decisions, not the script ledger's four. `edited` records that a reader changed the
+// thing in front of them, and there is nothing here to change - levers are review-only by
+// decision, and editing the value chain model has its own editor (StructureTab) and its own
+// workflow. ItemReviewRow.test.tsx reads item_review_service.VALID_DECISIONS out of the
+// Python rather than trusting this union, because a copy agrees with itself for ever: that is
+// exactly how ICON['edited'] came to be undefined on the script ledger while tsc stayed
+// silent, a total Record over a union that was simply too narrow.
+export type ItemReviewStatus = 'pending' | 'reviewed' | 'approved' | 'changes_requested'
+
+export interface NodeLedgerRow {
+  node_id: string
+  label: string
+  level: string | null
+  active: number
+  review_status: ItemReviewStatus
+  review_return_to: 'agent' | 'reviewer' | null
+  reviewed_at_version: number | null
+  last_version: number | null
+  last_author: string
+  review_count: number
+}
+
+export interface LeverLedgerRow {
+  lever_id: string
+  title: string
+  // The lever's own hypothesis state - untested, contradicted, confirmed - and **not** its
+  // review state. The interviews decide this one and a human decides the other.
+  status: string
+  review_status: ItemReviewStatus
+  review_return_to: 'agent' | 'reviewer' | null
+  reviewed_at_version: number | null
+  last_version: number | null
+  last_author: string
+  review_count: number
+}
+
 // A structural finding a validator raised and did not refuse. Recorded when an agent
 // writes, dispositioned by a reviewer, and carried back into the agent's next run unless
 // dismissed.
