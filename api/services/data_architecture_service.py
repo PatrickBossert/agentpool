@@ -225,11 +225,13 @@ def _shared_sources(graph) -> list[dict]:
     One entry per source, not per reader: the point of the panel it feeds is that the store is
     shared, and repeating it under each reader would bury that under the readers.
 
-    `CREW_DISPATCH_READS` is walked alongside the agents' own sources. Those six tables reach
-    an agent without any agent asking, so a walk over `AGENT_READS` alone leaves the two shared
-    ones out of the panel entirely - which is how the system database's global skills library
-    came to appear only inside a note, several sections below the panel a reader consults for
-    this exact question.
+    `CREW_DISPATCH_READS` is walked alongside the agents' own sources. Those tables reach an
+    agent without any agent asking, so a walk over `AGENT_READS` alone leaves the shared ones
+    among them out of the panel entirely - which is how the system database's global skills
+    library came to appear only inside a note, several sections below the panel a reader
+    consults for this exact question. Counted in prose here until this sentence was written -
+    it said "those six tables" and "the two shared ones" while the tuple held five and one, the
+    ordinary fate of a number kept in a docstring beside a list that grows.
 
     `reachable_by` is the finding the declared list cannot carry. `AGENT_READS` says which
     agents are *instructed* to read a collection; `ChromaQueryTool` takes the collection as an

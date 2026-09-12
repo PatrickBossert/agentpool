@@ -290,6 +290,116 @@ async def _fetch_regeneration_requests(slug: str, crew_name: str) -> str:
     )
 
 
+# Which agent owns each per-item ledger, and therefore which agent a send-back on one of its
+# rows may reach.
+#
+# Ownership, not crew membership, and the difference is the whole of this task.
+# `_fetch_regeneration_requests` above scopes on the crew - `assessment_design` - which is
+# sufficient there because that crew holds exactly one agent. `discovery_mapping` holds two,
+# so a crew-scoped block would hand Alex Morgan's lever notes and Morgan Alex's node notes.
+# That failure is invisible from the outside: the agent that should have been told is told, and
+# nothing anywhere says the other one was told as well.
+#
+# Keyed on the agent for a second reason as well. A crew-name check would be a third list of
+# which crew holds which agent, beside `_CREW_AGENT_NAMES` and `OUTPUT_OWNERS`; asking the
+# agent means `discovery_mapping`-only falls out of ownership rather than being asserted
+# separately. `_fetch_skill_notes` and `_fetch_change_requests` both reach their agents through
+# `_CREW_AGENT_NAMES`, and so does the caller below.
+_ITEM_LEDGER_AGENTS: frozenset[str] = frozenset({
+    "value_chain_mapper",    # value_chain_ledger - one row per node id
+    "value_lever_analyst",   # value_lever_ledger - one row per lever id
+})
+
+
+async def _pending_discovery_revisions(slug: str, agent_name: str) -> str:
+    """The nodes or levers a reviewer sent back to **this one agent**, as a prompt block.
+
+    `_fetch_regeneration_requests` above is the precedent for the injection and
+    `_fetch_change_requests` is the precedent for the scoping; this needs both at once, which
+    is why it is a third function rather than a widening of either.
+
+    Returns "" for an agent that owns no per-item ledger, which is every agent but two - so
+    the block reaches `discovery_mapping` runs and nothing else, the way
+    `_fetch_regeneration_requests` returns "" for every crew but `assessment_design`. It is
+    the agent that is asked rather than the crew, because the crew holds both of them.
+
+    The block does not say "regenerate only these". Alex rebuilds the whole chain on every run
+    by design - one run re-emitted 59 labels and not one was a redefinition - so an
+    instruction to touch nothing else would be an instruction he cannot follow. What the ids
+    are for is succession: the reviewer's complaint is about 3.3.3, and 3.3.3 must still be
+    3.3.3 afterwards. `register_nodes_sync` and `register_levers_sync` enforce that on the
+    write, and saying it here is what makes the agent's output match what the ledger will
+    accept rather than being silently corrected by it.
+    """
+    if agent_name not in _ITEM_LEDGER_AGENTS:
+        return ""
+    from api.services.discovery_review_service import (
+        levers_awaiting_regeneration,
+        nodes_awaiting_regeneration,
+    )
+
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            return ""
+        if agent_name == "value_chain_mapper":
+            pending = await nodes_awaiting_regeneration(conn, project_id=project["id"])
+            if not pending:
+                return ""
+            lines = "\n".join(
+                f"- {p['node_id']} ({p['level'] or 'level unrecorded'}): {p['label']}"
+                for p in pending
+            )
+            return (
+                "VALUE CHAIN NODES SENT BACK FOR REVISION. A reviewer disagreed with each of "
+                "these activities. Address them in this run, and keep every one of these ids "
+                "on the activity it already names - the id is what the reviewer cited and what "
+                "every theme, requirement and interview script anchors to:\n" + lines
+            )
+        pending = await levers_awaiting_regeneration(conn, project_id=project["id"])
+        if not pending:
+            return ""
+        lines = "\n".join(
+            f"- {p['lever_id']} ({p['status']}): {p['title']}" for p in pending
+        )
+        return (
+            "VALUE LEVERS SENT BACK FOR REVISION. A reviewer disagreed with each of these "
+            "levers. Address them in this run, and emit each one under the lever_id it "
+            "already has - a reworded title is expected and is not a new lever:\n" + lines
+        )
+
+
+# Display name (the CrewAI Agent's `role`) back to the snake key everything else uses.
+#
+# Inverted from `_SNAKE_TO_DISPLAY` rather than typed a second time. `agents/identity.py` is
+# blunt that this map is a *formatting* of the id rather than a decoupling of it, which is a
+# fair criticism of it as a registry and no objection at all to reading it backwards: the
+# thing needed here is precisely the round trip, and one map that round-trips cannot disagree
+# with itself.
+_DISPLAY_TO_SNAKE: dict[str, str] = {
+    display: snake for snake, display in _SNAKE_TO_DISPLAY.items()
+}
+
+
+def agent_name_for_task(task: Any) -> str:
+    """The snake agent key for the agent a crew task is assigned to, or "" if it cannot be
+    resolved.
+
+    A crew task carries its `Agent`, and the Agent carries a `role` - the display name. This
+    is the only join between a task and the agent name every other map here is keyed by, and
+    it is a string comparison, so it can fail quietly: a role reworded in an agent module and
+    not in `_SNAKE_TO_DISPLAY` resolves to "", the per-agent block goes to nobody, and an
+    ordinary run looks exactly the same.
+
+    Two things stop that being silent. `build_and_run_crew` logs a warning when it assembled a
+    block for an agent and no task would take it, and
+    `tests/test_discovery_revision_injection.py` drives the real `discovery_mapping` crew and
+    asserts which task each block landed on - so the join is exercised against the real role
+    strings rather than against a mock that would agree with whatever this function does.
+    """
+    return _DISPLAY_TO_SNAKE.get(getattr(getattr(task, "agent", None), "role", "") or "", "")
+
+
 # The instruction that turns a correction into a rule, injected only on a run that actually
 # has one to learn from.
 #
@@ -662,16 +772,34 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     warning_text = await _fetch_validation_warnings(slug, crew_name)
     regeneration_text = await _fetch_regeneration_requests(slug, crew_name)
 
+    # The one block that is not the same for every task in the crew. Assembled per agent
+    # because `discovery_mapping` holds two of them and a node sent back to Alex is not
+    # Morgan's to answer - see `_pending_discovery_revisions`. Empty entries are dropped so
+    # the undelivered check below is about blocks that had something to say.
+    item_revisions = {
+        agent_name: block
+        for agent_name in _CREW_AGENT_NAMES.get(crew_name, [])
+        if (block := await _pending_discovery_revisions(slug, agent_name))
+    }
+
     # Every block is prepended, so the code order below is the reverse of the reading order the
-    # agent gets: regeneration, warnings, changes, the proposal instruction, the skills, then
-    # the task. The proposal instruction is placed to fall immediately after the last of the
-    # blocks it refers to, and is injected **once** however many of them fired - a human sent
-    # one lot of work back, not two, and two copies of "propose at most one rule" is the
-    # fan-out defect `_fetch_change_requests` deduplicates for, arriving from a second source.
+    # agent gets: the per-item revisions, regeneration, warnings, changes, the proposal
+    # instruction, the skills, then the task. The proposal instruction is placed to fall
+    # immediately after the last of the blocks it refers to, and is injected **once** however
+    # many of them fired - a human sent one lot of work back, not two, and two copies of
+    # "propose at most one rule" is the fan-out defect `_fetch_change_requests` deduplicates
+    # for, arriving from a second source. A per-item send-back is a correction with a rule
+    # possibly behind it exactly as the other two are, so it earns the instruction on the same
+    # terms and on the task it was actually delivered to.
+    delivered_to: set[str] = set()
     for task in crew.tasks:
+        task_agent = agent_name_for_task(task)
+        item_text = item_revisions.get(task_agent, "")
+        if item_text:
+            delivered_to.add(task_agent)
         if skill_notes:
             task.description = skill_notes + "\n\n" + task.description
-        if change_text or regeneration_text:
+        if change_text or regeneration_text or item_text:
             task.description = _SKILL_PROPOSAL_INSTRUCTION + "\n\n" + task.description
         if change_text:
             task.description = change_text + "\n\n" + task.description
@@ -679,6 +807,19 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             task.description = warning_text + "\n\n" + task.description
         if regeneration_text:
             task.description = regeneration_text + "\n\n" + task.description
+        if item_text:
+            task.description = item_text + "\n\n" + task.description
+
+    # A block assembled for an agent no task would take is a reviewer's send-back that reached
+    # nobody, and it is otherwise indistinguishable from an ordinary run. It cannot be raised
+    # on - refusing the run would discard the rest of the crew's work over a prompt block - so
+    # it is logged with the names, which is what tells "the join broke" apart from "there was
+    # nothing to send" after the fact.
+    for agent_name in sorted(set(item_revisions) - delivered_to):
+        log.warning(
+            "per-item revisions for %s were assembled but no task in crew %s is assigned to "
+            "that agent - the send-back reached nobody", agent_name, crew_name,
+        )
 
     result = await crew.kickoff_async()
 

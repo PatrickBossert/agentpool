@@ -1168,6 +1168,7 @@ async def _migrate_value_chain_ledger(conn: aiosqlite.Connection) -> None:
             active            INTEGER NOT NULL DEFAULT 1,
             review_status     TEXT NOT NULL DEFAULT 'pending',
             review_return_to  TEXT,
+            reviewed_at_version INTEGER,
             last_version      INTEGER,
             last_author       TEXT NOT NULL DEFAULT '',
             created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1231,12 +1232,53 @@ async def _migrate_value_lever_ledger(conn: aiosqlite.Connection) -> None:
             status            TEXT NOT NULL DEFAULT 'untested',
             review_status     TEXT NOT NULL DEFAULT 'pending',
             review_return_to  TEXT,
+            reviewed_at_version INTEGER,
             last_version      INTEGER,
             last_author       TEXT NOT NULL DEFAULT '',
             created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    await conn.commit()
+
+
+async def _migrate_item_ledger_reviewed_at_version(conn: aiosqlite.Connection) -> None:
+    """Add reviewed_at_version to the node and lever ledgers.
+
+    The same column interview_script_ledger already carries, named the same because it means
+    the same thing: the last_version an item was AT when a reviewer recorded the send-back.
+    It is the difference between "a reviewer has asked for this" and "the agent has written
+    since they asked", and without it a send-back is injected into every subsequent run for
+    ever - the agent is told to revise a node it revised three runs ago.
+
+    Tasks 1 and 2 both declined this column deliberately, on the grounds that nothing read
+    it yet. `register_nodes_sync`'s docstring names the reader - "the staleness signal Tasks
+    3 and 4 read" - and this is that task: `nodes_awaiting_regeneration` and
+    `levers_awaiting_regeneration` in `api/services/discovery_review_service.py` are the
+    reader, and they land in the same change as the column.
+
+    **Nothing writes it yet, and the read is shaped so that that is safe.** The recorder is
+    the review surface's, exactly as `record_script_review` is the script ledger's, and it
+    must stamp this column in the same statement that sets review_status='changes_requested'.
+    A NULL here therefore means "no recorder has ever stamped this row", which is a different
+    fact from the script ledger's NULL (a backfill that predates per-batch versioning), and
+    the two reads treat it differently for that reason - see the COALESCE in
+    `discovery_review_service`, which falls towards injecting rather than towards silence.
+
+    PRAGMA table_info per table, and each half skips **itself**: a migration that raises takes
+    every later migration in the block down with it, and these two tables are absent from
+    every hand-built fixture that builds `projects` by hand. An empty table_info means the
+    table does not exist here at all, which is the skip - not an error, and not a reason to
+    create it, since the two functions above own creation.
+    """
+    for table in ("value_chain_ledger", "value_lever_ledger"):
+        async with conn.execute(f"PRAGMA table_info({table})") as cur:
+            columns = {row[1] async for row in cur}
+        if not columns or "reviewed_at_version" in columns:
+            continue
+        await conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN reviewed_at_version INTEGER"
+        )
     await conn.commit()
 
 
@@ -2018,7 +2060,15 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # opened at 17. Every existing deployment, unmigrated for ever, with nothing raised.
 #
 # 18 -> 19 adds `_migrate_value_lever_ledger`, the lever half of the same review loop.
-_SCHEMA_VERSION = 19
+#
+# 19 -> 20 adds `_migrate_item_ledger_reviewed_at_version`, which puts one column on **both**
+# of those ledgers. It is an ALTER rather than a new table, which is the easier bump to forget
+# for the reason 15 -> 16 gives: the two tables are already created on a fresh database by the
+# CREATE TABLE statements above, which now name the column, so a fresh deployment is correct
+# with no bump at all and only the databases already opened at 19 are left behind.
+# tests/test_discovery_revision_injection.py::test_a_database_at_version_19_gains_reviewed_at_
+# version_on_both_ledgers fails on 19 and passes on 20.
+_SCHEMA_VERSION = 20
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -2128,6 +2178,7 @@ async def get_connection(slug: str):
             await _migrate_script_reviews(conn)
             await _migrate_value_chain_ledger(conn)
             await _migrate_value_lever_ledger(conn)
+            await _migrate_item_ledger_reviewed_at_version(conn)
             await _migrate_interview_sessions_script_id(conn)
             await _migrate_interview_sessions_interviewer(conn)
             await _migrate_stakeholder_roles(conn)
