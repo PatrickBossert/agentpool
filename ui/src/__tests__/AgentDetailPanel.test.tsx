@@ -26,6 +26,36 @@ vi.mock('../context/AuthContext', () => ({
   }),
 }))
 
+// The agent configuration section mounts with the Setup tab and asks the server for each
+// agent's name, image and voice. Stubbed rather than left to reach the network: an unmocked
+// call resolves as a rejected promise inside react-query, which is noise in this file's
+// output and a race in anybody else's.
+vi.mock('../api/agentConfig', () => ({
+  agentConfigApi: {
+    // Task 7: every face and name on the panel resolves through `useAgentIdentity`,
+    // which reads this. An empty roll means the static map answers, which is what
+    // these tests were written against.
+    getAll: vi.fn().mockResolvedValue({ agents: {} }),
+    get: vi.fn().mockResolvedValue({
+      agent_id: 'stub',
+      configured: false,
+      defaults: {
+        display_name: 'Stub', image_url: null, voice_id: null,
+        language: 'en', country_code: 'GB', model_id: 'eleven_turbo_v2',
+      },
+      overrides: {
+        display_name: null, image_url: null, voice_id: null,
+        language: null, country_code: null, model_id: null,
+      },
+      resolved: {
+        display_name: 'Stub', image_url: null, voice_id: null,
+        language: 'en', country_code: 'GB', model_id: 'eleven_turbo_v2',
+      },
+    }),
+    put: vi.fn(),
+  },
+}))
+
 vi.mock('../api/endpoints', () => ({
   projectsApi: {
     getOutputContent: vi.fn().mockResolvedValue({ content: '{}', output_type: 'json' }),
@@ -45,6 +75,7 @@ vi.mock('../api/endpoints', () => ({
       can_grant_roles: false,
       can_issue_invite_links: false,
       can_change_platform_tier_settings: false,
+      can_administer_project: true,
       platform_tier_settings: [],
       writable_knowledge_tiers: [],
     }),
@@ -280,9 +311,10 @@ describe('AgentDetailPanel - the Output tab badge', () => {
 describe('AgentDetailPanel - unsaved work across a tab change', () => {
   // beforeunload does not fire on an in-panel tab change, so a tab that holds a draft and is
   // rendered conditionally loses it the moment another tab is clicked, silently and with no
-  // warning. Alex's Setup holds ten pieces of form state committed only by an explicit Save;
-  // Avery's and Taylor's do the same.
-  it('keeps a typed Setup brief when the user visits Output and comes back', async () => {
+  // warning. The discovery brief holds ten pieces of form state committed only by an explicit
+  // Save, and so do the invite rules and the stakeholder mapping - all of them on Setup, which
+  // is why Setup is rendered `hidden` rather than conditionally and why this asserts there.
+  it("keeps a typed discovery brief when the user visits Output and comes back", async () => {
     const user = userEvent.setup()
     renderPanel({ crewKey: 'discovery_mapping', outputs: ALEX_OUTPUTS, initialTab: 'setup' })
 
@@ -310,6 +342,7 @@ describe('AgentDetailPanel - Chat attach control', () => {
       can_grant_roles: false,
       can_issue_invite_links: false,
       can_change_platform_tier_settings: false,
+      can_administer_project: true,
       platform_tier_settings: [],
       writable_knowledge_tiers: [],
       ...overrides,

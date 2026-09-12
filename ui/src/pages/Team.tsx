@@ -7,12 +7,27 @@ import {
 } from '../components/agentStatus'
 import { skillsApi } from '../api/skills'
 import type { AgentSkill } from '../api/skills'
+import { useAuth } from '../context/AuthContext'
 
 export default function Team() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'sysadmin'
+
+  // Sysadmins only, and not requested at all otherwise. The route is `:slug/team` with no
+  // AdminRoute, so this page is open to every member of an engagement - and a pending skill is
+  // an agent's proposal about the engagement it was corrected on. The chip below renders
+  // `skill.name`, which for a proposal the agent did not name is `_derive_skill_name`'s first
+  // five words of the rule, so the name discloses what the description would have.
   const { data: pendingSkills = [] } = useQuery<AgentSkill[]>({
     queryKey: ['skills', 'pending'],
     queryFn: () => skillsApi.list({ status: 'pending' }),
+    enabled: isAdmin,
   })
+
+  // A second guard on the same fact, deliberately. Removing `enabled` above during a
+  // power-check failed the render assertion as well as the request one, which meant one flag
+  // was carrying both - so neither could fail on its own and be caught. Now each has its own.
+  const visiblePending = isAdmin ? pendingSkills : []
 
   return (
     <div className="px-6 py-8 max-w-7xl mx-auto">
@@ -28,7 +43,7 @@ export default function Team() {
         <AgentCard
           agentName="PAM"
           crewLabel="Pipeline Orchestrator"
-          pendingSkills={pendingSkills.filter(s => s.agents.includes('PAM'))}
+          pendingSkills={visiblePending.filter(s => s.agents.includes('PAM'))}
         />
       </div>
 
@@ -40,7 +55,7 @@ export default function Team() {
               key={agentName}
               agentName={agentName}
               crewLabel={CREW_LABELS[crewKey]}
-              pendingSkills={pendingSkills.filter(s => s.agents.includes(agentName))}
+              pendingSkills={visiblePending.filter(s => s.agents.includes(agentName))}
             />
           ))
         })}
@@ -58,6 +73,11 @@ function AgentCard({
   crewLabel: string
   pendingSkills: AgentSkill[]
 }) {
+  // **The one display site left on the static maps, deliberately.** Every other place that draws
+  // an agent's name or face resolves it against a project through `useAgentIdentity`; this page
+  // is the roll across the whole deployment and has no slug to resolve against. Inventing one -
+  // "the project they last looked at", say - would show one engagement's renames and portraits
+  // on a page that claims to describe the team, so it stays on the roll's own answer.
   const humanName = AGENT_HUMAN_NAME[agentName] ?? agentName
   const avatar    = AGENT_AVATAR[agentName] ?? { gradient: 'from-gray-400 to-gray-600', emoji: '🤖' }
   const imageSrc  = AGENT_AVATAR_IMAGE[agentName]

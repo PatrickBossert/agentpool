@@ -16,7 +16,8 @@ import {
 import { projectsApi } from '../api/endpoints'
 import { MermaidThumbnail, DiagramLightbox, CREW_WARNING_SOURCE } from './ReviewDialog'
 import ValidationWarnings from './ValidationWarnings'
-import { CREW_LABELS, CREW_DOWNSTREAM, CREW_AGENTS, AGENT_AVATAR, AGENT_AVATAR_IMAGE, AGENT_HUMAN_NAME } from './agentStatus'
+import { CREW_LABELS, CREW_DOWNSTREAM, CREW_AGENTS, AGENT_AVATAR } from './agentStatus'
+import { useAgentIdentity } from '../hooks/useAgentIdentity'
 import type { CrewStatus } from './agentStatus'
 import { CREW_OUTPUT_TYPE, parseDbDate } from './crewOutputs'
 import { outputLabel } from './outputTypeLabels'
@@ -548,7 +549,7 @@ export function AgentStatusTab({
   const agents = CREW_AGENTS[crewKey] ?? []
   const primaryAgent = agents[0] ?? ''
   const primaryAvatar = AGENT_AVATAR[primaryAgent] ?? { gradient: 'from-gray-400 to-gray-600' }
-  const primaryHumanName = AGENT_HUMAN_NAME[primaryAgent] ?? primaryAgent
+  const { name: primaryHumanName, imageUrl: primaryImage } = useAgentIdentity(slug)(primaryAgent)
   const firstName = primaryHumanName.split(' ')[0]
 
   const isRunning = crewStatus === 'running'
@@ -670,8 +671,8 @@ export function AgentStatusTab({
       ) : isRunning ? (
         <div className="flex flex-col items-center gap-3 py-12 text-center">
           <div className="w-16 h-16 rounded-full overflow-hidden ring-2 ring-teal-400 ring-offset-2 flex-shrink-0">
-            {AGENT_AVATAR_IMAGE[primaryAgent] ? (
-              <img src={AGENT_AVATAR_IMAGE[primaryAgent]} alt={firstName} className="w-full h-full object-cover" />
+            {primaryImage ? (
+              <img src={primaryImage} alt={firstName} className="w-full h-full object-cover" />
             ) : (
               <div className={`w-full h-full bg-gradient-to-br ${primaryAvatar.gradient} flex items-center justify-center text-2xl`}>
                 {firstName[0]}

@@ -104,14 +104,22 @@ async def test_the_ledger_table_exists_with_node_id_as_primary_key(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_a_database_at_the_previous_version_gains_the_value_chain_ledger(
+async def test_a_database_at_version_17_gains_the_value_chain_ledger(
     tmp_path, monkeypatch
 ):
     """The migration must reach databases that already exist, which is what the
     _SCHEMA_VERSION bump buys. Without the bump this passes on a fresh file and the table
     never appears on any deployment that has been opened once - no error, no warning.
 
-    Fails on _SCHEMA_VERSION = 14 and passes on 15.
+    Fails on _SCHEMA_VERSION = 17 and passes on 18.
+
+    **The pinned version is renumbered with the constant, and that is the whole point of it.**
+    This branch was written when the constant was 14 and bumped it to 15; master reached 17
+    while the branch was parked. A test still stamping 14 passes under *any* constant above it,
+    because `get_connection` re-runs the block whenever `user_version` is lower - so it would
+    have gone on passing while the ledger migration sat in the block with no bump covering it,
+    unreached on every database already opened at 17. Pinning the version immediately below the
+    constant is what makes this a test of the bump rather than a test of the migration.
     """
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     from api.config import get_settings
@@ -128,7 +136,7 @@ async def test_a_database_at_the_previous_version_gains_the_value_chain_ledger(
         # standing in for the real case: a database migrated before this branch existed.
         _MIGRATED.discard(slug)
         async with aiosqlite.connect(get_db_path(slug)) as raw:
-            await raw.execute("PRAGMA user_version = 14")
+            await raw.execute("PRAGMA user_version = 17")
             await raw.commit()
 
         async with get_connection(slug) as conn:

@@ -8,8 +8,17 @@
 // crew_name - so this only brings PAM's count into line with the rest of the carousel.
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import CrewCarousel from '../components/CrewCarousel'
+
+// The carousel resolves each agent's name and face against the project's configuration since
+// Task 7. Mocked to an empty roll so these tests are still about what they say they are about -
+// and so nothing here reaches the network. `CarouselAgentIdentity.test.tsx` is where a
+// configured face is driven.
+vi.mock('../api/agentConfig', () => ({
+  agentConfigApi: { getAll: vi.fn().mockResolvedValue({ agents: {} }) },
+}))
 import type { HumanReview } from '../types'
 
 function review(id: number, crew_name: string): HumanReview {
@@ -19,8 +28,10 @@ function review(id: number, crew_name: string): HumanReview {
 
 function renderCarousel(hitlReviews: HumanReview[]) {
   return render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <MemoryRouter>
       <CrewCarousel
+        slug="carousel-test"
         crewRuns={[]}
         isPipelineActive={false}
         logs={[]}
@@ -31,7 +42,8 @@ function renderCarousel(hitlReviews: HumanReview[]) {
         onRerunCrew={() => {}}
         onRunPipeline={() => {}}
       />
-    </MemoryRouter>,
+    </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 

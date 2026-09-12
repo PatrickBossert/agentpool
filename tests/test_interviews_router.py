@@ -7,15 +7,29 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from api.config import get_settings
-from api.database import get_connection, insert_interview_session
+from api.database import get_connection
+from tests.support_interview_sessions import insert_interview_session
 
 
+# The session carries a stamp because a real one does: `InterviewSessionTool._create` writes
+# the chosen interviewer's resolved voice and synthesis model onto the row, and
+# `POST /{token}/speak` reads them off it rather than taking a voice from its caller. A
+# fixture without one is not a simpler session, it is a broken one - and the door refuses it
+# on purpose, so that a session created without a resolved configuration is visible rather
+# than being conducted in a fallback voice nobody chose.
 FAKE_SESSION = {
     "session": {
         "id": 1,
         "session_token": "test-token-abc",
         "node_label": "Stakeholder A",
         "status": "pending",
+        "interviewer_agent_id": "stakeholder_interviewer",
+        "voice_config": {
+            "elevenlabs_voice_id": "stamped-voice-1",
+            "language": "en",
+            "country_code": "GB",
+            "model_id": "eleven_turbo_v2",
+        },
     },
     "script": {"questions": []},
 }
@@ -58,7 +72,7 @@ async def test_get_interview_session_success(client):
 async def test_speak_not_found(client):
     r = await client.post(
         "/api/interviews/unknown-token-xyz/speak",
-        json={"text": "Hello", "voice_id": "voice_123"},
+        json={"text": "Hello"},
     )
     assert r.status_code == 404
     assert r.json()["detail"] == "Session not found"
@@ -83,7 +97,7 @@ async def test_speak_success(client):
     ):
         r = await client.post(
             "/api/interviews/test-token-abc/speak",
-            json={"text": "Hello there", "voice_id": "voice_123"},
+            json={"text": "Hello there"},
         )
 
     assert r.status_code == 200

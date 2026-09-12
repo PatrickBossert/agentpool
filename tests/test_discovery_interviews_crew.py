@@ -23,14 +23,18 @@ def _build_crew(mock_llm, stakeholder_assignments=None, discovery_brief=""):
         )
 
 
-def test_discovery_interviews_crew_has_three_agents(mock_llm):
-    """Coordinator, interviewer, analyst.
+def test_discovery_interviews_crew_has_four_agents(mock_llm):
+    """Coordinator, two interviewers, analyst.
 
     The interview_script_designer agent was removed from this crew in 6dab668;
     script design moved to the template-driven API path (239e469).
+
+    The second interviewer is Laura Nelson, added so a project can run its interviews in a
+    female voice as well as a male one. She is a second voice rather than a second brief, so
+    the task count below stays at three - see tests/test_second_interviewer.py.
     """
     crew = _build_crew(mock_llm)
-    assert len(crew.agents) == 3
+    assert len(crew.agents) == 4
 
 
 def test_discovery_interviews_crew_has_three_tasks(mock_llm):
@@ -156,7 +160,9 @@ def test_a_sensitive_project_gets_no_hosted_model_in_this_crew(monkeypatch, tmp_
     _write_project_row(tmp_path, "sec-crew", "sensitive")
 
     crew = _build_crew_for_project("sec-crew")
-    assert len(crew.agents) == 3
+    # Four since Laura joined, and the count is asserted so that a factory quietly dropping an
+    # agent could not make the loop below pass over the ones it still built.
+    assert len(crew.agents) == 4
     for agent in crew.agents:
         assert agent.llm.base_url is not None, (
             f"{agent.role} has no base_url - not routed to a local model"

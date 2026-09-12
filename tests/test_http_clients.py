@@ -102,8 +102,8 @@ async def test_speak_does_not_construct_a_client_per_call(tmp_path, monkeypatch)
 
         from api.services.interview_service import speak
 
-        await speak("Hello", "voice-abc")
-        await speak("World", "voice-abc")
+        await speak("Hello", "voice-abc", "model-abc")
+        await speak("World", "voice-abc", "model-abc")
 
     assert mock_client_cls.call_count == 1, (
         "httpx.AsyncClient() was constructed more than once across two speak() calls - "

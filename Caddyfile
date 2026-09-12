@@ -8,9 +8,9 @@
 	# worked. tests/test_proxy_prefix_coverage.py enumerates app.routes and fails when this
 	# list stops covering them.
 	#
-	# The matchers are written /prefix* and not /prefix/* deliberately. `GET /projects`,
-	# `POST /projects`, and `GET /agent-skill-notes` are real routes with no sub-path, and a
-	# /prefix/* matcher does not match a bare /prefix.
+	# The matchers are written /prefix* and not /prefix/* deliberately. `GET /projects` and
+	# `POST /projects` are real routes with no sub-path of their own, and a /prefix/* matcher
+	# does not match a bare /prefix.
 	handle /projects* {
 		reverse_proxy localhost:8000
 	}
@@ -24,10 +24,6 @@
 	}
 
 	handle /system* {
-		reverse_proxy localhost:8000
-	}
-
-	handle /agent-skill-notes* {
 		reverse_proxy localhost:8000
 	}
 

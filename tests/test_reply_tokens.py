@@ -213,7 +213,8 @@ async def _send_reminders(slug: str) -> None:
 
 
 async def _completed_session(slug: str, stakeholder_id: int, token: str) -> None:
-    from api.database import fetch_project, get_connection, insert_interview_session
+    from api.database import fetch_project, get_connection
+    from tests.support_interview_sessions import insert_interview_session
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         await insert_interview_session(

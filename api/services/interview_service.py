@@ -85,6 +85,50 @@ async def _find_session_db(session_token: str) -> str | None:
     return None
 
 
+async def _interviewer_identity(conn, slug: str, session: dict) -> dict:
+    """The name and face of whoever this session was issued to.
+
+    Read from `interview_sessions.interviewer_agent_id` - the stamp - and resolved through the
+    same `resolve_agent_config` that produced the voice, on the connection already open, so a
+    participant's request does not run the migration block.
+
+    Two arms, and neither is a guess:
+
+    - **No stamp** means the session was created before the interviewer was recorded, and
+      before this commit there was exactly one interviewer. `stakeholder_interviewer` is
+      therefore a statement about history rather than a default, the same shape as the legacy
+      `model_id` rule at the speak door.
+    - **A stamp naming an id the roll no longer holds** answers empty. `agent_id` is a
+      permanent contract so this should not happen, and if it ever does, showing a participant
+      nobody is honest while showing them the wrong person is not.
+
+    A database error answers the agent's **defaults**, and that arm is not defensive padding:
+    `interview_db_connection` deliberately runs no migrations, so a project database that has
+    not been opened through `get_connection` since `project_agent_config` was added does not
+    have the table. "No overrides table" means "no overrides", which is precisely what the
+    defaults are - and the alternative is a 500 on a participant's first request. The branding
+    read a few lines below has always degraded the same way for the same reason.
+    """
+    import aiosqlite
+
+    from api.services.agent_config_service import (
+        UnknownAgent,
+        agent_defaults,
+        resolve_agent_config_with,
+    )
+
+    agent_id = session.get("interviewer_agent_id") or "stakeholder_interviewer"
+    try:
+        return await resolve_agent_config_with(conn, slug=slug, agent_id=agent_id)
+    except UnknownAgent:
+        return {"display_name": "", "image_url": ""}
+    except (aiosqlite.Error, ValueError):
+        try:
+            return agent_defaults(agent_id)
+        except UnknownAgent:
+            return {"display_name": "", "image_url": ""}
+
+
 async def get_session_with_script(session_token: str) -> dict | None:
     """Fetch interview session row plus its script from the state store.
 
@@ -120,12 +164,23 @@ async def get_session_with_script(session_token: str) -> dict | None:
         # wrong node, discipline and level, and nothing reports the mismatch.
         script = await script_for_session(conn, slug, dict(session_row))
 
+        interviewer = await _interviewer_identity(conn, slug, dict(session_row))
+
     branding = {
         "header_image_url": config.get("brand_header_image_url", ""),
         "primary_color": config.get("brand_primary_color", "#0d9488"),
         "text_color": config.get("brand_text_color", "#1f2937"),
-        "interviewer_image_url": config.get("brand_interviewer_image_url", ""),
-        "interviewer_name": config.get("brand_interviewer_name", "Avery Singh"),
+        # The person, resolved from the session's stamp - **not** from `brand_interviewer_*`.
+        # Those two settings were written when there was one interviewer and their default was
+        # that interviewer's name, so a project could not distinguish "we branded this" from
+        # "this is what shipped": every stored config holds the literal "Avery Singh", no UI
+        # has ever offered the field, and with two interviewers on the roster roughly half of
+        # every project's participants would have heard Laura and read Avery. The answer
+        # belongs to the agent and `project_agent_config` is where a project overrides it.
+        "interviewer_image_url": interviewer["image_url"] or "",
+        "interviewer_name": interviewer["display_name"],
+        # The tagline stays project branding: it describes the engagement's tone rather than
+        # naming a person, and it is the same sentence whoever is speaking.
         "interviewer_tagline": config.get("brand_interviewer_tagline", "I'll be guiding our conversation today"),
     }
 
@@ -161,8 +216,15 @@ async def generate_deepgram_token() -> str:
         return resp.json()["key"]
 
 
-async def synthesise(text: str, voice_id: str) -> bytes:
-    """Call ElevenLabs and return raw audio. No caching - the cache wraps this."""
+async def synthesise(text: str, voice_id: str, model_id: str) -> bytes:
+    """Call ElevenLabs and return raw audio. No caching - the cache wraps this.
+
+    `model_id` is a parameter and not a constant here because voice and language are separate
+    axes: a voice's `verified_languages` names a model per language, so a project that picks a
+    French voice and keeps `eleven_turbo_v2` has configured half of what it meant. It is
+    resolved per project through `resolve_agent_config`, and it is **required** - a default
+    here would be a second place the answer lives, which is the defect this whole task is about.
+    """
     settings = get_settings()
     if not settings.elevenlabs_api_key:
         raise ValueError("ELEVENLABS_API_KEY not configured")
@@ -175,7 +237,7 @@ async def synthesise(text: str, voice_id: str) -> bytes:
         },
         json={
             "text": text,
-            "model_id": "eleven_turbo_v2",
+            "model_id": model_id,
             "voice_settings": {
                 "stability": 0.40,
                 "similarity_boost": 0.75,
@@ -189,14 +251,20 @@ async def synthesise(text: str, voice_id: str) -> bytes:
     return resp.content
 
 
-async def speak(text: str, voice_id: str) -> bytes:
-    """Cached speech. Scripted questions are identical across every interviewee."""
+async def speak(text: str, voice_id: str, model_id: str) -> bytes:
+    """Cached speech. Scripted questions are identical across every interviewee.
+
+    `model_id` reaches the cache key as well as the request. Two models render the same words
+    in the same voice differently, so a key over voice and text alone would serve one project's
+    audio to another the moment the models diverge - the same collision the key's null-byte
+    separator exists to prevent, one field along.
+    """
     from api.services.tts_cache import cache_key, cached_audio, store_audio
-    key = cache_key(voice_id, text)
+    key = cache_key(voice_id, model_id, text)
     hit = cached_audio(key)
     if hit is not None:
         return hit
-    audio = await synthesise(text, voice_id)
+    audio = await synthesise(text, voice_id, model_id)
     store_audio(key, audio)
     return audio
 

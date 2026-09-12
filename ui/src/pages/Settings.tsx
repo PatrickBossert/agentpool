@@ -29,6 +29,10 @@ const DEFAULTS: ProjectSettings = {
   discovery_links: [],
   discovery_document_ids: [],
   interview_method: 'none',
+  // Matches api/models.py's default, which test_the_frontend_defaults_are_the_models_defaults
+  // holds it to. Not platform-tier: it decides the tone of a conversation, not where this
+  // engagement's material is sent. `interview_accent` sat beside it until sp64 retired it.
+  interviewer_selection: 'random',
   elaboration_press_timeout_seconds: 8,
   anthropic_fast_model: 'anthropic/claude-haiku-4-5-20251001',
   anthropic_deep_model: 'anthropic/claude-opus-4-6',
@@ -147,6 +151,14 @@ export default function Settings() {
   const [imageStatus, setImageStatus] = useState<string>('')
   const [imageError, setImageError] = useState(false)
   const [imageUploading, setImageUploading] = useState(false)
+  // The portrait just uploaded, and when. It exists so the **preview** can be cache-busted
+  // without the buster reaching what is stored: the door serves every version of a header image
+  // from one unchanging address, so a browser that already holds the old one shows it after a
+  // replacement, and appending `?t=` to the value in the form persists a frozen timestamp into
+  // `config_json` on the next save. Harmless while that address 404'd; live now that it
+  // resolves. Keyed on the URL as well as the time, so typing a different address in the box
+  // clears the buster rather than decorating somebody else's URL with it.
+  const [uploadedHeader, setUploadedHeader] = useState<{ url: string; at: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: settings, isError: settingsFailed, error: settingsError } = useQuery({
@@ -227,7 +239,10 @@ export default function Settings() {
     setImageStatus('')
     try {
       const data = await projectsApi.uploadBrandingImage(slug, file)
-      setForm((f) => ({ ...f, brand_header_image_url: `${data.url}?t=${Date.now()}` }))
+      // Stored clean. What the door answered is what the interview page must render, and a
+      // timestamp baked into it would be served to every participant for ever.
+      setForm((f) => ({ ...f, brand_header_image_url: data.url }))
+      setUploadedHeader({ url: data.url, at: Date.now() })
       setImageStatus('Image uploaded successfully.')
       setImageError(false)
     } catch {
@@ -428,6 +443,41 @@ export default function Settings() {
         </div>
 
         <div>
+          <label htmlFor="interviewer_selection" className="text-xs text-gray-600 block mb-1">
+            Who conducts the interview
+          </label>
+          <select
+            {...fieldProps('interviewer_selection')}
+            value={form.interviewer_selection}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                interviewer_selection: e.target
+                  .value as ProjectSettings['interviewer_selection'],
+              })
+            }
+            className="w-full bg-white border border-gray-200 rounded px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+          >
+            <option value="random">Either interviewer, chosen per session</option>
+            <option value="always_male">Always the male interviewer</option>
+            <option value="always_female">Always the female interviewer</option>
+          </select>
+          <p className="text-xs text-muted mt-1">
+            Decided once when a session is created and recorded on it, so a participant who
+            returns to their link meets the same person. Which interviewer has which voice is
+            read from the voice itself, never from a list held here.
+          </p>
+        </div>
+
+        {/* An "Interview accent" field stood here until sp64 and is gone with the setting
+            behind it. It decided nothing about any interview - the accent an interview is
+            conducted in is a property of the voice each interviewer is given, on their own
+            Setup tab - and its one effect was to open every voice picker filtered to
+            `british`, which showed 6 of the account's 41 voices. Accent and language are two
+            axes, and both now live on the picker itself, offering what the provider's listings
+            actually carry. */}
+
+        <div>
           <label
             htmlFor="elaboration_press_timeout_seconds"
             className="text-xs text-gray-600 block mb-2"
@@ -492,7 +542,11 @@ export default function Settings() {
           <label className="text-xs text-gray-600 block mb-1">Header Image</label>
           {form.brand_header_image_url && (
             <img
-              src={form.brand_header_image_url}
+              src={
+                uploadedHeader && uploadedHeader.url === form.brand_header_image_url
+                  ? `${uploadedHeader.url}?t=${uploadedHeader.at}`
+                  : form.brand_header_image_url
+              }
               alt="Brand header preview"
               className="mb-2 max-h-24 rounded border border-gray-200 object-contain"
             />

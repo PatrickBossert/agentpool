@@ -14,7 +14,7 @@ framing carries purpose* - applies to every interview script Maya will ever writ
 engagement. Nothing captured it, so the next project starts with a Maya who will make the same
 mistake and a reviewer who has to write the same note.
 
-**The machinery to prevent that already exists and has never been connected.** 54 skills are
+**The machinery to prevent that already exists and has never been connected.** 53 skills are
 assigned to agents and injected into every crew run. Every one is `baseline` or `manual`; **not
 one has come from a review.** `skills_service.extract_skills_many` turns free text into
 structured proposals and `check_specificity` judges whether a description is actionable - both
@@ -72,6 +72,20 @@ any agent that produces a reviewable output.
 That deliberately covers the loops sp60 is building for Alex and Morgan, and the ones the
 unbuilt register-shaped outputs will need.
 
+## The naming trap, found by Task 1's own control test
+
+**`agent_skill_assignments` is keyed by display name; the crew callers hold the snake id.** The
+live data says so: assignments carry `PAM`, `Value Chain Mapper`, `Value Lever Analyst`, while
+`agent_skill_notes` carries `interaction_designer`. Two tables about the same agents, keyed
+differently.
+
+So a proposal filed under `interaction_designer` is unreachable by any approval - and **it
+passes the safety test**, because a permanently-unreachable skill also never reaches a prompt.
+The test that catches it is the *control*: approve the proposal and assert it now appears.
+
+Every path here resolves through the existing snake-to-display mapping rather than copying it.
+The proposal writes what the injection reads, or the queue fills with rows nobody can act on.
+
 ## Where it lands
 
 `skills` lives in `system.db`, so new columns go in `init_system_db` as `CREATE TABLE IF NOT
@@ -79,7 +93,7 @@ EXISTS` plus `ALTER`, and **`_SCHEMA_VERSION` must not be bumped** - that consta
 databases, and bumping it would re-run every project migration for a table it does not govern.
 
 Columns the design needs and the table lacks: `occurrences` (default 1), and `proposed_by_agent`.
-`source_project` already exists and is NULL on all 54 rows - the proposal path should populate
+`source_project` already exists and is NULL on all 53 rows - the proposal path should populate
 it, since a skill's provenance is the first thing a reviewer will want.
 
 **Scope is inherited, not decided here.** An approved skill applies to its agent on every

@@ -15,6 +15,7 @@ from agents.discovery.stakeholder_interviewer import (
     create_stakeholder_interviewer,
     create_stakeholder_interviewer_task,
 )
+from agents.discovery.second_interviewer import create_second_interviewer
 from agents.discovery.synthesis_analyst import (
     create_synthesis_analyst,
     create_synthesis_analyst_task,
@@ -87,10 +88,22 @@ def create_discovery_interviews_crew(
         llm=llm or get_llm_for_agent("interview_coordinator", slug),
         tools=get_tools_for_agent("interview_coordinator", slug=slug, run_id=run_id, sector=sector),
     )
+    # Two interviewers and one interviewing task. Both are built, because both are on the crew
+    # and a crew that builds only the one it happens to use cannot be held against the
+    # membership it declares - but only one of them is given the task, since running the
+    # interview programme twice is not what a second voice means.
+    #
+    # Which one takes it is a project setting that does not exist yet, so it is Avery today,
+    # exactly as before. `second_interviewer` is the seam Task 3 turns into a choice.
     interviewer = create_stakeholder_interviewer(
         slug=slug,
         llm=llm or get_llm_for_agent("stakeholder_interviewer", slug),
         tools=get_tools_for_agent("stakeholder_interviewer", slug=slug, run_id=run_id, sector=sector),
+    )
+    second_interviewer = create_second_interviewer(
+        slug=slug,
+        llm=llm or get_llm_for_agent("second_interviewer", slug),
+        tools=get_tools_for_agent("second_interviewer", slug=slug, run_id=run_id, sector=sector),
     )
     analyst = create_synthesis_analyst(
         slug=slug,
@@ -109,7 +122,7 @@ def create_discovery_interviews_crew(
     t3 = create_synthesis_analyst_task(agent=analyst, context_tasks=[t2])
 
     return Crew(
-        agents=[coordinator, interviewer, analyst],
+        agents=[coordinator, interviewer, second_interviewer, analyst],
         tasks=[t1, t2, t3],
         process=Process.sequential,
         verbose=True,

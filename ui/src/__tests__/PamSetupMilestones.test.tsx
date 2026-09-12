@@ -11,11 +11,11 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import PamSetupTab from '../components/tabs/PamSetupTab'
+import ProjectScheduleSetup from '../components/tabs/ProjectScheduleSetup'
 import type { Milestone } from '../types'
 
 // `milestoneVariance` defaults `today` to the real clock, and these tests exercise components
-// that legitimately read it - PamReportView and PamSetupTab render a live view, so threading a
+// that legitimately read it - PamReportView and ProjectScheduleSetup render a live view, so threading a
 // date through them would be wrong. The clock is faked instead.
 //
 // Fixed once already in milestoneVariance.test.ts on 19 Aug 2026, where every call was given an
@@ -74,7 +74,7 @@ function renderTab() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <PamSetupTab slug="acme" />
+      <ProjectScheduleSetup slug="acme" />
     </QueryClientProvider>,
   )
 }

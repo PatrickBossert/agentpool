@@ -1,10 +1,23 @@
 // ui/src/components/tabs/AverySetupTab.tsx
-// Avery's Setup tab: voice interviewer configuration (localStorage-backed preferences)
+//
+// Avery's *interviewing behaviour* - style, depth, persistence, timing, guidance.
+//
+// **It holds no voice**, despite `agentpool-avery-voice-config` naming one. Who Avery sounds
+// like is `project_agent_config`, reached through the agent configuration section that now
+// renders on this tab beside this one; the misnamed key is the reason the design's first
+// finding read as "the voice choice never leaves the browser" when the truth was stronger -
+// there was no voice choice anywhere at all.
+//
+// These preferences **are** still in `localStorage`, per browser rather than per project, and
+// they still reach no server and therefore no interview. That is a known defect the design
+// puts out of scope for this branch, kept here rather than half-migrated.
+//
+// **It holds no rehearsal button either, as of sp63.** This tab is Avery's alone, so the dialog
+// it opened could hardcode his face and his name and still look right - and there was no route
+// to a rehearsal for Laura at all. The button is on `AgentConfigSection`, rendered from
+// `is_interviewer`, which makes it one route for every interviewer rather than a second one
+// here that only ever meant Avery.
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { FlaskConical } from 'lucide-react'
-import { projectsApi } from '../../api/endpoints'
-import TestInterviewDialog from './TestInterviewDialog'
 
 const AVERY_CONFIG_KEY = 'agentpool-avery-voice-config'
 
@@ -35,13 +48,6 @@ function loadConfig(slug: string): AveryConfig {
 export default function AverySetupTab({ slug }: { slug: string }) {
   const [config, setConfig] = useState<AveryConfig>(() => loadConfig(slug))
   const [saved, setSaved] = useState(false)
-  const [showTest, setShowTest] = useState(false)
-
-  const { data: settings } = useQuery({
-    queryKey: ['settings', slug],
-    queryFn: () => projectsApi.getSettings(slug),
-    enabled: !!slug,
-  })
 
   function save() {
     try {
@@ -60,9 +66,15 @@ export default function AverySetupTab({ slug }: { slug: string }) {
   return (
     <div className="space-y-5">
 
-      <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
-        <p className="text-[11px] text-blue-700 leading-relaxed">
-          Avery uses a male AI voice with accent matched to the interviewee's country (set on each stakeholder profile). These settings configure his interviewing behaviour across all sessions.
+      {/* brand tokens, not blue-*. The classes were pre-existing and this change rewrote the
+          sentence inside them, which is the moment to stop leaving a do-not-use colour on a
+          line being edited. */}
+      <div className="rounded-lg bg-brand/5 border border-brand/20 px-3 py-2.5">
+        <p className="text-[11px] text-teal-700 leading-relaxed">
+          These settings configure Avery's interviewing behaviour across all sessions. Who he
+          sounds like is set in the agent configuration section below - one voice per
+          interviewer per project, drawn from the accent on the Settings page, and not varied
+          per interviewee.
         </p>
       </div>
 
@@ -148,27 +160,6 @@ export default function AverySetupTab({ slug }: { slug: string }) {
         </button>
         {saved && <span className="text-emerald-500 text-xs">Saved.</span>}
       </div>
-
-      {/* ── Test Interview ─────────────────────────────────────────────── */}
-      <div className="border-t border-gray-100 pt-5 mt-2">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Test Interview</p>
-            <p className="text-[11px] text-gray-500 leading-relaxed max-w-sm">
-              Run a smoke-test interview using the sample script. Avery will ask real questions via voice and you respond — useful for testing ElevenLabs connectivity and interview flow before going live.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowTest(true)}
-            className="flex items-center gap-1.5 flex-shrink-0 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-teal-300 text-xs font-medium rounded transition-colors"
-          >
-            <FlaskConical size={13} />
-            Test Interview
-          </button>
-        </div>
-      </div>
-
-      {showTest && <TestInterviewDialog slug={slug} onClose={() => setShowTest(false)} locale={settings?.locale} />}
     </div>
   )
 }

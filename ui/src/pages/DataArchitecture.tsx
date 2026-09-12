@@ -628,6 +628,14 @@ function PageNav({ data }: { data: DataArchitectureModel }) {
 // Anthropic is still reached on one - the skills library is hosted by decision whatever the
 // project's mode - so removing the terms altogether would under-report. The card is replaced by
 // one that says which paths do and do not reach it.
+//
+// The card briefly read "not this engagement's prompts", because `SkillProposalTool` had put an
+// agent on the always-hosted skills path from inside a run and "not this engagement's agents"
+// had stopped being true. That was corrected in the code instead: the proposal's duplicate
+// check now goes through `project_completion` and moves with the project, so no agent reaches
+// Anthropic on a contained engagement and the stronger sentence is honest again. What remains
+// hosted is the **global library door** - the admin skills page, which carries no project -
+// and the card below says so in those terms rather than in terms of "the library".
 const UNDERTAKINGS: {
   title: string
   detail: string
@@ -666,9 +674,9 @@ const UNDERTAKINGS: {
       'When an agent pauses for a review, the request is written to this project’s own database and the agent waits there for a decision. Nothing is pushed out to announce it - the automation webhook that used to relay review prompts to Slack has been retired and no channel has replaced it, so a reviewer finds a waiting gate by opening this dashboard.',
   },
   {
-    title: 'The skills library is deliberately always hosted',
+    title: 'The skills library has one hosted door, and it is not this project',
     detail:
-      "Reviewer feedback about how an agent behaves is summarised by a hosted model regardless of a project's mode. This is a decision rather than an oversight: the library is global across engagements and its endpoints carry no project, so there is no project mode to honour. It is still reviewer feedback typed on an engagement, and a project-scoped library is the fix if that stops being acceptable.",
+      "Reviewer feedback typed on the administrator's skills page is summarised by a hosted model regardless of any project's mode. That is a decision rather than an oversight, and it rests on two facts about that door: the library is global across engagements, and the page carries no project, so there is no project mode to honour. It is still feedback typed on an engagement, and a project-scoped library is the fix if that stops being acceptable. The other way into the library does not work this way: when an agent proposes a rule after a reviewer has sent its work back, the check for whether that rule is already held goes to whichever model this project's mode allows - the same one its prompts go to.",
   },
   {
     title: 'Paths outside the crews',

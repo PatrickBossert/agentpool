@@ -5,8 +5,8 @@ import ValidationWarnings from './ValidationWarnings'
 import { X, Check, PauseCircle, Download, XCircle } from 'lucide-react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { projectsApi, skillNotesApi } from '../api/endpoints'
-import { AGENT_RUN_KEYS, AGENT_HUMAN_NAME, CREW_LABELS } from './agentStatus'
+import { projectsApi } from '../api/endpoints'
+import { CREW_LABELS } from './agentStatus'
 import { CREW_OUTPUT_TYPE } from './crewOutputs'
 import type { HumanReview, AgentOutput } from '../types'
 
@@ -373,10 +373,19 @@ export const CREW_WARNING_SOURCE: Record<string, string> = {
   assessment_design: 'script_ledger_registration',
 }
 
+// What each choice does, in the reviewer's language and truthfully.
+//
+// The third used to say "Do this on every project - becomes a capability this agent uses
+// everywhere", and it did neither: it set a column nothing read. It now files the reviewer's
+// sentence on the skills queue, where a human approves it and decides at that moment whether
+// it applies to this engagement or to all of them - the narrow answer being the default. The
+// copy says so, because a control promising to change an agent's behaviour everywhere is
+// exactly what the scope decision exists to stop happening without anybody choosing it.
 const INTENT_OPTIONS: [ReviewIntent, string, string][] = [
   ['change_request', 'Fix this output', 'Applies to the next run only.'],
   ['correction', 'This is true of this client', 'Becomes a standing fact for this client.'],
-  ['skill', 'Do this on every project', 'Becomes a capability this agent uses everywhere.'],
+  ['skill', 'Make this a standing rule for this agent',
+   'Goes to the skills queue - nothing changes until a reviewer approves it, and they decide whether it applies here or everywhere.'],
 ]
 
 export interface ReviewDialogProps {
@@ -390,7 +399,6 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   const qc = useQueryClient()
   const [mode, setMode] = useState<'idle' | 'revise' | 'reject'>('idle')
   const [notes, setNotes] = useState('')
-  const [skillInput, setSkillInput] = useState('')
   const [intent, setIntent] = useState<ReviewIntent>('change_request')
   const [submitting, setSubmitting] = useState(false)
 
@@ -399,14 +407,10 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   const crewLabel = review.crew_name ? (CREW_LABELS[review.crew_name] ?? review.crew_name) : 'Crew'
   const promptBody = stripHitlBoilerplate(review.prompt ?? '')
 
-  // Derive the rejecting agent's snake_case key and human name from matchedOutput
-  const rejectingAgentKey = matchedOutput?.agent_name ?? null
-  const rejectingAgentDisplayName = rejectingAgentKey
-    ? (Object.keys(AGENT_RUN_KEYS).find(k => AGENT_RUN_KEYS[k] === rejectingAgentKey) ?? null)
-    : null
-  const rejectingAgentHumanName = rejectingAgentDisplayName
-    ? (AGENT_HUMAN_NAME[rejectingAgentDisplayName] ?? rejectingAgentDisplayName)
-    : null
+  // The rejecting agent's snake key and human name were derived here, for the rejection-path
+  // note box that has gone. The server no longer needs telling which agent a rule is about -
+  // it reads `agent_outputs.agent_name` off the output the review was made against, which is
+  // the same answer without a second place for it to be got wrong.
 
   async function handleApprove() {
     setSubmitting(true)
@@ -427,10 +431,6 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
       await projectsApi.resolveReview(
         slug, review.id, decision, notes.trim(), mode === 'revise' ? intent : 'change_request',
       )
-      // Save skill note alongside rejection (fire-and-forget, non-blocking)
-      if (mode === 'reject' && rejectingAgentKey && skillInput.trim()) {
-        skillNotesApi.create(rejectingAgentKey, skillInput.trim()).catch(() => {})
-      }
       qc.invalidateQueries({ queryKey: ['reviews', slug] })
       onClose()
     } finally {
@@ -438,7 +438,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
     }
   }
 
-  function cancel() { setMode('idle'); setNotes(''); setSkillInput(''); setIntent('change_request') }
+  function cancel() { setMode('idle'); setNotes(''); setIntent('change_request') }
 
   return (
     <>
@@ -531,21 +531,13 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
                   />
                 </div>
-                {mode === 'reject' && rejectingAgentHumanName && (
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-2">
-                      What should {rejectingAgentHumanName} do differently next time?{' '}
-                      <span className="text-gray-400 font-normal">(optional)</span>
-                    </label>
-                    <textarea
-                      value={skillInput}
-                      onChange={e => setSkillInput(e.target.value)}
-                      placeholder="Describe specific improvements for future runs…"
-                      rows={3}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand resize-none"
-                    />
-                  </div>
-                )}
+                {/* A second box stood here on the rejection path - "what should Maya do
+                    differently next time?" - and its answer went straight into that agent's
+                    prompt on every engagement, distilled by a model and approved by nobody.
+                    The question is a good one and it is now asked where it can be answered
+                    properly: Request revision, then "Make this a standing rule for this
+                    agent", which files it on the skills queue for a human to approve and
+                    scope. */}
               </div>
             )}
           </div>

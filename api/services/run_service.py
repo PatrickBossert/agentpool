@@ -22,7 +22,6 @@ from api.database import (
 )
 from api.routers.ws import push_log
 from api.services.assignment_coverage import build_assignment_coverage
-from api.services.platform_settings import platform_public_url
 
 # Do not add a module-level `from agents…` import here. `agents/graph.py` imports
 # `_CREW_AGENT_NAMES` from this module and assembles at import time, and `agents/tools/_db.py`
@@ -40,7 +39,11 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
     "assessment_design":      ["interaction_designer"],
     "requirements":           ["requirements_capture", "requirements_analyst"],
     "stakeholder_management": ["stakeholder_manager"],
-    "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer", "synthesis_analyst"],
+    # Two interviewers, one interviewing task. Laura is a second voice rather than a second
+    # brief, so which of them takes the task is a project setting - not a reason to run the
+    # interviews twice.
+    "discovery_interviews":   ["interview_coordinator", "stakeholder_interviewer",
+                               "second_interviewer", "synthesis_analyst"],
     "value_design":           ["value_proposition_generator", "portfolio_manager"],
     "capabilities":           ["enterprise_architect", "initiative_identifier"],
     "delivery":               ["roadmap_generator"],
@@ -51,6 +54,19 @@ _CREW_AGENT_NAMES: dict[str, list[str]] = {
 }
 
 # Maps snake_case agent names (used in DB crew runs) to display names (used in agent_skills).
+#
+# Every agent `_CREW_AGENT_NAMES` dispatches must appear here, and absence is silent in **both**
+# directions: `_fetch_skill_notes` skips an agent with no display name, so the agent receives no
+# library skills however many are approved for it, and a skill proposal about it can be approved
+# and still reach no prompt. `visual_illustrator` was absent from here for as long as he had
+# been dispatched, which is the second time that one agent has been missing from a map nothing
+# held against the roll. `test_every_dispatched_crew_agent_resolves_to_a_skills_name` in
+# tests/test_crew_agent_registration.py is what now makes an absence loud.
+#
+# **There are two readers, not one.** `skills_service._role_name_for` resolves against this map
+# too, so a proposal made by an agent missing from it is filed under a name no approval can
+# reach - the same silence, arriving from the other end. That reader is why the guard lives in
+# a file about registration rather than beside either of them: it is a property of the map.
 _SNAKE_TO_DISPLAY: dict[str, str] = {
     "value_chain_mapper":          "Value Chain Mapper",
     "interaction_designer":        "Interaction Designer",
@@ -60,13 +76,19 @@ _SNAKE_TO_DISPLAY: dict[str, str] = {
     "stakeholder_manager":         "Stakeholder Manager",
     "interview_coordinator":       "Interview Coordinator",
     "stakeholder_interviewer":     "Stakeholder Interviewer",
+    "second_interviewer":          "Second Interviewer",
     "synthesis_analyst":           "Synthesis Analyst",
     "value_proposition_generator": "Value Proposition Generator",
     "portfolio_manager":           "Portfolio Manager",
     "enterprise_architect":        "Enterprise Architect",
     "initiative_identifier":       "Initiative Identifier",
     "roadmap_generator":           "Roadmap Generator",
+    "visual_illustrator":          "Visual Illustrator",
     "business_plan_generator":     "Business Plan Generator",
+    # PAM is dispatched by orchestration_service rather than by a crew, so it is in no entry
+    # of _CREW_AGENT_NAMES and nothing injects its skills - but it holds eight of them in the
+    # table under this name, and it can propose. The two names had to agree somewhere.
+    "pam":                         "PAM",
 }
 
 
@@ -87,33 +109,94 @@ def missing_config_keys(config: dict, crew_name: str) -> list[str]:
     return [key for key in REQUIRED_CONFIG_KEYS.get(crew_name, ()) if not config.get(key)]
 
 
-async def _fetch_skill_notes(crew_name: str) -> str:
-    """Return stored skill notes and approved library skills for this crew's agents."""
-    from api.database import get_system_connection, fetch_skill_notes as _fetch, fetch_skills
+def _skill_applies_here(slug: str, skill: dict) -> bool:
+    """Whether one approved skill is injected into a run on `slug`.
+
+    The scope question, and it is **not** the egress question `_candidates_that_may_travel`
+    asks in `skills_service.py`. That one is about where a project's material may be sent;
+    this one is about where a rule was decided to apply. A reviewer's answer, recorded on the
+    row at approval, read here.
+
+    - `global` reaches every engagement. That is what a reviewer widening a rule means, and
+      it is what the fifty-three skills written before the column existed were migrated to.
+    - `project` reaches only the engagement its own `source_project` names. Patrick's worked
+      example is the whole of it: *"do not include specific investment figures"* is global,
+      and *"this client calls it the renewals programme"* is not - the same reviewer, the
+      same control, and nothing in the text from which either could be derived.
+
+    A row that names neither - `project` with no `source_project` - reaches nothing, and that
+    is the safe direction rather than an oversight: an unattributable rule cannot be shown to
+    belong to the engagement being run, and the alternative default is the universal one this
+    whole column exists to stop being automatic. `scope` missing from the row entirely (a
+    hand-built fixture, a caller reading a table older than this column) falls the same way.
+
+    **The slug comparison is exact, and case-sensitively so.** Whitespace is stripped on both
+    sides, because that only ever collapses two spellings onto the *same* engagement; case is
+    not folded, so a rule filed on `proj-a` does not reach a run on `PROJ-A`. That direction
+    is deliberate and it is the safe one - the failure is a rule that does not appear, not a
+    rule that appears somewhere nobody chose - and it costs nothing in practice, since a slug
+    is generated lower-case and both sides of this comparison come from the same column
+    family. Said here because "compared exactly" is invisible in the expression below, and a
+    reader who assumed normalisation would be wrong in the direction that matters.
+
+    Nothing is logged when a skill is withheld. A project-scoped rule not appearing on another
+    engagement is the designed, overwhelmingly common case rather than a surprise worth
+    explaining, and a line per skill per agent per run would bury anything worth reading.
+    """
+    if (skill.get("scope") or "").strip() == "global":
+        return True
+    origin = (skill.get("source_project") or "").strip()
+    return bool(origin) and origin == (slug or "").strip()
+
+
+async def _fetch_skill_notes(crew_name: str, slug: str) -> str:
+    """The approved library skills that apply to this crew's agents on a run on `slug`.
+
+    **`slug` is required, and it is the whole of the second half of this docstring.** This
+    block is prepended to every task of the crew, so whatever it contains becomes part of a
+    prompt routed by `get_llm_for_agent(agent, slug)` - hosted Anthropic on a `standard`
+    project. Without the slug there was no question this function could ask, and it asked
+    none.
+
+    **An approved skill travels as far as its `scope` says**, and no further. A `global` one is
+    the agent's published instruction everywhere by design, which is what
+    `_candidates_that_may_travel` argues in `skills_service.py` and what `list_skills` turns
+    on; a `project` one reaches only the engagement it was decided on. `_skill_applies_here`
+    above is that filter, and the scope is a reviewer's judgement recorded at approval rather
+    than anything derivable from the rule's text.
+
+    **It used to read a second source, and that mechanism is retired.** A reviewer's rejection
+    feedback was distilled by a model into a note and prepended here - with no approval step
+    between being written and being injected, and applying to every engagement. It was never
+    intended: feedback was always meant to improve the output in hand and then be *evaluated*
+    as a project-level or global skill through the skills review, which is what
+    `intent='skill'` on `PATCH /projects/{slug}/reviews/{id}` now does. Nothing was lost by
+    retiring it. The immediate half already worked without it - a reviewer's note reaches the
+    agent through `_fetch_change_requests` - and the standing half is what a scoped, approved
+    skill does properly, with a human in the loop.
+
+    The name is kept because it is what every caller, test and note in CLAUDE.md refers to;
+    what it fetches is skills.
+    """
+    from api.database import get_system_connection, fetch_skills
     agent_names = _CREW_AGENT_NAMES.get(crew_name, [])
     if not agent_names:
         return ""
     async with get_system_connection() as conn:
-        notes: list[str] = []
         skills: list[str] = []
         seen_skill_ids: set[int] = set()
         for a in agent_names:
-            rows = await _fetch(conn, agent_name=a)
-            for r in rows:
-                notes.append(f"- {r['note']}")
             display = _SNAKE_TO_DISPLAY.get(a)
             if display:
                 skill_rows = await fetch_skills(conn, agent_name=display, status="approved")
                 for s in skill_rows:
-                    if s["id"] not in seen_skill_ids:
-                        seen_skill_ids.add(s["id"])
-                        skills.append(f"- {s['name']}: {s['description']}")
-    sections: list[str] = []
-    if notes:
-        sections.append("SKILL IMPROVEMENT NOTES (apply these in your output):\n" + "\n".join(notes))
-    if skills:
-        sections.append("AGENT SKILLS (apply these capabilities in your work):\n" + "\n".join(skills))
-    return "\n\n".join(sections)
+                    if s["id"] in seen_skill_ids or not _skill_applies_here(slug, s):
+                        continue
+                    seen_skill_ids.add(s["id"])
+                    skills.append(f"- {s['name']}: {s['description']}")
+    if not skills:
+        return ""
+    return "AGENT SKILLS (apply these capabilities in your work):\n" + "\n".join(skills)
 
 
 # Which crew is answerable for each warning source. A warning is only useful to the agent
@@ -205,6 +288,48 @@ async def _fetch_regeneration_requests(slug: str, crew_name: str) -> str:
         "note. They already have a script, so step 4's differential would otherwise skip "
         "them - these are the exception:\n" + lines
     )
+
+
+# The instruction that turns a correction into a rule, injected only on a run that actually
+# has one to learn from.
+#
+# It belongs with the two blocks above and below it rather than in any agent's task, because
+# the requirement is about a *situation* and not about an agent: anything that can be sent work
+# back should propose the general rule behind the correction it just made. Writing it into
+# Maya's task would have made it hers, and `SkillProposalTool` is held by all seventeen agents
+# a crew dispatches.
+#
+# Injected on a send-back and on nothing else. An agent holding the tool can call it whenever it
+# likes - a tool an agent holds is a tool it can decide to call - but an ordinary run is not
+# asked to, which is what keeps the deduplication's model call off every run that had nothing
+# corrected. That call is gated on the project's mode: `find_duplicate_skill` goes through
+# `llm_client.project_completion(slug, "fast", ...)`, so a sensitive engagement compares on its
+# own model, and `agents/egress.py` declares it `Reach.INFERENCE` for that reason. This comment
+# said "hosted" and "ungated on mode" until the commit that made both false went past it
+# without it - the same shape of defect this whole feature exists to catch.
+#
+# The worked example is real: it is the note a reviewer left on interview script SC-014 on
+# 3 September 2026, and the rule Maya's revision of it actually turned on. A general
+# instruction to "propose the rule, not the note" is the sort of thing an agent agrees with and
+# then ignores; one worked pair of the two is what makes the distinction operable.
+_SKILL_PROPOSAL_INSTRUCTION = (
+    "AFTER you have made every revision asked for above - not instead of making them - ask "
+    "whether the correction has a general rule behind it, and if it has, record that rule "
+    "with SkillProposalTool.\n"
+    "Propose the rule, not the note. The note is about the one piece of work in front of you; "
+    "the rule is what you should do differently on every future piece of work of that kind, on "
+    "this engagement and on every other. Worked example - the note left on interview script "
+    "SC-014 was: \"'not a performance review' appears twice, and the framing repeats the "
+    "welcome\". The rule behind it is: \"the welcome carries privacy and tone, the framing "
+    "carries the interview's purpose\". The first is about a script. The second is about every "
+    "script.\n"
+    "At most one proposal per correction, and none at all where the correction was particular "
+    "to this piece of work and generalises to nothing - an approved rule is applied to every "
+    "future run, so a rule that should not have been proposed costs more than a lesson left "
+    "unrecorded. Your suggestion changes nothing, on this run or any other, until a human "
+    "approves it, and whether it succeeds or fails has no bearing on the revision you have "
+    "already made."
+)
 
 
 async def _fetch_change_requests(slug: str, crew_name: str) -> tuple[str, list[int]]:
@@ -484,14 +609,12 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
         )
 
     elif crew_name == "stakeholder_management":
-        # public_url was never `config.get("public_url", "")` - "public_url" is not a
-        # declared ProjectSettings field, so PATCH /{slug}/settings could never set it and
-        # this was always "". platform_public_url() is the deployment's own address (the
-        # sysadmin setting, falling back to PUBLIC_URL), which is what Jordan's invitation
-        # links need to build against.
-        public_url = platform_public_url()
-        public_interview_url_base = f"{public_url}/dashboard/interview" if public_url else ""
-
+        # No interview URL base is computed here. Jordan drafted invitations and reminders
+        # until the interview process was returned to the Interview Coordinator, and the base
+        # went with the step rather than being kept for Taylor's build: an unused value that
+        # a later, unrelated repair gives a real meaning is exactly how the fabricated-link
+        # defect armed itself. Taylor's build reinstates it where his invites are issued.
+        #
         # The mapping reaches Jordan here, and only here.
         #
         # His task has instructed him to read `stakeholder_assignments` through
@@ -519,7 +642,6 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
             slug=slug,
             run_id=run_id,
             sector=sector,
-            public_interview_url_base=public_interview_url_base,
             coverage=coverage,
         )
 
@@ -535,24 +657,27 @@ async def build_and_run_crew(slug: str, crew_name: str, run_id: int) -> Any:
     # review_status='changes_requested' (POST /review and PATCH /reviews/{id}) also write
     # an output_changes row now, so injecting from here too would say the same thing twice.
 
-    skill_notes = await _fetch_skill_notes(crew_name)
-    if skill_notes:
-        for task in crew.tasks:
-            task.description = skill_notes + "\n\n" + task.description
-
+    skill_notes = await _fetch_skill_notes(crew_name, slug)
     change_text, change_ids = await _fetch_change_requests(slug, crew_name)
-    if change_text:
-        for task in crew.tasks:
-            task.description = change_text + "\n\n" + task.description
-
     warning_text = await _fetch_validation_warnings(slug, crew_name)
-    if warning_text:
-        for task in crew.tasks:
-            task.description = warning_text + "\n\n" + task.description
-
     regeneration_text = await _fetch_regeneration_requests(slug, crew_name)
-    if regeneration_text:
-        for task in crew.tasks:
+
+    # Every block is prepended, so the code order below is the reverse of the reading order the
+    # agent gets: regeneration, warnings, changes, the proposal instruction, the skills, then
+    # the task. The proposal instruction is placed to fall immediately after the last of the
+    # blocks it refers to, and is injected **once** however many of them fired - a human sent
+    # one lot of work back, not two, and two copies of "propose at most one rule" is the
+    # fan-out defect `_fetch_change_requests` deduplicates for, arriving from a second source.
+    for task in crew.tasks:
+        if skill_notes:
+            task.description = skill_notes + "\n\n" + task.description
+        if change_text or regeneration_text:
+            task.description = _SKILL_PROPOSAL_INSTRUCTION + "\n\n" + task.description
+        if change_text:
+            task.description = change_text + "\n\n" + task.description
+        if warning_text:
+            task.description = warning_text + "\n\n" + task.description
+        if regeneration_text:
             task.description = regeneration_text + "\n\n" + task.description
 
     result = await crew.kickoff_async()
@@ -788,15 +913,12 @@ async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
             create_stakeholder_manager,
             create_stakeholder_manager_task,
         )
-        # See the matching comment in the stakeholder_management crew branch above:
-        # config.get("public_url", "") was always "" - not a declared ProjectSettings
-        # field - so this standalone-agent path has never sent Jordan a URL either.
-        public_url = platform_public_url()
+        # See the matching comment in the stakeholder_management crew branch above: this path
+        # computed an interview URL base too, and it went the same way for the same reason.
         agent_obj = create_stakeholder_manager(slug=slug, llm=llm, tools=tools)
         task = create_stakeholder_manager_task(
             agent=agent_obj,
             project_slug=slug,
-            public_interview_url_base=f"{public_url}/dashboard/interview" if public_url else "",
         )
 
     else:

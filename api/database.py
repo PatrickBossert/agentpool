@@ -526,6 +526,7 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
             session_token         TEXT NOT NULL UNIQUE,
             status                TEXT NOT NULL DEFAULT 'pending',
             voice_config          TEXT,
+            interviewer_agent_id  TEXT,
             script_id             TEXT,
             transcript_json       TEXT,
             ratings_json          TEXT,
@@ -571,6 +572,34 @@ async def _migrate_interview_sessions_script_id(conn: aiosqlite.Connection) -> N
     cols = {row[1] for row in await cur.fetchall()}
     if "script_id" not in cols:
         await conn.execute("ALTER TABLE interview_sessions ADD COLUMN script_id TEXT")
+    await conn.commit()
+
+
+async def _migrate_interview_sessions_interviewer(conn: aiosqlite.Connection) -> None:
+    """Record which interviewer a session was issued to, beside the voice it was issued with.
+
+    The selection is per session and the setting that drives it is per project, so the two
+    disagree the moment the setting is changed - which it may be at any point between an
+    invite being sent and the interview being taken. Re-reading `interviewer_selection` at
+    interview time would answer "who would be chosen now", and under `random` it would answer
+    a different person on every open of the same link. The row is the only thing that can say
+    who actually conducted it, which is the same argument `client_documents.
+    knowledge_collection` settled in sp57: an address that is re-derived is an address that
+    can move underneath the thing it points at.
+
+    Nullable, because every session created before this migration genuinely has no answer.
+    A NULL here means "issued before the interviewer was recorded", never "unknown now".
+
+    Guarded with `PRAGMA table_info` so it skips *itself* rather than raising on a database
+    that already has the column - a migration that raises takes every later migration in the
+    block down with it, and this one runs after twenty-odd others.
+    """
+    cur = await conn.execute("PRAGMA table_info(interview_sessions)")
+    cols = {row[1] for row in await cur.fetchall()}
+    if "interviewer_agent_id" not in cols:
+        await conn.execute(
+            "ALTER TABLE interview_sessions ADD COLUMN interviewer_agent_id TEXT"
+        )
     await conn.commit()
 
 
@@ -1279,6 +1308,150 @@ async def _migrate_inbound_replies(conn: aiosqlite.Connection) -> None:
     await conn.commit()
 
 
+# The overridable columns of `project_agent_config`, in the order the design names them.
+# Stated once so the table, its repair loop, the SELECT, the upsert and the resolver's
+# `CONFIG_FIELDS` cannot drift apart on which fields exist - the drift that let `updated_at`
+# fall out of the repair loop while everything else agreed.
+AGENT_CONFIG_COLUMNS = (
+    "display_name",
+    "image_url",
+    "voice_id",
+    "language",
+    "country_code",
+    "model_id",
+)
+
+
+async def _migrate_project_agent_config(conn: aiosqlite.Connection) -> None:
+    """What this project calls an agent, what it shows for it, and how it sounds.
+
+    Keyed on `(project_id, agent_id)` - the permanent snake key from `agents/identity.py`, never
+    a display name. That separation is the whole reason this table is cheap: renaming Avery, or
+    running an engagement where he is called something else, moves no identity and breaks no
+    history, because nothing here is keyed on what a human reads.
+
+    **NULL means "use the default"; an empty string does not.** They are different states and
+    the difference is the point. A project that has deliberately cleared a name - or a face, or
+    a voice - has said something, and saying it must not be indistinguishable from never having
+    opened the settings. `resolve_agent_config` therefore tests each column for NULL and not for
+    truthiness: `''` is an override that resolves to `''`.
+
+    Every column but the key is nullable for the same reason, and each is resolved on its own,
+    so a project may choose a voice without also having to restate a name it was happy with.
+
+    Not `config_json`: this is per agent rather than per project, and it wants a row per agent
+    rather than a nested blob that every writer has to merge. Not `localStorage`, where the
+    voice choice lives today - a setting that never reaches the server cannot reach an
+    interview, which is exactly the first broken link in the wrong-voice defect.
+
+    `model_id` sits beside `voice_id` because voice and language are separate axes - a voice's
+    `verified_languages` names a model per language - so a project that chooses a French voice
+    and keeps an English synthesis model has configured half of what it meant. Every project is
+    English today and the resolved answer never varies; the column exists so that stops being
+    true without a second migration.
+
+    Written as create-then-fill rather than a bare CREATE TABLE so it is defensive about the
+    shape it finds: `PRAGMA table_info` decides which columns are missing, and the migration
+    skips *itself* on a database that already has them rather than raising and taking every
+    later migration in the block down with it. `updated_at` is repaired by the same loop and
+    with its own type - it was left out of the first version, so a table missing *that* column
+    was diagnosed as repaired and still broke `upsert_agent_config`, which writes it.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS project_agent_config (
+            project_id    INTEGER NOT NULL,
+            agent_id      TEXT NOT NULL,
+            display_name  TEXT,
+            image_url     TEXT,
+            voice_id      TEXT,
+            language      TEXT,
+            country_code  TEXT,
+            model_id      TEXT,
+            updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (project_id, agent_id)
+        )
+    """)
+    async with conn.execute("PRAGMA table_info(project_agent_config)") as cur:
+        cols = {row["name"] async for row in cur}
+    repairs = [(name, "TEXT") for name in AGENT_CONFIG_COLUMNS]
+    repairs.append(("updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"))
+    for column, declaration in repairs:
+        if column not in cols:
+            await conn.execute(
+                f"ALTER TABLE project_agent_config ADD COLUMN {column} {declaration}"
+            )
+    await conn.commit()
+
+
+async def fetch_agent_config(
+    conn: aiosqlite.Connection, *, project_id: int, agent_id: str
+) -> dict | None:
+    """The overrides this project has recorded for one agent, or None if it has recorded none.
+
+    A returned dict may hold NULLs. Distinguishing "no row" from "a row whose every column is
+    NULL" is deliberate even though `resolve_agent_config` resolves both to the defaults: the
+    settings door needs to know whether the project has ever been configured.
+    """
+    selected = ", ".join(AGENT_CONFIG_COLUMNS)
+    async with conn.execute(
+        f"SELECT project_id, agent_id, {selected}, updated_at FROM project_agent_config"
+        " WHERE project_id=? AND agent_id=?",
+        (project_id, agent_id),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def upsert_agent_config(
+    conn: aiosqlite.Connection,
+    *,
+    project_id: int,
+    agent_id: str,
+    display_name: str | None,
+    image_url: str | None,
+    voice_id: str | None,
+    language: str | None,
+    country_code: str | None,
+    model_id: str | None,
+) -> None:
+    """Record this project's overrides for one agent, replacing whatever it held before.
+
+    Every field is written, so passing None **clears** that override and restores the default -
+    it does not leave the stored value alone. That is the honest reading of "NULL means use the
+    default": a caller that omits a field is saying the field has no override, and a settings
+    form that posts its whole state gets the behaviour it expects. A caller wanting to change
+    one field of several reads the row first.
+
+    **None of the six has a Python default, deliberately.** With defaults,
+    `upsert_agent_config(conn, project_id=1, agent_id="x")` type-checks, reads at the call site
+    as a no-op, and wipes the row - so the shape most likely to be written by mistake is the
+    most destructive one available. Requiring all six puts the cost on the caller who means it
+    and makes a clear visible in the diff that performs it.
+
+    An empty string is stored as an empty string and is *not* a clear.
+    """
+    columns = ", ".join(AGENT_CONFIG_COLUMNS)
+    placeholders = ",".join("?" for _ in AGENT_CONFIG_COLUMNS)
+    assignments = ",".join(f" {name}=excluded.{name}" for name in AGENT_CONFIG_COLUMNS)
+    await conn.execute(
+        f"INSERT INTO project_agent_config (project_id, agent_id, {columns}, updated_at)"
+        f" VALUES (?,?,{placeholders},CURRENT_TIMESTAMP)"
+        f" ON CONFLICT(project_id, agent_id) DO UPDATE SET{assignments},"
+        "  updated_at=CURRENT_TIMESTAMP",
+        (
+            project_id,
+            agent_id,
+            display_name,
+            image_url,
+            voice_id,
+            language,
+            country_code,
+            model_id,
+        ),
+    )
+    await conn.commit()
+
+
 async def insert_inbound_reply(
     conn: aiosqlite.Connection,
     *,
@@ -1758,9 +1931,27 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # gains_the_collection_column, which fails on 12 and passes on 13; and
 # tests/test_local_inference_override.py::test_a_database_at_the_previous_version_gains_the_
 # force_local_inference_column, which fails on 13 and passes on 14; and
-# tests/test_value_chain_ledger.py::test_a_database_at_the_previous_version_gains_the_
-# value_chain_ledger, which fails on 14 and passes on 15.
-_SCHEMA_VERSION = 15
+# tests/test_agent_config.py::test_a_database_at_the_previous_version_gains_the_project_agent_
+# config_table, which fails on 14 and passes on 15; and
+# tests/test_agent_config.py::test_a_database_at_version_15_gains_the_model_id_column, which
+# fails on 15 and passes on 16; and
+# tests/test_interviewer_selection.py::test_a_database_at_version_16_gains_the_interviewer_
+# column, which fails on 16 and passes on 17; and
+# tests/test_value_chain_ledger.py::test_a_database_at_version_17_gains_the_value_chain_ledger,
+# which fails on 17 and passes on 18.
+#
+# Note that 15 -> 16 adds a column to an *existing* migration rather than a new function, which
+# the comment above already covers and which is the easier bump to forget: the migration is
+# already in the block, already runs on a fresh database, and only the databases that have
+# already been opened at 15 are left behind.
+#
+# **17 -> 18 is the number this branch nearly got wrong, and the mistake would have been
+# silent.** `_migrate_value_chain_ledger` was written when the constant was 14 and bumped it to
+# 15; master reached 17 while the branch was parked. Resolving the constant in master's favour -
+# which is what "take the newer number" looks like - would have left the ledger migration in the
+# block below with no bump covering it, so it would never have run on any database already
+# opened at 17. Every existing deployment, unmigrated for ever, with nothing raised.
+_SCHEMA_VERSION = 18
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -1870,6 +2061,7 @@ async def get_connection(slug: str):
             await _migrate_script_reviews(conn)
             await _migrate_value_chain_ledger(conn)
             await _migrate_interview_sessions_script_id(conn)
+            await _migrate_interview_sessions_interviewer(conn)
             await _migrate_stakeholder_roles(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)
@@ -1878,6 +2070,7 @@ async def get_connection(slug: str):
             await _migrate_validation_warnings(conn)
             await _migrate_registry_output_type(conn)
             await _migrate_inbound_replies(conn)
+            await _migrate_project_agent_config(conn)
             # PRAGMA does not accept bound parameters; _SCHEMA_VERSION is a hardcoded
             # module constant, never user input, so formatting it in is safe.
             await conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
@@ -2081,6 +2274,23 @@ async def fetch_agent_outputs(conn: aiosqlite.Connection, *, project_id: int) ->
         (project_id,),
     ) as cur:
         return [dict(r) async for r in cur]
+
+
+async def fetch_output_agent_name(
+    conn: aiosqlite.Connection, *, output_id: int
+) -> str | None:
+    """Which agent produced this output, or None if there is no such row.
+
+    The snake id the crews dispatch by - `value_chain_mapper` - which is what
+    `skills_service._role_name_for` resolves to the role name the skills library is keyed by.
+    A single row by id rather than `fetch_agent_outputs`, whose correlated subquery for the
+    latest reviewer notes is a great deal of work for one column.
+    """
+    async with conn.execute(
+        "SELECT agent_name FROM agent_outputs WHERE id=?", (output_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return row["agent_name"] if row else None
 
 
 async def insert_document(
@@ -3320,27 +3530,54 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             UNIQUE(user_id, project_slug)
         );
 
-        CREATE TABLE IF NOT EXISTS agent_skill_notes (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent_name TEXT NOT NULL,
-            note       TEXT NOT NULL,
-            raw_input  TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
+        -- A retired table stood here: a model's distillation of a reviewer's rejection
+        -- feedback, injected into every engagement's prompts with no approval step at all. It
+        -- was never intended - feedback was always meant to improve the output in hand and
+        -- then be evaluated as a project-level or global skill through the skills review -
+        -- and `intent='skill'` on the review door now files exactly that, into the queue
+        -- below. **It is not dropped here.** The statement is gone, so a fresh deployment
+        -- never creates it; an existing one keeps an inert table nothing reads, which is the
+        -- cheaper of the two mistakes and leaves its one row of test data recoverable.
+        --
+        -- `occurrences`, `proposed_by_agent`, `source_project` and `source_ref` are the
+        -- provenance an agent's proposal arrives with. A proposal is written `pending` and
+        -- `_fetch_skill_notes` (api/services/run_service.py) reads `status='approved'`, so
+        -- nothing an agent proposes reaches a prompt until a human approves it - that filter
+        -- is the whole safety argument for letting agents propose freely.
+        --
+        -- `occurrences` counts how many times the same rule has been proposed, so a queue
+        -- can sort evidence above guesswork. It defaults to 1 because every existing row
+        -- was proposed by a person exactly once.
+        --
+        -- `source_project` and `source_ref` are the **first** occurrence's provenance, not
+        -- an accumulating list. Accumulating provenance across later occurrences needs a
+        -- shape of its own and is deliberately not decided here.
+        --
+        -- `scope` says **where an approved rule applies**, and it is a different question
+        -- from `source_project`, which says where it came from. `_fetch_skill_notes` reads
+        -- both: a `global` skill is injected into every engagement's prompts, a `project`
+        -- one only into runs on the engagement named by its `source_project`. The default
+        -- is `project` because widening a rule changes an agent's behaviour on engagements
+        -- the reviewer has never seen, so widening is the deliberate act - see the backfill
+        -- below, which is a separate decision and deliberately a different value.
         CREATE TABLE IF NOT EXISTS skills (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            name            TEXT NOT NULL,
-            description     TEXT NOT NULL,
-            source          TEXT NOT NULL DEFAULT 'manual',
-            source_project  TEXT,
-            status          TEXT NOT NULL DEFAULT 'pending'
-                                CHECK(status IN ('pending', 'approved', 'rejected')),
-            flag_reason     TEXT,
-            flag_suggestion TEXT,
-            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-            reviewed_at     DATETIME,
-            reviewed_by     TEXT
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            name              TEXT NOT NULL,
+            description       TEXT NOT NULL,
+            source            TEXT NOT NULL DEFAULT 'manual',
+            source_project    TEXT,
+            source_ref        TEXT,
+            proposed_by_agent TEXT,
+            occurrences       INTEGER NOT NULL DEFAULT 1,
+            scope             TEXT NOT NULL DEFAULT 'project'
+                                  CHECK(scope IN ('project', 'global')),
+            status            TEXT NOT NULL DEFAULT 'pending'
+                                  CHECK(status IN ('pending', 'approved', 'rejected')),
+            flag_reason       TEXT,
+            flag_suggestion   TEXT,
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at       DATETIME,
+            reviewed_by       TEXT
         );
 
         CREATE TABLE IF NOT EXISTS agent_skill_assignments (
@@ -3348,6 +3585,39 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             agent_name  TEXT NOT NULL,
             PRIMARY KEY (skill_id, agent_name)
         );
+
+        -- One row per time an agent proposed a rule, including the first, so on a proposal
+        -- `skills.occurrences` is a denormalised COUNT(*) over this table - kept in step by
+        -- `record_skill_occurrence`, which writes both halves in one call for that reason.
+        --
+        -- Only proposals appear here. A `baseline` or `manual` skill has `occurrences` 1 and
+        -- no rows at all, which is honest rather than missing: nobody recorded where those
+        -- came from, and inventing an occurrence to make the count total would assert a
+        -- provenance the table has never held.
+        --
+        -- A table rather than a second `source_project` column, and rather than a JSON blob,
+        -- because of the question a reviewer actually asks at the queue: not "which project
+        -- first said this" but "how many, and where". A rule seen three times on one project
+        -- is weaker evidence than one seen once each on three, and only rows answer that -
+        -- COUNT(DISTINCT source_project) is a query here and is nothing a blob or a second
+        -- column can express. `skills.source_project`/`source_ref` stay the **first**
+        -- occurrence's, which is the row's own origin.
+        --
+        -- `description` is kept per occurrence because a near-duplicate is worded
+        -- differently by construction: how the rule was said the second and third time is
+        -- the evidence that the match was a fair one, and it is unrecoverable afterwards.
+        CREATE TABLE IF NOT EXISTS skill_occurrences (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            skill_id          INTEGER NOT NULL,
+            description       TEXT    NOT NULL,
+            source_project    TEXT,
+            source_ref        TEXT,
+            proposed_by_agent TEXT,
+            created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_occurrences_skill
+            ON skill_occurrences(skill_id);
 
         CREATE TABLE IF NOT EXISTS scheduled_jobs (
             job_name     TEXT NOT NULL,
@@ -3420,6 +3690,31 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
             PRIMARY KEY (project_slug, stakeholder_id)
         );
 
+        -- The deployment's default portrait for one agent, promoted from the first project
+        -- that ever uploaded one for an agent with no face of its own.
+        --
+        -- Recorded rather than inferred from the filesystem. `promoted_from_slug` is the
+        -- provenance, and it matters more here than for an ordinary asset: this is the one
+        -- write in the product where **one engagement's upload changes what a different
+        -- client's engagement displays**, so "which project did this face come from" has to
+        -- be answerable without reading file timestamps.
+        --
+        -- `agent_id` is the PRIMARY KEY because the claim is an INSERT OR IGNORE keyed on it -
+        -- see claim_agent_default_image below. First wins, and the row is what decides, so the
+        -- uniqueness has to be the table's rather than a caller's.
+        --
+        -- **No `_SCHEMA_VERSION` bump.** That constant gates *project* databases;
+        -- init_system_db has no version gate and runs on every system connection, so a
+        -- CREATE TABLE IF NOT EXISTS here is already enough - and bumping it would re-run
+        -- every project migration on every deployment for a table in a database it does not
+        -- govern. CLAUDE.md states the rule and states that it is inverted between the two.
+        CREATE TABLE IF NOT EXISTS agent_default_images (
+            agent_id           TEXT PRIMARY KEY,
+            extension          TEXT NOT NULL,
+            promoted_from_slug TEXT NOT NULL,
+            promoted_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
         -- The provider's id for a message that was actually sent to a named person.
         -- Recorded from the first send rather than when it is needed, because it cannot
         -- be recovered afterwards: if inbound routing turns out to strip the `+tag` from
@@ -3434,18 +3729,60 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
     """)
     await conn.commit()
 
+    # `skills.scope`, and it is **two decisions rather than one**.
+    #
+    # The column default is `project`: from now on a rule applies to the engagement it was
+    # corrected on until a reviewer deliberately widens it, because widening changes an
+    # agent's behaviour on engagements the reviewer has never seen.
+    #
+    # The rows that predate the column become `global`, once, at the moment it is added -
+    # fifty-three on the live deployment. They were written when global was the only thing a
+    # skill could be, so global is the honest reading of what their authors intended. Worth
+    # saying plainly rather than leaving to be inferred later: **this affirms fifty-three
+    # rules as universal without anybody re-reading them.** A reviewer who finds one that was
+    # really about a single engagement demotes it; the migration does not judge for them.
+    #
+    # A column that simply defaulted to `global` would satisfy the second decision and
+    # silently make every future proposal universal, which is the whole thing the scope
+    # exists to prevent. So the backfill is an explicit UPDATE inside the branch that adds
+    # the column, and it can never run twice: the next connection finds the column present.
+    #
+    # Before the `agent_skills` migration below, so the column exists by the time that INSERT
+    # names it - on a database old enough to hold `agent_skills` but new enough for
+    # CREATE TABLE IF NOT EXISTS to have just created `skills` with a `scope`, the backfill
+    # would otherwise not run and those rows would arrive `project` with no `source_project`,
+    # which reaches nothing.
+    #
+    # **No `_SCHEMA_VERSION` bump.** That constant gates *project* databases; init_system_db
+    # is idempotent, has no version gate and runs on every system connection, so this is the
+    # whole mechanism - and bumping it would re-run every project migration on every
+    # deployment for a table in a database it does not govern. CLAUDE.md states the rule and
+    # states that it is inverted between the two.
+    async with conn.execute("PRAGMA table_info(skills)") as cur:
+        skill_cols = {row[1] async for row in cur}
+    if "scope" not in skill_cols:
+        await conn.execute(
+            "ALTER TABLE skills ADD COLUMN scope TEXT NOT NULL DEFAULT 'project' "
+            "CHECK(scope IN ('project', 'global'))"
+        )
+        await conn.execute("UPDATE skills SET scope = 'global'")
+        await conn.commit()
+
     # Migrate old agent_skills table (pre-relational schema) if it still exists
     async with conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_skills'"
     ) as cur:
         has_old = await cur.fetchone() is not None
     if has_old:
+        # `'global'` for the same reason the backfill above uses it: these rows predate the
+        # scope entirely, and the pre-relational table has no column that could have held one.
         await conn.execute(
             """INSERT OR IGNORE INTO skills
                (id, name, description, source, source_project, status,
-                flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by)
+                flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by, scope)
                SELECT id, name, description, source, source_project, status,
-                      flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by
+                      flag_reason, flag_suggestion, created_at, reviewed_at, reviewed_by,
+                      'global'
                FROM agent_skills"""
         )
         await conn.execute(
@@ -3466,9 +3803,22 @@ async def init_system_db(conn: aiosqlite.Connection) -> None:
 
     # Column upgrades for existing system databases: CREATE TABLE IF NOT EXISTS above does
     # nothing once the table already exists, so new columns need an explicit ALTER TABLE.
+    #
+    # skills gains four here rather than through a _migrate_* function and a _SCHEMA_VERSION
+    # bump: that constant gates *project* databases, and bumping it would re-run every project
+    # migration for a table in a database it does not govern. init_system_db is idempotent and
+    # runs on every system connection, so this loop is the whole mechanism.
     for table, column, decl in (
         ("users", "is_sys_admin", "INTEGER NOT NULL DEFAULT 0"),
         ("project_memberships", "stakeholder_id", "INTEGER"),
+        ("skills", "source_ref", "TEXT"),
+        ("skills", "proposed_by_agent", "TEXT"),
+        ("skills", "occurrences", "INTEGER NOT NULL DEFAULT 1"),
+        # The retired notes table had an entry here too, and it had to go with the CREATE
+        # above rather than be left as a harmless leftover: PRAGMA table_info answers nothing
+        # for a table that does not exist, so the guard below would read "the column is
+        # missing" and the ALTER would raise on every fresh deployment - taking every later
+        # statement in init_system_db with it.
     ):
         cur = await conn.execute(f"PRAGMA table_info({table})")
         if column not in {row[1] for row in await cur.fetchall()}:
@@ -3520,28 +3870,6 @@ async def get_system_db():
         yield conn
 
 
-async def insert_skill_note(conn: aiosqlite.Connection, *, agent_name: str, note: str, raw_input: str) -> int:
-    cur = await conn.execute(
-        "INSERT INTO agent_skill_notes (agent_name, note, raw_input) VALUES (?,?,?)",
-        (agent_name, note, raw_input),
-    )
-    await conn.commit()
-    return cur.lastrowid
-
-
-async def fetch_skill_notes(conn: aiosqlite.Connection, *, agent_name: str | None = None) -> list[dict]:
-    if agent_name:
-        async with conn.execute(
-            "SELECT * FROM agent_skill_notes WHERE agent_name=? ORDER BY created_at DESC",
-            (agent_name,),
-        ) as cur:
-            return [dict(r) async for r in cur]
-    async with conn.execute(
-        "SELECT * FROM agent_skill_notes ORDER BY agent_name, created_at DESC"
-    ) as cur:
-        return [dict(r) async for r in cur]
-
-
 # ── skills library ─────────────────────────────────────────────────────────────
 
 async def insert_skill(
@@ -3551,14 +3879,30 @@ async def insert_skill(
     description: str,
     source: str = "manual",
     source_project: str | None = None,
+    source_ref: str | None = None,
+    proposed_by_agent: str | None = None,
+    status: str = "pending",
+    scope: str = "project",
     agents: list[str] | None = None,
     flag_reason: str | None = None,
     flag_suggestion: str | None = None,
 ) -> int:
+    """Insert one skill. `status` is written explicitly rather than left to the column
+    default, so the value a caller intends is visible at the call site - a skill proposed by
+    an agent must be `pending`, and that is the property `_fetch_skill_notes` rests on.
+
+    `scope` is written the same way and for the same reason, and its default is the narrow
+    one: a rule reaches only the engagement its `source_project` names until somebody says
+    otherwise. The one caller that names `global` is the baseline seed, which approves its
+    rows outright and so has no reviewer to decide for it; every other writer here files a
+    `pending` row, where the reviewer chooses the scope at approval.
+    """
     cur = await conn.execute(
-        """INSERT INTO skills (name, description, source, source_project, flag_reason, flag_suggestion)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (name, description, source, source_project, flag_reason, flag_suggestion),
+        """INSERT INTO skills (name, description, source, source_project, source_ref,
+                               proposed_by_agent, status, scope, flag_reason, flag_suggestion)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (name, description, source, source_project, source_ref,
+         proposed_by_agent, status, scope, flag_reason, flag_suggestion),
     )
     skill_id = cur.lastrowid
     if agents:
@@ -3576,6 +3920,33 @@ async def fetch_skills(
     agent_name: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
+    """Skills with their agent assignments, most-evidenced first and then most recent.
+
+    The ordering is here and takes no parameter, so there is nothing for a caller to get
+    wrong and nothing for two callers to spell differently. It is what the review queue
+    rests on: `occurrences` counts how many times an agent has proposed the same rule, so a
+    rule seen three times sits above one seen once, and a reviewer approving a change to an
+    agent's behaviour on every engagement reads the evidence before the prose. `created_at`
+    breaks the tie, which leaves the fifty-three pre-existing rows - all `occurrences` 1 -
+    in exactly the order they were in before.
+
+    `id` breaks the tie after that, and it is not decoration: `created_at` is
+    `CURRENT_TIMESTAMP`, whole seconds, so any two rows written in the same second tie on
+    both of the first two keys and the order falls to whatever SQLite happens to return. A
+    reviewer reloading the queue would see the same rows in a different order for no reason
+    they could name. Three keys make the ordering total.
+
+    **`status=None` means no filter, so the approved-only guarantee lives in the callers and
+    not here.** Six of the nine call sites pass no status, and each is safe for a reason of its
+    own: `/export` hardcodes `approved`, `/import` and `/seed` deduplicate by name and answer
+    counts, `POST` and `PATCH` select only the row the caller just touched. The two that read
+    for a purpose - `_fetch_skill_notes` and `_rules_already_held` - name their statuses. The
+    safe default is the other way round, and this signature is the wrong shape to express it
+    without silently narrowing those six, so the honest thing is to say where the guarantee
+    sits: **a new caller writing `fetch_skills(conn)` inherits a read of pending rows**, and a
+    pending row is one engagement's material rather than the agent's published instruction -
+    `list_skills` in `api/routers/skills.py` has the argument.
+    """
     where: list[str] = []
     params: list = []
     if status is not None:
@@ -3591,7 +3962,7 @@ async def fetch_skills(
         LEFT JOIN agent_skill_assignments asa ON asa.skill_id = s.id
         {where_sql}
         GROUP BY s.id
-        ORDER BY s.created_at DESC
+        ORDER BY s.occurrences DESC, s.created_at DESC, s.id DESC
     """
     rows: list[dict] = []
     async with conn.execute(query, params) as cur:
@@ -3612,13 +3983,26 @@ async def update_skill(
     description: str | None = None,
     reviewed_by: str | None = None,
     agents: list[str] | None = None,
+    scope: str | None = None,
 ) -> bool:
+    """Update one skill. Every field is optional and `None` means *leave it alone*.
+
+    `scope` follows that rule rather than carrying a default of its own, and the difference is
+    the whole of the reviewer's choice: an approval that names no scope must leave the row at
+    whatever it already holds - `project` for a proposal, because that is what `insert_skill`
+    writes - rather than restate a value the caller had no opinion about. CLAUDE.md records
+    what a writer that obliges its callers to restate state they do not own costs, in the six
+    carry-through lines of `update_project_config`; the seed and the import both call this
+    function to merge agents, and neither has anything to say about where a rule applies.
+    """
     updates: list[str] = []
     params: list = []
     if name is not None:
         updates.append("name = ?"); params.append(name)
     if description is not None:
         updates.append("description = ?"); params.append(description)
+    if scope is not None:
+        updates.append("scope = ?"); params.append(scope)
     if status is not None:
         updates.append("status = ?"); params.append(status)
         updates.append("reviewed_at = CURRENT_TIMESTAMP")
@@ -3641,8 +4025,64 @@ async def update_skill(
     return changed
 
 
+async def record_skill_occurrence(
+    conn: aiosqlite.Connection,
+    *,
+    skill_id: int,
+    description: str,
+    source_project: str | None = None,
+    source_ref: str | None = None,
+    proposed_by_agent: str | None = None,
+    bump: bool = False,
+) -> int:
+    """Record one occurrence of a skill's rule, and return the skill's occurrence count.
+
+    Both halves in one call deliberately. On a proposed skill `skills.occurrences` is a
+    denormalised count of the rows this writes, and the queue sorts by it - so a caller that
+    wrote the provenance row and forgot the increment would leave the ordering saying
+    something the evidence does not. `bump` is False for the first occurrence, whose count the
+    `skills` row already carries as the column default.
+
+    Returns 0 when the skill row has gone, so a caller can tell "counted" from "nothing to
+    count against" rather than reading a silent no-op as success.
+    """
+    async with conn.execute("SELECT occurrences FROM skills WHERE id = ?", (skill_id,)) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return 0
+    await conn.execute(
+        """INSERT INTO skill_occurrences
+               (skill_id, description, source_project, source_ref, proposed_by_agent)
+           VALUES (?, ?, ?, ?, ?)""",
+        (skill_id, description, source_project, source_ref, proposed_by_agent),
+    )
+    count = int(row["occurrences"])
+    if bump:
+        count += 1
+        await conn.execute(
+            "UPDATE skills SET occurrences = occurrences + 1 WHERE id = ?", (skill_id,)
+        )
+    await conn.commit()
+    return count
+
+
+async def fetch_skill_occurrences(conn: aiosqlite.Connection, *, skill_id: int) -> list[dict]:
+    """Every recorded occurrence of one skill's rule, oldest first.
+
+    Oldest first because the first row is the origin `skills.source_project` also carries,
+    and a reviewer reads the provenance as a history.
+    """
+    async with conn.execute(
+        "SELECT * FROM skill_occurrences WHERE skill_id = ? ORDER BY id", (skill_id,)
+    ) as cur:
+        return [dict(r) async for r in cur]
+
+
 async def delete_skill(conn: aiosqlite.Connection, *, skill_id: int) -> bool:
     await conn.execute("DELETE FROM agent_skill_assignments WHERE skill_id = ?", (skill_id,))
+    # Explicitly, not by cascade: nothing turns foreign keys on for this connection, so a
+    # declared ON DELETE CASCADE would be decoration. Its sibling above is deleted the same way.
+    await conn.execute("DELETE FROM skill_occurrences WHERE skill_id = ?", (skill_id,))
     cur = await conn.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
     await conn.commit()
     return cur.rowcount > 0
@@ -3736,27 +4176,12 @@ async def replace_stakeholder_assignments(
 
 # ── Interview Sessions ────────────────────────────────────────────────────────
 
-async def insert_interview_session(
-    conn: aiosqlite.Connection,
-    *,
-    project_id: int,
-    orchestration_run_id: int | None,
-    stakeholder_id: int,
-    node_label: str,
-    session_token: str,
-    voice_config: str | None = None,
-    script_id: str | None = None,
-) -> int:
-    cur = await conn.execute(
-        "INSERT INTO interview_sessions "
-        "(project_id, orchestration_run_id, stakeholder_id, node_label, session_token,"
-        " voice_config, script_id) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (project_id, orchestration_run_id, stakeholder_id, node_label, session_token,
-         voice_config, script_id),
-    )
-    await conn.commit()
-    return cur.lastrowid
+# `insert_interview_session` used to live here and is now
+# `tests/support_interview_sessions.py`. It had no production caller - `InterviewSessionTool.
+# _create` is the only thing that creates a session - and it had drifted two columns behind it,
+# to the point where the sessions it wrote were refused by the speak door for carrying no
+# stamped voice. CLAUDE.md's rule is "delete it, or make it the producer"; it cannot be the
+# producer, because the producer is a synchronous tool on `sqlite3`.
 
 
 async def fetch_session_token_for_stakeholder(
@@ -4546,6 +4971,41 @@ async def store_platform_public_url(conn: aiosqlite.Connection, public_url: str)
         (public_url,),
     )
     await conn.commit()
+
+
+async def claim_agent_default_image(
+    conn: aiosqlite.Connection, *, agent_id: str, extension: str, promoted_from_slug: str
+) -> bool:
+    """Claim the deployment's default portrait for one agent. True if this call won it.
+
+    `INSERT OR IGNORE` on the primary key, and the answer is `rowcount` - deliberately the
+    same shape as `register_project_if_unregistered` above, for the same reason. The caller
+    writes the file **only** when this returns True.
+
+    A prior `SELECT` would be the check-then-write this exists to avoid: two projects
+    uploading a portrait for the same faceless agent at once would both see no row, both
+    decide to promote, and the loser would overwrite the winner's file *after* losing the
+    row - leaving `promoted_from_slug` naming one engagement and the bytes coming from
+    another. The row is what decides, so the row has to be taken first.
+    """
+    cur = await conn.execute(
+        "INSERT OR IGNORE INTO agent_default_images "
+        "(agent_id, extension, promoted_from_slug) VALUES (?,?,?)",
+        (agent_id, extension, promoted_from_slug),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
+
+
+async def fetch_agent_default_image(
+    conn: aiosqlite.Connection, *, agent_id: str
+) -> dict | None:
+    """The promoted default recorded for one agent, or None - provenance included."""
+    async with conn.execute(
+        "SELECT * FROM agent_default_images WHERE agent_id=?", (agent_id,)
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
 
 
 async def record_scheduler_heartbeat(conn: aiosqlite.Connection, *, now_iso: str) -> None:

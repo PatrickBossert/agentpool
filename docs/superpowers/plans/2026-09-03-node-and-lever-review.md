@@ -92,6 +92,45 @@ def test_a_levers_id_survives_its_title_being_rewritten():
 
 ---
 
+### Task 2b: Item identity is declared, not hoped for
+
+**Files:** Modify `agents/tools/ownership.py`; Test: new
+
+Added 2026-09-04. Per-item review is impossible without per-item identity, and nothing today
+requires an artefact to have any. It holds by habit: every built collection artefact carries an
+id - `SC-001`, `3.3.3`, `1` - except `value_levers`, which Task 2 is fixing. **Habit is not a
+mechanism**, and most of the artefacts this must hold for are not built yet.
+
+The worked case the product owner gave: *"I can ask Finley to revise section 6.1.1 of the
+business case to include X."* Finley owns no declared output type at all today, so the business
+case is the ideal thing to constrain before it exists rather than after.
+
+- [ ] **Step 1: Report which output types are collections and which carry an id.** `OUTPUT_OWNERS`
+  declares 20 types. Establish, from the live artefacts and from each agent's task text, which
+  produce a collection of items and what identifies an item. Report the ones that produce nothing
+  yet separately - they are the majority and the point.
+
+- [ ] **Step 2: Declare it beside ownership.** A companion to `OUTPUT_OWNERS` naming, per output
+  type, whether it is a collection and which field carries the item id. An output type that is a
+  collection and declares no id field is the defect this exists to catch.
+
+- [ ] **Step 3: Guard it.** A test that fails when a collection output type has no declared id
+  field. **State in the docstring what the guard cannot see** - it reads a declaration, so an
+  artefact whose items carry an id field that is empty, duplicated, or regenerated per run passes
+  it. This checks the question was asked, not answered well; sp58's `fieldProps` walk is the
+  precedent for saying so plainly.
+
+- [ ] **Step 4: Hierarchical ids are the same rule, and the value chain is the precedent.**
+  `0`, `1.F`, `3.3.3` already carry section-shaped identity, and CLAUDE.md's contract for them
+  holds for a business case verbatim: **the ledger may grow and may retire, but may never
+  redefine or forget.** A section id must mean one section for the life of the project, so
+  renumbering on regeneration is the failure to design against - `6.1.1` cited in a review must
+  still be `6.1.1` in the next version.
+
+- [ ] **Step 5: Suites twice. Power-check by declaring a collection with no id field. Commit.**
+
+---
+
 ### Task 3: A send-back reaches the right agent, and only that agent
 
 **Files:** Modify `api/services/run_service.py`, `api/services/script_review_service.py` or a sibling; Test: new

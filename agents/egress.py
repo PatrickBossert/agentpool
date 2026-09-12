@@ -107,6 +107,10 @@ class Reach(Enum):
     WEB_SEARCH = "a web search service"
     PUBLIC_WEB = "any web address the agent names"
     INFERENCE = "a language model"
+    # The one reach where the request is not made by this deployment at all. See
+    # `PARTICIPANT_IMAGE_EGRESS` below for why that difference is worth a member of its own
+    # rather than being folded into `PUBLIC_WEB`.
+    PARTICIPANT_BROWSER = "any web address an administrator configures, fetched by the participant"
 
 
 @dataclass(frozen=True)
@@ -234,6 +238,28 @@ TOOL_EGRESS: dict[str, Egress] = {
             "user-agent. There is no allowlist, no mode check, and no record of the request"
         ),
     ),
+    # --- Reaches a model, and moves with the project like every other prompt does -------------
+    #
+    # The only tool in this table whose reach is `INFERENCE`. Inference is otherwise the reach
+    # no tool has - every agent runs on a model whether or not it holds one - but this tool
+    # makes a *second* model call of its own, to ask whether the rule the agent proposed
+    # restates one it already holds, and a call nothing declared would be a call nobody could
+    # find.
+    #
+    # It was `UNGATED_INFERENCE` for one commit, because `skills_service` built `AsyncAnthropic`
+    # directly and asked nothing about the project. That was the honest declaration of what the
+    # code then did, and the row is worth remembering rather than tidying away: it was the
+    # declaration, not the code, that made somebody read the sentence and decide the exemption
+    # had stopped being true. `find_duplicate_skill` now goes through `project_completion`, so
+    # the reach is the ordinary gated one and the member with no members went with it.
+    "SkillProposalTool": Egress(
+        reaches=Reach.INFERENCE,
+        sends=(
+            "the behaviour rule the agent wrote and the rules already suggested for it, so "
+            "whatever of the client's work the agent chose to quote in stating that rule goes "
+            "with it - to the same place every other prompt on this project goes"
+        ),
+    ),
 }
 
 
@@ -253,7 +279,52 @@ INFERENCE_EGRESS = Egress(
 )
 
 
+# The reach that belongs to no agent and no tool, and is not made by this server.
+#
+# Two `ProjectSettings`-adjacent fields are rendered into `<img src>` on the interview page:
+# `projects.brand_header_image_url`, written through `PATCH /{slug}/settings` and free text
+# since it existed, and `project_agent_config.image_url`, which had **no production writer at
+# all** until sp62's Setup section made the column live. Both are plain strings and neither is
+# fetched by this deployment - they are handed to the participant's browser, which fetches them.
+#
+# That is why this is its own `Reach` rather than `PUBLIC_WEB`. `WebFetchTool` reaches the open
+# web *from this server*, with this server's address; here the request is made by a person's
+# browser, so what is disclosed is **theirs** - their IP, their user agent, and the fact that an
+# interview is happening right now - and the interview page is one of the two doors CLAUDE.md
+# documents as having no floor at all, because a participant has no login. Folding the two
+# together would have made the auditor's answer to "whose address leaves?" wrong for one of them.
+#
+# It is ungated, on every mode, including `sensitive`. That is the finding rather than an
+# omission, exactly as the Tavily and open-web rows below are: an engagement whose documents and
+# inference this project keeps on the premises will still point its participants' browsers at
+# whatever host an administrator typed. `agents/deployment_modes.EGRESS_GRANTS` is deliberately
+# not extended for it - a capability nothing consults would read as a gate that is not there.
+#
+# `api/routers/agent_config.py` refuses a scheme a browser must not render (`javascript:`,
+# `data:`) and deliberately permits off-site `http`/`https`, because the older of the two fields
+# has always permitted it and closing one half would leave an operator unable to tell which. The
+# real fix is a same-origin upload path serving **both** fields, and it is its own task; this row
+# exists so that until then the reach is written down rather than implicit.
+#
+# **This is a declaration and nothing renders it yet.** `data_architecture()` assembles the
+# privacy page from agents and the tools they hold, and this reach is neither - attributing it to
+# an agent would be false. Surfacing it to the auditor is part of the same follow-up task.
+PARTICIPANT_IMAGE_EGRESS = Egress(
+    reaches=Reach.PARTICIPANT_BROWSER,
+    sends=(
+        "nothing of the client's material, and the participant's own connection: the interview "
+        "page renders projects.brand_header_image_url and project_agent_config.image_url as "
+        "<img src>, so if either names an off-site host, every participant's browser discloses "
+        "its IP address, its user agent and the timing of an interview in progress to that host"
+    ),
+)
+
+
 _NOWHERE = Destination(label="nothing outside this deployment", leaves_deployment=False)
+_PARTICIPANT_IMAGE_HOST = Destination(
+    label="any address an administrator configures, reached by the participant's browser",
+    leaves_deployment=True,
+)
 _TAVILY = Destination(label="Tavily's search API", leaves_deployment=True)
 _ANY_ADDRESS = Destination(label="any address the agent names", leaves_deployment=True)
 
@@ -310,6 +381,11 @@ _DESTINATION: dict[tuple[Reach, bool], Destination] = {
     (Reach.WEB_SEARCH, False): _TAVILY,
     (Reach.PUBLIC_WEB, True): _ANY_ADDRESS,
     (Reach.PUBLIC_WEB, False): _ANY_ADDRESS,
+    # The same object in both columns, like the two rows above it, and for the same reason: no
+    # grant stands between a configured image address and the participant's browser, so
+    # `_is_gated` derives `False` rather than a reader inferring it from two wordings.
+    (Reach.PARTICIPANT_BROWSER, True): _PARTICIPANT_IMAGE_HOST,
+    (Reach.PARTICIPANT_BROWSER, False): _PARTICIPANT_IMAGE_HOST,
 }
 
 

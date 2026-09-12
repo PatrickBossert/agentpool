@@ -30,26 +30,73 @@ pitch deck still calls Maya the "Assessment Designer", a role no registry has he
 name and a face, so nothing here is invented. This file is now where that fact lives, and the
 six restatements are Task 4's to collapse into it.
 
-Seventeen, not sixteen: `pam` is in no crew, so anything enumerating agents by walking the crew
+Eighteen, not seventeen: `pam` is in no crew, so anything enumerating agents by walking the crew
 map omits the orchestrator. The roll is `AGENT_TIER`, and `graph.py` refuses to assemble if this
 map and that one disagree.
 
 `image` is a path under `ui/public`, the form `ui/src/pages/VoiceInterview.tsx` already uses for
 these files; the front end prefixes its configured base. It is nullable because an agent without
-a headshot is a legitimate state - today every one of the seventeen has one, and
-`test_every_image_names_a_file_that_exists` asks the directory rather than trusting this list.
+a headshot is a legitimate state, and Laura Nelson was the first agent actually in that state
+until 7 September, when a portrait was supplied for her - so all eighteen now have one and the
+nullable branch is currently unexercised by any agent. It stays nullable deliberately: the next
+agent added will be faceless until somebody draws them, and `AgentAvatar` renders initials for
+exactly that gap. `test_every_image_names_a_file_that_exists` asks the directory rather than
+trusting this list, and skips the agents whose image is `None`.
+
+`voice_id`, `language` and `country_code` are the third piece of the mutable half, and they moved
+here from `DEFAULT_VOICE_CONFIG` in `ui/src/pages/VoiceInterview.tsx`. A default living inside a
+component is a default no server can read, no project can override, and nobody reviews - which is
+how Avery, described as male everywhere he is described at all, came to conduct the first
+completed interview in `21m00Tcm4TlvDq8ikWAM`, ElevenLabs' stock *Rachel*. The voice heard was
+never a fallback for his; it was a hardcoded stranger. It is corrected below, in the one place
+`resolve_agent_config` reads defaults from.
+
+`voice_id` is nullable and is `None` for every agent that does not speak. Only the interviewers
+are synthesised today; the others carry the field because the shape is the same and a special
+case would be the expensive half. `language` and `country_code` are not nullable - a voice always
+has a locale, and `en`/`GB` is the pair the interview portal has always sent.
+
+`model_id` is the synthesis model, and it is here rather than hardcoded in `synthesise` because
+**voice and language are separate axes and the ElevenLabs API says so**: a voice's
+`verified_languages` is a list of `{language, model_id, accent, locale, preview_url}`, and Daniel
+already carries `eleven_multilingual_v2` among his base models. A British voice is not a voice
+that can only speak English. `eleven_turbo_v2` is what every call has always sent, so it is the
+default and nothing changes audibly today - which is the point of carrying the field ahead of
+need: a French voice synthesising through an English model is the defect it forecloses, and it
+costs one field now rather than a second seam later.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+# ElevenLabs' stock "Daniel" - a British male voice, and the correction to the defect above.
+# Named as a constant so the id appears once and the test that asserts Avery is not Rachel can
+# name the wrong id without also naming the right one from the same source it is checking.
+AVERY_VOICE_ID = "onwK4e9ZLuTAKqWW03F9"
+
+# ElevenLabs' "Alice - Clear, Engaging Educator" - British, female, middle-aged, professional.
+# Chosen from the three British or Scottish female voices already in the account because its
+# register mirrors Daniel's: two interviewers are only interchangeable if a participant meets
+# the same kind of person either way, and "animated", "casual" and "actress" are not that at a
+# board-level interview. A default, not a decision - a project changes it through the picker.
+LAURA_VOICE_ID = "Xb7hH8MSUJpSbSDYk0k2"
+
+# The synthesis model every ElevenLabs call has always sent, lifted out of `synthesise` so it is
+# a default rather than a constant nobody can override. One place, named, so a door that has no
+# project to resolve against can still say which model it means without minting its own literal.
+DEFAULT_TTS_MODEL_ID = "eleven_turbo_v2"
+
 
 @dataclass(frozen=True)
 class Identity:
-    """The mutable half of an agent: what to call it, and what to show for it."""
+    """The mutable half of an agent: what to call it, what to show for it, how it sounds."""
 
     display_name: str
     image: str | None = None
+    voice_id: str | None = None
+    language: str = "en"
+    country_code: str = "GB"
+    model_id: str = DEFAULT_TTS_MODEL_ID
 
 
 AGENT_IDENTITY: dict[str, Identity] = {
@@ -61,7 +108,15 @@ AGENT_IDENTITY: dict[str, Identity] = {
     "requirements_analyst":        Identity("Riley Kim",       "/agents/riley-kim.jpg"),
     "value_lever_analyst":         Identity("Morgan Davis",    "/agents/morgan-davis.jpg"),
     "interview_coordinator":       Identity("Taylor Brooks",   "/agents/taylor-brooks.jpg"),
-    "stakeholder_interviewer":     Identity("Avery Singh",     "/agents/avery-singh.jpg"),
+    "stakeholder_interviewer":     Identity("Avery Singh",     "/agents/avery-singh.jpg",
+                                            voice_id=AVERY_VOICE_ID),
+    # The second interviewer. The id says where she sits on the roster and nothing else: it
+    # names neither her voice nor her sex, both of which are the mutable half this file exists
+    # to keep separable - an id like `female_interviewer` would be a fact about the voice
+    # written into the one thing that may never change. Which interviewer a project gets is
+    # decided from the voices' own metadata, not from an id spelled to encode the answer.
+    "second_interviewer":          Identity("Laura Nelson",    "/agents/laura-nelson.jpg",
+                                            voice_id=LAURA_VOICE_ID),
     "synthesis_analyst":           Identity("Casey Liu",       "/agents/casey-liu.jpg"),
     "value_proposition_generator": Identity("Quinn Harper",    "/agents/quinn-harper.jpg"),
     "portfolio_manager":           Identity("Blake Anderson",  "/agents/blake-anderson.jpg"),
@@ -71,6 +126,32 @@ AGENT_IDENTITY: dict[str, Identity] = {
     "visual_illustrator":          Identity("Luca Romano",     "/agents/luca-romano.jpg"),
     "business_plan_generator":     Identity("Finley Cooper",   "/agents/finley-cooper.jpg"),
 }
+
+
+def interviewer_agent_ids() -> list[str]:
+    """The agents that can conduct an interview, in a stable order.
+
+    Derived, never listed: an interviewer is an identity carrying a `voice_id`. The paragraph
+    above states why that is the rule rather than a coincidence - `voice_id` is None for every
+    agent that does not speak, and only the interviewers are synthesised - so the roster is a
+    consequence of the map above rather than a second list beside it. An agent given a voice
+    for some other purpose joins the roster, and the repair then is a better rule here rather
+    than a list of exceptions somewhere else.
+
+    **Why it lives beside the map rather than beside its first caller.** It was written in
+    `api/services/interviewer_selection.py`, which is where the roster is turned into a choice
+    of interviewer. A second caller now needs it - `agent_config_service.is_interviewer`, which
+    answers `is_interviewer` on the configuration door - and that module is one
+    `interviewer_selection` already imports, so leaving the rule there would have made the
+    configuration resolver import the selection policy that imports it back. The rule moved
+    down to the data it reads; it was not copied, which is the outcome that mattered.
+
+    Sorted so that a deterministic tie-break is available to tests and to `_random.Random(seed)`,
+    and so the order does not depend on dictionary insertion.
+    """
+    return sorted(
+        agent_id for agent_id, identity in AGENT_IDENTITY.items() if identity.voice_id
+    )
 
 
 # A crew's id is permanent in exactly the way an agent's is - `crew_runs.crew_name` stores it,

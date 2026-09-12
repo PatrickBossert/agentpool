@@ -1,6 +1,13 @@
 // ui/src/__tests__/ReviewIntent.test.tsx
 // The reviewer chooses in their own words. The default is the option that persists nothing,
-// so a reviewer in a hurry cannot seed project truth or the global library by accident.
+// so a reviewer in a hurry cannot seed project truth or the skills queue by accident.
+//
+// The third option's label moved in sp65 - from "Do this on every project" to "Make this a
+// standing rule for this agent" - because what it does moved with it. It used to set a column
+// nothing read; it now files a proposal that a human approves and scopes, defaulting to this
+// engagement. A control promising to change an agent's behaviour everywhere is precisely what
+// the scope decision exists to stop happening without anybody choosing it, so the locators
+// below follow the copy rather than the copy being kept to suit them.
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -11,7 +18,6 @@ const resolveReview = vi.fn().mockResolvedValue({})
 
 vi.mock('../api/endpoints', () => ({
   projectsApi: { resolveReview: (...a: unknown[]) => resolveReview(...a) },
-  skillNotesApi: { create: vi.fn().mockResolvedValue({}) },
 }))
 
 const review = {
@@ -36,7 +42,21 @@ describe('review intent', () => {
     fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
     expect(screen.getByLabelText(/fix this output/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/true of this client/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/every project/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/standing rule for this agent/i)).toBeInTheDocument()
+  })
+
+  it('says the standing rule waits for a human, and does not promise it applies everywhere', () => {
+    // The old copy said "becomes a capability this agent uses everywhere", which was untrue in
+    // both halves: nothing read the column it set, and a proposal now waits in a queue and is
+    // scoped to this engagement unless a reviewer widens it. A reviewer choosing this option
+    // is choosing to raise a suggestion, and the control has to say so.
+    render(<Wrapper />)
+    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    const option = screen.getByLabelText(/standing rule for this agent/i)
+      .closest('label') as HTMLElement
+
+    expect(option.textContent).toMatch(/until a reviewer approves it/i)
+    expect(option.textContent).not.toMatch(/uses everywhere/i)
   })
 
   it('defaults to fixing this output', async () => {
@@ -57,6 +77,27 @@ describe('review intent', () => {
     await waitFor(() =>
       expect(resolveReview).toHaveBeenCalledWith(
         'acme', 1, 'changes_requested', 'ISS only maintains property', 'correction',
+      ),
+    )
+  })
+
+  it('sends skill when the reviewer asks for a standing rule', async () => {
+    // Asserted on what is **sent**, not on what the radio renders. It is the value the server
+    // routes on: `intent='skill'` is what files the reviewer's sentence on the skills queue,
+    // and a form that rendered the choice and sent `change_request` would look identical here
+    // and file nothing at all - which is the state this option was in before sp65.
+    render(<Wrapper />)
+    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Refer to investments by their purpose, never by their figure' },
+    })
+    fireEvent.click(screen.getByLabelText(/standing rule for this agent/i))
+    fireEvent.click(screen.getByRole('button', { name: /submit revision request/i }))
+
+    await waitFor(() =>
+      expect(resolveReview).toHaveBeenCalledWith(
+        'acme', 1, 'changes_requested',
+        'Refer to investments by their purpose, never by their figure', 'skill',
       ),
     )
   })
