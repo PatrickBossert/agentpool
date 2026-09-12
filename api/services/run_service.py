@@ -109,112 +109,94 @@ def missing_config_keys(config: dict, crew_name: str) -> list[str]:
     return [key for key in REQUIRED_CONFIG_KEYS.get(crew_name, ()) if not config.get(key)]
 
 
-def _note_may_travel(slug: str, note: dict) -> bool:
-    """Whether one stored note may be injected into a run on `slug`.
+def _skill_applies_here(slug: str, skill: dict) -> bool:
+    """Whether one approved skill is injected into a run on `slug`.
 
-    The same rule as `_candidates_that_may_travel` in `skills_service.py`, and deliberately
-    the same shape rather than a call to it: that one decides about a *candidate* being sent
-    for comparison and takes the skills table's `status` exemption with it, and a shared
-    helper would have to grow a parameter saying which of the two it was being asked. Two
-    short functions that agree are cheaper to keep true than one that branches on its caller.
+    The scope question, and it is **not** the egress question `_candidates_that_may_travel`
+    asks in `skills_service.py`. That one is about where a project's material may be sent;
+    this one is about where a rule was decided to apply. A reviewer's answer, recorded on the
+    row at approval, read here.
 
-    Asked in the same order, and through `project_permits` rather than against a mode name:
+    - `global` reaches every engagement. That is what a reviewer widening a rule means, and
+      it is what the fifty-three skills written before the column existed were migrated to.
+    - `project` reaches only the engagement its own `source_project` names. Patrick's worked
+      example is the whole of it: *"do not include specific investment figures"* is global,
+      and *"this client calls it the renewals programme"* is not - the same reviewer, the
+      same control, and nothing in the text from which either could be derived.
 
-    1. Is this run's inference leaving the deployment at all? If the running project is not
-       granted `HOSTED_INFERENCE` the prompt goes to a model on this host, nothing leaves, and
-       no note is withheld.
-    2. May *this note* go there? Asked of the note's own `source_project`, never the running
-       one - the running project's grants are about the running project's material.
+    A row that names neither - `project` with no `source_project` - reaches nothing, and that
+    is the safe direction rather than an oversight: an unattributable rule cannot be shown to
+    belong to the engagement being run, and the alternative default is the universal one this
+    whole column exists to stop being automatic. `scope` missing from the row entirely (a
+    hand-built fixture, a caller reading a table older than this column) falls the same way.
 
-    A note with no `source_project` cannot be shown to permit anything, so it is withheld.
-    That is every row written before the column existed.
+    **The slug comparison is exact, and case-sensitively so.** Whitespace is stripped on both
+    sides, because that only ever collapses two spellings onto the *same* engagement; case is
+    not folded, so a rule filed on `proj-a` does not reach a run on `PROJ-A`. That direction
+    is deliberate and it is the safe one - the failure is a rule that does not appear, not a
+    rule that appears somewhere nobody chose - and it costs nothing in practice, since a slug
+    is generated lower-case and both sides of this comparison come from the same column
+    family. Said here because "compared exactly" is invisible in the expression below, and a
+    reader who assumed normalisation would be wrong in the direction that matters.
+
+    Nothing is logged when a skill is withheld. A project-scoped rule not appearing on another
+    engagement is the designed, overwhelmingly common case rather than a surprise worth
+    explaining, and a line per skill per agent per run would bury anything worth reading.
     """
-    from api.services.deployment_modes import Capability, project_permits
-
-    if not project_permits(slug, Capability.HOSTED_INFERENCE):
+    if (skill.get("scope") or "").strip() == "global":
         return True
-    origin = (note.get("source_project") or "").strip()
-    if not origin:
-        return False
-    return project_permits(origin, Capability.HOSTED_INFERENCE)
+    origin = (skill.get("source_project") or "").strip()
+    return bool(origin) and origin == (slug or "").strip()
 
 
 async def _fetch_skill_notes(crew_name: str, slug: str) -> str:
-    """Skill notes and approved library skills for this crew's agents, for a run on `slug`.
+    """The approved library skills that apply to this crew's agents on a run on `slug`.
 
     **`slug` is required, and it is the whole of the second half of this docstring.** This
     block is prepended to every task of the crew, so whatever it contains becomes part of a
     prompt routed by `get_llm_for_agent(agent, slug)` - hosted Anthropic on a `standard`
     project. Without the slug there was no question this function could ask, and it asked
-    none: every note ever written went into every crew's tasks on every engagement.
+    none.
 
-    Two sources, and they are not the same kind of thing.
+    **An approved skill travels as far as its `scope` says**, and no further. A `global` one is
+    the agent's published instruction everywhere by design, which is what
+    `_candidates_that_may_travel` argues in `skills_service.py` and what `list_skills` turns
+    on; a `project` one reaches only the engagement it was decided on. `_skill_applies_here`
+    above is that filter, and the scope is a reviewer's judgement recorded at approval rather
+    than anything derivable from the rule's text.
 
-    - **Approved skills travel.** An approved skill is the agent's published instruction
-      everywhere by design, which is what `_candidates_that_may_travel` argues in
-      `skills_service.py` and what `list_skills` turns on. Unchanged here.
-    - **A note is one engagement's material.** It is a model's distillation of a reviewer's
-      verbatim sentence about one named engagement - *"Maya named the Q3 outage at Iberdrola
-      in the welcome for SC-014"* is the shape the input actually takes - and it has no
-      approval step between being written and being injected. So a note travels only where
-      its own engagement's material may travel, which is `_note_may_travel` below: the same
-      rule as the deduplication candidates, applied at the other end of the same table
-      family.
+    **It used to read a second source, and that mechanism is retired.** A reviewer's rejection
+    feedback was distilled by a model into a note and prepended here - with no approval step
+    between being written and being injected, and applying to every engagement. It was never
+    intended: feedback was always meant to improve the output in hand and then be *evaluated*
+    as a project-level or global skill through the skills review, which is what
+    `intent='skill'` on `PATCH /projects/{slug}/reviews/{id}` now does. Nothing was lost by
+    retiring it. The immediate half already worked without it - a reviewer's note reaches the
+    agent through `_fetch_change_requests` - and the standing half is what a scoped, approved
+    skill does properly, with a human in the loop.
 
-    A note that names no engagement is withheld from a run that would send it off the
-    premises. Every row written before `source_project` existed is in that position, so on a
-    hosted project those notes stop being injected until they are written again - one row on
-    the live deployment. They are still injected on a project that keeps its inference local,
-    because nothing leaves there.
-
-    **What this does not do, stated so it is not mistaken for done.** The rule is about
-    *egress*. Two `standard` engagements both permit hosted inference, so a note written on
-    one is still injected into the other's prompts, and a sensitive deployment still shows
-    every note to every one of its own projects. That residual is meant to be handled by the
-    note being *general* - `_EXTRACT_SYSTEM` now carries the "no client-specific details"
-    clause its sibling `extract_skill` always had - and a prompt is not a guarantee. The
-    thing that would close it is an approval gate of the kind `skills` has, deliberately not
-    built here: it is a door, a queue and a reviewer's time, and inventing one silently
-    inside an egress fix is how a half-built gate ends up trusted.
+    The name is kept because it is what every caller, test and note in CLAUDE.md refers to;
+    what it fetches is skills.
     """
-    from api.database import get_system_connection, fetch_skill_notes as _fetch, fetch_skills
+    from api.database import get_system_connection, fetch_skills
     agent_names = _CREW_AGENT_NAMES.get(crew_name, [])
     if not agent_names:
         return ""
     async with get_system_connection() as conn:
-        notes: list[str] = []
         skills: list[str] = []
         seen_skill_ids: set[int] = set()
-        withheld: list[str] = []
         for a in agent_names:
-            rows = await _fetch(conn, agent_name=a)
-            for r in rows:
-                if not _note_may_travel(slug, r):
-                    withheld.append((r["source_project"] or "").strip() or "no engagement recorded")
-                    continue
-                notes.append(f"- {r['note']}")
             display = _SNAKE_TO_DISPLAY.get(a)
             if display:
                 skill_rows = await fetch_skills(conn, agent_name=display, status="approved")
                 for s in skill_rows:
-                    if s["id"] not in seen_skill_ids:
-                        seen_skill_ids.add(s["id"])
-                        skills.append(f"- {s['name']}: {s['description']}")
-    if withheld:
-        # `info`: on a deployment holding engagements of different modes this is the correct
-        # outcome and will fire often. Logged because it is the only answer to "why is that
-        # lesson not being applied here", which nothing else in the product can give.
-        log.info(
-            "skills: %d note(s) withheld from a %s run on %r, which sends prompts to a hosted "
-            "model - their own engagements (%s) do not permit that.",
-            len(withheld), crew_name, slug, ", ".join(sorted(set(withheld))),
-        )
-    sections: list[str] = []
-    if notes:
-        sections.append("SKILL IMPROVEMENT NOTES (apply these in your output):\n" + "\n".join(notes))
-    if skills:
-        sections.append("AGENT SKILLS (apply these capabilities in your work):\n" + "\n".join(skills))
-    return "\n\n".join(sections)
+                    if s["id"] in seen_skill_ids or not _skill_applies_here(slug, s):
+                        continue
+                    seen_skill_ids.add(s["id"])
+                    skills.append(f"- {s['name']}: {s['description']}")
+    if not skills:
+        return ""
+    return "AGENT SKILLS (apply these capabilities in your work):\n" + "\n".join(skills)
 
 
 # Which crew is answerable for each warning source. A warning is only useful to the agent

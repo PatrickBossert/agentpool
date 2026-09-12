@@ -24,7 +24,6 @@ from api.routers import interviews as interviews_router
 from api.routers import templates as templates_router
 from api.routers import admin as admin_router
 from api.routers import agent_chat as agent_chat_router
-from api.routers import skill_notes as skill_notes_router
 from api.routers import skills as skills_router
 from api.routers import platform_settings as platform_settings_router
 from api.routers import milestones as milestones_router
@@ -269,7 +268,6 @@ app.include_router(interviews_router.router)
 app.include_router(templates_router.router)
 app.include_router(admin_router.router)
 app.include_router(agent_chat_router.router)
-app.include_router(skill_notes_router.router)
 app.include_router(skills_router.router)
 app.include_router(platform_settings_router.router)
 app.include_router(milestones_router.router)

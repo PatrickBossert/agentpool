@@ -39,14 +39,23 @@ AGENT = "interaction_designer"
 OTHER_AGENT = "value_chain_mapper"
 CREW = "assessment_design"
 
-# The engagement a `_fetch_skill_notes` call in this file is made on behalf of. The slug
-# became required when `agent_skill_notes` learned which engagement a note came from, and it
-# changes nothing here: every assertion in this file is about the **approved library skills**
-# half of that block, which is exempt by design - an approved skill is the agent's published
-# instruction on every engagement. The notes half, which is narrowed, has its own file
-# (tests/test_skill_notes_travel.py). No project database of this name exists, which is
-# deliberate: a caller passing a slug this file never creates must still get its skills.
-INJECTION_SLUG = "skills-injection-reader"
+# The engagement every proposal in this file is made on, and the engagement every
+# `_fetch_skill_notes` call in it runs on. **They are the same slug on purpose.**
+#
+# The slug became required when `agent_skill_notes` learned which engagement a note came
+# from, and for a while it changed nothing here, because an approved skill was the agent's
+# published instruction on every engagement. Since sp65 it is not: an approved skill is
+# scoped `project` until a reviewer widens it, so a run on some *other* engagement would not
+# be shown one - and every assertion below about the approval gate, the crew filter and the
+# agent-name resolution would be answered by the scope filter instead, which is CLAUDE.md's
+# "a test that verifies a property one layer away from where it holds" exactly.
+#
+# So this file holds the scope constant and tests what it is named for. The scope itself has
+# a file of its own (tests/test_skill_scope.py), and the candidate-egress narrowing has
+# another (tests/test_skill_candidates_travel.py). No project database of this name exists,
+# which is still deliberate: a caller passing a slug this file never creates must still get
+# its skills.
+INJECTION_SLUG = "sp-gs-am"
 RULE = "The welcome carries privacy and tone; the framing carries the interview's purpose"
 
 # The same rule as RULE, said twice more with almost none of its vocabulary. This is the
@@ -519,7 +528,8 @@ async def test_a_proposal_from_the_illustrator_is_filed_where_an_approval_can_re
     at the injection, because that is the only layer where the difference shows.
     """
     result = await propose_skill(
-        "visual_illustrator", "Render every chart in the client's own palette.", "p1", "VI-001"
+        "visual_illustrator", "Render every chart in the client's own palette.",
+        INJECTION_SLUG, "VI-001",
     )
     await _approve(result["skill_id"])
     assert "client's own palette" in await _fetch_skill_notes("business_plan", INJECTION_SLUG)
@@ -545,7 +555,7 @@ async def test_a_caller_holding_the_role_name_already_is_not_mangled():
     """The admin door's vocabulary. `agent_skill_assignments` is keyed by these, so a name
     that is already one must pass through unchanged rather than be refused with the ids.
     """
-    result = await propose_skill(_SNAKE_TO_DISPLAY[AGENT], RULE, "p1", "SC-014")
+    result = await propose_skill(_SNAKE_TO_DISPLAY[AGENT], RULE, INJECTION_SLUG, "SC-014")
     assert result["agent"] == _SNAKE_TO_DISPLAY[AGENT]
     await _approve(result["skill_id"])
     assert RULE in await _fetch_skill_notes(CREW, INJECTION_SLUG)
@@ -915,11 +925,18 @@ async def test_a_proposal_with_no_project_is_refused_rather_than_routed(monkeypa
 # pass all four of the negative ones and silently end deduplication.
 
 
-async def _pending_rule_from(slug: str, description: str, *, status: str = "pending") -> int:
+async def _pending_rule_from(
+    slug: str, description: str, *, status: str = "pending", scope: str = "project",
+) -> int:
     """One row assigned to this file's agent, attributed to `slug`.
 
     Written directly rather than by proposing on `slug`, so the test does not need that
     project's model to answer before the case it is about can begin.
+
+    `scope` defaults to the narrow value `insert_skill` writes rather than being passed through
+    silently, because since sp65 it is the column the egress exemption reads: a caller here
+    that wants the exempt case has to say so, and one that says nothing gets the case where the
+    material is one client's.
     """
     from api.database import get_system_connection, insert_skill
 
@@ -933,6 +950,7 @@ async def _pending_rule_from(slug: str, description: str, *, status: str = "pend
             source_ref="SC-014",
             proposed_by_agent=AGENT,
             status=status,
+            scope=scope,
             agents=[_SNAKE_TO_DISPLAY[AGENT]],
         )
 
@@ -1038,13 +1056,17 @@ async def test_a_sensitive_project_is_still_compared_against_everything(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_an_approved_rule_travels_whatever_engagement_it_came_from(monkeypatch, tmp_path):
+async def test_a_global_rule_travels_whatever_engagement_it_came_from(monkeypatch, tmp_path):
     """The exemption, and it is not a loophole.
 
-    An approved skill is already injected into this agent's prompt on every engagement by
+    A **global** skill is already injected into this agent's prompt on every engagement by
     `_fetch_skill_notes`, including the standard ones whose prompts go to Anthropic. It is the
     agent's published instruction rather than one client's material - the same distinction
     `list_skills` turns on - so withholding it would lose deduplication and protect nothing.
+
+    This test used to say `approved` in both its name and its row, and the difference is C1: an
+    approval was the spelling of "everywhere" until this branch gave everywhere a column. The
+    row below is explicitly `scope="global"` now, and its negative pair is directly beneath.
     """
     monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
     get_settings.cache_clear()
@@ -1053,13 +1075,64 @@ async def test_an_approved_rule_travels_whatever_engagement_it_came_from(monkeyp
     })
     await _project("c2-standard-proposer", "standard", {})
     published = "State the units on every figure you carry forward."
-    await _pending_rule_from("c2-sensitive-origin", published, status="approved")
+    await _pending_rule_from(
+        "c2-sensitive-origin", published, status="approved", scope="global",
+    )
 
     local, hosted = _transports(monkeypatch)
     await propose_skill(AGENT, DIFFERENT_RULE, "c2-standard-proposer", "SC-031")
 
     assert len(hosted) == 1
     assert published in hosted[0].content.decode()
+
+
+@pytest.mark.asyncio
+async def test_a_sensitive_engagements_approved_project_rule_does_not_travel_either(
+    monkeypatch, tmp_path
+):
+    """C1, driven the whole way as the review drove it.
+
+    The rule is a sensitive engagement's, it is **approved**, and it is scoped to that
+    engagement. `_skill_applies_here` correctly keeps it out of every other engagement's
+    prompt - and until this fix it left the deployment anyway, inside the deduplication payload
+    the moment any hosted-inference project proposed a rule for the same agent. Approval was the
+    spelling of "everywhere", and this branch is what stopped it being that.
+
+    Asserted on the **bytes that left**, not on which client was constructed: `_transports`
+    installs a fake transport for both providers at once, so "it went to the local one instead"
+    is visible rather than assumed.
+
+    The second row is the control *inside* this test and it is not optional - without a
+    candidate that may travel, the list narrows to nothing, `find_duplicate_skill`
+    short-circuits, and no request is sent at all. "The secret did not travel" would then be
+    true of a fix that simply stopped comparing, which is a different test one screen up.
+    """
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    get_settings.cache_clear()
+    await _project("c1-sensitive-origin", "sensitive", {
+        "local_fast_model": "gemma4:fast", "local_fast_url": "http://localhost:11999/v1",
+    })
+    await _project("c1-standard-proposer", "standard", {})
+    secret = "When interviewing Iberdrola's SAP migration staff, never name the Q3 outage."
+    await _pending_rule_from(
+        "c1-sensitive-origin", secret, status="approved", scope="project",
+    )
+    permitted = "State the units on every figure you carry forward."
+    await _pending_rule_from(
+        "c1-standard-proposer", permitted, status="approved", scope="global",
+    )
+
+    local, hosted = _transports(monkeypatch)
+    await propose_skill(AGENT, DIFFERENT_RULE, "c1-standard-proposer", "SC-031")
+
+    assert len(hosted) == 1, "the standard project's own comparison did not happen"
+    body = hosted[0].content.decode()
+    assert secret not in body, (
+        "a sensitive engagement's approved project-scoped rule reached Anthropic inside "
+        "another project's comparison"
+    )
+    assert permitted in body, "the narrowing took the global library with it"
+    assert local == []
 
 
 @pytest.mark.asyncio
@@ -1111,3 +1184,216 @@ async def test_withholding_every_candidate_asks_no_model_at_all(monkeypatch, tmp
 
     assert local == [] and hosted == []
     assert result["action"] == "created"
+
+
+# ── the reviewer decides the scope, at the door ────────────────────────────────
+#
+# The header of this file says it holds the scope constant so that the tests above are about
+# what they are named for. **This section is the exception, and it is the only one**: these
+# tests are about the scope itself, so they vary it deliberately and drive
+# `PATCH /admin/skills/{skill_id}` over HTTP rather than calling `update_skill`.
+#
+# Everything here is asserted on the **stored row**, and where the row's consequence is what
+# matters, on the text `_fetch_skill_notes` injects. A body that omits `scope` and a body that
+# sends `"project"` are two different requests that must reach the same row, and no assertion
+# on a request can tell whether they did. `tests/test_skill_scope.py` owns the filter; this
+# section owns the door in front of it.
+
+# An engagement other than the one every proposal below is made on, so "did widening actually
+# widen" is a question about a prompt rather than about a column.
+ELSEWHERE = "sp65-some-other-engagement"
+
+
+async def _scope_of(skill_id: int) -> str:
+    return (await _stored(skill_id))["scope"]
+
+
+async def _a_pending_proposal() -> int:
+    result = await propose_skill(AGENT, RULE, INJECTION_SLUG, "SC-014")
+    assert await _scope_of(result["skill_id"]) == "project", "the narrow default was not written"
+    return result["skill_id"]
+
+
+@pytest.mark.asyncio
+async def test_an_approval_that_says_nothing_about_scope_leaves_the_rule_narrow(client):
+    """The default, asserted where it is stored.
+
+    A reviewer who clicks Approve without touching the scope control must not widen anything.
+    The body genuinely omits the key here - it is not `scope: null` and not `scope: "project"` -
+    because `SkillUpdate`'s optional fields mean *leave it alone*, and "leave it alone" is only
+    the same as "project" while nothing else has ever written the column.
+    """
+    skill_id = await _a_pending_proposal()
+
+    res = await client.patch(f"/admin/skills/{skill_id}", json={"status": "approved"})
+
+    assert res.status_code == 200
+    row = await _stored(skill_id)
+    assert row["status"] == "approved"
+    assert row["scope"] == "project"
+
+
+@pytest.mark.asyncio
+async def test_naming_the_narrow_scope_reaches_the_same_row_as_omitting_it(client):
+    """Two requests, one row. The pair is the point: the form sends the scope it is showing,
+    and an approval assembled by hand - or by a caller written before this column existed -
+    sends nothing. Both are approvals of a rule for one engagement, and a door where only one
+    of them lands narrow is a door that widens by accident.
+    """
+    omitted = await _a_pending_proposal()
+    named = (await propose_skill(AGENT, DIFFERENT_RULE, INJECTION_SLUG, "SC-031"))["skill_id"]
+
+    assert (await client.patch(
+        f"/admin/skills/{omitted}", json={"status": "approved"}
+    )).status_code == 200
+    assert (await client.patch(
+        f"/admin/skills/{named}", json={"status": "approved", "scope": "project"}
+    )).status_code == 200
+
+    assert await _scope_of(omitted) == await _scope_of(named) == "project"
+
+
+@pytest.mark.asyncio
+async def test_a_narrowly_approved_rule_reaches_its_own_engagement_and_no_other(client):
+    """What the narrow default *means*, asserted at the prompt.
+
+    The column is only a column. This is the half a reviewer is actually promised: approving
+    without widening puts the rule in front of the agent on the engagement it came from, and
+    in front of nobody else. Both halves, because the absence is the one that fails silently -
+    an approval that stored nothing at all would satisfy the second assertion perfectly.
+    """
+    skill_id = await _a_pending_proposal()
+
+    await client.patch(f"/admin/skills/{skill_id}", json={"status": "approved"})
+
+    assert RULE in await _fetch_skill_notes(CREW, INJECTION_SLUG)
+    assert RULE not in await _fetch_skill_notes(CREW, ELSEWHERE)
+
+
+@pytest.mark.asyncio
+async def test_a_reviewer_can_widen_a_rule_to_every_engagement(client):
+    """The control, and the plan calls it not optional: a form that hardcoded `project` - or a
+    door that dropped the key on the floor - would pass every test above.
+
+    Driven to the prompt on an engagement the rule has never been near, which is the only place
+    "applies everywhere" is a statement about anything.
+    """
+    skill_id = await _a_pending_proposal()
+
+    res = await client.patch(
+        f"/admin/skills/{skill_id}", json={"status": "approved", "scope": "global"}
+    )
+
+    assert res.status_code == 200
+    assert await _scope_of(skill_id) == "global"
+    assert RULE in await _fetch_skill_notes(CREW, ELSEWHERE)
+
+
+@pytest.mark.asyncio
+async def test_widening_is_reversible_and_the_prompt_follows(client):
+    """A reviewer who finds one of the fifty-three that belonged to a single engagement demotes
+    it - the spec says so in as many words, and this is the door that has to let them.
+
+    Asserted at the prompt as well as the column, because a demotion that changed the row and
+    not the injection would leave the rule in force everywhere with the queue saying otherwise.
+    """
+    skill_id = await _a_pending_proposal()
+    await client.patch(f"/admin/skills/{skill_id}", json={"status": "approved", "scope": "global"})
+    assert RULE in await _fetch_skill_notes(CREW, ELSEWHERE)
+
+    res = await client.patch(f"/admin/skills/{skill_id}", json={"scope": "project"})
+
+    assert res.status_code == 200
+    assert await _scope_of(skill_id) == "project"
+    assert RULE not in await _fetch_skill_notes(CREW, ELSEWHERE)
+    assert RULE in await _fetch_skill_notes(CREW, INJECTION_SLUG)
+
+
+@pytest.mark.asyncio
+async def test_a_scope_that_is_neither_is_refused_and_changes_nothing(client):
+    """422 with both values named, not a 500.
+
+    `skills.scope` carries a CHECK constraint, so an unvalidated word raises an `IntegrityError`
+    inside the write and the reviewer is told the server broke. The row is re-read afterwards
+    because a refusal that had already applied the `status` in the same body would be a partial
+    write dressed as a rejection.
+    """
+    skill_id = await _a_pending_proposal()
+
+    res = await client.patch(
+        f"/admin/skills/{skill_id}", json={"status": "approved", "scope": "everywhere"}
+    )
+
+    assert res.status_code == 422
+    assert "project" in res.json()["detail"] and "global" in res.json()["detail"]
+    row = await _stored(skill_id)
+    assert (row["scope"], row["status"]) == ("project", "pending")
+
+
+# ── a bundle crossing deployments is re-scoped by a human ─────────────────────
+#
+# Task 1 handed this over as an open edge: `export` emits no `scope`, so a round-trip through
+# `import` narrows every skill to `project`. **Settled as deliberate**, and the reasoning is
+# written out on `export_skills`. The short form: `scope='project'` points at a `source_project`
+# the bundle does not carry and a slug the importing deployment does not have, and
+# `scope='global'` is a claim about engagements the exporting reviewer has never seen. Import
+# files everything `pending`, so the bundle lands in the queue, which is where the decision
+# belongs.
+#
+# Two halves, because either alone is satisfied by the wrong thing: the first would pass
+# against an export that emitted nothing at all, and the second against an import that wrote
+# nothing at all.
+
+
+@pytest.mark.asyncio
+async def test_the_export_bundle_carries_no_scope(client):
+    """The rule travels; where it applies does not."""
+    skill_id = await _a_pending_proposal()
+    await client.patch(f"/admin/skills/{skill_id}", json={"status": "approved", "scope": "global"})
+
+    bundle = (await client.get("/admin/skills/export")).json()
+
+    entry = next(e for e in bundle if e["description"] == RULE)
+    assert "scope" not in entry
+    # Nor the engagement a narrow scope would have pointed at, which is the other half of why
+    # a scope cannot travel: it names a slug the importing deployment has never heard of.
+    assert "source_project" not in entry
+    assert entry["agents"] == [_SNAKE_TO_DISPLAY[AGENT]]
+
+
+@pytest.mark.asyncio
+async def test_a_bundle_naming_a_scope_is_still_imported_narrow_and_pending(client, monkeypatch):
+    """The hand-edited bundle, and the one a later version of this product might emit.
+
+    `SkillImportItem` declares no `scope`, so pydantic drops the key - asserted rather than
+    assumed, because "ignored by default" is a framework behaviour that a `model_config` on
+    some shared base could change without anybody here noticing. The row must reach the queue,
+    at the narrow scope, for a human to decide.
+
+    `check_specificity` is stubbed at the name the router *looks up*, not where it is defined -
+    `skills.py` binds its own reference with `from ... import`, and CLAUDE.md records four crew
+    tests that patched the definition and silently tested nothing. It is the one call on this
+    path that goes to hosted Anthropic (the skills library is the deliberate hosted gap), and
+    it is not what this test is about.
+    """
+    async def _not_specific(_description: str) -> dict:
+        return {"is_specific": False, "reason": None, "suggestion": None}
+
+    monkeypatch.setattr("api.routers.skills.check_specificity", _not_specific)
+
+    res = await client.post("/admin/skills/import", json=[{
+        "agents": [_SNAKE_TO_DISPLAY[AGENT]],
+        "name": "An imported rule",
+        "description": DIFFERENT_RULE,
+        "scope": "global",
+        "source_project": "some-other-deployments-slug",
+    }])
+
+    assert res.status_code == 200
+    assert res.json()["imported"] == 1
+    from api.database import fetch_skills, get_system_connection
+    async with get_system_connection() as conn:
+        row = next(s for s in await fetch_skills(conn) if s["name"] == "An imported rule")
+    assert (row["scope"], row["status"]) == ("project", "pending")
+    # And so it reaches no prompt anywhere, which is what "the reviewer decides" has to mean.
+    assert DIFFERENT_RULE not in await _fetch_skill_notes(CREW, INJECTION_SLUG)

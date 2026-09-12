@@ -3,9 +3,9 @@ import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, X, Download, Upload, BookOpen, Clock, Sprout, RotateCcw,
-  Repeat, ChevronDown, ChevronRight, Globe,
+  Repeat, ChevronDown, ChevronRight, Globe, MapPin,
 } from 'lucide-react'
-import { skillsApi, type AgentSkill } from '../api/skills'
+import { skillsApi, type AgentSkill, type SkillScope } from '../api/skills'
 import { describeError } from '../utils/describeError'
 import { CREW_AGENTS } from '../components/agentStatus'
 
@@ -80,6 +80,85 @@ function FlagCard({ reason, suggestion }: { reason: string; suggestion: string |
   )
 }
 
+/**
+ * Where the rule applies - the one control, used by the queue and by the library.
+ *
+ * The scope cannot be derived from the text: the same correction box yields "do not include
+ * specific investment figures", which is true of every client, or "this client calls it the
+ * renewals programme", which is true of one. It is a reviewer's judgement and has to be asked
+ * for, at approval and again whenever somebody finds a rule in the library that is wider than
+ * it should be.
+ *
+ * One component rather than two, because the two cards ask the same question and the labels
+ * are what a reviewer matches against the note beside them. Two copies would be two wordings
+ * within a sprint.
+ */
+function ScopeChooser({
+  name,
+  value,
+  onChange,
+  describedBy,
+}: {
+  name: string
+  value: SkillScope
+  onChange: (scope: SkillScope) => void
+  describedBy?: string
+}) {
+  return (
+    <fieldset
+      aria-describedby={describedBy}
+      className="rounded-lg border border-gray-200 px-3 py-2 space-y-1"
+    >
+      <legend className="text-[10px] font-semibold text-gray-700 uppercase tracking-widest px-1">
+        Where this rule applies
+      </legend>
+      {([
+        ['project', 'Applies to this engagement'],
+        ['global', 'Applies everywhere'],
+      ] as const).map(([option, label]) => (
+        <label key={option} className="flex items-center gap-2 cursor-pointer text-xs text-gray-700">
+          <input
+            type="radio"
+            name={name}
+            value={option}
+            checked={value === option}
+            onChange={() => onChange(option)}
+            className="border-gray-300 text-teal-600 focus:ring-teal-500"
+          />
+          {label}
+        </label>
+      ))}
+    </fieldset>
+  )
+}
+
+/**
+ * What an approved rule's reach is, at a glance, in the library.
+ *
+ * Without it the fifty-three rows the migration affirmed `global` are indistinguishable from a
+ * rule scoped to one engagement, and "a reviewer demotes the ones that were really about a
+ * single engagement" is an instruction with nothing to act on. The narrow badge names the
+ * engagement, because "this engagement" means nothing on a page listing every engagement's
+ * rules at once.
+ */
+function ScopeBadge({ skill }: { skill: AgentSkill }) {
+  const global = skill.scope === 'global'
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+        global
+          ? 'border-brand/40 bg-brand/15 text-gray-800'
+          : 'border-amber-200 bg-amber-50 text-amber-800'
+      }`}
+    >
+      {global ? <Globe size={10} /> : <MapPin size={10} />}
+      {global
+        ? 'Applies everywhere'
+        : `Applies to ${skill.source_project || 'no engagement'}`}
+    </span>
+  )
+}
+
 /** "Seen once" / "Seen 3 times" - the count the queue is ordered by, in words. */
 function occurrenceLabel(occurrences: number): string {
   const n = Math.max(1, occurrences || 1)
@@ -150,22 +229,34 @@ function EditableSkillCard({
   onReject,
 }: {
   skill: AgentSkill
-  onApprove: (id: number, name: string, description: string, agents: string[]) => void
+  onApprove: (
+    id: number, name: string, description: string, agents: string[], scope: SkillScope,
+  ) => void
   onReject: (id: number) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(skill.name)
   const [description, setDescription] = useState(skill.description)
   const [agents, setAgents] = useState(skill.agents)
+  // Seeded from the row rather than from a literal, so the control shows what is stored. For
+  // every proposal that is `project` - the narrow value `insert_skill` writes - which is the
+  // default a reviewer clicking without reading gets, and widening stays the deliberate act.
+  const [scope, setScope] = useState<SkillScope>(skill.scope)
 
   // The consequence sentence is bound to the Approve button by `aria-describedby`, not left
   // beside it. CLAUDE.md records a note asserted per section satisfying every control in that
   // section: proximity is not association, and an association the DOM holds is one a test can
   // read back from the button rather than infer from the layout.
   const noteId = `skill-${skill.id}-approve-consequence`
+  const scopeName = `skill-${skill.id}-scope`
   const holders = (editing ? agents : skill.agents)
   const agentPhrase = holders.length > 0 ? holders.join(', ') : 'the agent it is assigned to'
   const origin = skill.source_project || 'the engagement it came from'
+  // A proposal nobody can attribute. `POST /admin/skills` and the import door both write a row
+  // with no `source_project`, and a narrow approval of one of those is a rule that reaches no
+  // engagement at all - present in the library, correct-looking, injected nowhere. The
+  // reviewer is the only person who can tell that from a working approval, so they are told.
+  const unattributed = !skill.source_project
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
@@ -228,16 +319,36 @@ function EditableSkillCard({
 
       {!editing && <EvidencePanel skill={skill} />}
 
+      <ScopeChooser name={scopeName} value={scope} onChange={setScope} describedBy={noteId} />
+
       <p
         id={noteId}
         className="flex items-start gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-[11px] text-gray-800 leading-relaxed"
       >
-        <Globe size={12} className="mt-0.5 flex-shrink-0 text-brand-dark" />
-        <span>
-          Approving is a change to {agentPhrase} on <strong>every engagement</strong>, not only{' '}
-          {origin}. The rule joins that agent&rsquo;s instructions on its next run everywhere.
-          Rejecting leaves the instructions as they are.
-        </span>
+        {scope === 'global'
+          ? <Globe size={12} className="mt-0.5 flex-shrink-0 text-brand-dark" />
+          : <MapPin size={12} className="mt-0.5 flex-shrink-0 text-brand-dark" />}
+        {scope === 'global' ? (
+          <span>
+            Approving now is a change to {agentPhrase} on <strong>every engagement</strong>,
+            including ones you have never seen - not only {origin}. The rule joins that
+            agent&rsquo;s instructions on its next run everywhere. Rejecting leaves the
+            instructions as they are.
+          </span>
+        ) : unattributed ? (
+          <span>
+            This proposal names no engagement, so approving it as{' '}
+            <strong>applies to this engagement</strong> files a rule that reaches none. Choose{' '}
+            <strong>applies everywhere</strong> to put it into {agentPhrase}&rsquo;s
+            instructions, or reject it.
+          </span>
+        ) : (
+          <span>
+            Approving now adds this rule to {agentPhrase} on <strong>{origin}</strong> alone,
+            and nothing else changes. Choosing <strong>applies everywhere</strong> would widen
+            it to engagements you have never seen.
+          </span>
+        )}
       </p>
 
       <div className="flex items-center gap-2 justify-between">
@@ -258,12 +369,17 @@ function EditableSkillCard({
           >
             <X size={11} /> Reject
           </button>
+          {/* The label says what this click does, because it no longer always does the same
+              thing. "Approve everywhere" was true of every approval until a rule had a scope,
+              and a button that keeps saying it while filing a narrow rule is the kind of
+              wrong that nobody reports. */}
           <button
-            onClick={() => onApprove(skill.id, name, description, agents)}
+            onClick={() => onApprove(skill.id, name, description, agents, scope)}
             aria-describedby={noteId}
             className="flex items-center gap-1 text-xs text-white bg-brand-dark hover:bg-brand transition-colors px-3 py-1 rounded font-semibold"
           >
-            <Check size={11} /> Approve everywhere
+            <Check size={11} />
+            {scope === 'global' ? 'Approve everywhere' : 'Approve for this engagement'}
           </button>
         </div>
       </div>
@@ -277,13 +393,20 @@ function LibrarySkillCard({
   onDelete,
 }: {
   skill: AgentSkill
-  onEdit: (id: number, name: string, description: string, agents: string[]) => void
+  onEdit: (
+    id: number, name: string, description: string, agents: string[], scope: SkillScope,
+  ) => void
   onDelete: (id: number) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(skill.name)
   const [description, setDescription] = useState(skill.description)
   const [agents, setAgents] = useState(skill.agents)
+  const [scope, setScope] = useState<SkillScope>(skill.scope)
+
+  // The same note the queue binds to Approve, saying what Save is about to do. Bound rather
+  // than placed beside, for the reason the queue's is: proximity is not association.
+  const noteId = `library-skill-${skill.id}-scope-consequence`
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-2.5">
@@ -294,6 +417,7 @@ function LibrarySkillCard({
             {(editing ? agents : skill.agents).length === 0 && (
               <span className="text-[10px] text-gray-500 italic">Unassigned</span>
             )}
+            {!editing && <ScopeBadge skill={skill} />}
           </div>
           {editing ? (
             <input
@@ -329,17 +453,60 @@ function LibrarySkillCard({
         <p className="text-xs text-gray-600 leading-relaxed">{description}</p>
       )}
 
+      {/* Demotion, which is the action CLAUDE.md and the spec both describe and which the
+          product offered no route to until now: the fifty-three rows the migration affirmed
+          `global` were affirmed without anybody re-reading them, and a reviewer who finds one
+          that was really about a single engagement narrows it here. Widening from here is the
+          same control read the other way - a rule that has proved itself on one engagement is
+          exactly the kind somebody decides is general. */}
+      {editing && (
+        <>
+          <ScopeChooser
+            name={`library-skill-${skill.id}-scope`}
+            value={scope}
+            onChange={setScope}
+            describedBy={noteId}
+          />
+          <p
+            id={noteId}
+            className="flex items-start gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-[11px] text-gray-800 leading-relaxed"
+          >
+            {scope === 'global'
+              ? <Globe size={12} className="mt-0.5 flex-shrink-0 text-brand-dark" />
+              : <MapPin size={12} className="mt-0.5 flex-shrink-0 text-brand-dark" />}
+            {scope === 'global' ? (
+              <span>
+                Saving keeps this rule in force on <strong>every engagement</strong>, including
+                ones you have never seen.
+              </span>
+            ) : skill.source_project ? (
+              <span>
+                Saving narrows this rule to <strong>{skill.source_project}</strong>. It leaves
+                the other engagements&rsquo; agents on their next run there, and this is the
+                demotion to reach for when a rule turns out to have been about one client.
+              </span>
+            ) : (
+              <span>
+                This rule names no engagement, so narrowing it would leave it applying to{' '}
+                <strong>none</strong>. Delete it instead if it should not be in the library.
+              </span>
+            )}
+          </p>
+        </>
+      )}
+
       <div className="flex items-center gap-2 justify-end">
         {editing ? (
           <>
             <button
-              onClick={() => { setEditing(false); setName(skill.name); setDescription(skill.description); setAgents(skill.agents) }}
+              onClick={() => { setEditing(false); setName(skill.name); setDescription(skill.description); setAgents(skill.agents); setScope(skill.scope) }}
               className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded"
             >
               Cancel
             </button>
             <button
-              onClick={() => { onEdit(skill.id, name, description, agents); setEditing(false) }}
+              onClick={() => { onEdit(skill.id, name, description, agents, scope); setEditing(false) }}
+              aria-describedby={noteId}
               className="text-xs text-white bg-teal-600 hover:bg-teal-700 px-3 py-1 rounded font-semibold"
             >
               Save
@@ -403,16 +570,32 @@ export default function AdminSkills() {
     },
   })
 
-  function handleApprove(id: number, name: string, description: string, agents: string[]) {
-    updateMut.mutate({ id, data: { status: 'approved', name, description, agents } })
+  // `scope` is sent on every approval, from the control the reviewer sees. Not omitted when it
+  // happens to equal the default: the page would then be relying on the server's "leave it
+  // alone" to mean `project`, which is true only while nothing has ever written the column -
+  // and a reviewer demoting a global rule back to one engagement needs the narrow value to
+  // travel. The server's absent-key rule is the safety net for callers with no opinion, not
+  // for this one.
+  function handleApprove(
+    id: number, name: string, description: string, agents: string[], scope: SkillScope,
+  ) {
+    updateMut.mutate({ id, data: { status: 'approved', name, description, agents, scope } })
   }
 
   function handleReject(id: number) {
     updateMut.mutate({ id, data: { status: 'rejected' } })
   }
 
-  function handleEdit(id: number, name: string, description: string, agents: string[]) {
-    updateMut.mutate({ id, data: { name, description, agents } })
+  // Sends `scope`, and it is not the exception to the rule one file up - it is the rule.
+  // The reason `update`'s `scope` is optional is that a caller with **no opinion** must not
+  // restate a reach it cannot see. This caller can see it: the library card renders the stored
+  // scope as a badge and, while editing, as a control seeded from the row. Once the value is
+  // in front of the person pressing Save, omitting it would mean a reviewer selecting "applies
+  // to this engagement", saving, and being shown the rule still in force everywhere.
+  function handleEdit(
+    id: number, name: string, description: string, agents: string[], scope: SkillScope,
+  ) {
+    updateMut.mutate({ id, data: { name, description, agents, scope } })
   }
 
   async function handleExport() {

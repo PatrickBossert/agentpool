@@ -163,11 +163,11 @@ def is_shared_beyond_one_project(read: Read) -> bool:
     """Whether this source holds more than this engagement's material.
 
     Asked of **every** medium, not only of collections. The first version of this asked it of
-    `Medium.VECTOR_COLLECTION` alone, so `agent_skill_notes` and `skills` - which are in the
-    system database, are global across engagements, and are folded into every agent's
-    instructions on every crew run - could never earn the badge whatever they were called. The
-    page's sharing panel is where a reader goes with exactly that question, and it could not
-    answer it for the two stores that most needed answering.
+    `Medium.VECTOR_COLLECTION` alone, so the system database's tables - `skills`, and the
+    reviewer-notes table retired since, both global across engagements and folded into every
+    agent's instructions on every crew run - could never earn the badge whatever they were
+    called. The page's sharing panel is where a reader goes with exactly that question, and it
+    could not answer it for the stores that most needed answering.
 
     There is no one predicate across the media, because a source's name is only meaningful
     inside its own namespace: a collection's name is built from the slug and the sector, a

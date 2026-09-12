@@ -420,19 +420,23 @@ async def test_the_shared_sector_store_is_never_reported_as_this_project_alone(c
 async def test_a_shared_table_earns_the_badge_as_readily_as_a_shared_collection(client):
     """The predicate is asked of every medium, not only of collections.
 
-    `agent_skill_notes` and `skills` are in the system database - global across engagements -
-    and both are folded into every agent's instructions on every crew run. While the flag was
-    `medium is VECTOR_COLLECTION and ...` they could never earn it whatever they were called,
-    so the panel a reader consults with exactly this question said nothing about the two stores
-    that most needed saying. Both halves are asserted: every system table declared as a read is
-    flagged, and no project table is.
+    `skills` is in the system database - global across engagements - and is folded into every
+    agent's instructions on every crew run. While the flag was `medium is VECTOR_COLLECTION
+    and ...` it could never earn the badge whatever it was called, so the panel a reader
+    consults with exactly this question said nothing about the store that most needed saying.
+    Both halves are asserted: every system table declared as a read is flagged, and no project
+    table is.
+
+    It was two tables until sp65 retired the reviewer-notes one, which is why the assertions
+    read as a subset of a set of one rather than as an equality: a second system table
+    declared as a read tomorrow must be flagged too, and the last conjunct is what says so.
     """
     payload = await _payload(client)
     system_tables = system_database_tables()
-    assert {"agent_skill_notes", "skills"} <= system_tables
+    assert {"skills"} <= system_tables
 
     flagged = {row["source"] for row in payload["shared_sources"]}
-    assert {"agent_skill_notes", "skills"} <= flagged
+    assert {"skills"} <= flagged
 
     declared_tables = {
         read.source
@@ -524,7 +528,7 @@ async def test_every_shared_store_says_with_whom_and_not_only_that_it_is_shared(
 
     # The system database's tables are shared for a different reason and must not be dressed as
     # a tier: they are the deployment's own, not a width of the knowledge store.
-    for source in ("agent_skill_notes", "skills"):
+    for source in ("skills",):
         row = next(r for r in payload["shared_sources"] if r["source"] == source)
         assert row["tier"] is None and row["tier_scope"] is None
 
@@ -564,7 +568,7 @@ async def test_a_store_handed_to_every_agent_says_so_rather_than_naming_nobody(c
     skills library is the opposite of the truth.
     """
     payload = await _payload(client)
-    for source in ("agent_skill_notes", "skills"):
+    for source in ("skills",):
         row = next(r for r in payload["shared_sources"] if r["source"] == source)
         assert row["handed_to_every_agent"] is True
         assert row["read_by"] == []
