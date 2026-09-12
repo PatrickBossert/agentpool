@@ -319,6 +319,19 @@ fails unsafe, not loudly: `get_connection` only re-runs the migration block when
 silently never runs on any database that has already been opened once at the current version -
 no error, no warning, just rows that stay unmigrated forever on every existing deployment.
 
+**A migration's test must pin the version immediately below the constant, as a literal.** Not
+`_SCHEMA_VERSION - 1`, which is *always* the version below the constant and therefore passes
+under a constant that never moved; and not some older number, because `get_connection` re-runs
+the whole block whenever `user_version` is lower, so a database stamped at 14 gains the table
+under any constant above 14. Such a test proves the migration **function** works and never
+proves the **bump** covers it - one digit between the two. sp60 nearly shipped exactly that: it
+was paused at 15, master reached 17 while it waited, and its own test stamped 14, so resolving
+the merge in master's favour - which is what "take the newer number" looks like - would have
+left `_migrate_value_chain_ledger` sitting in the block, unreached on every database already
+opened at 17, with twenty-two green tests over it. Demonstrated both ways rather than reasoned
+about, and worth doing again for the next one: at constant 17 with the test pinned at 14 all 22
+passed, and pinned at 17 it failed alone.
+
 **A writer that requires columns its callers do not care about will be got wrong by one of
 them.** `update_project_config` wrote `llm_mode`, `force_local_inference` and `sector` on every
 call, all three mandatory, so a door that only wanted to merge one `config_json` key still had
@@ -452,6 +465,13 @@ Every content gate tests one of exactly two conditions, and the pair is stated o
 |------|-------|-------|
 | `caller_may_contribute` | `{reviewer, approver}` | `POST /{slug}/review`, `PATCH /{slug}/reviews/{id}`, `POST /{slug}/changes`, `PATCH /{slug}/validation-warnings/{id}` |
 | `caller_may_approve` | `{approver}` | `DELETE /{slug}/reviews/{id}`, `PUT` and `POST .../migrate` on `/{slug}/value-chain-model`, `POST /{slug}/outputs/{id}/revert`, `POST /{slug}/agent-chat/upload`, `POST /{slug}/agent-chat/link` |
+
+`POST /{slug}/node-ledger/{id}/review` and `POST /{slug}/lever-ledger/{id}/review` are in
+**both** rows and are the only doors that are: one handler asks `caller_may_approve` when the
+decision is `approved` and `caller_may_contribute` otherwise, because reading an item and
+approving it are the same door with different consequences. They ask the two by name rather
+than restating the role sets inline, which is what the four call sites below do and is why
+those four are not uniform with each other.
 
 Four older call sites hold the same two rules under their own names, and are *not* uniform -
 the earlier wording here said they "all test for `reviewer` or `approver`", which was wrong of
@@ -593,7 +613,10 @@ membership floor.
 
 *Content* is acting on what the crews produced: reviews, change requests, warning
 dispositions, commits, submissions, activation, the canonical value chain, reverts,
-milestone re-baselining, script reviews and script edits. Sixteen doors ask the walk.
+milestone re-baselining, script reviews and script edits, and - since sp60 - per-node and
+per-lever reviews. **Eighteen** doors ask the walk, sixteen at sp44 plus the two item-review
+writes; `GET /{slug}/my-permissions` reads it and gates nothing, so it is not one of them. The
+two item-review **reads** take the membership floor alone, like every other read.
 
 **Administration mints content, within one project.** Setting `is_approver` is stakeholder
 administration, and stakeholder administration is one of the sixteen widened doors - so a
@@ -754,9 +777,11 @@ question is which authenticated write path should have done it earlier.
 **Enumerate by behaviour, not by name.** The alias hid two files from a `require_any_auth`
 grep; `pam_report.py` then hid from the *alias* sweep by not aliasing, and it had the same
 hole. Two accidental discoveries meant the enumeration was wrong twice, so it was done
-properly: 104 handlers are mounted under a path containing `{slug}`, and the check is whether
-each one calls `check_project_access`. **One hundred and one of the hundred and four call it.**
-The three that do not:
+properly: 108 handlers are mounted under a path containing `{slug}`, and the check is whether
+each one calls `check_project_access`. **One hundred and five of the hundred and eight call it.**
+The count was 104 at sp63 and gained sp60's four item-review doors, all of which ask the floor -
+recount by enumerating `app.routes` rather than adjusting the number, because a count nobody
+re-derives is the thing this paragraph warns about two rows below. The three that do not:
 
 | Door | Why not |
 |------|---------|
@@ -1420,6 +1445,93 @@ event and the ledger row carries the derived state, because a script is reviewed
 several people and approved once. A send-back carries `review_return_to`: only `agent`
 enters Maya's differential, because a return to `reviewer` that regenerated the script
 would rewrite the instrument the reviewer was about to re-read.
+
+### Reviewing a collection: the unit of review is the unit of regeneration
+
+**An agent output that is a collection of items needs per-item review state before it needs a
+review surface.** A reviewer who can only send the whole artefact back makes the agent rewrite
+everything, and then cannot tell what changed - which is why the whole-artefact loop was built,
+works, and went unused. Maya's is used because a script *is* a row: SC-014 went back with a
+note, run 37 regenerated that one script, and the other 85 came back byte-identical. That is
+what a new output type is measured against, and it is a question about the **table**, not about
+the dialog.
+
+Three ledgers now, one shape, each maintained by the write path rather than by its agent - for
+the reason run 32 gives above, that an artefact the agent must remember to write is a guarantee
+which holds only when the agent finishes:
+
+| Ledger | Item id | Registered by | Owner |
+|---|---|---|---|
+| `interview_script_ledger` | `script_id` | `register_scripts_sync` | Maya |
+| `value_chain_ledger` | `node_id` | `register_nodes_sync`, from **both** registry doors | Alex |
+| `value_lever_ledger` | `lever_id` | `register_levers_sync` | Morgan |
+
+All three register `ON CONFLICT(<id>) DO NOTHING` and none of them deletes, so "may grow, may
+retire, may never redefine or forget" is a property of the table rather than an instruction in
+a prompt.
+
+**The id is permanent and the label is not.** `value_levers` had no id at all: its only
+identifying field was `lever`, a full sentence, and Morgan rewords every one of them on every
+run - v4 to v5 reworded all ten while v3 to v4 merely reordered them - so review state keyed on
+the title, or on the position, matches nothing by the time the reviewer reads the answer. sp60
+assigned `LV-001`.. once to the existing ten and **wrote them back into the artefact**, which is
+the half that makes them visible to the one agent who has to preserve them; an id is never
+re-derived from position or title. `ITEM_IDENTITY` in `agents/tools/ownership.py` declares, per
+output type, whether it is a collection and which field identifies an item, so the question is
+answered when an agent is built rather than when somebody wants to review its output.
+
+**`item_reviews` is one event table with an `item_kind`, not one table per ledger.** A node id
+and a lever id are different namespaces and nothing stops a project holding the same string in
+both, so the discriminator is stored rather than inferred from the shape of the id - and two
+tables would have been two copies of one recorder. `record_item_review`
+(`api/services/item_review_service.py`) serves both over `ITEM_LEDGERS`, which is the whole of
+the difference between them. Its vocabulary is three where the script ledger's is four:
+`edited` is **refused** rather than merely unoffered, because levers are review-only by decision
+and the value chain model has its own editor, so a decision no surface can produce would arrive
+in `review_status` as a state the reviewer could never explain.
+
+**The recorder takes no version argument.** `record_script_review` takes `at_version` and its
+single door fills it correctly; there are two doors here, so the recorder reads `last_version`
+off the row it has already selected and stamps from that - there is no parameter for a door to
+forget, and `test_the_recorder_takes_no_version_argument` asserts the signature so it cannot be
+reintroduced quietly. That is `merge_project_config`'s rule under *Database conventions*
+arriving a second time: when a signature obliges every caller to restate state it does not own,
+the signature is the defect. The stamp is written on **every** decision rather than only on
+`changes_requested`, because the staleness a reviewer reads - "changed since v3 to v7" - is the
+same number.
+
+**The failure direction was chosen, and it is the inverse of the migration trap above.**
+`nodes_awaiting_regeneration` spells its staleness guard `COALESCE(reviewed_at_version,
+last_version, 0) >= COALESCE(last_version, 0)`, deliberately *not* the way
+`scripts_awaiting_regeneration` spells the same idea, so a NULL stamp falls through to "still
+awaiting" rather than to "excluded". A recorder that set `review_status` and forgot the stamp
+therefore reaches the agent on **every** run until something clears it, rather than on **none**
+of them, silently. Both are defects; only one announces itself in the prompt.
+
+**A send-back is scoped by ledger ownership, not by crew.** `discovery_mapping` holds two
+agents, so a crew-scoped block would hand Alex Morgan's lever notes and Morgan Alex's node
+notes - a failure invisible from outside, because the agent who should have been told is told
+and nothing anywhere records that the other one was as well. `_pending_discovery_revisions` in
+`run_service.py` asks which agent owns which ledger, which also means "`discovery_mapping`
+only" falls out of ownership rather than becoming a third list beside `_CREW_AGENT_NAMES` and
+`OUTPUT_OWNERS`. `_fetch_regeneration_requests` scopes on the crew and is right to:
+`assessment_design` holds one agent, so there the two are the same question.
+
+**Alex's clearing is weaker than Maya's, and the surface says so rather than implying
+otherwise.** A send-back clears on evidence - `register_nodes_sync` stamping `last_version`
+past the version the reviewer read - and nothing closes it out. Maya regenerates only what was
+returned to her, so her stamps move on exactly what she rewrote; Alex rebuilds the whole chain
+on every run (one run re-emitted 59 labels and not one was a redefinition), so **any** run of
+his clears a send-back whether or not he addressed the note. `DiscoveryReviewExtra.tsx` says
+so per ledger section, keyed by `data-testid="clearing-note-{kind}"`, because a note on one
+section does not explain the other.
+
+**What legitimately moves on a single-item send-back.** The byte-identical claim is *within the
+ledger* - `tests/test_node_and_lever_review_loop.py` sends one node back through the door and
+hashes all 89 rows either side of it. `value_chain_tree` and `value_chain_summary` are derived
+from the model and will legitimately be rewritten end to end by a one-node change. Say which
+artefacts are expected to move before the first reviewer diffs a run, or a correct regeneration
+reads as a leak.
 
 ### One mechanism: a correction becomes a proposal, and the approval carries a scope
 
@@ -2250,6 +2362,35 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   true - and the design's one dependency is deferred with a soft revert, so this is a gap
   rather than a hole. The fix, when it is wanted, is a door (a UI action or an explicit
   instruction), not a change to the ledger.
+- **Retiring a lever is not expressible at all** - the same shape as the entry above and one
+  step worse. `value_lever_ledger` has no `active` column, declined in sp60 Task 2 as
+  speculative, so a lever Morgan has dropped keeps a live ledger row for ever and
+  `levers_awaiting_regeneration` has no clause to exclude it - where
+  `nodes_awaiting_regeneration` filters `active=1` and its query is written beside this one.
+  The consequence is bounded and real: a send-back recorded against a lever before it was
+  dropped outlives the lever, and is injected into Morgan's prompt on every run until she
+  re-emits that `lever_id`, which by then she has no reason to. The fix is the column, a
+  `_SCHEMA_VERSION` bump, and the clause - not a filter in the reader.
+- **Fifteen of the eighteen declared collections have no per-item review state**, and the rule
+  they are owed is stated under *Crew / agent conventions*: the unit of review is the unit of
+  regeneration. Three have a ledger (`interview_scripts`, `value_chain_registry`,
+  `value_levers`). Two of the rest are written today and are deliberate exclusions -
+  `value_chain_model` has `StructureTab` and a workflow of its own, and `value_chain_tree`
+  restates the registry's ids rather than holding any. The other thirteen have **never been
+  written at all**: `activity_insights`, `architecture_register`, `captured_requirements`,
+  `illustration_briefs`, `initiative_register`, `interview_plan`, `interview_transcripts`,
+  `portfolio_register`, `propositions`, `requirements_analysis`, `roadmap_data`,
+  `strategic_requirements`, and `themes`. Most are registers by name. They are listed as owing
+  a ledger rather than given one here, so the next agent to be built is measured against the
+  rule while it is cheap - after the artefact exists, adding per-item identity means a backfill
+  that assigns ids to items a reviewer has already read.
+- **Both sp60 backfills are written and have not run.** `scripts/backfill_value_chain_ledger.py`
+  (89 nodes) and `scripts/backfill_value_lever_ledger.py` (10 levers) are proven on copies of
+  `data/sp-gs-am.db` and skip against the live one, because the migrations have not reached the
+  running server's database - it is still at `PRAGMA user_version = 17` and holds neither
+  ledger. So a live `sp-gs-am` shows **empty** node and lever review panels until the API is
+  restarted and the backfills are run, in that order. A data state, not a defect in the
+  surface; diagnose it here before diagnosing it in `DiscoveryReviewExtra`.
 - `register_scripts_sync` carries a near-copy of `scripts_awaiting_regeneration`'s WHERE
   clause to reset a regenerated script's `review_status`, and the two have **already
   diverged**: the query filters `active=1` and `project_id`, the copy does neither. A retired
