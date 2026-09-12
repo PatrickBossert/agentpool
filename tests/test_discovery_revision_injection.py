@@ -289,6 +289,61 @@ async def test_an_agent_that_owns_no_item_ledger_gets_no_block(project):
         assert await _pending_discovery_revisions(SLUG, agent_name) == "", agent_name
 
 
+def test_the_item_ledger_agents_are_exactly_the_owners_of_the_ledgered_artefacts():
+    """`_ITEM_LEDGER_AGENTS` held equal to the set it claims to be, by derivation.
+
+    **The test above looks like this guard and is not.** It enumerates four agent names by
+    hand, so it catches a widening onto one of *those four* and is blind to every other name
+    in the system: adding `synthesis_analyst` - an agent in `discovery_interviews`, a
+    different crew entirely - passed the whole suite. The consequence in production is the
+    exact failure this task exists to prevent, and the silent half of it: everything that is
+    not `value_chain_mapper` falls through to the lever branch, so a lever send-back would be
+    injected into an unrelated crew's synthesis task, the agent who should be told is told,
+    and nothing anywhere records that another one was too.
+
+    The comment on the frozenset says "Ownership, not crew membership". That was a
+    description; this makes it a mechanism. Each ledger declares the output type it tracks
+    (`ITEM_LEDGERS`), `OUTPUT_OWNERS` says who writes that type, and the frozenset must be
+    exactly those owners - computed here rather than restated, so a ledger that starts
+    tracking a different artefact moves this expectation with it.
+
+    **Set equality, not containment**, which is CLAUDE.md's shape for the sole-caller guard
+    and for the same reason: an agent *removed* from the frozenset silently stops receiving
+    its own send-backs, and that fails here just as loudly as an agent added.
+    """
+    from agents.tools.ownership import OUTPUT_OWNERS
+    from api.services.item_review_service import ITEM_LEDGERS
+    from api.services.run_service import _ITEM_LEDGER_AGENTS
+
+    expected = {OUTPUT_OWNERS[spec.output_type] for spec in ITEM_LEDGERS.values()}
+    assert set(_ITEM_LEDGER_AGENTS) == expected
+    # Not vacuous: two empty sets are equal, and a refactor that made either lookup
+    # total-with-a-default would leave the assertion above true and meaningless.
+    assert len(expected) == 2
+
+
+def test_every_item_ledger_agent_runs_in_exactly_one_crew_and_it_is_the_same_one():
+    """The other half of "`discovery_mapping` only", which the derivation above does not say.
+
+    The frozenset could agree with `OUTPUT_OWNERS` perfectly and still name agents sitting in
+    two different crews - at which point `_pending_discovery_revisions` would inject an item
+    block into two crews' runs while every ownership assertion stayed green. One crew is what
+    makes "the block reaches `discovery_mapping` runs and nothing else" true, so it is
+    asserted rather than inferred from the fact that it happens to be true today.
+    """
+    from api.services.run_service import _CREW_AGENT_NAMES, _ITEM_LEDGER_AGENTS
+
+    crews = {
+        crew for crew, agents in _CREW_AGENT_NAMES.items()
+        for agent in agents if agent in _ITEM_LEDGER_AGENTS
+    }
+    assert crews == {"discovery_mapping"}
+    # Every one of them is dispatched by some crew: an agent in the frozenset and in no crew
+    # at all would produce an empty `crews` on its own and pass a containment test.
+    dispatched = {agent for agents in _CREW_AGENT_NAMES.values() for agent in agents}
+    assert set(_ITEM_LEDGER_AGENTS) <= dispatched
+
+
 @pytest.mark.asyncio
 async def test_the_block_names_every_awaiting_item_and_its_label(project):
     """A reviewer cites an id; the label is what tells the agent which activity that id is."""

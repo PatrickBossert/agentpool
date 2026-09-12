@@ -822,7 +822,11 @@ enforce it, which is the third time on this codebase a name-keyed sweep has miss
 **The sweep counts routes whose *path* holds `{slug}` and nothing else.** A project-scoped
 door taking its slug from the request *body* does not appear in it - `POST
 /api/interviews/test/elaboration-press` is that shape, and does call `check_project_access`,
-but the technique cannot see it. One hundred and four is not a completeness guarantee.
+but the technique cannot see it. One hundred and eight is not a completeness guarantee - and
+this sentence said "one hundred and four" for a while after the recount two paragraphs above
+it moved the number, which is the drift the paragraph above warns about, happening inside the
+warning. **Recount both figures rather than adjusting one to match the other**, and when the
+count moves, grep this file for the old number before believing it has been updated.
 
 **There are two body-slug doors now, and the second one arrived carrying a live hole.**
 `POST /api/interviews/test/speak` had no slug at all until sp62 gave it one so it could

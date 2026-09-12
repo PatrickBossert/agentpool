@@ -230,8 +230,16 @@ async def test_a_lever_going_back_moves_neither_ledgers_other_rows(client, chain
     database file.
 
     A recorder that keyed on the id alone would be invisible here until a node and a lever
-    happened to share one - which is why `test_item_reviews` drives that collision directly.
-    What this adds is that a lever review touches no node row at all.
+    happened to share one. That collision is driven directly in `tests/test_item_reviews.py`,
+    twice and at two different layers, because one of them was not enough:
+    `test_a_node_and_a_lever_sharing_an_id_do_not_share_review_events` drives the recorder and
+    the count, and `..._do_not_share_a_note` drives the **note subqueries** in
+    `discovery_review_service` - a different query, which the first does not reach at all.
+    Deleting the discriminator from that subquery passed the whole suite while this docstring
+    claimed the collision was covered, so the sentence is now two sentences and each names the
+    layer it means.
+
+    What this test adds is that a lever review touches no node row at all.
     """
     nodes_before = await _ledger_hashes("value_chain_ledger", "node_id")
     levers_before = await _ledger_hashes("value_lever_ledger", "lever_id")

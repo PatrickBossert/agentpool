@@ -55,16 +55,27 @@ class ItemLedger:
     `label` is the human-readable field a reviewer identifies the item by - `label` on a node,
     `title` on a lever. The two tables were written to mirror each other everywhere the fields
     mean the same thing, so this is the whole of the difference the recorder cares about.
+
+    `output_type` is the artefact whose items this ledger tracks, and it is what ties the
+    ledger back to `OUTPUT_OWNERS`. The recorder does not use it; it is declared here because
+    this is the one place that knows what a "node" and a "lever" are, and two other rules are
+    derived from it rather than restated:
+    `_ITEM_LEDGER_AGENTS` in `run_service.py` (which agent a send-back on one of these rows
+    may reach) and `LEDGER_CREW` in `commit_notify_service.py` (which crew's tab the emailed
+    link must land on). Both are held equal to the derivation by test, so a ledger that starts
+    tracking a different artefact - or an artefact whose owner moves to another crew - fails
+    loudly instead of silently widening one and breaking the other.
     """
 
     table: str
     id_column: str
     label_column: str
+    output_type: str
 
 
 ITEM_LEDGERS: dict[str, ItemLedger] = {
-    "node": ItemLedger("value_chain_ledger", "node_id", "label"),
-    "lever": ItemLedger("value_lever_ledger", "lever_id", "title"),
+    "node": ItemLedger("value_chain_ledger", "node_id", "label", "value_chain_registry"),
+    "lever": ItemLedger("value_lever_ledger", "lever_id", "title", "value_levers"),
 }
 
 

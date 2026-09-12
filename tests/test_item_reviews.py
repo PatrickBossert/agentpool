@@ -525,6 +525,72 @@ async def test_a_node_and_a_lever_sharing_an_id_do_not_share_review_events(seede
         assert (await cur.fetchone())[0] == "pending"
 
 
+@pytest.mark.asyncio
+async def test_a_node_and_a_lever_sharing_an_id_do_not_share_a_note(seeded):
+    """The same collision, driven through the **note join** - which is a different query.
+
+    The test above drives `item_review_count` and the other ledger's row, and that is the
+    layer the discriminator was actually asserted at. It is not the layer that matters most:
+    deleting `AND r.item_kind = 'node'` from `nodes_awaiting_regeneration`'s subquery passed
+    the entire suite, because every other test in it uses ids from disjoint namespaces
+    (`3.3.3` against `LV-001`) so matching on `item_id` alone happened to give the right
+    answer. CLAUDE.md's recurring failure mode, arriving again: the property asserted one
+    layer away from where it holds.
+
+    The namespaces are not structurally disjoint. `_usable_lever_id` takes `lever_id` straight
+    off whatever Morgan emits, so a lever id colliding with a node id is one agent error away
+    - which is what `_migrate_item_reviews`' own docstring says the column is for.
+
+    Asserted on the block the agent is handed, not on the dict the query returns, so it covers
+    the whole path from the event row to the prompt.
+
+    **Two colliding ids, with the two notes recorded in opposite orders**, and that is the
+    whole design of this test. The subquery takes the *last* event by row id, so one collision
+    only catches the discriminator on one side: with the node's note written first, deleting
+    `item_kind` from the **node** query makes it pick up the lever's later note and fail -
+    while the lever query still lands on its own note by accident and passes. Driven that way,
+    deleting the discriminator from the lever subquery survived. So `X-1` is written
+    node-then-lever and `X-2` lever-then-node, and neither query can be right by accident.
+    """
+    from api.services.run_service import _pending_discovery_revisions
+
+    slug, project_id = seeded
+    node_note = {"X-1": "NODE note on X-1: this belongs at L2.",
+                 "X-2": "NODE note on X-2: the label names a system."}
+    lever_note = {"X-1": "LEVER note on X-1: that is a mechanism.",
+                  "X-2": "LEVER note on X-2: already contradicted."}
+
+    async def send_back(conn, kind, item_id, notes):
+        await record_item_review(
+            conn, project_id=project_id, kind=kind, item_id=item_id, reviewer="sam",
+            decision="changes_requested", return_to="agent", notes=notes,
+        )
+
+    async with get_connection(slug) as conn:
+        for item_id in ("X-1", "X-2"):
+            await conn.execute(
+                "INSERT INTO value_chain_ledger (node_id, project_id, label, last_version)"
+                " VALUES (?, ?, ?, 2)", (item_id, project_id, f"A node called {item_id}"))
+            await conn.execute(
+                "INSERT INTO value_lever_ledger (lever_id, project_id, title, last_version)"
+                " VALUES (?, ?, ?, 2)", (item_id, project_id, f"A lever called {item_id}"))
+        await conn.commit()
+        await send_back(conn, "node", "X-1", node_note["X-1"])
+        await send_back(conn, "lever", "X-1", lever_note["X-1"])
+        # Reversed, so the node query cannot be the only one under test.
+        await send_back(conn, "lever", "X-2", lever_note["X-2"])
+        await send_back(conn, "node", "X-2", node_note["X-2"])
+
+    alex = await _pending_discovery_revisions(slug, "value_chain_mapper")
+    morgan = await _pending_discovery_revisions(slug, "value_lever_analyst")
+
+    for item_id in ("X-1", "X-2"):
+        assert node_note[item_id] in alex, item_id
+        assert lever_note[item_id] not in alex, item_id
+        assert lever_note[item_id] in morgan, item_id
+        assert node_note[item_id] not in morgan, item_id
+
+
 # ══════════════════════════════════════════════════════════════════════════════════════
 # The ledger reads
 # ══════════════════════════════════════════════════════════════════════════════════════

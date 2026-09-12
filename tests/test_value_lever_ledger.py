@@ -449,6 +449,42 @@ def test_an_ordinary_write_with_every_id_present_carries_no_warning(lever_projec
     assert "WARNING" not in out, out
 
 
+def test_a_write_that_is_not_an_array_registers_nothing_and_says_so(lever_project):
+    """The silent loss path on this key, made loud.
+
+    `value_levers` is a JSON array. An object - `{"value_levers": [...]}`, which is the shape
+    every *other* key on this tool takes, and therefore the mistake to expect - was accepted,
+    written durably, answered a plain "Written to ...", and left the ledger empty. Every other
+    loss path here announces itself in the string CrewAI hands back to the agent: a failed
+    registration says so, a lever with no id says so. A guard that is silent where its two
+    neighbours are loud is the one an agent learns nothing from, and the run ends with ten
+    levers outside the succession guarantee and nothing said.
+
+    The write still lands, deliberately. Refusing it would cost the work the run just did over
+    a container, and an outright refusal belongs in `_VALIDATORS` - which has no entry for this
+    key precisely because it refuses anything that is *not* a dict.
+    """
+    slug = lever_project
+    out = _write(slug, {"value_levers": [_lever("LV-001", "Wrapped in an object")]})
+    assert out.startswith("Written to"), out
+    assert "WARNING" in out, out
+    assert "must be a JSON array" in out and "dict" in out, out
+    assert current_lever_ledger_sync(slug) == {}
+
+
+def test_the_not_an_array_warning_names_what_was_actually_sent(lever_project):
+    """A string is a different mistake from an object and the message says which.
+
+    `type(parsed).__name__` rather than a fixed "not an array": an agent that sent a JSON
+    string of an array needs to be told it sent a string, and the two are indistinguishable in
+    a message that only says the expected shape.
+    """
+    slug = lever_project
+    out = _write(slug, "LV-001, LV-002")
+    assert "WARNING" in out and "str" in out, out
+    assert current_lever_ledger_sync(slug) == {}
+
+
 def test_a_failed_lever_registration_is_reported_to_the_agent_not_swallowed(
     lever_project, monkeypatch
 ):

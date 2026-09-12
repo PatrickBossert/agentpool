@@ -488,6 +488,29 @@ class SQLiteStateTool(BaseTool):
                         "one unrefused. Write it again."
                     )
 
+            if key == "value_levers" and not isinstance(parsed, list):
+                # **The silent half of this branch, made loud.** `value_levers` is a JSON
+                # array, so a write that is an object - `{"value_levers": [...]}`, which is
+                # the shape every other key on this tool takes and therefore the mistake to
+                # expect - simply fell past the `isinstance` below, registered nothing, and
+                # answered a plain "Written to ...". Every other loss path here announces
+                # itself in the string CrewAI hands back: a failed registration says so, a
+                # lever with no id says so. This one did not, and a type guard that is silent
+                # where its two neighbours are loud is the one an agent learns nothing from.
+                #
+                # The write itself still stands. Refusing it would discard work over a
+                # container, and `_VALIDATORS` - which is where an outright refusal belongs -
+                # deliberately has no entry for this key precisely because it refuses anything
+                # that is not a dict.
+                registration_note = (
+                    f" — WARNING: value_levers must be a JSON array of lever objects and "
+                    f"this write was a {type(parsed).__name__}. It has been stored, and "
+                    "NOTHING was registered: every lever in it is outside the ledger, so no "
+                    "review state can be kept for any of them and a later write could "
+                    "re-anchor an id unrefused. Write the array itself, not an object "
+                    "wrapping it."
+                )
+
             if key == "value_levers" and isinstance(parsed, list):
                 # A list, not a dict - value_levers is a JSON array, which is also why it
                 # has no _VALIDATORS entry (that map refuses anything that is not a dict).
