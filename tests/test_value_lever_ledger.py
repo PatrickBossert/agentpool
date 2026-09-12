@@ -546,16 +546,29 @@ def test_assigning_ids_never_touches_a_lever_that_already_has_one():
 
 
 def test_the_next_number_comes_from_the_highest_id_not_from_the_count():
-    """A count renumbers the moment a lever is dropped, which is the failure this file
-    exists to make impossible. Ten levers registered, three deleted, one added: the new one
-    is LV-011 and not LV-008."""
+    """A count renumbers the moment the set is not a contiguous run from 1, which is the
+    failure this file exists to make impossible.
+
+    **The held set has gaps deliberately, and that is the whole test.** Written first
+    against ten contiguous ids, `len(held) + 1` and `max(held) + 1` are the same number, so
+    a mutation replacing one with the other passed - the arrangement could not tell the
+    right code from the wrong code, which is not a property of the mutation but of the
+    fixture. Three ids whose highest is LV-007 separate them: the answer is LV-008, and a
+    count would say LV-004 and hand a new lever an id LV-004 has already meant.
+    """
     from scripts.backfill_value_lever_ledger import assign_lever_ids
 
-    held = {f"LV-{n:03d}" for n in range(1, 11)}
+    held = {"LV-001", "LV-002", "LV-007"}
     out, assigned = assign_lever_ids(
         [{"lever_id": "LV-002", "lever": "Survivor"}, {"lever": "Brand new"}], held=held)
-    assert [a["lever_id"] for a in assigned] == ["LV-011"]
-    assert out[1]["lever_id"] == "LV-011"
+    assert [a["lever_id"] for a in assigned] == ["LV-008"]
+    assert out[1]["lever_id"] == "LV-008"
+
+    # Two new levers in one pass take consecutive numbers, so the second does not collide
+    # with the first - the set the next number is drawn from includes what this call has
+    # already handed out.
+    _, two = assign_lever_ids([{"lever": "One"}, {"lever": "Two"}], held={"LV-004"})
+    assert [a["lever_id"] for a in two] == ["LV-005", "LV-006"]
 
 
 def test_the_backfill_assigns_ids_writes_them_back_and_is_a_no_op_twice(lever_project):
