@@ -118,11 +118,15 @@ def test_a_declared_id_field_appears_in_the_prompt_that_writes_it(output_type):
     than a note about intentions. A field declared here and absent from the schema the agent
     is given is a field no artefact will ever carry.
 
-    Two honest limits. `id` is a substring of ordinary English, so for the output types whose
-    id field is literally `id` this is close to vacuous - it is the quoted JSON key that is
-    searched for, `"id"`, which narrows it but does not close it. And a prompt can name a
-    field while the agent omits it; only an artefact can settle that, and the artefacts for
-    fourteen of these do not exist.
+    Two honest limits, the first of them demonstrated rather than supposed. **A file-level
+    search cannot tell which of several item schemas in one prompt carries the field.**
+    Deleting `"id": "DATA-001"` from the enterprise architect's data-layer schema left this
+    test green, because the technology and organisation layers still name `id` in the same
+    file - a mutation that really does ship an unidentifiable entity, and this cannot see it.
+    `test_each_architecture_layer_carries_its_own_id_series` below is what catches that one,
+    and it is a claim about that artefact rather than a rule this guard could express.
+    Second: a prompt can name a field while the agent omits it. Only an artefact settles
+    that, and fourteen of these artefacts do not exist.
     """
     _, id_field, _ = ITEM_IDENTITY[output_type]
     module = _module_that_writes(output_type)
@@ -154,6 +158,24 @@ def test_the_module_search_finds_a_writer_for_every_collection_and_not_by_accide
     assert _module_that_writes("value_chain_registry").name == "derive_registry.py", \
         "no prompt instructs a registry write; the derive tool is the door"
     assert _module_that_writes("no_such_output_type_at_all") is None
+
+
+def test_each_architecture_layer_carries_its_own_id_series():
+    """`architecture_register` holds three lists of entities in one artefact, and each needs
+    an id of its own.
+
+    Here rather than in the guard above because the guard reads a declaration, and a
+    declaration of one field name cannot say "three times, once per layer". This exists
+    because the mutation it catches survived everything else: deleting the data layer's
+    `"id": "DATA-001"` left the whole file green, since the other two layers still name `id`
+    a few lines down. An entity with no id is one a reviewer cannot send back and a later run
+    cannot match to what it replaced - the same failure `value_levers` was in.
+    """
+    text = _joined((AGENTS_DIR / "architecture" / "enterprise_architect.py").read_text())
+    for prefix in ("DATA-001", "TECH-001", "ORG-001"):
+        assert f'\\"id\\": \\"{prefix}\\"' in text, (
+            f"the {prefix.split('-')[0].lower()} layer's entity schema does not carry an id"
+        )
 
 
 def test_an_id_is_never_the_item_position():
