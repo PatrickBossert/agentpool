@@ -172,9 +172,17 @@ def test_each_architecture_layer_carries_its_own_id_series():
     cannot match to what it replaced - the same failure `value_levers` was in.
     """
     text = _joined((AGENTS_DIR / "architecture" / "enterprise_architect.py").read_text())
-    for prefix in ("DATA-001", "TECH-001", "ORG-001"):
-        assert f'\\"id\\": \\"{prefix}\\"' in text, (
-            f"the {prefix.split('-')[0].lower()} layer's entity schema does not carry an id"
+    for layer, prefix in (("Data", "DATA-001"), ("Technology", "TECH-001"),
+                          ("Organisation", "ORG-001")):
+        marker = f"{layer} layer"
+        at = text.find(marker + " — each entity:")
+        assert at != -1, f"the {layer} layer's entity schema is not where this expects it"
+        # The schema itself, not merely the same file. Asserting the id appears anywhere in
+        # the module passed while the data layer had none, because the placeholder object
+        # further up still carried one - proximity to the layer's own heading is what makes
+        # this an assertion about that layer's entity rather than about the prompt at large.
+        assert f'\\"id\\": \\"{prefix}\\"' in text[at:at + 200], (
+            f"the {layer} layer's entity schema does not carry an id"
         )
 
 
