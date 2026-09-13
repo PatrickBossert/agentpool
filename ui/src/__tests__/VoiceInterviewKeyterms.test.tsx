@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { FLUSH_TIMEOUT_MS, deepgramListenUrl, fetchDeepgramGrant, openDeepgramSocket } from '../api/deepgram'
 import {
+  FakeRecorder,
   FakeSocket,
   SCRIPT_TWO_QUESTIONS,
   completionPosted,
@@ -451,6 +452,72 @@ describe('the socket, driven directly', () => {
     expect(socket.sent.some(s => String(s).includes('CloseStream'))).toBe(true)
     expect(heard).toEqual(['and the last four words.'])
     expect(events).toEqual(['final', 'closed'])
+  })
+
+  it('sends the recorder’s last chunk before asking Deepgram to close', async () => {
+    // **The assertion the flush repair never had.** `stop()` waits for `onstop` precisely so the
+    // final `dataavailable` - which a real MediaRecorder queues as a task - goes out before
+    // `CloseStream`. Nothing checked that the chunk reached the wire at all, so sending
+    // `CloseStream` immediately after `recorder.stop()`, which is the defect the wait exists to
+    // repair, passed every test in this file. Asserted as **order on the wire**.
+    installStreaming()
+    const { hooks } = hooksSpy()
+    const closedAt: string[] = []
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', {
+      ...hooks,
+      onClosed: () => closedAt.push('closed'),
+    })
+
+    const socket = FakeSocket.opened[0]
+    recogniser?.stop()
+    await waitFor(() => expect(closedAt).toContain('closed'))
+
+    const chunk = socket.sent.findIndex(s => typeof s !== 'string')
+    const close = socket.sent.findIndex(s => typeof s === 'string' && s.includes('CloseStream'))
+    expect(chunk).toBeGreaterThanOrEqual(0)
+    expect(close).toBeGreaterThan(chunk)
+  })
+
+  it('does not send a chunk that arrives after the socket has gone', async () => {
+    // The `readyState` guard on `ondataavailable`, which nothing drove. A real WebSocket
+    // discards a `send` on a closed socket silently rather than throwing, so an unguarded send
+    // fails in the quietest way there is - and the encoder delivering a chunk after the socket
+    // has dropped is the ordinary shape of a drop, not a contrivance.
+    installStreaming()
+    const { hooks } = hooksSpy()
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+    await openDeepgramSocket(stream, 'wss://example.test/listen', hooks)
+
+    const socket = FakeSocket.opened[0]
+    const recorder = FakeRecorder.built[0]
+    socket.drop()
+    const before = socket.sent.length
+
+    recorder.deliver()
+
+    expect(socket.sent).toHaveLength(before)
+  })
+
+  it('asks nothing of a socket that is no longer open, and ends the answer at once', async () => {
+    // The `readyState` guard in `requestCloseStream`. A socket that has gone away silently -
+    // `readyState` moved without `onclose` ever arriving - must not be sent a `CloseStream` and
+    // then waited on: that is the participant held for the full flush deadline in front of a
+    // dead socket, which is the one thing the deadline is a ceiling on rather than a cost.
+    installStreaming()
+    const { closed, hooks } = hooksSpy()
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', hooks)
+
+    const socket = FakeSocket.opened[0]
+    socket.readyState = FakeSocket.CLOSED
+
+    recogniser?.stop()
+
+    // Promptly - the default `waitFor` window is well inside FLUSH_TIMEOUT_MS, so a stop that
+    // sat out the deadline fails here rather than passing slowly.
+    await waitFor(() => expect(closed.length).toBe(1))
+    expect(socket.sent.some(s => String(s).includes('CloseStream'))).toBe(false)
   })
 
   it('ends the answer anyway when the socket never answers the flush', async () => {

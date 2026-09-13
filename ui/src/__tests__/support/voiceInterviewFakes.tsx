@@ -146,23 +146,42 @@ export class FakeSocket {
 
 export class FakeRecorder {
   static isTypeSupported = () => true
+  /** Every recorder this test has built, so a test can deliver a chunk of its own. */
+  static built: FakeRecorder[] = []
   ondataavailable: ((e: { data: { size: number } }) => void) | null = null
   onstop: (() => void) | null = null
-  constructor(public stream: unknown, public options?: unknown) {}
+  constructor(public stream: unknown, public options?: unknown) {
+    FakeRecorder.built.push(this)
+  }
   start() { /* the socket assertions do not need audio bytes to flow */ }
+  /** A chunk of audio arriving from the encoder, whenever a test wants one. */
+  deliver(size = 4) {
+    this.ondataavailable?.({ data: { size } })
+  }
   /**
-   * A real MediaRecorder hands over its final chunk and *then* fires `onstop`, which is the
-   * signal `stop()` waits on before asking Deepgram to close. A fake that never fired it left
-   * the flush deadline as the only way an answer could ever end.
+   * A real MediaRecorder **queues** its final `dataavailable` as a task and fires `onstop`
+   * after it. Both halves are asynchronous, and the first one is the whole point.
+   *
+   * This fired `ondataavailable` **synchronously** from `stop()`, and that is precisely the
+   * behaviour `deepgram.ts` names as the original defect: "`dataavailable` after `stop()` is
+   * asynchronous and the socket had already gone". A fake more punctual than the real thing
+   * made the repair unfalsifiable - the reviewer proved it by sending `CloseStream` immediately
+   * after `recorder.stop()`, which is the bug, and watching every test stay green, because the
+   * chunk had already been delivered by the time `CloseStream` went out. Deleting the
+   * `readyState` guards did the same.
+   *
+   * A fake is a claim about an external system, and a claim that the system is more obliging
+   * than it is buys nothing but confidence.
    */
   stop() {
-    this.ondataavailable?.({ data: { size: 4 } })
+    setTimeout(() => this.ondataavailable?.({ data: { size: 4 } }), 0)
     setTimeout(() => this.onstop?.(), 0)
   }
 }
 
 export function installStreaming() {
   FakeSocket.opened = []
+  FakeRecorder.built = []
   vi.stubGlobal('WebSocket', FakeSocket)
   vi.stubGlobal('MediaRecorder', FakeRecorder)
 }

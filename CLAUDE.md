@@ -1619,6 +1619,21 @@ ended by tapping "Done speaking", which was a regression against the path being 
 `recognition.stop()` delivers a pending `onresult` before `onend`, so the browser engine never
 lost it. The deadline is a ceiling and not a cost; the ordinary wait is one round trip.
 
+**That flush guarantee was unfalsifiable as first tested, and the fake was only half of why.**
+`FakeRecorder.stop()` fired `ondataavailable` **synchronously**, while a real `MediaRecorder`
+queues it as a task - which is the exact sentence `deepgram.ts` uses to describe the original
+defect. So the fake was more punctual than the thing it stands for, and sending `CloseStream`
+immediately after `recorder.stop()` - the bug - stayed green. Making the fake asynchronous was
+**necessary and not sufficient**: all three mutations were still green afterwards, because
+nothing asserted that the chunk reached the wire at all. Three assertions were missing, one per
+mutation - the last chunk is sent *before* `CloseStream` (order on the wire, not presence); a
+chunk arriving after the socket has gone is not sent, which is the `ondataavailable` guard and
+fails in the quietest way there is, since a real WebSocket **discards** a send on a closed
+socket rather than throwing; and stopping a socket that is no longer open sends no `CloseStream`
+and ends the answer at once rather than holding a participant for the whole deadline. The
+generalisable half: **repairing a fake does not add the assertion the fake was hiding.** It
+makes the assertion possible, and it has to be written.
+
 **Two things travel to Deepgram, not one**, and `PARTICIPANT_SPEECH_EGRESS` in `agents/egress.py`
 names both - the participant's audio, and this engagement's vocabulary, which is client material
 and is *not* audio. That is the sp62 ElevenLabs correction arriving again and it is argued under
