@@ -7,319 +7,28 @@
 // caller is precisely how this path came to exist, so a test that drove `deepgramListenUrl` and
 // stopped there would reproduce the defect it is meant to close. Every assertion below reads the
 // URL handed to `new WebSocket` by a rendered, running interview.
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import VoiceInterview from '../pages/VoiceInterview'
 import { FLUSH_TIMEOUT_MS, deepgramListenUrl, fetchDeepgramGrant, openDeepgramSocket } from '../api/deepgram'
-
-const SCRIPT = {
-  script_id: 'SC-014',
-  node_label: 'Connections Delivery',
-  level: 'L2',
-  research_brief: '',
-  study_objectives: [],
-  welcome_message: 'Welcome.',
-  sections: [
-    {
-      section_id: 'S1',
-      title: 'Operations',
-      questions: [
-        {
-          id: 'q1',
-          text: 'What slows connections down?',
-          follow_up_count: 0,
-          probing_instructions: '',
-          follow_up_branches: [],
-          evasion_signals: [],
-        },
-      ],
-    },
-  ],
-  closing_message: 'Thank you.',
-}
-
-/**
- * A script with a second question, so an assertion can be made **while the interview is still
- * running**.
- *
- * The recogniser notice is rendered only in the interviewing phase. On the one-question script
- * above, an answer ends the interview, so `queryByTestId('recogniser-notice')` answers null
- * from the review screen whether or not a notice was ever set - which is a control that cannot
- * fail. Found by mutation: deleting the requested-stop guard left the one-question version
- * green. The second question keeps the phase open across the assertion.
- */
-const SCRIPT_TWO_QUESTIONS = {
-  script_id: 'SC-014',
-  node_label: 'Connections Delivery',
-  level: 'L2',
-  research_brief: '',
-  study_objectives: [],
-  welcome_message: 'Welcome.',
-  sections: [
-    {
-      section_id: 'S1',
-      title: 'Operations',
-      questions: [
-        {
-          id: 'q1',
-          text: 'What slows connections down?',
-          follow_up_count: 0,
-          probing_instructions: '',
-          follow_up_branches: [],
-          evasion_signals: [],
-        },
-        {
-          id: 'q2',
-          text: 'And who decides the order of works?',
-          follow_up_count: 0,
-          probing_instructions: '',
-          follow_up_branches: [],
-          evasion_signals: [],
-        },
-      ],
-    },
-  ],
-  closing_message: 'Thank you.',
-}
-
-const STAMP = { elevenlabs_voice_id: 'V', language: 'en', country_code: 'GB', model_id: 'm' }
+import {
+  FakeSocket,
+  SCRIPT_TWO_QUESTIONS,
+  completionPosted,
+  firstSocket,
+  forgetCompletion,
+  installAudioAndMic,
+  installFetch,
+  installSpeechRecognition,
+  installStreaming,
+  recognisersBuiltSoFar,
+  startInterview,
+} from './support/voiceInterviewFakes'
 
 // The vocabulary the *server* answered with. Nothing in the component may name any of these -
 // that is what makes the assertions about a project's own words rather than about a constant.
 const OUR_KEYTERMS = ['Renewals CapEx Allocation', 'Iberdrola', 'SP Energy Networks']
-
-// ── Fakes ────────────────────────────────────────────────────────────────────
-
-class FakeSocket {
-  static opened: FakeSocket[] = []
-  static OPEN = 1
-  static CLOSED = 3
-  readyState = 0
-  sent: unknown[] = []
-  onopen: (() => void) | null = null
-  onmessage: ((e: { data: string }) => void) | null = null
-  onerror: (() => void) | null = null
-  onclose: (() => void) | null = null
-  closed = false
-
-  constructor(public url: string) {
-    FakeSocket.opened.push(this)
-    setTimeout(() => {
-      this.readyState = FakeSocket.OPEN
-      this.onopen?.()
-    }, 0)
-  }
-
-  /** What Deepgram still has to say when it is asked to close. Set by a test before stopping. */
-  tailOnClose: string | null = null
-
-  /**
-   * Deepgram answers `CloseStream` by flushing whatever transcript it has left **and then**
-   * closing, in that order - which is the entire reason `stop()` waits rather than closing the
-   * socket itself. The fake has to do both halves, in that order, or it cannot tell a
-   * flush-aware `stop()` from the one it replaced.
-   *
-   * It also has to do the closing half at all: without it every "Done" in these tests would sit
-   * out the full flush deadline, and the deadline would become the only path the suite ever
-   * exercised - the one case that is *not* the ordinary one.
-   */
-  send(data: unknown) {
-    this.sent.push(data)
-    if (typeof data === 'string' && data.includes('CloseStream')) {
-      setTimeout(() => {
-        if (this.tailOnClose) this.say(this.tailOnClose, true)
-        this.readyState = FakeSocket.CLOSED
-        this.onclose?.()
-      }, 0)
-    }
-  }
-
-  /** A real socket fires `close` when it is closed. */
-  close() {
-    if (this.closed) return
-    this.readyState = FakeSocket.CLOSED
-    this.closed = true
-    this.onclose?.()
-  }
-
-  /** A Deepgram transcript frame, as it arrives on the wire. */
-  say(transcript: string, isFinal = true) {
-    this.onmessage?.({
-      data: JSON.stringify({ channel: { alternatives: [{ transcript }] }, is_final: isFinal }),
-    })
-  }
-
-  /**
-   * The socket going away underneath a participant who is still talking.
-   *
-   * **`error` then `close`, which is what the WebSocket specification requires** of an abnormal
-   * post-open failure - and therefore what the real case looks like every time. The first
-   * version of this fake fired `close` alone, so it exercised the one shape this code path does
-   * not actually meet, and it could not see the handover running twice.
-   */
-  drop() {
-    this.readyState = FakeSocket.CLOSED
-    this.onerror?.()
-    this.onclose?.()
-  }
-}
-
-class FakeRecorder {
-  static isTypeSupported = () => true
-  ondataavailable: ((e: { data: { size: number } }) => void) | null = null
-  onstop: (() => void) | null = null
-  constructor(public stream: unknown, public options?: unknown) {}
-  start() { /* the socket assertions do not need audio bytes to flow */ }
-  /**
-   * A real MediaRecorder hands over its final chunk and *then* fires `onstop`, which is the
-   * signal `stop()` waits on before asking Deepgram to close. A fake that never fired it left
-   * the flush deadline as the only way an answer could ever end.
-   */
-  stop() {
-    this.ondataavailable?.({ data: { size: 4 } })
-    setTimeout(() => this.onstop?.(), 0)
-  }
-}
-
-function installStreaming() {
-  FakeSocket.opened = []
-  vi.stubGlobal('WebSocket', FakeSocket)
-  vi.stubGlobal('MediaRecorder', FakeRecorder)
-}
-
-/**
- * The browser's own recogniser - the fallback, and what every interview used before this.
- *
- * **The fake has to be able to fail.** Until sp66's final review it only ever fired `no-speech`
- * after a successful result, so `network`, `audio-capture` and `aborted` had never executed -
- * and `network` is Chrome's *routine* failure, because Web Speech streams the audio to Google.
- * Every one of them recorded an empty answer and said nothing to the participant.
- *
- * `failWith` raises an error instead of hearing anything; `errorOnStop` raises one when the
- * engine is asked to stop, which is the control - `no-speech` and a stop we asked for must stay
- * silent, or the amber notice lands in front of every participant on every answer. A fake that
- * can only produce one of the two cannot tell the fix from a blanket notice.
- */
-/**
- * How many browser recognisers this interview has built.
- *
- * One microphone, so more than one per answer is the defect the socket adapter's `dropped`
- * flag exists to prevent - and a second one is invisible to any assertion about transcripts,
- * because both write into the same answer and the orphan is beyond the reach of `stop()`.
- * Counted rather than inferred, for the same reason the handover test counts occurrences.
- */
-let recognisersBuilt = 0
-
-function installSpeechRecognition(
-  transcript: string | null,
-  options: { failWith?: string; errorOnStop?: string } = {},
-) {
-  recognisersBuilt = 0
-  if (transcript === null) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (window as any).SpeechRecognition
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (window as any).webkitSpeechRecognition
-    return
-  }
-  const { failWith, errorOnStop } = options
-  class FakeRecognition {
-    continuous = false
-    interimResults = false
-    lang = ''
-    constructor() { recognisersBuilt += 1 }
-    onresult: ((e: unknown) => void) | null = null
-    onend: (() => void) | null = null
-    onerror: ((e: { error: string }) => void) | null = null
-    start() {
-      setTimeout(() => {
-        if (failWith) {
-          // Nothing heard at all, which is what these failures look like: the engine reports
-          // and stops, and the answer it closes is empty.
-          this.onerror?.({ error: failWith })
-          this.onend?.()
-          return
-        }
-        this.onresult?.({
-          resultIndex: 0,
-          results: [Object.assign([{ transcript }], { isFinal: true })],
-        })
-        if (errorOnStop) return // stays listening, so a test can drive "Done speaking"
-        this.onerror?.({ error: 'no-speech' })
-        this.onend?.()
-      }, 0)
-    }
-    stop() {
-      if (errorOnStop) this.onerror?.({ error: errorOnStop })
-      this.onend?.()
-    }
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(window as any).SpeechRecognition = FakeRecognition
-}
-
-let completedBody: { qa_pairs?: { answer: string }[] } | null = null
-
-function installFetch(grant: unknown | 'refused', script: unknown = SCRIPT) {
-  return vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith('/interviews/tok')) {
-      return new Response(
-        JSON.stringify({ session: { id: 1, session_token: 'tok', node_label: 'x', voice_config: STAMP }, script }),
-        { status: 200 },
-      )
-    }
-    if (url.endsWith('/deepgram-token')) {
-      if (grant === 'refused') return new Response('{"detail":"no key"}', { status: 503 })
-      return new Response(JSON.stringify(grant), { status: 200 })
-    }
-    if (url.endsWith('/speak')) return new Response(new Blob([new Uint8Array([1])]), { status: 200 })
-    if (url.endsWith('/complete')) {
-      completedBody = JSON.parse(String(init?.body))
-      return new Response('{}', { status: 200 })
-    }
-    return new Response('{}', { status: 200 })
-  })
-}
-
-function installAudioAndMic() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(window as any).Audio = class {
-    onended: (() => void) | null = null
-    onerror: (() => void) | null = null
-    play() { setTimeout(() => this.onended?.(), 0); return Promise.resolve() }
-  }
-  URL.createObjectURL = vi.fn(() => 'blob:fake')
-  URL.revokeObjectURL = vi.fn()
-  Object.defineProperty(navigator, 'mediaDevices', {
-    configurable: true,
-    value: {
-      enumerateDevices: async () => [{ kind: 'audioinput', deviceId: 'mic-1', label: 'Built-in Microphone' }],
-      getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }),
-    },
-  })
-}
-
-async function startInterview() {
-  render(
-    <MemoryRouter initialEntries={['/interview/tok']}>
-      <Routes>
-        <Route path="/interview/:sessionToken" element={<VoiceInterview />} />
-      </Routes>
-    </MemoryRouter>,
-  )
-  await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
-}
-
-/** The first socket a running interview opened, once it is open. */
-async function firstSocket(): Promise<FakeSocket> {
-  await waitFor(() => expect(FakeSocket.opened.length).toBeGreaterThan(0), { timeout: 5000 })
-  const socket = FakeSocket.opened[0]
-  await waitFor(() => expect(socket.readyState).toBe(FakeSocket.OPEN))
-  return socket
-}
 
 function paramsOf(url: string) {
   return new URL(url).searchParams
@@ -327,7 +36,7 @@ function paramsOf(url: string) {
 
 describe('the recogniser is told the project’s own words', () => {
   beforeEach(() => {
-    completedBody = null
+    forgetCompletion()
     vi.restoreAllMocks()
     installAudioAndMic()
   })
@@ -409,8 +118,8 @@ describe('the recogniser is told the project’s own words', () => {
     socket.say('Iberdrola sets the reporting calendar.', true)
     await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
 
-    await waitFor(() => expect(completedBody).not.toBeNull(), { timeout: 15000 })
-    const answers = (completedBody?.qa_pairs ?? []).map(p => p.answer).join(' ')
+    await waitFor(() => expect(completionPosted()).not.toBeNull(), { timeout: 15000 })
+    const answers = (completionPosted()?.qa_pairs ?? []).map(p => p.answer).join(' ')
     expect(answers).toContain('Iberdrola sets the reporting calendar.')
     expect(answers).not.toContain('the browser recogniser')
   }, 20000)
@@ -459,9 +168,9 @@ describe('the recogniser is told the project’s own words', () => {
     await screen.findByText(/who decides the order of works/i, undefined, { timeout: 10000 })
     expect(screen.queryByTestId('recogniser-notice')).toBeNull()
 
-    await waitFor(() => expect(completedBody).not.toBeNull(), { timeout: 15000 })
+    await waitFor(() => expect(completionPosted()).not.toBeNull(), { timeout: 15000 })
     expect(FakeSocket.opened).toEqual([])
-    const answers = (completedBody?.qa_pairs ?? []).map(p => p.answer).join(' ')
+    const answers = (completionPosted()?.qa_pairs ?? []).map(p => p.answer).join(' ')
     expect(answers).toContain('An answer the browser heard.')
   }, 20000)
 
@@ -486,8 +195,8 @@ describe('the recogniser is told the project’s own words', () => {
 
     // No click: the browser's recogniser took over this same answer and ran it to its end, which
     // is the handover working. The participant was not asked to do anything.
-    await waitFor(() => expect(completedBody).not.toBeNull(), { timeout: 15000 })
-    const answers = (completedBody?.qa_pairs ?? []).map(p => p.answer).join(' ')
+    await waitFor(() => expect(completionPosted()).not.toBeNull(), { timeout: 15000 })
+    const answers = (completionPosted()?.qa_pairs ?? []).map(p => p.answer).join(' ')
     // Kept, and continued.
     expect(answers).toContain('The first half of the answer')
     expect(answers).toContain('and the rest of the sentence.')
@@ -498,6 +207,30 @@ describe('the recogniser is told the project’s own words', () => {
     // released. Counted rather than contained, so the assertion can see it.
     expect(answers.split('and the rest of the sentence.').length - 1).toBe(1)
     expect(answers.split('The first half of the answer').length - 1).toBe(1)
+  }, 20000)
+
+  it('does not claim a handover to a browser that cannot transcribe', async () => {
+    // Firefox. The notice used to be set *before* `startWebSpeech` was called, and said "the
+    // interview is carrying on using your browser to transcribe. Please continue." - to a
+    // participant whose browser has no `SpeechRecognition` at all, who then kept talking into
+    // nothing on the strength of that sentence. A claim about a handover is a claim about
+    // something that has already happened.
+    installStreaming()
+    installSpeechRecognition(null)
+    vi.stubGlobal('fetch', installFetch({
+      token: 'jwt', listen_params: { model: 'nova-3', keyterm: OUR_KEYTERMS },
+    }))
+
+    await startInterview()
+    const socket = await firstSocket()
+    socket.say('The first half of the answer', true)
+    socket.drop()
+
+    const notice = await screen.findByTestId('recogniser-notice', undefined, { timeout: 10000 })
+    expect(notice.textContent).not.toMatch(/carrying on using your browser/i)
+    expect(notice.textContent).toMatch(/nothing you say from here is being recorded/i)
+    // And the half that is still true is still said: what was heard is kept.
+    expect(notice.textContent).toMatch(/already heard has been kept/i)
   }, 20000)
 
   it('tells the participant plainly when nothing in this browser can listen', async () => {
@@ -571,7 +304,7 @@ describe('the recogniser is told the project’s own words', () => {
     }))
 
     await startInterview()
-    await waitFor(() => expect(completedBody).not.toBeNull(), { timeout: 15000 })
+    await waitFor(() => expect(completionPosted()).not.toBeNull(), { timeout: 15000 })
 
     // **Two, and the two are nameable.** This script has one question, and the interview asks
     // for one section rating by voice at the end of it - one listen each, one recogniser each.
@@ -579,7 +312,7 @@ describe('the recogniser is told the project’s own words', () => {
     // constructor failure used to report, which no `stop()` can reach and which restarts
     // itself through `onend` for the rest of the interview. Measured both ways - 2 with the
     // flag claimed in that `catch`, 3 without.
-    expect(recognisersBuilt).toBe(2)
+    expect(recognisersBuiltSoFar()).toBe(2)
   }, 20000)
 
   it('says nothing when the engine reports the stop the participant asked for', async () => {

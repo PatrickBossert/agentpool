@@ -1553,6 +1553,29 @@ error is a failure only when nobody asked for it. `listenForAnswer` tracks `engi
 same reason the socket adapter holds its `dropped` flag: a browser-engine drop handed to the
 Deepgram handover branch starts a second browser recogniser on the engine that has just failed.
 
+**A notice about a handover is a claim about something that has already happened.** The
+mid-answer drop used to set *"the interview is carrying on using your browser to transcribe.
+Please continue"* and **then** call `startWebSpeech`, which answers `null` in Firefox - so a
+participant with no `SpeechRecognition` kept talking into nothing on the strength of that
+sentence. The engine is started first and the notice chosen from what it answered. Beside it,
+`deepgramOffRef` is no longer latched by the *first* drop: one blip condemned the rest of the
+interview to a recogniser that has never heard of the client, which is the thing this section
+exists for. Drops are counted in `deepgramDropsRef`, which cannot be the open-failure counter -
+a successful open resets that one, so a drop recorded there could never reach two - and two
+drops still turn Deepgram off, because an amber notice on every question for an hour is its own
+defect.
+
+**Anything that counts sockets across questions belongs in a test file of its own**, which is
+why `VoiceInterviewDeepgramRecovery.test.tsx` exists and is not part of its sibling.
+`cleanup()` unmounts the page and cannot stop the interview - an async loop over closures - so
+an earlier test's interview goes on listening, opens sockets, and fetches its grants from
+whatever `fetch` stub is installed *now*. Neither the socket's index nor the grant it carries
+distinguishes them. Measured rather than feared: inside the shared file, "one drop latches
+Deepgram off" **survived the mutation that reintroduces it**, and the same test failed
+immediately under `-t`. The fakes moved to `__tests__/support/voiceInterviewFakes.tsx` so the
+two files share one of each rather than two that can drift - a fake is a claim about an external
+system, and this branch has now been bitten twice by a fake more forgiving than the real thing.
+
 **A control asserted after the interview ends is not a control.** The recogniser notice renders
 only in the interviewing phase, so `queryByTestId('recogniser-notice')` on the review screen
 answers null however the code behaves. Two of these tests were written that way and both stayed

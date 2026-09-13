@@ -108,12 +108,21 @@ export default function VoiceInterview() {
   // be missed.
   const [recogniserNotice, setRecogniserNotice] = useState('')
   const recognitionRef = useRef<Recogniser | null>(null)
-  // One microphone stream for the whole interview, and the two counters that decide whether
-  // Deepgram is still worth asking for. `deepgramOffRef` is one-way: once the deployment has
-  // shown it has no Deepgram, or a live socket has dropped, every later answer goes straight to
-  // the browser's recogniser rather than paying a failed round trip in front of the participant.
+  // One microphone stream for the whole interview, and the counters that decide whether
+  // Deepgram is still worth asking for. `deepgramOffRef` is one-way once set: every later
+  // answer goes straight to the browser's recogniser rather than paying a failed round trip in
+  // front of the participant.
+  //
+  // **Two ways to reach it, counted separately, and a single mid-answer drop is no longer one
+  // of them.** `deepgramFailuresRef` counts consecutive failures to *open* - two in a row is a
+  // deployment without Deepgram. `deepgramDropsRef` counts sockets that opened and then went
+  // away, which cannot share that counter: a successful open resets the first one, so a drop
+  // recorded there could never accumulate past one. Setting the switch on the first drop meant
+  // one transient blip condemned the rest of the interview to a recogniser that has never
+  // heard of the client, which is the whole thing this branch exists to fix.
   const interviewStreamRef = useRef<MediaStream | null>(null)
   const deepgramFailuresRef = useRef(0)
+  const deepgramDropsRef = useRef(0)
   const deepgramOffRef = useRef(false)
   const restartAnswerRef = useRef(false)
   // Set by "Finish my last answer". Read inside listenWithRestart, the same way
@@ -555,14 +564,33 @@ export default function VoiceInterview() {
           // possible response is to end the answer quietly and let them finish into nothing.
           // Hand the rest of this same answer to the browser's recogniser, keep what was
           // already heard, and say what happened - both halves, not either.
-          deepgramOffRef.current = true
+          //
+          // **Start it before claiming it.** The notice used to be set first and said "the
+          // interview is carrying on using your browser to transcribe. Please continue." -
+          // and then `startWebSpeech` answered `null`, which is what it does in Firefox. The
+          // participant kept talking into nothing on the strength of that sentence. A claim
+          // about a handover is a claim about something that has already happened.
+          const handover = startWebSpeech(lang, hooks)
+          engineKind = handover ? 'browser' : null
+          if (!handover) {
+            setRecogniserNotice(
+              'The transcription service dropped out, and this browser cannot transcribe on ' +
+              'its own - so nothing you say from here is being recorded. Anything already ' +
+              'heard has been kept. Please reopen your interview link in Chrome or Edge, or ' +
+              'contact the person who invited you.',
+            )
+            finish()
+            return
+          }
+          engine = handover
+          // Counted, not latched. One blip must not cost the rest of the interview the only
+          // recogniser that has been told this engagement's own words.
+          deepgramDropsRef.current += 1
+          if (deepgramDropsRef.current >= 2) deepgramOffRef.current = true
           setRecogniserNotice(
             'The transcription service dropped out. What you have said so far has been kept, ' +
             'and the interview is carrying on using your browser to transcribe. Please continue.',
           )
-          engine = startWebSpeech(lang, hooks)
-          engineKind = engine ? 'browser' : null
-          if (!engine) finish()
         },
       }
 
