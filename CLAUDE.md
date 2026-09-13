@@ -1591,6 +1591,19 @@ guarded in `deepgram.ts` rather than in the page, because "an abnormal post-open
 guard a second recogniser starts on one microphone and the first is orphaned, holding the
 microphone for the rest of the interview.
 
+**`recorderMimeType` answers three things, not two, and Safari is why.** `undefined` is "this
+browser will not say", which is a reason to try its default; `null` is "this browser has said it
+records none of these", which is a reason not to open the socket at all. They were one value -
+`.find()` returning `undefined` - so a browser that answered **false** to webm/opus, webm and
+ogg/opus alike had its negative probe discarded and got a recorder built with its own preferred
+container, streamed to a socket configured for webm/opus. **Safari, including on iOS, records
+MP4/AAC and answers false to all three**, and that is the device a participant is most likely to
+be holding. If Deepgram answers such a stream with no transcripts rather than closing the
+socket, nothing fires `onDropped` at all and the participant meets the silent empty answer this
+section's fifth case is about. Declining costs Safari nothing - it has
+`webkitSpeechRecognition`, so the fallback works - and it is the one place in this file where
+the safe direction is *not* to try.
+
 **A flag guards the routes that set it, and one route did not.** `new MediaRecorder(...)`
 throwing reaches a `catch` that answers the promise `null` - "fall back" - and *then* closes the
 socket, and that close arrived at `onclose` with the socket open and not stopping, so it

@@ -104,11 +104,27 @@ export function browserCanStream(): boolean {
   return typeof WebSocket !== 'undefined' && typeof MediaRecorder !== 'undefined'
 }
 
-function recorderMimeType(): string | undefined {
+/**
+ * The container to record in - and `null` when the browser has been asked and said no to all of
+ * them.
+ *
+ * **Three answers, not two.** `undefined` is "this browser will not say", which is a reason to
+ * try its default and see; `null` is "this browser has said it records none of these", which is
+ * a reason not to try at all. Collapsing them - which is what `.find()` returning `undefined`
+ * did - builds the recorder with whatever container the browser prefers and streams it to a
+ * socket configured for webm/opus.
+ *
+ * **Safari, including on iOS, records MP4/AAC and answers false to all three**, which is the
+ * device a participant is most likely to be holding. If Deepgram answers that stream with no
+ * transcripts rather than closing the socket, nothing fires `onDropped` and the participant
+ * gets a countdown and an empty answer - the silent failure this branch exists to remove.
+ * Declining here costs Safari nothing: it has `webkitSpeechRecognition`, so the fallback works.
+ */
+function recorderMimeType(): string | null | undefined {
   const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
   const supported = (MediaRecorder as unknown as { isTypeSupported?: (t: string) => boolean }).isTypeSupported
   if (typeof supported !== 'function') return undefined
-  return candidates.find(type => supported.call(MediaRecorder, type))
+  return candidates.find(type => supported.call(MediaRecorder, type)) ?? null
 }
 
 /** How often a chunk of audio is handed to the socket. Small enough to feel live. */
@@ -247,8 +263,18 @@ export function openDeepgramSocket(
 
     socket.onopen = () => {
       opened = true
+      const mimeType = recorderMimeType()
+      if (mimeType === null) {
+        // Asked, and told no to every container this socket is configured for. Fall back rather
+        // than stream something Deepgram was not asked to decode - see `recorderMimeType`. The
+        // `dropped` claim is the same one the constructor failure makes below, for the same
+        // reason: this closure is ours, and the caller has already been told to fall back.
+        dropped = true
+        settle(null)
+        try { socket.close() } catch { /* already gone */ }
+        return
+      }
       try {
-        const mimeType = recorderMimeType()
         recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
         recorder.ondataavailable = (event: BlobEvent) => {
           if (!event.data || event.data.size === 0) return

@@ -494,6 +494,59 @@ describe('the socket, driven directly', () => {
     expect(dropped).toEqual([])
   })
 
+  it('declines the socket when the browser records none of the containers it is configured for', async () => {
+    // Safari, including on iOS: it records MP4/AAC and answers false to webm/opus, webm and
+    // ogg/opus alike. `.find()` answering `undefined` was treated identically to "this browser
+    // will not say", so the recorder was built with Safari's own container and streamed to a
+    // socket configured for webm/opus. If Deepgram answers that with no transcripts rather than
+    // closing, nothing fires `onDropped` and the participant gets a countdown and an empty
+    // answer - on the device a participant is most likely to be holding.
+    installStreaming()
+    const built: unknown[] = []
+    vi.stubGlobal('MediaRecorder', class {
+      static isTypeSupported = () => false
+      constructor(...args: unknown[]) { built.push(args) }
+      start() {}
+      stop() {}
+    })
+    const { dropped, hooks } = hooksSpy()
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', hooks)
+
+    expect(recogniser).toBeNull()
+    // Declined before anything was recorded, not after.
+    expect(built).toEqual([])
+    // And silently: this is the "socket will not open" case, which falls back without a notice.
+    expect(dropped).toEqual([])
+  })
+
+  it('still records when the browser will not say what it supports', async () => {
+    // The control, and the reason the answer has three values rather than two. A browser with no
+    // `isTypeSupported` at all has refused nothing - declining there would take Deepgram away
+    // from every browser that simply does not implement the probe.
+    installStreaming()
+    const built: unknown[] = []
+    class NoProbe {
+      ondataavailable: ((e: { data: { size: number } }) => void) | null = null
+      onstop: (() => void) | null = null
+      constructor(...args: unknown[]) { built.push(args) }
+      start() {}
+      stop() {}
+    }
+    vi.stubGlobal('MediaRecorder', NoProbe)
+    const { dropped, hooks } = hooksSpy()
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', hooks)
+
+    expect(recogniser).not.toBeNull()
+    expect(built).toHaveLength(1)
+    // Built with the browser's own default - no mimeType argument to impose one.
+    expect(built[0]).toHaveLength(1)
+    expect(dropped).toEqual([])
+  })
+
   it('reports no drop at all when the caller stopped it', async () => {
     // The control: a `close` following our own `stop()` is the socket doing as it was told, and
     // reporting that as a failure would put the amber notice in front of every participant on
