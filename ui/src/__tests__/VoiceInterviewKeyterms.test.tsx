@@ -41,6 +41,50 @@ const SCRIPT = {
   closing_message: 'Thank you.',
 }
 
+/**
+ * A script with a second question, so an assertion can be made **while the interview is still
+ * running**.
+ *
+ * The recogniser notice is rendered only in the interviewing phase. On the one-question script
+ * above, an answer ends the interview, so `queryByTestId('recogniser-notice')` answers null
+ * from the review screen whether or not a notice was ever set - which is a control that cannot
+ * fail. Found by mutation: deleting the requested-stop guard left the one-question version
+ * green. The second question keeps the phase open across the assertion.
+ */
+const SCRIPT_TWO_QUESTIONS = {
+  script_id: 'SC-014',
+  node_label: 'Connections Delivery',
+  level: 'L2',
+  research_brief: '',
+  study_objectives: [],
+  welcome_message: 'Welcome.',
+  sections: [
+    {
+      section_id: 'S1',
+      title: 'Operations',
+      questions: [
+        {
+          id: 'q1',
+          text: 'What slows connections down?',
+          follow_up_count: 0,
+          probing_instructions: '',
+          follow_up_branches: [],
+          evasion_signals: [],
+        },
+        {
+          id: 'q2',
+          text: 'And who decides the order of works?',
+          follow_up_count: 0,
+          probing_instructions: '',
+          follow_up_branches: [],
+          evasion_signals: [],
+        },
+      ],
+    },
+  ],
+  closing_message: 'Thank you.',
+}
+
 const STAMP = { elevenlabs_voice_id: 'V', language: 'en', country_code: 'GB', model_id: 'm' }
 
 // The vocabulary the *server* answered with. Nothing in the component may name any of these -
@@ -146,8 +190,23 @@ function installStreaming() {
   vi.stubGlobal('MediaRecorder', FakeRecorder)
 }
 
-/** The browser's own recogniser - the fallback, and what every interview used before this. */
-function installSpeechRecognition(transcript: string | null) {
+/**
+ * The browser's own recogniser - the fallback, and what every interview used before this.
+ *
+ * **The fake has to be able to fail.** Until sp66's final review it only ever fired `no-speech`
+ * after a successful result, so `network`, `audio-capture` and `aborted` had never executed -
+ * and `network` is Chrome's *routine* failure, because Web Speech streams the audio to Google.
+ * Every one of them recorded an empty answer and said nothing to the participant.
+ *
+ * `failWith` raises an error instead of hearing anything; `errorOnStop` raises one when the
+ * engine is asked to stop, which is the control - `no-speech` and a stop we asked for must stay
+ * silent, or the amber notice lands in front of every participant on every answer. A fake that
+ * can only produce one of the two cannot tell the fix from a blanket notice.
+ */
+function installSpeechRecognition(
+  transcript: string | null,
+  options: { failWith?: string; errorOnStop?: string } = {},
+) {
   if (transcript === null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (window as any).SpeechRecognition
@@ -155,6 +214,7 @@ function installSpeechRecognition(transcript: string | null) {
     delete (window as any).webkitSpeechRecognition
     return
   }
+  const { failWith, errorOnStop } = options
   class FakeRecognition {
     continuous = false
     interimResults = false
@@ -164,15 +224,26 @@ function installSpeechRecognition(transcript: string | null) {
     onerror: ((e: { error: string }) => void) | null = null
     start() {
       setTimeout(() => {
+        if (failWith) {
+          // Nothing heard at all, which is what these failures look like: the engine reports
+          // and stops, and the answer it closes is empty.
+          this.onerror?.({ error: failWith })
+          this.onend?.()
+          return
+        }
         this.onresult?.({
           resultIndex: 0,
           results: [Object.assign([{ transcript }], { isFinal: true })],
         })
+        if (errorOnStop) return // stays listening, so a test can drive "Done speaking"
         this.onerror?.({ error: 'no-speech' })
         this.onend?.()
       }, 0)
     }
-    stop() { this.onend?.() }
+    stop() {
+      if (errorOnStop) this.onerror?.({ error: errorOnStop })
+      this.onend?.()
+    }
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any).SpeechRecognition = FakeRecognition
@@ -180,11 +251,11 @@ function installSpeechRecognition(transcript: string | null) {
 
 let completedBody: { qa_pairs?: { answer: string }[] } | null = null
 
-function installFetch(grant: unknown | 'refused') {
+function installFetch(grant: unknown | 'refused', script: unknown = SCRIPT) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/interviews/tok')) {
       return new Response(
-        JSON.stringify({ session: { id: 1, session_token: 'tok', node_label: 'x', voice_config: STAMP }, script: SCRIPT }),
+        JSON.stringify({ session: { id: 1, session_token: 'tok', node_label: 'x', voice_config: STAMP }, script }),
         { status: 200 },
       )
     }
@@ -359,17 +430,27 @@ describe('the recogniser is told the project’s own words', () => {
   it('falls back to the browser’s recogniser when the deployment has no Deepgram key', async () => {
     // 503 from the token door. The interview must happen - this is the deployment every
     // interview before this task ran on - and it must not be reported as broken.
+    //
+    // **The silence assertion is made mid-interview, on the second question.** It used to sit
+    // after `completedBody`, on the review screen, where the notice is not rendered at all -
+    // so it answered null however the code behaved. Mutation found it: making `no-speech`
+    // report a failure, which would put an amber notice on every silent moment of every
+    // interview, left the old version green.
     installStreaming()
     installSpeechRecognition('An answer the browser heard.')
-    vi.stubGlobal('fetch', installFetch('refused'))
+    vi.stubGlobal('fetch', installFetch('refused', SCRIPT_TWO_QUESTIONS))
 
     await startInterview()
+
+    // Still interviewing, and nothing has been said to the participant: the fallback is
+    // silent, which is the whole of the first of the five cases.
+    await screen.findByText(/who decides the order of works/i, undefined, { timeout: 10000 })
+    expect(screen.queryByTestId('recogniser-notice')).toBeNull()
 
     await waitFor(() => expect(completedBody).not.toBeNull(), { timeout: 15000 })
     expect(FakeSocket.opened).toEqual([])
     const answers = (completedBody?.qa_pairs ?? []).map(p => p.answer).join(' ')
     expect(answers).toContain('An answer the browser heard.')
-    expect(screen.queryByTestId('recogniser-notice')).toBeNull()
   }, 20000)
 
   it('hands a dropped connection to the browser mid-answer, and says so', async () => {
@@ -420,6 +501,65 @@ describe('the recogniser is told the project’s own words', () => {
     const notice = await screen.findByTestId('recogniser-notice', undefined, { timeout: 10000 })
     expect(notice.textContent).toMatch(/cannot transcribe speech/i)
     expect(notice.textContent).toMatch(/nothing you say is being recorded/i)
+  }, 20000)
+
+  // ── The fifth case: the fallback engine's own failures ─────────────────────
+  //
+  // Every one of these is a deployment with no DEEPGRAM_API_KEY - which is every deployment
+  // before sp66 - so the browser's recogniser is not the fallback here, it is the whole of the
+  // transcription. When it fails there is nothing to hand over to, and the participant kept
+  // talking into a countdown while `onend` closed one empty answer after another.
+
+  it('says so when the browser’s recogniser loses the transcription service', async () => {
+    // Chrome's Web Speech streams audio to Google, so `network` is the routine failure and not
+    // an exotic one: a connectivity blip on a deployment without Deepgram recorded all 59
+    // answers empty and told the participant nothing.
+    installStreaming()
+    installSpeechRecognition('never heard', { failWith: 'network' })
+    vi.stubGlobal('fetch', installFetch('refused', SCRIPT_TWO_QUESTIONS))
+
+    await startInterview()
+
+    const notice = await screen.findByTestId('recogniser-notice', undefined, { timeout: 10000 })
+    expect(notice.textContent).toMatch(/stopped hearing you/i)
+    // It must not claim a handover. There is no other engine - this *is* the other engine.
+    expect(notice.textContent).not.toMatch(/carrying on using your browser/i)
+  }, 20000)
+
+  it('names the microphone when the browser’s recogniser cannot capture audio', async () => {
+    // `audio-capture` is the device gone or taken by something else, which is a different
+    // remedy from a transcription failure - so it must not be told in the same words.
+    installStreaming()
+    installSpeechRecognition('never heard', { failWith: 'audio-capture' })
+    vi.stubGlobal('fetch', installFetch('refused', SCRIPT_TWO_QUESTIONS))
+
+    await startInterview()
+
+    const notice = await screen.findByTestId('recogniser-notice', undefined, { timeout: 10000 })
+    expect(notice.textContent).toMatch(/microphone/i)
+    expect(notice.textContent).not.toMatch(/stopped hearing you/i)
+  }, 20000)
+
+  it('says nothing when the engine reports the stop the participant asked for', async () => {
+    // The control, and the reason the fix reads the stop flag before setting it. An engine
+    // interrupted by its own caller reports `aborted`, and a notice on every "Done speaking"
+    // would put the amber box in front of every participant on every answer - which is the
+    // failure mode of "fix C1 by reporting everything".
+    //
+    // **Asserted on the second question, not on the review screen.** The notice renders only
+    // during the interview, so the first version of this read `queryByTestId` after the
+    // interview had ended and answered null however the code behaved - it stayed green with
+    // the guard deleted. The two-question script is what makes the absence an absence.
+    installStreaming()
+    installSpeechRecognition('An answer the browser heard.', { errorOnStop: 'aborted' })
+    vi.stubGlobal('fetch', installFetch('refused', SCRIPT_TWO_QUESTIONS))
+
+    await startInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
+
+    // Still interviewing: the second question is on screen, so the notice would be too.
+    await screen.findByText(/who decides the order of works/i, undefined, { timeout: 10000 })
+    expect(screen.queryByTestId('recogniser-notice')).toBeNull()
   }, 20000)
 })
 

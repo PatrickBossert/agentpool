@@ -1520,7 +1520,7 @@ vocabulary should outrank inferred. The cost is stated where it is paid: a prope
 ever opens a sentence is missed, which is the safe direction - a missing term costs one word's
 accuracy, a junk term costs a place on the cap.
 
-**The fallback is behaviour, not a `catch` block, and four cases are deliberately not the same
+**The fallback is behaviour, not a `catch` block, and five cases are deliberately not the same
 case.** No Deepgram key, no streaming support, or a socket that will not open: **silent** fall
 back to the browser's recogniser, and after two consecutive failures the client stops asking, so
 a deployment without Deepgram does not pay a failed round trip before every answer. A socket
@@ -1532,6 +1532,35 @@ sentence it carries is *"nothing you say is being recorded"* and a notice that t
 before somebody mid-sentence looks up. That last case is a change in behaviour rather than a
 new message - before sp66 an interview in a browser with no `SpeechRecognition` ran to the end
 recording nothing and telling nobody.
+
+**The fifth is the fallback engine failing on its own, and this file said "four" while it was
+silent.** `startWebSpeech`'s `onerror` reported only `not-allowed` and `service-not-allowed`;
+`network`, `audio-capture` and `aborted` fell through to an `onend` that closed the answer with
+empty `parts` and set no notice at all. `network` is not exotic - Chrome's Web Speech streams
+the audio to Google, so it is the **routine** failure, and on a deployment with no
+`DEEPGRAM_API_KEY`, which is every deployment before sp66, the browser's recogniser is not the
+fallback but the whole of the transcription. A participant on Chrome with a connectivity blip
+recorded every answer empty and saw only a countdown. It is now the same two halves as a
+dropped socket, minus the handover, because there is nothing to hand over *to*: what was heard
+is kept and the participant is told, pointed at the correction step that actually exists.
+
+Three things about that arm, and each is a separate mutation away from being wrong. The default
+is now **report**, so a browser error code nobody has heard of reaches a person rather than a
+countdown. `no-speech` is excluded by name, because silence is the ordinary end of an answer and
+an amber box on every pause is worse than the defect. And `onerror` reads the stop flag **before**
+setting it, so an engine reporting `aborted` because its own caller stopped it says nothing - an
+error is a failure only when nobody asked for it. `listenForAnswer` tracks `engineKind` for the
+same reason the socket adapter holds its `dropped` flag: a browser-engine drop handed to the
+Deepgram handover branch starts a second browser recogniser on the engine that has just failed.
+
+**A control asserted after the interview ends is not a control.** The recogniser notice renders
+only in the interviewing phase, so `queryByTestId('recogniser-notice')` on the review screen
+answers null however the code behaves. Two of these tests were written that way and both stayed
+green under mutation - including the pre-existing one for the silent fallback, which survived
+`no-speech` being turned into a reported failure. They assert on a **two-question script, while
+the second question is on screen**. Same family as this file's "an assertion scoped to a
+container is not an assertion about its contents": the phase, not the container, but the same
+mistake - asserting an absence somewhere the thing could never have been.
 
 Two properties of that fallback are easy to remove by accident. `onDropped` is **at most once**,
 guarded in `deepgram.ts` rather than in the page, because "an abnormal post-open failure fires

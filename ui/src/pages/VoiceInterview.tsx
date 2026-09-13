@@ -364,11 +364,33 @@ export default function VoiceInterview() {
     }
 
     recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      // Read the flag before setting it: an engine interrupted by its own caller reports
+      // `aborted`, and a notice on every "Done speaking" would put the amber box in front of
+      // every participant on every answer.
+      const requested = stopping
       // Whatever the error, do not restart: let onend close the answer out.
       stopping = true
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      if (requested) return
+      // Silence is the ordinary end of an answer, not a failure. The countdown has already
+      // said everything there is to say about it.
+      if (event.error === 'no-speech') return
+      if (
+        event.error === 'not-allowed' ||
+        event.error === 'service-not-allowed' ||
+        // The device is gone, or another application has taken it. A different remedy from a
+        // transcription failure, and told in different words.
+        event.error === 'audio-capture'
+      ) {
         hooks.onDropped('microphone')
+        return
       }
+      // **Everything else, including `network`.** This arm did not exist until sp66's final
+      // review: `network` is Chrome's *routine* failure, because Web Speech streams the audio
+      // to Google, and it fell through here to an `onend` that closed the answer with nothing
+      // in it and set no notice at all. On a deployment with no Deepgram key - which is every
+      // deployment before sp66 - that is every answer of the interview, recorded empty, in
+      // front of a participant watching a countdown.
+      hooks.onDropped('connection')
     }
 
     recognition.start()
@@ -436,6 +458,12 @@ export default function VoiceInterview() {
       const parts: string[] = []
       let resolved = false
       let engine: Recogniser | null = null
+      // **Which engine is listening, because a drop means different things on each.** Deepgram
+      // going away has somewhere to go - the browser's recogniser picks up the same answer. The
+      // browser's recogniser going away has nowhere: it *is* the fallback. Handing that drop to
+      // the handover branch would start a second browser recogniser on an engine that has just
+      // failed, so the distinction is structural rather than a nicety.
+      let engineKind: 'deepgram' | 'browser' | null = null
       let stopRequested = false
 
       // Longer initial wait (before first speech), shorter gap once they've started
@@ -498,11 +526,26 @@ export default function VoiceInterview() {
         onDropped: (reason) => {
           if (resolved) return
           if (reason === 'microphone') {
-            // The browser's recogniser has lost the microphone, and so would any other. There
-            // is nothing to hand over to; onClosed follows and ends the answer.
+            // The microphone has gone - refused, revoked, unplugged, or taken by another
+            // application - and so it has for any other engine. There is nothing to hand over
+            // to; onClosed follows and ends the answer. The sentence covers both causes
+            // because the engine reports them as one thing to us and the participant has to
+            // check both.
             setRecogniserNotice(
-              'We have lost access to your microphone. Allow microphone access for this page, ' +
-              'then use Done to carry on.',
+              'We have lost access to your microphone. Check that it is connected and that ' +
+              'this page is allowed to use it, then use Done to carry on.',
+            )
+            return
+          }
+          if (engineKind === 'browser') {
+            // The browser's own recogniser has dropped, and it is the last engine there is.
+            // Nothing to hand over to, so the honest thing is to say what happened, keep what
+            // was heard, and point at the correction step that actually exists - onClosed
+            // follows and closes the answer.
+            setRecogniserNotice(
+              'We stopped hearing you - your browser’s transcription dropped out. Anything ' +
+              'already heard has been kept, but the end of that answer may be missing. The ' +
+              'interview carries on, and you can correct every answer before you finish.',
             )
             return
           }
@@ -516,6 +559,7 @@ export default function VoiceInterview() {
             'and the interview is carrying on using your browser to transcribe. Please continue.',
           )
           engine = startWebSpeech(lang, hooks)
+          engineKind = engine ? 'browser' : null
           if (!engine) finish()
         },
       }
@@ -535,7 +579,9 @@ export default function VoiceInterview() {
           // failed round trip before every answer is latency a participant sits through.
           if (deepgramFailuresRef.current >= 2) deepgramOffRef.current = true
           engine = startWebSpeech(lang, hooks)
+          engineKind = engine ? 'browser' : null
         } else {
+          engineKind = 'deepgram'
           deepgramFailuresRef.current = 0
         }
 
