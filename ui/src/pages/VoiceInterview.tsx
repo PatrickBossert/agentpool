@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Check, Pause, Pencil, Play, Undo2, X } from 'lucide-react'
+import { Check, Copy, Pause, Play, ShieldCheck, Undo2 } from 'lucide-react'
 import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
 
 // webkit speech recognition types (Chrome/Safari vendor prefix)
@@ -108,13 +108,13 @@ export default function VoiceInterview() {
   const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [isPaused, setIsPaused] = useState(false)
   const [silenceProgress, setSilenceProgress] = useState(0)
-  const [editableTranscript, setEditableTranscript] = useState<{ question: string; answer: string }[]>([])
-  const [editingIdx, setEditingIdx] = useState<number | null>(null)
-  const [editText, setEditText] = useState('')
-  const [sendCopy, setSendCopy] = useState(false)
-  const [copyEmail, setCopyEmail] = useState('')
-  const [sendingEmail, setSendingEmail] = useState(false)
-  const [emailSent, setEmailSent] = useState(false)
+  // The whole pair, not `{question, answer}`. The corrected answers are re-submitted to
+  // `/complete` when the participant finishes, and that door requires `question_id` on every
+  // pair - narrowing the type here is how an edit would have been sent without its address.
+  const [editableTranscript, setEditableTranscript] = useState<CapturedPair[]>([])
+  const [savingCorrections, setSavingCorrections] = useState(false)
+  const [finished, setFinished] = useState(false)
+  const [copied, setCopied] = useState(false)
   const isPausedRef = useRef(false)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const silenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -567,14 +567,28 @@ export default function VoiceInterview() {
     }
   }
 
-  async function submitResponses(ratings: SectionMaturityRating[]) {
-    setStatusMessage('Saving your responses…')
+  /**
+   * Submit the transcript to `/complete`. Called twice for one interview: once when the
+   * closing message has been spoken, and again when the participant finishes the review step,
+   * carrying whatever they corrected.
+   *
+   * One function rather than two calls, because the second submission has to restate things
+   * it has no opinion about. `complete_interview_session` writes `ratings_json` unconditionally,
+   * so a resubmission that omitted the ratings would set them to NULL and silently discard
+   * every maturity rating the interview collected - the transcript would be corrected and the
+   * ratings lost, with a 200 either way.
+   *
+   * Resubmitting is safe by design rather than by luck: `insert_interview_answer` upserts on
+   * `(session_id, question_id)` and re-indexes from the row ids it returns, so a corrected
+   * answer replaces the stored one under the id retrieved chunks already cite.
+   */
+  async function postCompletion(pairs: CapturedPair[], ratings: SectionMaturityRating[]) {
     try {
       const res = await fetch(`${BASE}/interviews/${sessionToken}/complete`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          qa_pairs: qaRef.current,
+          qa_pairs: pairs,
           ratings: ratings.length > 0 ? ratings : undefined,
         }),
       })
@@ -582,6 +596,11 @@ export default function VoiceInterview() {
     } catch (err) {
       console.error('Failed to submit responses', err)
     }
+  }
+
+  async function submitResponses(ratings: SectionMaturityRating[]) {
+    setStatusMessage('Saving your responses…')
+    await postCompletion(qaRef.current, ratings)
     setPhase('complete')
     setStatusMessage('')
     setCurrentQuestion('')
@@ -815,21 +834,42 @@ export default function VoiceInterview() {
     // phase reverts to 'interviewing' in the loop after collectInlineRating resolves
   }
 
-  async function handleFinishInterview() {
-    if (sendCopy && copyEmail) {
-      setSendingEmail(true)
-      try {
-        await fetch(`${BASE}/interviews/${sessionToken}/email-transcript`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: copyEmail, qa_pairs: editableTranscript }),
-        })
-      } catch {
-        // fail silently — transcript is already saved server-side
-      }
-      setSendingEmail(false)
+  /** The transcript as a participant would paste it - the text the Copy button puts on the
+   *  clipboard, built from what is in the fields now rather than from what was recorded. */
+  function transcriptAsText(): string {
+    return editableTranscript.map(pair => `${pair.question}\n${pair.answer}`).join('\n\n')
+  }
+
+  async function handleCopyTranscript() {
+    try {
+      await navigator.clipboard?.writeText(transcriptAsText())
+      setCopied(true)
+    } catch {
+      // A browser that refuses clipboard access leaves the button saying "Copy" rather than
+      // claiming a copy that did not happen. The whole point of this screen is that it stopped
+      // telling a participant something had worked when it had not.
+      setCopied(false)
     }
-    setEmailSent(true)
+  }
+
+  /**
+   * Finishing the review submits the corrections.
+   *
+   * Nothing is emailed. The checkbox that used to sit here posted to `/email-transcript`,
+   * which answered `{"sent": true}` to a participant who never received anything: `dev_mode`
+   * holds project mail and `FROM_EMAIL` names a domain Resend has not verified. It was the one
+   * path in the product where the person who triggered the action was told it had worked.
+   *
+   * What that post also did, incidentally, was carry the corrected answers - so it was the only
+   * route an edit had to the server, and only for a participant who happened to tick a box.
+   * Everyone else corrected their transcript into a state variable that was then discarded.
+   * The corrections now go to `/complete`, which is where the transcript lives.
+   */
+  async function handleFinishInterview() {
+    setSavingCorrections(true)
+    await postCompletion(editableTranscript, sectionRatingsRef.current)
+    setSavingCorrections(false)
+    setFinished(true)
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -876,100 +916,85 @@ export default function VoiceInterview() {
               </div>
               <h1 className="text-2xl font-bold text-gray-800">Thank you!</h1>
               <p className="text-gray-500 text-sm mt-1">
-                {emailSent
+                {finished
                   ? 'Your responses have been recorded. You may now close this window.'
-                  : 'Please review your responses below. You can edit any answer before finishing.'}
+                  : 'Please review your responses below. Every answer can be edited - correct anything the recogniser misheard before you finish.'}
               </p>
             </div>
 
-            {!emailSent && (
+            {!finished && (
               <>
                 <div className="space-y-4 mb-6">
                   {editableTranscript.map((pair, i) => (
-                    <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                    <div key={pair.question_id || i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
                       <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-                        <p className="text-sm text-gray-600 leading-relaxed">{pair.question}</p>
+                        <p id={`review-question-${i}`} className="text-sm text-gray-600 leading-relaxed">
+                          {pair.question}
+                        </p>
                       </div>
                       <div className="px-4 py-3">
-                        {editingIdx === i ? (
-                          <div className="space-y-2">
-                            <textarea
-                              className="w-full text-sm text-gray-700 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-teal-400"
-                              rows={4}
-                              value={editText}
-                              onChange={e => setEditText(e.target.value)}
-                              autoFocus
-                            />
-                            <div className="flex gap-2 justify-end">
-                              <button
-                                onClick={() => setEditingIdx(null)}
-                                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-3 py-1.5 border border-gray-200 rounded-lg transition-colors"
-                              >
-                                <X size={12} /> Cancel
-                              </button>
-                              <button
-                                onClick={() => {
-                                  const updated = [...editableTranscript]
-                                  updated[i] = { ...updated[i], answer: editText }
-                                  setEditableTranscript(updated)
-                                  setEditingIdx(null)
-                                }}
-                                className="flex items-center gap-1 text-xs text-white px-3 py-1.5 rounded-lg transition-colors"
-                                style={{ backgroundColor: primaryColor }}
-                              >
-                                <Check size={12} /> Save
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-start gap-2">
-                            <p className="flex-1 text-sm text-gray-700 leading-relaxed">
-                              {pair.answer || <span className="text-gray-400 italic">No response recorded</span>}
-                            </p>
-                            <button
-                              onClick={() => { setEditingIdx(i); setEditText(pair.answer) }}
-                              className="flex-shrink-0 p-1 text-gray-300 hover:text-teal-500 transition-colors rounded"
-                              title="Edit this response"
-                            >
-                              <Pencil size={14} />
-                            </button>
-                          </div>
-                        )}
+                        {/* Open, always. This was a `text-gray-300` pencil that had to be found
+                            and hovered before an answer could be corrected, on a screen carrying
+                            59 of them in the 4 September walkthrough - and correcting what the
+                            recogniser heard is the last chance anybody gets. An affordance
+                            nobody notices is not an affordance.
+
+                            The question is the field's *description*, not its name: an implicit
+                            <label> wrapping both would give every field a different accessible
+                            name, so "offer every answer for editing" could only be asserted by
+                            counting nodes rather than by asking for the control. */}
+                        <textarea
+                          aria-label="Your answer"
+                          aria-describedby={`review-question-${i}`}
+                          className="w-full text-sm text-gray-700 border border-gray-200 rounded-lg p-2.5 resize-y focus:outline-none focus:ring-2 focus:ring-teal-400"
+                          rows={4}
+                          value={pair.answer}
+                          placeholder="No response recorded"
+                          onChange={e => {
+                            const corrected = e.target.value
+                            setEditableTranscript(current =>
+                              current.map((p, idx) => (idx === i ? { ...p, answer: corrected } : p)),
+                            )
+                            // What is on the clipboard is no longer this transcript.
+                            setCopied(false)
+                          }}
+                        />
                       </div>
                     </div>
                   ))}
                 </div>
 
                 <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={sendCopy}
-                      onChange={e => setSendCopy(e.target.checked)}
-                      className="w-4 h-4 rounded"
-                      style={{ accentColor: primaryColor }}
-                    />
-                    <span className="text-sm text-gray-700">Send a copy of this transcript to me</span>
-                  </label>
-                  {sendCopy && (
-                    <input
-                      type="email"
-                      placeholder="Your email address"
-                      value={copyEmail}
-                      onChange={e => setCopyEmail(e.target.value)}
-                      className="mt-3 w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-teal-400"
-                    />
-                  )}
+                  <div className="flex items-start gap-3">
+                    <ShieldCheck size={18} className="flex-shrink-0 mt-0.5 text-gray-400" />
+                    <div className="flex-1">
+                      {/* The note that replaced "Send a copy of this transcript to me". That
+                          checkbox posted to /email-transcript, which answered {"sent": true}
+                          and delivered nothing. Nothing here promises a message. */}
+                      <p className="text-sm text-gray-700">
+                        For confidentiality, this transcript is not emailed to anyone. If you
+                        would like your own copy, use the Copy button below and paste it
+                        wherever you keep it.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleCopyTranscript}
+                        className="mt-3 inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-2 transition-colors"
+                      >
+                        <Copy size={14} />{copied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="text-center">
                   <button
                     onClick={handleFinishInterview}
-                    disabled={sendingEmail || (sendCopy && !copyEmail)}
+                    disabled={savingCorrections}
                     className="px-8 py-3 rounded-xl text-white font-medium text-sm disabled:opacity-50 transition-opacity"
                     style={{ backgroundColor: primaryColor }}
                   >
-                    {sendingEmail ? 'Sending…' : 'Finish'}
+                    {savingCorrections ? 'Saving…' : 'Finish'}
                   </button>
                 </div>
               </>
