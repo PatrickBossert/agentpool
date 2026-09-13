@@ -127,6 +127,29 @@ function recorderMimeType(): string | null | undefined {
   return candidates.find(type => supported.call(MediaRecorder, type)) ?? null
 }
 
+/**
+ * Why this browser cannot stream to Deepgram, asked before an interview begins - or `null` when
+ * it can.
+ *
+ * **The second half of the probe, and the half that has nothing to do with Deepgram.** On an
+ * engagement that forbids the browser's own recogniser there is no fallback, so "this browser
+ * records only MP4/AAC" and "Deepgram refused our key" have the same consequence and must both
+ * be found at device setup rather than at the participant's first question.
+ *
+ * It answers the same three-way question `recorderMimeType` does and collapses it to the two
+ * that matter here: a browser that *will not say* what it supports has refused nothing, so it is
+ * allowed to try - declining there would take Deepgram away from every browser with no
+ * `isTypeSupported`, which is the control `openDeepgramSocket` already keeps.
+ *
+ * The strings are the closed vocabulary `POST /{token}/speech-failure` accepts. They are reasons,
+ * not sentences: that door is unauthenticated and its output reaches an administrator's alert, so
+ * the wording is composed on the server.
+ */
+export function browserStreamingObstacle(): 'no_streaming_support' | 'unsupported_container' | null {
+  if (!browserCanStream()) return 'no_streaming_support'
+  return recorderMimeType() === null ? 'unsupported_container' : null
+}
+
 /** How often a chunk of audio is handed to the socket. Small enough to feel live. */
 const CHUNK_MS = 250
 /** A handshake that has not completed by now is one the participant is waiting on. */

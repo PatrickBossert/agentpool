@@ -614,6 +614,47 @@ describe('the prose half', () => {
     expect(screen.queryByText(/Anthropic - not this engagement's agents/)).toBeNull()
   })
 
+  // Finding C2. The Deepgram card above names one transcription destination, specifically and
+  // confidently - and until sp66's final review there was a second one nobody had written down.
+  // When Deepgram cannot be reached the interview page falls back to the browser's own
+  // recogniser, and Chrome streams that audio to Google while Safari streams it to Apple. "A row
+  // that names one shape reads as an assurance about all of them" is this branch's own rule, in
+  // the file it was applied to.
+  //
+  // Keyed on the same resolved grant as the Anthropic pair above, so the auditor is told which
+  // of the two answers applies here rather than left to infer it from an absence.
+
+  it('names where the browser’s own recogniser sends the audio, on an engagement that permits it', async () => {
+    get.mockResolvedValue({
+      ...PAYLOAD,
+      llm_mode: 'standard',
+      inference: { ...PAYLOAD.inference, leaves_deployment: true },
+    })
+    renderPage()
+    const card = await screen.findByText(/The browser’s own transcription - the fallback/)
+    expect(card).toBeInTheDocument()
+    // The vendors, by name. "The browser's own recogniser" tells an auditor nothing about where
+    // the audio goes, which is the only question this section exists to answer.
+    const detail = card.parentElement?.textContent ?? ''
+    expect(detail).toMatch(/Google/)
+    expect(detail).toMatch(/Apple/)
+    // And the refusal card is not also showing - they are two answers to one question.
+    expect(screen.queryByText(/refused on this engagement/)).toBeNull()
+  })
+
+  it('says the browser’s recogniser is refused when inference stays on this server', async () => {
+    // The fixture resolves inference locally, so this is the default case.
+    renderPage()
+    const card = await screen.findByText(/The browser’s own transcription - refused on this engagement/)
+    const detail = card.parentElement?.textContent ?? ''
+    // The operational consequence stated where an auditor and a consultant will both read it,
+    // rather than left to be discovered by a participant holding a phone.
+    expect(detail).toMatch(/iPhone or iPad/)
+    // And it says the interview stops rather than degrading quietly, which is the undertaking.
+    expect(detail).toMatch(/does not start|stops/)
+    expect(screen.queryByText(/The browser’s own transcription - the fallback/)).toBeNull()
+  })
+
   it('says that the paths outside the crews were checked against the table', async () => {
     renderPage()
     expect(await screen.findByText(/Paths outside the crews/)).toBeInTheDocument()

@@ -13,6 +13,7 @@ import re
 import time
 from collections import defaultdict
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -41,6 +42,13 @@ from api.services.interview_service import (
 )
 from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
 from api.services.process_cache import register_cache
+from api.services.speech_policy import (
+    SPEECH_REQUIRED,
+    alert_speech_unavailable,
+    describe_browser_failure,
+    describe_deepgram_failure,
+    speech_policy_for,
+)
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
@@ -50,6 +58,29 @@ router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 # ---------------------------------------------------------------------------
 
 _EMPTY_SUMMARY = {"pending": 0, "active": 0, "completed": 0, "abandoned": 0}
+
+
+def _speech_failure_of(row) -> dict | None:
+    """The recorded transcription failure for one session, or None.
+
+    Answers None for every way the record can be missing or unreadable - a column a project
+    database predating the migration does not have, a NULL, a blob written by some earlier
+    shape - because this is a status panel and a malformed record must not 500 the list of every
+    other session beside it.
+    """
+    try:
+        raw = row["speech_failure"]
+    except (IndexError, KeyError):
+        return None
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return {"at": parsed.get("at", ""), "diagnosis": parsed.get("diagnosis", "")}
 
 
 @router.get("/sessions/{slug}")
@@ -113,6 +144,11 @@ async def get_sessions_for_project(slug: str, payload: dict = Depends(require_an
             "node_label": row["node_label"],
             "session_token": row["session_token"],
             "status": status,
+            # Why this person could not be interviewed, for the consultant who would chase
+            # them. Parsed here rather than handed over as a JSON string: the column is this
+            # deployment's own record and the panel is a reader of it, and a client that had to
+            # `JSON.parse` a field would be a second place the shape is known.
+            "speech_failure": _speech_failure_of(row),
             "interview_url": interview_url(row["session_token"]),
             "started_at": row["started_at"],
             "completed_at": row["completed_at"],
@@ -311,13 +347,30 @@ async def get_deepgram_token(session_token: str):
     result = await get_session_with_script(session_token)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
-    try:
-        token = await generate_deepgram_token()
-    except ValueError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
     db_path = await _find_session_db(session_token)
     slug = Path(db_path).stem if db_path else ""
+
+    # **Half of the probe, and the half only this server can answer.** Minting a grant is the
+    # same call the interview makes, so a refused key or an exhausted account fails here at
+    # device setup rather than at the participant's first question.
+    #
+    # What the failure *means* differs by engagement, and the difference is decided here rather
+    # than in the browser: on an engagement permitted hosted inference this is the routine 503
+    # every deployment without a Deepgram key has always answered, and the page falls back. On
+    # one that is not, there is nothing to fall back to that does not stream the participant's
+    # voice to their browser vendor - so the interview stops, and somebody is told which of a
+    # refused key, an exhausted balance and a rate limit it was.
+    try:
+        token = await generate_deepgram_token()
+    except (ValueError, httpx.HTTPError) as exc:
+        diagnosis = describe_deepgram_failure(exc)
+        if slug and db_path and speech_policy_for(slug) == SPEECH_REQUIRED:
+            await alert_speech_unavailable(
+                db_path=db_path, slug=slug, session_token=session_token, diagnosis=diagnosis
+            )
+        raise HTTPException(status_code=503, detail=diagnosis)
+
     keyterms = await keyterms_for_project(slug) if slug else []
 
     # The language the session was **stamped** with, not one re-derived from the project. A
@@ -464,6 +517,56 @@ async def save_checkpoint(session_token: str, body: CheckpointBody):
     async with interview_db_connection(db_path) as conn:
         await save_interview_checkpoint(conn, session_token, body.checkpoint)
     return {"saved": True}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 5c: POST /{session_token}/speech-failure
+# ---------------------------------------------------------------------------
+
+class SpeechFailureBody(BaseModel):
+    """The half of the probe only the participant's browser can answer.
+
+    A closed vocabulary, not a sentence. This door is unauthenticated - a session token is the
+    whole of what the public half of this router checks - and the string it produces lands in an
+    administrator's alert, so a free-text `reason` would be a way of putting an attacker's words
+    in front of an operator. `describe_browser_failure` composes what they read; the browser only
+    says which case it is.
+    """
+
+    reason: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/{session_token}/speech-failure")
+async def report_speech_failure(session_token: str, body: SpeechFailureBody):
+    """The interview could not be transcribed, and this engagement forbids the fallback.
+
+    Two things reach this door, and neither is visible from the server: a browser that records
+    none of the containers Deepgram is opened for - Safari and iOS record MP4/AAC, which since
+    `f914bc56` declines the socket - and a socket that would not stay open. The Deepgram half of
+    the probe is answered at the token door above, where the status code that distinguishes a
+    refused key from an exhausted balance actually is.
+
+    **It records nothing on an engagement permitted hosted inference**, and answers so. There the
+    browser's own recogniser is the designed answer, the amber notice already says which
+    recogniser is listening, and an alert per fallback would be noise on every deployment that
+    has never configured a Deepgram key - which is every deployment before sp66.
+
+    A 404 for an unknown token, like every door in this router, so this is not a way to make the
+    server alert about sessions that do not exist.
+    """
+    db_path = await _find_session_db(session_token)
+    if not db_path:
+        raise HTTPException(status_code=404, detail="Session not found")
+    slug = Path(db_path).stem
+    if speech_policy_for(slug) != SPEECH_REQUIRED:
+        return {"recorded": False, "reason": "this engagement permits the browser's recogniser"}
+    await alert_speech_unavailable(
+        db_path=db_path,
+        slug=slug,
+        session_token=session_token,
+        diagnosis=describe_browser_failure(body.reason),
+    )
+    return {"recorded": True}
 
 
 # ---------------------------------------------------------------------------

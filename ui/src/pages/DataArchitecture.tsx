@@ -670,6 +670,28 @@ const UNDERTAKINGS: {
       "A participant's browser streams their speech to Deepgram for transcription, with content retention disabled, and the connection carries this engagement's own vocabulary with it - the labels on its value chain and the names in its interview scripts - so that the words specific to this client come back correctly rather than as English words that sound like them. Nothing else about the project is sent, and the credential the browser holds is a grant that lasts thirty seconds and permits transcription alone. The same decision covers all of this as covers ElevenLabs, and for the same reason.",
   },
   {
+    // The row the Deepgram row above made necessary. Naming one transcription destination
+    // specifically and confidently reads as an assurance about the whole of transcription, and
+    // until sp66's final review there was a second one nobody had written down: when Deepgram
+    // cannot be reached, the interview page falls back to the browser's own recogniser, and
+    // Chrome streams that audio to Google while Safari streams it to Apple. No contract, no
+    // retention undertaking, and no provider this deployment chose.
+    //
+    // Two entries keyed on the same resolved grant as the inference pair above, so an auditor is
+    // told which of the two answers applies to *this* engagement rather than left to infer it
+    // from an absence. Declared in `agents/egress.py` as `BROWSER_SPEECH_EGRESS`.
+    title: 'The browser’s own transcription - the fallback, and where it goes',
+    detail:
+      "When Deepgram cannot be reached, the interview page falls back to the speech recognition built into the participant's browser. That is not a service this system chose or contracts with: Chrome and Edge stream the audio to Google, and Safari streams it to Apple, under those companies' own terms. This engagement permits hosted services, so that fallback is available - the participant is shown a notice on screen naming which recogniser is listening whenever it is used, and their answers are then transcribed by their browser vendor rather than by Deepgram.",
+    appliesTo: (data) => data.inference.leaves_deployment,
+  },
+  {
+    title: 'The browser’s own transcription - refused on this engagement',
+    detail:
+      "Interviews on this engagement are transcribed by Deepgram or not at all. The speech recognition built into a participant's browser streams audio to Google (Chrome and Edge) or to Apple (Safari) under those companies' own terms, which is not compatible with keeping this engagement's material on this deployment - so it is refused rather than used as a fallback. Before an interview begins, the page checks that Deepgram can be reached and that the participant's browser can produce audio it accepts; if either check fails the interview does not start, the participant is asked to try again later, and an administrator is told what went wrong. A failure part-way through an interview is treated the same way: everything answered so far is preserved and the interview stops. One consequence is worth stating plainly - Safari records in a format Deepgram is not opened for, so an interview on this engagement cannot be conducted on an iPhone or iPad.",
+    appliesTo: (data) => !data.inference.leaves_deployment,
+  },
+  {
     title: 'Resend - invitation and reminder email',
     detail:
       "Interview invitations carry a stakeholder's name and a unique link. Delivery logs are held by Resend under its own policy. Email is a dispatch path rather than an agent tool, so it does not appear in the generated table above.",

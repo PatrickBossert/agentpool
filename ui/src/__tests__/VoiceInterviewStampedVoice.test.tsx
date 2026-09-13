@@ -82,7 +82,13 @@ let completed = false
 function installFetch(session: unknown, branding?: unknown) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/interviews/tok')) {
-      return new Response(JSON.stringify({ session, script: SCRIPT, branding }), { status: 200 })
+      // `speech_policy` is declared because the page fails closed without it: an absent policy
+      // means `required`, which refuses the browser's own recogniser and stops the interview
+      // before it starts. These are standard-engagement tests, so they say so.
+      return new Response(
+        JSON.stringify({ session, script: SCRIPT, branding, speech_policy: 'browser_permitted' }),
+        { status: 200 },
+      )
     }
     if (url.endsWith('/speak')) {
       speakBodies.push(JSON.parse(String(init?.body)))

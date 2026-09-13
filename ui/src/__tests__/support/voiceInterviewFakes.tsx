@@ -268,11 +268,32 @@ export function forgetCompletion() {
   completedBody = null
 }
 
-export function installFetch(grant: unknown | 'refused', script: unknown = SCRIPT) {
+/**
+ * What the server answers about the browser's own recogniser.
+ *
+ * **The fake has to carry this, and defaulting it is a decision rather than a convenience.** The
+ * page fails closed - an absent `speech_policy` means `required`, so that a slow load or an older
+ * API cannot silently stream a participant's voice to Google - and every test in this directory
+ * that predates sp66's C2 fix is about a *standard* engagement falling back. So the default here
+ * is the permissive one, matching what those tests are engagements of, and a test about the
+ * refusal names it explicitly. A fake that defaulted the other way would make the whole fallback
+ * suite assert the refusal by accident.
+ */
+export type FakeSpeechPolicy = 'required' | 'browser_permitted'
+
+export function installFetch(
+  grant: unknown | 'refused',
+  script: unknown = SCRIPT,
+  speechPolicy: FakeSpeechPolicy = 'browser_permitted',
+) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/interviews/tok')) {
       return new Response(
-        JSON.stringify({ session: { id: 1, session_token: 'tok', node_label: 'x', voice_config: STAMP }, script }),
+        JSON.stringify({
+          session: { id: 1, session_token: 'tok', node_label: 'x', voice_config: STAMP },
+          script,
+          speech_policy: speechPolicy,
+        }),
         { status: 200 },
       )
     }

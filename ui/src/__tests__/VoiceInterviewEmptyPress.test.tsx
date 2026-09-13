@@ -62,7 +62,12 @@ let submitted: { qa_pairs: { question: string; answer: string }[] } | null = nul
 function installFetch(pressText: unknown) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/interviews/tok')) {
-      return new Response(JSON.stringify({ session: SESSION, script: SCRIPT }), { status: 200 })
+      // Declared, because the page fails closed on an absent policy - see the note in
+      // `support/voiceInterviewFakes.tsx`. This is a standard engagement.
+      return new Response(
+        JSON.stringify({ session: SESSION, script: SCRIPT, speech_policy: 'browser_permitted' }),
+        { status: 200 },
+      )
     }
     if (url.endsWith('/speak')) {
       spoken.push(JSON.parse(String(init?.body)).text)

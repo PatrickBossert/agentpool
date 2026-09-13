@@ -2,7 +2,7 @@
 // Avery's Output tab extra: interview sessions panel with transcript links
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, Check, XCircle, ExternalLink } from 'lucide-react'
+import { AlertTriangle, Copy, Check, XCircle, ExternalLink } from 'lucide-react'
 import type { InterviewSessionsResponse, InterviewSessionStatus } from '../../types'
 
 const STATUS_CLASSES: Record<InterviewSessionStatus['status'], string> = {
@@ -79,6 +79,25 @@ export default function AveryOutputExtra({ slug }: { slug: string }) {
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-gray-800 truncate">{s.name}</p>
               <p className="text-[10px] text-gray-400 truncate">{s.node_label}</p>
+              {/* Why this person could not be interviewed.
+                  On an engagement that requires Deepgram, an interview that cannot reach it
+                  stops rather than falling back to the browser's own recogniser - so somebody
+                  has to chase the participant, and that somebody is whoever is reading this
+                  panel. Nothing else in the product would tell them: the alert's other legs are
+                  the server log and a message to the deployment's administrator, and neither is
+                  where the consultant running an engagement looks.
+                  Not truncated, unlike the two lines above it: the sentence names which of a
+                  refused key, an exhausted balance and an unsupported browser it was, and that
+                  is the whole of its value. */}
+              {s.speech_failure && (
+                <p
+                  data-testid={`speech-failure-${s.id}`}
+                  className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-1 mt-1 leading-relaxed"
+                >
+                  <AlertTriangle size={10} className="inline-block mr-1 -mt-0.5" aria-hidden="true" />
+                  Not interviewed - {s.speech_failure.diagnosis}
+                </p>
+              )}
             </div>
             <span className={`text-[10px] px-2 py-0.5 rounded-full capitalize flex-shrink-0 ${STATUS_CLASSES[s.status]}`}>
               {s.status}

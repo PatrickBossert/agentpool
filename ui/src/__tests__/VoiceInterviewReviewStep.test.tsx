@@ -87,6 +87,18 @@ function completionBodies(): Record<string, unknown>[] {
   return sent.filter(r => r.url.endsWith('/complete')).map(r => r.body as Record<string, unknown>)
 }
 
+/**
+ * How `/complete` answers, switched *after* the review step has been reached.
+ *
+ * **Both fetch fakes in this suite answered 200 for `/complete` unconditionally**, which is why
+ * finding I4 - a Finish button that claimed success whatever the server said - could not be seen
+ * by any test. A fake that only ever succeeds cannot distinguish a page that reports the outcome
+ * from one that ignores it. The switch is deliberately flipped after the first, successful
+ * submission, because that is the real scenario: the interview was recorded, and it is the
+ * *corrections* that are at risk.
+ */
+let completeResponds: 'ok' | 'refused' | 'offline' = 'ok'
+
 function installFetch() {
   return vi.fn(async (url: string, init?: RequestInit) => {
     let body: Record<string, unknown> | null = null
@@ -95,8 +107,22 @@ function installFetch() {
     }
     sent.push({ method: init?.method ?? 'GET', url, body })
 
+    if (url.endsWith('/complete')) {
+      // Two ways it fails, and the page swallowed both. A 5xx is a server that answered; a
+      // thrown fetch is connectivity gone, which is the scenario in the finding - forty-five
+      // minutes on the page, the network dropped, three answers corrected.
+      if (completeResponds === 'offline') throw new TypeError('Failed to fetch')
+      if (completeResponds === 'refused') return new Response('{"detail":"nope"}', { status: 503 })
+      return new Response('{}', { status: 200 })
+    }
+
     if (url.endsWith('/interviews/tok')) {
-      return new Response(JSON.stringify({ session: SESSION, script: SCRIPT }), { status: 200 })
+      // Declared, because the page fails closed on an absent policy - see the note in
+      // `support/voiceInterviewFakes.tsx`. This is a standard engagement.
+      return new Response(
+        JSON.stringify({ session: SESSION, script: SCRIPT, speech_policy: 'browser_permitted' }),
+        { status: 200 },
+      )
     }
     if (url.endsWith('/speak')) {
       return new Response(new Blob([new Uint8Array([1, 2, 3])]), { status: 200 })
@@ -165,6 +191,7 @@ function installAudioAndMic() {
  */
 async function reachTheReviewStep(spoken = 'The recogniser heard this.') {
   sent = []
+  completeResponds = 'ok'
   vi.stubGlobal('fetch', installFetch())
   installSpeechRecognition(spoken)
   installAudioAndMic()
@@ -335,6 +362,99 @@ describe('the review and correction step', () => {
     expect((offered as HTMLTextAreaElement).value).toContain('The recogniser heard this.')
     // Read-only: this is the copy, not a second place to correct the answers.
     expect((offered as HTMLTextAreaElement).readOnly).toBe(true)
+  })
+
+  // ── Finding I4: Finish claimed success whatever the server said ─────────────
+  //
+  // `postCompletion` swallowed a non-ok response and a thrown fetch alike, and
+  // `handleFinishInterview` then set `finished` unconditionally - rendering "Your responses have
+  // been recorded. You may now close this window." and unmounting the transcript behind it. A
+  // participant forty-five minutes in, whose connection had gone, corrected three mangled answers,
+  // tapped Finish, was told it worked, and closed the window.
+  //
+  // The original answers survive from the first submission, so what is lost is the *corrections* -
+  // but it is the one button the participant triggers and is told about, which is the exact shape
+  // this branch exists to remove.
+
+  it.each([
+    ['the server refuses', 'refused' as const],
+    ['the connection has gone', 'offline' as const],
+  ])('does not claim the corrections were saved when %s', async (_name, failure) => {
+    await reachTheReviewStep()
+
+    const fields = screen.getAllByRole('textbox', { name: /your answer/i })
+    await userEvent.clear(fields[0])
+    await userEvent.type(fields[0], 'The correction that must not be silently lost.')
+
+    completeResponds = failure
+    await userEvent.click(screen.getByRole('button', { name: /^finish$/i }))
+
+    // The sentence that was the defect is absent.
+    await waitFor(() =>
+      expect(screen.queryByText(/may now close this window/i)).toBeNull(),
+    )
+    // And the truth is said, assertively - a participant about to close the tab must not have to
+    // notice a polite live region.
+    const problem = await screen.findByTestId('finish-error')
+    expect(problem.textContent).toMatch(/could not save your corrections/i)
+    // It says which is at risk: the interview is safe, the edits are not. Telling somebody their
+    // whole interview was lost would be its own false claim.
+    expect(problem.textContent).toMatch(/original answers are safe/i)
+  })
+
+  it('keeps the transcript on screen so the corrections can be sent again', async () => {
+    // Telling the truth is necessary and not sufficient. The screen used to unmount every field
+    // the moment `finished` was set, so a participant told it had failed would have had nothing
+    // left to retry with - which is the same loss by a more honest route.
+    await reachTheReviewStep()
+
+    const fields = screen.getAllByRole('textbox', { name: /your answer/i })
+    await userEvent.clear(fields[0])
+    await userEvent.type(fields[0], 'The correction that must survive a failed save.')
+
+    completeResponds = 'offline'
+    await userEvent.click(screen.getByRole('button', { name: /^finish$/i }))
+    await screen.findByTestId('finish-error')
+
+    // Every field is still there, and still holds what was typed.
+    const after = screen.getAllByRole('textbox', { name: /your answer/i })
+    expect(after).toHaveLength(3)
+    expect((after[0] as HTMLTextAreaElement).value).toBe('The correction that must survive a failed save.')
+
+    // And there is something to press. Named for what it now does.
+    await screen.findByRole('button', { name: /try again/i })
+  })
+
+  it('sends the corrections and reports success once the connection comes back', async () => {
+    // **The control.** Without it, a change that never claimed success would pass every
+    // assertion above - and would be a page nobody could ever finish. The retry is driven
+    // through the same button, and the corrected text is asserted on the *body that was sent*
+    // rather than on the screen, because a retry that showed the success screen without
+    // resubmitting is the failure this pair is really about.
+    await reachTheReviewStep()
+
+    const fields = screen.getAllByRole('textbox', { name: /your answer/i })
+    await userEvent.clear(fields[0])
+    await userEvent.type(fields[0], 'The correction that eventually arrives.')
+
+    completeResponds = 'offline'
+    await userEvent.click(screen.getByRole('button', { name: /^finish$/i }))
+    await screen.findByTestId('finish-error')
+
+    const before = completionBodies().length
+    completeResponds = 'ok'
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }))
+
+    await screen.findByText(/may now close this window/i)
+    const bodies = completionBodies()
+    expect(bodies.length).toBeGreaterThan(before)
+    const last = bodies[bodies.length - 1]
+    expect(JSON.stringify(last.qa_pairs)).toContain('The correction that eventually arrives.')
+    // The ratings ride along, as they must: `/complete` writes `ratings_json` unconditionally,
+    // so a resubmission that omitted them would correct the transcript and discard every rating.
+    expect(last.ratings).toBeTruthy()
+    // And the notice is gone rather than left standing beside a success message.
+    expect(screen.queryByTestId('finish-error')).toBeNull()
   })
 
   it('does not say “Copied” when the clipboard exists and refuses', async () => {

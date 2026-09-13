@@ -20,6 +20,7 @@ from api.services.interview_keyterms import build_keyterms, harvest_strings
 from api.services.llm_client import LocalModelError, project_completion
 from api.services.interview_answer_service import record_answers, script_for_session
 from api.services.platform_settings import platform_public_url
+from api.services.speech_policy import speech_policy_for
 from api.database import (
     complete_interview_session,
     fetch_interview_session,
@@ -198,7 +199,22 @@ async def get_session_with_script(session_token: str) -> dict | None:
     # the returned dict so the frontend contract does not change.
     questionnaire = None
 
-    return {"session": session_dict, "script": script, "branding": branding, "questionnaire": questionnaire}
+    return {
+        "session": session_dict,
+        "script": script,
+        "branding": branding,
+        "questionnaire": questionnaire,
+        # **The policy, never the mode.** A participant's page has no login and no business
+        # knowing an engagement's posture, so what crosses is the decision this engagement has
+        # already made about the browser's own recogniser - `required` or `browser_permitted` -
+        # and not `llm_mode`, not a capability set, and not a slug the page could ask about.
+        # Same rule as `writable_knowledge_tiers`: never restate the rule in TypeScript.
+        #
+        # `speech_policy_for` fails closed by construction: `project_llm_mode` answers
+        # `sensitive` for a database it cannot read, which resolves to `required`, so the miss
+        # costs an interview rather than sending a participant's voice to Google.
+        "speech_policy": speech_policy_for(slug),
+    }
 
 
 async def generate_deepgram_token() -> str:

@@ -1,9 +1,17 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { AlertTriangle, Check, Copy, Pause, Play, ShieldCheck, Undo2 } from 'lucide-react'
-import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
+import type {
+  InterviewSession,
+  InterviewScript,
+  InterviewBranding,
+  MaturityRating,
+  SectionMaturityRating,
+  SpeechPolicy,
+} from '../types'
 import {
   browserCanStream,
+  browserStreamingObstacle,
   deepgramListenUrl,
   fetchDeepgramGrant,
   openDeepgramSocket,
@@ -27,10 +35,46 @@ function initialsOf(name: string): string {
     .join('')
 }
 
-type Phase = 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'rating' | 'complete' | 'error'
+type Phase =
+  | 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'rating' | 'complete' | 'error'
+  // The interview stopped because it could not be transcribed and this engagement forbids the
+  // browser's own recogniser. Its own phase rather than `error`, which says "Unable to load
+  // interview" - a participant forty minutes in has loaded it perfectly well.
+  | 'speech_halted'
 type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'testing' | 'ready'
+/** Whether the probe run before the interview begins has been satisfied. */
+type SpeechProbe = 'unchecked' | 'checking' | 'ready' | 'unavailable'
 
 const BASE = '/api'
+
+/**
+ * Thrown to unwind the interview loop when speech has stopped and may not fall back.
+ *
+ * The loop is an await over sections and questions, so there is no flag a nested question could
+ * set that the enclosing section would see in time - it would speak the next question first. A
+ * throw is what actually stops it, and `runInterview` swallows this one because the halt screen
+ * is already up by the time it arrives.
+ */
+class SpeechHalted extends Error {}
+
+// What a participant is told, in each of the three ways this can end an interview. Plain words
+// about what happened, what it means for them, and what to do - never a status code, and never
+// the diagnosis the operator gets, which names this deployment's provider and its billing.
+const HALT_NO_SERVICE =
+  'We are sorry - the transcription service this interview needs is not available at the moment, ' +
+  'so we cannot start. Nothing you say could be recorded, and this interview is not permitted to ' +
+  'use your browser’s own transcription instead. Please try your link again later, or ' +
+  'contact the person who invited you. They have been told.'
+const HALT_BROWSER =
+  'We are sorry - this interview cannot be conducted in this browser. It cannot record audio in a ' +
+  'format our transcription service accepts, and this interview is not permitted to use your ' +
+  'browser’s own transcription instead. Please reopen your interview link in Chrome or Edge ' +
+  'on a computer. Safari, including on an iPhone or iPad, will not work for this interview.'
+const HALT_MID_INTERVIEW =
+  'We are sorry - the transcription service stopped responding, so we have had to end the ' +
+  'interview here. Everything you answered up to this point has been saved, and nothing has been ' +
+  'lost. Please try your link again later, or contact the person who invited you. They have been ' +
+  'told.'
 
 // There is deliberately no default voice in this file, and there must never be one again.
 //
@@ -107,6 +151,17 @@ export default function VoiceInterview() {
   // looked up, and "nothing you say is being recorded" is precisely the sentence that must not
   // be missed.
   const [recogniserNotice, setRecogniserNotice] = useState('')
+  // **Defaults to `required`, and that is the whole of the fail-closed behaviour on this side.**
+  // Until the server has said otherwise - a slow load, a malformed payload, an older API - the
+  // browser's own recogniser is refused. The opposite default would make every one of those
+  // silently stream a participant's voice to Google.
+  const [speechPolicy, setSpeechPolicy] = useState<SpeechPolicy>('required')
+  const [speechProbe, setSpeechProbe] = useState<SpeechProbe>('unchecked')
+  const [haltNotice, setHaltNotice] = useState('')
+  // The listen loop owns closures that outlive a render, so the policy it consults has to be a
+  // ref. The state above is what the screens read.
+  const speechPolicyRef = useRef<SpeechPolicy>('required')
+  const haltedRef = useRef(false)
   const recognitionRef = useRef<Recogniser | null>(null)
   // One microphone stream for the whole interview, and the counters that decide whether
   // Deepgram is still worth asking for. `deepgramOffRef` is one-way once set: every later
@@ -146,6 +201,11 @@ export default function VoiceInterview() {
   // Three outcomes, not two. "Not copied yet" and "this browser would not copy" are different
   // things to a participant, and a boolean can only say one of them.
   const [copyOutcome, setCopyOutcome] = useState<'idle' | 'copied' | 'unavailable'>('idle')
+  // Set when the corrections could not be saved. Finding I4: this screen used to say "Your
+  // responses have been recorded" whatever `/complete` answered, and then unmounted the
+  // transcript - so a participant who lost connectivity was told their corrections had landed
+  // and left with no way to try again.
+  const [finishError, setFinishError] = useState('')
   const isPausedRef = useRef(false)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const silenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -165,7 +225,9 @@ export default function VoiceInterview() {
   // releases it, and a stream left running keeps the browser's recording indicator lit on a
   // page that has finished asking questions.
   useEffect(() => {
-    if (phase === 'complete' || phase === 'error') releaseInterviewStream()
+    if (phase === 'complete' || phase === 'error' || phase === 'speech_halted') {
+      releaseInterviewStream()
+    }
   }, [phase])
   useEffect(() => releaseInterviewStream, [])
 
@@ -178,6 +240,18 @@ export default function VoiceInterview() {
   useEffect(() => {
     if (phase === 'ready') loadAudioDevices()
   }, [phase])
+
+  // The probe, at device setup and nowhere else.
+  //
+  // **Before the interview begins, not during it.** A participant on an engagement that forbids
+  // the browser's recogniser has to be told they cannot proceed before they start, not after
+  // thirty answers - which is what a mid-interview discovery would mean, and the whole reason
+  // this runs here rather than at the first question.
+  useEffect(() => {
+    if (phase === 'ready' && speechPolicy === 'required' && speechProbe === 'unchecked') {
+      void probeSpeech()
+    }
+  }, [phase, speechPolicy, speechProbe])
 
   async function checkMicDevices(): Promise<boolean> {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -286,6 +360,15 @@ export default function VoiceInterview() {
       setProgress({ current: 0, total })
       setSessionData(data)
       setBranding(data.branding ?? null)
+      // **The server's decision, taken as given.** `browser_permitted` is the only value that
+      // opens the fallback; anything else - `required`, a missing key, a value this build has
+      // never heard of - closes it. Written as an allow-list rather than as `=== 'required'`
+      // for the reason CLAUDE.md gives about the skills-library exemptions: a third value must
+      // prove itself rather than inherit the permissive branch by not being named.
+      const policy: SpeechPolicy =
+        data.speech_policy === 'browser_permitted' ? 'browser_permitted' : 'required'
+      setSpeechPolicy(policy)
+      speechPolicyRef.current = policy
       // Inline maturity ratings are embedded in section.maturity_rating — no separate questionnaire
 
       const micOk = await checkMicDevices()
@@ -294,6 +377,124 @@ export default function VoiceInterview() {
       setErrorMessage(err instanceof Error ? err.message : 'Unknown error')
       setPhase('error')
     }
+  }
+
+  /**
+   * Tell the server an interview could not be transcribed. Never throws.
+   *
+   * A closed vocabulary rather than a sentence: the door is unauthenticated and what it produces
+   * lands in an administrator's alert, so the wording is composed on the server and the browser
+   * only says which case it is.
+   *
+   * **A side effect must not veto the thing it is a side effect of.** The participant has already
+   * been refused by the time this runs, and a failed report must not turn a handled refusal into
+   * a thrown error on the one screen that is trying to explain itself.
+   */
+  async function reportSpeechFailure(reason: string): Promise<void> {
+    try {
+      await fetch(`${BASE}/interviews/${sessionToken}/speech-failure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      })
+    } catch {
+      // The server's own log is the other leg of this alert. Nothing here is worth failing on.
+    }
+  }
+
+  /**
+   * Everything said so far, kept where a reconnecting session would find it. Never throws.
+   *
+   * **`partial_answer` is not padding.** `qaRef` gains a pair only when an answer *completes*, so
+   * a halt part-way through one would otherwise discard exactly the words the participant was
+   * speaking when the service went - which on the first question of an interview is all of them.
+   * It carries no question id because it has none: the pair is built by the interview loop after
+   * `listenForAnswer` returns, and inventing an id here would put an answer under an address
+   * nothing else agrees with. The words are what must not be lost.
+   */
+  async function preserveProgress(partialAnswer: string): Promise<void> {
+    try {
+      await fetch(`${BASE}/interviews/${sessionToken}/checkpoint`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkpoint: {
+            qa_pairs: qaRef.current,
+            ratings: sectionRatingsRef.current,
+            partial_answer: partialAnswer,
+          },
+        }),
+      })
+    } catch {
+      // Best effort. The halt screen is shown either way - telling a participant the interview
+      // has stopped matters more than the checkpoint, and saying nothing is the failure.
+    }
+  }
+
+  /**
+   * Can this interview be conducted at all? Asked once, at device setup.
+   *
+   * **Two questions, not one**, and either failing refuses the interview:
+   *
+   *  1. **Can this browser produce a container Deepgram accepts?** `f914bc56` made a browser that
+   *     records none of webm/opus, webm or ogg/opus decline the socket rather than stream
+   *     MP4/AAC into a connection configured for Opus. Safari and iOS record MP4/AAC - so this
+   *     arm fails for reasons that have nothing to do with Deepgram, on the device a participant
+   *     is most likely holding, and on this kind of engagement it must still mean "cannot
+   *     proceed". That is an accepted operational constraint, not a defect to engineer around:
+   *     the alternative is the participant's voice going to Apple.
+   *  2. **Is Deepgram reachable and in credit?** Minting a grant is the same call the interview
+   *     makes, so a refused key or an exhausted balance fails here. The grant is then discarded -
+   *     it lives thirty seconds and could not be held for the first question anyway - and that
+   *     small waste is the price of asking the question honestly rather than assuming.
+   *
+   * The first is asked first deliberately: it needs no network, and a browser that could never
+   * have worked should not be reported to an administrator as a Deepgram outage.
+   *
+   * **Nothing here opens a socket to any speech service.** The grant is fetched from this
+   * deployment's own API; a refusal ends the probe with no `WebSocket` constructed anywhere and
+   * no `SpeechRecognition` started, which is the entire point of probing rather than trying.
+   */
+  async function probeSpeech(): Promise<void> {
+    setSpeechProbe('checking')
+    const obstacle = browserStreamingObstacle()
+    if (obstacle) {
+      setHaltNotice(obstacle === 'unsupported_container' ? HALT_BROWSER : HALT_NO_SERVICE)
+      setSpeechProbe('unavailable')
+      await reportSpeechFailure(obstacle)
+      return
+    }
+    const grant = await fetchDeepgramGrant(BASE, sessionToken ?? '')
+    if (!grant) {
+      // The token door has already recorded and alerted for this half: it is the only place that
+      // holds the status code telling a refused key from an exhausted balance from a rate limit,
+      // and an administrator sent to check all three has been told nothing useful.
+      setHaltNotice(HALT_NO_SERVICE)
+      setSpeechProbe('unavailable')
+      return
+    }
+    setSpeechProbe('ready')
+  }
+
+  /**
+   * Stop the interview, keep what has been answered, and tell everyone who needs to know.
+   *
+   * Reached when transcription fails *during* an interview on an engagement that forbids the
+   * fallback - credit expiring at answer thirty, a socket that will not reopen. Falling back to
+   * Google is exactly what the probe exists to prevent, so it cannot be the mid-interview answer
+   * either.
+   *
+   * Preserve first, then report, then show the screen. The order is deliberate: an alert that
+   * arrived before the answers were saved would be an alert about an interview whose answers
+   * might not have been.
+   */
+  async function haltForSpeechFailure(reason: string, partialAnswer = ''): Promise<void> {
+    if (haltedRef.current) return
+    haltedRef.current = true
+    setHaltNotice(HALT_MID_INTERVIEW)
+    await preserveProgress(partialAnswer)
+    await reportSpeechFailure(reason)
+    setPhase('speech_halted')
   }
 
   async function speakText(text: string): Promise<void> {
@@ -465,7 +666,7 @@ export default function VoiceInterview() {
    * interview on before they had been heard at all.
    */
   function listenForAnswer(lang: string = 'en-GB'): Promise<string> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const parts: string[] = []
       let resolved = false
       let engine: Recogniser | null = null
@@ -497,6 +698,29 @@ export default function VoiceInterview() {
         setStatusMessage('')
         setInterimText('')
         resolve(parts.join(' ').trim())
+      }
+
+      /**
+       * End the whole interview rather than this answer, and hand nothing to the browser.
+       *
+       * Rejects rather than resolving: the interview is an await loop, so an answer that simply
+       * resolved would be followed by the next question being spoken. `runInterview` catches
+       * `SpeechHalted` and does nothing, because `haltForSpeechFailure` has already put the halt
+       * screen up.
+       */
+      function halt(reason: string) {
+        if (resolved) return
+        resolved = true
+        recognitionRef.current = null
+        clearSilenceTimers()
+        setSilenceProgress(0)
+        setIsListening(false)
+        setStatusMessage('')
+        setInterimText('')
+        // The words heard so far on *this* answer, which no pair holds yet - the interview loop
+        // builds the pair after this promise settles, and it never will now.
+        void haltForSpeechFailure(reason, parts.join(' ').trim())
+        reject(new SpeechHalted(reason))
       }
 
       function resetSilenceTimer(initial = false) {
@@ -565,6 +789,14 @@ export default function VoiceInterview() {
           // Hand the rest of this same answer to the browser's recogniser, keep what was
           // already heard, and say what happened - both halves, not either.
           //
+          // **Not on an engagement that forbids the fallback.** The browser's recogniser streams
+          // to Google or to Apple, and "the socket dropped" is not a reason to do that - it is
+          // the exact circumstance the probe at device setup exists to prevent, arriving later.
+          // So the interview stops here instead, keeping what was answered.
+          if (speechPolicyRef.current === 'required') {
+            halt('socket_failed')
+            return
+          }
           // **Start it before claiming it.** The notice used to be set first and said "the
           // interview is carrying on using your browser to transcribe. Please continue." -
           // and then `startWebSpeech` answered `null`, which is what it does in Firefox. The
@@ -604,6 +836,14 @@ export default function VoiceInterview() {
       void (async () => {
         engine = await startDeepgram(hooks)
         if (!engine) {
+          // The probe passed at device setup and Deepgram has gone since - an expiring balance,
+          // a key revoked mid-engagement, a network that came and went. The fallback is refused
+          // here for the same reason it is refused on a drop: it would send this participant's
+          // voice to their browser vendor, which is what this engagement does not permit.
+          if (speechPolicyRef.current === 'required') {
+            halt('socket_failed')
+            return
+          }
           deepgramFailuresRef.current += 1
           // Two in a row is a deployment without Deepgram, not a bad moment. Stop asking: a
           // failed round trip before every answer is latency a participant sits through.
@@ -807,7 +1047,10 @@ export default function VoiceInterview() {
    * `(session_id, question_id)` and re-indexes from the row ids it returns, so a corrected
    * answer replaces the stored one under the id retrieved chunks already cite.
    */
-  async function postCompletion(pairs: CapturedPair[], ratings: SectionMaturityRating[]) {
+  async function postCompletion(
+    pairs: CapturedPair[],
+    ratings: SectionMaturityRating[],
+  ): Promise<boolean> {
     try {
       const res = await fetch(`${BASE}/interviews/${sessionToken}/complete`, {
         method: 'PATCH',
@@ -817,21 +1060,54 @@ export default function VoiceInterview() {
           ratings: ratings.length > 0 ? ratings : undefined,
         }),
       })
-      if (!res.ok) console.warn('complete endpoint returned', res.status)
+      // **Answered, not swallowed.** Both arms of this used to `console.warn` and return, and
+      // `handleFinishInterview` then set `finished` unconditionally - so a participant who had
+      // spent forty-five minutes on the page, lost connectivity, corrected three mangled answers
+      // and tapped Finish was told "Your responses have been recorded", and the transcript was
+      // unmounted behind that sentence with no way to try again. It is the one button the
+      // participant triggers and is told about, which is the exact shape this branch exists to
+      // remove.
+      if (!res.ok) {
+        console.warn('complete endpoint returned', res.status)
+        return false
+      }
+      return true
     } catch (err) {
       console.error('Failed to submit responses', err)
+      return false
     }
   }
 
   async function submitResponses(ratings: SectionMaturityRating[]) {
     setStatusMessage('Saving your responses…')
+    // The answer is deliberately not acted on here, and this is not the same omission as I4. The
+    // review screen this moves to *is* the retry: it carries every answer, and Finish resubmits
+    // the lot to the same door. Refusing to show it would strand a participant who has finished
+    // speaking, on the one path where nothing has been claimed to them yet.
     await postCompletion(qaRef.current, ratings)
     setPhase('complete')
     setStatusMessage('')
     setCurrentQuestion('')
   }
 
+  /**
+   * Start the interview, and absorb the one way it can stop rather than finish.
+   *
+   * `SpeechHalted` is thrown out of `listenForAnswer` when transcription has failed on an
+   * engagement that forbids the browser's recogniser. By the time it arrives here the halt screen
+   * is already up, the answers are checkpointed and the failure is reported, so there is nothing
+   * left to do but stop unwinding. Anything else is a real fault and is left to propagate.
+   */
   async function runInterview() {
+    try {
+      await conductInterview()
+    } catch (err) {
+      if (err instanceof SpeechHalted) return
+      throw err
+    }
+  }
+
+  async function conductInterview() {
     if (!sessionData) return
     const { session, script } = sessionData
     // The session is stamped with its interviewer's resolved configuration when it is created.
@@ -1038,7 +1314,18 @@ export default function VoiceInterview() {
     }
     const lang = interviewLangRef.current
     setStatusMessage('Listening for your rating…')
-    const spoken = await listenForAnswer(lang)
+    // This is the one listen the interview loop does not await directly - it is kicked off with
+    // `void` and resolves through `ratingResolveRef`. So a halt thrown here has no await to
+    // unwind into, and it is caught rather than left as an unhandled rejection. The rating
+    // promise is then deliberately never resolved: the loop parks on it, which is correct, since
+    // the halt screen has replaced the interview and nothing further may be spoken or recorded.
+    let spoken: string
+    try {
+      spoken = await listenForAnswer(lang)
+    } catch (err) {
+      if (err instanceof SpeechHalted) return
+      throw err
+    }
     // Guard: if user already tapped while we were listening, the resolve has fired — bail out
     if (!ratingResolveRef.current) return
     const parsed = parseRatingFromVoice(spoken)
@@ -1137,8 +1424,21 @@ export default function VoiceInterview() {
    */
   async function handleFinishInterview() {
     setSavingCorrections(true)
-    await postCompletion(editableTranscript, sectionRatingsRef.current)
+    setFinishError('')
+    const saved = await postCompletion(editableTranscript, sectionRatingsRef.current)
     setSavingCorrections(false)
+    if (!saved) {
+      // The transcript stays on screen, every field still editable, and Finish is still there to
+      // press again. Telling the truth is necessary and not sufficient: a participant told it
+      // failed and left with nothing to press has still lost their corrections.
+      setFinishError(
+        'We could not save your corrections just now - the connection did not reach us. Your ' +
+        'original answers are safe, but the changes you have made on this page are not saved ' +
+        'yet. Please check your connection and press Finish again. If it keeps failing, use ' +
+        'Copy above to keep your own copy before you close this window.',
+      )
+      return
+    }
     setFinished(true)
   }
 
@@ -1164,6 +1464,35 @@ export default function VoiceInterview() {
           )}
           <p className="text-red-600 text-xl font-semibold mb-2">Unable to load interview</p>
           <p className="text-gray-500">{errorMessage}</p>
+        </div>
+      </div>
+    )
+  }
+
+  // The interview could not be transcribed, and this engagement does not permit the browser's own
+  // recogniser. Its own screen rather than `error`, which says "Unable to load interview" - the
+  // page loaded perfectly well and the participant may be forty minutes into it. It apologises,
+  // says what has been kept, and asks them to come back, because there is nothing they can do
+  // about a transcription provider and telling them to try another browser would be a lie on two
+  // of the three routes here.
+  if (phase === 'speech_halted') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
+        <div className="max-w-lg w-full text-center">
+          {branding?.header_image_url && (
+            <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+          )}
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-amber-50 mb-3">
+            <AlertTriangle size={24} className="text-amber-600" aria-hidden="true" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">We have had to stop here</h1>
+          <p
+            role="alert"
+            data-testid="speech-halted-notice"
+            className="text-gray-600 text-sm leading-relaxed"
+          >
+            {haltNotice || HALT_MID_INTERVIEW}
+          </p>
         </div>
       </div>
     )
@@ -1282,6 +1611,17 @@ export default function VoiceInterview() {
                   </div>
                 </div>
 
+                {finishError && (
+                  <div
+                    role="alert"
+                    data-testid="finish-error"
+                    className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 mb-4"
+                  >
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                    <span>{finishError}</span>
+                  </div>
+                )}
+
                 <div className="text-center">
                   <button
                     onClick={handleFinishInterview}
@@ -1289,7 +1629,7 @@ export default function VoiceInterview() {
                     className="px-8 py-3 rounded-xl text-white font-medium text-sm disabled:opacity-50 transition-opacity"
                     style={{ backgroundColor: primaryColor }}
                   >
-                    {savingCorrections ? 'Saving…' : 'Finish'}
+                    {savingCorrections ? 'Saving…' : finishError ? 'Try again' : 'Finish'}
                   </button>
                 </div>
               </>
@@ -1530,13 +1870,29 @@ export default function VoiceInterview() {
             </button>
           </div>
 
-          <button
-            onClick={runInterview}
-            className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
-            style={{ backgroundColor: branding?.primary_color }}
-          >
-            Start Interview
-          </button>
+          {/* The probe's answer, and the only thing that stands between this button and an
+              interview. On an engagement that permits the browser's recogniser the probe never
+              runs and `speechProbe` stays `unchecked`, which is why the refusal is keyed on the
+              one value that means "asked and refused" rather than on "not yet ready". */}
+          {speechProbe === 'unavailable' ? (
+            <div
+              role="alert"
+              data-testid="speech-unavailable-notice"
+              className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-900"
+            >
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+              <span>{haltNotice}</span>
+            </div>
+          ) : (
+            <button
+              onClick={runInterview}
+              disabled={speechProbe === 'checking'}
+              className="bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
+              style={{ backgroundColor: branding?.primary_color }}
+            >
+              {speechProbe === 'checking' ? 'Checking your connection…' : 'Start Interview'}
+            </button>
+          )}
         </div>
       </div>
     )

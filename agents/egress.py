@@ -116,6 +116,10 @@ class Reach(Enum):
     # named provider under a stated contract, and it carries the client's words rather than
     # only the participant's connection.
     PARTICIPANT_TRANSCRIPTION = "a speech-to-text service, streamed from the participant"
+    # The *other* speech-to-text path, and the reason it is a reach of its own rather than a
+    # second destination for the one above: there is no contract behind it and no provider this
+    # deployment chose. See `BROWSER_SPEECH_EGRESS`.
+    BROWSER_SPEECH = "the browser vendor's own speech-to-text service"
 
 
 @dataclass(frozen=True)
@@ -370,6 +374,52 @@ PARTICIPANT_SPEECH_EGRESS = Egress(
 )
 
 
+# The reach this file had no row for, on the path it had just described in confident detail.
+#
+# `PARTICIPANT_SPEECH_EGRESS` above names Deepgram, under a stated contract, with retention
+# disabled. It is the *first choice*. When it cannot be had, the interview page falls back to the
+# browser's own `SpeechRecognition` - and **Chrome streams that audio to Google, Safari to
+# Apple**. There is no contract, no retention undertaking, and no provider this deployment chose;
+# the participant's every answer, in the client's own words, reaches whoever made their browser.
+#
+# It is not a new leak - it is what every interview did before Deepgram had a caller at all, and
+# the amber notice the page shows on a handover has always been honest about *which* recogniser
+# is listening. What was new, and what this row closes, is that sp66 made the Deepgram
+# undertaking specific and confident while leaving the alternative undeclared. This module's own
+# rule, stated on the row above: **a row that names one shape reads as an assurance about all of
+# them.**
+#
+# **This is the first participant reach that a grant actually moves**, and that is the policy
+# decided on 13 September rather than a property of browsers. A project not granted
+# `HOSTED_INFERENCE` - `sensitive`, or any mode narrowed by `force_local_inference` - never
+# reaches this path at all: `api/services/speech_policy.py` answers `required` for it, the
+# interview page probes Deepgram at device setup and refuses to begin without it, and a
+# mid-interview failure stops the interview rather than handing the microphone to Google. So the
+# two columns of `_DESTINATION` genuinely differ here, where for `PARTICIPANT_BROWSER` and
+# `PARTICIPANT_TRANSCRIPTION` they are the same object.
+#
+# `HOSTED_INFERENCE` is the grant rather than a capability of its own, and deliberately so:
+# `speech_policy_for` asks exactly that question, so the declaration derives from the routing
+# rather than restating it - which is the argument `_mode_key`'s removal made for this whole
+# module. A capability nothing consults would read as a gate that is not there.
+#
+# Rendered, unlike the two rows above it, in `UNDERTAKINGS` on
+# `ui/src/pages/DataArchitecture.tsx` - two entries, one for each answer, keyed on the same
+# resolved grant, so an auditor reading a sensitive engagement's page is told the browser
+# recogniser is refused rather than left to infer it from an absence.
+BROWSER_SPEECH_EGRESS = Egress(
+    reaches=Reach.BROWSER_SPEECH,
+    sends=(
+        "the participant's speech, streamed live from their browser - so every answer in the "
+        "client's own words - to whichever speech service their browser vendor uses: Google for "
+        "Chrome and Edge, Apple for Safari. No contract governs it, nothing undertakes not to "
+        "retain it, and this deployment neither chose the provider nor sees the connection. It "
+        "is reached only when Deepgram cannot be, and only on an engagement permitted hosted "
+        "inference"
+    ),
+)
+
+
 _NOWHERE = Destination(label="nothing outside this deployment", leaves_deployment=False)
 _PARTICIPANT_IMAGE_HOST = Destination(
     label="any address an administrator configures, reached by the participant's browser",
@@ -395,6 +445,10 @@ _ANY_ADDRESS = Destination(label="any address the agent names", leaves_deploymen
 _REACH_GRANT: dict[Reach, Capability] = {
     Reach.VECTOR_STORE: Capability.CLOUD_VECTOR_STORE,
     Reach.INFERENCE: Capability.HOSTED_INFERENCE,
+    # Not because a browser's recogniser is inference, but because `speech_policy_for` asks this
+    # exact question to decide whether the interview page may fall back to it - so the
+    # declaration derives from the routing instead of restating it. See `BROWSER_SPEECH_EGRESS`.
+    Reach.BROWSER_SPEECH: Capability.HOSTED_INFERENCE,
 }
 
 
@@ -445,6 +499,21 @@ _DESTINATION: dict[tuple[Reach, bool], Destination] = {
     # premises and still streams its interviews to Deepgram, by decision.
     (Reach.PARTICIPANT_TRANSCRIPTION, True): _TRANSCRIPTION_HOST,
     (Reach.PARTICIPANT_TRANSCRIPTION, False): _TRANSCRIPTION_HOST,
+    # **Two different objects, and the first participant reach where that is true.** The three
+    # rows above resolve to one destination in both columns because no grant stands between them
+    # and where they go; this one is refused outright on a project without `HOSTED_INFERENCE`,
+    # so `_is_gated` derives `True` and the privacy page's badge is earned rather than asserted.
+    (Reach.BROWSER_SPEECH, True): Destination(
+        label="the browser vendor's speech service - Google for Chrome and Edge, Apple for Safari",
+        leaves_deployment=True,
+    ),
+    (Reach.BROWSER_SPEECH, False): Destination(
+        label=(
+            "nowhere - this engagement requires Deepgram, and an interview that cannot reach it "
+            "stops rather than falling back to the browser's own recogniser"
+        ),
+        leaves_deployment=False,
+    ),
 }
 
 
