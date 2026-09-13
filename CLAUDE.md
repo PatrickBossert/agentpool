@@ -475,8 +475,26 @@ brings the reviewer to the content on the server** — never the content itself.
 existed in the retired payload, which carried a `review_url` pointing at the dashboard; what it
 lacked was a token and a channel that was not n8n. `deliver_reset` in
 `api/services/invite_service.py` is the established shape for "one place delivery is decided", and
-while `FROM_EMAIL` names an unverified Resend domain an administrator-visible link is the honest
-channel — the same one the invite and reset doors run on today.
+an administrator-visible link is the channel the invite and reset doors run on today.
+
+**That sentence used to end "while `FROM_EMAIL` names an unverified Resend domain", and the
+premise was false.** `taskreimagination.ai` is verified (`eu-west-1`), confirmed against
+`GET /domains` on 13 September 2026, and it is the domain PAM's updates already send from. **Email
+delivers, and has.** The claim appeared in four places in this file and was the stated
+justification for four separate decisions - hand-delivered invites, the administrator reset door
+returning a raw token, `deliver_reset` being described as where Resend *would* be wired, and a
+*Known issues* entry gating reminder emails on verification. Every one of those justifications is
+void. **Whether the decisions should change is a separate question** - hand delivery may still be
+wanted for a credential - but none of them may cite this reason again.
+
+Worth naming as a class, because this file is mostly claims about the world: **a fact about an
+external service is the kind of claim that rots silently, and nothing here can check one.** The
+same shape as *a fake is a claim about an external system* below, and as the ElevenLabs add-voice
+door recorded as "never confirmed against the real provider" - except this one was confirmed once,
+became untrue, and went on being quoted. It survived because every reader found it corroborated:
+it was in this file, in the memory index, and in a *Known issues* entry, and the three were each
+other's evidence. **Re-derive a provider fact from the provider**, which for this one is a
+read-only API call taking seconds.
 
 Authority on a project is read, never inferred. `caller_roles(slug, payload)` in
 `api/services/authority_service.py` walks JWT to `users`, to `project_memberships` for that
@@ -2403,14 +2421,24 @@ second domain setting, and a `FROM_EMAIL` with no address raises rather than min
 `pam@`. Platform mail (the welcome email) keeps `FROM_EMAIL` **entire**, name and address
 both - no role owns it, and `noreply@` is honest for a message nobody should answer.
 
-Two things are **assumed and unconfirmed**, because the domain is not verified in Resend
-and nothing can be tested against it: that Resend permits sending from arbitrary local
-parts on a verified domain (verification is per-domain, so almost certainly yes), and that
-inbound routing can fan several addresses into one webhook. Confirm both when the domain is
-verified, before relying on either.
+**The domain is verified** - `taskreimagination.ai`, `eu-west-1`, confirmed against Resend's
+`GET /domains` on 13 September 2026, alongside `datamaturity.futureedge.consulting`. This
+section said the opposite for a long time and the correction is argued in full above, under
+the review-notification paragraph; what matters here is which of its consequences survive and
+which do not.
 
-No `reply_to` is set anywhere, deliberately: nothing can receive - the domain is
-unverified, and there is no inbound routing, mailbox or threading token. A `reply_to` that
+Two things are **still assumed and unconfirmed**, and they are now confirmable rather than
+blocked: that Resend permits sending from arbitrary local parts on a verified domain
+(verification is per-domain, so almost certainly yes - but `pam@` and
+`stakeholder-manager@` have never been *sent* from), and that inbound routing can fan
+several addresses into one webhook. **Do not treat "the domain is verified" as having
+settled either**: the first is about local parts and the second about inbound, and neither
+follows from a verified domain. Platform mail is the one path that depends on neither,
+because it keeps `FROM_EMAIL` entire.
+
+No `reply_to` is set anywhere, deliberately: nothing can **receive**. That reason is
+unchanged by verification, which governs sending alone - there is no inbound routing, no
+mailbox and no threading token. A `reply_to` that
 bounces is worse than none. A role-keyed `From` does not change that yet, but it does mean
 that when the mailboxes exist a reply already goes to the right place by default, and a
 `reply_to` would only be needed to say something *different*. Inbound routing itself -
@@ -2596,7 +2624,14 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   dark tests already name as theirs. Argued in full under *Test commands*; recorded here so it
   is findable as work.
 - `python-pptx` must be installed inside the venv (not system pip on macOS with Homebrew Python 3.13 / PEP 668)
-- `taskreimagination.ai` must be a verified sender domain in Resend before reminder emails deliver
+- ~~`taskreimagination.ai` must be a verified sender domain in Resend before reminder emails
+  deliver~~ - **closed, and it had been closed for some time before anybody checked.** The domain
+  is verified in `eu-west-1`, confirmed against `GET /domains` on 13 September 2026. It is left
+  struck through rather than deleted because this entry was **cited as a reason** by four
+  decisions elsewhere in this file, and a reader who finds those citations needs to land
+  somewhere that says the reason is void rather than find nothing. What is *not* closed by it:
+  `pam@` and `stakeholder-manager@` have never been sent from, inbound routing does not exist,
+  and `dev_mode` still defaults to `True` so project mail is still held.
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
 - The `business_plan` crew has never completed a real run. It only became buildable when
   `visual_illustrator` was registered; before that `create_business_plan_crew` raised
