@@ -32,7 +32,7 @@ These rules apply to all content produced for this project — UI labels, copy, 
 | Auth | JWT (python-jose), bcrypt (direct — NOT passlib; see below) |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS v3, React Router v6 |
 | Email | Resend HTTP API (httpx — not SMTP) |
-| Voice | ElevenLabs (TTS) + Web Speech API + Deepgram (STT) |
+| Voice | ElevenLabs (TTS) + Deepgram (STT, primary since sp66) + Web Speech API (fallback) |
 | Infra | Docker Compose (ChromaDB), Caddy (prod), cloudflared (prod) |
 
 ---
@@ -101,7 +101,17 @@ both sides; tests using the shared `client` fixture must scope every assertion t
 created rather than hardcoding an id or counting globally.
 
 **Export `DATABASE_DIR`, `PROJECTS_DIR` and `DATA_DIR` to a private directory before invoking
-pytest.** `conftest.py` reads all three with `setdefault`, so exporting them is the whole of it.
+pytest, and `mkdir -p` all three.** `conftest.py` reads all three with `setdefault`, so
+exporting them is the whole of *pointing* the suite somewhere private - but it does not create
+the directories, and not every test can. `test_agent_chat`'s fixture opens a bare
+`aiosqlite.connect(db_path)`, which will not create a parent, so exporting without creating
+produced **five errors, all `sqlite3.OperationalError: unable to open database file`, all
+passing when that file was run alone**. That is precisely the shape the trap below describes -
+filesystem errors, never an assertion - so it reads as somebody else's collision rather than as
+your own missing `mkdir`. It self-heals on the second run, because a later test's
+`get_connection` makes the directory, which is the worst available signal: the run that told
+you something was wrong is the one you then cannot reproduce. The instruction stood here for
+sprints without the two words, and cost sp66 an hour of chasing the wrong trap.
 The fixed defaults are not only a hazard across *successive* runs: two agents running pytest at
 once **corrupt each other**, because `conftest.py` `shutil.rmtree`s the default `DATA_DIR` at
 import time, so a second session starting mid-flight deletes a directory under the first. The
@@ -258,6 +268,24 @@ been a fabricated UUID forming a well-formed dead link on the deployment's own d
 into `draft_message`. **"This code has never run" is not "this code works"**, and repairing
 whatever kept it from running is precisely when the difference arrives.
 
+That shape has now arrived often enough to be expected rather than discovered: the branding
+door that answered a URL nothing served, unseen because no deployment had ever uploaded a
+header image; `insert_interview_session`, extended with a column production never populated;
+`upsert_agent_config`, built three tasks before any door could write its table. **sp66's
+Deepgram grant door is the sharpest instance, because two defects were sitting in it and the
+repair that armed the path is what found both.** `GET /api/interviews/{session_token}/
+deepgram-token` landed in `e1c075d4` on 13 May 2026 - mounted, tested, and called by no line
+of `ui/src` for **four months**. It read `resp.json()["key"]` and posted
+`{"grant_type": "instant"}`; Deepgram's
+grant endpoint answers `access_token` and takes only `ttl_seconds`, so the first real call
+would have been a `KeyError` and a 500. Beside it, `listenForAnswer` returned `''` when the
+browser had no `SpeechRecognition`, so a participant in Firefox gave a full interview that
+recorded nothing and told nobody. Both were green throughout, because a door nothing opens
+cannot fail and a test can supply the recogniser the browser will not. **The lesson to take
+is about the review question rather than about Deepgram**: for any path, ask *what calls this
+in production* before asking whether its tests pass, and treat "nothing does" as a finding in
+itself rather than as an absence of evidence.
+
 **Quoting a rule is not applying it.** A guard was written on this branch whose docstring
 *cited* this file's own "a guard's reach must be established, not described" - and then
 described its reach instead of establishing it. It was defeated on the first attempt, by a
@@ -287,6 +315,32 @@ code protects that code and nothing else, which is the milestone-clock lesson ar
 second form. The generalisable half is the repair: the sentinel is held against **every**
 identity's image rather than against Avery's, because the collision was found by reading one
 agent's default and the next agent added could be any of the eighteen.
+
+**A fake is a claim about an external system, and nothing here can check one.** This is a
+*different* mechanism from every entry above, and the difference decides where to look for it.
+In those, the assertion is in the wrong place - one layer away from the property, scoped to a
+container, drawn from the system's own defaults - and reading the test against the code finds
+it. Here the assertion is in exactly the right place, asserting exactly the right thing, and
+the simulated world it runs in is wrong; reading the test against the code finds nothing,
+because the code and the test agree. The only thing that can contradict a fake is the
+specification of the system it imitates.
+
+Two of sp66's three Important findings were this, and both fakes were wrong **in the same
+direction as the bug**, which is what made them invisible. `FakeSocket.drop()` fired `close`
+alone; a real socket failing after open fires `error` **then** `close`, which is the exact case
+the handover code exists for - so the non-idempotent handler started a second recogniser, the
+first was orphaned holding the microphone for the rest of the interview, and the test that
+existed to cover the handover watched one event and saw one handover. `FakeRecorder.stop()`
+fired no `onstop`, so a flush that waited for the recorder's final chunk could not be
+distinguished from one that did not wait at all. Neither was found by the suite. Both were
+found by a reviewer reading the code against the WebSocket and MediaRecorder specifications.
+
+So: **when a test's world is simulated, the fake needs its own review against the real thing's
+contract, and it is worth writing the contract down beside it.** The fakes now fire `error`
+then `close`, and hand over a final chunk before `onstop`, because that is what the real ones
+do - and where a fake deliberately simplifies, the simplification is a comment rather than a
+silence. The cheapest tell that you are in this territory: a test whose green depends on an
+event ordering you have not read the specification for.
 
 ---
 
@@ -1359,8 +1413,9 @@ and wrong the first time the provider adds one.
 **Two notions of an engagement's locale, and nothing reconciles them.** The picker's accent is
 chosen per agent, per project, when a voice is picked - the **speaking** side. An agent's
 `language` and `country_code` are also per agent per project, set in the agent Setup section,
-stamped into `voice_config` at session creation, and `VoiceInterview.tsx:606` joins them into
-`recognition.lang` for the browser's speech-to-text - the **listening** side. Neither moves the
+stamped into `voice_config` at session creation, and `VoiceInterview.tsx` joins them into
+`recognition.lang` for the browser's speech-to-text - the **listening** side (a line number
+stood here for a sprint and was 168 lines out by sp66; name the symbol). Neither moves the
 other. **So an Irish engagement given an Irish voice still listens as `en-GB`**, until somebody
 separately edits Avery's `country_code`. Of the four planned engagements - Scottish, Irish, New
 Zealand, Australian - this reaches the recognition side of all but the British default. sp64
@@ -1374,6 +1429,13 @@ the design document
 (`docs/superpowers/specs/2026-09-04-agent-config-and-interviewer-selection-design.md`), which
 says *"the gap is on the speaking side, not the listening side"*. That is now incomplete: the
 listening side is correct and **unconnected**, which is a different thing from correct.
+
+**Since sp66 the listening side is two engines, and they are told the locale in two
+resolutions.** Deepgram is sent the bare `language` off the session's stamp (`en`), because
+that is what its `language` parameter takes; the browser's recogniser is still given
+`language-country_code` (`en-GB`). Both read the same stamped row, so they cannot disagree
+about the engagement - but they are not the same string, and a future attempt to join the
+accent to the recogniser has **two** consumers to satisfy rather than one.
 
 Three smaller things about that branch, recorded so they are known rather than rediscovered.
 The design document's Testing section still reads *"`always_female` never yields Avery, and
@@ -1416,6 +1478,84 @@ names both fields in `PARTICIPANT_IMAGE_EGRESS` and **nothing renders that row**
 this reach is neither, because the request is made by a *participant's browser* and not by this
 deployment. Attributing it to an agent would be false, so it is a known limitation of the privacy
 view rather than an oversight; surfacing it belongs with the upload path, not before it.
+
+### Listening to a participant: the recogniser, its vocabulary, and its fallback
+
+**Deepgram is the recogniser and the browser's is the fallback, and that has only been true
+since sp66.** The door issuing the grant was written in May 2026 and called by nothing for four
+months - argued in full under *Reviewing changes*, because the two defects sitting in it are a
+lesson about review rather than about speech. What matters here is the shape that came out of
+connecting it, which is four decisions a future change must not quietly undo.
+
+**The model and the boost parameter are one decision, and a mismatch is silent.** `keyterm` is
+Nova-3's; `keywords` is Nova-2's legacy feature with a different syntax. Send either to the
+model that does not implement it and Deepgram **ignores the parameter** rather than refusing the
+connection - the socket opens, transcription is perfect, and nothing is boosted, which is
+indistinguishable from the vocabulary work never having been done. So `DEEPGRAM_MODEL` and
+`DEEPGRAM_KEYTERM_PARAM` live beside each other in `interview_service.py`, travel to the browser
+in a single `listen_params` dict, and are asserted together
+(`test_the_model_and_the_boost_parameter_are_chosen_together`). **The client decides neither**,
+and must not start to: a vocabulary assembled in TypeScript is a second declaration of a
+server-side pairing, free to fall behind it.
+
+**The grant JWT goes in the URL as `?access_token=`, not in `Sec-WebSocket-Protocol`.** The
+documented `Sec-WebSocket-Protocol: token, <value>` form is for an API **key**; a temporary JWT
+offered that way is answered 401. A browser cannot set an `Authorization` header on a handshake,
+so the URL is the only route. This is worth a line for one reason: **this repository's own
+`api/routers/ws.py` authenticates its JWTs by the subprotocol form**, so the nearest local
+precedent is the wrong one, and anybody reaching for "how do we do WebSocket auth here?" is led
+directly into the 401.
+
+**The vocabulary comes from the project's own material, never from a list in this repository.**
+`keyterms_for_project(slug)` reads two sources - `value_chain_ledger` labels where `active = 1`,
+and the proper nouns extracted from the `interview_scripts` artefact - so an engagement's terms
+are whatever that engagement has already declared and written. This is the rule the voice work
+reached after five disagreeing declarations of the same facts, arriving one layer over, and the
+failure mode here is worse than a wrong voice id: a hardcoded vocabulary is a **list of one
+client's names, committed to this repository and sent up with every other client's interview**.
+The extraction is positional rather than a stopword list (a capitalised run that *opens* a
+sentence and is one word long is discarded, which is what removes "How" and "Please" without
+anybody listing them), capped at `MAX_KEYTERMS = 100`, registry labels first because declared
+vocabulary should outrank inferred. The cost is stated where it is paid: a proper noun that only
+ever opens a sentence is missed, which is the safe direction - a missing term costs one word's
+accuracy, a junk term costs a place on the cap.
+
+**The fallback is behaviour, not a `catch` block, and four cases are deliberately not the same
+case.** No Deepgram key, no streaming support, or a socket that will not open: **silent** fall
+back to the browser's recogniser, and after two consecutive failures the client stops asking, so
+a deployment without Deepgram does not pay a failed round trip before every answer. A socket
+that **drops mid-answer**: what was already heard is kept, the browser's recogniser picks up
+*the same answer*, and the participant is told - both halves, because neither is enough alone.
+Microphone access lost: a plain notice naming what to do. And **nothing in this browser can
+listen at all**: said plainly, in an `alert` live region that does not clear itself, because the
+sentence it carries is *"nothing you say is being recorded"* and a notice that times out is gone
+before somebody mid-sentence looks up. That last case is a change in behaviour rather than a
+new message - before sp66 an interview in a browser with no `SpeechRecognition` ran to the end
+recording nothing and telling nobody.
+
+Two properties of that fallback are easy to remove by accident. `onDropped` is **at most once**,
+guarded in `deepgram.ts` rather than in the page, because "an abnormal post-open failure fires
+`error` then `close`" is knowledge about WebSockets and one file should hold it - without the
+guard a second recogniser starts on one microphone and the first is orphaned, holding the
+microphone for the rest of the interview. And `stop()` **waits for the flush**, bounded at
+`FLUSH_TIMEOUT_MS = 1500`: closing the socket in the same tick discarded the tail of any answer
+ended by tapping "Done speaking", which was a regression against the path being replaced -
+`recognition.stop()` delivers a pending `onresult` before `onend`, so the browser engine never
+lost it. The deadline is a ceiling and not a cost; the ordinary wait is one round trip.
+
+**Two things travel to Deepgram, not one**, and `PARTICIPANT_SPEECH_EGRESS` in `agents/egress.py`
+names both - the participant's audio, and this engagement's vocabulary, which is client material
+and is *not* audio. That is the sp62 ElevenLabs correction arriving again and it is argued under
+*Egress is granted, never assumed*; the point to carry here is that the vocabulary is the half a
+row naming only the audio would silently exclude.
+
+**Nothing on this path has ever spoken to the real Deepgram.** The `access_token`-in-URL form,
+the `keyterm` spelling and the webm/opus stream are all read off documentation, so every test
+encodes a *reading of the docs* rather than the provider's behaviour, and a wrong reading opens a
+socket that transcribes and boosts nothing. This is the same honesty the ElevenLabs add-voice
+door is recorded with under *Known issues* - "never confirmed against the real provider" - and
+the mitigation is the fallback: a wrong guess degrades to the behaviour every interview before
+sp66 had, rather than losing an interview. **Treat the first live interview as the test.**
 
 Maya owes one interview script per active value chain activity. Coverage is checked on every
 `interview_scripts` write by `api/services/coverage_validation.py` and reported as
@@ -1964,11 +2104,29 @@ carries - is a second line of defence, never the guarantee.
 **The boundary, stated honestly.** For those two declared capabilities, nothing leaves a
 `sensitive` deployment. Five paths still send material off-premises with **no mode question
 asked at all** - the global skills library door, `TavilySearchTool`, `WebFetchTool`,
-Deepgram/ElevenLabs, and Resend - every one pre-existing, none widened here, and each already
-documented in this file or declared in `agents/egress.py` (where an ungated reach resolves to
-the same `Destination` in both modes, written out rather than left implicit, because that
-sameness *is* the finding). "Nothing escapes secure mode" is true of the two capabilities and of
-nothing wider.
+Deepgram/ElevenLabs, and Resend - every one pre-existing, none widened here, and each documented
+in this file or declared in `agents/egress.py` (where an ungated reach resolves to the same
+`Destination` in both modes, written out rather than left implicit, because that sameness *is*
+the finding). "Nothing escapes secure mode" is true of the two capabilities and of nothing wider.
+
+**That disjunction was doing more work than it looked, and sp66 found out how.** It reads "in
+this file **or** declared in `agents/egress.py`", and for Deepgram only the first arm was ever
+true - `TOOL_EGRESS` is keyed on tool class names and Deepgram is not a tool, so
+`agents/egress.py` held no reference to it at all. The prose arm was worse than absent: the
+rendered privacy page said *"interview audio is streamed for transcription with content
+retention disabled"*, which was an **undertaking about a path nothing had ever called**. So a
+reader checking the boundary found a sentence, believed the path was surveyed, and the path did
+not exist. Closed in sp66 - `PARTICIPANT_SPEECH_EGRESS` is declared, on its own
+`Reach.PARTICIPANT_TRANSCRIPTION`, following the `PARTICIPANT_IMAGE_EGRESS` precedent because
+the request is made by the participant's browser rather than by this deployment - and it names
+**two** things travelling where the prose named one: the audio, and this engagement's
+vocabulary, its value chain labels and the proper nouns from its interview scripts. That second
+half is client material and is not audio, which is exactly the correction sp62 made to the
+ElevenLabs row two paragraphs down; a row naming one shape reads as an assurance about all of
+them. **ElevenLabs is still prose-only**, so the disjunction still has one member leaning on its
+weaker arm - when that is closed, the sentence above can lose the "or". `EGRESS_GRANTS` is
+deliberately not extended for either: a capability nothing consults reads as a gate that is not
+there.
 
 **Two of those five are reachable from inside a crew run**, and knowing which two is the
 claim worth keeping true. `TOOL_EGRESS` in `agents/egress.py` is the table that says so:
@@ -2144,10 +2302,17 @@ wanted, is a platform-level hold, not a default slug. `dev_mode`'s redirect addr
 own administrators - must **refuse to send** when a project has none. A fallback to the
 intended recipients would make this switch fail open, which is the worst direction for it.
 
-One live consequence worth knowing before diagnosing it as a bug: with `dev_mode` on, a
-participant who asks for their interview transcript is answered `{"sent": true}`, never
-receives it, and it arrives in the operator's inbox. That is what the setting means, and it
-is the only path where the recipient triggered the action and is told it worked.
+One consequence of the hold is worth knowing before diagnosing it as a bug, and this paragraph
+used to overstate who meets it. With `dev_mode` on, `POST
+/api/interviews/{session_token}/email-transcript` answers `{"sent": true}`, delivers nothing to
+the participant, and puts the transcript in the operator's inbox. The door still does exactly
+that - but **no participant can reach it any more**: sp66 removed the review step's "email me a
+copy" checkbox, which was its only caller, so the one path in the product where the *recipient*
+triggered a send and was told it worked is now reachable only by hand. See *Known issues* for
+why the door was kept. **Corrected rather than deleted**, because the shape is what to watch for
+in the next send path rather than a fact about this one: a hold that answers success to the very
+person it is holding from has to be written down somewhere, or it is diagnosed as a delivery
+failure.
 
 ---
 
@@ -2298,7 +2463,18 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   before its first task. Treat its first run as an experiment.
 - Deepgram (STT) and ElevenLabs (TTS) are used in secure mode by decision, both being
   streamed with no content retention. Local speech services are future work, not a
-  current requirement. ElevenLabs is now reached for a **second** kind of request - the two
+  current requirement. **For Deepgram that sentence described an intention until sp66, not a
+  practice**: the grant door had existed since May 2026 and nothing in `ui/src` had ever called
+  it, so the decision, the undertaking on the privacy page and the entry here were all about a
+  path with no traffic on it. It is connected now, it is the primary recogniser with the
+  browser's as the fallback, and what travels on it is **two things rather than one** - the
+  participant's audio and this engagement's vocabulary. Both are declared in
+  `PARTICIPANT_SPEECH_EGRESS`; the decision itself is unchanged. The residual is the one
+  ElevenLabs' add-voice door already carries below: **no part of this path has spoken to the
+  real provider.** The URL form, the `keyterm` spelling and the webm/opus stream are read off
+  documentation, so a wrong reading opens a socket that boosts nothing, and the fallback is
+  what keeps the worst case at "today's behaviour" rather than "a lost interview". Argued in
+  full under *Listening to a participant*. ElevenLabs is reached for a **second** kind of request - the two
   voice listings behind `GET /projects/{slug}/voices` (`api/services/voice_catalogue.py`) -
   and that request carries no client material at all: an accent, a sex, and a search term the
   consultant typed. It is recorded because the row said "interview text" and would otherwise
@@ -2318,6 +2494,36 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - Avery still blocks on `HumanInputTool` for up to 24 hours during an interview programme,
   and nothing notifies the crew when a session completes. It does not affect interviewee
   experience, which is why sub-project B left it alone.
+- **`POST /api/interviews/{session_token}/email-transcript` is orphaned and deliberately kept.**
+  sp66 removed the review step's "email me a copy" checkbox - it promised a delivery that
+  `dev_mode` was holding, and it was the *only* reader of the participant's edits, so a
+  participant who corrected a mangled answer and left the box unticked had their corrections
+  discarded. The door behind it is still mounted, still tested (five backend files touch it),
+  and now has **no caller in `ui/src`**. Kept rather than retired for one reason: it is a
+  working, well-guarded send path and the product wants *some* route to a participant's own
+  transcript, so deleting it would be deleting the mechanism rather than the promise. **Who can
+  call it, and what happens:** anybody holding a `session_token` for a completed session, by
+  hand - no login. It refuses a destination that is not the stakeholder's own address on file,
+  caps the body, and rate-limits to three sends per session per hour, so a leaked token cannot
+  relay attacker-chosen text from the sending domain. Under `dev_mode` it answers
+  `{"sent": true}` and the transcript goes to the operator, which is the corrected sentence in
+  the mail section above. **If it is ever retired, it takes the router handler, the request
+  model, the rate-limit registration, and tests in five files with it** - and that mail-section
+  paragraph must be corrected a second time, since it would then describe no door at all.
+- **The keyterm read widens what a session token discloses, and that is a judgement rather
+  than an oversight.** `GET /api/interviews/{session_token}/deepgram-token` answers the whole
+  **active** `value_chain_ledger`, while the session itself is anchored to one node. The
+  holder of that token is already served their entire interview script verbatim one endpoint
+  over, so the script half of the vocabulary is a strict subset - the ledger half is not: it
+  discloses the shape of the whole value chain. Judged acceptable (a node label is a few words
+  naming an activity, and the interview discusses the value chain with that person anyway), and
+  recorded because somebody may reasonably disagree. **Narrowing it to the session's own node
+  and script is a one-line change** in `keyterms_for_project`.
+- A Deepgram socket is opened **per answer**, not per interview, which costs a handshake of
+  latency before each one. It matches the `new SpeechRecognition()` per answer it replaces and
+  it fits the grant's 30-second TTL exactly, and the microphone stream *is* held for the whole
+  interview so the browser's recording indicator does not flicker. If the latency is felt, the
+  fix is to open the next socket while the question is being spoken, not to lengthen the grant.
 - `complete_session` and `_find_session_db` in `api/services/interview_service.py` open
   their connections with a bare `aiosqlite.connect(db_path)`, not
   `api.database.get_connection(slug)`. WAL survives that, because it is a persistent
@@ -2326,6 +2532,13 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   concurrent interview completions in `tests/test_interview_concurrency.py` - it did not
   fail the test on this workload, but the `get_connection` guarantee does not actually
   reach the `/complete` endpoint's writes. Worth a follow-up task.
+
+  **`_find_session_db` also runs twice per grant request**, and that path is now per answer
+  rather than per interview, so the cost is newly worth something: each call scans every
+  project database. `api/routers/interviews.py` calls it once inside `get_session_with_script`
+  and again to recover the slug the keyterms need - and `get_session_with_script` **already
+  computes that slug** and simply does not return it. Returning it removes both scans; the
+  `speak` door has the same shape and would be fixed by the same line.
 - Secure mode runs two local models concurrently. `OLLAMA_MAX_LOADED_MODELS` defaults to 1, which
   makes them evict each other on every alternation regardless of free memory - see
   `docs/runbook-local-models.md` before diagnosing local models as slow.

@@ -289,10 +289,17 @@ async def get_deepgram_token(session_token: str):
     scripts - client material, answered to whoever holds a session token, which is the whole of
     what this router authenticates by. That is the right door for them rather than a widening of
     it: the holder of this token is already answered the *script* by `GET /{session_token}`,
-    verbatim and in full, and the value chain node the session is anchored to comes with it. The
-    vocabulary is a strict subset of what the same caller already reads one endpoint over, so
-    nothing is disclosed here that was not disclosed before, and the authentication is
-    deliberately left exactly as it was.
+    verbatim and in full, and the value chain node the session is anchored to comes with it.
+
+    **The script half is a strict subset of that. The ledger half is not, and saying so is the
+    point.** `keyterms_for_project` reads the whole *active* `value_chain_ledger`, while the
+    session is anchored to one node - so this door widens what a token holder sees from "this
+    node and this script" to "the shape of the whole value chain". Judged acceptable: a node
+    label is a few words naming an activity, the holder is a stakeholder of the organisation
+    being mapped, and the interview discusses that value chain with them. It is a judgement
+    rather than a subset, it is recorded in CLAUDE.md's *Known issues* as one, and narrowing it
+    to the session's own node is a one-line change if the judgement goes the other way. The
+    authentication is deliberately left exactly as it was.
 
     A project with no vocabulary is served a token and no keyterm parameter at all. It is not an
     error: an interview conducted without boosting is what every interview before this one was.

@@ -562,6 +562,8 @@ export default function Architecture() {
                 ['GET', '/api/interviews/{token}', 'Get session for voice interview (public)'],
                 ['PATCH', '/api/interviews/{token}/complete', 'Mark session complete with ratings'],
                 ['POST', '/api/interviews/{token}/speak', 'ElevenLabs TTS proxy'],
+                ['GET', '/api/interviews/{token}/deepgram-token', "Deepgram grant plus this project's keyterms and listen params (public)"],
+                ['POST', '/api/interviews/{token}/email-transcript', "Transcript copy to the session's own stakeholder - mounted, no caller in the dashboard since sp66"],
                 ['GET', '/api/templates', 'List interview templates'],
                 ['POST', '/api/templates', 'Create template'],
                 ['PATCH', '/api/templates/{id}', 'Update template'],
@@ -589,7 +591,7 @@ export default function Architecture() {
             <tbody>
               {[
                 ['/login', 'Login', 'Public', 'JWT login form'],
-                ['/interview/:sessionToken', 'VoiceInterview', 'Public', 'Self-serve voice interview portal (ElevenLabs + SpeechRecognition)'],
+                ['/interview/:sessionToken', 'VoiceInterview', 'Public', 'Self-serve voice interview portal (ElevenLabs TTS; Deepgram STT, falling back to the browser Web Speech API)'],
                 ['/', 'Dashboard', 'Protected', 'Project list or selected project overview'],
                 ['/:slug', 'Dashboard', 'Protected', 'Project dashboard with neural agent tree'],
                 ['/:slug/discovery', 'Discovery', 'Protected', 'Discovery Interviews tab + Layer Map tab'],
@@ -670,9 +672,13 @@ export default function Architecture() {
         </Card>
 
         <Card title="Deepgram (STT)" accent="border-blue-700/50">
-          <KV k="Access method" v="Deepgram WebSocket API (temporary token fetched from /api/interviews/{token}/deepgram-token)" />
-          <KV k="Auth method" v="DEEPGRAM_API_KEY env var (used server-side to issue short-lived tokens)" />
-          <KV k="Used by" v="VoiceInterview page - stakeholder speech-to-text during voice interviews" />
+          <KV k="Access method" v="Deepgram streaming WebSocket (wss://api.deepgram.com/v1/listen), opened by the participant's browser. The grant JWT goes on the URL as ?access_token= - the Sec-WebSocket-Protocol form is for API keys and a JWT is answered 401." />
+          <KV k="Auth method" v="DEEPGRAM_API_KEY env var, used server-side by GET /api/interviews/{token}/deepgram-token to issue a 30-second grant. The key itself never reaches the browser." />
+          <KV k="Model" v="nova-3, paired with the keyterm boost parameter. keywords is Nova-2's legacy feature; a mismatch is ignored silently, so both are decided server-side in one listen_params dict." />
+          <KV k="What travels" v="Two things: the participant's audio, and this engagement's vocabulary - its active value chain labels and the proper nouns from its interview scripts. Declared as PARTICIPANT_SPEECH_EGRESS in agents/egress.py." />
+          <KV k="Used by" v="VoiceInterview page - the primary recogniser for every answer since sp66. Connected then; the door was written in May 2026 and called by nothing for four months." />
+          <KV k="Fallback" v="The browser's Web Speech API, silently, when Deepgram is unavailable; a mid-answer drop keeps what was heard and hands the same answer over, saying so. A browser that can do neither is told plainly that nothing is being recorded." />
+          <p className="text-xs text-slate-500 mt-2">Never exercised against the real provider - the URL form, the keyterm spelling and the webm/opus stream are documentation-derived. Treat the first live interview as the test.</p>
         </Card>
 
         <Card title="Cloudflare Tunnel" accent="border-slate-600">
