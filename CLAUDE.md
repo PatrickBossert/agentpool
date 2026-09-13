@@ -2369,6 +2369,25 @@ in the next send path rather than a fact about this one: a hold that answers suc
 person it is holding from has to be written down somewhere, or it is diagnosed as a delivery
 failure.
 
+**Removing that checkbox made the Copy button the participant's only route to their own
+transcript, and the Copy button was telling the same lie.** `await navigator.clipboard
+?.writeText(...)` short-circuits to `undefined` when there is no clipboard, and `await undefined`
+does not throw - so the `catch` covered a clipboard that *exists and rejects*, nothing covered a
+browser with none, and the button said "Copied" over an empty clipboard. `navigator.clipboard`
+is undefined in **every non-secure context**, so the browser this fails in is a plain-http
+on-premises deployment: precisely the secure-mode customer. The comment beside it claimed the
+opposite - *"leaves the button saying Copy rather than claiming a copy that did not happen"* -
+which is this file's *quoting a rule is not applying it* in its purest form, on the one screen
+whose entire purpose is to stop telling a participant something worked when it did not.
+
+Three states now, not two, because "not copied yet" and "this browser would not copy" are
+different things to say. The claim is made **true** before it is withdrawn:
+`document.execCommand('copy')` is tried second, deprecated and still the only clipboard route a
+page has over plain http. Only when both fail does the button read "Could not copy" - and the
+whole transcript is then offered in one read-only field, because a participant told "could not
+copy" and left with fifty-nine separate answer boxes has still lost it. Withdrawing a false
+claim is necessary and not sufficient; the person still needs the thing they came for.
+
 ---
 
 ## The deployment's public URL: a setting, not an environment variable

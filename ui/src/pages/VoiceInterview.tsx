@@ -134,7 +134,9 @@ export default function VoiceInterview() {
   const [editableTranscript, setEditableTranscript] = useState<CapturedPair[]>([])
   const [savingCorrections, setSavingCorrections] = useState(false)
   const [finished, setFinished] = useState(false)
-  const [copied, setCopied] = useState(false)
+  // Three outcomes, not two. "Not copied yet" and "this browser would not copy" are different
+  // things to a participant, and a boolean can only say one of them.
+  const [copyOutcome, setCopyOutcome] = useState<'idle' | 'copied' | 'unavailable'>('idle')
   const isPausedRef = useRef(false)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const silenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -1035,16 +1037,61 @@ export default function VoiceInterview() {
     return editableTranscript.map(pair => `${pair.question}\n${pair.answer}`).join('\n\n')
   }
 
-  async function handleCopyTranscript() {
+  /**
+   * The older clipboard route, which is the only one a page has in a non-secure context.
+   *
+   * `document.execCommand('copy')` is deprecated and still works everywhere, including over
+   * plain http where `navigator.clipboard` does not exist at all. It is tried before giving up,
+   * because making the claim true is better than withdrawing it: an on-premises deployment
+   * served over http is exactly the secure-mode customer, and this button is the only route a
+   * participant has to their own transcript since the email route was removed.
+   *
+   * Answers `false` rather than throwing for every way it can fail, including a browser that
+   * does not implement it at all, so the caller has one thing to test.
+   */
+  function copyByExecCommand(text: string): boolean {
     try {
-      await navigator.clipboard?.writeText(transcriptAsText())
-      setCopied(true)
+      const carrier = document.createElement('textarea')
+      carrier.value = text
+      carrier.setAttribute('readonly', '')
+      carrier.style.position = 'fixed'
+      carrier.style.top = '0'
+      carrier.style.opacity = '0'
+      document.body.appendChild(carrier)
+      carrier.select()
+      const exec = (document as unknown as { execCommand?: (c: string) => boolean }).execCommand
+      const ok = typeof exec === 'function' && exec.call(document, 'copy') === true
+      document.body.removeChild(carrier)
+      return ok
     } catch {
-      // A browser that refuses clipboard access leaves the button saying "Copy" rather than
-      // claiming a copy that did not happen. The whole point of this screen is that it stopped
-      // telling a participant something had worked when it had not.
-      setCopied(false)
+      return false
     }
+  }
+
+  /**
+   * Copy the transcript, and say what actually happened.
+   *
+   * This read `await navigator.clipboard?.writeText(...)` inside a `try`, with a comment saying
+   * it left the button saying "Copy rather than claiming a copy that did not happen". It did
+   * the opposite: `navigator.clipboard` is **undefined in every non-secure context**, the
+   * optional chain short-circuits to `undefined`, and `await undefined` does not throw - so the
+   * `catch` covered a clipboard that exists and rejects, and nothing at all covered a browser
+   * with no clipboard. The button said "Copied" over an empty clipboard, on the one screen
+   * whose whole purpose is to stop telling a participant something had worked when it had not.
+   */
+  async function handleCopyTranscript() {
+    const text = transcriptAsText()
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(text)
+        setCopyOutcome('copied')
+        return
+      } catch {
+        // Present and refused - a permission prompt declined, or a document without focus.
+        // Fall through: the older route often still works.
+      }
+    }
+    setCopyOutcome(copyByExecCommand(text) ? 'copied' : 'unavailable')
   }
 
   /**
@@ -1151,7 +1198,7 @@ export default function VoiceInterview() {
                               current.map((p, idx) => (idx === i ? { ...p, answer: corrected } : p)),
                             )
                             // What is on the clipboard is no longer this transcript.
-                            setCopied(false)
+                            setCopyOutcome('idle')
                           }}
                         />
                       </div>
@@ -1176,8 +1223,33 @@ export default function VoiceInterview() {
                         onClick={handleCopyTranscript}
                         className="mt-3 inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-2 transition-colors"
                       >
-                        <Copy size={14} />{copied ? 'Copied' : 'Copy'}
+                        <Copy size={14} />
+                        {copyOutcome === 'copied'
+                          ? 'Copied'
+                          : copyOutcome === 'unavailable'
+                            ? 'Could not copy'
+                            : 'Copy'}
                       </button>
+                      {/* Withdrawing the false claim is necessary and not sufficient. A
+                          participant told "could not copy" and left with 59 separate answer
+                          fields has still lost their transcript, so the whole text is offered
+                          in one selectable field - a route they can actually take. Read-only:
+                          this is the copy, not a second place to correct the answers. */}
+                      {copyOutcome === 'unavailable' && (
+                        <div className="mt-3" data-testid="copy-by-hand">
+                          <p className="text-sm text-gray-700">
+                            This browser would not let the page copy for you. Your transcript is
+                            below - select it all and copy it yourself.
+                          </p>
+                          <textarea
+                            readOnly
+                            aria-label="Your transcript"
+                            value={transcriptAsText()}
+                            rows={10}
+                            className="mt-2 w-full text-sm text-gray-700 border border-gray-200 rounded-lg p-2.5 resize-y focus:outline-none focus:ring-2 focus:ring-teal-400"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

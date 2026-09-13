@@ -298,5 +298,58 @@ describe('the review and correction step', () => {
     await waitFor(() => expect(written).toHaveLength(1))
     expect(written[0]).toContain('Question 2?')
     expect(written[0]).toContain('The recogniser heard this.')
+    // And it says so, which is the half the case below is about.
+    await screen.findByRole('button', { name: /copied/i })
+  })
+
+  it('does not say “Copied” when this browser has no clipboard for it to copy to', async () => {
+    // `navigator.clipboard` is **undefined in any non-secure context** - a plain-http
+    // on-premises deployment, which is exactly the secure-mode customer - and
+    // `await navigator.clipboard?.writeText(...)` short-circuits to `undefined`. `await
+    // undefined` does not throw, so the `catch` never ran and the button said "Copied" over an
+    // empty clipboard. This branch removed the email route, so the button is a participant's
+    // only path to their own transcript: they tap Copy, read "Copied", close the window, and
+    // have nothing.
+    await reachTheReviewStep()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (navigator as any).clipboard
+    await userEvent.click(screen.getByRole('button', { name: /^copy$/i }))
+
+    expect(screen.queryByRole('button', { name: /^copied$/i })).toBeNull()
+    await screen.findByRole('button', { name: /could not copy/i })
+  })
+
+  it('gives the participant the transcript to copy by hand when it cannot copy for them', async () => {
+    // Withdrawing the false claim is necessary and not sufficient: a participant told "could
+    // not copy" and left with 59 separate answer fields has still lost their transcript. The
+    // whole text is offered in one selectable field, which is a route they can actually take.
+    await reachTheReviewStep()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (navigator as any).clipboard
+    await userEvent.click(screen.getByRole('button', { name: /^copy$/i }))
+
+    const offered = await screen.findByRole('textbox', { name: /your transcript/i })
+    expect((offered as HTMLTextAreaElement).value).toContain('Question 2?')
+    expect((offered as HTMLTextAreaElement).value).toContain('The recogniser heard this.')
+    // Read-only: this is the copy, not a second place to correct the answers.
+    expect((offered as HTMLTextAreaElement).readOnly).toBe(true)
+  })
+
+  it('does not say “Copied” when the clipboard exists and refuses', async () => {
+    // The other way the write fails, and the one the original `catch` did cover. Kept as a
+    // control: a fix that only tested for the clipboard's *absence* would leave this arm
+    // claiming a copy that a permission prompt had just refused.
+    await reachTheReviewStep()
+
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('refused by the user') } },
+    })
+    await userEvent.click(screen.getByRole('button', { name: /^copy$/i }))
+
+    expect(screen.queryByRole('button', { name: /^copied$/i })).toBeNull()
+    await screen.findByRole('button', { name: /could not copy/i })
   })
 })
