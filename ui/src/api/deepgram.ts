@@ -257,6 +257,18 @@ export function openDeepgramSocket(
         }
         recorder.start(CHUNK_MS)
       } catch {
+        // **The route the flag above did not cover.** This `catch` answers the promise with
+        // `null` - "fall back" - and then closes the socket, and that close arrives at a socket
+        // which is open and not stopping, so `onclose` below called `reportDropped()`. The
+        // caller then had two reasons to start a browser recogniser, the null answer and the
+        // drop, and started one for each: two on one microphone, the first orphaned beyond the
+        // reach of `stop()` and restarting itself for the rest of the interview. That is
+        // verbatim the defect `dropped` was added to prevent, reached by a different door.
+        //
+        // Claiming the drop here rather than suppressing it at `onclose` is deliberate: this is
+        // the only place that knows the closure was ours, and a test on `onclose` for "was the
+        // recorder built?" would be the same knowledge written where it cannot be checked.
+        dropped = true
         settle(null)
         try { socket.close() } catch { /* already gone */ }
         return

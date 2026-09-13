@@ -203,10 +203,21 @@ function installStreaming() {
  * silent, or the amber notice lands in front of every participant on every answer. A fake that
  * can only produce one of the two cannot tell the fix from a blanket notice.
  */
+/**
+ * How many browser recognisers this interview has built.
+ *
+ * One microphone, so more than one per answer is the defect the socket adapter's `dropped`
+ * flag exists to prevent - and a second one is invisible to any assertion about transcripts,
+ * because both write into the same answer and the orphan is beyond the reach of `stop()`.
+ * Counted rather than inferred, for the same reason the handover test counts occurrences.
+ */
+let recognisersBuilt = 0
+
 function installSpeechRecognition(
   transcript: string | null,
   options: { failWith?: string; errorOnStop?: string } = {},
 ) {
+  recognisersBuilt = 0
   if (transcript === null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (window as any).SpeechRecognition
@@ -219,6 +230,7 @@ function installSpeechRecognition(
     continuous = false
     interimResults = false
     lang = ''
+    constructor() { recognisersBuilt += 1 }
     onresult: ((e: unknown) => void) | null = null
     onend: (() => void) | null = null
     onerror: ((e: { error: string }) => void) | null = null
@@ -540,6 +552,36 @@ describe('the recogniser is told the project’s own words', () => {
     expect(notice.textContent).not.toMatch(/stopped hearing you/i)
   }, 20000)
 
+  it('leaves one recogniser on the microphone when the recorder cannot be built', async () => {
+    // The consequence of the route above, through the page that suffers it. The grant is good
+    // and the socket opens; only the recorder fails. The page then had two reasons to start a
+    // browser recogniser - the null engine and the drop - and started one for each.
+    //
+    // Counted, because the transcript cannot tell one from two: both write into the same
+    // answer, and the orphan is the one that outlives it, restarting itself through `onend`
+    // and holding the microphone for the rest of the interview.
+    installStreaming()
+    vi.stubGlobal('MediaRecorder', class {
+      static isTypeSupported = () => true
+      constructor() { throw new Error('this browser cannot record from this stream') }
+    })
+    installSpeechRecognition('An answer the browser heard.')
+    vi.stubGlobal('fetch', installFetch({
+      token: 'jwt', listen_params: { model: 'nova-3', keyterm: OUR_KEYTERMS },
+    }))
+
+    await startInterview()
+    await waitFor(() => expect(completedBody).not.toBeNull(), { timeout: 15000 })
+
+    // **Two, and the two are nameable.** This script has one question, and the interview asks
+    // for one section rating by voice at the end of it - one listen each, one recogniser each.
+    // Three is the defect and nothing else: the third is the orphan, started by the drop the
+    // constructor failure used to report, which no `stop()` can reach and which restarts
+    // itself through `onend` for the rest of the interview. Measured both ways - 2 with the
+    // flag claimed in that `catch`, 3 without.
+    expect(recognisersBuilt).toBe(2)
+  }, 20000)
+
   it('says nothing when the engine reports the stop the participant asked for', async () => {
     // The control, and the reason the fix reads the stop flag before setting it. An engine
     // interrupted by its own caller reports `aborted`, and a notice on every "Done speaking"
@@ -694,6 +736,30 @@ describe('the socket, driven directly', () => {
     expect(closed).toEqual([])
     await waitFor(() => expect(closed.length).toBe(1), { timeout: FLUSH_TIMEOUT_MS + 1500 })
   }, 10000)
+
+  it('reports no drop when the recorder cannot be built, however the socket then closes', async () => {
+    // The route the `dropped` flag did not cover. `new MediaRecorder(...)` throwing reaches a
+    // `catch` that calls `settle(null)` **and** `socket.close()`, and that close arrives at a
+    // socket which is open and not stopping - so it reported a drop, on a promise that had
+    // already answered "fall back". The caller then started one recogniser for the null answer
+    // and another for the drop: two on one microphone, the first orphaned beyond `stop()`.
+    //
+    // Asserted as the route rather than as the flag: the failure is driven through the
+    // constructor, and both halves of the contract are checked - no drop reported, and the
+    // promise still answers null so the caller does fall back.
+    installStreaming()
+    vi.stubGlobal('MediaRecorder', class {
+      static isTypeSupported = () => true
+      constructor() { throw new Error('this browser cannot record from this stream') }
+    })
+    const { dropped, hooks } = hooksSpy()
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', hooks)
+
+    expect(recogniser).toBeNull()
+    expect(dropped).toEqual([])
+  })
 
   it('reports no drop at all when the caller stopped it', async () => {
     // The control: a `close` following our own `stop()` is the socket doing as it was told, and

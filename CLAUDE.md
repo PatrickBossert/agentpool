@@ -1566,7 +1566,18 @@ Two properties of that fallback are easy to remove by accident. `onDropped` is *
 guarded in `deepgram.ts` rather than in the page, because "an abnormal post-open failure fires
 `error` then `close`" is knowledge about WebSockets and one file should hold it - without the
 guard a second recogniser starts on one microphone and the first is orphaned, holding the
-microphone for the rest of the interview. And `stop()` **waits for the flush**, bounded at
+microphone for the rest of the interview.
+
+**A flag guards the routes that set it, and one route did not.** `new MediaRecorder(...)`
+throwing reaches a `catch` that answers the promise `null` - "fall back" - and *then* closes the
+socket, and that close arrived at `onclose` with the socket open and not stopping, so it
+reported a drop. The caller then had two reasons to start a browser recogniser, the null answer
+and the drop, and started one for each: verbatim the defect the flag was added to prevent, by a
+door the flag did not cover. The `catch` claims `dropped` itself, because it is the only place
+that knows the closure was ours. It is asserted as the **route** - the failure driven through
+the constructor - and counted through the page, where a one-question interview builds exactly
+two recognisers (the answer, and the spoken section rating) and built three before the fix. A
+transcript cannot see this: both recognisers write into the same answer. And `stop()` **waits for the flush**, bounded at
 `FLUSH_TIMEOUT_MS = 1500`: closing the socket in the same tick discarded the tail of any answer
 ended by tapping "Done speaking", which was a regression against the path being replaced -
 `recognition.stop()` delivers a pending `onresult` before `onend`, so the browser engine never
