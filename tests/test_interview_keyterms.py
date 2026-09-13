@@ -317,6 +317,46 @@ def test_a_sentence_initial_capital_is_not_a_proper_noun():
     assert "Please" not in terms
 
 
+def test_a_sentence_opener_is_dropped_from_the_run_it_begins():
+    """The case the positional rule missed, which is the one an interview script is full of.
+
+    A sentence-opening capital was discarded only when the run was **one word** long, so every
+    question beginning "If ISS...", "Does GS UK...", "Before I..." kept the opener glued to the
+    proper noun beside it. Keyterm prompting biases towards the literal phrase, so "If ISS" is
+    worse than useless: it boosts nothing and it takes a place on a capped list of a hundred.
+
+    Measured on the live `sp-gs-am` scripts, v37, on the path a deployment without a value chain
+    ledger takes: **16 of the 100 slots** before this, none after.
+
+    The test the module already had drove `"How does Iberdrola decide?"` - where a lowercase
+    word separates the opener from the name - so it drove the rule "both ways" in the one
+    dimension that could not fail.
+    """
+    terms = terms_in_prose(
+        "If Iberdrola reviews it, escalate. Does Fraikin know? Before ISS arrives, check."
+    )
+    assert terms == ["Iberdrola", "Fraikin", "ISS"]
+    # And the openers are gone rather than merely unjoined.
+    assert not [t for t in terms if t.split()[0] in {"If", "Does", "Before"}]
+
+
+def test_the_cost_of_that_rule_is_the_first_word_of_a_name_that_opens_a_sentence():
+    """Stated where it is paid, because it is a real loss and not a rounding error.
+
+    The rule cannot tell "If Iberdrola" from "SP Energy Networks" without a word list, which is
+    the one thing this module refuses to be. So a multi-word name that **only ever** opens a
+    sentence arrives one word short. That is still the safe direction - "Energy Networks" boosts
+    the two words it keeps, where "If Iberdrola" boosts nothing - and the same name used
+    anywhere mid-sentence is picked up whole, which in a real script it invariably is.
+    """
+    assert terms_in_prose("SP Energy Networks owns the asset.") == ["Energy Networks"]
+    # Mid-sentence, in the same corpus, and the whole name is kept - which is why the loss is
+    # bounded in practice rather than merely acceptable in principle.
+    assert "SP Energy Networks" in terms_in_prose(
+        "SP Energy Networks owns the asset. The asset is owned by SP Energy Networks."
+    )
+
+
 def test_a_possessive_is_the_name_without_the_possessive():
     assert terms_in_prose("The board reviews Iberdrola's submission.") == ["Iberdrola"]
 

@@ -1513,12 +1513,27 @@ are whatever that engagement has already declared and written. This is the rule 
 reached after five disagreeing declarations of the same facts, arriving one layer over, and the
 failure mode here is worse than a wrong voice id: a hardcoded vocabulary is a **list of one
 client's names, committed to this repository and sent up with every other client's interview**.
-The extraction is positional rather than a stopword list (a capitalised run that *opens* a
-sentence and is one word long is discarded, which is what removes "How" and "Please" without
-anybody listing them), capped at `MAX_KEYTERMS = 100`, registry labels first because declared
-vocabulary should outrank inferred. The cost is stated where it is paid: a proper noun that only
-ever opens a sentence is missed, which is the safe direction - a missing term costs one word's
-accuracy, a junk term costs a place on the cap.
+The extraction is positional rather than a stopword list - the **first word** of a capitalised
+run that opens a sentence is dropped and the rest of the run kept, which is what removes "How"
+and "Please" without anybody listing them - capped at `MAX_KEYTERMS = 100`, registry labels
+first because declared vocabulary should outrank inferred.
+
+**That rule was written in the docstring and implemented for lone words only**, so a run of two
+survived it intact: `If ISS`, `Does GS UK`, `Before I`, `Which KPIs`, `Is Fraikin`. Measured on
+the live `sp-gs-am` scripts at v37, on the path a deployment without a value chain ledger takes,
+that was **16 of the 100 slots and is now none**. Keyterm prompting biases towards the literal
+phrase, so each was worse than useless: it boosted nothing and took a place on the cap.
+
+The cost is stated where it is paid, and the repair moved it by one word rather than removing
+it: a multi-word name that **only ever** opens a sentence now arrives one word short - `SP
+Energy Networks` as `Energy Networks` - because nothing positional distinguishes it from `If
+Iberdrola`. On the same corpus that costs about eight phrases (`Decision Quality` becomes
+`Quality`, `Strategic Intent` becomes `Intent`), against sixteen junk terms removed. **A
+corpus-evidence variant was measured and rejected**: keeping the run whole when its first word
+is seen capitalised mid-sentence anywhere does preserve those eight, and lets `Is Fraikin` back
+in, for a good deal more code - and keeping the whole *run* when the run is seen mid-sentence
+preserves none of them, because those phrases only ever open sentences in this corpus. A
+missing word against a junk term holding a place on a capped list is the safe direction.
 
 **The fallback is behaviour, not a `catch` block, and five cases are deliberately not the same
 case.** No Deepgram key, no streaming support, or a socket that will not open: **silent** fall

@@ -96,16 +96,24 @@ def _acceptable(term: str) -> bool:
 def terms_in_prose(text: str) -> list[str]:
     """Proper nouns and acronyms in ordinary prose, most frequent first.
 
-    The rule is **positional, not a word list**. Every sentence capitalises its first word, so a
-    capitalised run that begins a sentence and is one word long is discarded outright - that is
-    what removes "How", "What", "Please" and "Thank" without anybody having to list them. A run
-    of two or more capitalised words is kept wherever it sits, because ordinary English does not
-    capitalise two words in a row, and a lone capitalised word is kept when it appears
-    mid-sentence, because nothing but a proper noun puts it there.
+    The rule is **positional, not a word list**. Every sentence capitalises its first word, so
+    the first word of a capitalised run that *begins* a sentence is dropped and the rest of the
+    run kept - that is what removes "How", "What", "Please" and "Thank" without anybody having
+    to list them, and it is what stops "If ISS", "Does GS UK" and "Before I" reaching the
+    recogniser. A run of two or more capitalised words is kept whole wherever else it sits,
+    because ordinary English does not capitalise two words in a row, and a lone capitalised word
+    is kept when it appears mid-sentence, because nothing but a proper noun puts it there.
 
-    The cost of the rule is stated rather than hidden: a proper noun that only ever opens a
-    sentence is missed. That is the safe direction - a missing term costs one word's accuracy,
-    a junk term costs a place on a capped list.
+    **This applied to lone words only until sp66's final review**, and the docstring claimed the
+    general rule while the code implemented the special case: 16 of the 100 slots on the live
+    `sp-gs-am` scripts were openers glued to the name beside them, and keyterm prompting biases
+    towards the literal phrase, so each was worse than useless.
+
+    The cost of the rule is stated rather than hidden, and the fix moved it by one word: a
+    multi-word name that **only ever** opens a sentence arrives one word short - "SP Energy
+    Networks" as "Energy Networks" - because nothing positional can tell that from "If
+    Iberdrola". That is still the safe direction, a missing word against a junk term holding a
+    place on a capped list, and the same name used once mid-sentence is picked up whole.
     """
     counts: Counter[str] = Counter()
     first_seen: dict[str, str] = {}
@@ -122,8 +130,19 @@ def terms_in_prose(text: str) -> list[str]:
             while index < len(words) and _is_capitalised(words[index][0]):
                 index += 1
             run = [w for w, _ in words[run_start:index]]
-            # Sentence-initial and alone: it is capitalised because the sentence started.
-            if run_start == 0 and len(run) == 1:
+            # **The first word of a sentence is capitalised because the sentence started**, so
+            # it is dropped from whatever run it opens - not only when it is the whole run.
+            #
+            # That was the rule as written and it was applied to `len(run) == 1` alone, which
+            # left every question beginning "If ISS...", "Does GS UK...", "Before I..." handing
+            # the recogniser the opener glued to the name beside it. Keyterm prompting biases
+            # towards the literal phrase, so "If ISS" boosts nothing *and* takes a place on a
+            # capped list: 16 of the hundred slots on the live sp-gs-am scripts.
+            #
+            # A run of one leaves nothing behind and is skipped exactly as before.
+            if run_start == 0:
+                run = run[1:]
+            if not run:
                 continue
             term = _strip_possessive(" ".join(run))
             if not _acceptable(term):
