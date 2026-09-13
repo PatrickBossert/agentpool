@@ -1472,7 +1472,11 @@ export default function VoiceInterview() {
                 no speech API, and the one thing they must never be is unaware of it. */}
             {recogniserNotice && (
               <div
-                role="status"
+                // `alert`, not `status`. One of the sentences this carries is "nothing you say
+                // is being recorded", and a polite live region may wait for a pause that a
+                // participant mid-interview never gives it. Assertive is right when the notice
+                // is the reason to stop talking.
+                role="alert"
                 data-testid="recogniser-notice"
                 className="flex items-start gap-2 w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
               >

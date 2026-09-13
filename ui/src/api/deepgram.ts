@@ -16,10 +16,15 @@
 
 export const DEEPGRAM_LISTEN_URL = 'wss://api.deepgram.com/v1/listen'
 
-/** What the token door answers: a short-lived grant, and the words to listen for. */
+/**
+ * What the token door answers: a short-lived grant, and the parameters to open the socket with.
+ *
+ * The vocabulary arrives **inside** `listen_params`, under whichever parameter name the server's
+ * chosen model takes, and not as a list of its own beside it. A second copy would be payload
+ * nothing reads and a second place an auditor has to check to see what leaves the deployment.
+ */
 export interface DeepgramGrant {
   token: string
-  keyterms: string[]
   listen_params: Record<string, string | string[]>
 }
 
@@ -87,7 +92,6 @@ export async function fetchDeepgramGrant(
     if (!data || typeof data.token !== 'string' || !data.token) return null
     return {
       token: data.token,
-      keyterms: Array.isArray(data.keyterms) ? data.keyterms : [],
       listen_params: data.listen_params && typeof data.listen_params === 'object' ? data.listen_params : {},
     }
   } catch {
@@ -111,6 +115,14 @@ function recorderMimeType(): string | undefined {
 const CHUNK_MS = 250
 /** A handshake that has not completed by now is one the participant is waiting on. */
 const OPEN_TIMEOUT_MS = 6000
+/**
+ * How long the answer waits for Deepgram's last words after `CloseStream`.
+ *
+ * A ceiling rather than a cost. Deepgram answers `CloseStream` with whatever it has left and
+ * then closes, so the ordinary wait is one round trip; this only runs out when the socket has
+ * gone away without saying so, and a participant must never be held on a dead one.
+ */
+export const FLUSH_TIMEOUT_MS = 1500
 
 /**
  * Open the socket, start recording, and translate Deepgram's frames into the page's hooks.
@@ -129,7 +141,22 @@ export function openDeepgramSocket(
     let settled = false
     let opened = false
     let stopping = false
+    let closeRequested = false
+    let finished = false
+    // **A drop is reported at most once.** The WebSocket specification fires `error` and then
+    // `close` for an abnormal post-open failure, so the two handlers below are two views of one
+    // event - and the caller's response to a drop is to start a recogniser, which is not a thing
+    // to do twice. Doing it twice put two browser recognisers on one microphone, both writing
+    // into the same answer, with the first orphaned beyond the reach of `stop()` and restarting
+    // itself for the rest of the interview.
+    //
+    // The flag is here rather than in the page deliberately. "error then close" is knowledge
+    // about WebSockets, and this file is the only one that has to hold it; and `onDropped` is a
+    // hook both engines share, so making it at-most-once **once** is what lets every caller -
+    // including `startWebSpeech`'s - treat it as an event rather than a level.
+    let dropped = false
     let recorder: MediaRecorder | null = null
+    let flushTimer: ReturnType<typeof setTimeout> | null = null
     let socket: WebSocket
 
     try {
@@ -152,17 +179,70 @@ export function openDeepgramSocket(
       resolve(value)
     }
 
+    /**
+     * End the answer, after giving Deepgram a bounded chance to send its last words.
+     *
+     * Three steps, and the order of all three is load-bearing. This used to be one step - stop
+     * the recorder, send `CloseStream`, close the socket, resolve - with a comment claiming the
+     * flush kept the tail of an answer. It did not: `close()` is immediate and `onClosed()`
+     * resolved the answer synchronously, so any flushed `is_final` frame arrived after the
+     * `resolve` and was pushed into an array nobody read. The recorder's last chunk of audio was
+     * never sent at all, because `dataavailable` after `stop()` is asynchronous and the socket
+     * had already gone.
+     *
+     * That was a **regression against the recogniser this replaced**: `recognition.stop()`
+     * delivers a pending `onresult` before `onend`, so the browser's engine keeps the tail. It
+     * cost a participant the end of any sentence they were still speaking when they tapped
+     * "Done" or "Finish my last answer", which is exactly the moment somebody is mid-thought.
+     *
+     *   1. the deadline, first, so nothing below can hold a participant on a dead socket;
+     *   2. `recorder.stop()`, and `CloseStream` only once its final `dataavailable` has been
+     *      sent - sending it earlier discards the very audio this exists to keep;
+     *   3. the socket stays open until Deepgram closes it, or the deadline passes.
+     */
     function stop() {
       if (stopping) return
       stopping = true
-      try { recorder?.stop() } catch { /* already stopped */ }
+      flushTimer = setTimeout(finishStop, FLUSH_TIMEOUT_MS)
+      if (!recorder) {
+        requestCloseStream()
+        return
+      }
+      // `onstop` fires after the recorder has handed over its final chunk.
+      recorder.onstop = () => requestCloseStream()
       try {
-        // Deepgram flushes and closes cleanly on this, so the last words of an answer are not
-        // lost to a socket torn down mid-phrase.
-        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'CloseStream' }))
-      } catch { /* the close below covers it */ }
+        recorder.stop()
+      } catch {
+        requestCloseStream()
+      }
+    }
+
+    function requestCloseStream() {
+      if (closeRequested) return
+      closeRequested = true
+      try {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'CloseStream' }))
+          // And now wait. Deepgram answers with whatever transcript it has left and then closes,
+          // which reaches `onclose` below.
+          return
+        }
+      } catch { /* nothing to flush into - end it */ }
+      finishStop()
+    }
+
+    function finishStop() {
+      if (finished) return
+      finished = true
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
       try { socket.close() } catch { /* already gone */ }
       hooks.onClosed()
+    }
+
+    function reportDropped() {
+      if (dropped) return
+      dropped = true
+      hooks.onDropped('connection')
     }
 
     socket.onopen = () => {
@@ -203,7 +283,10 @@ export function openDeepgramSocket(
         settle(null)
         return
       }
-      if (!stopping) hooks.onDropped('connection')
+      // Mid-flush, an error means there is nothing left to wait for: end the answer now rather
+      // than sitting out the deadline in front of somebody who has already tapped Done.
+      if (stopping) finishStop()
+      else reportDropped()
     }
 
     socket.onclose = () => {
@@ -211,7 +294,8 @@ export function openDeepgramSocket(
         settle(null)
         return
       }
-      if (!stopping) hooks.onDropped('connection')
+      if (stopping) finishStop()
+      else reportDropped()
     }
   })
 }

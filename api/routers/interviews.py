@@ -294,8 +294,12 @@ async def get_deepgram_token(session_token: str):
     nothing is disclosed here that was not disclosed before, and the authentication is
     deliberately left exactly as it was.
 
-    A project with no vocabulary is served a token and an empty list. It is not an error: an
-    interview conducted without boosting is what every interview before this one was.
+    A project with no vocabulary is served a token and no keyterm parameter at all. It is not an
+    error: an interview conducted without boosting is what every interview before this one was.
+
+    `listen_params` is the whole answer. There is deliberately no separate `keyterms` key beside
+    it: the client reads only the parameters it is to encode, so a second copy of the same list
+    would be dead payload and a second place an auditor has to look to see what leaves.
     """
     result = await get_session_with_script(session_token)
     if not result:
@@ -309,11 +313,15 @@ async def get_deepgram_token(session_token: str):
     slug = Path(db_path).stem if db_path else ""
     keyterms = await keyterms_for_project(slug) if slug else []
 
+    # The language the session was **stamped** with, not one re-derived from the project. A
+    # session records its interviewer's resolved configuration at creation, and the speak door
+    # one endpoint down reads the same stamp for the same reason: a project's configuration may
+    # be edited between an invite being issued and the interview being taken, and re-reading it
+    # would make the recogniser disagree with the voice.
     voice_config = result["session"].get("voice_config") or {}
     language = voice_config.get("language") if isinstance(voice_config, dict) else None
     return {
         "token": token,
-        "keyterms": keyterms,
         "listen_params": deepgram_listen_params(keyterms, language or "en"),
     }
 

@@ -13,7 +13,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import VoiceInterview from '../pages/VoiceInterview'
-import { deepgramListenUrl, fetchDeepgramGrant } from '../api/deepgram'
+import { FLUSH_TIMEOUT_MS, deepgramListenUrl, fetchDeepgramGrant, openDeepgramSocket } from '../api/deepgram'
 
 const SCRIPT = {
   script_id: 'SC-014',
@@ -69,8 +69,37 @@ class FakeSocket {
     }, 0)
   }
 
-  send(data: unknown) { this.sent.push(data) }
-  close() { this.readyState = FakeSocket.CLOSED; this.closed = true }
+  /** What Deepgram still has to say when it is asked to close. Set by a test before stopping. */
+  tailOnClose: string | null = null
+
+  /**
+   * Deepgram answers `CloseStream` by flushing whatever transcript it has left **and then**
+   * closing, in that order - which is the entire reason `stop()` waits rather than closing the
+   * socket itself. The fake has to do both halves, in that order, or it cannot tell a
+   * flush-aware `stop()` from the one it replaced.
+   *
+   * It also has to do the closing half at all: without it every "Done" in these tests would sit
+   * out the full flush deadline, and the deadline would become the only path the suite ever
+   * exercised - the one case that is *not* the ordinary one.
+   */
+  send(data: unknown) {
+    this.sent.push(data)
+    if (typeof data === 'string' && data.includes('CloseStream')) {
+      setTimeout(() => {
+        if (this.tailOnClose) this.say(this.tailOnClose, true)
+        this.readyState = FakeSocket.CLOSED
+        this.onclose?.()
+      }, 0)
+    }
+  }
+
+  /** A real socket fires `close` when it is closed. */
+  close() {
+    if (this.closed) return
+    this.readyState = FakeSocket.CLOSED
+    this.closed = true
+    this.onclose?.()
+  }
 
   /** A Deepgram transcript frame, as it arrives on the wire. */
   say(transcript: string, isFinal = true) {
@@ -79,16 +108,36 @@ class FakeSocket {
     })
   }
 
-  /** The socket going away underneath a participant who is still talking. */
-  drop() { this.readyState = FakeSocket.CLOSED; this.onclose?.() }
+  /**
+   * The socket going away underneath a participant who is still talking.
+   *
+   * **`error` then `close`, which is what the WebSocket specification requires** of an abnormal
+   * post-open failure - and therefore what the real case looks like every time. The first
+   * version of this fake fired `close` alone, so it exercised the one shape this code path does
+   * not actually meet, and it could not see the handover running twice.
+   */
+  drop() {
+    this.readyState = FakeSocket.CLOSED
+    this.onerror?.()
+    this.onclose?.()
+  }
 }
 
 class FakeRecorder {
   static isTypeSupported = () => true
   ondataavailable: ((e: { data: { size: number } }) => void) | null = null
+  onstop: (() => void) | null = null
   constructor(public stream: unknown, public options?: unknown) {}
   start() { /* the socket assertions do not need audio bytes to flow */ }
-  stop() { /* nothing to flush */ }
+  /**
+   * A real MediaRecorder hands over its final chunk and *then* fires `onstop`, which is the
+   * signal `stop()` waits on before asking Deepgram to close. A fake that never fired it left
+   * the flush deadline as the only way an answer could ever end.
+   */
+  stop() {
+    this.ondataavailable?.({ data: { size: 4 } })
+    setTimeout(() => this.onstop?.(), 0)
+  }
 }
 
 function installStreaming() {
@@ -218,7 +267,6 @@ describe('the recogniser is told the project’s own words', () => {
     installSpeechRecognition('should not be reached')
     vi.stubGlobal('fetch', installFetch({
       token: 'jwt-from-the-server',
-      keyterms: OUR_KEYTERMS,
       listen_params: { model: 'nova-3', language: 'en', smart_format: 'true', keyterm: OUR_KEYTERMS },
     }))
 
@@ -247,7 +295,7 @@ describe('the recogniser is told the project’s own words', () => {
     installStreaming()
     installSpeechRecognition('should not be reached')
     vi.stubGlobal('fetch', installFetch({
-      token: 'jwt', keyterms: theirs,
+      token: 'jwt',
       listen_params: { model: 'nova-3', language: 'en', keyterm: theirs },
     }))
 
@@ -265,7 +313,7 @@ describe('the recogniser is told the project’s own words', () => {
     installStreaming()
     installSpeechRecognition('the browser recogniser, which must not be what is recorded')
     vi.stubGlobal('fetch', installFetch({
-      token: 'jwt', keyterms: OUR_KEYTERMS,
+      token: 'jwt',
       listen_params: { model: 'nova-3', keyterm: OUR_KEYTERMS },
     }))
 
@@ -291,7 +339,7 @@ describe('the recogniser is told the project’s own words', () => {
     installStreaming()
     installSpeechRecognition('should not be reached')
     vi.stubGlobal('fetch', installFetch({
-      token: 'jwt', keyterms: [],
+      token: 'jwt',
       listen_params: { model: 'nova-3', language: 'en', smart_format: 'true' },
     }))
 
@@ -331,7 +379,7 @@ describe('the recogniser is told the project’s own words', () => {
     installStreaming()
     installSpeechRecognition('and the rest of the sentence.')
     vi.stubGlobal('fetch', installFetch({
-      token: 'jwt', keyterms: OUR_KEYTERMS, listen_params: { model: 'nova-3', keyterm: OUR_KEYTERMS },
+      token: 'jwt', listen_params: { model: 'nova-3', keyterm: OUR_KEYTERMS },
     }))
 
     await startInterview()
@@ -350,6 +398,13 @@ describe('the recogniser is told the project’s own words', () => {
     // Kept, and continued.
     expect(answers).toContain('The first half of the answer')
     expect(answers).toContain('and the rest of the sentence.')
+    // **Once.** `toContain` cannot tell one handover from two, and two is what a socket
+    // failing the way the specification says it fails used to produce: `error` and `close`
+    // both reached onDropped, each starting a recogniser of its own, both pushing into the
+    // same answer. The participant's words appeared twice and one microphone was never
+    // released. Counted rather than contained, so the assertion can see it.
+    expect(answers.split('and the rest of the sentence.').length - 1).toBe(1)
+    expect(answers.split('The first half of the answer').length - 1).toBe(1)
   }, 20000)
 
   it('tells the participant plainly when nothing in this browser can listen', async () => {
@@ -374,7 +429,6 @@ describe('the address the browser opens', () => {
   it('repeats an array parameter and joins nothing', () => {
     const url = deepgramListenUrl({
       token: 'jwt',
-      keyterms: [],
       listen_params: { model: 'nova-3', keyterm: ['A B', 'C'] },
     })
     const params = new URL(url).searchParams
@@ -385,15 +439,119 @@ describe('the address the browser opens', () => {
 
   it('encodes a term with a space or an ampersand rather than breaking the query', () => {
     const url = deepgramListenUrl({
-      token: 'jwt', keyterms: [], listen_params: { keyterm: ['Transmission & Distribution'] },
+      token: 'jwt', listen_params: { keyterm: ['Transmission & Distribution'] },
     })
     expect(url).not.toContain('Transmission & Distribution')
     expect(new URL(url).searchParams.getAll('keyterm')).toEqual(['Transmission & Distribution'])
   })
 
   it('carries no keyterm key at all when the server sent none', () => {
-    const url = deepgramListenUrl({ token: 'jwt', keyterms: [], listen_params: { model: 'nova-3' } })
+    const url = deepgramListenUrl({ token: 'jwt', listen_params: { model: 'nova-3' } })
     expect(url).not.toContain('keyterm')
+  })
+})
+
+describe('the socket, driven directly', () => {
+  // The page's handover is not idempotent by nature - it starts a recogniser - so "a dropped
+  // socket reports itself once" has to be a property of the socket adapter rather than a habit
+  // of its caller. Asserted here, on its own, because the through-the-page test above can only
+  // see the consequence and this can see the cause.
+  const hooksSpy = () => {
+    const dropped: string[] = []
+    const closed: number[] = []
+    return {
+      dropped,
+      closed,
+      hooks: {
+        onSpeechActivity: () => {},
+        onFinal: () => {},
+        onInterim: () => {},
+        onClosed: () => closed.push(1),
+        onDropped: (reason: 'microphone' | 'connection') => dropped.push(reason),
+      },
+    }
+  }
+
+  afterEach(() => { vi.stubGlobal('fetch', async () => new Response('{}', { status: 200 })) })
+
+  it('reports a drop once, however many events the failure fires', async () => {
+    // error-then-close is what the WebSocket specification requires of an abnormal closure, so
+    // this is the ordinary case and not an edge one.
+    installStreaming()
+    const { dropped, hooks } = hooksSpy()
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', hooks)
+    expect(recogniser).not.toBeNull()
+
+    const socket = FakeSocket.opened[0]
+    socket.onerror?.()
+    socket.onclose?.()
+
+    expect(dropped).toEqual(['connection'])
+  })
+
+  it('keeps the tail of an answer that arrives after the participant tapped Done', async () => {
+    // The regression this guards against was a comment: `stop()` sent `CloseStream` and then
+    // closed and resolved in the same tick, so a flushed `is_final` frame landed after the
+    // answer had already been handed over. The browser's recogniser - the thing this replaced -
+    // does keep that tail, because `recognition.stop()` delivers a pending `onresult` before
+    // `onend`. Asserted as *ordering*, not as "the frame was received": the point is that it
+    // arrives while the answer is still open.
+    installStreaming()
+    const { hooks } = hooksSpy()
+    const heard: string[] = []
+    const events: string[] = []
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', {
+      ...hooks,
+      onFinal: (t) => { heard.push(t); events.push('final') },
+      onClosed: () => events.push('closed'),
+    })
+
+    const socket = FakeSocket.opened[0]
+    // The words Deepgram has not finalised yet at the moment Done is tapped. They come back on
+    // the flush, which is the whole of what `stop()` waits for.
+    socket.tailOnClose = 'and the last four words.'
+    recogniser?.stop()
+
+    await waitFor(() => expect(events).toContain('closed'))
+    // The socket was asked to flush rather than simply torn down.
+    expect(socket.sent.some(s => String(s).includes('CloseStream'))).toBe(true)
+    expect(heard).toEqual(['and the last four words.'])
+    expect(events).toEqual(['final', 'closed'])
+  })
+
+  it('ends the answer anyway when the socket never answers the flush', async () => {
+    // The other half, and the reason the flush is bounded: a socket that has gone away without
+    // saying so must not hold a participant. The deadline is a ceiling, never a cost - the test
+    // above is the ordinary path and completes in a tick.
+    installStreaming()
+    const { closed, hooks } = hooksSpy()
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', hooks)
+    const socket = FakeSocket.opened[0]
+    // A socket that accepts CloseStream and then says nothing at all.
+    socket.send = (data: unknown) => { socket.sent.push(data) }
+
+    recogniser?.stop()
+    expect(closed).toEqual([])
+    await waitFor(() => expect(closed.length).toBe(1), { timeout: FLUSH_TIMEOUT_MS + 1500 })
+  }, 10000)
+
+  it('reports no drop at all when the caller stopped it', async () => {
+    // The control: a `close` following our own `stop()` is the socket doing as it was told, and
+    // reporting that as a failure would put the amber notice in front of every participant on
+    // every answer.
+    installStreaming()
+    const { dropped, closed, hooks } = hooksSpy()
+    const stream = { getTracks: () => [] } as unknown as MediaStream
+    const recogniser = await openDeepgramSocket(stream, 'wss://example.test/listen', hooks)
+
+    recogniser?.stop()
+    FakeSocket.opened[0].onclose?.()
+
+    await waitFor(() => expect(closed.length).toBe(1))
+    expect(dropped).toEqual([])
   })
 })
 
@@ -419,7 +577,7 @@ describe('reading the grant', () => {
 
   it('reads a real answer, so the nulls above are about the failures rather than the reader', async () => {
     vi.stubGlobal('fetch', async () => new Response(
-      JSON.stringify({ token: 'jwt', keyterms: ['Iberdrola'], listen_params: { keyterm: ['Iberdrola'] } }),
+      JSON.stringify({ token: 'jwt', listen_params: { keyterm: ['Iberdrola'] } }),
       { status: 200 },
     ))
     const grant = await fetchDeepgramGrant('/api', 'tok')

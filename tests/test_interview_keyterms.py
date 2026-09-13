@@ -213,6 +213,29 @@ async def test_a_project_with_no_registry_and_no_scripts_has_no_keyterms(two_eng
 
 
 @pytest.mark.asyncio
+async def test_asking_an_unknown_slug_materialises_no_database(two_engagements):
+    """A read must never create a project database, and this one had two ways to.
+
+    The ledger half guards on the file existing. The scripts half did not, and it does not touch
+    sqlite in any obvious way - but `current_output_path` resolves its ledger row through
+    `get_project_id`, which is a bare `sqlite3.connect`, and sqlite creates the file it is
+    pointed at. So asking for an unknown slug's vocabulary left an empty database behind.
+
+    Unreachable from the door, which only ever holds a slug it resolved a session out of.
+    Asserted anyway: CLAUDE.md states the rule for `caller_roles` and `_stakeholder_matches_
+    invite` without an exception for hard-to-reach callers, and a standing rule is not kept by
+    the reachability of the places that break it.
+    """
+    db_dir = Path(get_settings().database_dir)
+    before = {p.name for p in db_dir.glob("*.db")}
+
+    assert await keyterms_for_project("never-heard-of-it") == []
+    assert await keyterms_for_project("") == []
+
+    assert {p.name for p in db_dir.glob("*.db")} == before
+
+
+@pytest.mark.asyncio
 async def test_a_project_with_nothing_still_gets_a_connection_to_open(two_engagements):
     """And the parameters it would connect with are complete and carry no keyterm at all.
 
@@ -387,10 +410,15 @@ async def test_the_token_door_answers_the_projects_own_words(two_engagements, mo
         );
         """
     )
+    # **A language deliberately unlike the default.** `deepgram_listen_params` falls back to
+    # "en", and "en" is also what a natural fixture would seed - so a door that never read the
+    # session's stamp at all would answer "en" and satisfy every assertion. That is CLAUDE.md's
+    # "a sentinel drawn from the system's own defaults cannot fail", and this is a task whose
+    # whole subject is that class of defect. "cy" can only have come from this row.
     conn.execute(
         "INSERT INTO interview_sessions (session_token, node_label, voice_config, status) "
         "VALUES ('tok-1', 'Connections Delivery', ?, 'pending')",
-        (json.dumps({"elevenlabs_voice_id": "V", "language": "en", "country_code": "GB"}),),
+        (json.dumps({"elevenlabs_voice_id": "V", "language": "cy", "country_code": "GB"}),),
     )
     conn.commit()
     conn.close()
@@ -406,10 +434,14 @@ async def test_the_token_door_answers_the_projects_own_words(two_engagements, mo
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["token"] == "jwt-for-the-browser"
-    assert "Iberdrola" in body["keyterms"]
-    assert "Clydeport" not in body["keyterms"]
     assert body["listen_params"]["model"] == DEEPGRAM_MODEL
     assert "Iberdrola" in body["listen_params"][DEEPGRAM_KEYTERM_PARAM]
+    assert "Clydeport" not in body["listen_params"][DEEPGRAM_KEYTERM_PARAM]
+    # The session's stamped language, read off the row rather than defaulted.
+    assert body["listen_params"]["language"] == "cy"
+    # And no second copy of the vocabulary beside the parameters that carry it: a key nothing
+    # reads is dead payload and a second place an auditor has to check for what leaves.
+    assert "keyterms" not in body
 
 
 @pytest.mark.asyncio

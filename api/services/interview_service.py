@@ -266,13 +266,22 @@ async def keyterms_for_project(slug: str) -> list[str]:
         except Exception:
             _log.warning("keyterms: no value chain ledger for %s", slug)
 
+    # Guarded on the same `db_path.exists()` as the ledger read above, and for a reason that has
+    # nothing to do with scripts: `current_output_path` resolves the ledger row through
+    # `get_project_id`, which is a bare `sqlite3.connect` - and sqlite **creates** the file. So
+    # asking an unknown slug for its scripts would materialise an empty database for it, which
+    # is the thing CLAUDE.md forbids outright (`caller_roles` and `_stakeholder_matches_invite`
+    # both carry the same guard). Unreachable from the door, which only ever holds a slug it
+    # resolved a session out of - and a standing rule is not kept by the reachability of its
+    # exceptions.
     script_text = ""
-    try:
-        path = current_output_path(slug, "interview_scripts")
-        if path is not None:
-            script_text = "\n".join(harvest_strings(json.loads(path.read_text())))
-    except Exception:
-        _log.warning("keyterms: could not read interview scripts for %s", slug)
+    if db_path.exists():
+        try:
+            path = current_output_path(slug, "interview_scripts")
+            if path is not None:
+                script_text = "\n".join(harvest_strings(json.loads(path.read_text())))
+        except Exception:
+            _log.warning("keyterms: could not read interview scripts for %s", slug)
 
     return build_keyterms(labels, script_text)
 
