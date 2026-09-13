@@ -1040,11 +1040,20 @@ lost, and the same `auth_tokens` table serves password resets.
 nothing in it - status, body, or header - may branch on the outcome, and the page posting to
 it says "if that address has an account, a link is on its way". `POST
 /auth/users/{id}/reset-link` is the administrator door, gated on the platform tier, and
-returns the raw token to deliver by hand - the arrangement the invite loop already runs on,
-because `FROM_EMAIL` names a domain Resend has not verified. Both call `deliver_reset`
-(`invite_service.py`), which is **the one place to wire Resend**; its docstring carries the
-two constraints that survive the wiring (the 204 must stay outcome-blind, and the send must go
-off the request path or it reopens the timing tell `issue_reset` closed).
+returns the raw token to deliver by hand - the arrangement the invite loop already runs on.
+Both call `deliver_reset` (`invite_service.py`), which is **the one place to wire Resend**; its
+docstring carries the two constraints that survive the wiring (the 204 must stay outcome-blind,
+and the send must go off the request path or it reopens the timing tell `issue_reset` closed).
+
+**Hand delivery is now a decision without a reason.** This paragraph read "*because `FROM_EMAIL`
+names a domain Resend has not verified*", and the domain is verified - argued above, under the
+review-notification paragraph. So the arrangement is unjustified rather than wrong: there may be
+a good argument for putting a *credential* in front of an administrator rather than in an inbox,
+and if there is, it should be written here in place of the one that expired. Note which way the
+two doors differ before making it: the administrator door hands a token to somebody who has
+already authenticated at the platform tier, while the self-service door's 204 must stay
+outcome-blind whatever channel it uses, so wiring `deliver_reset` changes what the *first* costs
+and what the *second* must be careful about.
 
 The self-service door has a blind spot worth knowing before trusting it: `issue_reset`
 resolves its account by `users.username`, so a login whose username is not its email address -
