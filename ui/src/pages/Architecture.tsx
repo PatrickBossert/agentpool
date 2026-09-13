@@ -293,7 +293,7 @@ export default function Architecture() {
               {
                 name: 'Interview Coordinator',
                 file: 'agents/discovery/interview_coordinator.py',
-                role: 'Plan stakeholder interview programme; configure voice settings per locale using ElevenLabs voice IDs.',
+                role: 'Plan stakeholder interview programme. The interviewer and their voice are resolved from each agent\'s per-project configuration and stamped on the session at creation, not chosen per locale here.',
                 tools: ['SQLiteStateTool', 'HumanInputTool', 'InterviewSessionTool'],
                 output: 'interview_plan (JSON: session_token, voice_config, node_label per stakeholder)',
               },
@@ -645,11 +645,12 @@ export default function Architecture() {
         </Card>
 
         <Card title="Anthropic / Claude API" accent="border-rose-700/50">
-          <KV k="Access method" v="Via LiteLLM proxy  (http://localhost:4000)" />
-          <KV k="Auth method" v="ANTHROPIC_API_KEY env var (passed to LiteLLM)" />
-          <KV k="Models used" v="claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001" />
-          <KV k="Routing" v="standard mode → Claude; sensitive mode → local qwen3; fallback → Claude then local" />
-          <KV k="PAM agent" v="Always Claude Opus (regardless of llm_mode)" />
+          <KV k="Access method" v="LiteLLM as a library, direct to the provider - there is no proxy" />
+          <KV k="Auth method" v="ANTHROPIC_API_KEY env var" />
+          <KV k="Models used" v="Per tier, per project. Defaults: claude-haiku-4-5-20251001 (fast), claude-opus-4-6 (deep)" />
+          <KV k="Routing" v="Granted HOSTED_INFERENCE → Anthropic; otherwise the project's local model" />
+          <KV k="On no local model" v="Raises LocalModelUnavailable. There is no hosted fallback and no borrowing of the other tier" />
+          <KV k="PAM agent" v="No exemption - deep tier, and local for a sensitive project like every other agent" />
         </Card>
 
         <Card title="ChromaDB (Vector Store)" accent="border-emerald-700/50">
