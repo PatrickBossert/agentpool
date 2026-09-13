@@ -146,8 +146,14 @@ Each crew writes structured JSON to `projects/<slug>/outputs/`.
 
 Stakeholders receive an email with a link to `/dashboard/interview/:sessionToken`. The page uses:
 - **ElevenLabs** for AI voice synthesis (requires `ELEVENLABS_API_KEY`)
-- **Web Speech API** (browser built-in) for speech recognition
-- **Deepgram** as fallback transcription (requires `DEEPGRAM_API_KEY`)
+- **Deepgram** for speech recognition (requires `DEEPGRAM_API_KEY`), told the project's own
+  vocabulary - its value chain labels and the proper nouns in its interview scripts - so client
+  and programme names come back as themselves
+- **Web Speech API** (browser built-in) as the fallback, used when a deployment has no Deepgram
+  key or the connection cannot be made
+
+The two were the other way round until sp66, and the entry above said so: the browser's
+recogniser did every interview and the Deepgram door had no caller at all.
 
 Interview sessions are tracked in the **Discovery → Interviews** tab. Completed transcripts feed directly into the Discovery Interviews crew.
 

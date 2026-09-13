@@ -107,10 +107,15 @@ class Reach(Enum):
     WEB_SEARCH = "a web search service"
     PUBLIC_WEB = "any web address the agent names"
     INFERENCE = "a language model"
-    # The one reach where the request is not made by this deployment at all. See
-    # `PARTICIPANT_IMAGE_EGRESS` below for why that difference is worth a member of its own
+    # Two reaches where the request is not made by this deployment at all. See
+    # `PARTICIPANT_IMAGE_EGRESS` below for why that difference is worth members of their own
     # rather than being folded into `PUBLIC_WEB`.
     PARTICIPANT_BROWSER = "any web address an administrator configures, fetched by the participant"
+    # Kept apart from the row above because the two differ on the question an auditor is
+    # actually asking. That one goes wherever an administrator typed; this one goes to one
+    # named provider under a stated contract, and it carries the client's words rather than
+    # only the participant's connection.
+    PARTICIPANT_TRANSCRIPTION = "a speech-to-text service, streamed from the participant"
 
 
 @dataclass(frozen=True)
@@ -320,9 +325,58 @@ PARTICIPANT_IMAGE_EGRESS = Egress(
 )
 
 
+# The reach that used to carry nothing, because nothing called it.
+#
+# `GET /api/interviews/{session_token}/deepgram-token` was built in SP10f and then left: it
+# issued a grant nobody had ever asked for, because the portal's recogniser was the browser's
+# own `webkitSpeechRecognition` and no line of `ui/src` referenced the door. Deepgram appeared
+# on the privacy page throughout - "interview audio is streamed for transcription with content
+# retention disabled" - which was a commitment about a path that did not yet exist. It exists
+# now, and **two** things travel on it rather than the one the sentence named:
+#
+#   the audio     - the participant's voice, and therefore the client's own words, every
+#                   answer of every interview.
+#   the vocabulary - this engagement's `value_chain_ledger` labels and the proper nouns out of
+#                   its interview scripts, sent up with the connection so the recogniser
+#                   returns the client's terms rather than English words that sound like them.
+#
+# The second is the half worth writing down. It is the reason this row is being edited rather
+# than merely becoming true: sp62 made the identical correction to ElevenLabs when the voice
+# listings joined the synthesis calls, and the lesson there is the lesson here - **a row that
+# names one shape reads as an assurance about all of them**, so a reader asking "what leaves a
+# sensitive engagement?" would have been told something untrue about a path they had already
+# accepted. The keyterms are client material and they are not audio.
+#
+# **The gating does not change, and this row is not a proposal that it should.** Deepgram is
+# ungated on every mode including `sensitive`, by the decision CLAUDE.md records: it and
+# ElevenLabs are streamed with no content retention, and local speech services are future work
+# rather than a current requirement. `api/services/deployment_modes.EGRESS_GRANTS` is
+# deliberately not extended for it, for the reason `PARTICIPANT_IMAGE_EGRESS` gives one row
+# down - a capability nothing consults would read as a gate that is not there.
+#
+# Like that row, **this is a declaration and nothing generates it**. `data_architecture()`
+# builds the auditor's page from agents and the tools they hold, and this is neither: the
+# request is made by the participant's browser, and no agent is anywhere near it. The rendered
+# statement lives in `UNDERTAKINGS` on `ui/src/pages/DataArchitecture.tsx`, which this task
+# updated in step with this row so the two say the same thing.
+PARTICIPANT_SPEECH_EGRESS = Egress(
+    reaches=Reach.PARTICIPANT_TRANSCRIPTION,
+    sends=(
+        "the participant's speech, streamed live from their browser - so every answer in the "
+        "client's own words - together with this engagement's vocabulary: its value chain "
+        "labels and the proper nouns in its interview scripts, sent with the connection so the "
+        "recogniser is biased towards the client's terms"
+    ),
+)
+
+
 _NOWHERE = Destination(label="nothing outside this deployment", leaves_deployment=False)
 _PARTICIPANT_IMAGE_HOST = Destination(
     label="any address an administrator configures, reached by the participant's browser",
+    leaves_deployment=True,
+)
+_TRANSCRIPTION_HOST = Destination(
+    label="Deepgram's streaming API, opened by the participant's browser",
     leaves_deployment=True,
 )
 _TAVILY = Destination(label="Tavily's search API", leaves_deployment=True)
@@ -386,6 +440,11 @@ _DESTINATION: dict[tuple[Reach, bool], Destination] = {
     # `_is_gated` derives `False` rather than a reader inferring it from two wordings.
     (Reach.PARTICIPANT_BROWSER, True): _PARTICIPANT_IMAGE_HOST,
     (Reach.PARTICIPANT_BROWSER, False): _PARTICIPANT_IMAGE_HOST,
+    # The same object in both columns again, and here the sameness is the finding rather than a
+    # convenience: a `sensitive` engagement keeps its documents and its inference on the
+    # premises and still streams its interviews to Deepgram, by decision.
+    (Reach.PARTICIPANT_TRANSCRIPTION, True): _TRANSCRIPTION_HOST,
+    (Reach.PARTICIPANT_TRANSCRIPTION, False): _TRANSCRIPTION_HOST,
 }
 
 

@@ -16,6 +16,7 @@ import httpx
 
 from api.config import get_settings
 from api.services.http_clients import get_tts_client
+from api.services.interview_keyterms import build_keyterms, harvest_strings
 from api.services.llm_client import LocalModelError, project_completion
 from api.services.interview_answer_service import record_answers, script_for_session
 from api.services.platform_settings import platform_public_url
@@ -201,7 +202,20 @@ async def get_session_with_script(session_token: str) -> dict | None:
 
 
 async def generate_deepgram_token() -> str:
-    """Create a short-lived Deepgram streaming token via the REST API."""
+    """Create a short-lived Deepgram streaming token via the REST API.
+
+    `POST /v1/auth/grant` answers ``{"access_token": "<jwt>", "expires_in": 30}`` and takes an
+    optional ``ttl_seconds`` and nothing else. This read ``resp.json()["key"]`` and posted
+    ``{"grant_type": "instant"}`` from the day it was written, and neither is a field Deepgram
+    has: the first would have raised `KeyError` on the first real call. It never did, because
+    **nothing in the browser had ever called this door** - the recogniser was the Web Speech API
+    and this half of the path was built and left. "This code has never run" is not "this code
+    works", and the moment something calls it is exactly when the difference arrives.
+
+    The token carries `usage::write` on the voice APIs and expires in thirty seconds by default,
+    which is the whole reason the client asks for one per connection rather than once per
+    interview: it has to be spent on a handshake almost immediately after it is issued.
+    """
     settings = get_settings()
     if not settings.deepgram_api_key:
         raise ValueError("DEEPGRAM_API_KEY not configured")
@@ -209,11 +223,77 @@ async def generate_deepgram_token() -> str:
         resp = await client.post(
             "https://api.deepgram.com/v1/auth/grant",
             headers={"Authorization": f"Token {settings.deepgram_api_key}"},
-            json={"grant_type": "instant"},
             timeout=10.0,
         )
         resp.raise_for_status()
-        return resp.json()["key"]
+        return resp.json()["access_token"]
+
+
+# Nova-3 is chosen for one reason: `keyterm` is its feature. Deepgram has two keyword-boosting
+# parameters and they are not alternatives - `keywords=TERM:INTENSIFIER` is the legacy feature on
+# Nova-2 and earlier, and `keyterm=TERM` (repeated, plain, no intensifier) is Keyterm Prompting
+# on Nova-3 and Flux. Sending `keyterm` to Nova-2, or `keywords` to Nova-3, is silently ignored -
+# a connection that succeeds and boosts nothing - so the model and the parameter are chosen here,
+# together, in one place, and the client is told both rather than deciding either.
+DEEPGRAM_MODEL = "nova-3"
+DEEPGRAM_KEYTERM_PARAM = "keyterm"
+
+
+async def keyterms_for_project(slug: str) -> list[str]:
+    """The vocabulary this project uses about itself, for the recogniser to bias towards.
+
+    Assembled per project and from the project - its `value_chain_ledger` labels and the text of
+    its own `interview_scripts` - so that two engagements never send the same list. Nothing here
+    names a client; a hardcoded list would satisfy a single-project assertion perfectly and be
+    wrong for every engagement after the first.
+
+    Every read is defensive and answers *fewer terms*, never an error. A project whose database
+    predates the ledger migration, or which has no scripts yet, has no vocabulary to send, and an
+    interview conducted with no boosting is the behaviour this door is replacing - a participant
+    must not lose their interview because a table is missing.
+    """
+    from agents.tools._db import current_output_path
+
+    labels: list[str] = []
+    db_path = Path(get_settings().database_dir) / f"{slug}.db"
+    if db_path.exists():
+        try:
+            async with interview_db_connection(str(db_path)) as conn:
+                async with conn.execute(
+                    "SELECT label FROM value_chain_ledger WHERE active = 1 ORDER BY node_id"
+                ) as cur:
+                    labels = [row[0] for row in await cur.fetchall() if row[0]]
+        except Exception:
+            _log.warning("keyterms: no value chain ledger for %s", slug)
+
+    script_text = ""
+    try:
+        path = current_output_path(slug, "interview_scripts")
+        if path is not None:
+            script_text = "\n".join(harvest_strings(json.loads(path.read_text())))
+    except Exception:
+        _log.warning("keyterms: could not read interview scripts for %s", slug)
+
+    return build_keyterms(labels, script_text)
+
+
+def deepgram_listen_params(keyterms: list[str], language: str) -> dict[str, object]:
+    """The query Deepgram's streaming door is opened with, minus the credential.
+
+    The server decides these and the browser encodes them, rather than the browser deciding and
+    the server supplying a token. The pairing above - Nova-3 takes `keyterm`, Nova-2 takes
+    `keywords` - is one fact, and restating it in TypeScript would be a second declaration free
+    to fall behind this one. What crosses to the client is **data**: parameter names and values.
+    """
+    params: dict[str, object] = {
+        "model": DEEPGRAM_MODEL,
+        "language": language or "en",
+        "smart_format": "true",
+        "interim_results": "true",
+    }
+    if keyterms:
+        params[DEEPGRAM_KEYTERM_PARAM] = keyterms
+    return params
 
 
 async def synthesise(text: str, voice_id: str, model_id: str) -> bytes:

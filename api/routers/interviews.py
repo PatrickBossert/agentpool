@@ -31,9 +31,11 @@ from api.database import (
 from api.services.interview_service import (
     _find_session_db,
     complete_session,
+    deepgram_listen_params,
     elaboration_press,
     generate_deepgram_token,
     get_session_with_script,
+    keyterms_for_project,
     interview_url,
     speak,
 )
@@ -277,14 +279,43 @@ async def get_interview_session(session_token: str):
 
 @router.get("/{session_token}/deepgram-token")
 async def get_deepgram_token(session_token: str):
+    """A credential for the recogniser, and the words this project wants it to listen for.
+
+    One door and not two, because the client needs both at the same instant: the grant expires
+    in thirty seconds, so it is fetched immediately before the socket is opened, and a second
+    round trip for the vocabulary would spend part of that window.
+
+    The keyterms are value chain labels and proper nouns out of this engagement's interview
+    scripts - client material, answered to whoever holds a session token, which is the whole of
+    what this router authenticates by. That is the right door for them rather than a widening of
+    it: the holder of this token is already answered the *script* by `GET /{session_token}`,
+    verbatim and in full, and the value chain node the session is anchored to comes with it. The
+    vocabulary is a strict subset of what the same caller already reads one endpoint over, so
+    nothing is disclosed here that was not disclosed before, and the authentication is
+    deliberately left exactly as it was.
+
+    A project with no vocabulary is served a token and an empty list. It is not an error: an
+    interview conducted without boosting is what every interview before this one was.
+    """
     result = await get_session_with_script(session_token)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
         token = await generate_deepgram_token()
-        return {"token": token}
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+    db_path = await _find_session_db(session_token)
+    slug = Path(db_path).stem if db_path else ""
+    keyterms = await keyterms_for_project(slug) if slug else []
+
+    voice_config = result["session"].get("voice_config") or {}
+    language = voice_config.get("language") if isinstance(voice_config, dict) else None
+    return {
+        "token": token,
+        "keyterms": keyterms,
+        "listen_params": deepgram_listen_params(keyterms, language or "en"),
+    }
 
 
 # ---------------------------------------------------------------------------

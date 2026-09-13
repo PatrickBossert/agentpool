@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Check, Copy, Pause, Play, ShieldCheck, Undo2 } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Pause, Play, ShieldCheck, Undo2 } from 'lucide-react'
 import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
+import {
+  browserCanStream,
+  deepgramListenUrl,
+  fetchDeepgramGrant,
+  openDeepgramSocket,
+  type Recogniser,
+  type RecogniserHooks,
+} from '../api/deepgram'
 
 // webkit speech recognition types (Chrome/Safari vendor prefix)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -94,7 +102,19 @@ export default function VoiceInterview() {
   const [isMicTesting, setIsMicTesting] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [interimText, setInterimText] = useState('')
-  const recognitionRef = useRef<any>(null)
+  // What has gone wrong with the recogniser, in words a participant can act on. It stays on
+  // screen once set: a notice that cleared itself would be gone before somebody mid-sentence
+  // looked up, and "nothing you say is being recorded" is precisely the sentence that must not
+  // be missed.
+  const [recogniserNotice, setRecogniserNotice] = useState('')
+  const recognitionRef = useRef<Recogniser | null>(null)
+  // One microphone stream for the whole interview, and the two counters that decide whether
+  // Deepgram is still worth asking for. `deepgramOffRef` is one-way: once the deployment has
+  // shown it has no Deepgram, or a live socket has dropped, every later answer goes straight to
+  // the browser's recogniser rather than paying a failed round trip in front of the participant.
+  const interviewStreamRef = useRef<MediaStream | null>(null)
+  const deepgramFailuresRef = useRef(0)
+  const deepgramOffRef = useRef(false)
   const restartAnswerRef = useRef(false)
   // Set by "Finish my last answer". Read inside listenWithRestart, the same way
   // restartAnswerRef is - a flag rather than a callback, because the listen loop owns the
@@ -128,6 +148,15 @@ export default function VoiceInterview() {
   useEffect(() => {
     if (phase !== 'mic_setup' && phase !== 'ready') stopMicTest()
   }, [phase])
+
+  // Release the interview's own microphone stream when the interview is over, and on unmount.
+  // It is held open for the whole interview on purpose - see interviewStream - so nothing else
+  // releases it, and a stream left running keeps the browser's recording indicator lit on a
+  // page that has finished asking questions.
+  useEffect(() => {
+    if (phase === 'complete' || phase === 'error') releaseInterviewStream()
+  }, [phase])
+  useEffect(() => releaseInterviewStream, [])
 
   // Snapshot the QA ref into editable state when the interview completes
   useEffect(() => {
@@ -285,56 +314,154 @@ export default function VoiceInterview() {
     setStatusMessage('')
   }
 
+  /**
+   * The browser's own recogniser, which is the fallback rather than the first choice.
+   *
+   * Unchanged in behaviour, including Chrome's habit of stopping the recogniser on its own
+   * timer - `onend` restarts it unless the stop was ours. That sentinel used to be
+   * `recognitionRef.current === recognition`, a piece of the page's state read from inside the
+   * engine; it is a local flag now, because there are two engines and only one ref.
+   */
+  function startWebSpeech(lang: string, hooks: RecogniserHooks): Recogniser | null {
+    const SpeechRecognition =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).SpeechRecognition ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) return null
+
+    const recognition = new SpeechRecognition()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = lang
+    let stopping = false
+
+    recognition.onresult = (event: typeof SpeechRecognitionEvent) => {
+      hooks.onSpeechActivity()
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) hooks.onFinal(event.results[i][0].transcript)
+      }
+      const interim = Array.from(event.results as unknown[])
+        .slice(event.resultIndex)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .filter((r: any) => !r.isFinal)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((r: any) => r[0].transcript)
+        .join(' ')
+      if (interim) hooks.onInterim(interim)
+    }
+
+    recognition.onend = () => {
+      if (!stopping) {
+        try {
+          recognition.start()
+          return
+        } catch {
+          // Cannot restart - permission revoked mid-session, or the engine is gone.
+        }
+      }
+      hooks.onClosed()
+    }
+
+    recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      // Whatever the error, do not restart: let onend close the answer out.
+      stopping = true
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        hooks.onDropped('microphone')
+      }
+    }
+
+    recognition.start()
+    return { stop: () => { stopping = true; try { recognition.stop() } catch { hooks.onClosed() } } }
+  }
+
+  /**
+   * The microphone stream the interview records from, acquired once and kept.
+   *
+   * One stream for the whole interview rather than one per question: `getUserMedia` per answer
+   * makes the browser's recording indicator flicker on and off between every question, which
+   * reads to a participant as something going wrong.
+   */
+  function releaseInterviewStream() {
+    interviewStreamRef.current?.getTracks().forEach(track => track.stop())
+    interviewStreamRef.current = null
+  }
+
+  async function interviewStream(): Promise<MediaStream | null> {
+    if (interviewStreamRef.current) return interviewStreamRef.current
+    if (!navigator.mediaDevices?.getUserMedia) return null
+    try {
+      const audio: MediaTrackConstraints | boolean = selectedDeviceId
+        ? { deviceId: { exact: selectedDeviceId } }
+        : true
+      const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
+      interviewStreamRef.current = stream
+      return stream
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Deepgram, told this project's own words - and `null` for every reason it cannot be reached.
+   *
+   * Each of those reasons means the same thing to the caller (use the browser's recogniser), so
+   * they are not distinguished here. What *is* counted is how many times in a row it has
+   * happened: a transient failure on the first question must not condemn the rest of the
+   * interview to a recogniser that has never heard of the client, and a deployment with no
+   * Deepgram key must not pay a failed round trip before every single answer.
+   */
+  async function startDeepgram(hooks: RecogniserHooks): Promise<Recogniser | null> {
+    if (deepgramOffRef.current || !browserCanStream()) return null
+    const grant = await fetchDeepgramGrant(BASE, sessionToken ?? '')
+    if (!grant) return null
+    const stream = await interviewStream()
+    if (!stream) return null
+    return openDeepgramSocket(stream, deepgramListenUrl(grant), hooks)
+  }
+
+  /**
+   * Listen for one answer, on whichever recogniser can be had.
+   *
+   * Deepgram first, because it is the only one that has been told what this engagement calls
+   * things; the browser's recogniser second, because it needs no key and no network of ours;
+   * and if neither can listen, **the participant is told in plain words rather than left
+   * speaking into nothing**. The silence countdown starts when a recogniser is actually
+   * listening, not when this function is entered - fetching a grant and opening a socket takes
+   * a second or two, and counting that against a participant's thinking time would move the
+   * interview on before they had been heard at all.
+   */
   function listenForAnswer(lang: string = 'en-GB'): Promise<string> {
     return new Promise((resolve) => {
-      const SpeechRecognition =
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).SpeechRecognition ||
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).webkitSpeechRecognition
-      if (!SpeechRecognition) {
-        resolve('')
-        return
-      }
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = lang
-
-      recognitionRef.current = recognition
-
       const parts: string[] = []
       let resolved = false
-
-      function finish() {
-        if (resolved) return
-        resolved = true
-        recognitionRef.current = null
-        setIsListening(false)
-        setStatusMessage('')
-        setInterimText('')
-        resolve(parts.join(' ').trim())
-      }
-
-      setStatusMessage('Listening…')
-      setIsListening(true)
-      setIsPaused(false)
-      isPausedRef.current = false
-      setSilenceProgress(0)
+      let engine: Recogniser | null = null
+      let stopRequested = false
 
       // Longer initial wait (before first speech), shorter gap once they've started
       const INITIAL_SILENCE_MS = 10000
       const ANSWER_SILENCE_MS  = 3000
       const TICK_MS = 50
-      let hasSpoken = false
 
       function clearSilenceTimers() {
         if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
         if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
       }
 
+      function finish() {
+        if (resolved) return
+        resolved = true
+        recognitionRef.current = null
+        clearSilenceTimers()
+        setSilenceProgress(0)
+        setIsListening(false)
+        setStatusMessage('')
+        setInterimText('')
+        resolve(parts.join(' ').trim())
+      }
+
       function resetSilenceTimer(initial = false) {
-        if (isPausedRef.current) return
+        if (isPausedRef.current || resolved) return
         clearSilenceTimers()
         const duration = initial ? INITIAL_SILENCE_MS : ANSWER_SILENCE_MS
         let elapsed = 0
@@ -343,72 +470,94 @@ export default function VoiceInterview() {
           elapsed += TICK_MS
           setSilenceProgress(Math.max(0, 100 - (elapsed / duration) * 100))
         }, TICK_MS)
-        // Clear ref first so onend knows this stop is intentional (not a Chrome timeout)
         silenceTimerRef.current = setTimeout(() => {
           clearSilenceTimers()
           setSilenceProgress(0)
           recognitionRef.current = null
-          try { recognition.stop() } catch { finish() }
+          handle.stop()
         }, duration)
       }
 
-      // Start the initial (longer) countdown immediately so the user sees it from the first frame
-      resetSilenceTimer(true)
+      // The buttons need something to stop from the first frame, before any engine exists -
+      // "Done", "Restart answer" and the silence timer can all fire while a socket is still
+      // being opened, and a stop that reached nothing would hang the interview on that question.
+      const handle: Recogniser = {
+        stop: () => {
+          stopRequested = true
+          if (engine) engine.stop()
+          else finish()
+        },
+      }
+      recognitionRef.current = handle
+
+      const hooks: RecogniserHooks = {
+        onSpeechActivity: () => resetSilenceTimer(false),
+        onFinal: (text) => { if (text) parts.push(text) },
+        onInterim: (text) => setInterimText([...parts, text].join(' ').trim()),
+        onClosed: finish,
+        onDropped: (reason) => {
+          if (resolved) return
+          if (reason === 'microphone') {
+            // The browser's recogniser has lost the microphone, and so would any other. There
+            // is nothing to hand over to; onClosed follows and ends the answer.
+            setRecogniserNotice(
+              'We have lost access to your microphone. Allow microphone access for this page, ' +
+              'then use Done to carry on.',
+            )
+            return
+          }
+          // The socket dropped mid-answer. The participant is still talking, so the worst
+          // possible response is to end the answer quietly and let them finish into nothing.
+          // Hand the rest of this same answer to the browser's recogniser, keep what was
+          // already heard, and say what happened - both halves, not either.
+          deepgramOffRef.current = true
+          setRecogniserNotice(
+            'The transcription service dropped out. What you have said so far has been kept, ' +
+            'and the interview is carrying on using your browser to transcribe. Please continue.',
+          )
+          engine = startWebSpeech(lang, hooks)
+          if (!engine) finish()
+        },
+      }
+
+      setStatusMessage('Listening…')
+      setIsListening(true)
+      setIsPaused(false)
+      isPausedRef.current = false
+      setSilenceProgress(0)
       resetSilenceTimerRef.current = () => resetSilenceTimer(false)
 
-      recognition.onresult = (event: typeof SpeechRecognitionEvent) => {
-        if (!hasSpoken) {
-          hasSpoken = true
+      void (async () => {
+        engine = await startDeepgram(hooks)
+        if (!engine) {
+          deepgramFailuresRef.current += 1
+          // Two in a row is a deployment without Deepgram, not a bad moment. Stop asking: a
+          // failed round trip before every answer is latency a participant sits through.
+          if (deepgramFailuresRef.current >= 2) deepgramOffRef.current = true
+          engine = startWebSpeech(lang, hooks)
+        } else {
+          deepgramFailuresRef.current = 0
         }
-        resetSilenceTimer(false)
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            parts.push(event.results[i][0].transcript)
-          }
-        }
-        // Show live transcript to user
-        const interim = Array.from(event.results as unknown[])
-          .slice(event.resultIndex)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .filter((r: any) => !r.isFinal)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .map((r: any) => r[0].transcript)
-          .join(' ')
-        setInterimText([...parts, interim].join(' ').trim())
-      }
 
-      // onend fires after every stop - including Chrome's internal timeouts.
-      // Only finish if the ref was cleared (user/silence-timer initiated stop).
-      // Otherwise restart to keep listening.
-      recognition.onend = () => {
-        if (recognitionRef.current === recognition) {
-          // Chrome stopped us internally - restart to keep listening
-          try {
-            recognition.start()
-            return
-          } catch {
-            // Can't restart (e.g., permission revoked mid-session)
-          }
-        }
-        clearSilenceTimers()
-        setSilenceProgress(0)
-        finish()
-      }
-
-      recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-        clearSilenceTimers()
-        setSilenceProgress(0)
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          // Microphone permission denied - show message, block auto-advance
-          setStatusMessage('⚠️ Microphone access denied. Allow microphone access in your browser, then click ✓ Done to continue.')
-          recognitionRef.current = null  // prevent onend from restarting
+        if (!engine) {
+          // Nothing in this browser can listen. Say so - an interview that carries on silently
+          // records nothing and tells the participant afterwards, which is the worst outcome
+          // available to a person who has given up an hour.
+          setRecogniserNotice(
+            'This browser cannot transcribe speech, so nothing you say is being recorded. ' +
+            'Please reopen your interview link in Chrome or Edge, or contact the person who invited you.',
+          )
+          finish()
           return
         }
-        // For no-speech, network, etc. - clear ref so onend won't restart
-        recognitionRef.current = null
-      }
 
-      recognition.start()
+        if (stopRequested) {
+          engine.stop()
+          return
+        }
+        // The countdown starts now that something is actually listening.
+        resetSilenceTimer(true)
+      })()
     })
   }
 
@@ -1318,6 +1467,19 @@ export default function VoiceInterview() {
           )}
 
           <div className="flex flex-col items-center gap-3 w-full max-w-xl">
+            {/* Whatever has gone wrong with the recogniser, said plainly and left on screen.
+                A participant mid-interview cannot diagnose a dropped socket or a browser with
+                no speech API, and the one thing they must never be is unaware of it. */}
+            {recogniserNotice && (
+              <div
+                role="status"
+                data-testid="recogniser-notice"
+                className="flex items-start gap-2 w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+              >
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <span>{recogniserNotice}</span>
+              </div>
+            )}
             {statusMessage && (
               <p className="text-teal-600 font-medium animate-pulse text-sm">{statusMessage}</p>
             )}

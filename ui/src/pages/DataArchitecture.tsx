@@ -659,9 +659,15 @@ const UNDERTAKINGS: {
       'Interview question text is streamed for synthesis and is not retained. Voice services were accepted in secure mode by decision on that basis; local speech synthesis is future work rather than a current requirement.',
   },
   {
+    // This row said "interview audio" while nothing in the portal had ever opened a Deepgram
+    // connection - the recogniser was the browser's own, and the token door had no caller. Now
+    // that it has one, two things travel rather than the one named, and the second is why this
+    // sentence was rewritten rather than simply left to come true: a row that names one shape
+    // reads as an assurance about all of them. sp62 made the identical correction to the
+    // ElevenLabs row when the voice listings joined the synthesis calls.
     title: 'Deepgram - transcription, nothing kept',
     detail:
-      'Interview audio is streamed for transcription with content retention disabled. The same decision covers it as covers ElevenLabs, and for the same reason.',
+      "A participant's browser streams their speech to Deepgram for transcription, with content retention disabled, and the connection carries this engagement's own vocabulary with it - the labels on its value chain and the names in its interview scripts - so that the words specific to this client come back correctly rather than as English words that sound like them. Nothing else about the project is sent, and the credential the browser holds is a grant that lasts thirty seconds and permits transcription alone. The same decision covers all of this as covers ElevenLabs, and for the same reason.",
   },
   {
     title: 'Resend - invitation and reminder email',
@@ -686,7 +692,7 @@ const UNDERTAKINGS: {
   {
     title: 'Data at rest, and in transit',
     detail:
-      "Project databases and output files live on this server's filesystem; disk encryption and file permissions belong to whoever hosts it. All traffic to this application and onward to every third party is over TLS. Third-party keys live in the server's environment and are never returned to the browser.",
+      "Project databases and output files live on this server's filesystem; disk encryption and file permissions belong to whoever hosts it. All traffic to this application and onward to every third party is over TLS. Third-party keys live in the server's environment and are never returned to the browser; the one credential that does reach a browser is the transcription grant named above, which this server mints for a single connection, which expires after thirty seconds, and which is not the key it was minted from.",
   },
   {
     title: 'One database, one directory, per project',
