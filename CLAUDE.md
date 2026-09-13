@@ -2717,17 +2717,30 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   it the expensive way twice is the argument for asking the question when the helper is written,
   not when the door is.
 
-  **The third instance is a *setting*, and it had been telling auditors something false.**
-  `litellm_proxy_url` is declared in `api/config.py`, documented in `.env.example`, defaulted in
-  `tests/conftest.py` and **asserted in `tests/test_config.py`** - and no production code reads
-  it. Crew agents build `LLM(...)` with a `base_url` from the project's own settings, and
-  LiteLLM is a library here, not a proxy; nothing has ever spoken to `localhost:4000`. The rule
-  is the same, but the cost lands somewhere the first two could not reach: the hidden
-  `/architecture` page told a reader *"Access method: Via LiteLLM proxy"* because the setting
-  existed and was pinned, so the page was describing a deployment topology that has never run.
-  **A setting with no reader is a claim, and a test over it reads as corroboration** - the
-  assertion says the value is right and says nothing about anyone asking for it. Delete it, or
-  make something read it; asserting it is the one option that makes the drift look verified.
+  **The third instance was a *setting*, it had been telling auditors something false, and it
+  is now deleted.** `litellm_proxy_url` was declared in `api/config.py`, documented in
+  `.env.example`, defaulted in `tests/conftest.py` and **asserted in `tests/test_config.py`** -
+  and no production code read it. Crew agents build `LLM(...)` with a `base_url` from the
+  project's own settings, and LiteLLM is a library here, not a proxy; nothing has ever spoken
+  to `localhost:4000`. The rule was the same, but the cost landed somewhere the first two could
+  not reach: the hidden `/architecture` page told a reader *"Access method: Via LiteLLM proxy"*
+  because the setting existed and was pinned, so the page described a deployment topology that
+  has never run. **A setting with no reader is a claim, and a test over it reads as
+  corroboration** - the assertion says the value is right and says nothing about anyone asking
+  for it.
+
+  **Two sites the first write-up missed, and they were the two an operator actually sees.**
+  `start.sh` *launched* the proxy and announced `LiteLLM http://localhost:4000` as a running
+  service, under a comment saying it was "only needed for local / sensitive-mode routing" -
+  the opposite of true, since local routing goes to the project's own `local_fast_url` /
+  `local_deep_url`, Ollama on `:11434` by default. And `litellm_config.yaml` opened with *"all
+  agents call :4000 instead of APIs directly"*. Six sites, then, not four: sp66 deleted the
+  setting, both files, `tests/test_litellm_routing.py` (whose docstring claimed it tested
+  "the correct model for each llm_mode", which `model_registry.py` and `deployment_modes.py`
+  decide and that file never touched), and the launch. **When a dead setting is catalogued,
+  sweep for the thing it configures as well as for readers of the name** - a process being
+  started is a louder claim than a string being declared, and a name-keyed grep finds the
+  string.
 - Retiring an interview script - `interview_script_ledger.active = 0` - is unreachable in
   practice. `SET active` appears exactly once in the codebase
   (`register_scripts_sync`, `agents/tools/_db.py`), its only route is an

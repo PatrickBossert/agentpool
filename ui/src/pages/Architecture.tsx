@@ -99,14 +99,13 @@ export default function Architecture() {
               <TableRow cells={['Caddy reverse proxy', ':80', 'Caddy', 'Routes /api/* → FastAPI, /dashboard* → React, / → landing HTML']} />
               <TableRow cells={['FastAPI backend', ':8000', 'Python / FastAPI / uvicorn', 'REST API, crew dispatch, DB management, auth']} />
               <TableRow cells={['React dashboard', ':3000', 'React / Vite / Tailwind', 'Main consultant UI (served under /dashboard)']} />
-              <TableRow cells={['LiteLLM proxy', ':4000', 'LiteLLM', 'LLM routing - Claude Opus/Sonnet/Haiku + local qwen3']} />
               <TableRow cells={['ChromaDB', ':8002', 'ChromaDB (Docker)', 'Vector store - project docs + sector knowledge']} />
               <TableRow cells={['Cloudflare Tunnel', '(managed)', 'cloudflared', 'Exposes :80 publicly at https://taskreimagination.ai']} />
-              <TableRow cells={['llama.cpp', ':10000', 'llama.cpp / Unsloth', 'Local LLM endpoint (sensitive mode, Qwen3-4B)']} />
+              <TableRow cells={['Local model endpoint', "the project's own", 'Ollama (or any OpenAI-compatible server)', "Inference for a project not granted HOSTED_INFERENCE. The address is that project's local_fast_url / local_deep_url, :11434 by default - not a fixed port, and not started here."]} />
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-slate-500 mt-2">All services started by <code className="text-slate-300">start.sh</code>; Docker manages ChromaDB. Chainlit (:8001) and n8n (:5678) were retired in SP50.</p>
+        <p className="text-xs text-slate-500 mt-2">Every row but the last is started by <code className="text-slate-300">start.sh</code>; Docker manages ChromaDB, and the local model endpoint is run and addressed per project. Chainlit (:8001) and n8n (:5678) were retired in SP50; the LiteLLM proxy (:4000) in SP66 - LiteLLM is a library here, and nothing ever called it.</p>
       </Section>
 
       {/* ── Orchestration Pipeline ── */}
@@ -249,7 +248,7 @@ export default function Architecture() {
 
       {/* ── Agents ── */}
       <Section id="agents" title="Agents">
-        <p className="text-sm text-slate-400 mb-4">All agents are CrewAI agents backed by LiteLLM. Default model is Claude Sonnet unless noted.</p>
+        <p className="text-sm text-slate-400 mb-4">All agents are CrewAI agents. No agent names a model: each declares a capability tier in <code className="text-slate-300">agents/model_registry.py</code> - fast or deep - and the project&rsquo;s grants bind that tier to one. Hosted defaults are claude-haiku-4-5-20251001 (fast) and claude-opus-4-6 (deep); a project not granted HOSTED_INFERENCE gets its own local model for that tier, or refuses to run.</p>
 
         {[
           {
@@ -689,12 +688,6 @@ export default function Architecture() {
           <KV k="Access policy" v="Cloudflare Access - email OTP protects /dashboard/*; bypass for /api/* and /dashboard/interview/*" />
         </Card>
 
-        <Card title="LiteLLM Proxy" accent="border-slate-600">
-          <KV k="URL" v="http://localhost:4000" />
-          <KV k="Config file" v="litellm_config.yaml" />
-          <KV k="Models configured" v="claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001, qwen3-4b (local)" />
-          <KV k="Local LLM backend" v="llama.cpp at localhost:10000 (OpenAI-compatible API)" />
-        </Card>
       </Section>
 
       <div className="text-center text-slate-600 text-xs py-8 border-t border-slate-800">

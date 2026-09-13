@@ -8,7 +8,6 @@ import yaml
 
 class Settings(BaseSettings):
     anthropic_api_key: str
-    litellm_proxy_url: str = "http://localhost:4000"
     chroma_host: str = "localhost"
     chroma_port: int = 8002
     chroma_api_key: Optional[str] = None

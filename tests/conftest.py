@@ -24,7 +24,6 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ.setdefault("ADMIN_PASSWORD", "test-admin-pw")
 os.environ.setdefault("ADMIN_USERNAME", "admin")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
-os.environ.setdefault("LITELLM_PROXY_URL", "http://localhost:4000")
 os.environ.setdefault("CHROMA_HOST", "localhost")
 os.environ.setdefault("CHROMA_PORT", "8002")  # pydantic coerces str→int
 # Blank all credential-gated settings so unit tests behave identically whether

@@ -63,15 +63,13 @@ else
   SKIPPED+=("Docker services - docker not installed (ChromaDB needs it)")
 fi
 
-# ── LiteLLM proxy - only needed for local / sensitive-mode routing ────────────
-if [ -x ./venv/bin/litellm ] && [ -f litellm_config.yaml ]; then
-  echo "Starting LiteLLM proxy on :4000..."
-  ./venv/bin/litellm --config litellm_config.yaml --port 4000 >/dev/null 2>&1 &
-  echo $! > .pids/litellm.pid
-  STARTED+=("LiteLLM        http://localhost:4000")
-else
-  SKIPPED+=("LiteLLM - not in venv or litellm_config.yaml missing (only needed for sensitive mode)")
-fi
+# No LiteLLM proxy. LiteLLM is a **library** here: crew agents build `LLM(...)` with a
+# base_url taken from the project's own settings and call the provider directly, and nothing in
+# the codebase has ever read `litellm_proxy_url` or spoken to :4000. This block started one
+# anyway and announced it to the operator as a running service, with a comment saying it was
+# "only needed for local / sensitive-mode routing" - which is the opposite of true: local
+# routing goes to the project's `local_fast_url` / `local_deep_url`, Ollama on :11434 by
+# default. Retired in sp66 along with litellm_config.yaml and the setting.
 
 # ── FastAPI - required ───────────────────────────────────────────────────────
 if [ "$DEV_MODE" = "1" ]; then
