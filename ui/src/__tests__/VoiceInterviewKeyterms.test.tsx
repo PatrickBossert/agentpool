@@ -437,6 +437,23 @@ describe('the address the browser opens', () => {
     expect(params.get('access_token')).toBe('jwt')
   })
 
+  it('carries a parameter it has never heard of, so the server stays the only decider', () => {
+    // `mip_opt_out` is the case this exists for - it opts the interview out of Deepgram's Model
+    // Improvement Programme, whose default is opted *in*, and it is decided server-side beside
+    // the model. The builder must forward it without knowing what it is: an allow-list here
+    // would silently drop a privacy control while every server-side test stayed green, and the
+    // failure would be invisible - a socket that opens, transcribes perfectly, and retains.
+    // A fabricated name is asserted beside it so this cannot pass by `mip_opt_out` alone being
+    // special-cased, which is the shape the real defect would take.
+    const url = deepgramListenUrl({
+      token: 'jwt',
+      listen_params: { mip_opt_out: 'true', some_parameter_added_later: 'kept' },
+    })
+    const params = new URL(url).searchParams
+    expect(params.get('mip_opt_out')).toBe('true')
+    expect(params.get('some_parameter_added_later')).toBe('kept')
+  })
+
   it('encodes a term with a space or an ampersand rather than breaking the query', () => {
     const url = deepgramListenUrl({
       token: 'jwt', listen_params: { keyterm: ['Transmission & Distribution'] },

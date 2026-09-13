@@ -299,6 +299,14 @@ def deepgram_listen_params(keyterms: list[str], language: str) -> dict[str, obje
         "language": language or "en",
         "smart_format": "true",
         "interim_results": "true",
+        # Deepgram's Model Improvement Program defaults to **opted in**: omitting this parameter
+        # is a decision, and it is the wrong one for every engagement this product runs. It is
+        # unconditional rather than keyed on `llm_mode` for the same reason `prepare_portrait`
+        # strips EXIF on every upload - a participant's speech is a client's material on a
+        # `standard` engagement exactly as much as on a `sensitive` one, and a conditional
+        # opt-out is a second decision free to fall behind this one. It also settles where
+        # processing may happen, which no capability in `deployment_modes.py` governs.
+        "mip_opt_out": "true",
     }
     if keyterms:
         params[DEEPGRAM_KEYTERM_PARAM] = keyterms

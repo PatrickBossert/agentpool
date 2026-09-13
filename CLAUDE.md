@@ -1549,6 +1549,21 @@ and is *not* audio. That is the sp62 ElevenLabs correction arriving again and it
 *Egress is granted, never assumed*; the point to carry here is that the vocabulary is the half a
 row naming only the audio would silently exclude.
 
+**`mip_opt_out=true` is on every connection, and its default is the reason.** Deepgram's Model
+Improvement Program defaults to **opted in**, so the parameter's absence is a decision and not a
+gap - an interview that omits it has consented to the participant's speech being retained, used
+for training, and processed wherever the provider chooses. It is set in `deepgram_listen_params`
+beside the model, **unconditionally**, and the unconditional part is the half worth defending:
+keying it on `llm_mode` would be a second egress decision free to fall behind this one, and a
+participant's answers are a client's material on a `standard` engagement exactly as much as on a
+`sensitive` one. It also settles **where** processing may happen, which no capability in
+`deployment_modes.py` governs - so this is not `HOSTED_INFERENCE` wearing another hat, and a
+future mode table must not absorb it. The test is parametrised over every shape the other two
+inputs take, because the property is that it is unconditional: a single-shape assertion would be
+satisfied by a value set beside the keyterms, and the branch that would then opt in is the
+*empty-vocabulary* one - a project with no registry yet, which is every engagement on its first
+interview.
+
 **Nothing on this path has ever spoken to the real Deepgram.** The `access_token`-in-URL form,
 the `keyterm` spelling and the webm/opus stream are all read off documentation, so every test
 encodes a *reading of the docs* rather than the provider's behaviour, and a wrong reading opens a
@@ -2463,8 +2478,17 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   before its first task. Treat its first run as an experiment.
 - Deepgram (STT) and ElevenLabs (TTS) are used in secure mode by decision, both being
   streamed with no content retention. Local speech services are future work, not a
-  current requirement. **For Deepgram that sentence described an intention until sp66, not a
-  practice**: the grant door had existed since May 2026 and nothing in `ui/src` had ever called
+  current requirement. **For Deepgram, "no content retention" was an undertaking with nothing
+  behind it until `mip_opt_out=true` was set on every connection** - the Model Improvement
+  Program defaults to opted *in*, so a socket opened without that parameter consented to
+  retention and to training on a participant's speech, and the sentence above was describing
+  what we intended rather than what we sent. Argued under *Listening to a participant*; the
+  half to carry here is that **the undertaking and the parameter are two different things**, and
+  this file asserted the first for as long as the door was dark. **ElevenLabs' half of this
+  sentence has had no equivalent audit** - it is stated here the way Deepgram's was, and that is
+  now a known reason to check rather than a reason to believe.
+  **For Deepgram the sentence described an intention until sp66 in a second way as well**:
+  the grant door had existed since May 2026 and nothing in `ui/src` had ever called
   it, so the decision, the undertaking on the privacy page and the entry here were all about a
   path with no traffic on it. It is connected now, it is the primary recogniser with the
   browser's as the fallback, and what travels on it is **two things rather than one** - the

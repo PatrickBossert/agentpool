@@ -267,6 +267,31 @@ def test_the_model_and_the_boost_parameter_are_chosen_together():
     assert "keywords" not in params
 
 
+@pytest.mark.parametrize(
+    "keyterms, language",
+    [
+        (["Iberdrola"], "en"),
+        ([], "en"),
+        ([], ""),
+        ([], "cy"),
+        (["Iberdrola", "renewals programme"], "cy"),
+    ],
+)
+def test_every_connection_opts_out_of_the_model_improvement_programme(keyterms, language):
+    """Deepgram's default is **opted in**, so omitting this parameter is a decision.
+
+    Parametrised over every shape the other two inputs take, because the property is that it is
+    unconditional: a project with no registry, an engagement with no language stamped, and one
+    with both must all carry it. A single-shape assertion would be satisfied by a value set
+    beside the keyterms, and the branch a participant's speech actually travels on - a project
+    whose vocabulary came back empty - would be the one that opted in.
+
+    Asserted as the string the URL will carry rather than a bool, because `urlencode` renders
+    Python's `True` as `True` and Deepgram reads `true`.
+    """
+    assert deepgram_listen_params(keyterms, language)["mip_opt_out"] == "true"
+
+
 def test_the_language_is_the_sessions_and_falls_back_to_english():
     assert deepgram_listen_params([], "cy")["language"] == "cy"
     assert deepgram_listen_params([], "")["language"] == "en"
