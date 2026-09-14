@@ -603,11 +603,17 @@ class SpeechFailureBody(BaseModel):
 async def report_speech_failure(session_token: str, body: SpeechFailureBody):
     """The interview could not be transcribed, and this engagement forbids the fallback.
 
-    Two things reach this door, and neither is visible from the server: a browser that records
-    none of the containers Deepgram is opened for - Safari and iOS record MP4/AAC, which since
-    `f914bc56` declines the socket - and a socket that would not stay open. The Deepgram half of
-    the probe is answered at the token door above, where the status code that distinguishes a
-    refused key from an exhausted balance actually is.
+    Two things reach this door, and neither is visible from the server: a browser that cannot
+    capture audio for us at all, and a socket that would not stay open. The Deepgram half of the
+    probe is answered at the token door above, where the status code that distinguishes a refused
+    key from an exhausted balance actually is.
+
+    The first of those used to be narrower and used to land on far more people. While the page
+    recorded through `MediaRecorder` the browser negotiated a container, Safari and iOS
+    negotiated MP4/AAC against a socket opened for webm/opus, and `f914bc56` made the page
+    decline rather than stream it - so every iPhone and iPad reported here and could not be
+    interviewed. sp67 sends raw PCM, which negotiates nothing, so what arrives now is
+    `no_audio_worklet` from a browser predating April 2021.
 
     **It records nothing on an engagement permitted hosted inference**, and answers so. There the
     browser's own recogniser is the designed answer, the amber notice already says which

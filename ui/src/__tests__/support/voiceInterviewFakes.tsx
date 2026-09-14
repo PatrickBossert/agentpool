@@ -1,10 +1,11 @@
 // ui/src/__tests__/support/voiceInterviewFakes.tsx
 //
-// The fakes a rendered interview needs: a Deepgram socket, a MediaRecorder, the browser's own
-// recogniser, the interview API, and the audio and microphone the page reaches for.
+// The fakes a rendered interview needs: a Deepgram socket, the audio graph the capture runs in,
+// the browser's own recogniser, the interview API, and the audio and microphone the page reaches
+// for.
 //
 // **Shared rather than copied, because a fake is a claim about an external system.** Two copies
-// of "how a WebSocket fails" or "when a MediaRecorder hands over its last chunk" are two
+// of "how a WebSocket fails" or "when an audio worklet hands over its last samples" are two
 // declarations free to drift, and the whole of sp66's final review turned on fakes that were
 // more forgiving than the real thing. One copy, so a correction reaches every test at once.
 //

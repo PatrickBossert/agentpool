@@ -337,9 +337,13 @@ found by a reviewer reading the code against the WebSocket and MediaRecorder spe
 
 So: **when a test's world is simulated, the fake needs its own review against the real thing's
 contract, and it is worth writing the contract down beside it.** The fakes now fire `error`
-then `close`, and hand over a final chunk before `onstop`, because that is what the real ones
-do - and where a fake deliberately simplifies, the simplification is a comment rather than a
-silence. The cheapest tell that you are in this territory: a test whose green depends on an
+then `close`, and hand over the audio still held before acknowledging a flush, because that is
+what the real ones do - and where a fake deliberately simplifies, the simplification is a comment
+rather than a silence. sp67 replaced the recorder with an `AudioWorklet` and the discipline
+carried: its `AudioContext` reports **44100** rather than the 48000 a guess would use, its
+`addModule` **rejects** for an address that does not resolve, and its context starts
+**suspended** - three claims chosen because a more obliging fake would hide a defect that is
+silent in the browser. The cheapest tell that you are in this territory: a test whose green depends on an
 event ordering you have not read the specification for.
 
 ---
@@ -1633,33 +1637,98 @@ guarded in `deepgram.ts` rather than in the page, because "an abnormal post-open
 guard a second recogniser starts on one microphone and the first is orphaned, holding the
 microphone for the rest of the interview.
 
-**`recorderMimeType` answers three things, not two, and Safari is why.** `undefined` is "this
-browser will not say", which is a reason to try its default; `null` is "this browser has said it
-records none of these", which is a reason not to open the socket at all. They were one value -
-`.find()` returning `undefined` - so a browser that answered **false** to webm/opus, webm and
-ogg/opus alike had its negative probe discarded and got a recorder built with its own preferred
-container, streamed to a socket configured for webm/opus. **Safari, including on iOS, records
-MP4/AAC and answers false to all three**, and that is the device a participant is most likely to
-be holding. If Deepgram answers such a stream with no transcripts rather than closing the
-socket, nothing fires `onDropped` at all and the participant meets the silent empty answer this
-section's fifth case is about. Declining costs Safari nothing - it has
-`webkitSpeechRecognition`, so the fallback works - and it is the one place in this file where
-the safe direction is *not* to try.
+**The audio is raw PCM from an `AudioWorklet`, and sp67 is why - the container is gone and so is
+the constraint it imposed.** Until then the page recorded through `MediaRecorder`, which
+*negotiates* a container: Chrome and Firefox record webm/opus and Safari records MP4/AAC, and a
+socket opened for one and fed the other returns no transcripts rather than an error. So the page
+had to ask `MediaRecorder.isTypeSupported` and decline a browser that answered false to all
+three - which is Safari, **and therefore every iPhone and iPad**. On an engagement that requires
+Deepgram that meant the device a participant is most likely to be holding could not be
+interviewed at all. It was an accepted operational constraint rather than a defect, because the
+alternative was the participant's voice going to Apple.
 
-**A flag guards the routes that set it, and one route did not.** `new MediaRecorder(...)`
-throwing reaches a `catch` that answers the promise `null` - "fall back" - and *then* closes the
+**That was never a fact about Safari's microphone. It was a fact about `MediaRecorder`.**
+`AudioWorklet` hands over `Float32Array` samples straight from the audio graph, in the same shape
+on every browser, so there is nothing to negotiate and nothing to decline - and Safari has had it
+since **14.1 on macOS and iOS 14.5**, April 2021. **An iPhone can now be interviewed on a
+sensitive engagement**, and `VoiceInterviewSpeechPolicy.test.tsx` drives verbatim the browser the
+old probe refused (`isTypeSupported` false to all three) and asserts the Deepgram socket opens.
+Nothing else about the policy moved: the browser's own recogniser is still refused on such an
+engagement, and Deepgram being unreachable or out of credit still stops the interview.
+
+The probe kept its two-question shape and changed what the second question *is*: "can this
+browser produce a container Deepgram accepts" became "does this browser have `AudioWorklet`".
+The reason word changed with it - `unsupported_container` is retired and `no_audio_worklet`
+replaces it, because the retired sentence told an operator an iPhone could not be interviewed
+and nothing else in the system would have contradicted it. The population it refuses is now a
+browser predating April 2021 rather than a current device, so the participant's notice names
+updating their browser instead of finding a computer.
+
+Four things about the PCM path fail **silently** when they are wrong, which is why each is driven
+as a pure function in `PcmCapture.test.ts` rather than through a screen:
+
+- **The sample rate is measured, never assumed.** It goes on the URL as `sample_rate`, read off
+  the live `AudioContext` - commonly 48000, and 44100 on plenty of real machines. A mismatch does
+  not error: the socket opens, the audio streams, Deepgram decodes it at the wrong speed, and the
+  transcript is gibberish or empty. The fakes report **44100**, deliberately, so a rate hardcoded
+  to the common case fails every test in the directory rather than passing by coincidence.
+- **Float32 to Int16 needs an explicit clamp.** `DataView.setInt16` takes its value modulo 2^16,
+  so an unclamped 1.5 arrives as -16386 - the loudest part of a word inverts, and transcribes as
+  noise. The two halves scale by different maxima (`0x8000` negative, `0x7fff` positive), because
+  two's complement holds -32768 and only +32767. A round trip over in-range samples can see
+  neither; the test drives plus and minus 2.0, in both directions.
+- **`linear16` is little-endian**, which is `setInt16`'s third argument and `false` by default.
+- **The graph must pull.** An `AudioWorkletNode` with an input and no path to `destination` may
+  never be scheduled, so it is connected onward through a **zero-gain** node. Connecting it
+  straight to `destination` is the easy mistake while proving the graph runs, and it puts the
+  participant's own voice in their ears.
+
+Two more are about iOS specifically, and both were found by reading specifications rather than by
+the suite. A context starts **suspended**, and iOS reports a **fourth** state, `interrupted`,
+when the participant switches tabs or lets the screen lock - which never clears on its own.
+`process()` is called on neither, so the answer comes back empty with nothing raised anywhere,
+which is precisely the class of failure this path was rebuilt to remove: the capture therefore
+checks the state *after* resuming rather than trusting the resume, and refuses rather than
+capturing into silence. And the render quantum is **no longer fixed at 128** - Chrome 153 shipped
+`AudioContextOptions.renderSizeHint` in September 2026, so 128 is the specification's default
+rather than its value, and the processor reads the block's own length.
+
+**`encoding`, `sample_rate` and `channels` are the client's, and that is the one exception to the
+rule above.** `model` and `keyterm` are the server's because they are one fact *about Deepgram*.
+These three are one fact about *this browser's audio graph*, and the server cannot observe an
+`AudioContext`'s sample rate at all - so they are set together in `deepgramListenUrl`, and
+`deepgram_listen_params` declares none of them, which
+`test_the_server_declares_nothing_about_the_shape_of_the_audio` holds. What that exists to stop
+is somebody adding "just the encoding" server-side, which looks entirely reasonable and splits a
+pair whose disagreement is silent at both ends.
+
+**A flag guards the routes that set it, and one route did not.** A capture that fails to start
+reaches a `catch` that answers the promise `null` - "fall back" - and *then* closes the
 socket, and that close arrived at `onclose` with the socket open and not stopping, so it
 reported a drop. The caller then had two reasons to start a browser recogniser, the null answer
 and the drop, and started one for each: verbatim the defect the flag was added to prevent, by a
 door the flag did not cover. The `catch` claims `dropped` itself, because it is the only place
 that knows the closure was ours. It is asserted as the **route** - the failure driven through
-the constructor - and counted through the page, where a one-question interview builds exactly
+the graph connection - and counted through the page, where a one-question interview builds exactly
 two recognisers (the answer, and the spoken section rating) and built three before the fix. A
-transcript cannot see this: both recognisers write into the same answer. And `stop()` **waits for the flush**, bounded at
+transcript cannot see this: both recognisers write into the same answer.
+
+And `stop()` **waits for the flush**, bounded at
 `FLUSH_TIMEOUT_MS = 1500`: closing the socket in the same tick discarded the tail of any answer
 ended by tapping "Done speaking", which was a regression against the path being replaced -
 `recognition.stop()` delivers a pending `onresult` before `onend`, so the browser engine never
 lost it. The deadline is a ceiling and not a cost; the ordinary wait is one round trip.
+
+**PCM has no `onstop`, so that guarantee is kept by a different mechanism and is stronger for
+it.** `stop()` asks the worklet for the samples it is still holding, the processor posts its tail
+and *then* acknowledges, and `CloseStream` goes out on the acknowledgement. A `MessagePort`
+delivers in order, so "the tail is on the wire before the close" is a property of the port rather
+than of two independently queued tasks - which is what the final `dataavailable` and `onstop`
+were. The deadline still bounds the whole of it, because a worklet on an interrupted context
+never answers at all. One thing the `MediaRecorder` path did not need: the graph is **torn down**
+when the answer ends and on every route that declines, because one `AudioContext` serves the
+whole interview and a graph left connected goes on posting into a closed socket for every
+remaining question.
 
 **That flush guarantee was unfalsifiable as first tested, and the fake was only half of why.**
 `FakeRecorder.stop()` fired `ondataavailable` **synchronously**, while a real `MediaRecorder`
@@ -1675,6 +1744,13 @@ socket rather than throwing; and stopping a socket that is no longer open sends 
 and ends the answer at once rather than holding a participant for the whole deadline. The
 generalisable half: **repairing a fake does not add the assertion the fake was hiding.** It
 makes the assertion possible, and it has to be written.
+
+`FakeRecorder` is gone with the recorder, and **every one of those assertions survived the
+move** - rewritten against the worklet's port rather than deleted with the thing they were about.
+That is the test of whether a lesson was understood or merely recorded: the batch reaching the
+wire before `CloseStream`, the send guard on a socket that has gone, and the stop that sends no
+`CloseStream` to a closed socket are all still asserted, and the fakes that replace it carry
+their contract in a comment naming which specification each claim comes from.
 
 **Two things travel to Deepgram, not one**, and `PARTICIPANT_SPEECH_EGRESS` in `agents/egress.py`
 names both - the participant's audio, and this engagement's vocabulary, which is client material
@@ -1698,7 +1774,8 @@ satisfied by a value set beside the keyterms, and the branch that would then opt
 interview.
 
 **Nothing on this path has ever spoken to the real Deepgram.** The `access_token`-in-URL form,
-the `keyterm` spelling and the webm/opus stream are all read off documentation, so every test
+the `keyterm` spelling and the `linear16`/`sample_rate`/`channels` triple are all read off
+documentation, so every test
 encodes a *reading of the docs* rather than the provider's behaviour, and a wrong reading opens a
 socket that transcribes and boosts nothing. This is the same honesty the ElevenLabs add-voice
 door is recorded with under *Known issues* - "never confirmed against the real provider" - and
@@ -2664,10 +2741,13 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   participant's audio and this engagement's vocabulary. Both are declared in
   `PARTICIPANT_SPEECH_EGRESS`; the decision itself is unchanged. The residual is the one
   ElevenLabs' add-voice door already carries below: **no part of this path has spoken to the
-  real provider.** The URL form, the `keyterm` spelling and the webm/opus stream are read off
+  real provider.** The URL form, the `keyterm` spelling and the raw PCM stream with its measured sample
+  rate are read off
   documentation, so a wrong reading opens a socket that boosts nothing, and the fallback is
   what keeps the worst case at "today's behaviour" rather than "a lost interview". Argued in
-  full under *Listening to a participant*. ElevenLabs is reached for a **second** kind of request - the two
+  full under *Listening to a participant*. **The audio is raw `linear16` PCM since sp67 rather
+  than webm/opus** - the same speech in a different shape on the wire, and the row is unchanged
+  in what it declares leaves. ElevenLabs is reached for a **second** kind of request - the two
   voice listings behind `GET /projects/{slug}/voices` (`api/services/voice_catalogue.py`) -
   and that request carries no client material at all: an accent, a sex, and a search term the
   consultant typed. It is recorded because the row said "interview text" and would otherwise

@@ -95,6 +95,9 @@ beforeAll(async () => {
     expect(name).toBe('pcm-capture')
     PcmCaptureProcessor = ctor
   })
+  // Plain JavaScript with no declaration file, deliberately - it is loaded by `addModule` into
+  // a scope the bundler never sees, so there is nothing for a `.d.ts` to describe.
+  // @ts-expect-error - untyped by design; `registerProcessor` above is what gives it a shape
   await import('../api/pcm-worklet.js')
 })
 

@@ -647,11 +647,17 @@ describe('the prose half', () => {
     renderPage()
     const card = await screen.findByText(/The browser’s own transcription - refused on this engagement/)
     const detail = card.parentElement?.textContent ?? ''
-    // The operational consequence stated where an auditor and a consultant will both read it,
-    // rather than left to be discovered by a participant holding a phone.
-    expect(detail).toMatch(/iPhone or iPad/)
-    // And it says the interview stops rather than degrading quietly, which is the undertaking.
+    // It says the interview stops rather than degrading quietly, which is the undertaking.
     expect(detail).toMatch(/does not start|stops/)
+    // **And it no longer tells a client their people cannot be interviewed on a phone.** That
+    // sentence was here, correctly, for as long as the audio went through `MediaRecorder` and
+    // its container - it was a promise about what this engagement could not do, made where an
+    // auditor and a consultant both read it. sp67 sends raw PCM, which negotiates nothing, so
+    // the constraint is gone and the promise had to go with it. Asserted as an absence because
+    // a stale operational limit on this page is read as current by the people planning around
+    // it; the page says so in as many words instead.
+    expect(detail).toMatch(/no longer/)
+    expect(detail).not.toMatch(/cannot be conducted on an iPhone/)
     expect(screen.queryByText(/The browser’s own transcription - the fallback/)).toBeNull()
   })
 
