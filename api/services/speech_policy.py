@@ -72,14 +72,18 @@ it is reporting, and the refusal is what protects the participant.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
 
 import httpx
 
 from api.config import get_settings
 from api.services.deployment_modes import Capability, project_permits
+from api.services.process_cache import register_cache
 
 _log = logging.getLogger(__name__)
 
@@ -145,6 +149,17 @@ def describe_deepgram_failure(exc: BaseException) -> str:
     piece of evidence that distinguishes them and it is available exactly here, where the call is
     made, and nowhere downstream.
     """
+    from api.services.interview_service import DeepgramGrantMalformed
+
+    if isinstance(exc, DeepgramGrantMalformed):
+        # A 200 whose body the grant cannot be read out of. Checked before `ValueError` would be
+        # if it were one, and kept distinct from "not configured" because an operator sent to
+        # check their API key for a provider-shape change has been told the wrong thing.
+        return (
+            f"Deepgram accepted the request and answered something this deployment could not "
+            f"read a grant out of ({exc}) - their response shape, or this integration, has "
+            f"changed"
+        )
     if isinstance(exc, ValueError):
         # `generate_deepgram_token`'s own refusal: DEEPGRAM_API_KEY is not set at all.
         return f"Deepgram is not configured on this deployment ({exc})"
@@ -168,6 +183,97 @@ def describe_deepgram_failure(exc: BaseException) -> str:
     if isinstance(exc, httpx.HTTPError):
         return f"Deepgram could not be reached from this server ({type(exc).__name__}: {exc})"
     return f"Deepgram failed for a reason this deployment does not recognise ({type(exc).__name__}: {exc})"
+
+
+# How many alert messages one engagement may generate in a window, and how long that window is.
+#
+# **Keyed on the slug, not on the session token**, and that is the whole of the control. The case
+# is not an attacker: a key is revoked, and a campaign of forty stakeholders opens their links
+# over a morning. Those are forty different tokens and one incident, so a per-token limit would
+# permit all forty messages. It also re-fires on every reload and on every answer, because each
+# one asks the token door again.
+#
+# With a session token in hand, a loop over `POST /{token}/speech-failure` is otherwise unbounded
+# mail and unbounded Resend spend on an unauthenticated door. `email_transcript`, eighty lines
+# below the alert door, lists exactly this control among the ones it needs.
+#
+# Three, because the first tells an operator the engagement is down and the next two are the
+# evidence it is not a one-off. Everything above that is in the log and on the session rows.
+_MAIL_LIMIT = 3
+_MAIL_WINDOW_SECONDS = 3600
+
+# slug -> the monotonic times alert messages were sent for it.
+_alert_mail_log: dict[str, list[float]] = defaultdict(list)
+register_cache(_alert_mail_log.clear)
+
+
+def _may_mail_about(slug: str) -> bool:
+    """Whether another alert message may go out for this engagement, and record it if so.
+
+    Records on the way out rather than on success, deliberately: a provider that is timing out is
+    exactly when this is called most, and a limit that only counted successful sends would not
+    bound the attempts - which is where the cost and the latency are.
+    """
+    now = time.monotonic()
+    recent = [t for t in _alert_mail_log[slug] if now - t < _MAIL_WINDOW_SECONDS]
+    if len(recent) >= _MAIL_LIMIT:
+        _alert_mail_log[slug] = recent
+        return False
+    recent.append(now)
+    _alert_mail_log[slug] = recent
+    return True
+
+
+# The alert sends that have been scheduled and not yet finished.
+#
+# Held so the event loop does not garbage-collect a task nothing is awaiting - `asyncio` keeps
+# only a weak reference - and it is what a test awaits to see the send land.
+_pending_alerts: set[asyncio.Task] = set()
+
+
+def _send_off_the_request_path(*, slug: str, to: str, subject: str, body: str) -> None:
+    """Schedule the alert message, and do not wait for it.
+
+    **The participant is on the other end of this request.** `send_platform_mail` posts to Resend
+    through an `httpx` client with a fifteen-second timeout, and this is reached from the token
+    door during device setup - so awaiting it means a slow provider holds a participant on
+    "Checking your connection…" for up to fifteen seconds before they are told the interview
+    cannot go ahead. CLAUDE.md states this rule for `deliver_reset` in as many words: the send
+    goes off the request path.
+
+    Nothing is awaited and nothing raises. The outcome is logged, and the two legs that matter -
+    the log line and the session row - have already happened by the time this is called.
+
+    Falls back to sending inline when there is no running loop, which is only ever a test calling
+    the alert synchronously; production reaches this from inside a request.
+    """
+    async def deliver() -> None:
+        try:
+            from api.services.outbound_mail import send_platform_mail
+
+            # Platform mail, never project mail: `dev_mode` defaults to True and would redirect
+            # an outage alert to the operator's own inbox, where its absence reads as "no
+            # outage". Nor governance mail, which signs as PAM and goes to the project's
+            # governors - not the people who renew a transcription contract.
+            await send_platform_mail(to=to, subject=subject, body=body)
+        except Exception:
+            _log.exception(
+                "interview speech unavailable [%s]: the alert message to %s could not be sent. "
+                "The log line above and the interview session row still carry the alert.",
+                slug, to,
+            )
+
+    try:
+        task = asyncio.get_running_loop().create_task(deliver())
+    except RuntimeError:
+        _log.warning(
+            "interview speech unavailable [%s]: no running event loop, sending the alert inline",
+            slug,
+        )
+        asyncio.run(deliver())
+        return
+    _pending_alerts.add(task)
+    task.add_done_callback(_pending_alerts.discard)
 
 
 def _record(*, slug: str, session_token: str, diagnosis: str, at: str) -> str:
@@ -214,6 +320,15 @@ async def alert_speech_unavailable(
             "the log line above is the record", slug,
         )
 
+    if not _may_mail_about(slug):
+        _log.error(
+            "interview speech unavailable [%s]: suppressing the alert message - %d have already "
+            "been sent for this engagement within the last %d minutes, and they are one "
+            "incident. The log above and the interview session row still carry every one.",
+            slug, _MAIL_LIMIT, _MAIL_WINDOW_SECONDS // 60,
+        )
+        return
+
     to = get_settings().admin_alert_email.strip()
     if not to:
         # Not a guess. `admin_username` is a login and is routinely not an address, and
@@ -226,29 +341,20 @@ async def alert_speech_unavailable(
             "row carry this alert either way.", slug,
         )
         return
-    try:
-        from api.services.outbound_mail import send_platform_mail
-
-        # Platform mail, never project mail: `dev_mode` defaults to True and would redirect this
-        # to the operator's own inbox, which is not an alert.
-        await send_platform_mail(
-            to=to,
-            subject=f"Interview could not be conducted on {slug} - transcription unavailable",
-            body=(
-                f"An interview on the engagement '{slug}' was stopped because speech "
-                f"transcription could not be reached.\n\n"
-                f"What went wrong: {diagnosis}\n\n"
-                f"Session token: {session_token}\n"
-                f"When: {at}\n\n"
-                f"This engagement is not granted hosted inference, so the browser's own speech "
-                f"recogniser - which streams the participant's audio to Google or Apple - is "
-                f"refused rather than used as a fallback. The participant was asked to try again "
-                f"later and anything they had already answered has been preserved.\n\n"
-                f"The interview sessions panel on this project records the same failure."
-            ),
-        )
-    except Exception:
-        _log.exception(
-            "interview speech unavailable [%s]: the alert message to %s could not be sent. The "
-            "log line above and the interview session row still carry the alert.", slug, to,
-        )
+    _send_off_the_request_path(
+        slug=slug,
+        to=to,
+        subject=f"Interview could not be conducted on {slug} - transcription unavailable",
+        body=(
+            f"An interview on the engagement '{slug}' was stopped because speech "
+            f"transcription could not be reached.\n\n"
+            f"What went wrong: {diagnosis}\n\n"
+            f"Session token: {session_token}\n"
+            f"When: {at}\n\n"
+            f"This engagement is not granted hosted inference, so the browser's own speech "
+            f"recogniser - which streams the participant's audio to Google or Apple - is "
+            f"refused rather than used as a fallback. The answers the participant had already "
+            f"given have been kept, and the session is recorded as abandoned.\n\n"
+            f"The interview sessions panel on this project records the same failure."
+        ),
+    )

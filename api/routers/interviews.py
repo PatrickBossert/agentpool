@@ -9,6 +9,7 @@ credential the rest of this API relies on - so it requires an authenticated call
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections import defaultdict
@@ -31,6 +32,7 @@ from api.database import (
     update_interview_session_status,
 )
 from api.services.interview_service import (
+    DeepgramGrantMalformed,
     _find_session_db,
     complete_session,
     deepgram_listen_params,
@@ -51,6 +53,8 @@ from api.services.speech_policy import (
     describe_deepgram_failure,
     speech_policy_for,
 )
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
@@ -365,7 +369,7 @@ async def get_deepgram_token(session_token: str):
     # refused key, an exhausted balance and a rate limit it was.
     try:
         token = await generate_deepgram_token()
-    except (ValueError, httpx.HTTPError) as exc:
+    except (ValueError, httpx.HTTPError, DeepgramGrantMalformed) as exc:
         diagnosis = describe_deepgram_failure(exc)
         if slug and db_path and speech_policy_for(slug) == SPEECH_REQUIRED:
             await alert_speech_unavailable(
@@ -384,9 +388,22 @@ async def get_deepgram_token(session_token: str):
     # goes the moment the engagement can actually be interviewed rather than an hour later. An
     # interview that starts and is abandoned for some other reason is also correctly no longer
     # described as a transcription failure.
+    # Guarded, and the guard is the important half. `interview_db_connection` runs no migrations
+    # by design, so a project database that has not been opened through `get_connection` since
+    # sp66 has no `speech_failure` column at all - and this sits on the **success** path, which a
+    # live interview walks before every answer. An unguarded write here would turn a missing
+    # column into a 503 for a participant whose Deepgram is working perfectly. Tidying a stale
+    # amber line is worth nothing beside that.
     if db_path:
-        async with interview_db_connection(db_path) as conn:
-            await record_session_speech_failure(conn, session_token, None)
+        try:
+            async with interview_db_connection(db_path) as conn:
+                await record_session_speech_failure(conn, session_token, None)
+        except Exception:
+            _log.warning(
+                "could not clear the recorded speech failure for session %s - the interview is "
+                "unaffected, but the sessions panel may still show a failure that is no longer "
+                "true", session_token, exc_info=True,
+            )
 
     keyterms = await keyterms_for_project(slug) if slug else []
 

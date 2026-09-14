@@ -30,6 +30,7 @@ and unpassable in the other. The names carry no vocabulary the assertions search
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import sqlite3
@@ -213,6 +214,35 @@ def engagements(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+async def _settle_alerts() -> None:
+    """Wait for the alert messages this test scheduled.
+
+    The send is deliberately **off the request path** - a participant is on the other end of the
+    door that raises it, and awaiting a fifteen-second Resend timeout would hold them on
+    "Checking your connection…". So it is a task, and a test that wants to see it land has to
+    wait for it rather than assume it ran.
+    """
+    from api.services.speech_policy import _pending_alerts
+
+    while _pending_alerts:
+        await asyncio.gather(*list(_pending_alerts), return_exceptions=True)
+
+
+@pytest.fixture(autouse=True)
+def forget_alert_mail_log():
+    """Empty the per-slug mail limiter between tests.
+
+    It accumulates for the life of the process, exactly like `_transcript_email_log` in the
+    interviews router - so without this a test that sends three alerts leaves any later test on
+    the same slug silently suppressed, and the suppression looks like a broken alert.
+    """
+    from api.services.speech_policy import _alert_mail_log
+
+    _alert_mail_log.clear()
+    yield
+    _alert_mail_log.clear()
+
+
 def _failure_on(db_dir: Path, slug: str, token: str) -> dict | None:
     conn = sqlite3.connect(db_dir / f"{slug}.db")
     row = conn.execute(
@@ -336,6 +366,52 @@ def test_each_deepgram_failure_names_its_own_remedy():
     assert "not configured" in unconfigured.lower()
 
     assert len({refused_key, no_credit, rate_limited, unconfigured}) == 4
+
+
+@pytest.mark.asyncio
+async def test_a_two_hundred_with_no_grant_in_it_is_refused_rather_than_a_five_hundred(
+    engagements, monkeypatch
+):
+    """Minor 8, and the docstring above `generate_deepgram_token` says this exact shape was live.
+
+    It read `resp.json()["key"]` for months against a body that has no `key`, and never raised
+    only because nothing in the browser had ever called the door. Reading a key the body does not
+    have raises `KeyError`, which is in neither of the families the token door catches - so it
+    answered **500**, with no diagnosis and no alert, on an engagement whose whole point is that
+    somebody is told which problem it was.
+
+    Driven through an `httpx.MockTransport` rather than by stubbing the function, because the
+    defect is in the function: a stub would prove the door handles what the stub raises.
+    """
+    from api.main import app
+    from api.services import interview_service
+
+    def answer_without_the_grant(request: httpx.Request) -> httpx.Response:
+        # A perfectly successful response whose shape this integration does not expect.
+        return httpx.Response(200, json={"token": "not-the-key-we-read", "expires_in": 30})
+
+    transport = httpx.MockTransport(answer_without_the_grant)
+    real_client = httpx.AsyncClient
+
+    def client_on_the_mock(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(get_settings(), "deepgram_api_key", "a-configured-key", raising=False)
+    monkeypatch.setattr(interview_service.httpx, "AsyncClient", client_on_the_mock)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/interviews/tok-alpha/deepgram-token")
+
+    assert resp.status_code == 503, "a malformed grant answered 500 rather than being refused"
+    detail = resp.json()["detail"]
+    # And it is told apart from the deployment simply not being configured, which is a different
+    # problem with a different remedy - the whole reason `describe_deepgram_failure` exists.
+    assert "not configured" not in detail.lower()
+    assert "changed" in detail.lower()
+
+    # The participant is refused either way; what this buys is that somebody is told why.
+    assert _failure_on(engagements, "locked-down", "tok-alpha") is not None
 
 
 def test_an_unreachable_host_is_not_reported_as_a_refusal():
@@ -477,6 +553,59 @@ async def test_a_successful_grant_clears_a_failure_recorded_earlier(engagements,
     assert _failure_on(engagements, "locked-down", "tok-alpha") is None, (
         "the panel would show 'Not interviewed' beside a completed interview"
     )
+
+
+@pytest.mark.asyncio
+async def test_the_clearing_never_costs_a_participant_a_working_interview(
+    engagements, monkeypatch, no_network, tmp_path
+):
+    """**The guard matters more than the clearing does**, and this is why it is a `try`.
+
+    `interview_db_connection` runs no migrations by design, so a project database that has not
+    been opened through `get_connection` since sp66 has no `speech_failure` column at all. The
+    clearing sits on the token door's **success** path, which a live interview walks before every
+    single answer - so an unguarded write turns a missing column into a 503 for a participant
+    whose Deepgram is working perfectly, and on a required engagement a 503 there ends the
+    interview.
+
+    Found by running the suite rather than by reasoning: the first version of this repair broke
+    `test_interview_keyterms.py`'s token-door test, which builds its `interview_sessions` table by
+    hand. Tidying a stale amber line is worth nothing beside a working interview.
+    """
+    from api.main import app
+    from api.routers import interviews as interviews_router
+
+    db_dir = Path(get_settings().database_dir)
+    conn = sqlite3.connect(db_dir / "never-migrated.db")
+    conn.executescript(
+        """
+        CREATE TABLE projects (id INTEGER PRIMARY KEY, slug TEXT UNIQUE, llm_mode TEXT);
+        CREATE TABLE interview_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_token TEXT UNIQUE,
+            node_label TEXT,
+            voice_config TEXT,
+            status TEXT DEFAULT 'pending'
+        );
+        """
+    )
+    conn.execute("INSERT INTO projects (id, slug, llm_mode) VALUES (1, 'never-migrated', 'sensitive')")
+    conn.execute(
+        "INSERT INTO interview_sessions (session_token, node_label) VALUES ('tok-old', 'x')"
+    )
+    conn.commit()
+    conn.close()
+    forget_project_mode("never-migrated")
+
+    async def grant() -> str:
+        return "jwt-for-the-browser"
+
+    monkeypatch.setattr(interviews_router, "generate_deepgram_token", grant)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/interviews/tok-old/deepgram-token")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["token"] == "jwt-for-the-browser"
 
 
 @pytest.mark.asyncio
@@ -769,12 +898,135 @@ async def test_the_alert_is_platform_mail_and_never_project_mail(engagements, mo
         session_token="tok-alpha",
         diagnosis="Deepgram reports this account has no credit (402)",
     )
+    await _settle_alerts()
 
     assert len(platform) == 1
     assert platform[0]["to"] == "ops@example.test"
     # The diagnosis reaches the person who can act on it, not just a "something failed".
     assert "no credit" in platform[0]["body"]
     assert "locked-down" in platform[0]["subject"]
+
+
+@pytest.mark.asyncio
+async def test_one_outage_across_a_campaign_does_not_send_a_message_per_stakeholder(
+    engagements, monkeypatch
+):
+    """F3. No attacker needed: a key is revoked, and forty stakeholders open their links.
+
+    Those are forty different session tokens and **one incident**, which is why the limit is keyed
+    on the slug - a per-token limit would permit all forty. Each also re-fires on every reload and
+    on every answer, because each one asks the token door again; and with a session token in hand
+    a loop over `POST /{token}/speech-failure` is otherwise unbounded mail and unbounded Resend
+    spend on an unauthenticated door.
+
+    `email_transcript`, eighty lines below the alert door in the same router, lists exactly this
+    control among the ones it needs.
+    """
+    from api.services import speech_policy as module
+    import api.services.outbound_mail as outbound
+
+    monkeypatch.setattr(get_settings(), "admin_alert_email", "ops@example.test", raising=False)
+    sent: list[str] = []
+
+    async def fake_platform(*, to, subject, body):
+        sent.append(subject)
+        return True
+
+    monkeypatch.setattr(outbound, "send_platform_mail", fake_platform)
+
+    for n in range(12):
+        await module.alert_speech_unavailable(
+            db_path=str(engagements / "locked-down.db"),
+            slug="locked-down",
+            session_token=f"tok-stakeholder-{n}",
+            diagnosis="Deepgram refused the API key this deployment holds (401)",
+        )
+    await _settle_alerts()
+
+    assert len(sent) == module._MAIL_LIMIT, (
+        f"one incident produced {len(sent)} messages across a campaign"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_limit_is_per_engagement_and_does_not_silence_a_second_client(
+    engagements, monkeypatch
+):
+    """The control. A limit that silenced every engagement once one was noisy would be worse
+    than none: the second client's outage would reach nobody, and its absence would read as
+    "no outage" - which is the exact failure `send_platform_mail` was chosen to avoid."""
+    from api.services import speech_policy as module
+    import api.services.outbound_mail as outbound
+
+    monkeypatch.setattr(get_settings(), "admin_alert_email", "ops@example.test", raising=False)
+    sent: list[str] = []
+
+    async def fake_platform(*, to, subject, body):
+        sent.append(subject)
+        return True
+
+    monkeypatch.setattr(outbound, "send_platform_mail", fake_platform)
+
+    for n in range(6):
+        await module.alert_speech_unavailable(
+            db_path=str(engagements / "locked-down.db"), slug="locked-down",
+            session_token=f"tok-a-{n}", diagnosis="401",
+        )
+    await _settle_alerts()
+    exhausted = len(sent)
+
+    await module.alert_speech_unavailable(
+        db_path=str(engagements / "measuring-local.db"), slug="measuring-local",
+        session_token="tok-gamma", diagnosis="402",
+    )
+    await _settle_alerts()
+
+    assert len(sent) == exhausted + 1, "a second engagement's outage was silenced by the first's"
+
+
+@pytest.mark.asyncio
+async def test_the_participant_is_not_held_while_the_alert_is_sent(engagements, monkeypatch):
+    """**The send is off the request path**, and this is asserted as time rather than as shape.
+
+    `send_platform_mail` posts to Resend with a fifteen-second `httpx` timeout, and the alert is
+    raised from the token door *during device setup* - so awaiting it holds a participant on
+    "Checking your connection…" for up to fifteen seconds before they are even told the interview
+    cannot go ahead. CLAUDE.md states this rule for `deliver_reset` in as many words.
+
+    The fake send never finishes on its own; if the alert awaited it, this test would hang rather
+    than fail, which is the honest shape - so it is bounded by `wait_for`.
+    """
+    from api.services import speech_policy as module
+    import api.services.outbound_mail as outbound
+
+    monkeypatch.setattr(get_settings(), "admin_alert_email", "ops@example.test", raising=False)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_platform(*, to, subject, body):
+        started.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(outbound, "send_platform_mail", slow_platform)
+
+    await asyncio.wait_for(
+        module.alert_speech_unavailable(
+            db_path=str(engagements / "locked-down.db"),
+            slug="locked-down",
+            session_token="tok-alpha",
+            diagnosis="Deepgram could not be reached from this server",
+        ),
+        timeout=2.0,
+    )
+
+    # The alert returned while the send is still in flight, which is the property.
+    await asyncio.wait_for(started.wait(), timeout=2.0)
+    # And the leg the consultant reads landed before the caller was released.
+    assert _failure_on(engagements, "locked-down", "tok-alpha") is not None
+
+    release.set()
+    await _settle_alerts()
 
 
 @pytest.mark.asyncio
@@ -804,6 +1056,7 @@ async def test_an_alert_that_cannot_be_sent_does_not_take_the_refusal_with_it(
         session_token="tok-alpha",
         diagnosis="Deepgram refused the API key this deployment holds (401)",
     )
+    await _settle_alerts()
 
     # No exception, and the leg that does not depend on mail still landed.
     recorded = _failure_on(engagements, "locked-down", "tok-alpha")

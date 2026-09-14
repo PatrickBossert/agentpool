@@ -32,6 +32,16 @@ from api.database import (
 _log = logging.getLogger(__name__)
 
 
+class DeepgramGrantMalformed(Exception):
+    """Deepgram answered successfully with a body the grant cannot be read out of.
+
+    Its own class rather than the `ValueError` used for "not configured", because those are
+    different problems with different remedies and `describe_deepgram_failure` exists precisely so
+    an operator is not sent to check both. A missing key is a deployment that has not been set up;
+    this is a provider whose response shape is not what this code expects, which is an incident.
+    """
+
+
 def interview_url(session_token: str) -> str:
     """The link an interviewee follows.
 
@@ -243,7 +253,25 @@ async def generate_deepgram_token() -> str:
             timeout=10.0,
         )
         resp.raise_for_status()
-        return resp.json()["access_token"]
+        # **The exact shape the docstring above records as having been live for months** - a 200
+        # whose body does not carry the key being read. It was `["key"]` then; it is
+        # `["access_token"]` now, and reading either of a body that has neither raises `KeyError`,
+        # which is in neither of the token door's caught families. So the door answered 500, with
+        # no diagnosis and no alert, on an engagement whose whole point is that somebody is told
+        # which problem it was. Raised as something the caller already catches instead.
+        try:
+            body = resp.json()
+        except ValueError as exc:
+            raise DeepgramGrantMalformed(
+                f"Deepgram answered {resp.status_code} with a body that is not JSON"
+            ) from exc
+        token = body.get("access_token") if isinstance(body, dict) else None
+        if not token:
+            raise DeepgramGrantMalformed(
+                f"Deepgram answered {resp.status_code} with no access_token - the grant endpoint "
+                f"returned {sorted(body) if isinstance(body, dict) else type(body).__name__}"
+            )
+        return token
 
 
 # Nova-3 is chosen for one reason: `keyterm` is its feature. Deepgram has two keyword-boosting
