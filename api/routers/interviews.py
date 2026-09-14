@@ -26,6 +26,7 @@ from api.database import (
     fetch_interview_sessions_for_run,
     get_connection,
     interview_db_connection,
+    record_session_speech_failure,
     save_interview_checkpoint,
     update_interview_session_status,
 )
@@ -371,6 +372,21 @@ async def get_deepgram_token(session_token: str):
                 db_path=db_path, slug=slug, session_token=session_token, diagnosis=diagnosis
             )
         raise HTTPException(status_code=503, detail=diagnosis)
+
+    # **A grant was minted, so whatever was recorded against this session is no longer true.**
+    # Without this, 09:00's "Deepgram reports this account has no credit (402)" sits on the row
+    # for ever: credit is restored, the participant is interviewed at 14:00, and the consultant's
+    # panel shows a green `completed` badge beside a permanent amber "Not interviewed" - so they
+    # chase somebody already interviewed, or distrust a good transcript.
+    #
+    # Here rather than in `complete_session` because this is the earliest honest moment: it fires
+    # at the probe of the retry, before the participant has answered anything, so the amber line
+    # goes the moment the engagement can actually be interviewed rather than an hour later. An
+    # interview that starts and is abandoned for some other reason is also correctly no longer
+    # described as a transcription failure.
+    if db_path:
+        async with interview_db_connection(db_path) as conn:
+            await record_session_speech_failure(conn, session_token, None)
 
     keyterms = await keyterms_for_project(slug) if slug else []
 

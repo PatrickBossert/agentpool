@@ -89,7 +89,13 @@ export default function AveryOutputExtra({ slug }: { slug: string }) {
                   Not truncated, unlike the two lines above it: the sentence names which of a
                   refused key, an exhausted balance and an unsupported browser it was, and that
                   is the whole of its value. */}
-              {s.speech_failure && (
+              {/* Never beside a `completed` badge. The server clears the record when a grant is
+                  minted, so the two should not co-occur - but a row recorded before that clearing
+                  shipped still carries one, and "completed" with "Not interviewed" underneath is
+                  a contradiction the consultant has to resolve rather than a warning they can
+                  act on. The status is the fact; this explains an absence, so it has nothing to
+                  say once the interview happened. */}
+              {s.speech_failure && s.status !== 'completed' && (
                 <p
                   data-testid={`speech-failure-${s.id}`}
                   className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-1 mt-1 leading-relaxed"

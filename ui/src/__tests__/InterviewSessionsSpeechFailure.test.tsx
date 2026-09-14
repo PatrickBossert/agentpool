@@ -90,6 +90,48 @@ describe('the interview sessions panel', () => {
     expect(screen.queryByText(/Not interviewed/i)).toBeNull()
   })
 
+  it('never shows “Not interviewed” beside a completed interview', async () => {
+    // The contradiction a consultant would have to resolve rather than act on. The server clears
+    // the record when a grant is minted, so the two should not co-occur - but a row recorded
+    // before that clearing shipped still carries one, and the panel must not put "completed"
+    // and "Not interviewed" on the same line whatever the row says.
+    installSessions([{
+      ...BASE,
+      status: 'completed',
+      speech_failure: {
+        at: '2026-09-13T09:00:00+00:00',
+        diagnosis: 'Deepgram reports this account has no credit (402)',
+      },
+    }])
+
+    renderPanel()
+
+    await screen.findByText('Fiona Marshall')
+    expect(screen.queryByTestId('speech-failure-1')).toBeNull()
+    expect(screen.queryByText(/Not interviewed/i)).toBeNull()
+    // The status is the fact, and it is still shown.
+    expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0)
+  })
+
+  it('still shows it beside an abandoned interview, which is the case it is for', async () => {
+    // The control for the suppression above: a halted interview lands at `abandoned`, and that
+    // is precisely when the consultant needs to know why. Suppressing on any non-pending status
+    // would pass the test above and hide the real signal.
+    installSessions([{
+      ...BASE,
+      status: 'abandoned',
+      speech_failure: {
+        at: '2026-09-13T09:00:00+00:00',
+        diagnosis: 'Deepgram reports this account has no credit (402)',
+      },
+    }])
+
+    renderPanel()
+
+    const note = await screen.findByTestId('speech-failure-1')
+    expect(note.textContent).toMatch(/no credit/i)
+  })
+
   it('marks only the sessions that failed when others in the same run did not', async () => {
     // The shape an engagement actually takes: one participant on an iPhone, the rest fine. A
     // panel keyed on anything but the row - a flag on the run, a banner at the top - would tell

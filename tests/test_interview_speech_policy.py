@@ -442,6 +442,84 @@ async def test_the_project_forcing_local_inference_is_treated_as_the_strict_one(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+async def test_a_successful_grant_clears_a_failure_recorded_earlier(engagements, monkeypatch, no_network):
+    """**A recorded failure is a statement about now, and nothing was clearing it.**
+
+    09:00 Deepgram is out of credit and the participant is refused. Credit is restored; they are
+    interviewed at 14:00. Without this the consultant's panel shows the amber "Not interviewed -
+    no credit (402)" for ever, beside whatever the session becomes - so they chase somebody
+    already interviewed, or distrust a good transcript.
+
+    Driven as the **sequence**, which is the only way to see it: record through the real door,
+    then succeed through the real door, then read the row.
+    """
+    from api.main import app
+    from api.routers import interviews as interviews_router
+
+    # 09:00 - no credit.
+    async def refuse() -> str:
+        raise _status_error(402)
+
+    monkeypatch.setattr(interviews_router, "generate_deepgram_token", refuse)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.get("/api/interviews/tok-alpha/deepgram-token")
+    assert _failure_on(engagements, "locked-down", "tok-alpha") is not None
+
+    # 14:00 - credit restored, and the same door answers.
+    async def grant() -> str:
+        return "jwt-for-the-browser"
+
+    monkeypatch.setattr(interviews_router, "generate_deepgram_token", grant)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/interviews/tok-alpha/deepgram-token")
+
+    assert resp.status_code == 200
+    assert _failure_on(engagements, "locked-down", "tok-alpha") is None, (
+        "the panel would show 'Not interviewed' beside a completed interview"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_never_failed_is_unaffected_by_the_clearing(engagements, monkeypatch, no_network):
+    """The control: clearing must be a clearing, not a write that happens to leave NULL.
+
+    A door that always wrote NULL would pass the test above and would also erase a failure
+    recorded a moment earlier for a *different* session on the same project, which is the case
+    that matters when forty stakeholders share one outage.
+    """
+    from api.main import app
+    from api.routers import interviews as interviews_router
+
+    async def refuse() -> str:
+        raise _status_error(402)
+
+    # tok-alpha fails and stays failed.
+    monkeypatch.setattr(interviews_router, "generate_deepgram_token", refuse)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.get("/api/interviews/tok-alpha/deepgram-token")
+
+    # A second session on the same project succeeds. Its clearing must not reach tok-alpha.
+    _seed(engagements, "locked-down", mode="sensitive", token="tok-epsilon")
+    conn = sqlite3.connect(engagements / "locked-down.db")
+    conn.execute(
+        "INSERT OR IGNORE INTO interview_sessions (session_token, node_label) VALUES ('tok-epsilon','x')"
+    )
+    conn.commit()
+    conn.close()
+
+    async def grant() -> str:
+        return "jwt"
+
+    monkeypatch.setattr(interviews_router, "generate_deepgram_token", grant)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.get("/api/interviews/tok-epsilon/deepgram-token")
+
+    assert _failure_on(engagements, "locked-down", "tok-alpha") is not None, (
+        "one session's success erased another session's recorded failure"
+    )
+
+
+@pytest.mark.asyncio
 async def test_the_browser_half_of_the_probe_is_recorded_on_a_sensitive_engagement(
     engagements, no_network
 ):
