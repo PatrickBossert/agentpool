@@ -70,11 +70,22 @@ const HALT_BROWSER =
   'format our transcription service accepts, and this interview is not permitted to use your ' +
   'browser’s own transcription instead. Please reopen your interview link in Chrome or Edge ' +
   'on a computer. Safari, including on an iPhone or iPad, will not work for this interview.'
+// **Every clause here is something that is now true.** The first version said "Everything you
+// answered up to this point has been saved, and nothing has been lost" - and a halted interview
+// wrote a `checkpoint_json` that nothing in the product read, left `interview_answers` empty and
+// left the session `active`, so the answers were about to be discarded and a participant
+// returning to the link would be asked question one again. A participant reads this forty
+// minutes in, at the moment it most needs to be true.
+//
+// The answers are genuinely saved now - `POST /{token}/speech-failure` hands them to the same
+// machinery `/complete` uses. **Resumption is still not built**, so this says so plainly rather
+// than inviting somebody to reopen a link that will start them over. "Please try your link again
+// later" was the clause that did exactly that.
 const HALT_MID_INTERVIEW =
   'We are sorry - the transcription service stopped responding, so we have had to end the ' +
-  'interview here. Everything you answered up to this point has been saved, and nothing has been ' +
-  'lost. Please try your link again later, or contact the person who invited you. They have been ' +
-  'told.'
+  'interview here. The answers you had already given have been saved, so that part of your time ' +
+  'is not lost. Reopening this link will not pick up where you left off, so please do not try - ' +
+  'the person who invited you has been told, and will arrange anything further with you.'
 
 // There is deliberately no default voice in this file, and there must never be one again.
 //
@@ -390,12 +401,19 @@ export default function VoiceInterview() {
    * been refused by the time this runs, and a failed report must not turn a handled refusal into
    * a thrown error on the one screen that is trying to explain itself.
    */
-  async function reportSpeechFailure(reason: string): Promise<void> {
+  async function reportSpeechFailure(
+    reason: string,
+    answers: CapturedPair[] = [],
+    ratings: SectionMaturityRating[] = [],
+  ): Promise<void> {
     try {
       await fetch(`${BASE}/interviews/${sessionToken}/speech-failure`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
+        // The answers ride with the report rather than going to a door of their own: one
+        // request, and the server decides the order - preserve, then alert - so a slow or
+        // failing alert can never cost a participant their answers.
+        body: JSON.stringify({ reason, qa_pairs: answers, ratings: ratings.length ? ratings : undefined }),
       })
     } catch {
       // The server's own log is the other leg of this alert. Nothing here is worth failing on.
@@ -492,8 +510,13 @@ export default function VoiceInterview() {
     if (haltedRef.current) return
     haltedRef.current = true
     setHaltNotice(HALT_MID_INTERVIEW)
+    // Two different things are being kept, and only one of them can become a row. The completed
+    // answers go to the server as `qa_pairs` and are written to `interview_answers`, which is
+    // what the crews read. The words spoken into the failing socket have no question id - the
+    // interview loop builds the pair after the listen resolves, and it never will - so the
+    // checkpoint is the only thing that can hold them.
     await preserveProgress(partialAnswer)
-    await reportSpeechFailure(reason)
+    await reportSpeechFailure(reason, qaRef.current, sectionRatingsRef.current)
     setPhase('speech_halted')
   }
 

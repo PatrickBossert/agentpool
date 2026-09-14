@@ -38,6 +38,7 @@ from api.services.interview_service import (
     get_session_with_script,
     keyterms_for_project,
     interview_url,
+    preserve_partial_interview,
     speak,
 )
 from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
@@ -523,17 +524,46 @@ async def save_checkpoint(session_token: str, body: CheckpointBody):
 # Endpoint 5c: POST /{session_token}/speech-failure
 # ---------------------------------------------------------------------------
 
-class SpeechFailureBody(BaseModel):
-    """The half of the probe only the participant's browser can answer.
+class CapturedPair(BaseModel):
+    """One answer, addressed to the question that produced it.
 
-    A closed vocabulary, not a sentence. This door is unauthenticated - a session token is the
-    whole of what the public half of this router checks - and the string it produces lands in an
-    administrator's alert, so a free-text `reason` would be a way of putting an attacker's words
-    in front of an operator. `describe_browser_failure` composes what they read; the browser only
-    says which case it is.
+    Typed rather than a bare dict: an untyped payload accepted a pair with no question_id
+    silently, and the answer then had no question to be traced to. follow_up marks a
+    generated probe or a scripted branch, which is further evidence about one question rather
+    than a question of its own.
+
+    Declared here rather than beside `/complete` below because both doors take it now: a halted
+    interview hands over what it captured so those answers become rows, which is what makes the
+    halt screen's promise true.
+    """
+    question_id: str
+    question: str
+    answer: str = ""
+    follow_up: int = 0
+
+class SpeechFailureBody(BaseModel):
+    """The half of the probe only the participant's browser can answer, and what it still holds.
+
+    `reason` is a closed vocabulary, not a sentence. This door is unauthenticated - a session
+    token is the whole of what the public half of this router checks - and the string it produces
+    lands in an administrator's alert, so a free-text `reason` would be a way of putting an
+    attacker's words in front of an operator. `describe_browser_failure` composes what they read;
+    the browser only says which case it is.
+
+    **`reason` may be `None`, and that is not "no failure".** It means the failure has already
+    been recorded and alerted by the door that actually knew what it was - the token door below
+    holds the HTTP status that tells a refused key from an exhausted balance, and the browser
+    holds only "the socket would not open". Reporting both wrote the vague sentence over the
+    specific one and mailed the operator twice for one incident.
+
+    `qa_pairs` is what the interview captured before it stopped. It is the same shape
+    `/complete` takes and is written by the same machinery, because the alternative - a
+    `checkpoint_json` nothing reads - is what made the halt screen's promise untrue.
     """
 
-    reason: str = Field(min_length=1, max_length=64)
+    reason: str | None = Field(default=None, max_length=64)
+    qa_pairs: list[CapturedPair] = Field(default_factory=list)
+    ratings: list[dict] | None = None
 
 
 @router.post("/{session_token}/speech-failure")
@@ -559,33 +589,40 @@ async def report_speech_failure(session_token: str, body: SpeechFailureBody):
         raise HTTPException(status_code=404, detail="Session not found")
     slug = Path(db_path).stem
     if speech_policy_for(slug) != SPEECH_REQUIRED:
-        return {"recorded": False, "reason": "this engagement permits the browser's recogniser"}
+        return {
+            "preserved": False,
+            "recorded": False,
+            "reason": "this engagement permits the browser's recogniser",
+        }
+
+    # **Preserve first, and unconditionally.** The answers are what the participant gave up their
+    # time for, and they must survive whether or not this failure is one the browser is reporting
+    # for the first time. It is also what the halt screen now promises, so it happens before
+    # anything that could fail.
+    preserved = False
+    if body.qa_pairs:
+        preserved = await preserve_partial_interview(
+            session_token, [p.model_dump() for p in body.qa_pairs], body.ratings
+        )
+
+    # `reason is None` means the token door has already recorded and alerted, with the diagnosis
+    # only it could produce. Reporting again wrote "the socket would not open" over "the balance
+    # is exhausted", and mailed the operator twice for one incident.
+    if body.reason is None:
+        return {"preserved": preserved, "recorded": False, "reason": "already reported"}
+
     await alert_speech_unavailable(
         db_path=db_path,
         slug=slug,
         session_token=session_token,
         diagnosis=describe_browser_failure(body.reason),
     )
-    return {"recorded": True}
+    return {"preserved": preserved, "recorded": True}
 
 
 # ---------------------------------------------------------------------------
 # Endpoint 6: PATCH /{session_token}/complete
 # ---------------------------------------------------------------------------
-
-class CapturedPair(BaseModel):
-    """One answer, addressed to the question that produced it.
-
-    Typed rather than a bare dict: an untyped payload accepted a pair with no question_id
-    silently, and the answer then had no question to be traced to. follow_up marks a
-    generated probe or a scripted branch, which is further evidence about one question rather
-    than a question of its own.
-    """
-    question_id: str
-    question: str
-    answer: str = ""
-    follow_up: int = 0
-
 
 class CompleteRequest(BaseModel):
     qa_pairs: list[CapturedPair]

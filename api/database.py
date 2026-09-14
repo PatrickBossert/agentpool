@@ -4501,6 +4501,32 @@ async def complete_interview_session(
     await conn.commit()
 
 
+async def abandon_interview_session(
+    conn, session_token: str, transcript_json: str, ratings_json: str | None = None
+) -> None:
+    """Keep what an interview captured, and say plainly that it did not finish.
+
+    The sibling of `complete_interview_session`, and the two differences are the whole reason it
+    exists rather than a flag on that one. **`status` is `abandoned`, not `completed`** - a
+    transcription failure at answer twelve of sixty leaves a real transcript that the crew should
+    read and a stakeholder who still has not been interviewed, and marking it completed would
+    tell the consultant and every downstream coverage count that the conversation happened. That
+    is the same false sentence this branch exists to remove, one person over. **And
+    `completed_at` is left alone**, because nothing completed.
+
+    The checkpoint is deliberately *not* cleared by this, unlike the completion path: the answers
+    become `interview_answers` rows here, but the words spoken into the failing socket have no
+    question id and so cannot, and the checkpoint is the only thing holding them.
+    """
+    await conn.execute(
+        """UPDATE interview_sessions
+           SET status='abandoned', transcript_json=?, ratings_json=?
+           WHERE session_token=?""",
+        (transcript_json, ratings_json, session_token),
+    )
+    await conn.commit()
+
+
 async def save_interview_checkpoint(
     conn: aiosqlite.Connection, session_token: str, checkpoint: dict | None
 ) -> None:

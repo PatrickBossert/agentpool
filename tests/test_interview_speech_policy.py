@@ -160,8 +160,11 @@ CREATE TABLE IF NOT EXISTS interview_sessions (
     node_label TEXT,
     voice_config TEXT,
     status TEXT DEFAULT 'pending',
+    transcript_json TEXT,
+    ratings_json TEXT,
     checkpoint_json TEXT,
-    speech_failure TEXT
+    speech_failure TEXT,
+    completed_at TEXT
 );
 """
 
@@ -488,6 +491,164 @@ async def test_an_unknown_token_is_a_404_rather_than_an_alert(engagements, no_ne
             "/api/interviews/no-such-token/speech-failure", json={"reason": "socket_failed"}
         )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# A halted interview keeps what it captured - F4
+# ---------------------------------------------------------------------------
+
+_PAIRS = [
+    {"question_id": "SC-014.S1.Q1", "question": "What slows connections down?",
+     "answer": "Wayleaves, mostly.", "follow_up": 0},
+    {"question_id": "SC-014.S1.Q2", "question": "Who decides the order of works?",
+     "answer": "The programme board, quarterly.", "follow_up": 0},
+]
+
+
+def _session_row(db_dir: Path, slug: str, token: str) -> dict:
+    conn = sqlite3.connect(db_dir / f"{slug}.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM interview_sessions WHERE session_token=?", (token,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
+@pytest.mark.asyncio
+async def test_a_halted_interview_keeps_the_answers_it_captured(engagements, no_network):
+    """**The halt screen promises this, so it has to be true.**
+
+    Before the repair a halt wrote a `checkpoint_json` that nothing in `api/`, `ui/src` or
+    `agents/` ever read, and `interview_answers` stayed empty - so the transcript the crews read
+    was empty and forty minutes of a participant's time was discarded behind the sentence
+    "everything you answered has been saved".
+
+    Asserted on the **transcript the server now holds**, not on the request having been accepted.
+    """
+    from api.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/interviews/tok-alpha/speech-failure",
+            json={"reason": "socket_failed", "qa_pairs": _PAIRS},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["preserved"] is True
+
+    row = _session_row(engagements, "locked-down", "tok-alpha")
+    assert "Wayleaves, mostly." in (row["transcript_json"] or "")
+    assert "The programme board, quarterly." in (row["transcript_json"] or "")
+
+
+@pytest.mark.asyncio
+async def test_a_halted_interview_is_not_recorded_as_one_that_happened(engagements, no_network):
+    """**The reason this does not simply call `/complete`.**
+
+    That door stamps `status='completed'` and `completed_at`, which would tell the consultant,
+    the crews and every coverage count that a twelve-of-sixty interview had finished - trading a
+    false sentence to the participant for a false one about them, which is the same defect one
+    person over. `abandoned` is the honest state: real answers, and a stakeholder who still has
+    not been interviewed.
+    """
+    from api.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/interviews/tok-alpha/speech-failure",
+            json={"reason": "socket_failed", "qa_pairs": _PAIRS},
+        )
+
+    row = _session_row(engagements, "locked-down", "tok-alpha")
+    assert row["status"] == "abandoned"
+    assert row["status"] != "completed"
+    assert not row["completed_at"], "a halted interview was stamped with a completion time"
+
+
+@pytest.mark.asyncio
+async def test_the_words_with_no_question_are_kept_where_only_the_checkpoint_can_hold_them(
+    engagements, no_network
+):
+    """The checkpoint survives a halt, unlike a completion, and that is the one thing it is for.
+
+    A completion clears `checkpoint_json` because every answer has become a row. A halt cannot:
+    the words spoken into the failing socket have no question id, since the interview loop builds
+    the pair after the listen resolves and it never will. Clearing it here - which is what
+    reusing the completion path wholesale would have done - would discard exactly the sentence
+    the participant was speaking when the service went.
+    """
+    from api.database import interview_db_connection, save_interview_checkpoint
+    from api.main import app
+
+    db_path = str(engagements / "locked-down.db")
+    async with interview_db_connection(db_path) as conn:
+        await save_interview_checkpoint(
+            conn, "tok-alpha", {"partial_answer": "the half sentence nothing else holds"}
+        )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/interviews/tok-alpha/speech-failure",
+            json={"reason": "socket_failed", "qa_pairs": _PAIRS},
+        )
+
+    row = _session_row(engagements, "locked-down", "tok-alpha")
+    assert "the half sentence nothing else holds" in (row["checkpoint_json"] or "")
+
+
+@pytest.mark.asyncio
+async def test_the_kept_answers_reach_the_thing_that_writes_interview_answers_rows(
+    engagements, no_network, monkeypatch
+):
+    """The transcript blob is not what the crews read - `interview_answers` is.
+
+    A halt that stored the blob and never reached `record_answers` would leave the interview
+    invisible to every agent downstream, which is the state this repair exists to end, and every
+    assertion above would still pass. Asserted at the seam because these fixtures carry no script
+    artefact for the resolver to find; `complete_session` reaches the identical helper, so the
+    row-writing itself is the path the completion tests already cover.
+    """
+    from api.services import interview_service
+
+    handed: list[list[dict]] = []
+
+    async def capture(conn, slug, session_id, qa_pairs, *, script):
+        handed.append(qa_pairs)
+
+    async def a_script(conn, slug, session):
+        return {"script_id": "SC-014", "sections": []}
+
+    monkeypatch.setattr(interview_service, "record_answers", capture)
+    monkeypatch.setattr(interview_service, "script_for_session", a_script)
+
+    assert await interview_service.preserve_partial_interview("tok-alpha", _PAIRS) is True
+
+    assert len(handed) == 1
+    assert [p["answer"] for p in handed[0]] == [
+        "Wayleaves, mostly.", "The programme board, quarterly.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_completion_still_clears_the_checkpoint_and_says_completed(engagements, no_network):
+    """The control for the two above. `/complete` is untouched, and must stay so.
+
+    Without this, a change that made completion behave like a halt - `abandoned`, checkpoint
+    left standing - would pass every assertion above while breaking every real interview.
+    """
+    from api.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.patch(
+            "/api/interviews/tok-alpha/complete", json={"qa_pairs": _PAIRS}
+        )
+
+    assert resp.status_code == 200
+    row = _session_row(engagements, "locked-down", "tok-alpha")
+    assert row["status"] == "completed"
+    assert row["completed_at"]
+    assert row["checkpoint_json"] is None
 
 
 # ---------------------------------------------------------------------------

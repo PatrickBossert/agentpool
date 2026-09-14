@@ -206,7 +206,13 @@ describe('an engagement that requires Deepgram', () => {
 
     const halted = await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
     expect(halted.textContent).toMatch(/had to end the interview/i)
-    expect(halted.textContent).toMatch(/saved/i)
+    expect(halted.textContent).toMatch(/have been saved/i)
+    // **It must not invite a resumption that does not exist.** Nothing reads `checkpoint_json`
+    // back, so "try your link again later" - which this said - would send a participant round
+    // to question one. The answers are saved; the interview cannot be continued, and the screen
+    // now says both.
+    expect(halted.textContent).toMatch(/will not pick up where you left off/i)
+    expect(halted.textContent).not.toMatch(/try your link again later/i)
 
     // No handover: the browser's recogniser was never built, on a page that has one available.
     expect(recognisersBuiltSoFar()).toBe(0)
@@ -261,7 +267,13 @@ describe('an engagement that requires Deepgram', () => {
 
     const reported = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/speech-failure'))
     expect(reported).toBeTruthy()
-    expect(JSON.parse(String((reported![1] as RequestInit).body)).reason).toBe('socket_failed')
+    const body = JSON.parse(String((reported![1] as RequestInit).body))
+    expect(body.reason).toBe('socket_failed')
+    // **The completed answers go with the report, and this is what makes the halt screen's
+    // promise true.** The checkpoint holds the words with no question id; only these become
+    // `interview_answers` rows, which is the only thing the crews read. A halt that sent the
+    // report alone left the transcript empty behind a screen saying it had been saved.
+    expect(JSON.stringify(body.qa_pairs)).toContain('A finished answer to the first question.')
   }, 25000)
 
   // ── An absent policy is the strict one ─────────────────────────────────────

@@ -22,6 +22,7 @@ from api.services.interview_answer_service import record_answers, script_for_ses
 from api.services.platform_settings import platform_public_url
 from api.services.speech_policy import speech_policy_for
 from api.database import (
+    abandon_interview_session,
     complete_interview_session,
     fetch_interview_session,
     interview_db_connection,
@@ -475,6 +476,38 @@ async def elaboration_press(
         return ""
 
 
+async def _record_answer_rows(conn, slug: str, session_token: str, qa_pairs: list[dict]) -> None:
+    """Turn a captured transcript into `interview_answers` rows.
+
+    The transcript blob stays for the review screen; the rows are what anything queries, and
+    `interview_answers` is the only thing the crews read - so a transcript that never becomes
+    rows is an interview that, to every agent downstream, did not happen.
+
+    A session whose script cannot be resolved writes no rows and is logged: the blob still holds
+    everything the interviewee said, so nothing is lost and the rows can be backfilled once the
+    script is found.
+
+    Shared by the completion path and the halt path rather than copied into both. They differ in
+    exactly one thing - the status the session lands in - and that difference belongs at the
+    call site, not in two near-identical copies of the part that must never diverge.
+    """
+    async with conn.execute(
+        "SELECT * FROM interview_sessions WHERE session_token = ?", (session_token,)
+    ) as cur:
+        row = await cur.fetchone()
+    session = dict(row) if row else None
+    if not session:
+        return
+    script = await script_for_session(conn, slug, session)
+    if script:
+        await record_answers(conn, slug, session["id"], qa_pairs, script=script)
+    else:
+        _log.warning(
+            "[%s]: no script resolved for session %s - transcript saved, no answer rows written",
+            slug, session_token,
+        )
+
+
 async def complete_session(
     session_token: str,
     qa_pairs: list[dict],
@@ -496,24 +529,43 @@ async def complete_session(
         ratings_json = json.dumps(ratings) if ratings is not None else None
         await complete_interview_session(conn, session_token, transcript_json, ratings_json)
         await save_interview_checkpoint(conn, session_token, None)
+        await _record_answer_rows(conn, slug, session_token, qa_pairs)
+    return True
 
-        # The transcript blob stays for the review and email screens; the rows are what
-        # anything queries. A session whose script cannot be resolved writes no rows and is
-        # logged - the blob still holds everything the interviewee said, so nothing is lost
-        # and the rows can be backfilled once the script is found.
-        async with conn.execute(
-            "SELECT * FROM interview_sessions WHERE session_token = ?", (session_token,)
-        ) as cur:
-            row = await cur.fetchone()
-        session = dict(row) if row else None
 
-        if session:
-            script = await script_for_session(conn, slug, session)
-            if script:
-                await record_answers(conn, slug, session["id"], qa_pairs, script=script)
-            else:
-                _log.warning(
-                    "complete_session[%s]: no script resolved for session %s - transcript "
-                    "saved, no answer rows written", slug, session_token,
-                )
+async def preserve_partial_interview(
+    session_token: str,
+    qa_pairs: list[dict],
+    ratings: list[dict] | None = None,
+) -> bool:
+    """Keep what a halted interview captured, without claiming the interview happened.
+
+    **This is what makes the halt screen's promise true.** Before it, a halted interview wrote a
+    `checkpoint_json` that nothing in `api/`, `ui/src` or `agents/` ever read, left
+    `interview_answers` completely empty, and left the session at `active` - so "everything you
+    answered has been saved" was a sentence a participant read forty minutes in, at the moment it
+    most needed to be true, about answers that were about to be discarded.
+
+    It is deliberately **not** `complete_session`. That door stamps `status='completed'` and
+    `completed_at`, which would tell the crew, every coverage count and the consultant that a
+    twelve-of-sixty interview had finished - trading a false sentence to the participant for a
+    false one about them. `abandon_interview_session` keeps the answers and says plainly that the
+    conversation did not finish.
+
+    Safe to call more than once for the same reason resubmitting corrections is:
+    `insert_interview_answer` upserts on `(session_id, question_id)`.
+
+    Returns True when the session was found and written, False when it was not.
+    """
+    db_path = await _find_session_db(session_token)
+    if not db_path:
+        return False
+    slug = Path(db_path).stem
+
+    async with interview_db_connection(db_path) as conn:
+        transcript_json = json.dumps(qa_pairs)
+        ratings_json = json.dumps(ratings) if ratings is not None else None
+        await abandon_interview_session(conn, session_token, transcript_json, ratings_json)
+        # The checkpoint is deliberately left standing - see `abandon_interview_session`.
+        await _record_answer_rows(conn, slug, session_token, qa_pairs)
     return True
