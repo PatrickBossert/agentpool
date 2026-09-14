@@ -206,7 +206,12 @@ export interface PcmCapture {
   onbatch: ((bytes: ArrayBuffer) => void) | null
   /** The worklet has handed over its last samples. Sent after the final `onbatch`. */
   onflushed: (() => void) | null
-  /** The capture has failed and no more audio is coming. */
+  /**
+   * The capture has failed and no more audio is coming.
+   *
+   * Two things reach it: a processor that threw, and **a context that stopped running while the
+   * participant was still speaking** - see the `statechange` watch in `startPcmCapture`.
+   */
   onerror: (() => void) | null
   /** Connect the graph and begin. Separate from construction so nothing is captured early. */
   start: () => void
@@ -278,6 +283,28 @@ export function createAudioContext(): AudioContext | null {
  * runs at all. The processor writes nothing to its outputs, so the zero gain is the second of
  * two reasons nothing is heard rather than the only one.
  */
+/**
+ * The `addModule` call for each context, so one interview fetches the processor once.
+ *
+ * `startPcmCapture` runs per answer, so a forty-question interview asked for the module forty
+ * times. The browser's module map makes the repeats cheap, but "cheap" is a claim about the
+ * browser and this removes the question rather than resting on it. A **rejection is not cached** -
+ * it is deleted on the way out, so a transient failure to fetch the worklet costs one answer
+ * rather than the rest of the interview.
+ */
+const _moduleLoads = new WeakMap<AudioContext, Promise<void>>()
+
+function loadWorkletModule(context: AudioContext, moduleUrl: string): Promise<void> {
+  const started = _moduleLoads.get(context)
+  if (started) return started
+  const loading = context.audioWorklet.addModule(moduleUrl).catch((err: unknown) => {
+    _moduleLoads.delete(context)
+    throw err
+  })
+  _moduleLoads.set(context, loading)
+  return loading
+}
+
 export async function startPcmCapture(
   stream: MediaStream,
   context: AudioContext,
@@ -286,17 +313,28 @@ export async function startPcmCapture(
   if (typeof AudioWorkletNode === 'undefined') return null
   if (!(await wakeAudioContext(context))) return null
   try {
-    await context.audioWorklet.addModule(moduleUrl)
+    await loadWorkletModule(context, moduleUrl)
     const node = new AudioWorkletNode(context, 'pcm-capture', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       channelCount: PCM_CHANNELS,
+      // **`explicit`, because `channelCount` alone does not downmix.** Under the default `max`
+      // the count is ignored and a stereo microphone hands the processor two channels, of which
+      // it reads the first - so the right channel is *discarded* rather than mixed, and half a
+      // stereo capture is quieter and can be almost silent on a device that puts most of the
+      // signal in one channel. `explicit` with `speakers` makes the node mix down to the one
+      // channel `channels=1` promises Deepgram.
+      channelCountMode: 'explicit',
+      channelInterpretation: 'speakers',
       // Declared once in `pcm.ts` and passed in, so the processor holds no number of its own.
       processorOptions: { batchFrames: PCM_BATCH_FRAMES },
     })
     const source = context.createMediaStreamSource(stream)
     const silence = context.createGain()
     silence.gain.value = 0
+    // Whether the graph is connected and samples are expected. The `statechange` watch below
+    // reads it, so an interruption before `start()` or after `close()` reports nothing.
+    let capturing = false
 
     const capture: PcmCapture = {
       get sampleRate() {
@@ -311,16 +349,39 @@ export async function startPcmCapture(
         source.connect(node)
         node.connect(silence)
         silence.connect(context.destination)
+        capturing = true
       },
       flush() {
         node.port.postMessage({ type: 'flush' })
       },
       close() {
+        capturing = false
         node.port.onmessage = null
+        context.onstatechange = null
         for (const part of [source, node, silence]) {
           try { part.disconnect() } catch { /* already gone */ }
         }
       },
+    }
+
+    // **The answer that would otherwise come back empty with nothing raised.** The state is
+    // checked before each answer, which catches a context that was already interrupted - but iOS
+    // interrupts one *mid-answer* too, on an incoming call, the screen locking, or the tab going
+    // to the background. `process()` then stops being called, no batches are posted, the socket
+    // stays open, and the silence timer ends the answer three seconds later: an empty answer, no
+    // notice, and a context the next answer quietly resumes, so it reads as somebody who said
+    // nothing.
+    //
+    // It is a new exposure and it lands on the population this branch exists to serve - before
+    // PCM, an iPhone was refused outright and could not reach this path at all. Routed to
+    // `onerror`, which is the same drop the socket reports: a handover on a standard engagement,
+    // an honest halt on one that requires Deepgram, and the answer so far kept either way.
+    //
+    // `onstatechange` rather than `addEventListener`, because one capture is live at a time and
+    // the assignment is what makes that structural: a stale handler from the previous answer is
+    // overwritten rather than accumulated, and `close()` clears the last one.
+    context.onstatechange = () => {
+      if (capturing && context.state !== 'running') capture.onerror?.()
     }
 
     node.port.onmessage = (event: MessageEvent) => {
@@ -360,24 +421,23 @@ export const FLUSH_TIMEOUT_MS = 1500
  * participant is mid-answer by then - and that goes to `onDropped`, which keeps what was heard
  * and says so.
  *
- * **The capture is built before the socket and that order is required, not stylistic.** The URL
- * carries `sample_rate`, and the only thing that knows the sample rate is the live context - so
- * there is no address to open until the graph exists. The happy side effect is that a browser
- * which cannot capture now declines before anything is opened at all, where the container check
- * it replaces had to run inside `onopen` and close a socket it had just been given.
+ * **It takes a built capture rather than a stream and a context**, and the two calls are separate
+ * for a reason the participant feels. The URL carries `sample_rate` and only the live context
+ * knows it, so the capture has to exist first either way - but composing them *here* left the
+ * caller unable to tell "this browser's audio engine would not start" from "Deepgram refused the
+ * socket", and it reported the second. An operator then checks the key, the balance and the
+ * network, all of which are fine. Two calls, two answers, and the page reports the half that
+ * actually declined.
+ *
+ * Ownership passes with the capture: from here on every route that ends the answer - flushed,
+ * deadline, error, close, and all four refusals - tears the graph down.
  */
 export async function openDeepgramSocket(
-  stream: MediaStream,
-  context: AudioContext,
+  capture: PcmCapture,
   grant: DeepgramGrant,
   hooks: RecogniserHooks,
   base: string = DEEPGRAM_LISTEN_URL,
 ): Promise<Recogniser | null> {
-  const built = await startPcmCapture(stream, context)
-  if (!built) return null
-  // Rebound so the closures below hold a `PcmCapture` rather than a `PcmCapture | null`: the
-  // functions inside the executor are hoisted declarations, which do not inherit the narrowing.
-  const capture: PcmCapture = built
   const url = deepgramListenUrl(grant, { sampleRate: capture.sampleRate }, base)
   return new Promise((resolve) => {
     let settled = false
@@ -407,6 +467,20 @@ export async function openDeepgramSocket(
       capture.close()
       resolve(null)
       return
+    }
+
+    // **Armed before the handshake rather than in `onopen`.** The graph exists from the moment
+    // the capture was built, so a processor that throws - or a context iOS interrupts - during
+    // the second or two the socket takes to open would otherwise reach a `null` handler and be
+    // swallowed, leaving a participant talking into a dead capture on an open socket.
+    capture.onerror = () => {
+      if (stopping) return
+      if (!opened) {
+        settle(null)
+        try { socket.close() } catch { /* already gone */ }
+        return
+      }
+      reportDropped()
     }
 
     const timer = setTimeout(() => {
@@ -520,11 +594,6 @@ export async function openDeepgramSocket(
           if (socket.readyState !== WebSocket.OPEN) return
           socket.send(bytes)
         }
-        // A processor that throws stops being called, and the graph goes on existing. Without
-        // this the participant talks into a capture that is no longer listening, the socket
-        // stays open, and the answer comes back empty with nothing raised - which is precisely
-        // the class of failure this path was rebuilt to remove.
-        capture.onerror = () => { if (!stopping) reportDropped() }
         capture.start()
         capturing = true
       } catch {

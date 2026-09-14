@@ -229,6 +229,73 @@ describe('an engagement that requires Deepgram', () => {
     }, { timeout: 10000 })
   }, 20000)
 
+  it('builds the audio context in the task the Start click created', async () => {
+    // **iOS, and the reason the claim about phones cannot rest on an assumption.** Safari starts
+    // an `AudioContext` suspended when it is constructed outside a user gesture, and whether
+    // `resume()` is then granted on sticky activation alone is exactly what nobody has driven on
+    // a real device. Built lazily at the first answer it certainly *was* outside one:
+    // `conductInterview` awaits `PATCH /status` and then the interviewer speaking before
+    // anything reaches `startDeepgram`, so the gesture's task had long since yielded.
+    //
+    // The refusal would be clean either way - the capture declines rather than capturing
+    // silence - but a clean refusal at question one on every iPhone is this branch's headline
+    // claim inverted.
+    //
+    // Asserted against the **first request the interview makes**, which is the first await after
+    // the click: a context that exists by then was built synchronously in the click's own task.
+    // A lazy construction fails this, because at `/status` there is no context at all.
+    installStreaming()
+    installSpeechRecognition(null)
+    const inner = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
+    const contextsWhenAsked: [string, number][] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      contextsWhenAsked.push([String(url), FakeAudioContext.built.length])
+      return inner(url, init)
+    })
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    await waitFor(() => {
+      expect(contextsWhenAsked.some(([url]) => url.endsWith('/status'))).toBe(true)
+    }, { timeout: 10000 })
+    const [, contextsAtStatus] = contextsWhenAsked.find(([url]) => url.endsWith('/status'))!
+    expect(contextsAtStatus).toBeGreaterThanOrEqual(1)
+  }, 25000)
+
+  it('reports a capture that would not run as the browser’s fault, not Deepgram’s', async () => {
+    // **The operator is sent to the wrong place by the wrong word.** A context that will not
+    // resume is this participant's own audio engine - on an iPhone, one an incoming call or the
+    // screen locking interrupted. Reported as `socket_failed`, the alert reads "could not hold a
+    // streaming connection to Deepgram open", and an administrator checks the key, the balance
+    // and the network, every one of which is fine. The only thing that would have helped is
+    // ringing the participant back.
+    //
+    // Deepgram is deliberately healthy here: the grant is answered, so nothing but the capture
+    // can be at fault, and a door that still blamed the socket could not be right by accident.
+    installStreaming()
+    class WillNotResume extends FakeAudioContext {
+      async resume() { /* answers, and stays exactly where it was */ }
+    }
+    vi.stubGlobal('AudioContext', WillNotResume)
+    installSpeechRecognition('must not be reached')
+    const fetchSpy = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
+    vi.stubGlobal('fetch', fetchSpy)
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
+    await waitFor(() => {
+      const reported = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/speech-failure'))
+      expect(reported).toBeTruthy()
+      const body = JSON.parse(String((reported![1] as RequestInit).body))
+      expect(body.reason).toBe('audio_capture_failed')
+    }, { timeout: 10000 })
+    // And the interview stopped rather than handing the microphone to Apple.
+    expect(recognisersBuiltSoFar()).toBe(0)
+  }, 25000)
+
   // ── Mid-interview ──────────────────────────────────────────────────────────
 
   it('stops the interview rather than falling back when the socket drops mid-answer', async () => {

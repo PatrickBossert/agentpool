@@ -15,6 +15,7 @@ import {
   createAudioContext,
   fetchDeepgramGrant,
   openDeepgramSocket,
+  startPcmCapture,
   type Recogniser,
   type RecogniserHooks,
 } from '../api/deepgram'
@@ -56,6 +57,27 @@ const BASE = '/api'
  * is already up by the time it arrives.
  */
 class SpeechHalted extends Error {}
+
+/**
+ * Which of the closed reasons the server is told, for each way starting Deepgram can fail.
+ *
+ * `null` means "say nothing": the token door has already recorded and alerted with the HTTP
+ * status that distinguishes a refused key from an exhausted balance from a rate limit, and a
+ * vague sentence written over a specific one is worse than no second report.
+ *
+ * The rest are genuinely different problems and must not share a sentence. `capture` is this
+ * browser's audio engine refusing to run - on iOS, a context interrupted by a call or the screen
+ * locking - and an operator told "the socket would not stay open" checks the key, the balance
+ * and the network, none of which is the fault.
+ */
+function haltReasonForFailureKind(
+  kind: 'grant' | 'socket' | 'browser' | 'capture' | 'microphone' | null,
+): string | null {
+  if (kind === 'grant') return null
+  if (kind === 'browser') return 'no_audio_worklet'
+  if (kind === 'capture') return 'audio_capture_failed'
+  return 'socket_failed'
+}
 
 // What a participant is told, in each of the three ways this can end an interview. Plain words
 // about what happened, what it means for them, and what to do - never a status code, and never
@@ -183,7 +205,8 @@ export default function VoiceInterview() {
   // diagnosed from one only this end saw. `grant` means the token door refused, and it alerted
   // with the status code that distinguishes a revoked key from an exhausted balance - reporting
   // again from here wrote "the socket would not open" over it and mailed the operator twice.
-  const deepgramFailureKindRef = useRef<'grant' | 'socket' | 'browser' | 'microphone' | null>(null)
+  const deepgramFailureKindRef =
+    useRef<'grant' | 'socket' | 'browser' | 'capture' | 'microphone' | null>(null)
   // The words already spoken for the current question that no pair holds yet - carried across a
   // "Restart answer" or a "Finish my last answer" by `listenWithRestart`. A ref because the halt
   // lives one closure in, inside `listenForAnswer`, and cannot see that local.
@@ -737,9 +760,20 @@ export default function VoiceInterview() {
       deepgramFailureKindRef.current = 'browser'
       return null
     }
+    // **Two calls, because they fail for different reasons and an operator is sent to different
+    // places.** A capture that will not start is this browser's audio engine - on iOS, a context
+    // that would not resume - and reporting it as a socket failure tells an administrator to
+    // check the Deepgram key, the balance and the network, every one of which is fine.
+    const capture = await startPcmCapture(stream, context)
+    if (!capture) {
+      deepgramFailureKindRef.current = 'capture'
+      return null
+    }
     deepgramFailureKindRef.current = 'socket'
-    const engine = await openDeepgramSocket(stream, context, grant, hooks)
+    const engine = await openDeepgramSocket(capture, grant, hooks)
     if (engine) deepgramFailureKindRef.current = null
+    // The socket declining owns the teardown from the moment it was handed the capture, so
+    // there is nothing to release here - see `settle` in `openDeepgramSocket`.
     return engine
   }
 
@@ -940,7 +974,7 @@ export default function VoiceInterview() {
           // socket would not open" over "the balance is exhausted or the card has expired" and
           // mailed the operator twice for one incident.
           if (speechPolicyRef.current === 'required') {
-            halt(deepgramFailureKindRef.current === 'grant' ? null : 'socket_failed')
+            halt(haltReasonForFailureKind(deepgramFailureKindRef.current))
             return
           }
           deepgramFailuresRef.current += 1
@@ -1210,6 +1244,17 @@ export default function VoiceInterview() {
    * left to do but stop unwinding. Anything else is a real fault and is left to propagate.
    */
   async function runInterview() {
+    // **Built here, synchronously, because this runs in the task the Start click created.**
+    // iOS starts an `AudioContext` suspended when it is constructed outside a user gesture, and
+    // whether `resume()` is then granted on sticky activation alone is exactly the thing nobody
+    // has driven on a real device. Constructed lazily at the first answer it certainly *was*
+    // outside one - `conductInterview` awaits `PATCH /status` and then the interviewer speaking
+    // before anything reaches `startDeepgram`, so the gesture's task had long since yielded.
+    // The refusal is clean either way (the capture declines rather than capturing silence), but
+    // a clean refusal at question one on every iPhone is this branch's headline claim inverted.
+    // Nothing here depends on the context being usable, so a browser without Web Audio is
+    // unaffected: the probe has already refused it, and `startDeepgram` re-asks.
+    interviewAudioContext()
     try {
       await conductInterview()
     } catch (err) {

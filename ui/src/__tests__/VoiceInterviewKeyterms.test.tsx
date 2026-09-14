@@ -11,13 +11,20 @@ import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { FLUSH_TIMEOUT_MS, deepgramListenUrl, fetchDeepgramGrant, openDeepgramSocket } from '../api/deepgram'
+import {
+  FLUSH_TIMEOUT_MS,
+  deepgramListenUrl,
+  fetchDeepgramGrant,
+  openDeepgramSocket,
+  startPcmCapture,
+} from '../api/deepgram'
 import {
   FakeAudioContext,
   FakeAudioWorkletNode,
   FakeSocket,
   SCRIPT_TWO_QUESTIONS,
   completionPosted,
+  completionsPosted,
   firstSocket,
   forgetCompletion,
   installAudioAndMic,
@@ -36,6 +43,26 @@ const OUR_KEYTERMS = ['Renewals CapEx Allocation', 'Iberdrola', 'SP Energy Netwo
 
 function paramsOf(url: string) {
   return new URL(url).searchParams
+}
+
+/**
+ * Wait for the completion **this** interview posted, identified by what its own recogniser heard.
+ *
+ * `completionPosted()` alone is unsound in this file: an earlier test's interview outlives its
+ * test and posts through the current `fetch` stub, so the latest completion may be a stranger's.
+ * Scanning for this test's own transcript is the only thing that tells them apart, and a
+ * completion that never arrives fails on the timeout rather than passing on somebody else's.
+ */
+async function answersOfInterviewHearing(expected: string): Promise<string> {
+  let answers = ''
+  await waitFor(() => {
+    const mine = completionsPosted()
+      .map(body => (body.qa_pairs ?? []).map(pair => pair.answer).join(' '))
+      .find(joined => joined.includes(expected))
+    expect(mine, `no completion carried ${JSON.stringify(expected)}`).toBeTruthy()
+    answers = mine!
+  }, { timeout: 15000 })
+  return answers
 }
 
 describe('the recogniser is told the project’s own words', () => {
@@ -122,15 +149,15 @@ describe('the recogniser is told the project’s own words', () => {
     socket.say('Iberdrola sets the reporting calendar.', true)
     await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
 
-    await waitFor(() => expect(completionPosted()).not.toBeNull(), { timeout: 15000 })
-    const answers = (completionPosted()?.qa_pairs ?? []).map(p => p.answer).join(' ')
-    expect(answers).toContain('Iberdrola sets the reporting calendar.')
+    const answers = await answersOfInterviewHearing('Iberdrola sets the reporting calendar.')
     expect(answers).not.toContain('the browser recogniser')
   }, 20000)
 
   // ── Step 5: a project with nothing still connects ──────────────────────────
 
   it('connects with no keyterms at all when the project has none', async () => {
+    // Note the completion wait at the end. Without it this interview outlives its own test and
+    // posts into the next one - see `answersOfInterviewHearing` above for what that cost.
     // The control without which a fix that never connected would pass every assertion above.
     installStreaming()
     installSpeechRecognition('should not be reached')
@@ -148,7 +175,16 @@ describe('the recogniser is told the project’s own words', () => {
     // It still connected, and it is still configured.
     expect(params.get('model')).toBe('nova-3')
     expect(params.get('access_token')).toBe('jwt')
-  })
+
+    // Settled inside its own test. Left running, this interview answers the remaining question
+    // and posts a completion through whatever `fetch` stub is installed by then - which lands in
+    // a later test as an answer that test's recogniser never heard. It is what happened: an
+    // extra `await` in `startDeepgram` shifted it one test to the right and failed an assertion
+    // about the browser fallback that had nothing to do with the change.
+    socket.say('An answer, so this interview finishes inside its own test.', true)
+    await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
+    await answersOfInterviewHearing('An answer, so this interview finishes inside its own test.')
+  }, 20000)
 
   // ── Step 6: the fallback a participant meets ───────────────────────────────
 
@@ -172,9 +208,9 @@ describe('the recogniser is told the project’s own words', () => {
     await screen.findByText(/who decides the order of works/i, undefined, { timeout: 10000 })
     expect(screen.queryByTestId('recogniser-notice')).toBeNull()
 
-    await waitFor(() => expect(completionPosted()).not.toBeNull(), { timeout: 15000 })
+    const answers = await answersOfInterviewHearing('An answer the browser heard.')
+    // Deepgram was never reached at all - the 503 is the whole of it.
     expect(FakeSocket.opened).toEqual([])
-    const answers = (completionPosted()?.qa_pairs ?? []).map(p => p.answer).join(' ')
     expect(answers).toContain('An answer the browser heard.')
   }, 20000)
 
@@ -389,6 +425,26 @@ describe('the address the browser opens', () => {
 /** The grant the direct-socket tests open with. The vocabulary is asserted through the page. */
 const GRANT_FOR_SOCKET = { token: 'jwt', listen_params: { model: 'nova-3' } }
 
+/**
+ * A built capture, which `openDeepgramSocket` now takes instead of a stream and a context.
+ *
+ * The two are separate calls so the page can report *which half* declined - a browser whose
+ * audio engine will not run and a Deepgram socket that was refused send an operator to
+ * completely different places. Tests of the capture half call `startPcmCapture` directly.
+ */
+/** The last binary frame the socket was given - the audio, as opposed to `CloseStream`. */
+function socketTail(socket: FakeSocket): ArrayBuffer {
+  const binary = socket.sent.filter(sent => typeof sent !== 'string')
+  expect(binary.length).toBeGreaterThan(0)
+  return binary[binary.length - 1] as ArrayBuffer
+}
+
+async function captureOn(context: FakeAudioContext = new FakeAudioContext()) {
+  const capture = await startPcmCapture(fakeStream(), context as unknown as AudioContext)
+  expect(capture).not.toBeNull()
+  return capture!
+}
+
 describe('the socket, driven directly', () => {
   // The page's handover is not idempotent by nature - it starts a recogniser - so "a dropped
   // socket reports itself once" has to be a property of the socket adapter rather than a habit
@@ -417,8 +473,7 @@ describe('the socket, driven directly', () => {
     // this is the ordinary case and not an edge one.
     installStreaming()
     const { dropped, hooks } = hooksSpy()
-    const stream = fakeStream()
-    const recogniser = await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, hooks)
+    const recogniser = await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, hooks)
     expect(recogniser).not.toBeNull()
 
     const socket = FakeSocket.opened[0]
@@ -439,8 +494,7 @@ describe('the socket, driven directly', () => {
     const { hooks } = hooksSpy()
     const heard: string[] = []
     const events: string[] = []
-    const stream = fakeStream()
-    const recogniser = await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, {
+    const recogniser = await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, {
       ...hooks,
       onFinal: (t) => { heard.push(t); events.push('final') },
       onClosed: () => events.push('closed'),
@@ -472,8 +526,7 @@ describe('the socket, driven directly', () => {
     installStreaming()
     const { hooks } = hooksSpy()
     const closedAt: string[] = []
-    const stream = fakeStream()
-    const recogniser = await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, {
+    const recogniser = await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, {
       ...hooks,
       onClosed: () => closedAt.push('closed'),
     })
@@ -495,8 +548,7 @@ describe('the socket, driven directly', () => {
     // has dropped is the ordinary shape of a drop, not a contrivance.
     installStreaming()
     const { hooks } = hooksSpy()
-    const stream = fakeStream()
-    await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, hooks)
+    await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, hooks)
 
     const socket = FakeSocket.opened[0]
     const node = FakeAudioWorkletNode.built[0]
@@ -516,8 +568,7 @@ describe('the socket, driven directly', () => {
     // dead socket, which is the one thing the deadline is a ceiling on rather than a cost.
     installStreaming()
     const { closed, hooks } = hooksSpy()
-    const stream = fakeStream()
-    const recogniser = await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, hooks)
+    const recogniser = await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, hooks)
 
     const socket = FakeSocket.opened[0]
     socket.readyState = FakeSocket.CLOSED
@@ -536,8 +587,7 @@ describe('the socket, driven directly', () => {
     // above is the ordinary path and completes in a tick.
     installStreaming()
     const { closed, hooks } = hooksSpy()
-    const stream = fakeStream()
-    const recogniser = await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, hooks)
+    const recogniser = await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, hooks)
     const socket = FakeSocket.opened[0]
     // A socket that accepts CloseStream and then says nothing at all.
     socket.send = (data: unknown) => { socket.sent.push(data) }
@@ -563,9 +613,8 @@ describe('the socket, driven directly', () => {
     }
     vi.stubGlobal('AudioWorkletNode', RefusesToConnect)
     const { dropped, hooks } = hooksSpy()
-    const stream = fakeStream()
 
-    const recogniser = await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, hooks)
+    const recogniser = await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, hooks)
 
     expect(recogniser).toBeNull()
     expect(dropped).toEqual([])
@@ -580,15 +629,13 @@ describe('the socket, driven directly', () => {
     // `FakeSocket.opened` rather than on the return value alone.
     installStreaming()
     FakeAudioContext.resolves = () => false
-    const { dropped, hooks } = hooksSpy()
-    const stream = fakeStream()
 
-    const recogniser = await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, hooks)
+    const capture = await startPcmCapture(fakeStream(), fakeAudioContext())
 
-    expect(recogniser).toBeNull()
+    expect(capture).toBeNull()
+    // Nothing was opened, because the page asks for the capture first and stops when it is
+    // refused - so a browser that cannot capture reaches no speech service at all.
     expect(FakeSocket.opened).toEqual([])
-    // And silently: this is the "socket will not open" case, which falls back without a notice.
-    expect(dropped).toEqual([])
   })
 
   it('declines rather than capturing into a context that will not run', async () => {
@@ -602,15 +649,12 @@ describe('the socket, driven directly', () => {
     class WillNotResume extends FakeAudioContext {
       async resume() { /* answers, and stays exactly where it was */ }
     }
-    const { dropped, hooks } = hooksSpy()
-
-    const recogniser = await openDeepgramSocket(
-      fakeStream(), new WillNotResume() as unknown as AudioContext, GRANT_FOR_SOCKET, hooks,
+    const capture = await startPcmCapture(
+      fakeStream(), new WillNotResume() as unknown as AudioContext,
     )
 
-    expect(recogniser).toBeNull()
+    expect(capture).toBeNull()
     expect(FakeSocket.opened).toEqual([])
-    expect(dropped).toEqual([])
   })
 
   it('resumes a suspended context rather than assuming it is running', async () => {
@@ -621,8 +665,7 @@ describe('the socket, driven directly', () => {
     const context = new FakeAudioContext()
     expect(context.state).toBe('suspended')
 
-    const recogniser = await openDeepgramSocket(
-      fakeStream(), context as unknown as AudioContext, GRANT_FOR_SOCKET, hooksSpy().hooks,
+    const recogniser = await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooksSpy().hooks,
     )
 
     expect(recogniser).not.toBeNull()
@@ -638,8 +681,7 @@ describe('the socket, driven directly', () => {
     installStreaming()
     const context = new FakeAudioContext()
 
-    await openDeepgramSocket(
-      fakeStream(), context as unknown as AudioContext, GRANT_FOR_SOCKET, hooksSpy().hooks,
+    await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooksSpy().hooks,
     )
 
     const node = FakeAudioWorkletNode.built[0]!
@@ -666,8 +708,7 @@ describe('the socket, driven directly', () => {
       FakeAudioContext.reportedSampleRate = rate
       const context = new FakeAudioContext()
 
-      await openDeepgramSocket(
-        fakeStream(), context as unknown as AudioContext, GRANT_FOR_SOCKET, hooksSpy().hooks,
+      await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooksSpy().hooks,
       )
 
       const params = paramsOf(FakeSocket.opened[0]!.url)
@@ -682,9 +723,7 @@ describe('the socket, driven directly', () => {
     // must travel together. The server declares none of them, which
     // `tests/test_interview_keyterms.py` holds, so this is the only place they are set.
     installStreaming()
-    await openDeepgramSocket(
-      fakeStream(), fakeAudioContext(), GRANT_FOR_SOCKET, hooksSpy().hooks,
-    )
+    await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, hooksSpy().hooks)
 
     const params = paramsOf(FakeSocket.opened[0]!.url)
     expect(params.get('encoding')).toBe('linear16')
@@ -705,8 +744,7 @@ describe('the socket, driven directly', () => {
     installStreaming()
     const context = new FakeAudioContext()
 
-    await openDeepgramSocket(
-      fakeStream(), context as unknown as AudioContext, GRANT_FOR_SOCKET, hooksSpy().hooks,
+    await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooksSpy().hooks,
     )
 
     expect(context.modulesRequested).toHaveLength(1)
@@ -718,6 +756,171 @@ describe('the socket, driven directly', () => {
     expect(() => new URL(requested)).not.toThrow()
   })
 
+  it('converts the samples on the way to the wire, not only when the converter is called', async () => {
+    // **The assertion that was missing, and the exact shape CLAUDE.md keeps recording.**
+    // `PcmCapture.test.ts` drives `floatTo16BitPcm` thoroughly - and nothing asserted it was
+    // *applied at the seam*. Deleting the call, so the worklet's raw Float32 buffer went
+    // straight to `socket.send`, left the whole frontend suite green: the only test reading the
+    // wire checked `typeof s !== 'string'`, which a Float32 buffer satisfies perfectly.
+    //
+    // Live, the socket then carries 32-bit float bytes under `encoding=linear16`. Deepgram reads
+    // two float samples as one Int16 pair, decodes noise at double speed, and returns empty or
+    // gibberish - no error at either end. That is the silent-failure class this branch exists to
+    // remove, asserted one layer away from where it holds.
+    //
+    // Asserted on **bytes, not length**, and driven with a sample outside ±1.0, so one assertion
+    // covers four mutations: no conversion at all (four bytes a frame, and 2.0 as float32 is
+    // `00 00 00 40`); no clamp (2.0 wrapping rather than pinning); the wrong scale (`0x8000`
+    // giving `00 80`); and the wrong byte order (`7f ff`).
+    installStreaming()
+    const { hooks } = hooksSpy()
+    await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, hooks)
+    const socket = FakeSocket.opened[0]!
+    const node = FakeAudioWorkletNode.built[0]!
+
+    node.deliver(4, 2)
+    await waitFor(() => expect(socket.sent.length).toBe(1))
+
+    const sent = socket.sent[0] as ArrayBuffer
+    // Two bytes a frame, which four raw Float32 samples could never be.
+    expect(sent.byteLength).toBe(4 * 2)
+    // +2.0 clamped to +1.0, scaled by 0x7fff, little-endian: 32767 is `ff 7f`.
+    expect([...new Uint8Array(sent)]).toEqual([0xff, 0x7f, 0xff, 0x7f, 0xff, 0x7f, 0xff, 0x7f])
+  })
+
+  it('sends the tail of an answer converted too, not only the batches before it', async () => {
+    // The flush path posts through the same `onmessage`, but it is the one that runs after the
+    // participant has tapped Done - so it is the batch a conversion applied in the wrong place
+    // would most plausibly miss. The bound is asserted elsewhere; this is about the bytes.
+    installStreaming()
+    const { hooks } = hooksSpy()
+    const closedAt: string[] = []
+    const recogniser = await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, {
+      ...hooks,
+      onClosed: () => closedAt.push('closed'),
+    })
+
+    recogniser?.stop()
+    await waitFor(() => expect(closedAt).toContain('closed'))
+
+    const tail = socketTail(FakeSocket.opened[0]!)
+    // `FakeWorkletPort.tailFrames` is 128, so 256 bytes converted and 512 raw.
+    expect(tail.byteLength).toBe(128 * 2)
+  })
+
+  it('reports an interruption mid-answer rather than letting it end as silence', async () => {
+    // **A new silent path, on exactly the population this branch exists to serve.** The context's
+    // state is checked before each answer, which catches one that was already interrupted. iOS
+    // interrupts one *mid-answer* too - an incoming call, the screen locking, the tab going to
+    // the background - and then `process()` simply stops being called: no batches, no error, the
+    // socket still open, and the three-second silence timer ends the answer. An empty answer,
+    // nothing said to the participant, and the next answer resumes the context so it self-heals
+    // and reads as somebody who did not speak.
+    //
+    // Before this branch an iPhone was refused outright and could never reach this path, so the
+    // exposure is created by the change. Routed to the same drop the socket reports: handover on
+    // a standard engagement, honest halt on one that requires Deepgram.
+    installStreaming()
+    const { dropped, hooks } = hooksSpy()
+    const context = new FakeAudioContext()
+    await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooks)
+
+    context.interrupt()
+
+    expect(dropped).toEqual(['connection'])
+  })
+
+  it('says nothing when a context comes back to running on its own', async () => {
+    // **The control, and the first version of it could not fail.** It asserted that no drop was
+    // reported after an ordinary `openDeepgramSocket` - but the resume that takes a context to
+    // `running` happens inside `startPcmCapture`, before the graph is connected, so the watch is
+    // dormant and a mutation reporting *every* state change stayed green. Power-check found it.
+    //
+    // Driven properly: a transition to `running` while the capture is live, which is what iOS
+    // does when it hands the audio engine back after a call ends. That must be silent, or the
+    // amber notice lands on every participant who recovers - the failure mode of "report
+    // everything", which this project already met once on the browser recogniser's `onerror`.
+    installStreaming()
+    const context = new FakeAudioContext()
+    const { dropped, hooks } = hooksSpy()
+    await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooks)
+    await waitFor(() => expect(FakeAudioWorkletNode.built[0]!.connectedTo).not.toEqual([]))
+
+    context.interrupt('running')
+
+    expect(dropped).toEqual([])
+  })
+
+  it('stops watching the context once the answer has ended', async () => {
+    // **Asserted as the detachment rather than as a silence, and deliberately.** A state change
+    // arriving after the answer is additionally absorbed by the `stopping` guard on the handler,
+    // so a test that only checked "no drop was reported" passes whether or not the watch was
+    // ever taken down - which is what the first version of this did, and a mutation leaving the
+    // handler attached stayed green.
+    //
+    // What the clearing buys is that one context serves the whole interview: the watch belongs
+    // to the capture that installed it, and a handler outliving its capture is a closure over a
+    // graph that no longer exists.
+    installStreaming()
+    const context = new FakeAudioContext()
+    const { dropped, closed, hooks } = hooksSpy()
+    const recogniser = await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooks)
+    expect(context.onstatechange).not.toBeNull()
+
+    recogniser?.stop()
+    await waitFor(() => expect(closed.length).toBe(1))
+
+    expect(context.onstatechange).toBeNull()
+    context.interrupt()
+    expect(dropped).toEqual([])
+  })
+
+  it('fetches the worklet module once for a context, however many answers it serves', async () => {
+    // `startPcmCapture` runs per answer, so a forty-question interview asked for the module forty
+    // times. The browser's module map makes the repeats cheap - but that is a claim about the
+    // browser, and this removes the question rather than resting on it.
+    installStreaming()
+    const context = new FakeAudioContext()
+
+    await captureOn(context)
+    await captureOn(context)
+    await captureOn(context)
+
+    expect(context.modulesRequested).toHaveLength(1)
+  })
+
+  it('asks again next answer when the module could not be fetched', async () => {
+    // A rejection is not cached. A transient failure to fetch the worklet should cost one answer,
+    // not condemn the rest of the interview to the browser's recogniser - which is what a stored
+    // rejected promise would do, invisibly, because every later answer would reuse it.
+    installStreaming()
+    const context = new FakeAudioContext()
+    FakeAudioContext.resolves = () => false
+
+    expect(await startPcmCapture(fakeStream(), context as unknown as AudioContext)).toBeNull()
+
+    FakeAudioContext.resolves = () => true
+    expect(await startPcmCapture(fakeStream(), context as unknown as AudioContext)).not.toBeNull()
+    expect(context.modulesRequested).toHaveLength(2)
+  })
+
+  it('mixes a stereo microphone down rather than discarding half of it', async () => {
+    // `channelCount: 1` is ignored under the default `channelCountMode` of `max`: the node takes
+    // whatever the source hands it, the processor reads channel 0, and the right channel is
+    // **discarded** rather than mixed. On a device that puts most of the signal in one channel
+    // that is a capture which is quiet or nearly silent - and `channels=1` on the URL would be a
+    // promise to Deepgram that nothing kept.
+    installStreaming()
+    await captureOn()
+
+    const options = FakeAudioWorkletNode.built[0]!.options as {
+      channelCount?: number; channelCountMode?: string; channelInterpretation?: string
+    }
+    expect(options.channelCount).toBe(1)
+    expect(options.channelCountMode).toBe('explicit')
+    expect(options.channelInterpretation).toBe('speakers')
+  })
+
   it('takes the graph down when the answer ends', async () => {
     // **One context serves the whole interview, so nothing else ever will.** A graph left
     // connected goes on running `process()` and posting batches into a socket that has closed,
@@ -726,8 +929,7 @@ describe('the socket, driven directly', () => {
     installStreaming()
     const { closed, hooks } = hooksSpy()
     const context = new FakeAudioContext()
-    const recogniser = await openDeepgramSocket(
-      fakeStream(), context as unknown as AudioContext, GRANT_FOR_SOCKET, hooks,
+    const recogniser = await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooks,
     )
 
     const node = FakeAudioWorkletNode.built[0]!
@@ -764,8 +966,7 @@ describe('the socket, driven directly', () => {
     })
     const context = new FakeAudioContext()
 
-    const recogniser = await openDeepgramSocket(
-      fakeStream(), context as unknown as AudioContext, GRANT_FOR_SOCKET, hooksSpy().hooks,
+    const recogniser = await openDeepgramSocket(await captureOn(context), GRANT_FOR_SOCKET, hooksSpy().hooks,
     )
 
     expect(recogniser).toBeNull()
@@ -780,8 +981,7 @@ describe('the socket, driven directly', () => {
     // every answer.
     installStreaming()
     const { dropped, closed, hooks } = hooksSpy()
-    const stream = fakeStream()
-    const recogniser = await openDeepgramSocket(stream, fakeAudioContext(), GRANT_FOR_SOCKET, hooks)
+    const recogniser = await openDeepgramSocket(await captureOn(), GRANT_FOR_SOCKET, hooks)
 
     recogniser?.stop()
     FakeSocket.opened[0].onclose?.()

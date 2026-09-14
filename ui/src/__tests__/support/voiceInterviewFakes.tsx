@@ -190,9 +190,17 @@ class FakeWorkletPort {
     }
   }
 
-  /** A batch of samples arriving from the audio thread. Float32, as the processor posts. */
-  deliver(frames: number) {
-    this.onmessage?.({ data: new Float32Array(frames).fill(0.5).buffer })
+  /**
+   * A batch of samples arriving from the audio thread. **Float32**, as the processor posts - the
+   * conversion to 16-bit is the main thread's, so a fake that posted Int16 would hide whether it
+   * happens at all.
+   *
+   * The fill value is a parameter so a test can drive a *known* sample, including one outside
+   * ±1.0: what reaches the wire then says whether the conversion ran, at what scale, and in
+   * which byte order, none of which a length can see.
+   */
+  deliver(frames: number, value = 0.5) {
+    this.onmessage?.({ data: new Float32Array(frames).fill(value).buffer })
   }
 }
 
@@ -209,7 +217,7 @@ export class FakeAudioWorkletNode {
   connect(target: unknown) { this.connectedTo.push(target) }
   disconnect() { this.connectedTo = [] }
   /** A batch of audio reaching the main thread, whenever a test wants one. Asynchronous. */
-  deliver(frames = 128) { setTimeout(() => this.port.deliver(frames), 0) }
+  deliver(frames = 128, value = 0.5) { setTimeout(() => this.port.deliver(frames, value), 0) }
 }
 
 class FakeAudioNode {
@@ -237,6 +245,13 @@ export class FakeAudioContext {
   static resolves: (url: string) => boolean = url => url.endsWith('/pcm-worklet.js')
 
   state: string = 'suspended'
+  /**
+   * Fired whenever the state changes, which is how a page learns iOS has interrupted a context.
+   * A real `BaseAudioContext` fires it on every transition - suspended, running, interrupted and
+   * closed alike - so `interrupt()` below sets the state *and then* fires, in that order, or a
+   * handler reading `context.state` would see the old one.
+   */
+  onstatechange: (() => void) | null = null
   sampleRate = FakeAudioContext.reportedSampleRate
   destination = new FakeAudioNode()
   /** The module URLs this context was asked for, so the address can be asserted. */
@@ -260,8 +275,24 @@ export class FakeAudioContext {
   async resume() {
     if (this.state === 'closed') throw new DOMException('closed', 'InvalidStateError')
     this.state = 'running'
+    this.onstatechange?.()
   }
-  async close() { this.state = 'closed' }
+  async close() {
+    this.state = 'closed'
+    this.onstatechange?.()
+  }
+  /**
+   * iOS taking the audio engine away mid-answer: an incoming call, the screen locking, the tab
+   * going to the background.
+   *
+   * **`interrupted` is a real fourth state and not an invention of this fake** - WebKit reports
+   * it beside `suspended`, `running` and `closed`, and it does not clear on its own. The
+   * processor simply stops being called; nothing throws, and the socket stays open.
+   */
+  interrupt(state = 'interrupted') {
+    this.state = state
+    this.onstatechange?.()
+  }
   createMediaStreamSource(_stream: unknown) {
     const source = new FakeAudioNode()
     this.sources.push(source)
@@ -369,12 +400,31 @@ export function installSpeechRecognition(
   ;(window as any).SpeechRecognition = FakeRecognition
 }
 
-let completedBody: { qa_pairs?: { answer: string }[] } | null = null
-export function completionPosted() {
-  return completedBody
+type CompletionBody = { qa_pairs?: { answer: string }[] }
+
+/**
+ * Every completion posted since the last `forgetCompletion()`, in order - **not just the last**.
+ *
+ * `cleanup()` unmounts the page and cannot stop the interview, which is an async loop over
+ * closures, so an earlier test's interview goes on answering and posts its completion through
+ * whatever `fetch` stub is installed *now*. There is nothing in the body that distinguishes it
+ * from this test's. So "a completion arrived" is not evidence about *this* interview, and a test
+ * that reads the latest one can be handed a stranger's - which is not hypothetical: it happened
+ * the moment an extra `await` in `startDeepgram` shifted one interview a test to the right.
+ *
+ * Tests that care scan for the answer their own recogniser was given. Same family as the warning
+ * on `socketAt` below, and the same remedy: assert on evidence only this test could have
+ * produced.
+ */
+let completedBodies: CompletionBody[] = []
+export function completionPosted(): CompletionBody | null {
+  return completedBodies[completedBodies.length - 1] ?? null
+}
+export function completionsPosted(): CompletionBody[] {
+  return completedBodies
 }
 export function forgetCompletion() {
-  completedBody = null
+  completedBodies = []
 }
 
 /**
@@ -412,7 +462,7 @@ export function installFetch(
     }
     if (url.endsWith('/speak')) return new Response(new Blob([new Uint8Array([1])]), { status: 200 })
     if (url.endsWith('/complete')) {
-      completedBody = JSON.parse(String(init?.body))
+      completedBodies.push(JSON.parse(String(init?.body)))
       return new Response('{}', { status: 200 })
     }
     return new Response('{}', { status: 200 })

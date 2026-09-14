@@ -125,6 +125,14 @@ _BROWSER_DIAGNOSES: dict[str, str] = {
         "so this is an out-of-date browser rather than a device that cannot be interviewed, and "
         "the remedy is for the participant to update it or use another one"
     ),
+    "audio_capture_failed": (
+        "this participant's browser could not capture audio for Deepgram - its audio engine "
+        "would not start, or stopped while they were speaking. On an iPhone or iPad that is what "
+        "an incoming call, the screen locking or switching apps does, and it does not recover on "
+        "its own. Nothing is wrong with the Deepgram key, the balance or the network, so this is "
+        "the one reason here that is worth ringing the participant about rather than "
+        "investigating"
+    ),
     "no_streaming_support": (
         "this participant's browser has no Web Audio or no WebSocket, so it cannot stream "
         "audio to Deepgram at all"

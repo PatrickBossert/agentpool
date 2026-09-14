@@ -1611,6 +1611,17 @@ a successful open resets that one, so a drop recorded there could never reach tw
 drops still turn Deepgram off, because an amber notice on every question for an hour is its own
 defect.
 
+**A completion is not evidence about the interview that was running when it arrived.**
+`cleanup()` cannot stop an interview, so an earlier test's goes on answering and posts through
+whatever `fetch` stub is installed *now* - and nothing in the body distinguishes it. Reading "the
+last completion" is therefore unsound in these files, and it was not hypothetical: one extra
+`await` in `startDeepgram` shifted an interview a test to the right, and an assertion about the
+*browser fallback* failed carrying a transcript from two tests earlier. Two halves to the repair,
+because either alone leaves it latent: a test settles its own interview before it ends, and one
+that reads a completion scans for the answer **its own** recogniser was given. The diagnosis is
+the reusable part - when a timing change breaks a test that has nothing to do with it, suspect
+the shared sink before the change.
+
 **Anything that counts sockets across questions belongs in a test file of its own**, which is
 why `VoiceInterviewDeepgramRecovery.test.tsx` exists and is not part of its sibling.
 `cleanup()` unmounts the page and cannot stop the interview - an async loop over closures - so
@@ -1693,6 +1704,47 @@ capturing into silence. And the render quantum is **no longer fixed at 128** - C
 `AudioContextOptions.renderSizeHint` in September 2026, so 128 is the specification's default
 rather than its value, and the processor reads the block's own length.
 
+**The capture and the socket are two calls, because they fail for different reasons.**
+`startPcmCapture` builds the graph and `openDeepgramSocket` takes the built capture; the page
+calls them in turn, so it can say which half declined. Composed into one function it could not,
+and it reported the socket - so a context that would not run reached the operator as *"could not
+hold a streaming connection to Deepgram open"*, sending them to check the key, the balance and
+the network, none of which was the fault. `audio_capture_failed` is the reason for the capture
+half and it names the remedy, which is ringing the participant back rather than investigating
+anything. Ownership of the graph passes with the capture: from the moment `openDeepgramSocket`
+is handed one, every route that ends the answer tears it down.
+
+**The context is built in the task the Start click created, and that is about iOS.** Safari
+starts an `AudioContext` suspended when it is constructed outside a user gesture, and whether
+`resume()` is then granted on sticky activation alone is exactly what nobody has driven on a real
+device. Built lazily at the first answer it certainly *was* outside one - `conductInterview`
+awaits `PATCH /status` and then the interviewer speaking before anything reaches `startDeepgram`.
+So `runInterview`, which **is** the click handler, calls `interviewAudioContext()` as its first
+statement. The refusal would be clean either way, because the capture declines rather than
+capturing silence - but a clean refusal at question one on every iPhone is this section's
+headline claim inverted. Asserted against the first request the interview makes, since a context
+that exists by `/status` was built synchronously in the click's own task.
+
+**A mid-answer interruption is watched for, and it is an exposure this branch created.** The
+context's state is checked before each answer, which catches one that was already interrupted -
+but iOS interrupts one *during* an answer too, on an incoming call, the screen locking, or the
+tab going to the background. `process()` then stops being called: no batches, no error, the
+socket still open, and the three-second silence timer ends the answer. An empty answer, nothing
+said to the participant, and the next answer resumes the context so it self-heals and reads as
+somebody who did not speak. Before PCM an iPhone was refused outright and could never reach this
+path, so **the population this change exists to serve is the population it exposed.**
+`context.onstatechange` routes it to the same drop the socket reports - handover on a standard
+engagement, honest halt on one that requires Deepgram. It reports only a transition **away from**
+`running`, because a context coming back fires the event too and an amber notice on every
+recovery is the "report everything" failure this file already records on the browser recogniser's
+`onerror`.
+
+**`channelCount: 1` does not downmix on its own.** Under the default `channelCountMode` of `max`
+the count is ignored: a stereo microphone hands the processor two channels, it reads channel 0,
+and the right channel is **discarded** rather than mixed - a capture that is quiet or nearly
+silent on a device that puts most of the signal in one channel, and a `channels=1` on the URL
+that is a promise to Deepgram nothing keeps. It is `explicit` with `speakers`.
+
 **`encoding`, `sample_rate` and `channels` are the client's, and that is the one exception to the
 rule above.** `model` and `keyterm` are the server's because they are one fact *about Deepgram*.
 These three are one fact about *this browser's audio graph*, and the server cannot observe an
@@ -1745,6 +1797,17 @@ and ends the answer at once rather than holding a participant for the whole dead
 generalisable half: **repairing a fake does not add the assertion the fake was hiding.** It
 makes the assertion possible, and it has to be written.
 
+**The conversion was asserted as a function and not as a wire property, which is this file's
+recurring failure in its thirteenth instance.** `floatTo16BitPcm` was driven thoroughly - clamp,
+scale and byte order, in both directions - and nothing asserted it was *applied at the seam*.
+Deleting the call, so the worklet's raw Float32 buffer went straight to `socket.send`, left the
+whole frontend suite green: the only test reading the wire checked `typeof s !== 'string'`, which
+a Float32 buffer satisfies perfectly. Live, the socket would then carry 32-bit float bytes under
+`encoding=linear16` - Deepgram reads two float samples as one Int16 pair and decodes noise at
+double speed, with no error at either end. It is asserted on **bytes rather than length**, driven
+with a sample outside ±1.0, so one assertion covers four mutations: no conversion, no clamp,
+wrong scale and wrong byte order. *What calls this, and is that tested?*
+
 `FakeRecorder` is gone with the recorder, and **every one of those assertions survived the
 move** - rewritten against the worklet's port rather than deleted with the thing they were about.
 That is the test of whether a lesson was understood or merely recorded: the batch reaching the
@@ -1772,6 +1835,16 @@ inputs take, because the property is that it is unconditional: a single-shape as
 satisfied by a value set beside the keyterms, and the branch that would then opt in is the
 *empty-vocabulary* one - a project with no registry yet, which is every engagement on its first
 interview.
+
+**Raw PCM costs about forty times the bandwidth, and nobody priced it before enabling mobile.**
+`linear16` mono at 48 kHz is ~96 kB/s - roughly 768 kbit/s sustained, against roughly 24 kbit/s
+for webm/opus - so **a 45-minute interview uploads about 260 MB**. Nothing consults
+`socket.bufferedAmount`, so a connection that cannot keep up buffers without bound rather than
+shedding or complaining. No change was made: the fallback still covers a socket that fails, and
+guessing at a threshold is worse than measuring one. But it is a real cost of serving phones, and
+the device it lands hardest on is the device this branch exists to enable. **Run the first iPhone
+test on cellular rather than office Wi-Fi**, and watch what a weak signal does to the transcript
+before concluding anything about the recogniser.
 
 **Nothing on this path has ever spoken to the real Deepgram.** The `access_token`-in-URL form,
 the `keyterm` spelling and the `linear16`/`sample_rate`/`channels` triple are all read off
