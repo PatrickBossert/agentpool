@@ -173,6 +173,15 @@ export default function VoiceInterview() {
   // ref. The state above is what the screens read.
   const speechPolicyRef = useRef<SpeechPolicy>('required')
   const haltedRef = useRef(false)
+  // Why the last `startDeepgram` gave up, so a halt can tell a failure the server has already
+  // diagnosed from one only this end saw. `grant` means the token door refused, and it alerted
+  // with the status code that distinguishes a revoked key from an exhausted balance - reporting
+  // again from here wrote "the socket would not open" over it and mailed the operator twice.
+  const deepgramFailureKindRef = useRef<'grant' | 'socket' | 'browser' | 'microphone' | null>(null)
+  // The words already spoken for the current question that no pair holds yet - carried across a
+  // "Restart answer" or a "Finish my last answer" by `listenWithRestart`. A ref because the halt
+  // lives one closure in, inside `listenForAnswer`, and cannot see that local.
+  const carriedTextRef = useRef('')
   const recognitionRef = useRef<Recogniser | null>(null)
   // One microphone stream for the whole interview, and the counters that decide whether
   // Deepgram is still worth asking for. `deepgramOffRef` is one-way once set: every later
@@ -402,7 +411,7 @@ export default function VoiceInterview() {
    * a thrown error on the one screen that is trying to explain itself.
    */
   async function reportSpeechFailure(
-    reason: string,
+    reason: string | null,
     answers: CapturedPair[] = [],
     ratings: SectionMaturityRating[] = [],
   ): Promise<void> {
@@ -506,7 +515,7 @@ export default function VoiceInterview() {
    * arrived before the answers were saved would be an alert about an interview whose answers
    * might not have been.
    */
-  async function haltForSpeechFailure(reason: string, partialAnswer = ''): Promise<void> {
+  async function haltForSpeechFailure(reason: string | null, partialAnswer = ''): Promise<void> {
     if (haltedRef.current) return
     haltedRef.current = true
     setHaltNotice(HALT_MID_INTERVIEW)
@@ -669,12 +678,28 @@ export default function VoiceInterview() {
    * Deepgram key must not pay a failed round trip before every single answer.
    */
   async function startDeepgram(hooks: RecogniserHooks): Promise<Recogniser | null> {
-    if (deepgramOffRef.current || !browserCanStream()) return null
+    if (deepgramOffRef.current || !browserCanStream()) {
+      deepgramFailureKindRef.current = 'browser'
+      return null
+    }
     const grant = await fetchDeepgramGrant(BASE, sessionToken ?? '')
-    if (!grant) return null
+    if (!grant) {
+      // **The server has already recorded and alerted for this one, with the diagnosis only it
+      // could produce.** `GET /{token}/deepgram-token` holds the HTTP status that tells a refused
+      // key from an exhausted balance from a rate limit; all this end knows is "no grant". Saying
+      // so here is what let the vague sentence be written over the specific one.
+      deepgramFailureKindRef.current = 'grant'
+      return null
+    }
     const stream = await interviewStream()
-    if (!stream) return null
-    return openDeepgramSocket(stream, deepgramListenUrl(grant), hooks)
+    if (!stream) {
+      deepgramFailureKindRef.current = 'microphone'
+      return null
+    }
+    deepgramFailureKindRef.current = 'socket'
+    const engine = await openDeepgramSocket(stream, deepgramListenUrl(grant), hooks)
+    if (engine) deepgramFailureKindRef.current = null
+    return engine
   }
 
   /**
@@ -731,7 +756,7 @@ export default function VoiceInterview() {
        * `SpeechHalted` and does nothing, because `haltForSpeechFailure` has already put the halt
        * screen up.
        */
-      function halt(reason: string) {
+      function halt(reason: string | null) {
         if (resolved) return
         resolved = true
         recognitionRef.current = null
@@ -741,9 +766,12 @@ export default function VoiceInterview() {
         setStatusMessage('')
         setInterimText('')
         // The words heard so far on *this* answer, which no pair holds yet - the interview loop
-        // builds the pair after this promise settles, and it never will now.
-        void haltForSpeechFailure(reason, parts.join(' ').trim())
-        reject(new SpeechHalted(reason))
+        // builds the pair after this promise settles, and it never will now. `carriedTextRef` is
+        // the same thing one closure out: anything said before the participant tapped "Restart
+        // answer" or "Finish my last answer", which `listenWithRestart` holds and this cannot see.
+        const spoken = [carriedTextRef.current, parts.join(' ').trim()].filter(Boolean).join(' ')
+        void haltForSpeechFailure(reason, spoken)
+        reject(new SpeechHalted(reason ?? 'already reported'))
       }
 
       function resetSilenceTimer(initial = false) {
@@ -863,8 +891,15 @@ export default function VoiceInterview() {
           // a key revoked mid-engagement, a network that came and went. The fallback is refused
           // here for the same reason it is refused on a drop: it would send this participant's
           // voice to their browser vendor, which is what this engagement does not permit.
+          //
+          // **`null` when the token door refused**, because it has already recorded and alerted
+          // with the status code that says which problem it was. `probeSpeech` has made exactly
+          // this judgement since the branch landed and says why; carrying it here is the whole
+          // of the repair. Without it, the balance running out at answer twelve wrote "the
+          // socket would not open" over "the balance is exhausted or the card has expired" and
+          // mailed the operator twice for one incident.
           if (speechPolicyRef.current === 'required') {
-            halt('socket_failed')
+            halt(deepgramFailureKindRef.current === 'grant' ? null : 'socket_failed')
             return
           }
           deepgramFailuresRef.current += 1
@@ -973,7 +1008,13 @@ export default function VoiceInterview() {
     // Carried rather than discarded: the participant is correcting the previous answer, not
     // retracting this one, and losing words they have already spoken is the same failure the
     // button exists to fix.
+    //
+    // **Mirrored into `carriedTextRef` on every change**, because a halt happens one closure in,
+    // inside `listenForAnswer`, which cannot see this local. Without the mirror these words went
+    // with the socket - the same class as the in-flight answer, one closure further out, and a
+    // participant who had tapped "Finish my last answer" would lose the most of anybody.
     let carried = ''
+    carriedTextRef.current = ''
     // eslint-disable-next-line no-constant-condition
     while (true) {
       setInterimText('')
@@ -982,6 +1023,7 @@ export default function VoiceInterview() {
       if (restartAnswerRef.current) {
         restartAnswerRef.current = false
         carried = ''
+        carriedTextRef.current = ''
         setStatusMessage('Restarting…')
         await new Promise(r => setTimeout(r, 300))
         setStatusMessage('')
@@ -991,6 +1033,7 @@ export default function VoiceInterview() {
       if (appendToPreviousRef.current) {
         appendToPreviousRef.current = false
         carried = [carried, heard].filter(Boolean).join(' ').trim()
+        carriedTextRef.current = carried
         const previous = qaRef.current[qaRef.current.length - 1]
         if (!previous) {
           // Nothing has been committed yet, so there is nothing to finish. Say so rather
@@ -1025,6 +1068,10 @@ export default function VoiceInterview() {
         continue
       }
 
+      // The answer is about to become a pair, so nothing is carried any more. Cleared here as
+      // well as on entry, or a halt on a *later* question would re-send words that already
+      // reached the transcript under their own question.
+      carriedTextRef.current = ''
       return answer
     }
   }

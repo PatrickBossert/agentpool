@@ -26,6 +26,7 @@ import VoiceInterview from '../pages/VoiceInterview'
 import {
   FakeRecorder,
   FakeSocket,
+  SCRIPT_THREE_QUESTIONS,
   SCRIPT_TWO_QUESTIONS,
   firstSocket,
   forgetCompletion,
@@ -34,6 +35,7 @@ import {
   installSpeechRecognition,
   installStreaming,
   recognisersBuiltSoFar,
+  socketAt,
 } from './support/voiceInterviewFakes'
 
 const GRANT = { token: 'jwt', listen_params: { model: 'nova-3', language: 'en' } }
@@ -275,6 +277,149 @@ describe('an engagement that requires Deepgram', () => {
     // report alone left the transcript empty behind a screen saying it had been saved.
     expect(JSON.stringify(body.qa_pairs)).toContain('A finished answer to the first question.')
   }, 25000)
+
+  // ── The sequence nothing drove: the balance runs out mid-interview ─────────
+
+  it('does not report a failure the token door has already diagnosed', async () => {
+    // **The sequence, driven.** The grant succeeds at question one; the balance runs out before
+    // question two, so `GET /deepgram-token` refuses - and that door has the HTTP status that
+    // says "no credit (402) - the balance is exhausted or the card has expired", records it and
+    // mails it. All this end knows is "no grant".
+    //
+    // Reporting `socket_failed` from here wrote "could not hold a streaming connection open -
+    // it was refused, or it dropped" **over** the specific sentence, and mailed the operator a
+    // second time for one incident. The consultant's panel - the only live leg while
+    // ADMIN_ALERT_EMAIL is unset - then showed the vague one.
+    //
+    // `probeSpeech` has made exactly this judgement since the branch landed; this is it carried
+    // into the listen loop.
+    installStreaming()
+    installSpeechRecognition('must not be reached')
+    let grantsAnswered = 0
+    const fetchSpy = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.endsWith('/interviews/tok')) {
+        return new Response(JSON.stringify({
+          session: { id: 1, session_token: 'tok', node_label: 'x', voice_config: { elevenlabs_voice_id: 'V', language: 'en', country_code: 'GB', model_id: 'm' } },
+          script: SCRIPT_TWO_QUESTIONS,
+          speech_policy: 'required',
+        }), { status: 200 })
+      }
+      if (url.endsWith('/deepgram-token')) {
+        grantsAnswered += 1
+        // The probe and question one are answered; the balance runs out after that.
+        if (grantsAnswered <= 2) return new Response(JSON.stringify(GRANT), { status: 200 })
+        return new Response('{"detail":"Deepgram reports this account has no credit (402)"}', { status: 503 })
+      }
+      return new Response('{}', { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    const first = await firstSocket()
+    first.say('An answer given while there was still credit.', true)
+    await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
+
+    // Question two: no grant, so the interview halts.
+    await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
+
+    const reports = fetchSpy.mock.calls.filter(([url]) => String(url).endsWith('/speech-failure'))
+    expect(reports).toHaveLength(1)
+    const body = JSON.parse(String((reports[0][1] as RequestInit).body))
+    // **`null`, not `socket_failed`.** The server records nothing further and does not alert a
+    // second time, so its own specific diagnosis is what the consultant reads.
+    expect(body.reason).toBeNull()
+    // And the answers still travel, because preserving is not what is being suppressed.
+    expect(JSON.stringify(body.qa_pairs)).toContain('An answer given while there was still credit.')
+  }, 25000)
+
+  it('does report when the socket itself failed, which the server never saw', async () => {
+    // **The control.** A change that suppressed every mid-interview report would pass the test
+    // above and would lose the one failure only this end can see: the grant was minted, so the
+    // token door answered 200 and recorded nothing, and then the socket dropped.
+    installStreaming()
+    installSpeechRecognition('must not be reached')
+    const fetchSpy = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
+    vi.stubGlobal('fetch', fetchSpy)
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    const socket = await firstSocket()
+    socket.drop()
+
+    await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
+    const reports = fetchSpy.mock.calls.filter(([url]) => String(url).endsWith('/speech-failure'))
+    expect(reports).toHaveLength(1)
+    expect(JSON.parse(String((reports[0][1] as RequestInit).body)).reason).toBe('socket_failed')
+  }, 25000)
+
+  it('reports when the grant was good and the socket would not start, which the server never saw', async () => {
+    // **The control the drop test could not be.** That one goes through `onDropped`, which is a
+    // different branch - so mutating the `!engine` arm to suppress everything left it green.
+    // Found by power-check: `halt(null)` unconditionally passed all twelve tests.
+    //
+    // Here the token door answers 200, so the server records nothing and alerts nobody, and
+    // `startDeepgram` still returns null because the recorder cannot be built. If this end also
+    // stayed quiet, the incident would reach no one at all - the opposite failure from the
+    // double report, and the reason the branch tests the *kind* rather than suppressing wholesale.
+    installStreaming()
+    vi.stubGlobal('MediaRecorder', class {
+      static isTypeSupported = () => true
+      constructor() { throw new Error('this browser cannot record from this stream') }
+    })
+    installSpeechRecognition('must not be reached')
+    const fetchSpy = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
+    vi.stubGlobal('fetch', fetchSpy)
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
+
+    const reports = fetchSpy.mock.calls.filter(([url]) => String(url).endsWith('/speech-failure'))
+    expect(reports).toHaveLength(1)
+    expect(JSON.parse(String((reports[0][1] as RequestInit).body)).reason).toBe('socket_failed')
+  }, 25000)
+
+  it('keeps the words carried across “Finish my last answer” when it then halts', async () => {
+    // Minor 6, and the same class as the in-flight answer one closure further out.
+    // `listenWithRestart` holds `carried` - everything said before the participant tapped
+    // "Finish my last answer" - and `halt()` lives inside `listenForAnswer`, which cannot see
+    // that local. Without the mirror, the participant who used that button lost the most.
+    installStreaming()
+    installSpeechRecognition('must not be reached')
+    const fetchSpy = installFetch(GRANT, SCRIPT_THREE_QUESTIONS, 'required')
+    vi.stubGlobal('fetch', fetchSpy)
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    // Question one, answered and committed, so "Finish my last answer" is offered.
+    const first = await firstSocket()
+    first.say('The first answer.', true)
+    await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
+
+    // Question two: say something, then tap "Finish my last answer" - those words become
+    // `carried` rather than an answer.
+    const second = await socketAt(1)
+    second.say('Words that become carried rather than an answer.', true)
+    await userEvent.click(await screen.findByRole('button', { name: /finish my last answer/i }))
+
+    // The continuation listen opens another socket, and that is the one that dies.
+    const third = await socketAt(2)
+    third.drop()
+
+    await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
+
+    await waitFor(() => {
+      const checkpoints = fetchSpy.mock.calls.filter(([url]) => String(url).endsWith('/checkpoint'))
+      expect(checkpoints.length).toBeGreaterThan(0)
+      const body = JSON.parse(String((checkpoints[checkpoints.length - 1][1] as RequestInit).body))
+      expect(JSON.stringify(body.checkpoint)).toContain('Words that become carried rather than an answer.')
+    }, { timeout: 10000 })
+  }, 30000)
 
   // ── An absent policy is the strict one ─────────────────────────────────────
 
