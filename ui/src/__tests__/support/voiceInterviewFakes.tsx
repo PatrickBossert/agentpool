@@ -144,46 +144,154 @@ export class FakeSocket {
   }
 }
 
-export class FakeRecorder {
-  static isTypeSupported = () => true
-  /** Every recorder this test has built, so a test can deliver a chunk of its own. */
-  static built: FakeRecorder[] = []
-  ondataavailable: ((e: { data: { size: number } }) => void) | null = null
-  onstop: (() => void) | null = null
-  constructor(public stream: unknown, public options?: unknown) {
-    FakeRecorder.built.push(this)
+// ── The audio graph ──────────────────────────────────────────────────────────
+//
+// **Every claim these make was checked against a specification, because the last branch was bitten
+// three times by a fake more obliging than the thing it stood for** - a socket that fired `close`
+// without `error`, and a recorder that never fired `onstop` and then fired `ondataavailable`
+// synchronously where the real one queues it. The claims here, and where each comes from:
+//
+//  - `sampleRate` is a property of the **context**, and it is *not* 48000 everywhere. The default
+//    below is 44100 deliberately, so a value hardcoded to the common case fails every test in
+//    this directory rather than passing by coincidence.
+//  - `audioWorklet.addModule` returns a **Promise**, and it **rejects** for a URL that does not
+//    resolve. That is the `/dashboard` base trap, and a fake that resolved unconditionally could
+//    not tell a correct address from a 404.
+//  - `port.postMessage` is **asynchronous** in both directions, so the flush is a round trip and
+//    not a function call.
+//  - An `AudioContext` starts **suspended** and has to be resumed - which on iOS is the whole
+//    difference between a capture and a silence.
+//
+// What the processor does with the samples once it has them - batching, and posting its tail
+// before it acknowledges a flush - is not claimed here at all. It is driven against the real
+// `pcm-worklet.js` in `PcmCapture.test.ts`, so these fakes stand on an asserted property rather
+// than on a second description of one.
+
+/** The `MessagePort` between the main thread and the audio thread, with a worklet behind it. */
+class FakeWorkletPort {
+  /** What the main thread has posted to the worklet. */
+  sent: unknown[] = []
+  onmessage: ((event: { data: unknown }) => void) | null = null
+  /** How many frames the worklet is still holding, handed over on a flush. */
+  tailFrames = 128
+
+  postMessage(data: unknown) {
+    this.sent.push(data)
+    if (data && (data as { type?: string }).type === 'flush') {
+      // Asynchronous, and the tail before the acknowledgement - both are properties of the real
+      // processor, asserted directly in `PcmCapture.test.ts`. `deepgram.ts` sends `CloseStream`
+      // on the acknowledgement, so a fake that acknowledged first could not tell the flush
+      // guarantee from its absence.
+      setTimeout(() => {
+        if (this.tailFrames > 0) this.deliver(this.tailFrames)
+        this.onmessage?.({ data: { type: 'flushed' } })
+      }, 0)
+    }
   }
-  start() { /* the socket assertions do not need audio bytes to flow */ }
-  /** A chunk of audio arriving from the encoder, whenever a test wants one. */
-  deliver(size = 4) {
-    this.ondataavailable?.({ data: { size } })
+
+  /** A batch of samples arriving from the audio thread. Float32, as the processor posts. */
+  deliver(frames: number) {
+    this.onmessage?.({ data: new Float32Array(frames).fill(0.5).buffer })
   }
+}
+
+export class FakeAudioWorkletNode {
+  /** Every node built, so a test can push a batch or fail a processor. */
+  static built: FakeAudioWorkletNode[] = []
+  port = new FakeWorkletPort()
+  onprocessorerror: (() => void) | null = null
+  /** What this node is connected onward to - the zero-gain path, never `destination`. */
+  connectedTo: unknown[] = []
+  constructor(public context: unknown, public name: string, public options?: unknown) {
+    FakeAudioWorkletNode.built.push(this)
+  }
+  connect(target: unknown) { this.connectedTo.push(target) }
+  disconnect() { this.connectedTo = [] }
+  /** A batch of audio reaching the main thread, whenever a test wants one. Asynchronous. */
+  deliver(frames = 128) { setTimeout(() => this.port.deliver(frames), 0) }
+}
+
+class FakeAudioNode {
+  connectedTo: unknown[] = []
+  connect(target: unknown) { this.connectedTo.push(target) }
+  disconnect() { this.connectedTo = [] }
+}
+
+class FakeGainNode extends FakeAudioNode {
+  gain = { value: 1 }
+}
+
+export class FakeAudioContext {
+  static built: FakeAudioContext[] = []
   /**
-   * A real MediaRecorder **queues** its final `dataavailable` as a task and fires `onstop`
-   * after it. Both halves are asynchronous, and the first one is the whole point.
+   * What a context reports - **44100, not 48000**, and that is the point of it.
    *
-   * This fired `ondataavailable` **synchronously** from `stop()`, and that is precisely the
-   * behaviour `deepgram.ts` names as the original defect: "`dataavailable` after `stop()` is
-   * asynchronous and the socket had already gone". A fake more punctual than the real thing
-   * made the repair unfalsifiable - the reviewer proved it by sending `CloseStream` immediately
-   * after `recorder.stop()`, which is the bug, and watching every test stay green, because the
-   * chunk had already been delivered by the time `CloseStream` went out. Deleting the
-   * `readyState` guards did the same.
-   *
-   * A fake is a claim about an external system, and a claim that the system is more obliging
-   * than it is buys nothing but confidence.
+   * 48000 is the common answer and 44100 is a perfectly ordinary one, so a rate hardcoded to the
+   * common case would be invisible against a fake that reported it. The consequence of getting
+   * it wrong is a socket that opens, audio that streams, and a transcript decoded at the wrong
+   * speed, with nothing raised at either end - so the fake is set to disagree with the guess.
    */
-  stop() {
-    setTimeout(() => this.ondataavailable?.({ data: { size: 4 } }), 0)
-    setTimeout(() => this.onstop?.(), 0)
+  static reportedSampleRate = 44100
+  /** The module URLs `addModule` will resolve. Anything else rejects, as a 404 does. */
+  static resolves: (url: string) => boolean = url => url.endsWith('/pcm-worklet.js')
+
+  state: string = 'suspended'
+  sampleRate = FakeAudioContext.reportedSampleRate
+  destination = new FakeAudioNode()
+  /** The module URLs this context was asked for, so the address can be asserted. */
+  modulesRequested: string[] = []
+  sources: FakeAudioNode[] = []
+  gains: FakeGainNode[] = []
+
+  audioWorklet = {
+    addModule: async (url: string) => {
+      this.modulesRequested.push(url)
+      if (!FakeAudioContext.resolves(url)) {
+        // What a browser does with an address that does not answer: the promise rejects. A fake
+        // that resolved regardless is a fake that cannot see the `/dashboard` base trap.
+        throw new DOMException(`Failed to load ${url}`, 'AbortError')
+      }
+    },
+  }
+
+  constructor() { FakeAudioContext.built.push(this) }
+
+  async resume() {
+    if (this.state === 'closed') throw new DOMException('closed', 'InvalidStateError')
+    this.state = 'running'
+  }
+  async close() { this.state = 'closed' }
+  createMediaStreamSource(_stream: unknown) {
+    const source = new FakeAudioNode()
+    this.sources.push(source)
+    return source
+  }
+  createGain() {
+    const gain = new FakeGainNode()
+    this.gains.push(gain)
+    return gain
   }
 }
 
 export function installStreaming() {
   FakeSocket.opened = []
-  FakeRecorder.built = []
+  FakeAudioWorkletNode.built = []
+  FakeAudioContext.built = []
+  FakeAudioContext.reportedSampleRate = 44100
+  FakeAudioContext.resolves = url => url.endsWith('/pcm-worklet.js')
   vi.stubGlobal('WebSocket', FakeSocket)
-  vi.stubGlobal('MediaRecorder', FakeRecorder)
+  vi.stubGlobal('AudioContext', FakeAudioContext)
+  vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode)
+}
+
+/** A stream, for a test that drives the socket without rendering an interview. */
+export function fakeStream(): MediaStream {
+  return { getTracks: () => [] } as unknown as MediaStream
+}
+
+/** A context to hand `openDeepgramSocket`, of the kind the page holds for the whole interview. */
+export function fakeAudioContext(): AudioContext {
+  return new FakeAudioContext() as unknown as AudioContext
 }
 
 /**

@@ -12,7 +12,7 @@ import type {
 import {
   browserCanStream,
   browserStreamingObstacle,
-  deepgramListenUrl,
+  createAudioContext,
   fetchDeepgramGrant,
   openDeepgramSocket,
   type Recogniser,
@@ -65,11 +65,17 @@ const HALT_NO_SERVICE =
   'so we cannot start. Nothing you say could be recorded, and this interview is not permitted to ' +
   'use your browser’s own transcription instead. Please try your link again later, or ' +
   'contact the person who invited you. They have been told.'
+// **This no longer names a device, because sp67 stopped there being one to name.** It used to
+// send the participant away from Safari and therefore off every iPhone and iPad, which was
+// honest while the audio went through `MediaRecorder` and its container. Raw PCM has no
+// container, and Safari has had `AudioWorklet` since 14.1 - so what is left is an out-of-date
+// browser of any make, and the remedy is to update it rather than to find another device.
 const HALT_BROWSER =
-  'We are sorry - this interview cannot be conducted in this browser. It cannot record audio in a ' +
-  'format our transcription service accepts, and this interview is not permitted to use your ' +
-  'browser’s own transcription instead. Please reopen your interview link in Chrome or Edge ' +
-  'on a computer. Safari, including on an iPhone or iPad, will not work for this interview.'
+  'We are sorry - this interview cannot be conducted in this browser, because it is too old to ' +
+  'record audio in the way our transcription service needs, and this interview is not permitted ' +
+  'to use your browser’s own transcription instead. Please update your browser, or reopen ' +
+  'your interview link in an up-to-date Chrome, Edge, Safari or Firefox. The person who invited ' +
+  'you has been told.'
 // **Every clause here is something that is now true.** The first version said "Everything you
 // answered up to this point has been saved, and nothing has been lost" - and a halted interview
 // wrote a `checkpoint_json` that nothing in the product read, left `interview_answers` empty and
@@ -196,6 +202,9 @@ export default function VoiceInterview() {
   // one transient blip condemned the rest of the interview to a recogniser that has never
   // heard of the client, which is the whole thing this branch exists to fix.
   const interviewStreamRef = useRef<MediaStream | null>(null)
+  // The audio graph's context, held beside the stream and released with it - see
+  // `interviewAudioContext` for why it is one per interview rather than one per answer.
+  const audioContextRef = useRef<AudioContext | null>(null)
   const deepgramFailuresRef = useRef(0)
   const deepgramDropsRef = useRef(0)
   const deepgramOffRef = useRef(false)
@@ -463,13 +472,17 @@ export default function VoiceInterview() {
    *
    * **Two questions, not one**, and either failing refuses the interview:
    *
-   *  1. **Can this browser produce a container Deepgram accepts?** `f914bc56` made a browser that
-   *     records none of webm/opus, webm or ogg/opus decline the socket rather than stream
-   *     MP4/AAC into a connection configured for Opus. Safari and iOS record MP4/AAC - so this
-   *     arm fails for reasons that have nothing to do with Deepgram, on the device a participant
-   *     is most likely holding, and on this kind of engagement it must still mean "cannot
-   *     proceed". That is an accepted operational constraint, not a defect to engineer around:
-   *     the alternative is the participant's voice going to Apple.
+   *  1. **Can this browser capture audio for us at all?** Raw PCM comes out of an `AudioWorklet`,
+   *     so this arm asks whether the browser has one. It fails for reasons that have nothing to
+   *     do with Deepgram, and on this kind of engagement it must still mean "cannot proceed" -
+   *     the alternative is the participant's voice going to Google or Apple.
+   *
+   *     **It used to ask a much narrower question and refuse a great many more people.** While
+   *     the audio went through `MediaRecorder`, the browser negotiated a container and Safari
+   *     negotiated MP4/AAC against a socket opened for webm/opus, so this arm declined every
+   *     iPhone and iPad. Raw PCM negotiates nothing, and Safari has had `AudioWorklet` since
+   *     14.1 on macOS and iOS 14.5, so what is left is an out-of-date browser rather than a
+   *     device.
    *  2. **Is Deepgram reachable and in credit?** Minting a grant is the same call the interview
    *     makes, so a refused key or an exhausted balance fails here. The grant is then discarded -
    *     it lives thirty seconds and could not be held for the first question anyway - and that
@@ -486,7 +499,7 @@ export default function VoiceInterview() {
     setSpeechProbe('checking')
     const obstacle = browserStreamingObstacle()
     if (obstacle) {
-      setHaltNotice(obstacle === 'unsupported_container' ? HALT_BROWSER : HALT_NO_SERVICE)
+      setHaltNotice(obstacle === 'no_audio_worklet' ? HALT_BROWSER : HALT_NO_SERVICE)
       setSpeechProbe('unavailable')
       await reportSpeechFailure(obstacle)
       return
@@ -651,6 +664,27 @@ export default function VoiceInterview() {
   function releaseInterviewStream() {
     interviewStreamRef.current?.getTracks().forEach(track => track.stop())
     interviewStreamRef.current = null
+    // Chrome caps a page at six concurrent `AudioContext`s, and one that is never closed keeps
+    // the audio hardware awake after the interview has finished.
+    const context = audioContextRef.current
+    audioContextRef.current = null
+    if (context) { try { void context.close() } catch { /* already gone */ } }
+  }
+
+  /**
+   * The `AudioContext` the capture graph runs in, acquired once and kept.
+   *
+   * The same argument as the microphone stream above, with an iOS-specific third: Safari starts a
+   * context suspended and reports a fourth state, `interrupted`, when the participant switches
+   * tabs or lets the screen lock. `startPcmCapture` resumes it before every answer, which is
+   * cheap on a context that is already running and is the only thing that brings back one that
+   * is not - and doing that to one long-lived context is a great deal more reliable than
+   * constructing a fresh one inside an answer loop, where there is no user gesture in the call
+   * chain at all.
+   */
+  function interviewAudioContext(): AudioContext | null {
+    if (!audioContextRef.current) audioContextRef.current = createAudioContext()
+    return audioContextRef.current
   }
 
   async function interviewStream(): Promise<MediaStream | null> {
@@ -696,8 +730,15 @@ export default function VoiceInterview() {
       deepgramFailureKindRef.current = 'microphone'
       return null
     }
+    const context = interviewAudioContext()
+    if (!context) {
+      // No Web Audio at all. Reported as a browser failure rather than a socket one: nothing was
+      // opened, and an administrator sent to check Deepgram would be looking in the wrong place.
+      deepgramFailureKindRef.current = 'browser'
+      return null
+    }
     deepgramFailureKindRef.current = 'socket'
-    const engine = await openDeepgramSocket(stream, deepgramListenUrl(grant), hooks)
+    const engine = await openDeepgramSocket(stream, context, grant, hooks)
     if (engine) deepgramFailureKindRef.current = null
     return engine
   }

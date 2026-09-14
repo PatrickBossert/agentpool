@@ -297,6 +297,38 @@ def test_the_language_is_the_sessions_and_falls_back_to_english():
     assert deepgram_listen_params([], "")["language"] == "en"
 
 
+@pytest.mark.parametrize("keyterms", [[], ["Iberdrola"]])
+@pytest.mark.parametrize("language", ["en", "cy"])
+def test_the_server_declares_nothing_about_the_shape_of_the_audio(keyterms, language):
+    """The encoding, the rate and the channel count are the browser's, and must stay together.
+
+    **This is the mirror of the `model`/`keyterm` rule, running the other way, and the reason it
+    is asserted here is that the two halves fail differently.** `model` and its boost parameter
+    are one fact about Deepgram, so restating them in TypeScript would be a second declaration of
+    a server-side pairing. `encoding` and `sample_rate` are one fact about *this browser's audio
+    graph*, and the server cannot observe an `AudioContext`'s sample rate at all - so they are
+    set in `deepgramListenUrl` from the live context, and the server declares neither.
+
+    What this test exists to stop is somebody adding "just the encoding" here, which looks
+    entirely reasonable: `linear16` is a constant, it is not going to change, and the server
+    already owns every other parameter. Split that way, a client that later captured at a
+    different depth would send bytes the server was still describing as 16-bit, and **the failure
+    is silent** - the socket opens, the audio streams, and the transcript comes back as noise.
+
+    Parametrised over both inputs because the property is that it is unconditional, and the
+    empty-vocabulary branch is the one every engagement takes on its first interview.
+    """
+    params = deepgram_listen_params(keyterms, language)
+
+    for owned_by_the_browser in ("encoding", "sample_rate", "channels"):
+        assert owned_by_the_browser not in params, (
+            f"{owned_by_the_browser} describes the audio this browser produces, not how Deepgram "
+            f"is configured. It belongs with the sample rate in deepgramListenUrl, which reads "
+            f"the live AudioContext; declaring it here separates a pair that must travel "
+            f"together, and a mismatch between them is silent at both ends."
+        )
+
+
 # ---------------------------------------------------------------------------
 # The extraction rules, driven directly and in both directions
 # ---------------------------------------------------------------------------
