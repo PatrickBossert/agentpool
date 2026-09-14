@@ -292,6 +292,23 @@ _MODULE_LEVEL_STATE = {
         "trap: it accumulates, so one test's three sends leave a later test on the same "
         "session token answering 429"
     ),
+    "api/services/speech_policy.py::_alert_mail_log": (
+        REGISTERED, "a per-process rate-limit ledger keyed on the slug, exactly like "
+        "_transcript_email_log above and with the same trap: it accumulates, so one test that "
+        "exhausts an engagement's three alert messages leaves every later test on that slug "
+        "silently sending none - and a suppressed alert is indistinguishable from a broken one, "
+        "which is the reading this whole finding is about. Keyed on the slug rather than the "
+        "session token because the case it bounds is one outage across a campaign of forty "
+        "stakeholders, which is forty tokens and one incident - proved by probe below"
+    ),
+    "api/services/speech_policy.py::_pending_alerts": (
+        NOT_A_CACHE, "the set of alert sends in flight. It holds a strong reference to each "
+        "task because asyncio keeps only a weak one, so clearing it between tests would let "
+        "the event loop collect a send mid-flight - the opposite of what isolation wants. It "
+        "empties itself: every task is added with a done-callback that discards it, so it is "
+        "bounded by the sends actually outstanding rather than growing. Nothing reads a value "
+        "out of it, so there is no stale answer for a later test to inherit"
+    ),
     "api/services/voice_metadata.py::_GENDER_CACHE": (
         REGISTERED, "a voice's sex as ElevenLabs reports it, held because it does not change "
         "- proved by probe below. Stale entries are the ordinary test-order trap and one that "
@@ -446,7 +463,17 @@ def _library_probe_probe():
     )
 
 
+def _alert_mail_log_probe():
+    from api.services import speech_policy
+    key = "process-cache-probe-slug"
+    return (
+        lambda: speech_policy._alert_mail_log[key].append(1.0),
+        lambda: key in speech_policy._alert_mail_log,
+    )
+
+
 _REGISTERED_PROBES = {
+    "api/services/speech_policy.py::_alert_mail_log": _alert_mail_log_probe,
     "api/services/voice_metadata.py::_GENDER_CACHE": _voice_gender_probe,
     "api/services/voice_catalogue.py::_LIBRARY_PROBE": _library_probe_probe,
     "api/services/chroma_client.py::_MODE_CACHE": _mode_cache_probe,

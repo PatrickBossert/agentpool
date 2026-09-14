@@ -202,7 +202,13 @@ async def test_get_session_with_script_keeps_the_questionnaire_key(tmp_path):
         result = await get_session_with_script("tok-q")
 
     assert result is not None
-    assert set(result.keys()) == {"session", "script", "branding", "questionnaire"}
+    # `speech_policy` joined the payload in sp66's C2 fix: it is what tells the participant's
+    # page whether this engagement permits the browser's own recogniser when Deepgram cannot be
+    # reached. Set equality is the right shape and is why this had to be edited deliberately -
+    # the same property is what would catch a key being dropped.
+    assert set(result.keys()) == {
+        "session", "script", "branding", "questionnaire", "speech_policy",
+    }
     assert result["questionnaire"] is None
 
 

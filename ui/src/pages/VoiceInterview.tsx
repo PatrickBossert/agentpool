@@ -1,7 +1,23 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Check, Pause, Pencil, Play, Undo2, X } from 'lucide-react'
-import type { InterviewSession, InterviewScript, InterviewBranding, MaturityRating, SectionMaturityRating } from '../types'
+import { AlertTriangle, Check, Copy, Pause, Play, ShieldCheck, Undo2 } from 'lucide-react'
+import type {
+  InterviewSession,
+  InterviewScript,
+  InterviewBranding,
+  MaturityRating,
+  SectionMaturityRating,
+  SpeechPolicy,
+} from '../types'
+import {
+  browserCanStream,
+  browserStreamingObstacle,
+  deepgramListenUrl,
+  fetchDeepgramGrant,
+  openDeepgramSocket,
+  type Recogniser,
+  type RecogniserHooks,
+} from '../api/deepgram'
 
 // webkit speech recognition types (Chrome/Safari vendor prefix)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -19,10 +35,57 @@ function initialsOf(name: string): string {
     .join('')
 }
 
-type Phase = 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'rating' | 'complete' | 'error'
+type Phase =
+  | 'loading' | 'mic_setup' | 'ready' | 'interviewing' | 'rating' | 'complete' | 'error'
+  // The interview stopped because it could not be transcribed and this engagement forbids the
+  // browser's own recogniser. Its own phase rather than `error`, which says "Unable to load
+  // interview" - a participant forty minutes in has loaded it perfectly well.
+  | 'speech_halted'
 type MicStatus = 'no_device' | 'permission_needed' | 'permission_denied' | 'testing' | 'ready'
+/** Whether the probe run before the interview begins has been satisfied. */
+type SpeechProbe = 'unchecked' | 'checking' | 'ready' | 'unavailable'
 
 const BASE = '/api'
+
+/**
+ * Thrown to unwind the interview loop when speech has stopped and may not fall back.
+ *
+ * The loop is an await over sections and questions, so there is no flag a nested question could
+ * set that the enclosing section would see in time - it would speak the next question first. A
+ * throw is what actually stops it, and `runInterview` swallows this one because the halt screen
+ * is already up by the time it arrives.
+ */
+class SpeechHalted extends Error {}
+
+// What a participant is told, in each of the three ways this can end an interview. Plain words
+// about what happened, what it means for them, and what to do - never a status code, and never
+// the diagnosis the operator gets, which names this deployment's provider and its billing.
+const HALT_NO_SERVICE =
+  'We are sorry - the transcription service this interview needs is not available at the moment, ' +
+  'so we cannot start. Nothing you say could be recorded, and this interview is not permitted to ' +
+  'use your browser’s own transcription instead. Please try your link again later, or ' +
+  'contact the person who invited you. They have been told.'
+const HALT_BROWSER =
+  'We are sorry - this interview cannot be conducted in this browser. It cannot record audio in a ' +
+  'format our transcription service accepts, and this interview is not permitted to use your ' +
+  'browser’s own transcription instead. Please reopen your interview link in Chrome or Edge ' +
+  'on a computer. Safari, including on an iPhone or iPad, will not work for this interview.'
+// **Every clause here is something that is now true.** The first version said "Everything you
+// answered up to this point has been saved, and nothing has been lost" - and a halted interview
+// wrote a `checkpoint_json` that nothing in the product read, left `interview_answers` empty and
+// left the session `active`, so the answers were about to be discarded and a participant
+// returning to the link would be asked question one again. A participant reads this forty
+// minutes in, at the moment it most needs to be true.
+//
+// The answers are genuinely saved now - `POST /{token}/speech-failure` hands them to the same
+// machinery `/complete` uses. **Resumption is still not built**, so this says so plainly rather
+// than inviting somebody to reopen a link that will start them over. "Please try your link again
+// later" was the clause that did exactly that.
+const HALT_MID_INTERVIEW =
+  'We are sorry - the transcription service stopped responding, so we have had to end the ' +
+  'interview here. The answers you had already given have been saved, so that part of your time ' +
+  'is not lost. Reopening this link will not pick up where you left off, so please do not try - ' +
+  'the person who invited you has been told, and will arrange anything further with you.'
 
 // There is deliberately no default voice in this file, and there must never be one again.
 //
@@ -94,7 +157,48 @@ export default function VoiceInterview() {
   const [isMicTesting, setIsMicTesting] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [interimText, setInterimText] = useState('')
-  const recognitionRef = useRef<any>(null)
+  // What has gone wrong with the recogniser, in words a participant can act on. It stays on
+  // screen once set: a notice that cleared itself would be gone before somebody mid-sentence
+  // looked up, and "nothing you say is being recorded" is precisely the sentence that must not
+  // be missed.
+  const [recogniserNotice, setRecogniserNotice] = useState('')
+  // **Defaults to `required`, and that is the whole of the fail-closed behaviour on this side.**
+  // Until the server has said otherwise - a slow load, a malformed payload, an older API - the
+  // browser's own recogniser is refused. The opposite default would make every one of those
+  // silently stream a participant's voice to Google.
+  const [speechPolicy, setSpeechPolicy] = useState<SpeechPolicy>('required')
+  const [speechProbe, setSpeechProbe] = useState<SpeechProbe>('unchecked')
+  const [haltNotice, setHaltNotice] = useState('')
+  // The listen loop owns closures that outlive a render, so the policy it consults has to be a
+  // ref. The state above is what the screens read.
+  const speechPolicyRef = useRef<SpeechPolicy>('required')
+  const haltedRef = useRef(false)
+  // Why the last `startDeepgram` gave up, so a halt can tell a failure the server has already
+  // diagnosed from one only this end saw. `grant` means the token door refused, and it alerted
+  // with the status code that distinguishes a revoked key from an exhausted balance - reporting
+  // again from here wrote "the socket would not open" over it and mailed the operator twice.
+  const deepgramFailureKindRef = useRef<'grant' | 'socket' | 'browser' | 'microphone' | null>(null)
+  // The words already spoken for the current question that no pair holds yet - carried across a
+  // "Restart answer" or a "Finish my last answer" by `listenWithRestart`. A ref because the halt
+  // lives one closure in, inside `listenForAnswer`, and cannot see that local.
+  const carriedTextRef = useRef('')
+  const recognitionRef = useRef<Recogniser | null>(null)
+  // One microphone stream for the whole interview, and the counters that decide whether
+  // Deepgram is still worth asking for. `deepgramOffRef` is one-way once set: every later
+  // answer goes straight to the browser's recogniser rather than paying a failed round trip in
+  // front of the participant.
+  //
+  // **Two ways to reach it, counted separately, and a single mid-answer drop is no longer one
+  // of them.** `deepgramFailuresRef` counts consecutive failures to *open* - two in a row is a
+  // deployment without Deepgram. `deepgramDropsRef` counts sockets that opened and then went
+  // away, which cannot share that counter: a successful open resets the first one, so a drop
+  // recorded there could never accumulate past one. Setting the switch on the first drop meant
+  // one transient blip condemned the rest of the interview to a recogniser that has never
+  // heard of the client, which is the whole thing this branch exists to fix.
+  const interviewStreamRef = useRef<MediaStream | null>(null)
+  const deepgramFailuresRef = useRef(0)
+  const deepgramDropsRef = useRef(0)
+  const deepgramOffRef = useRef(false)
   const restartAnswerRef = useRef(false)
   // Set by "Finish my last answer". Read inside listenWithRestart, the same way
   // restartAnswerRef is - a flag rather than a callback, because the listen loop owns the
@@ -108,13 +212,20 @@ export default function VoiceInterview() {
   const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [isPaused, setIsPaused] = useState(false)
   const [silenceProgress, setSilenceProgress] = useState(0)
-  const [editableTranscript, setEditableTranscript] = useState<{ question: string; answer: string }[]>([])
-  const [editingIdx, setEditingIdx] = useState<number | null>(null)
-  const [editText, setEditText] = useState('')
-  const [sendCopy, setSendCopy] = useState(false)
-  const [copyEmail, setCopyEmail] = useState('')
-  const [sendingEmail, setSendingEmail] = useState(false)
-  const [emailSent, setEmailSent] = useState(false)
+  // The whole pair, not `{question, answer}`. The corrected answers are re-submitted to
+  // `/complete` when the participant finishes, and that door requires `question_id` on every
+  // pair - narrowing the type here is how an edit would have been sent without its address.
+  const [editableTranscript, setEditableTranscript] = useState<CapturedPair[]>([])
+  const [savingCorrections, setSavingCorrections] = useState(false)
+  const [finished, setFinished] = useState(false)
+  // Three outcomes, not two. "Not copied yet" and "this browser would not copy" are different
+  // things to a participant, and a boolean can only say one of them.
+  const [copyOutcome, setCopyOutcome] = useState<'idle' | 'copied' | 'unavailable'>('idle')
+  // Set when the corrections could not be saved. Finding I4: this screen used to say "Your
+  // responses have been recorded" whatever `/complete` answered, and then unmounted the
+  // transcript - so a participant who lost connectivity was told their corrections had landed
+  // and left with no way to try again.
+  const [finishError, setFinishError] = useState('')
   const isPausedRef = useRef(false)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const silenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -129,6 +240,17 @@ export default function VoiceInterview() {
     if (phase !== 'mic_setup' && phase !== 'ready') stopMicTest()
   }, [phase])
 
+  // Release the interview's own microphone stream when the interview is over, and on unmount.
+  // It is held open for the whole interview on purpose - see interviewStream - so nothing else
+  // releases it, and a stream left running keeps the browser's recording indicator lit on a
+  // page that has finished asking questions.
+  useEffect(() => {
+    if (phase === 'complete' || phase === 'error' || phase === 'speech_halted') {
+      releaseInterviewStream()
+    }
+  }, [phase])
+  useEffect(() => releaseInterviewStream, [])
+
   // Snapshot the QA ref into editable state when the interview completes
   useEffect(() => {
     if (phase === 'complete') setEditableTranscript([...qaRef.current])
@@ -138,6 +260,18 @@ export default function VoiceInterview() {
   useEffect(() => {
     if (phase === 'ready') loadAudioDevices()
   }, [phase])
+
+  // The probe, at device setup and nowhere else.
+  //
+  // **Before the interview begins, not during it.** A participant on an engagement that forbids
+  // the browser's recogniser has to be told they cannot proceed before they start, not after
+  // thirty answers - which is what a mid-interview discovery would mean, and the whole reason
+  // this runs here rather than at the first question.
+  useEffect(() => {
+    if (phase === 'ready' && speechPolicy === 'required' && speechProbe === 'unchecked') {
+      void probeSpeech()
+    }
+  }, [phase, speechPolicy, speechProbe])
 
   async function checkMicDevices(): Promise<boolean> {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -246,6 +380,15 @@ export default function VoiceInterview() {
       setProgress({ current: 0, total })
       setSessionData(data)
       setBranding(data.branding ?? null)
+      // **The server's decision, taken as given.** `browser_permitted` is the only value that
+      // opens the fallback; anything else - `required`, a missing key, a value this build has
+      // never heard of - closes it. Written as an allow-list rather than as `=== 'required'`
+      // for the reason CLAUDE.md gives about the skills-library exemptions: a third value must
+      // prove itself rather than inherit the permissive branch by not being named.
+      const policy: SpeechPolicy =
+        data.speech_policy === 'browser_permitted' ? 'browser_permitted' : 'required'
+      setSpeechPolicy(policy)
+      speechPolicyRef.current = policy
       // Inline maturity ratings are embedded in section.maturity_rating — no separate questionnaire
 
       const micOk = await checkMicDevices()
@@ -254,6 +397,136 @@ export default function VoiceInterview() {
       setErrorMessage(err instanceof Error ? err.message : 'Unknown error')
       setPhase('error')
     }
+  }
+
+  /**
+   * Tell the server an interview could not be transcribed. Never throws.
+   *
+   * A closed vocabulary rather than a sentence: the door is unauthenticated and what it produces
+   * lands in an administrator's alert, so the wording is composed on the server and the browser
+   * only says which case it is.
+   *
+   * **A side effect must not veto the thing it is a side effect of.** The participant has already
+   * been refused by the time this runs, and a failed report must not turn a handled refusal into
+   * a thrown error on the one screen that is trying to explain itself.
+   */
+  async function reportSpeechFailure(
+    reason: string | null,
+    answers: CapturedPair[] = [],
+    ratings: SectionMaturityRating[] = [],
+  ): Promise<void> {
+    try {
+      await fetch(`${BASE}/interviews/${sessionToken}/speech-failure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // The answers ride with the report rather than going to a door of their own: one
+        // request, and the server decides the order - preserve, then alert - so a slow or
+        // failing alert can never cost a participant their answers.
+        body: JSON.stringify({ reason, qa_pairs: answers, ratings: ratings.length ? ratings : undefined }),
+      })
+    } catch {
+      // The server's own log is the other leg of this alert. Nothing here is worth failing on.
+    }
+  }
+
+  /**
+   * Everything said so far, kept where a reconnecting session would find it. Never throws.
+   *
+   * **`partial_answer` is not padding.** `qaRef` gains a pair only when an answer *completes*, so
+   * a halt part-way through one would otherwise discard exactly the words the participant was
+   * speaking when the service went - which on the first question of an interview is all of them.
+   * It carries no question id because it has none: the pair is built by the interview loop after
+   * `listenForAnswer` returns, and inventing an id here would put an answer under an address
+   * nothing else agrees with. The words are what must not be lost.
+   */
+  async function preserveProgress(partialAnswer: string): Promise<void> {
+    try {
+      await fetch(`${BASE}/interviews/${sessionToken}/checkpoint`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkpoint: {
+            qa_pairs: qaRef.current,
+            ratings: sectionRatingsRef.current,
+            partial_answer: partialAnswer,
+          },
+        }),
+      })
+    } catch {
+      // Best effort. The halt screen is shown either way - telling a participant the interview
+      // has stopped matters more than the checkpoint, and saying nothing is the failure.
+    }
+  }
+
+  /**
+   * Can this interview be conducted at all? Asked once, at device setup.
+   *
+   * **Two questions, not one**, and either failing refuses the interview:
+   *
+   *  1. **Can this browser produce a container Deepgram accepts?** `f914bc56` made a browser that
+   *     records none of webm/opus, webm or ogg/opus decline the socket rather than stream
+   *     MP4/AAC into a connection configured for Opus. Safari and iOS record MP4/AAC - so this
+   *     arm fails for reasons that have nothing to do with Deepgram, on the device a participant
+   *     is most likely holding, and on this kind of engagement it must still mean "cannot
+   *     proceed". That is an accepted operational constraint, not a defect to engineer around:
+   *     the alternative is the participant's voice going to Apple.
+   *  2. **Is Deepgram reachable and in credit?** Minting a grant is the same call the interview
+   *     makes, so a refused key or an exhausted balance fails here. The grant is then discarded -
+   *     it lives thirty seconds and could not be held for the first question anyway - and that
+   *     small waste is the price of asking the question honestly rather than assuming.
+   *
+   * The first is asked first deliberately: it needs no network, and a browser that could never
+   * have worked should not be reported to an administrator as a Deepgram outage.
+   *
+   * **Nothing here opens a socket to any speech service.** The grant is fetched from this
+   * deployment's own API; a refusal ends the probe with no `WebSocket` constructed anywhere and
+   * no `SpeechRecognition` started, which is the entire point of probing rather than trying.
+   */
+  async function probeSpeech(): Promise<void> {
+    setSpeechProbe('checking')
+    const obstacle = browserStreamingObstacle()
+    if (obstacle) {
+      setHaltNotice(obstacle === 'unsupported_container' ? HALT_BROWSER : HALT_NO_SERVICE)
+      setSpeechProbe('unavailable')
+      await reportSpeechFailure(obstacle)
+      return
+    }
+    const grant = await fetchDeepgramGrant(BASE, sessionToken ?? '')
+    if (!grant) {
+      // The token door has already recorded and alerted for this half: it is the only place that
+      // holds the status code telling a refused key from an exhausted balance from a rate limit,
+      // and an administrator sent to check all three has been told nothing useful.
+      setHaltNotice(HALT_NO_SERVICE)
+      setSpeechProbe('unavailable')
+      return
+    }
+    setSpeechProbe('ready')
+  }
+
+  /**
+   * Stop the interview, keep what has been answered, and tell everyone who needs to know.
+   *
+   * Reached when transcription fails *during* an interview on an engagement that forbids the
+   * fallback - credit expiring at answer thirty, a socket that will not reopen. Falling back to
+   * Google is exactly what the probe exists to prevent, so it cannot be the mid-interview answer
+   * either.
+   *
+   * Preserve first, then report, then show the screen. The order is deliberate: an alert that
+   * arrived before the answers were saved would be an alert about an interview whose answers
+   * might not have been.
+   */
+  async function haltForSpeechFailure(reason: string | null, partialAnswer = ''): Promise<void> {
+    if (haltedRef.current) return
+    haltedRef.current = true
+    setHaltNotice(HALT_MID_INTERVIEW)
+    // Two different things are being kept, and only one of them can become a row. The completed
+    // answers go to the server as `qa_pairs` and are written to `interview_answers`, which is
+    // what the crews read. The words spoken into the failing socket have no question id - the
+    // interview loop builds the pair after the listen resolves, and it never will - so the
+    // checkpoint is the only thing that can hold them.
+    await preserveProgress(partialAnswer)
+    await reportSpeechFailure(reason, qaRef.current, sectionRatingsRef.current)
+    setPhase('speech_halted')
   }
 
   async function speakText(text: string): Promise<void> {
@@ -285,56 +558,224 @@ export default function VoiceInterview() {
     setStatusMessage('')
   }
 
-  function listenForAnswer(lang: string = 'en-GB'): Promise<string> {
-    return new Promise((resolve) => {
-      const SpeechRecognition =
+  /**
+   * The browser's own recogniser, which is the fallback rather than the first choice.
+   *
+   * Unchanged in behaviour, including Chrome's habit of stopping the recogniser on its own
+   * timer - `onend` restarts it unless the stop was ours. That sentinel used to be
+   * `recognitionRef.current === recognition`, a piece of the page's state read from inside the
+   * engine; it is a local flag now, because there are two engines and only one ref.
+   */
+  function startWebSpeech(lang: string, hooks: RecogniserHooks): Recogniser | null {
+    const SpeechRecognition =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).SpeechRecognition ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) return null
+
+    const recognition = new SpeechRecognition()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = lang
+    let stopping = false
+
+    recognition.onresult = (event: typeof SpeechRecognitionEvent) => {
+      hooks.onSpeechActivity()
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) hooks.onFinal(event.results[i][0].transcript)
+      }
+      const interim = Array.from(event.results as unknown[])
+        .slice(event.resultIndex)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).SpeechRecognition ||
+        .filter((r: any) => !r.isFinal)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).webkitSpeechRecognition
-      if (!SpeechRecognition) {
-        resolve('')
+        .map((r: any) => r[0].transcript)
+        .join(' ')
+      if (interim) hooks.onInterim(interim)
+    }
+
+    recognition.onend = () => {
+      if (!stopping) {
+        try {
+          recognition.start()
+          return
+        } catch {
+          // Cannot restart - permission revoked mid-session, or the engine is gone.
+        }
+      }
+      hooks.onClosed()
+    }
+
+    recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      // Read the flag before setting it: an engine interrupted by its own caller reports
+      // `aborted`, and a notice on every "Done speaking" would put the amber box in front of
+      // every participant on every answer.
+      const requested = stopping
+      // Whatever the error, do not restart: let onend close the answer out.
+      stopping = true
+      if (requested) return
+      // Silence is the ordinary end of an answer, not a failure. The countdown has already
+      // said everything there is to say about it.
+      if (event.error === 'no-speech') return
+      if (
+        event.error === 'not-allowed' ||
+        event.error === 'service-not-allowed' ||
+        // The device is gone, or another application has taken it. A different remedy from a
+        // transcription failure, and told in different words.
+        event.error === 'audio-capture'
+      ) {
+        hooks.onDropped('microphone')
         return
       }
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = lang
+      // **Everything else, including `network`.** This arm did not exist until sp66's final
+      // review: `network` is Chrome's *routine* failure, because Web Speech streams the audio
+      // to Google, and it fell through here to an `onend` that closed the answer with nothing
+      // in it and set no notice at all. On a deployment with no Deepgram key - which is every
+      // deployment before sp66 - that is every answer of the interview, recorded empty, in
+      // front of a participant watching a countdown.
+      hooks.onDropped('connection')
+    }
 
-      recognitionRef.current = recognition
+    recognition.start()
+    return { stop: () => { stopping = true; try { recognition.stop() } catch { hooks.onClosed() } } }
+  }
 
+  /**
+   * The microphone stream the interview records from, acquired once and kept.
+   *
+   * One stream for the whole interview rather than one per question: `getUserMedia` per answer
+   * makes the browser's recording indicator flicker on and off between every question, which
+   * reads to a participant as something going wrong.
+   */
+  function releaseInterviewStream() {
+    interviewStreamRef.current?.getTracks().forEach(track => track.stop())
+    interviewStreamRef.current = null
+  }
+
+  async function interviewStream(): Promise<MediaStream | null> {
+    if (interviewStreamRef.current) return interviewStreamRef.current
+    if (!navigator.mediaDevices?.getUserMedia) return null
+    try {
+      const audio: MediaTrackConstraints | boolean = selectedDeviceId
+        ? { deviceId: { exact: selectedDeviceId } }
+        : true
+      const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
+      interviewStreamRef.current = stream
+      return stream
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Deepgram, told this project's own words - and `null` for every reason it cannot be reached.
+   *
+   * Each of those reasons means the same thing to the caller (use the browser's recogniser), so
+   * they are not distinguished here. What *is* counted is how many times in a row it has
+   * happened: a transient failure on the first question must not condemn the rest of the
+   * interview to a recogniser that has never heard of the client, and a deployment with no
+   * Deepgram key must not pay a failed round trip before every single answer.
+   */
+  async function startDeepgram(hooks: RecogniserHooks): Promise<Recogniser | null> {
+    if (deepgramOffRef.current || !browserCanStream()) {
+      deepgramFailureKindRef.current = 'browser'
+      return null
+    }
+    const grant = await fetchDeepgramGrant(BASE, sessionToken ?? '')
+    if (!grant) {
+      // **The server has already recorded and alerted for this one, with the diagnosis only it
+      // could produce.** `GET /{token}/deepgram-token` holds the HTTP status that tells a refused
+      // key from an exhausted balance from a rate limit; all this end knows is "no grant". Saying
+      // so here is what let the vague sentence be written over the specific one.
+      deepgramFailureKindRef.current = 'grant'
+      return null
+    }
+    const stream = await interviewStream()
+    if (!stream) {
+      deepgramFailureKindRef.current = 'microphone'
+      return null
+    }
+    deepgramFailureKindRef.current = 'socket'
+    const engine = await openDeepgramSocket(stream, deepgramListenUrl(grant), hooks)
+    if (engine) deepgramFailureKindRef.current = null
+    return engine
+  }
+
+  /**
+   * Listen for one answer, on whichever recogniser can be had.
+   *
+   * Deepgram first, because it is the only one that has been told what this engagement calls
+   * things; the browser's recogniser second, because it needs no key and no network of ours;
+   * and if neither can listen, **the participant is told in plain words rather than left
+   * speaking into nothing**. The silence countdown starts when a recogniser is actually
+   * listening, not when this function is entered - fetching a grant and opening a socket takes
+   * a second or two, and counting that against a participant's thinking time would move the
+   * interview on before they had been heard at all.
+   */
+  function listenForAnswer(lang: string = 'en-GB'): Promise<string> {
+    return new Promise((resolve, reject) => {
       const parts: string[] = []
       let resolved = false
-
-      function finish() {
-        if (resolved) return
-        resolved = true
-        recognitionRef.current = null
-        setIsListening(false)
-        setStatusMessage('')
-        setInterimText('')
-        resolve(parts.join(' ').trim())
-      }
-
-      setStatusMessage('Listening…')
-      setIsListening(true)
-      setIsPaused(false)
-      isPausedRef.current = false
-      setSilenceProgress(0)
+      let engine: Recogniser | null = null
+      // **Which engine is listening, because a drop means different things on each.** Deepgram
+      // going away has somewhere to go - the browser's recogniser picks up the same answer. The
+      // browser's recogniser going away has nowhere: it *is* the fallback. Handing that drop to
+      // the handover branch would start a second browser recogniser on an engine that has just
+      // failed, so the distinction is structural rather than a nicety.
+      let engineKind: 'deepgram' | 'browser' | null = null
+      let stopRequested = false
 
       // Longer initial wait (before first speech), shorter gap once they've started
       const INITIAL_SILENCE_MS = 10000
       const ANSWER_SILENCE_MS  = 3000
       const TICK_MS = 50
-      let hasSpoken = false
 
       function clearSilenceTimers() {
         if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
         if (silenceIntervalRef.current) { clearInterval(silenceIntervalRef.current); silenceIntervalRef.current = null }
       }
 
+      function finish() {
+        if (resolved) return
+        resolved = true
+        recognitionRef.current = null
+        clearSilenceTimers()
+        setSilenceProgress(0)
+        setIsListening(false)
+        setStatusMessage('')
+        setInterimText('')
+        resolve(parts.join(' ').trim())
+      }
+
+      /**
+       * End the whole interview rather than this answer, and hand nothing to the browser.
+       *
+       * Rejects rather than resolving: the interview is an await loop, so an answer that simply
+       * resolved would be followed by the next question being spoken. `runInterview` catches
+       * `SpeechHalted` and does nothing, because `haltForSpeechFailure` has already put the halt
+       * screen up.
+       */
+      function halt(reason: string | null) {
+        if (resolved) return
+        resolved = true
+        recognitionRef.current = null
+        clearSilenceTimers()
+        setSilenceProgress(0)
+        setIsListening(false)
+        setStatusMessage('')
+        setInterimText('')
+        // The words heard so far on *this* answer, which no pair holds yet - the interview loop
+        // builds the pair after this promise settles, and it never will now. `carriedTextRef` is
+        // the same thing one closure out: anything said before the participant tapped "Restart
+        // answer" or "Finish my last answer", which `listenWithRestart` holds and this cannot see.
+        const spoken = [carriedTextRef.current, parts.join(' ').trim()].filter(Boolean).join(' ')
+        void haltForSpeechFailure(reason, spoken)
+        reject(new SpeechHalted(reason ?? 'already reported'))
+      }
+
       function resetSilenceTimer(initial = false) {
-        if (isPausedRef.current) return
+        if (isPausedRef.current || resolved) return
         clearSilenceTimers()
         const duration = initial ? INITIAL_SILENCE_MS : ANSWER_SILENCE_MS
         let elapsed = 0
@@ -343,72 +784,154 @@ export default function VoiceInterview() {
           elapsed += TICK_MS
           setSilenceProgress(Math.max(0, 100 - (elapsed / duration) * 100))
         }, TICK_MS)
-        // Clear ref first so onend knows this stop is intentional (not a Chrome timeout)
         silenceTimerRef.current = setTimeout(() => {
           clearSilenceTimers()
           setSilenceProgress(0)
           recognitionRef.current = null
-          try { recognition.stop() } catch { finish() }
+          handle.stop()
         }, duration)
       }
 
-      // Start the initial (longer) countdown immediately so the user sees it from the first frame
-      resetSilenceTimer(true)
+      // The buttons need something to stop from the first frame, before any engine exists -
+      // "Done", "Restart answer" and the silence timer can all fire while a socket is still
+      // being opened, and a stop that reached nothing would hang the interview on that question.
+      const handle: Recogniser = {
+        stop: () => {
+          stopRequested = true
+          if (engine) engine.stop()
+          else finish()
+        },
+      }
+      recognitionRef.current = handle
+
+      const hooks: RecogniserHooks = {
+        onSpeechActivity: () => resetSilenceTimer(false),
+        onFinal: (text) => { if (text) parts.push(text) },
+        onInterim: (text) => setInterimText([...parts, text].join(' ').trim()),
+        onClosed: finish,
+        onDropped: (reason) => {
+          if (resolved) return
+          if (reason === 'microphone') {
+            // The microphone has gone - refused, revoked, unplugged, or taken by another
+            // application - and so it has for any other engine. There is nothing to hand over
+            // to; onClosed follows and ends the answer. The sentence covers both causes
+            // because the engine reports them as one thing to us and the participant has to
+            // check both.
+            setRecogniserNotice(
+              'We have lost access to your microphone. Check that it is connected and that ' +
+              'this page is allowed to use it, then use Done to carry on.',
+            )
+            return
+          }
+          if (engineKind === 'browser') {
+            // The browser's own recogniser has dropped, and it is the last engine there is.
+            // Nothing to hand over to, so the honest thing is to say what happened, keep what
+            // was heard, and point at the correction step that actually exists - onClosed
+            // follows and closes the answer.
+            setRecogniserNotice(
+              'We stopped hearing you - your browser’s transcription dropped out. Anything ' +
+              'already heard has been kept, but the end of that answer may be missing. The ' +
+              'interview carries on, and you can correct every answer before you finish.',
+            )
+            return
+          }
+          // The socket dropped mid-answer. The participant is still talking, so the worst
+          // possible response is to end the answer quietly and let them finish into nothing.
+          // Hand the rest of this same answer to the browser's recogniser, keep what was
+          // already heard, and say what happened - both halves, not either.
+          //
+          // **Not on an engagement that forbids the fallback.** The browser's recogniser streams
+          // to Google or to Apple, and "the socket dropped" is not a reason to do that - it is
+          // the exact circumstance the probe at device setup exists to prevent, arriving later.
+          // So the interview stops here instead, keeping what was answered.
+          if (speechPolicyRef.current === 'required') {
+            halt('socket_failed')
+            return
+          }
+          // **Start it before claiming it.** The notice used to be set first and said "the
+          // interview is carrying on using your browser to transcribe. Please continue." -
+          // and then `startWebSpeech` answered `null`, which is what it does in Firefox. The
+          // participant kept talking into nothing on the strength of that sentence. A claim
+          // about a handover is a claim about something that has already happened.
+          const handover = startWebSpeech(lang, hooks)
+          engineKind = handover ? 'browser' : null
+          if (!handover) {
+            setRecogniserNotice(
+              'The transcription service dropped out, and this browser cannot transcribe on ' +
+              'its own - so nothing you say from here is being recorded. Anything already ' +
+              'heard has been kept. Please reopen your interview link in Chrome or Edge, or ' +
+              'contact the person who invited you.',
+            )
+            finish()
+            return
+          }
+          engine = handover
+          // Counted, not latched. One blip must not cost the rest of the interview the only
+          // recogniser that has been told this engagement's own words.
+          deepgramDropsRef.current += 1
+          if (deepgramDropsRef.current >= 2) deepgramOffRef.current = true
+          setRecogniserNotice(
+            'The transcription service dropped out. What you have said so far has been kept, ' +
+            'and the interview is carrying on using your browser to transcribe. Please continue.',
+          )
+        },
+      }
+
+      setStatusMessage('Listening…')
+      setIsListening(true)
+      setIsPaused(false)
+      isPausedRef.current = false
+      setSilenceProgress(0)
       resetSilenceTimerRef.current = () => resetSilenceTimer(false)
 
-      recognition.onresult = (event: typeof SpeechRecognitionEvent) => {
-        if (!hasSpoken) {
-          hasSpoken = true
-        }
-        resetSilenceTimer(false)
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            parts.push(event.results[i][0].transcript)
-          }
-        }
-        // Show live transcript to user
-        const interim = Array.from(event.results as unknown[])
-          .slice(event.resultIndex)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .filter((r: any) => !r.isFinal)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .map((r: any) => r[0].transcript)
-          .join(' ')
-        setInterimText([...parts, interim].join(' ').trim())
-      }
-
-      // onend fires after every stop - including Chrome's internal timeouts.
-      // Only finish if the ref was cleared (user/silence-timer initiated stop).
-      // Otherwise restart to keep listening.
-      recognition.onend = () => {
-        if (recognitionRef.current === recognition) {
-          // Chrome stopped us internally - restart to keep listening
-          try {
-            recognition.start()
+      void (async () => {
+        engine = await startDeepgram(hooks)
+        if (!engine) {
+          // The probe passed at device setup and Deepgram has gone since - an expiring balance,
+          // a key revoked mid-engagement, a network that came and went. The fallback is refused
+          // here for the same reason it is refused on a drop: it would send this participant's
+          // voice to their browser vendor, which is what this engagement does not permit.
+          //
+          // **`null` when the token door refused**, because it has already recorded and alerted
+          // with the status code that says which problem it was. `probeSpeech` has made exactly
+          // this judgement since the branch landed and says why; carrying it here is the whole
+          // of the repair. Without it, the balance running out at answer twelve wrote "the
+          // socket would not open" over "the balance is exhausted or the card has expired" and
+          // mailed the operator twice for one incident.
+          if (speechPolicyRef.current === 'required') {
+            halt(deepgramFailureKindRef.current === 'grant' ? null : 'socket_failed')
             return
-          } catch {
-            // Can't restart (e.g., permission revoked mid-session)
           }
+          deepgramFailuresRef.current += 1
+          // Two in a row is a deployment without Deepgram, not a bad moment. Stop asking: a
+          // failed round trip before every answer is latency a participant sits through.
+          if (deepgramFailuresRef.current >= 2) deepgramOffRef.current = true
+          engine = startWebSpeech(lang, hooks)
+          engineKind = engine ? 'browser' : null
+        } else {
+          engineKind = 'deepgram'
+          deepgramFailuresRef.current = 0
         }
-        clearSilenceTimers()
-        setSilenceProgress(0)
-        finish()
-      }
 
-      recognition.onerror = (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-        clearSilenceTimers()
-        setSilenceProgress(0)
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          // Microphone permission denied - show message, block auto-advance
-          setStatusMessage('⚠️ Microphone access denied. Allow microphone access in your browser, then click ✓ Done to continue.')
-          recognitionRef.current = null  // prevent onend from restarting
+        if (!engine) {
+          // Nothing in this browser can listen. Say so - an interview that carries on silently
+          // records nothing and tells the participant afterwards, which is the worst outcome
+          // available to a person who has given up an hour.
+          setRecogniserNotice(
+            'This browser cannot transcribe speech, so nothing you say is being recorded. ' +
+            'Please reopen your interview link in Chrome or Edge, or contact the person who invited you.',
+          )
+          finish()
           return
         }
-        // For no-speech, network, etc. - clear ref so onend won't restart
-        recognitionRef.current = null
-      }
 
-      recognition.start()
+        if (stopRequested) {
+          engine.stop()
+          return
+        }
+        // The countdown starts now that something is actually listening.
+        resetSilenceTimer(true)
+      })()
     })
   }
 
@@ -485,7 +1008,13 @@ export default function VoiceInterview() {
     // Carried rather than discarded: the participant is correcting the previous answer, not
     // retracting this one, and losing words they have already spoken is the same failure the
     // button exists to fix.
+    //
+    // **Mirrored into `carriedTextRef` on every change**, because a halt happens one closure in,
+    // inside `listenForAnswer`, which cannot see this local. Without the mirror these words went
+    // with the socket - the same class as the in-flight answer, one closure further out, and a
+    // participant who had tapped "Finish my last answer" would lose the most of anybody.
     let carried = ''
+    carriedTextRef.current = ''
     // eslint-disable-next-line no-constant-condition
     while (true) {
       setInterimText('')
@@ -494,6 +1023,7 @@ export default function VoiceInterview() {
       if (restartAnswerRef.current) {
         restartAnswerRef.current = false
         carried = ''
+        carriedTextRef.current = ''
         setStatusMessage('Restarting…')
         await new Promise(r => setTimeout(r, 300))
         setStatusMessage('')
@@ -503,6 +1033,7 @@ export default function VoiceInterview() {
       if (appendToPreviousRef.current) {
         appendToPreviousRef.current = false
         carried = [carried, heard].filter(Boolean).join(' ').trim()
+        carriedTextRef.current = carried
         const previous = qaRef.current[qaRef.current.length - 1]
         if (!previous) {
           // Nothing has been committed yet, so there is nothing to finish. Say so rather
@@ -537,6 +1068,10 @@ export default function VoiceInterview() {
         continue
       }
 
+      // The answer is about to become a pair, so nothing is carried any more. Cleared here as
+      // well as on entry, or a halt on a *later* question would re-send words that already
+      // reached the transcript under their own question.
+      carriedTextRef.current = ''
       return answer
     }
   }
@@ -567,27 +1102,82 @@ export default function VoiceInterview() {
     }
   }
 
-  async function submitResponses(ratings: SectionMaturityRating[]) {
-    setStatusMessage('Saving your responses…')
+  /**
+   * Submit the transcript to `/complete`. Called twice for one interview: once when the
+   * closing message has been spoken, and again when the participant finishes the review step,
+   * carrying whatever they corrected.
+   *
+   * One function rather than two calls, because the second submission has to restate things
+   * it has no opinion about. `complete_interview_session` writes `ratings_json` unconditionally,
+   * so a resubmission that omitted the ratings would set them to NULL and silently discard
+   * every maturity rating the interview collected - the transcript would be corrected and the
+   * ratings lost, with a 200 either way.
+   *
+   * Resubmitting is safe by design rather than by luck: `insert_interview_answer` upserts on
+   * `(session_id, question_id)` and re-indexes from the row ids it returns, so a corrected
+   * answer replaces the stored one under the id retrieved chunks already cite.
+   */
+  async function postCompletion(
+    pairs: CapturedPair[],
+    ratings: SectionMaturityRating[],
+  ): Promise<boolean> {
     try {
       const res = await fetch(`${BASE}/interviews/${sessionToken}/complete`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          qa_pairs: qaRef.current,
+          qa_pairs: pairs,
           ratings: ratings.length > 0 ? ratings : undefined,
         }),
       })
-      if (!res.ok) console.warn('complete endpoint returned', res.status)
+      // **Answered, not swallowed.** Both arms of this used to `console.warn` and return, and
+      // `handleFinishInterview` then set `finished` unconditionally - so a participant who had
+      // spent forty-five minutes on the page, lost connectivity, corrected three mangled answers
+      // and tapped Finish was told "Your responses have been recorded", and the transcript was
+      // unmounted behind that sentence with no way to try again. It is the one button the
+      // participant triggers and is told about, which is the exact shape this branch exists to
+      // remove.
+      if (!res.ok) {
+        console.warn('complete endpoint returned', res.status)
+        return false
+      }
+      return true
     } catch (err) {
       console.error('Failed to submit responses', err)
+      return false
     }
+  }
+
+  async function submitResponses(ratings: SectionMaturityRating[]) {
+    setStatusMessage('Saving your responses…')
+    // The answer is deliberately not acted on here, and this is not the same omission as I4. The
+    // review screen this moves to *is* the retry: it carries every answer, and Finish resubmits
+    // the lot to the same door. Refusing to show it would strand a participant who has finished
+    // speaking, on the one path where nothing has been claimed to them yet.
+    await postCompletion(qaRef.current, ratings)
     setPhase('complete')
     setStatusMessage('')
     setCurrentQuestion('')
   }
 
+  /**
+   * Start the interview, and absorb the one way it can stop rather than finish.
+   *
+   * `SpeechHalted` is thrown out of `listenForAnswer` when transcription has failed on an
+   * engagement that forbids the browser's recogniser. By the time it arrives here the halt screen
+   * is already up, the answers are checkpointed and the failure is reported, so there is nothing
+   * left to do but stop unwinding. Anything else is a real fault and is left to propagate.
+   */
   async function runInterview() {
+    try {
+      await conductInterview()
+    } catch (err) {
+      if (err instanceof SpeechHalted) return
+      throw err
+    }
+  }
+
+  async function conductInterview() {
     if (!sessionData) return
     const { session, script } = sessionData
     // The session is stamped with its interviewer's resolved configuration when it is created.
@@ -794,7 +1384,18 @@ export default function VoiceInterview() {
     }
     const lang = interviewLangRef.current
     setStatusMessage('Listening for your rating…')
-    const spoken = await listenForAnswer(lang)
+    // This is the one listen the interview loop does not await directly - it is kicked off with
+    // `void` and resolves through `ratingResolveRef`. So a halt thrown here has no await to
+    // unwind into, and it is caught rather than left as an unhandled rejection. The rating
+    // promise is then deliberately never resolved: the loop parks on it, which is correct, since
+    // the halt screen has replaced the interview and nothing further may be spoken or recorded.
+    let spoken: string
+    try {
+      spoken = await listenForAnswer(lang)
+    } catch (err) {
+      if (err instanceof SpeechHalted) return
+      throw err
+    }
     // Guard: if user already tapped while we were listening, the resolve has fired — bail out
     if (!ratingResolveRef.current) return
     const parsed = parseRatingFromVoice(spoken)
@@ -815,21 +1416,100 @@ export default function VoiceInterview() {
     // phase reverts to 'interviewing' in the loop after collectInlineRating resolves
   }
 
-  async function handleFinishInterview() {
-    if (sendCopy && copyEmail) {
-      setSendingEmail(true)
-      try {
-        await fetch(`${BASE}/interviews/${sessionToken}/email-transcript`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: copyEmail, qa_pairs: editableTranscript }),
-        })
-      } catch {
-        // fail silently — transcript is already saved server-side
-      }
-      setSendingEmail(false)
+  /** The transcript as a participant would paste it - the text the Copy button puts on the
+   *  clipboard, built from what is in the fields now rather than from what was recorded. */
+  function transcriptAsText(): string {
+    return editableTranscript.map(pair => `${pair.question}\n${pair.answer}`).join('\n\n')
+  }
+
+  /**
+   * The older clipboard route, which is the only one a page has in a non-secure context.
+   *
+   * `document.execCommand('copy')` is deprecated and still works everywhere, including over
+   * plain http where `navigator.clipboard` does not exist at all. It is tried before giving up,
+   * because making the claim true is better than withdrawing it: an on-premises deployment
+   * served over http is exactly the secure-mode customer, and this button is the only route a
+   * participant has to their own transcript since the email route was removed.
+   *
+   * Answers `false` rather than throwing for every way it can fail, including a browser that
+   * does not implement it at all, so the caller has one thing to test.
+   */
+  function copyByExecCommand(text: string): boolean {
+    try {
+      const carrier = document.createElement('textarea')
+      carrier.value = text
+      carrier.setAttribute('readonly', '')
+      carrier.style.position = 'fixed'
+      carrier.style.top = '0'
+      carrier.style.opacity = '0'
+      document.body.appendChild(carrier)
+      carrier.select()
+      const exec = (document as unknown as { execCommand?: (c: string) => boolean }).execCommand
+      const ok = typeof exec === 'function' && exec.call(document, 'copy') === true
+      document.body.removeChild(carrier)
+      return ok
+    } catch {
+      return false
     }
-    setEmailSent(true)
+  }
+
+  /**
+   * Copy the transcript, and say what actually happened.
+   *
+   * This read `await navigator.clipboard?.writeText(...)` inside a `try`, with a comment saying
+   * it left the button saying "Copy rather than claiming a copy that did not happen". It did
+   * the opposite: `navigator.clipboard` is **undefined in every non-secure context**, the
+   * optional chain short-circuits to `undefined`, and `await undefined` does not throw - so the
+   * `catch` covered a clipboard that exists and rejects, and nothing at all covered a browser
+   * with no clipboard. The button said "Copied" over an empty clipboard, on the one screen
+   * whose whole purpose is to stop telling a participant something had worked when it had not.
+   */
+  async function handleCopyTranscript() {
+    const text = transcriptAsText()
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(text)
+        setCopyOutcome('copied')
+        return
+      } catch {
+        // Present and refused - a permission prompt declined, or a document without focus.
+        // Fall through: the older route often still works.
+      }
+    }
+    setCopyOutcome(copyByExecCommand(text) ? 'copied' : 'unavailable')
+  }
+
+  /**
+   * Finishing the review submits the corrections.
+   *
+   * Nothing is emailed. The checkbox that used to sit here posted to `/email-transcript`,
+   * which answered `{"sent": true}` to a participant who never received anything: `dev_mode`
+   * holds project mail and `FROM_EMAIL` names a domain Resend has not verified. It was the one
+   * path in the product where the person who triggered the action was told it had worked.
+   *
+   * What that post also did, incidentally, was carry the corrected answers - so it was the only
+   * route an edit had to the server, and only for a participant who happened to tick a box.
+   * Everyone else corrected their transcript into a state variable that was then discarded.
+   * The corrections now go to `/complete`, which is where the transcript lives.
+   */
+  async function handleFinishInterview() {
+    setSavingCorrections(true)
+    setFinishError('')
+    const saved = await postCompletion(editableTranscript, sectionRatingsRef.current)
+    setSavingCorrections(false)
+    if (!saved) {
+      // The transcript stays on screen, every field still editable, and Finish is still there to
+      // press again. Telling the truth is necessary and not sufficient: a participant told it
+      // failed and left with nothing to press has still lost their corrections.
+      setFinishError(
+        'We could not save your corrections just now - the connection did not reach us. Your ' +
+        'original answers are safe, but the changes you have made on this page are not saved ' +
+        'yet. Please check your connection and press Finish again. If it keeps failing, use ' +
+        'Copy above to keep your own copy before you close this window.',
+      )
+      return
+    }
+    setFinished(true)
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -859,6 +1539,35 @@ export default function VoiceInterview() {
     )
   }
 
+  // The interview could not be transcribed, and this engagement does not permit the browser's own
+  // recogniser. Its own screen rather than `error`, which says "Unable to load interview" - the
+  // page loaded perfectly well and the participant may be forty minutes into it. It apologises,
+  // says what has been kept, and asks them to come back, because there is nothing they can do
+  // about a transcription provider and telling them to try another browser would be a lie on two
+  // of the three routes here.
+  if (phase === 'speech_halted') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6 overflow-y-auto">
+        <div className="max-w-lg w-full text-center">
+          {branding?.header_image_url && (
+            <img src={branding.header_image_url} alt="" className="w-full max-h-24 object-contain mb-6" />
+          )}
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-amber-50 mb-3">
+            <AlertTriangle size={24} className="text-amber-600" aria-hidden="true" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">We have had to stop here</h1>
+          <p
+            role="alert"
+            data-testid="speech-halted-notice"
+            className="text-gray-600 text-sm leading-relaxed"
+          >
+            {haltNotice || HALT_MID_INTERVIEW}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   if (phase === 'complete') {
     const primaryColor = branding?.primary_color ?? '#0d9488'
     return (
@@ -876,100 +1585,121 @@ export default function VoiceInterview() {
               </div>
               <h1 className="text-2xl font-bold text-gray-800">Thank you!</h1>
               <p className="text-gray-500 text-sm mt-1">
-                {emailSent
+                {finished
                   ? 'Your responses have been recorded. You may now close this window.'
-                  : 'Please review your responses below. You can edit any answer before finishing.'}
+                  : 'Please review your responses below. Every answer can be edited - correct anything the recogniser misheard before you finish.'}
               </p>
             </div>
 
-            {!emailSent && (
+            {!finished && (
               <>
                 <div className="space-y-4 mb-6">
                   {editableTranscript.map((pair, i) => (
-                    <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                    <div key={pair.question_id || i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
                       <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-                        <p className="text-sm text-gray-600 leading-relaxed">{pair.question}</p>
+                        <p id={`review-question-${i}`} className="text-sm text-gray-600 leading-relaxed">
+                          {pair.question}
+                        </p>
                       </div>
                       <div className="px-4 py-3">
-                        {editingIdx === i ? (
-                          <div className="space-y-2">
-                            <textarea
-                              className="w-full text-sm text-gray-700 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-teal-400"
-                              rows={4}
-                              value={editText}
-                              onChange={e => setEditText(e.target.value)}
-                              autoFocus
-                            />
-                            <div className="flex gap-2 justify-end">
-                              <button
-                                onClick={() => setEditingIdx(null)}
-                                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-3 py-1.5 border border-gray-200 rounded-lg transition-colors"
-                              >
-                                <X size={12} /> Cancel
-                              </button>
-                              <button
-                                onClick={() => {
-                                  const updated = [...editableTranscript]
-                                  updated[i] = { ...updated[i], answer: editText }
-                                  setEditableTranscript(updated)
-                                  setEditingIdx(null)
-                                }}
-                                className="flex items-center gap-1 text-xs text-white px-3 py-1.5 rounded-lg transition-colors"
-                                style={{ backgroundColor: primaryColor }}
-                              >
-                                <Check size={12} /> Save
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-start gap-2">
-                            <p className="flex-1 text-sm text-gray-700 leading-relaxed">
-                              {pair.answer || <span className="text-gray-400 italic">No response recorded</span>}
-                            </p>
-                            <button
-                              onClick={() => { setEditingIdx(i); setEditText(pair.answer) }}
-                              className="flex-shrink-0 p-1 text-gray-300 hover:text-teal-500 transition-colors rounded"
-                              title="Edit this response"
-                            >
-                              <Pencil size={14} />
-                            </button>
-                          </div>
-                        )}
+                        {/* Open, always. This was a `text-gray-300` pencil that had to be found
+                            and hovered before an answer could be corrected, on a screen carrying
+                            59 of them in the 4 September walkthrough - and correcting what the
+                            recogniser heard is the last chance anybody gets. An affordance
+                            nobody notices is not an affordance.
+
+                            The question is the field's *description*, not its name: an implicit
+                            <label> wrapping both would give every field a different accessible
+                            name, so "offer every answer for editing" could only be asserted by
+                            counting nodes rather than by asking for the control. */}
+                        <textarea
+                          aria-label="Your answer"
+                          aria-describedby={`review-question-${i}`}
+                          className="w-full text-sm text-gray-700 border border-gray-200 rounded-lg p-2.5 resize-y focus:outline-none focus:ring-2 focus:ring-teal-400"
+                          rows={4}
+                          value={pair.answer}
+                          placeholder="No response recorded"
+                          onChange={e => {
+                            const corrected = e.target.value
+                            setEditableTranscript(current =>
+                              current.map((p, idx) => (idx === i ? { ...p, answer: corrected } : p)),
+                            )
+                            // What is on the clipboard is no longer this transcript.
+                            setCopyOutcome('idle')
+                          }}
+                        />
                       </div>
                     </div>
                   ))}
                 </div>
 
                 <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={sendCopy}
-                      onChange={e => setSendCopy(e.target.checked)}
-                      className="w-4 h-4 rounded"
-                      style={{ accentColor: primaryColor }}
-                    />
-                    <span className="text-sm text-gray-700">Send a copy of this transcript to me</span>
-                  </label>
-                  {sendCopy && (
-                    <input
-                      type="email"
-                      placeholder="Your email address"
-                      value={copyEmail}
-                      onChange={e => setCopyEmail(e.target.value)}
-                      className="mt-3 w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-teal-400"
-                    />
-                  )}
+                  <div className="flex items-start gap-3">
+                    <ShieldCheck size={18} className="flex-shrink-0 mt-0.5 text-gray-400" />
+                    <div className="flex-1">
+                      {/* The note that replaced "Send a copy of this transcript to me". That
+                          checkbox posted to /email-transcript, which answered {"sent": true}
+                          and delivered nothing. Nothing here promises a message. */}
+                      <p className="text-sm text-gray-700">
+                        For confidentiality, this transcript is not emailed to anyone. If you
+                        would like your own copy, use the Copy button below and paste it
+                        wherever you keep it.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleCopyTranscript}
+                        className="mt-3 inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg px-3 py-2 transition-colors"
+                      >
+                        <Copy size={14} />
+                        {copyOutcome === 'copied'
+                          ? 'Copied'
+                          : copyOutcome === 'unavailable'
+                            ? 'Could not copy'
+                            : 'Copy'}
+                      </button>
+                      {/* Withdrawing the false claim is necessary and not sufficient. A
+                          participant told "could not copy" and left with 59 separate answer
+                          fields has still lost their transcript, so the whole text is offered
+                          in one selectable field - a route they can actually take. Read-only:
+                          this is the copy, not a second place to correct the answers. */}
+                      {copyOutcome === 'unavailable' && (
+                        <div className="mt-3" data-testid="copy-by-hand">
+                          <p className="text-sm text-gray-700">
+                            This browser would not let the page copy for you. Your transcript is
+                            below - select it all and copy it yourself.
+                          </p>
+                          <textarea
+                            readOnly
+                            aria-label="Your transcript"
+                            value={transcriptAsText()}
+                            rows={10}
+                            className="mt-2 w-full text-sm text-gray-700 border border-gray-200 rounded-lg p-2.5 resize-y focus:outline-none focus:ring-2 focus:ring-teal-400"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {finishError && (
+                  <div
+                    role="alert"
+                    data-testid="finish-error"
+                    className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 mb-4"
+                  >
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                    <span>{finishError}</span>
+                  </div>
+                )}
 
                 <div className="text-center">
                   <button
                     onClick={handleFinishInterview}
-                    disabled={sendingEmail || (sendCopy && !copyEmail)}
+                    disabled={savingCorrections}
                     className="px-8 py-3 rounded-xl text-white font-medium text-sm disabled:opacity-50 transition-opacity"
                     style={{ backgroundColor: primaryColor }}
                   >
-                    {sendingEmail ? 'Sending…' : 'Finish'}
+                    {savingCorrections ? 'Saving…' : finishError ? 'Try again' : 'Finish'}
                   </button>
                 </div>
               </>
@@ -1210,13 +1940,29 @@ export default function VoiceInterview() {
             </button>
           </div>
 
-          <button
-            onClick={runInterview}
-            className="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
-            style={{ backgroundColor: branding?.primary_color }}
-          >
-            Start Interview
-          </button>
+          {/* The probe's answer, and the only thing that stands between this button and an
+              interview. On an engagement that permits the browser's recogniser the probe never
+              runs and `speechProbe` stays `unchecked`, which is why the refusal is keyed on the
+              one value that means "asked and refused" rather than on "not yet ready". */}
+          {speechProbe === 'unavailable' ? (
+            <div
+              role="alert"
+              data-testid="speech-unavailable-notice"
+              className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-900"
+            >
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+              <span>{haltNotice}</span>
+            </div>
+          ) : (
+            <button
+              onClick={runInterview}
+              disabled={speechProbe === 'checking'}
+              className="bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
+              style={{ backgroundColor: branding?.primary_color }}
+            >
+              {speechProbe === 'checking' ? 'Checking your connection…' : 'Start Interview'}
+            </button>
+          )}
         </div>
       </div>
     )
@@ -1293,6 +2039,23 @@ export default function VoiceInterview() {
           )}
 
           <div className="flex flex-col items-center gap-3 w-full max-w-xl">
+            {/* Whatever has gone wrong with the recogniser, said plainly and left on screen.
+                A participant mid-interview cannot diagnose a dropped socket or a browser with
+                no speech API, and the one thing they must never be is unaware of it. */}
+            {recogniserNotice && (
+              <div
+                // `alert`, not `status`. One of the sentences this carries is "nothing you say
+                // is being recorded", and a polite live region may wait for a pause that a
+                // participant mid-interview never gives it. Assertive is right when the notice
+                // is the reason to stop talking.
+                role="alert"
+                data-testid="recogniser-notice"
+                className="flex items-start gap-2 w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+              >
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <span>{recogniserNotice}</span>
+              </div>
+            )}
             {statusMessage && (
               <p className="text-teal-600 font-medium animate-pulse text-sm">{statusMessage}</p>
             )}

@@ -16,10 +16,13 @@ import httpx
 
 from api.config import get_settings
 from api.services.http_clients import get_tts_client
+from api.services.interview_keyterms import build_keyterms, harvest_strings
 from api.services.llm_client import LocalModelError, project_completion
 from api.services.interview_answer_service import record_answers, script_for_session
 from api.services.platform_settings import platform_public_url
+from api.services.speech_policy import speech_policy_for
 from api.database import (
+    abandon_interview_session,
     complete_interview_session,
     fetch_interview_session,
     interview_db_connection,
@@ -27,6 +30,16 @@ from api.database import (
 )
 
 _log = logging.getLogger(__name__)
+
+
+class DeepgramGrantMalformed(Exception):
+    """Deepgram answered successfully with a body the grant cannot be read out of.
+
+    Its own class rather than the `ValueError` used for "not configured", because those are
+    different problems with different remedies and `describe_deepgram_failure` exists precisely so
+    an operator is not sent to check both. A missing key is a deployment that has not been set up;
+    this is a provider whose response shape is not what this code expects, which is an incident.
+    """
 
 
 def interview_url(session_token: str) -> str:
@@ -197,11 +210,39 @@ async def get_session_with_script(session_token: str) -> dict | None:
     # the returned dict so the frontend contract does not change.
     questionnaire = None
 
-    return {"session": session_dict, "script": script, "branding": branding, "questionnaire": questionnaire}
+    return {
+        "session": session_dict,
+        "script": script,
+        "branding": branding,
+        "questionnaire": questionnaire,
+        # **The policy, never the mode.** A participant's page has no login and no business
+        # knowing an engagement's posture, so what crosses is the decision this engagement has
+        # already made about the browser's own recogniser - `required` or `browser_permitted` -
+        # and not `llm_mode`, not a capability set, and not a slug the page could ask about.
+        # Same rule as `writable_knowledge_tiers`: never restate the rule in TypeScript.
+        #
+        # `speech_policy_for` fails closed by construction: `project_llm_mode` answers
+        # `sensitive` for a database it cannot read, which resolves to `required`, so the miss
+        # costs an interview rather than sending a participant's voice to Google.
+        "speech_policy": speech_policy_for(slug),
+    }
 
 
 async def generate_deepgram_token() -> str:
-    """Create a short-lived Deepgram streaming token via the REST API."""
+    """Create a short-lived Deepgram streaming token via the REST API.
+
+    `POST /v1/auth/grant` answers ``{"access_token": "<jwt>", "expires_in": 30}`` and takes an
+    optional ``ttl_seconds`` and nothing else. This read ``resp.json()["key"]`` and posted
+    ``{"grant_type": "instant"}`` from the day it was written, and neither is a field Deepgram
+    has: the first would have raised `KeyError` on the first real call. It never did, because
+    **nothing in the browser had ever called this door** - the recogniser was the Web Speech API
+    and this half of the path was built and left. "This code has never run" is not "this code
+    works", and the moment something calls it is exactly when the difference arrives.
+
+    The token carries `usage::write` on the voice APIs and expires in thirty seconds by default,
+    which is the whole reason the client asks for one per connection rather than once per
+    interview: it has to be spent on a handshake almost immediately after it is issued.
+    """
     settings = get_settings()
     if not settings.deepgram_api_key:
         raise ValueError("DEEPGRAM_API_KEY not configured")
@@ -209,11 +250,112 @@ async def generate_deepgram_token() -> str:
         resp = await client.post(
             "https://api.deepgram.com/v1/auth/grant",
             headers={"Authorization": f"Token {settings.deepgram_api_key}"},
-            json={"grant_type": "instant"},
             timeout=10.0,
         )
         resp.raise_for_status()
-        return resp.json()["key"]
+        # **The exact shape the docstring above records as having been live for months** - a 200
+        # whose body does not carry the key being read. It was `["key"]` then; it is
+        # `["access_token"]` now, and reading either of a body that has neither raises `KeyError`,
+        # which is in neither of the token door's caught families. So the door answered 500, with
+        # no diagnosis and no alert, on an engagement whose whole point is that somebody is told
+        # which problem it was. Raised as something the caller already catches instead.
+        try:
+            body = resp.json()
+        except ValueError as exc:
+            raise DeepgramGrantMalformed(
+                f"Deepgram answered {resp.status_code} with a body that is not JSON"
+            ) from exc
+        token = body.get("access_token") if isinstance(body, dict) else None
+        if not token:
+            raise DeepgramGrantMalformed(
+                f"Deepgram answered {resp.status_code} with no access_token - the grant endpoint "
+                f"returned {sorted(body) if isinstance(body, dict) else type(body).__name__}"
+            )
+        return token
+
+
+# Nova-3 is chosen for one reason: `keyterm` is its feature. Deepgram has two keyword-boosting
+# parameters and they are not alternatives - `keywords=TERM:INTENSIFIER` is the legacy feature on
+# Nova-2 and earlier, and `keyterm=TERM` (repeated, plain, no intensifier) is Keyterm Prompting
+# on Nova-3 and Flux. Sending `keyterm` to Nova-2, or `keywords` to Nova-3, is silently ignored -
+# a connection that succeeds and boosts nothing - so the model and the parameter are chosen here,
+# together, in one place, and the client is told both rather than deciding either.
+DEEPGRAM_MODEL = "nova-3"
+DEEPGRAM_KEYTERM_PARAM = "keyterm"
+
+
+async def keyterms_for_project(slug: str) -> list[str]:
+    """The vocabulary this project uses about itself, for the recogniser to bias towards.
+
+    Assembled per project and from the project - its `value_chain_ledger` labels and the text of
+    its own `interview_scripts` - so that two engagements never send the same list. Nothing here
+    names a client; a hardcoded list would satisfy a single-project assertion perfectly and be
+    wrong for every engagement after the first.
+
+    Every read is defensive and answers *fewer terms*, never an error. A project whose database
+    predates the ledger migration, or which has no scripts yet, has no vocabulary to send, and an
+    interview conducted with no boosting is the behaviour this door is replacing - a participant
+    must not lose their interview because a table is missing.
+    """
+    from agents.tools._db import current_output_path
+
+    labels: list[str] = []
+    db_path = Path(get_settings().database_dir) / f"{slug}.db"
+    if db_path.exists():
+        try:
+            async with interview_db_connection(str(db_path)) as conn:
+                async with conn.execute(
+                    "SELECT label FROM value_chain_ledger WHERE active = 1 ORDER BY node_id"
+                ) as cur:
+                    labels = [row[0] for row in await cur.fetchall() if row[0]]
+        except Exception:
+            _log.warning("keyterms: no value chain ledger for %s", slug)
+
+    # Guarded on the same `db_path.exists()` as the ledger read above, and for a reason that has
+    # nothing to do with scripts: `current_output_path` resolves the ledger row through
+    # `get_project_id`, which is a bare `sqlite3.connect` - and sqlite **creates** the file. So
+    # asking an unknown slug for its scripts would materialise an empty database for it, which
+    # is the thing CLAUDE.md forbids outright (`caller_roles` and `_stakeholder_matches_invite`
+    # both carry the same guard). Unreachable from the door, which only ever holds a slug it
+    # resolved a session out of - and a standing rule is not kept by the reachability of its
+    # exceptions.
+    script_text = ""
+    if db_path.exists():
+        try:
+            path = current_output_path(slug, "interview_scripts")
+            if path is not None:
+                script_text = "\n".join(harvest_strings(json.loads(path.read_text())))
+        except Exception:
+            _log.warning("keyterms: could not read interview scripts for %s", slug)
+
+    return build_keyterms(labels, script_text)
+
+
+def deepgram_listen_params(keyterms: list[str], language: str) -> dict[str, object]:
+    """The query Deepgram's streaming door is opened with, minus the credential.
+
+    The server decides these and the browser encodes them, rather than the browser deciding and
+    the server supplying a token. The pairing above - Nova-3 takes `keyterm`, Nova-2 takes
+    `keywords` - is one fact, and restating it in TypeScript would be a second declaration free
+    to fall behind this one. What crosses to the client is **data**: parameter names and values.
+    """
+    params: dict[str, object] = {
+        "model": DEEPGRAM_MODEL,
+        "language": language or "en",
+        "smart_format": "true",
+        "interim_results": "true",
+        # Deepgram's Model Improvement Program defaults to **opted in**: omitting this parameter
+        # is a decision, and it is the wrong one for every engagement this product runs. It is
+        # unconditional rather than keyed on `llm_mode` for the same reason `prepare_portrait`
+        # strips EXIF on every upload - a participant's speech is a client's material on a
+        # `standard` engagement exactly as much as on a `sensitive` one, and a conditional
+        # opt-out is a second decision free to fall behind this one. It also settles where
+        # processing may happen, which no capability in `deployment_modes.py` governs.
+        "mip_opt_out": "true",
+    }
+    if keyterms:
+        params[DEEPGRAM_KEYTERM_PARAM] = keyterms
+    return params
 
 
 async def synthesise(text: str, voice_id: str, model_id: str) -> bytes:
@@ -362,6 +504,38 @@ async def elaboration_press(
         return ""
 
 
+async def _record_answer_rows(conn, slug: str, session_token: str, qa_pairs: list[dict]) -> None:
+    """Turn a captured transcript into `interview_answers` rows.
+
+    The transcript blob stays for the review screen; the rows are what anything queries, and
+    `interview_answers` is the only thing the crews read - so a transcript that never becomes
+    rows is an interview that, to every agent downstream, did not happen.
+
+    A session whose script cannot be resolved writes no rows and is logged: the blob still holds
+    everything the interviewee said, so nothing is lost and the rows can be backfilled once the
+    script is found.
+
+    Shared by the completion path and the halt path rather than copied into both. They differ in
+    exactly one thing - the status the session lands in - and that difference belongs at the
+    call site, not in two near-identical copies of the part that must never diverge.
+    """
+    async with conn.execute(
+        "SELECT * FROM interview_sessions WHERE session_token = ?", (session_token,)
+    ) as cur:
+        row = await cur.fetchone()
+    session = dict(row) if row else None
+    if not session:
+        return
+    script = await script_for_session(conn, slug, session)
+    if script:
+        await record_answers(conn, slug, session["id"], qa_pairs, script=script)
+    else:
+        _log.warning(
+            "[%s]: no script resolved for session %s - transcript saved, no answer rows written",
+            slug, session_token,
+        )
+
+
 async def complete_session(
     session_token: str,
     qa_pairs: list[dict],
@@ -383,24 +557,43 @@ async def complete_session(
         ratings_json = json.dumps(ratings) if ratings is not None else None
         await complete_interview_session(conn, session_token, transcript_json, ratings_json)
         await save_interview_checkpoint(conn, session_token, None)
+        await _record_answer_rows(conn, slug, session_token, qa_pairs)
+    return True
 
-        # The transcript blob stays for the review and email screens; the rows are what
-        # anything queries. A session whose script cannot be resolved writes no rows and is
-        # logged - the blob still holds everything the interviewee said, so nothing is lost
-        # and the rows can be backfilled once the script is found.
-        async with conn.execute(
-            "SELECT * FROM interview_sessions WHERE session_token = ?", (session_token,)
-        ) as cur:
-            row = await cur.fetchone()
-        session = dict(row) if row else None
 
-        if session:
-            script = await script_for_session(conn, slug, session)
-            if script:
-                await record_answers(conn, slug, session["id"], qa_pairs, script=script)
-            else:
-                _log.warning(
-                    "complete_session[%s]: no script resolved for session %s - transcript "
-                    "saved, no answer rows written", slug, session_token,
-                )
+async def preserve_partial_interview(
+    session_token: str,
+    qa_pairs: list[dict],
+    ratings: list[dict] | None = None,
+) -> bool:
+    """Keep what a halted interview captured, without claiming the interview happened.
+
+    **This is what makes the halt screen's promise true.** Before it, a halted interview wrote a
+    `checkpoint_json` that nothing in `api/`, `ui/src` or `agents/` ever read, left
+    `interview_answers` completely empty, and left the session at `active` - so "everything you
+    answered has been saved" was a sentence a participant read forty minutes in, at the moment it
+    most needed to be true, about answers that were about to be discarded.
+
+    It is deliberately **not** `complete_session`. That door stamps `status='completed'` and
+    `completed_at`, which would tell the crew, every coverage count and the consultant that a
+    twelve-of-sixty interview had finished - trading a false sentence to the participant for a
+    false one about them. `abandon_interview_session` keeps the answers and says plainly that the
+    conversation did not finish.
+
+    Safe to call more than once for the same reason resubmitting corrections is:
+    `insert_interview_answer` upserts on `(session_id, question_id)`.
+
+    Returns True when the session was found and written, False when it was not.
+    """
+    db_path = await _find_session_db(session_token)
+    if not db_path:
+        return False
+    slug = Path(db_path).stem
+
+    async with interview_db_connection(db_path) as conn:
+        transcript_json = json.dumps(qa_pairs)
+        ratings_json = json.dumps(ratings) if ratings is not None else None
+        await abandon_interview_session(conn, session_token, transcript_json, ratings_json)
+        # The checkpoint is deliberately left standing - see `abandon_interview_session`.
+        await _record_answer_rows(conn, slug, session_token, qa_pairs)
     return True

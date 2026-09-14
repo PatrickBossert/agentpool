@@ -9,10 +9,12 @@ credential the rest of this API relies on - so it requires an authenticated call
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections import defaultdict
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -25,20 +27,34 @@ from api.database import (
     fetch_interview_sessions_for_run,
     get_connection,
     interview_db_connection,
+    record_session_speech_failure,
     save_interview_checkpoint,
     update_interview_session_status,
 )
 from api.services.interview_service import (
+    DeepgramGrantMalformed,
     _find_session_db,
     complete_session,
+    deepgram_listen_params,
     elaboration_press,
     generate_deepgram_token,
     get_session_with_script,
+    keyterms_for_project,
     interview_url,
+    preserve_partial_interview,
     speak,
 )
 from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
 from api.services.process_cache import register_cache
+from api.services.speech_policy import (
+    SPEECH_REQUIRED,
+    alert_speech_unavailable,
+    describe_browser_failure,
+    describe_deepgram_failure,
+    speech_policy_for,
+)
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
@@ -48,6 +64,29 @@ router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 # ---------------------------------------------------------------------------
 
 _EMPTY_SUMMARY = {"pending": 0, "active": 0, "completed": 0, "abandoned": 0}
+
+
+def _speech_failure_of(row) -> dict | None:
+    """The recorded transcription failure for one session, or None.
+
+    Answers None for every way the record can be missing or unreadable - a column a project
+    database predating the migration does not have, a NULL, a blob written by some earlier
+    shape - because this is a status panel and a malformed record must not 500 the list of every
+    other session beside it.
+    """
+    try:
+        raw = row["speech_failure"]
+    except (IndexError, KeyError):
+        return None
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return {"at": parsed.get("at", ""), "diagnosis": parsed.get("diagnosis", "")}
 
 
 @router.get("/sessions/{slug}")
@@ -111,6 +150,11 @@ async def get_sessions_for_project(slug: str, payload: dict = Depends(require_an
             "node_label": row["node_label"],
             "session_token": row["session_token"],
             "status": status,
+            # Why this person could not be interviewed, for the consultant who would chase
+            # them. Parsed here rather than handed over as a JSON string: the column is this
+            # deployment's own record and the panel is a reader of it, and a client that had to
+            # `JSON.parse` a field would be a second place the shape is known.
+            "speech_failure": _speech_failure_of(row),
             "interview_url": interview_url(row["session_token"]),
             "started_at": row["started_at"],
             "completed_at": row["completed_at"],
@@ -277,14 +321,103 @@ async def get_interview_session(session_token: str):
 
 @router.get("/{session_token}/deepgram-token")
 async def get_deepgram_token(session_token: str):
+    """A credential for the recogniser, and the words this project wants it to listen for.
+
+    One door and not two, because the client needs both at the same instant: the grant expires
+    in thirty seconds, so it is fetched immediately before the socket is opened, and a second
+    round trip for the vocabulary would spend part of that window.
+
+    The keyterms are value chain labels and proper nouns out of this engagement's interview
+    scripts - client material, answered to whoever holds a session token, which is the whole of
+    what this router authenticates by. That is the right door for them rather than a widening of
+    it: the holder of this token is already answered the *script* by `GET /{session_token}`,
+    verbatim and in full, and the value chain node the session is anchored to comes with it.
+
+    **The script half is a strict subset of that. The ledger half is not, and saying so is the
+    point.** `keyterms_for_project` reads the whole *active* `value_chain_ledger`, while the
+    session is anchored to one node - so this door widens what a token holder sees from "this
+    node and this script" to "the shape of the whole value chain". Judged acceptable: a node
+    label is a few words naming an activity, the holder is a stakeholder of the organisation
+    being mapped, and the interview discusses that value chain with them. It is a judgement
+    rather than a subset, it is recorded in CLAUDE.md's *Known issues* as one, and narrowing it
+    to the session's own node is a one-line change if the judgement goes the other way. The
+    authentication is deliberately left exactly as it was.
+
+    A project with no vocabulary is served a token and no keyterm parameter at all. It is not an
+    error: an interview conducted without boosting is what every interview before this one was.
+
+    `listen_params` is the whole answer. There is deliberately no separate `keyterms` key beside
+    it: the client reads only the parameters it is to encode, so a second copy of the same list
+    would be dead payload and a second place an auditor has to look to see what leaves.
+    """
     result = await get_session_with_script(session_token)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    db_path = await _find_session_db(session_token)
+    slug = Path(db_path).stem if db_path else ""
+
+    # **Half of the probe, and the half only this server can answer.** Minting a grant is the
+    # same call the interview makes, so a refused key or an exhausted account fails here at
+    # device setup rather than at the participant's first question.
+    #
+    # What the failure *means* differs by engagement, and the difference is decided here rather
+    # than in the browser: on an engagement permitted hosted inference this is the routine 503
+    # every deployment without a Deepgram key has always answered, and the page falls back. On
+    # one that is not, there is nothing to fall back to that does not stream the participant's
+    # voice to their browser vendor - so the interview stops, and somebody is told which of a
+    # refused key, an exhausted balance and a rate limit it was.
     try:
         token = await generate_deepgram_token()
-        return {"token": token}
-    except ValueError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    except (ValueError, httpx.HTTPError, DeepgramGrantMalformed) as exc:
+        diagnosis = describe_deepgram_failure(exc)
+        if slug and db_path and speech_policy_for(slug) == SPEECH_REQUIRED:
+            await alert_speech_unavailable(
+                db_path=db_path, slug=slug, session_token=session_token, diagnosis=diagnosis
+            )
+        raise HTTPException(status_code=503, detail=diagnosis)
+
+    # **A grant was minted, so whatever was recorded against this session is no longer true.**
+    # Without this, 09:00's "Deepgram reports this account has no credit (402)" sits on the row
+    # for ever: credit is restored, the participant is interviewed at 14:00, and the consultant's
+    # panel shows a green `completed` badge beside a permanent amber "Not interviewed" - so they
+    # chase somebody already interviewed, or distrust a good transcript.
+    #
+    # Here rather than in `complete_session` because this is the earliest honest moment: it fires
+    # at the probe of the retry, before the participant has answered anything, so the amber line
+    # goes the moment the engagement can actually be interviewed rather than an hour later. An
+    # interview that starts and is abandoned for some other reason is also correctly no longer
+    # described as a transcription failure.
+    # Guarded, and the guard is the important half. `interview_db_connection` runs no migrations
+    # by design, so a project database that has not been opened through `get_connection` since
+    # sp66 has no `speech_failure` column at all - and this sits on the **success** path, which a
+    # live interview walks before every answer. An unguarded write here would turn a missing
+    # column into a 503 for a participant whose Deepgram is working perfectly. Tidying a stale
+    # amber line is worth nothing beside that.
+    if db_path:
+        try:
+            async with interview_db_connection(db_path) as conn:
+                await record_session_speech_failure(conn, session_token, None)
+        except Exception:
+            _log.warning(
+                "could not clear the recorded speech failure for session %s - the interview is "
+                "unaffected, but the sessions panel may still show a failure that is no longer "
+                "true", session_token, exc_info=True,
+            )
+
+    keyterms = await keyterms_for_project(slug) if slug else []
+
+    # The language the session was **stamped** with, not one re-derived from the project. A
+    # session records its interviewer's resolved configuration at creation, and the speak door
+    # one endpoint down reads the same stamp for the same reason: a project's configuration may
+    # be edited between an invite being issued and the interview being taken, and re-reading it
+    # would make the recogniser disagree with the voice.
+    voice_config = result["session"].get("voice_config") or {}
+    language = voice_config.get("language") if isinstance(voice_config, dict) else None
+    return {
+        "token": token,
+        "listen_params": deepgram_listen_params(keyterms, language or "en"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +554,7 @@ async def save_checkpoint(session_token: str, body: CheckpointBody):
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 6: PATCH /{session_token}/complete
+# Endpoint 5c: POST /{session_token}/speech-failure
 # ---------------------------------------------------------------------------
 
 class CapturedPair(BaseModel):
@@ -431,12 +564,98 @@ class CapturedPair(BaseModel):
     silently, and the answer then had no question to be traced to. follow_up marks a
     generated probe or a scripted branch, which is further evidence about one question rather
     than a question of its own.
+
+    Declared here rather than beside `/complete` below because both doors take it now: a halted
+    interview hands over what it captured so those answers become rows, which is what makes the
+    halt screen's promise true.
     """
     question_id: str
     question: str
     answer: str = ""
     follow_up: int = 0
 
+class SpeechFailureBody(BaseModel):
+    """The half of the probe only the participant's browser can answer, and what it still holds.
+
+    `reason` is a closed vocabulary, not a sentence. This door is unauthenticated - a session
+    token is the whole of what the public half of this router checks - and the string it produces
+    lands in an administrator's alert, so a free-text `reason` would be a way of putting an
+    attacker's words in front of an operator. `describe_browser_failure` composes what they read;
+    the browser only says which case it is.
+
+    **`reason` may be `None`, and that is not "no failure".** It means the failure has already
+    been recorded and alerted by the door that actually knew what it was - the token door below
+    holds the HTTP status that tells a refused key from an exhausted balance, and the browser
+    holds only "the socket would not open". Reporting both wrote the vague sentence over the
+    specific one and mailed the operator twice for one incident.
+
+    `qa_pairs` is what the interview captured before it stopped. It is the same shape
+    `/complete` takes and is written by the same machinery, because the alternative - a
+    `checkpoint_json` nothing reads - is what made the halt screen's promise untrue.
+    """
+
+    reason: str | None = Field(default=None, max_length=64)
+    qa_pairs: list[CapturedPair] = Field(default_factory=list)
+    ratings: list[dict] | None = None
+
+
+@router.post("/{session_token}/speech-failure")
+async def report_speech_failure(session_token: str, body: SpeechFailureBody):
+    """The interview could not be transcribed, and this engagement forbids the fallback.
+
+    Two things reach this door, and neither is visible from the server: a browser that records
+    none of the containers Deepgram is opened for - Safari and iOS record MP4/AAC, which since
+    `f914bc56` declines the socket - and a socket that would not stay open. The Deepgram half of
+    the probe is answered at the token door above, where the status code that distinguishes a
+    refused key from an exhausted balance actually is.
+
+    **It records nothing on an engagement permitted hosted inference**, and answers so. There the
+    browser's own recogniser is the designed answer, the amber notice already says which
+    recogniser is listening, and an alert per fallback would be noise on every deployment that
+    has never configured a Deepgram key - which is every deployment before sp66.
+
+    A 404 for an unknown token, like every door in this router, so this is not a way to make the
+    server alert about sessions that do not exist.
+    """
+    db_path = await _find_session_db(session_token)
+    if not db_path:
+        raise HTTPException(status_code=404, detail="Session not found")
+    slug = Path(db_path).stem
+    if speech_policy_for(slug) != SPEECH_REQUIRED:
+        return {
+            "preserved": False,
+            "recorded": False,
+            "reason": "this engagement permits the browser's recogniser",
+        }
+
+    # **Preserve first, and unconditionally.** The answers are what the participant gave up their
+    # time for, and they must survive whether or not this failure is one the browser is reporting
+    # for the first time. It is also what the halt screen now promises, so it happens before
+    # anything that could fail.
+    preserved = False
+    if body.qa_pairs:
+        preserved = await preserve_partial_interview(
+            session_token, [p.model_dump() for p in body.qa_pairs], body.ratings
+        )
+
+    # `reason is None` means the token door has already recorded and alerted, with the diagnosis
+    # only it could produce. Reporting again wrote "the socket would not open" over "the balance
+    # is exhausted", and mailed the operator twice for one incident.
+    if body.reason is None:
+        return {"preserved": preserved, "recorded": False, "reason": "already reported"}
+
+    await alert_speech_unavailable(
+        db_path=db_path,
+        slug=slug,
+        session_token=session_token,
+        diagnosis=describe_browser_failure(body.reason),
+    )
+    return {"preserved": preserved, "recorded": True}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 6: PATCH /{session_token}/complete
+# ---------------------------------------------------------------------------
 
 class CompleteRequest(BaseModel):
     qa_pairs: list[CapturedPair]

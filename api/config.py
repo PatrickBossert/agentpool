@@ -8,7 +8,6 @@ import yaml
 
 class Settings(BaseSettings):
     anthropic_api_key: str
-    litellm_proxy_url: str = "http://localhost:4000"
     chroma_host: str = "localhost"
     chroma_port: int = 8002
     chroma_api_key: Optional[str] = None
@@ -52,6 +51,18 @@ class Settings(BaseSettings):
     # to send when a project has none, never fall back to the intended recipients, because
     # this is the one setting whose failure must not be open.
     dev_mode_address: str = "Patrick@FutureEdge.consulting"
+    # Where a system-level alert goes: today, only the one raised when a sensitive engagement's
+    # interview cannot reach Deepgram (api/services/speech_policy.py). Platform mail, not project
+    # mail, so `dev_mode` - which defaults to True - cannot silently redirect an outage alert to
+    # the operator, where its absence would read as "no outage".
+    #
+    # **Blank means no mail is attempted**, and that is deliberate rather than a missing default.
+    # `admin_username` is a login and is routinely not an address, so guessing at it would post a
+    # deployment's alerts to "admin@"; and `dev_mode_address` is where *held* mail goes, which is
+    # a different question. Neither honestly means "the system administrator", so an unset value
+    # is loudly absent in the log rather than quietly misaddressed - and the alert still reaches
+    # the interview session row the consultant running the engagement watches.
+    admin_alert_email: str = ""
     # The one organisation every engagement belongs to. Not one organisation per client:
     # this is a project-based application that happens to hold organisation entities, so the
     # organisation is the consultancy and an org_admin appointed in it reaches every

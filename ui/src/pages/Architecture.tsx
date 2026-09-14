@@ -99,14 +99,13 @@ export default function Architecture() {
               <TableRow cells={['Caddy reverse proxy', ':80', 'Caddy', 'Routes /api/* → FastAPI, /dashboard* → React, / → landing HTML']} />
               <TableRow cells={['FastAPI backend', ':8000', 'Python / FastAPI / uvicorn', 'REST API, crew dispatch, DB management, auth']} />
               <TableRow cells={['React dashboard', ':3000', 'React / Vite / Tailwind', 'Main consultant UI (served under /dashboard)']} />
-              <TableRow cells={['LiteLLM proxy', ':4000', 'LiteLLM', 'LLM routing - Claude Opus/Sonnet/Haiku + local qwen3']} />
               <TableRow cells={['ChromaDB', ':8002', 'ChromaDB (Docker)', 'Vector store - project docs + sector knowledge']} />
               <TableRow cells={['Cloudflare Tunnel', '(managed)', 'cloudflared', 'Exposes :80 publicly at https://taskreimagination.ai']} />
-              <TableRow cells={['llama.cpp', ':10000', 'llama.cpp / Unsloth', 'Local LLM endpoint (sensitive mode, Qwen3-4B)']} />
+              <TableRow cells={['Local model endpoint', "the project's own", 'Ollama (or any OpenAI-compatible server)', "Inference for a project not granted HOSTED_INFERENCE. The address is that project's local_fast_url / local_deep_url, :11434 by default - not a fixed port, and not started here."]} />
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-slate-500 mt-2">All services started by <code className="text-slate-300">start.sh</code>; Docker manages ChromaDB. Chainlit (:8001) and n8n (:5678) were retired in SP50.</p>
+        <p className="text-xs text-slate-500 mt-2">Every row but the last is started by <code className="text-slate-300">start.sh</code>; Docker manages ChromaDB, and the local model endpoint is run and addressed per project. Chainlit (:8001) and n8n (:5678) were retired in SP50; the LiteLLM proxy (:4000) in SP66 - LiteLLM is a library here, and nothing ever called it.</p>
       </Section>
 
       {/* ── Orchestration Pipeline ── */}
@@ -249,7 +248,7 @@ export default function Architecture() {
 
       {/* ── Agents ── */}
       <Section id="agents" title="Agents">
-        <p className="text-sm text-slate-400 mb-4">All agents are CrewAI agents backed by LiteLLM. Default model is Claude Sonnet unless noted.</p>
+        <p className="text-sm text-slate-400 mb-4">All agents are CrewAI agents. No agent names a model: each declares a capability tier in <code className="text-slate-300">agents/model_registry.py</code> - fast or deep - and the project&rsquo;s grants bind that tier to one. Hosted defaults are claude-haiku-4-5-20251001 (fast) and claude-opus-4-6 (deep); a project not granted HOSTED_INFERENCE gets its own local model for that tier, or refuses to run.</p>
 
         {[
           {
@@ -293,7 +292,7 @@ export default function Architecture() {
               {
                 name: 'Interview Coordinator',
                 file: 'agents/discovery/interview_coordinator.py',
-                role: 'Plan stakeholder interview programme; configure voice settings per locale using ElevenLabs voice IDs.',
+                role: 'Plan stakeholder interview programme. The interviewer and their voice are resolved from each agent\'s per-project configuration and stamped on the session at creation, not chosen per locale here.',
                 tools: ['SQLiteStateTool', 'HumanInputTool', 'InterviewSessionTool'],
                 output: 'interview_plan (JSON: session_token, voice_config, node_label per stakeholder)',
               },
@@ -562,6 +561,8 @@ export default function Architecture() {
                 ['GET', '/api/interviews/{token}', 'Get session for voice interview (public)'],
                 ['PATCH', '/api/interviews/{token}/complete', 'Mark session complete with ratings'],
                 ['POST', '/api/interviews/{token}/speak', 'ElevenLabs TTS proxy'],
+                ['GET', '/api/interviews/{token}/deepgram-token', "Deepgram grant plus this project's keyterms and listen params (public)"],
+                ['POST', '/api/interviews/{token}/email-transcript', "Transcript copy to the session's own stakeholder - mounted, no caller in the dashboard since sp66"],
                 ['GET', '/api/templates', 'List interview templates'],
                 ['POST', '/api/templates', 'Create template'],
                 ['PATCH', '/api/templates/{id}', 'Update template'],
@@ -589,7 +590,7 @@ export default function Architecture() {
             <tbody>
               {[
                 ['/login', 'Login', 'Public', 'JWT login form'],
-                ['/interview/:sessionToken', 'VoiceInterview', 'Public', 'Self-serve voice interview portal (ElevenLabs + SpeechRecognition)'],
+                ['/interview/:sessionToken', 'VoiceInterview', 'Public', 'Self-serve voice interview portal (ElevenLabs TTS; Deepgram STT, falling back to the browser Web Speech API)'],
                 ['/', 'Dashboard', 'Protected', 'Project list or selected project overview'],
                 ['/:slug', 'Dashboard', 'Protected', 'Project dashboard with neural agent tree'],
                 ['/:slug/discovery', 'Discovery', 'Protected', 'Discovery Interviews tab + Layer Map tab'],
@@ -643,11 +644,12 @@ export default function Architecture() {
         </Card>
 
         <Card title="Anthropic / Claude API" accent="border-rose-700/50">
-          <KV k="Access method" v="Via LiteLLM proxy  (http://localhost:4000)" />
-          <KV k="Auth method" v="ANTHROPIC_API_KEY env var (passed to LiteLLM)" />
-          <KV k="Models used" v="claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001" />
-          <KV k="Routing" v="standard mode → Claude; sensitive mode → local qwen3; fallback → Claude then local" />
-          <KV k="PAM agent" v="Always Claude Opus (regardless of llm_mode)" />
+          <KV k="Access method" v="LiteLLM as a library, direct to the provider - there is no proxy" />
+          <KV k="Auth method" v="ANTHROPIC_API_KEY env var" />
+          <KV k="Models used" v="Per tier, per project. Defaults: claude-haiku-4-5-20251001 (fast), claude-opus-4-6 (deep)" />
+          <KV k="Routing" v="Granted HOSTED_INFERENCE → Anthropic; otherwise the project's local model" />
+          <KV k="On no local model" v="Raises LocalModelUnavailable. There is no hosted fallback and no borrowing of the other tier" />
+          <KV k="PAM agent" v="No exemption - deep tier, and local for a sensitive project like every other agent" />
         </Card>
 
         <Card title="ChromaDB (Vector Store)" accent="border-emerald-700/50">
@@ -670,9 +672,13 @@ export default function Architecture() {
         </Card>
 
         <Card title="Deepgram (STT)" accent="border-blue-700/50">
-          <KV k="Access method" v="Deepgram WebSocket API (temporary token fetched from /api/interviews/{token}/deepgram-token)" />
-          <KV k="Auth method" v="DEEPGRAM_API_KEY env var (used server-side to issue short-lived tokens)" />
-          <KV k="Used by" v="VoiceInterview page - stakeholder speech-to-text during voice interviews" />
+          <KV k="Access method" v="Deepgram streaming WebSocket (wss://api.deepgram.com/v1/listen), opened by the participant's browser. The grant JWT goes on the URL as ?access_token= - the Sec-WebSocket-Protocol form is for API keys and a JWT is answered 401." />
+          <KV k="Auth method" v="DEEPGRAM_API_KEY env var, used server-side by GET /api/interviews/{token}/deepgram-token to issue a 30-second grant. The key itself never reaches the browser." />
+          <KV k="Model" v="nova-3, paired with the keyterm boost parameter. keywords is Nova-2's legacy feature; a mismatch is ignored silently, so both are decided server-side in one listen_params dict." />
+          <KV k="What travels" v="Two things: the participant's audio, and this engagement's vocabulary - its active value chain labels and the proper nouns from its interview scripts. Declared as PARTICIPANT_SPEECH_EGRESS in agents/egress.py." />
+          <KV k="Used by" v="VoiceInterview page - the primary recogniser for every answer since sp66. Connected then; the door was written in May 2026 and called by nothing for four months." />
+          <KV k="Fallback" v="The browser's Web Speech API, silently, when Deepgram is unavailable; a mid-answer drop keeps what was heard and hands the same answer over, saying so. A browser that can do neither is told plainly that nothing is being recorded." />
+          <p className="text-xs text-slate-500 mt-2">Never exercised against the real provider - the URL form, the keyterm spelling and the webm/opus stream are documentation-derived. Treat the first live interview as the test.</p>
         </Card>
 
         <Card title="Cloudflare Tunnel" accent="border-slate-600">
@@ -682,12 +688,6 @@ export default function Architecture() {
           <KV k="Access policy" v="Cloudflare Access - email OTP protects /dashboard/*; bypass for /api/* and /dashboard/interview/*" />
         </Card>
 
-        <Card title="LiteLLM Proxy" accent="border-slate-600">
-          <KV k="URL" v="http://localhost:4000" />
-          <KV k="Config file" v="litellm_config.yaml" />
-          <KV k="Models configured" v="claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001, qwen3-4b (local)" />
-          <KV k="Local LLM backend" v="llama.cpp at localhost:10000 (OpenAI-compatible API)" />
-        </Card>
       </Section>
 
       <div className="text-center text-slate-600 text-xs py-8 border-t border-slate-800">

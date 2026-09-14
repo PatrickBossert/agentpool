@@ -629,6 +629,26 @@ export interface InterviewSession {
   voice_config: VoiceConfig | null
 }
 
+/**
+ * What this engagement permits when Deepgram cannot be reached, decided on the server.
+ *
+ * `required` means the interview stops rather than falling back to the browser's own recogniser,
+ * which streams the participant's audio to Google or to Apple. `browser_permitted` means the
+ * fallback is the designed answer, with the amber notice that already exists.
+ *
+ * **This is deliberately not `llm_mode`.** The participant's page has no login and no business
+ * knowing an engagement's posture; `api/services/speech_policy.py` resolves the capability and
+ * sends the decision. Never re-derive it here - the rule CLAUDE.md states for
+ * `writable_knowledge_tiers`.
+ */
+export type SpeechPolicy = 'required' | 'browser_permitted'
+
+/** Why an interview could not be transcribed, as the consultant running it is shown. */
+export interface SpeechFailure {
+  at: string
+  diagnosis: string
+}
+
 export interface SessionSummary {
   pending: number
   active: number
@@ -643,6 +663,7 @@ export interface InterviewSessionStatus {
   node_label: string
   session_token: string
   status: 'pending' | 'active' | 'completed' | 'abandoned'
+  speech_failure: SpeechFailure | null
   interview_url: string
   started_at: string | null
   completed_at: string | null

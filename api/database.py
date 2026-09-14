@@ -531,6 +531,7 @@ async def _migrate_interview_sessions(conn: aiosqlite.Connection) -> None:
             transcript_json       TEXT,
             ratings_json          TEXT,
             checkpoint_json       TEXT,
+            speech_failure        TEXT,
             started_at            TEXT,
             completed_at          TEXT,
             created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -600,6 +601,34 @@ async def _migrate_interview_sessions_interviewer(conn: aiosqlite.Connection) ->
         await conn.execute(
             "ALTER TABLE interview_sessions ADD COLUMN interviewer_agent_id TEXT"
         )
+    await conn.commit()
+
+
+async def _migrate_interview_sessions_speech_failure(conn: aiosqlite.Connection) -> None:
+    """Record that an interview could not be conducted because transcription was unreachable.
+
+    On an engagement not granted hosted inference, an interview that cannot reach Deepgram stops
+    rather than falling back to the browser's own recogniser - see
+    `api/services/speech_policy.py`. Something has to tell the consultant running that engagement,
+    because they are the person who would chase the participant - and an administrator's mailbox
+    is not where that person looks. `send_project_mail` could not serve them either: it is held
+    by `dev_mode`, which defaults to `True`.
+
+    So the row carries it, and `GET /api/interviews/sessions/{slug}` - the panel they already
+    watch - reads it back. A column rather than a notification centre, deliberately.
+
+    JSON rather than three columns: nothing queries its parts, and a schema that grows a column
+    per field is one that will be got wrong once.
+
+    NULL means no failure was recorded, which is every session before this migration and every
+    session that simply worked. Guarded with `PRAGMA table_info` so it skips *itself* rather than
+    raising on a database that already has the column - a migration that raises takes every
+    later migration in the block down with it.
+    """
+    cur = await conn.execute("PRAGMA table_info(interview_sessions)")
+    cols = {row[1] for row in await cur.fetchall()}
+    if "speech_failure" not in cols:
+        await conn.execute("ALTER TABLE interview_sessions ADD COLUMN speech_failure TEXT")
     await conn.commit()
 
 
@@ -2121,7 +2150,14 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # recorder the two ledgers were waiting for, and what puts the reviewer's note into the next
 # run's prompt. tests/test_item_reviews.py::test_a_database_at_version_20_gains_the_item_
 # reviews_table fails on 20 and passes on 21.
-_SCHEMA_VERSION = 21
+#
+# 21 -> 22 adds `_migrate_interview_sessions_speech_failure`, the column that tells the
+# consultant running an engagement that an interview could not be conducted because
+# transcription was unreachable - the leg of that alert which reaches the person who would chase
+# the participant, rather than the administrator who would fix the provider.
+# tests/test_interview_speech_policy.py::
+# test_a_database_at_version_21_gains_the_speech_failure_column fails on 21 and passes on 22.
+_SCHEMA_VERSION = 22
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -2235,6 +2271,7 @@ async def get_connection(slug: str):
             await _migrate_item_reviews(conn)
             await _migrate_interview_sessions_script_id(conn)
             await _migrate_interview_sessions_interviewer(conn)
+            await _migrate_interview_sessions_speech_failure(conn)
             await _migrate_stakeholder_roles(conn)
             await _migrate_blocked_writes(conn)
             await _migrate_lineage(conn)
@@ -4464,6 +4501,32 @@ async def complete_interview_session(
     await conn.commit()
 
 
+async def abandon_interview_session(
+    conn, session_token: str, transcript_json: str, ratings_json: str | None = None
+) -> None:
+    """Keep what an interview captured, and say plainly that it did not finish.
+
+    The sibling of `complete_interview_session`, and the two differences are the whole reason it
+    exists rather than a flag on that one. **`status` is `abandoned`, not `completed`** - a
+    transcription failure at answer twelve of sixty leaves a real transcript that the crew should
+    read and a stakeholder who still has not been interviewed, and marking it completed would
+    tell the consultant and every downstream coverage count that the conversation happened. That
+    is the same false sentence this branch exists to remove, one person over. **And
+    `completed_at` is left alone**, because nothing completed.
+
+    The checkpoint is deliberately *not* cleared by this, unlike the completion path: the answers
+    become `interview_answers` rows here, but the words spoken into the failing socket have no
+    question id and so cannot, and the checkpoint is the only thing holding them.
+    """
+    await conn.execute(
+        """UPDATE interview_sessions
+           SET status='abandoned', transcript_json=?, ratings_json=?
+           WHERE session_token=?""",
+        (transcript_json, ratings_json, session_token),
+    )
+    await conn.commit()
+
+
 async def save_interview_checkpoint(
     conn: aiosqlite.Connection, session_token: str, checkpoint: dict | None
 ) -> None:
@@ -4531,6 +4594,22 @@ async def delete_template(conn, template_id: int) -> bool:
     return cur.rowcount > 0
 
 
+async def record_session_speech_failure(
+    conn: aiosqlite.Connection, session_token: str, failure_json: str | None
+) -> None:
+    """Record - or clear - why an interview could not be transcribed.
+
+    Written on the *last* failure rather than appended to, because the consultant's question is
+    "can this person be interviewed?", which the most recent answer settles. The log carries the
+    history; this carries the state.
+    """
+    await conn.execute(
+        "UPDATE interview_sessions SET speech_failure=? WHERE session_token=?",
+        (failure_json, session_token),
+    )
+    await conn.commit()
+
+
 async def fetch_interview_sessions_for_run(
     conn: aiosqlite.Connection, orchestration_run_id: int
 ) -> list[aiosqlite.Row]:
@@ -4544,6 +4623,7 @@ async def fetch_interview_sessions_for_run(
             is_.node_label,
             is_.session_token,
             is_.status,
+            is_.speech_failure,
             is_.started_at,
             is_.completed_at,
             is_.created_at
