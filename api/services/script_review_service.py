@@ -146,7 +146,12 @@ async def scripts_awaiting_regeneration(conn: aiosqlite.Connection, *, project_i
     conn.row_factory = aiosqlite.Row
     cur = await conn.execute(
         "SELECT l.script_id, l.node_id, l.node_label,"
+        # Scoped on project_id as well as script_id. Harmless today - one SQLite file per
+        # project, so `script_reviews` only ever holds this project's rows - and wrong the
+        # moment that stops holding, in the direction that puts one client's reviewer note
+        # into another client's agent prompt. The join column exists; using it costs nothing.
         "       (SELECT notes FROM script_reviews r WHERE r.script_id = l.script_id"
+        "         AND r.project_id = l.project_id"
         "         ORDER BY r.id DESC LIMIT 1) AS notes"
         "  FROM interview_script_ledger l"
         " WHERE l.project_id=? AND l.review_status='changes_requested'"
