@@ -269,6 +269,34 @@ def report_vector_store_failure(
     came back empty", and an operator triaging at 9am needs to know which.
     """
     try:
+        # A cloud store can be perfectly reachable and still refuse the write because the
+        # account is out of quota, and "ChromaDB is not reachable" would be a wrong and
+        # expensive thing to tell an operator about it. So a refusal that classifies as a
+        # billing, rate or key problem is reported as what it is and the reachability wording is
+        # not used. **Chroma Cloud exposes no quota endpoint at all** - `/usage`, `/quota` and
+        # `/billing/usage` all 404 - so the refusal at the call site is the only signal that
+        # exists for this provider, which makes this branch the whole of Chroma's credit cover.
+        if exc is not None:
+            from api.services.provider_health import (
+                CHROMA,
+                OUT_OF_CREDIT,
+                RATE_LIMITED,
+                AUTH_REFUSED,
+                classify,
+                report_provider_failure,
+            )
+
+            fault = classify(CHROMA, exc)
+            if fault.fault in (OUT_OF_CREDIT, RATE_LIMITED, AUTH_REFUSED):
+                report_provider_failure(
+                    provider=CHROMA,
+                    operation=operation,
+                    exc=exc,
+                    slug=slug,
+                    consequence=consequence,
+                )
+                return
+
         diagnosis = describe_vector_store_failure(slug, exc)
         where = f" on engagement '{slug}'" if slug else ""
         alert_operator(

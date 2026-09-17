@@ -31,7 +31,31 @@ def get_anthropic_client() -> AsyncAnthropic:
     global _anthropic_client
     if _anthropic_client is None:
         from api.config import get_settings
-        _anthropic_client = AsyncAnthropic(api_key=get_settings().anthropic_api_key)
+
+        # A response event hook, so the rate-limit headers are read where they actually arrive.
+        #
+        # Anthropic publishes **no balance endpoint**; the only headroom signal that exists is
+        # the `anthropic-ratelimit-*` set on every response. The SDK hands call sites a parsed
+        # `Message` with the headers discarded, so reading them at the call site means switching
+        # to `messages.with_raw_response.create` - which breaks every existing mock that stubs
+        # `messages.create`, fourteen tests' worth, none of them about monitoring.
+        #
+        # At the transport there is nothing to rewrite: the hook sees every Anthropic response
+        # this deployment receives, no call site changes, and a test that fakes the client never
+        # reaches the transport so it never fires. That is what makes this indicator free, which
+        # is the only condition on which it was worth having at all.
+        #
+        # The hook must never raise - an exception here would fail a completion that succeeded -
+        # and `note_anthropic_headers` guarantees that for itself.
+        async def _note_rate_limit_headers(response: httpx.Response) -> None:
+            from api.services.provider_health import note_anthropic_headers
+
+            note_anthropic_headers(response.headers)
+
+        _anthropic_client = AsyncAnthropic(
+            api_key=get_settings().anthropic_api_key,
+            http_client=httpx.AsyncClient(event_hooks={"response": [_note_rate_limit_headers]}),
+        )
     return _anthropic_client
 
 

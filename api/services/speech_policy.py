@@ -189,6 +189,11 @@ def describe_deepgram_failure(exc: BaseException) -> str:
                  "or the card has expired",
             429: "Deepgram is rate-limiting or has exceeded this account's token limit (429) - "
                  "this one clears on its own, unlike the others",
+            400: "Deepgram rejected the *request* as malformed (400) - this is a defect in what "
+                 "this deployment sent, not a problem with the key, the balance or the network. "
+                 "'Keyterm limit exceeded' is the known example, and it means the vocabulary "
+                 "assembled for this engagement is too large for the model. Topping up the "
+                 "account and waiting both change nothing; the code has to be fixed",
         }
         if status in known:
             return known[status]

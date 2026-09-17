@@ -407,7 +407,29 @@ async def synthesise(text: str, voice_id: str, model_id: str) -> bytes:
         },
         timeout=30.0,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception as exc:
+        # Reported and **re-raised unchanged**: the caller decides what a participant hears, and
+        # swallowing here would hand back empty audio, which is the silent failure this reporting
+        # exists to remove rather than to create.
+        #
+        # ElevenLabs spells a quota exhaustion as a **401** carrying
+        # `{"detail": {"status": "quota_exceeded"}}` - the same status as a bad key - so the
+        # classifier reads the body before the status. A plain 401-means-auth rule would send an
+        # operator to replace a key that is working perfectly.
+        from api.services.provider_health import ELEVENLABS, report_provider_failure
+
+        report_provider_failure(
+            provider=ELEVENLABS,
+            operation="synthesising interview speech",
+            exc=exc,
+            consequence=(
+                "an interview question could not be spoken. The participant is mid-interview, "
+                "so this is worth acting on now rather than at the next working day."
+            ),
+        )
+        raise
     return resp.content
 
 
