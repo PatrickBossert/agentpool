@@ -244,8 +244,31 @@ def index_answers(slug: str, rows: list[dict]) -> int:
             metadatas=[answer_metadata(r) for r in rows],
         )
         return len(rows)
-    except Exception:
+    except Exception as exc:
         _log.exception("index_answers[%s]: %d answers not indexed", slug, len(rows))
+        # The swallow above is right and stays: the SQLite rows are the system of record, and
+        # failing here would lose an interview a person has already given. What was missing is
+        # that the swallow was the *end* of it - a log line in a server nobody tails is not a
+        # person being told. Measured on this deployment on 17 September: 229 answers across
+        # three completed interviews in SQLite, and no `sp-gs-am_interviews` collection at all.
+        # Every one of those failures logged exactly here, and nobody knew for days.
+        #
+        # Never raises and never blocks; see `report_vector_store_failure`. `index_answers` runs
+        # in a worker thread via `_index_in_background`, so the alert is sent inline from there
+        # rather than scheduled - which is correct, because no request is waiting on this thread.
+        from api.services.health_checks import report_vector_store_failure
+
+        report_vector_store_failure(
+            operation="indexing interview answers",
+            slug=slug,
+            exc=exc,
+            consequence=(
+                f"{len(rows)} answers from a completed interview were saved to the project "
+                f"database but are not searchable. They are not lost - re-indexing will pick "
+                f"them up once the store is back - but no agent retrieving from this "
+                f"engagement's interviews will find them until then."
+            ),
+        )
         return 0
 
 
