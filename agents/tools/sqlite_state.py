@@ -212,6 +212,48 @@ def _warn_script_durations(_parsed: object, _slug: str, batch: object) -> list[d
     return validate_script_durations(batch)
 
 
+def _warn_theme_evidence(_parsed: object, slug: str, batch: object) -> list[dict]:
+    """Whether the themes this write produced say who their evidence came from.
+
+    **Judges `batch`, for `_warn_script_durations`' reason.** The first themes artefact carries
+    the defect on all 68 of its evidence rows, and it is staying - so a warner handed the merged
+    artefact would report it on every write for ever, which is a warner somebody turns off.
+
+    The answers' stakeholder ids are read here and passed in, so the validator itself stays a
+    pure function over given data and a hostile case can be driven without a project.
+    """
+    import sqlite3
+    from pathlib import Path
+
+    from api.config import get_settings
+    from api.services.theme_evidence_validation import validate_theme_evidence
+
+    if not isinstance(batch, (dict, list)):
+        return []
+
+    by_answer: dict[int, int] = {}
+    db_path = Path(get_settings().database_dir) / f"{slug}.db"
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                by_answer = {
+                    int(a): int(s)
+                    for a, s in conn.execute(
+                        "SELECT id, stakeholder_id FROM interview_answers "
+                        "WHERE stakeholder_id IS NOT NULL"
+                    )
+                }
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            # An unreadable corpus means the id checks cannot be made. The `relationship`
+            # check does not need it and still runs - a partial answer beats none, and a
+            # warner must never be the thing that fails a write.
+            by_answer = {}
+    return validate_theme_evidence(batch, by_answer)
+
+
 def _warn_script_assertions(parsed: object, _slug: str, _batch: object) -> list[dict]:
     from api.services.script_assertion_validation import validate_script_assertions
 
@@ -249,7 +291,7 @@ def _warn_script_assertions(parsed: object, _slug: str, _batch: object) -> list[
 # discovering that only one of the two was ever available.
 _WARNERS: dict[str, list[tuple[str, Callable[[object, str, object], list[dict]]]]] = {
     "value_chain_tree": [("value_chain_tree", _warn_value_chain_tree)],
-    "themes": [("theme_anchor", _warn_themes)],
+    "themes": [("theme_anchor", _warn_themes), ("theme_evidence", _warn_theme_evidence)],
     "interview_scripts": [
         ("interview_coverage", _warn_interview_coverage),
         ("script_assertion", _warn_script_assertions),
