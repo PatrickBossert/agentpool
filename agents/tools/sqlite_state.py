@@ -168,7 +168,7 @@ _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
 }
 
 
-def _warn_themes(parsed: object, slug: str) -> list[dict]:
+def _warn_themes(parsed: object, slug: str, _batch: object) -> list[dict]:
     from api.services.anchor_validation import validate_theme_anchors
 
     if not isinstance(parsed, list):
@@ -178,7 +178,7 @@ def _warn_themes(parsed: object, slug: str) -> list[dict]:
     return validate_theme_anchors(parsed, _current_registry(slug))
 
 
-def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
+def _warn_value_chain_tree(parsed: object, slug: str, _batch: object) -> list[dict]:
     from api.services.tree_validation import validate_tree_structure
 
     previous = _current_registry(slug)
@@ -187,7 +187,7 @@ def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
     return validate_tree_structure(parsed, previous or None)
 
 
-def _warn_interview_coverage(parsed: object, slug: str) -> list[dict]:
+def _warn_interview_coverage(parsed: object, slug: str, _batch: object) -> list[dict]:
     from api.services.coverage_validation import validate_node_coverage
 
     if not isinstance(parsed, dict):
@@ -195,7 +195,24 @@ def _warn_interview_coverage(parsed: object, slug: str) -> list[dict]:
     return validate_node_coverage(parsed, _current_registry(slug))
 
 
-def _warn_script_assertions(parsed: object, _slug: str) -> list[dict]:
+def _warn_script_durations(_parsed: object, _slug: str, batch: object) -> list[dict]:
+    """Whether each script this batch wrote states a duration matching its own sections.
+
+    **Judges `batch`, not `parsed`, and that is the whole design of it.** Every other warner here
+    is handed the merged artefact deliberately, because their findings are about the accumulated
+    set. This one is not: 83 of the 84 scripts already stored disagree with their own budget, the
+    owner has decided they stay as they are, and a warner reporting all 83 on every write for
+    ever is a warner somebody turns off - taking its siblings with it. The scripts this write
+    produced are the only ones the agent can still act on.
+    """
+    from api.services.script_duration_validation import validate_script_durations
+
+    if not isinstance(batch, dict):
+        return []
+    return validate_script_durations(batch)
+
+
+def _warn_script_assertions(parsed: object, _slug: str, _batch: object) -> list[dict]:
     from api.services.script_assertion_validation import validate_script_assertions
 
     if not isinstance(parsed, dict):
@@ -225,12 +242,18 @@ def _warn_script_assertions(parsed: object, _slug: str) -> list[dict]:
 # everything for that source and clears what is now absent. Two checks sharing one source would
 # therefore make each one's clean run wipe the other's findings, which is a silent loss rather
 # than a wrong label. The pairing is what keeps the clearing honest.
-_WARNERS: dict[str, list[tuple[str, Callable[[object, str], list[dict]]]]] = {
+# The third argument is the **pre-merge batch** - what this write actually produced, before it
+# was merged into the accumulated artefact. Almost every warner wants the merged artefact and
+# ignores it; `_warn_script_durations` wants the batch and says why. It is passed to all of them
+# rather than to the one that reads it, so a new warner chooses which it is judging instead of
+# discovering that only one of the two was ever available.
+_WARNERS: dict[str, list[tuple[str, Callable[[object, str, object], list[dict]]]]] = {
     "value_chain_tree": [("value_chain_tree", _warn_value_chain_tree)],
     "themes": [("theme_anchor", _warn_themes)],
     "interview_scripts": [
         ("interview_coverage", _warn_interview_coverage),
         ("script_assertion", _warn_script_assertions),
+        ("script_duration", _warn_script_durations),
     ],
 }
 
@@ -590,7 +613,7 @@ class SQLiteStateTool(BaseTool):
 
             for source, warner in _WARNERS.get(key, ()):
                 try:
-                    found = warner(parsed, self.slug)
+                    found = warner(parsed, self.slug, batch)
                     # complete=True: a warner re-derives every finding from the artefact it
                     # just judged, so anything absent is fixed and is cleared. Called even
                     # when nothing was found, because that is precisely when clearing

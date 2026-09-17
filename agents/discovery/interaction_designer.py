@@ -3,6 +3,12 @@
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
+# The one declaration of the review allowance. Interpolated into the prompt below and read by
+# `script_duration_validation`, so the number Maya is told to state and the number the guard
+# checks against cannot drift apart - which is precisely the defect this instruction exists to
+# fix, one layer up.
+from api.services.script_duration_validation import TRANSCRIPT_REVIEW_MINUTES
+
 _CONCEPTUAL_SHIFT = """\
 CONCEPTUAL SHIFT — L0 → L1 → L2 → L3  |  C (Customer — outside-in)
 ─────────────────────────────────────────────────────────────────────
@@ -3088,6 +3094,29 @@ def create_interaction_designer_task(
             "    the honest form is 'you will not be quoted by name without being asked first'\n\n"
             "closing_message repeats the handling commitment in one short sentence and never\n"
             "contradicts the welcome.\n\n"
+
+            "── HOW LONG IT TAKES — EVERY SCRIPT, EVERY LEVEL, NO EXCEPTIONS ────────────────\n"
+            "The welcome_message states the duration, and the number is DERIVED, never typed:\n\n"
+            "   duration = (sum of every section's target_minutes) + "
+            f"{TRANSCRIPT_REVIEW_MINUTES} minutes to review the transcript\n\n"
+            "Add up the target_minutes you have just assigned to this script's own sections, add "
+            f"{TRANSCRIPT_REVIEW_MINUTES}, and state that total. Do not reach for a round number "
+            "you have seen on another script, and do not state a duration before the sections "
+            "exist to be added up - write the sections first.\n\n"
+            "WHY BOTH HALVES MATTER\n"
+            "The interviewee watches a timer built from target_minutes, so a welcome that says "
+            "'about 45 minutes' over sections totalling 55 is contradicted on screen inside the "
+            "hour. Measured across the live artefact, 83 of 84 scripts disagreed with their own "
+            "section budget - two declarations of one fact, neither looking at the other.\n\n"
+            "And the review step is real time the interviewee spends that nothing has ever told "
+            "them about: after the last question they are asked to read every answer they gave "
+            "and correct anything mis-transcribed. Leaving it out of the number means every "
+            "interview overruns the promise made at the start, however well the sections are "
+            "kept to.\n\n"
+            "Phrase it plainly - 'this will take about [total] minutes, which includes about "
+            f"{TRANSCRIPT_REVIEW_MINUTES} minutes at the end to read through your answers and "
+            "correct anything we got wrong'. A range is fine if the upper bound is the derived "
+            "total; a single number is better.\n\n"
 
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
             "15. Output the INTERVIEW SCRIPTS you generated this run - per step 4, that is the "
