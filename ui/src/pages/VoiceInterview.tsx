@@ -105,6 +105,42 @@ export function needsElaboration(answer: string, evasionSignals: string[] | unde
 }
 
 /**
+ * Everything the interviewer will say from this script, in the order it will be said.
+ *
+ * **Only what is scripted.** An elaboration press, a re-prompt and "Of course, go on" are
+ * composed while the interview is running and cannot be on this list - which is the whole
+ * reason `primeNextUtterance` advances on a *match* rather than on every utterance: a press
+ * that moved the cursor would have the interview prefetch the wrong question for ever after.
+ *
+ * Mirrors `conductInterview`'s own walk, including what that loop deliberately does not speak:
+ * the framing block's positioning line alone rather than its bullets and lenses, and of the
+ * synthesis check only the peer referral - the rest was withdrawn on 4 September and stays
+ * withdrawn. **If either changes, this changes with it**, and the cost of forgetting is a
+ * prefetch that misses rather than a wrong interview: the cursor stops matching, the cache
+ * stops helping, and every question goes back to being synthesised while somebody waits.
+ *
+ * A branch is listed only while its `follow_up_count` allows it, because that is the condition
+ * the loop asks. It cannot know whether a press will consume one of those slots, so a script
+ * whose question draws a press has one listed branch it never reaches - which costs one
+ * speculative synthesis and no correctness, since the cursor matches on the words.
+ */
+export function scriptedSpeech(script: InterviewScript): string[] {
+  const plan: string[] = [script.welcome_message]
+  if (script.framing_block) plan.push(script.framing_block.positioning)
+  for (const section of script.sections) {
+    for (const question of section.questions) {
+      plan.push(question.text)
+      const branches = question.follow_up_branches ?? []
+      for (let i = 0; i < question.follow_up_count && branches[i]; i++) plan.push(branches[i])
+    }
+    if (section.maturity_rating) plan.push(section.maturity_rating.prompt)
+  }
+  if (script.synthesis_check) plan.push(script.synthesis_check.peer_referral)
+  plan.push(script.closing_message)
+  return plan.filter(Boolean)
+}
+
+/**
  * How long this script says it should take, in minutes - or 0 when it does not say.
  *
  * **Summed from the sections rather than declared once**, because that is where the number
@@ -454,6 +490,13 @@ export default function VoiceInterview() {
   // When the participant tapped Start, which is what the elapsed clock counts from. `null`
   // until then, so the top bar has nothing to show rather than a zero that has not started.
   const [startedAt, setStartedAt] = useState<number | null>(null)
+  // Everything the interviewer will say, in order, and how far down it playback has got. The
+  // pair is what lets one utterance be synthesised while the previous one is being heard.
+  const speechPlanRef = useRef<string[]>([])
+  const planCursorRef = useRef(0)
+  // Audio asked for but not yet spoken, keyed on the words. At most two entries live: the one
+  // being said and the one after it.
+  const speechAheadRef = useRef<Map<string, Promise<Blob | null>>>(new Map())
   // The whole pair, not `{question, answer}`. The corrected answers are re-submitted to
   // `/complete` when the participant finishes, and that door requires `question_id` on every
   // pair - narrowing the type here is how an edit would have been sent without its address.
@@ -775,19 +818,80 @@ export default function VoiceInterview() {
     setPhase('speech_halted')
   }
 
-  async function speakText(text: string): Promise<void> {
-    setStatusMessage('Speaking…')
-    const res = await fetch(`${BASE}/interviews/${sessionToken}/speak`, {
+  /**
+   * Ask the speak door for one utterance, at most once at a time.
+   *
+   * Keyed on the text, so the prefetch below and the `speakText` that later wants the same
+   * words share **one** request rather than racing: whichever arrives first, the other awaits
+   * the same promise.
+   *
+   * **A failure is never cached.** `null` means this utterance could not be had *this time* - a
+   * refused request, a dropped connection - and leaving that in the map would silently mute
+   * that question for the rest of the interview, which is a worse outcome than the round trip
+   * the cache exists to save. So the entry removes itself and the next asker tries again.
+   */
+  function requestSpeech(text: string): Promise<Blob | null> {
+    const inFlight = speechAheadRef.current.get(text)
+    if (inFlight) return inFlight
+    const pending = fetch(`${BASE}/interviews/${sessionToken}/speak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     })
-    if (!res.ok) {
-      // Non-fatal: skip audio, continue
-      console.warn('speak endpoint error', res.status)
+      .then(async res => {
+        if (!res.ok) {
+          // Non-fatal: skip audio, continue.
+          console.warn('speak endpoint error', res.status)
+          return null
+        }
+        return await res.blob()
+      })
+      .catch(() => null)
+      .then(blob => {
+        if (!blob) speechAheadRef.current.delete(text)
+        return blob
+      })
+    speechAheadRef.current.set(text, pending)
+    return pending
+  }
+
+  /**
+   * Start synthesising whatever comes next, while this utterance is still being said.
+   *
+   * **Measured, not guessed.** In the 17 September interview 95 of the 96 speak calls were
+   * cache misses - every question synthesised live with the participant waiting - because
+   * `prewarm_script_audio` on the server has no production caller and the cache key includes
+   * the voice, so sp62's per-project voice invalidated the entries a previous run had left.
+   * The idle time is real: an utterance plays for fifteen to twenty seconds and the answer to
+   * it takes twenty more, against a synthesis of a few seconds.
+   *
+   * **One ahead, and only after the current blob is in hand**, so the prefetch never competes
+   * with the request somebody is actually waiting on.
+   *
+   * The cursor advances only when what was just spoken *is* the next planned utterance, which
+   * is what keeps a dynamic one - an elaboration press, a re-prompt, "Of course, go on" - from
+   * skipping a question. It is a position rather than a search, so two questions with the same
+   * words cannot confuse it.
+   */
+  function primeNextUtterance(justSpoken: string): void {
+    const plan = speechPlanRef.current
+    if (plan[planCursorRef.current] !== justSpoken) return
+    planCursorRef.current += 1
+    const next = plan[planCursorRef.current]
+    if (next) void requestSpeech(next)
+  }
+
+  async function speakText(text: string): Promise<void> {
+    setStatusMessage('Speaking…')
+    const blob = await requestSpeech(text)
+    speechAheadRef.current.delete(text)
+    // After the await, so the next utterance is synthesised during this one rather than beside
+    // it. Before the playback await, so it has the whole of the utterance to be ready in.
+    primeNextUtterance(text)
+    if (!blob) {
+      setStatusMessage('')
       return
     }
-    const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     await new Promise<void>((resolve) => {
       const audio = new Audio(url)
@@ -1495,6 +1599,9 @@ export default function VoiceInterview() {
     // The clock starts when the interview does, not when the page loaded - a participant who
     // left the device-setup screen open over lunch has not been interviewed for an hour.
     setStartedAt(Date.now())
+    speechPlanRef.current = scriptedSpeech(script)
+    planCursorRef.current = 0
+    speechAheadRef.current.clear()
     setPhase('interviewing')
 
     // Activate session
