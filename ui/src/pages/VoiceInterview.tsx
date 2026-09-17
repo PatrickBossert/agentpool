@@ -376,6 +376,43 @@ export interface CapturedPair {
   question: string
   answer: string
   follow_up: 0 | 1
+  /**
+   * Which of this page's engines produced `answer` - `deepgram`, `browser`, `deepgram+browser`
+   * for an answer handed over mid-sentence, or `none` when nothing could listen.
+   *
+   * **Recorded because nothing recorded it.** Two live interviews were transcribed end to end by
+   * the browser's fallback while every surface this product owns reported success, and the only
+   * way anybody found out was opening the provider's console. An operator asking "was this
+   * interview transcribed by the engine we configured?" had nowhere to look.
+   *
+   * It is a claim about *this page*, never about Deepgram: it says which engine the answer text
+   * came out of, which is exactly the fact that was missing.
+   */
+  recogniser: string
+}
+
+/**
+ * The engines behind one answer, combined.
+ *
+ * An answer can be produced by both - Deepgram drops mid-sentence and the browser's recogniser
+ * picks up the rest of the same answer - and `listenWithRestart` can compose several listens
+ * into one answer besides. Reporting only the last of those would describe a handover as though
+ * the whole answer came from the engine that finished it, which is the more flattering half.
+ *
+ * `none` is a positive claim that nothing listened, so it is **absorbed** by any real engine
+ * rather than combined with one: an answer partly heard is not an answer nothing heard. `''` is
+ * "not recorded" and gives way to anything at all.
+ */
+export function mergeRecognisers(a: string, b: string): string {
+  const engines = new Set<string>()
+  for (const part of [a, b]) {
+    for (const one of part.split('+')) {
+      if (one && one !== 'none') engines.add(one)
+    }
+  }
+  if (engines.size === 0) return a === 'none' || b === 'none' ? 'none' : ''
+  // Sorted, so `deepgram+browser` is one string rather than two spellings of one fact.
+  return [...engines].sort().reverse().join('+')
 }
 
 /**
@@ -407,6 +444,11 @@ export function capturedPair(
     question,
     answer,
     follow_up: followUp ? 1 : 0,
+    // Left blank here and stamped where the pair is recorded. This function is pure and knows
+    // nothing about which engine was listening; obliging every call site to pass it would be a
+    // signature that makes each caller restate state it does not own, which is the defect this
+    // repository records under `merge_project_config`.
+    recogniser: '',
   }
 }
 
@@ -471,6 +513,12 @@ export default function VoiceInterview() {
   // The audio graph's context, held beside the stream and released with it - see
   // `interviewAudioContext` for why it is one per interview rather than one per answer.
   const audioContextRef = useRef<AudioContext | null>(null)
+  // Which engines produced the most recent single listen, and the answer being assembled from
+  // one or more of them. Two refs because they have different lifetimes: `listenWithRestart`
+  // composes several listens into one answer (a restart, a carried "finish my last answer"), and
+  // the "finish my last answer" text belongs to the *previous* pair rather than this one.
+  const lastListenRecogniserRef = useRef('')
+  const answerRecogniserRef = useRef('')
   const deepgramFailuresRef = useRef(0)
   const deepgramDropsRef = useRef(0)
   const deepgramOffRef = useRef(false)
@@ -1113,6 +1161,10 @@ export default function VoiceInterview() {
       // the handover branch would start a second browser recogniser on an engine that has just
       // failed, so the distinction is structural rather than a nicety.
       let engineKind: 'deepgram' | 'browser' | null = null
+      // Every engine that listened during *this* answer, not only the one that finished it - a
+      // handover is two, and reporting the second alone describes a dropped socket as a clean
+      // Deepgram answer.
+      let enginesUsed = ''
       let stopRequested = false
 
       // Longer initial wait (before first speech), shorter gap once they've started
@@ -1128,6 +1180,9 @@ export default function VoiceInterview() {
       function finish() {
         if (resolved) return
         resolved = true
+        // `none` rather than `''`: nothing listened, which is a fact worth recording and is not
+        // the same as this build not having recorded anything.
+        lastListenRecogniserRef.current = enginesUsed || 'none'
         recognitionRef.current = null
         clearSilenceTimers()
         setSilenceProgress(0)
@@ -1148,6 +1203,7 @@ export default function VoiceInterview() {
       function halt(reason: string | null) {
         if (resolved) return
         resolved = true
+        lastListenRecogniserRef.current = enginesUsed || 'none'
         recognitionRef.current = null
         clearSilenceTimers()
         setSilenceProgress(0)
@@ -1244,6 +1300,7 @@ export default function VoiceInterview() {
           // about a handover is a claim about something that has already happened.
           const handover = startWebSpeech(lang, hooks)
           engineKind = handover ? 'browser' : null
+          if (handover) enginesUsed = mergeRecognisers(enginesUsed, 'browser')
           if (!handover) {
             setRecogniserNotice(
               'The transcription service dropped out, and this browser cannot transcribe on ' +
@@ -1297,8 +1354,10 @@ export default function VoiceInterview() {
           if (deepgramFailuresRef.current >= 2) deepgramOffRef.current = true
           engine = startWebSpeech(lang, hooks)
           engineKind = engine ? 'browser' : null
+          if (engine) enginesUsed = mergeRecognisers(enginesUsed, 'browser')
         } else {
           engineKind = 'deepgram'
+          enginesUsed = mergeRecognisers(enginesUsed, 'deepgram')
           deepgramFailuresRef.current = 0
         }
 
@@ -1404,15 +1463,21 @@ export default function VoiceInterview() {
     // participant who had tapped "Finish my last answer" would lose the most of anybody.
     let carried = ''
     carriedTextRef.current = ''
+    // Accumulated across every listen that contributes to the answer this call returns, and
+    // cleared alongside `carried` on a restart - the words go, so their provenance goes with
+    // them.
+    let answerEngines = ''
     // eslint-disable-next-line no-constant-condition
     while (true) {
       setInterimText('')
       const heard = await listenForAnswer(lang)
+      answerEngines = mergeRecognisers(answerEngines, lastListenRecogniserRef.current)
 
       if (restartAnswerRef.current) {
         restartAnswerRef.current = false
         carried = ''
         carriedTextRef.current = ''
+        answerEngines = ''
         setStatusMessage('Restarting…')
         await new Promise(r => setTimeout(r, 300))
         setStatusMessage('')
@@ -1436,7 +1501,13 @@ export default function VoiceInterview() {
         if (reprompt) await speakText('Of course — go on.')
         const extra = await listenForAnswer(lang)
         setStatusMessage('')
-        if (extra.trim()) previous.answer = `${previous.answer} ${extra}`.trim()
+        if (extra.trim()) {
+          previous.answer = `${previous.answer} ${extra}`.trim()
+          // The words were added to an answer already recorded, so the engine that heard them
+          // belongs to *that* pair. Stamping it on the current one would credit this question
+          // with a recogniser that produced none of its text.
+          previous.recogniser = mergeRecognisers(previous.recogniser, lastListenRecogniserRef.current)
+        }
         // Back to where we were.
         if (reprompt) {
           setCurrentQuestion(reprompt.text)
@@ -1461,8 +1532,26 @@ export default function VoiceInterview() {
       // well as on entry, or a halt on a *later* question would re-send words that already
       // reached the transcript under their own question.
       carriedTextRef.current = ''
+      // Published for the pair this answer is about to become. One place, so a new recording
+      // site cannot forget to work out its own provenance and cannot get it wrong.
+      answerRecogniserRef.current = answerEngines
       return answer
     }
+  }
+
+  /**
+   * Record one captured pair, stamped with the engines that produced it.
+   *
+   * **The single place a pair reaches the transcript.** `capturedPair` is pure and knows nothing
+   * about which recogniser was listening, and there are four recording sites - the primary
+   * answer, a generated press, a scripted branch, and the peer referral. Passing the stamp at
+   * each would oblige four callers to restate state none of them owns, which is exactly how one
+   * of them ends up spelling it differently from the other three.
+   */
+  function recordPair(pair: CapturedPair): CapturedPair {
+    pair.recogniser = mergeRecognisers(pair.recogniser, answerRecogniserRef.current)
+    qaRef.current.push(pair)
+    return pair
   }
 
   async function getElaborationPress(
@@ -1676,7 +1765,7 @@ export default function VoiceInterview() {
           await speakText(pressText)
           const followUpAnswer = await listenWithRestart(lang)
           pressCount++
-          qaRef.current.push(capturedPair(
+          recordPair(capturedPair(
             scriptId, sectionId, questionNo, pressText, followUpAnswer,
             { kind: 'F', index: pressCount },
           ))
@@ -1689,12 +1778,15 @@ export default function VoiceInterview() {
         // pair, and `halt` can only carry what the *current* listen heard. Pre-existing, and
         // pressing on brevity would have made it common. Pushing first also puts the pairs in
         // the order they happened, which is the order the review screen shows them in.
-        const primaryPair = capturedPair(scriptId, sectionId, questionNo, question.text, answer)
-        qaRef.current.push(primaryPair)
+        const primaryPair = recordPair(
+          capturedPair(scriptId, sectionId, questionNo, question.text, answer))
 
         const elaboration = await pressFor(question.text, answer)
         if (elaboration) {
           primaryPair.answer = `${primaryPair.answer} ${elaboration}`.trim()
+          // The press's words joined this answer, so its engine did too.
+          primaryPair.recogniser = mergeRecognisers(
+            primaryPair.recogniser, answerRecogniserRef.current)
           // A press has always consumed a branch slot: it asked the thing the first scripted
           // branch was there to ask.
           followUpCount++
@@ -1713,9 +1805,13 @@ export default function VoiceInterview() {
           const branchPair = capturedPair(
             scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: branchIndex },
           )
-          qaRef.current.push(branchPair)
+          recordPair(branchPair)
           const drawnOut = await pressFor(branch, branchAnswer)
-          if (drawnOut) branchPair.answer = `${branchPair.answer} ${drawnOut}`.trim()
+          if (drawnOut) {
+            branchPair.answer = `${branchPair.answer} ${drawnOut}`.trim()
+            branchPair.recogniser = mergeRecognisers(
+              branchPair.recogniser, answerRecogniserRef.current)
+          }
         }
       }
 
@@ -1766,7 +1862,7 @@ export default function VoiceInterview() {
       setCurrentQuestion(sc.peer_referral)
       await speakText(sc.peer_referral)
       const referralResponse = await listenWithRestart(lang)
-      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
+      recordPair(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
 
       // WITHDRAWN: forward roadmap.
       // setCurrentQuestion(sc.forward_roadmap)

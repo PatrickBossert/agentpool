@@ -9,7 +9,7 @@ import { capturedPair } from '../pages/VoiceInterview'
 describe('capturedPair', () => {
   it('gives a scripted question its own id', () => {
     expect(capturedPair('SC-014', 'S3', 2, 'Q?', 'A.')).toEqual({
-      question_id: 'SC-014.S3.Q2', question: 'Q?', answer: 'A.', follow_up: 0,
+      question_id: 'SC-014.S3.Q2', question: 'Q?', answer: 'A.', follow_up: 0, recogniser: '',
     })
   })
 
@@ -18,7 +18,7 @@ describe('capturedPair', () => {
     // interviewee pressed three times read as three questions covered.
     expect(capturedPair('SC-014', 'S3', 2, 'Say more?', 'B.', { kind: 'F', index: 1 }))
       .toEqual({
-        question_id: 'SC-014.S3.Q2.F1', question: 'Say more?', answer: 'B.', follow_up: 1,
+        question_id: 'SC-014.S3.Q2.F1', question: 'Say more?', answer: 'B.', follow_up: 1, recogniser: '',
       })
   })
 
@@ -27,13 +27,13 @@ describe('capturedPair', () => {
     // the interviewer improvising - a reader auditing the instrument needs to tell them apart.
     expect(capturedPair('SC-014', 'S3', 2, 'And?', 'C.', { kind: 'B', index: 2 }))
       .toEqual({
-        question_id: 'SC-014.S3.Q2.B2', question: 'And?', answer: 'C.', follow_up: 1,
+        question_id: 'SC-014.S3.Q2.B2', question: 'And?', answer: 'C.', follow_up: 1, recogniser: '',
       })
   })
 
   it('gives a section-level prompt the section id alone', () => {
     expect(capturedPair('SC-014', 'S3', null, 'Anything missed?', 'D.')).toEqual({
-      question_id: 'SC-014.S3', question: 'Anything missed?', answer: 'D.', follow_up: 0,
+      question_id: 'SC-014.S3', question: 'Anything missed?', answer: 'D.', follow_up: 0, recogniser: '',
     })
   })
 

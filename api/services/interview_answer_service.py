@@ -55,6 +55,23 @@ def _locate(script: dict, question_id: str) -> tuple[dict, dict]:
     return {}, {}
 
 
+# The engines a page can honestly report having used. A closed vocabulary, for the reason the
+# speech-failure door's `reason` is one: this text reaches an operator's judgement about whether
+# an interview is trustworthy, and the door that carries it checks only a session token.
+RECOGNISERS = frozenset({"deepgram", "browser", "deepgram+browser", "none"})
+
+
+def _recogniser_of(pair: dict) -> str:
+    """Which engine the page says produced this answer, or `''` for "not recorded".
+
+    `''` is deliberately the answer for both an older client that sends nothing and a value this
+    build does not know. Neither can be reported as an engine, and inventing one - defaulting to
+    `browser`, say - would put a fact in front of an operator that nobody established.
+    """
+    claimed = str(pair.get("recogniser", "") or "").strip().lower()
+    return claimed if claimed in RECOGNISERS else ""
+
+
 async def record_answers(
     conn, slug: str, session_id: int, qa_pairs: list[dict], script: dict
 ) -> int:
@@ -111,6 +128,12 @@ async def record_answers(
             question_intent=tags.get("question_intent") or "",
             elicitation=tags.get("elicitation") or "",
             rating=None,
+            # Sanitised rather than trusted: this door is unauthenticated, a session token is the
+            # whole of what it checks, and this string is read back by an operator deciding
+            # whether an interview is trustworthy. An unrecognised value is recorded as `''`
+            # ("not recorded") rather than stored verbatim, which is the same rule
+            # `SpeechFailureBody.reason` follows one model over and for the same reason.
+            recogniser=_recogniser_of(pair),
         ))
 
     if written_ids:

@@ -573,6 +573,13 @@ class CapturedPair(BaseModel):
     question: str
     answer: str = ""
     follow_up: int = 0
+    # Which engine produced `answer` - `deepgram`, `browser`, `deepgram+browser` for an answer
+    # handed over mid-sentence, or `none` when nothing could listen. Defaulted rather than
+    # required because this door is also reached by a halted interview's checkpoint and by older
+    # clients, and an answer that arrives without its provenance is still evidence; `''` says so
+    # rather than guessing. It is never trusted as a *claim about Deepgram* - it is the page
+    # reporting which of its own engines it used, which is exactly the fact nothing recorded.
+    recogniser: str = ""
 
 class SpeechFailureBody(BaseModel):
     """The half of the probe only the participant's browser can answer, and what it still holds.
