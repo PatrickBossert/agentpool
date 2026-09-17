@@ -1930,8 +1930,25 @@ export default function VoiceInterview() {
                 <div className="space-y-4 mb-6">
                   {editableTranscript.map((pair, i) => (
                     <div key={pair.question_id || i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                      <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-                        <p id={`review-question-${i}`} className="text-sm text-gray-600 leading-relaxed">
+                      {/* **White on dark grey, and deliberately not a branding colour.**
+                          Finding 10 of the 17 September interview: the question was
+                          `text-gray-600` on `bg-gray-50` and the answer `text-gray-700` on
+                          white, so on a screen carrying dozens of pairs there was almost
+                          nothing to tell one from the other at a glance. A dark band reads as
+                          "asked" against a light field that reads as "said".
+
+                          A project sets `primary_color` and `text_color` and neither is used
+                          here, on purpose: this pair is chosen for contrast and checked, and
+                          deriving either half from an operator's colour picker would make the
+                          legibility of the one screen where a participant corrects their own
+                          words depend on a choice made for a logo. The heading and the buttons
+                          above still carry the branding, so the page is still theirs. */}
+                      <div className="px-4 py-3 bg-slate-700">
+                        <p
+                          id={`review-question-${i}`}
+                          data-testid="review-question"
+                          className="text-sm text-white leading-relaxed"
+                        >
                           {pair.question}
                         </p>
                       </div>

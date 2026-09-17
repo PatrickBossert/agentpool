@@ -99,6 +99,9 @@ function completionBodies(): Record<string, unknown>[] {
  */
 let completeResponds: 'ok' | 'refused' | 'offline' = 'ok'
 
+/** Branding the server answers with, if a test has set any. */
+let branding: Record<string, unknown> | null = null
+
 function installFetch() {
   return vi.fn(async (url: string, init?: RequestInit) => {
     let body: Record<string, unknown> | null = null
@@ -120,7 +123,10 @@ function installFetch() {
       // Declared, because the page fails closed on an absent policy - see the note in
       // `support/voiceInterviewFakes.tsx`. This is a standard engagement.
       return new Response(
-        JSON.stringify({ session: SESSION, script: SCRIPT, speech_policy: 'browser_permitted' }),
+        JSON.stringify({
+          session: SESSION, script: SCRIPT, speech_policy: 'browser_permitted',
+          ...(branding ? { branding } : {}),
+        }),
         { status: 200 },
       )
     }
@@ -198,9 +204,13 @@ function installAudioAndMic() {
  */
 const A_FULL_ANSWER = 'The recogniser heard this, and it heard the whole of it too.'
 
-async function reachTheReviewStep(spoken = A_FULL_ANSWER) {
+async function reachTheReviewStep(
+  spoken = A_FULL_ANSWER,
+  withBranding: Record<string, unknown> | null = null,
+) {
   sent = []
   completeResponds = 'ok'
+  branding = withBranding
   vi.stubGlobal('fetch', installFetch())
   installSpeechRecognition(spoken)
   installAudioAndMic()
@@ -223,6 +233,67 @@ async function reachTheReviewStep(spoken = A_FULL_ANSWER) {
   await waitFor(() => expect(completionBodies().length).toBe(1), { timeout: 5000 })
   await screen.findByRole('button', { name: /^finish$/i })
 }
+
+describe('telling a question from an answer at a glance', () => {
+  beforeEach(() => { vi.restoreAllMocks() })
+  afterEach(() => {
+    cleanup()
+    branding = null
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 200 }))
+  })
+
+  it('puts the questions in white on a dark band, above their answers', async () => {
+    // Finding 10: `text-gray-600` on `bg-gray-50` above `text-gray-700` on white. Two greys
+    // one step apart, dozens of times down a page - there was nothing to scan by.
+    await reachTheReviewStep()
+
+    const questions = screen.getAllByTestId('review-question')
+    expect(questions).toHaveLength(3)
+    for (const question of questions) {
+      expect(question.className).toContain('text-white')
+      // The band is the parent, which is what actually carries the colour behind the words.
+      expect(question.parentElement!.className).toContain('bg-slate-700')
+      // And the grey it replaces is gone rather than merely overridden.
+      expect(question.className).not.toContain('text-gray-600')
+    }
+  }, 20000)
+
+  it('does not take the question colour from the project’s branding', async () => {
+    // **The control, and it is a real hazard rather than a hypothetical.** A project sets
+    // `text_color`, the page uses it for headings on light surfaces, and applying it to this
+    // dark band would render a dark-grey question invisible on it - on the one screen where a
+    // participant corrects what was recorded of them. So the pair is fixed and checked here.
+    await reachTheReviewStep(undefined, {
+      header_image_url: '',
+      primary_color: '#111111',
+      text_color: '#1f2937',
+      interviewer_name: 'Avery Singh',
+      interviewer_tagline: '',
+    })
+
+    for (const question of screen.getAllByTestId('review-question')) {
+      expect(question.getAttribute('style')).toBeNull()
+      expect(question.parentElement!.getAttribute('style')).toBeNull()
+      expect(question.className).toContain('text-white')
+    }
+  }, 20000)
+
+  it('keeps each question as the description of its own answer field', async () => {
+    // The band is a restyle and must stay a restyle: the question is the field's *description*
+    // rather than its name, which is what lets every field be asked for by one accessible name
+    // and still be explained. Losing the id here would be an accessibility regression that no
+    // colour assertion could see.
+    await reachTheReviewStep()
+
+    const fields = screen.getAllByRole('textbox', { name: /your answer/i })
+    const questions = screen.getAllByTestId('review-question')
+    expect(fields).toHaveLength(questions.length)
+    fields.forEach((field, i) => {
+      expect(field.getAttribute('aria-describedby')).toBe(questions[i].id)
+      expect(questions[i].id).not.toBe('')
+    })
+  }, 20000)
+})
 
 const finishTheReview = async () => {
   await userEvent.click(screen.getByRole('button', { name: /^finish$/i }))
