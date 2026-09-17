@@ -195,6 +195,16 @@ def _warn_interview_coverage(parsed: object, slug: str) -> list[dict]:
     return validate_node_coverage(parsed, _current_registry(slug))
 
 
+def _warn_script_assertions(parsed: object, _slug: str) -> list[dict]:
+    from api.services.script_assertion_validation import validate_script_assertions
+
+    if not isinstance(parsed, dict):
+        return []
+    # Takes no registry and no project: whether a spoken line tells the interviewee what they
+    # said is a property of the line.
+    return validate_script_assertions(parsed)
+
+
 # Warners differ from validators in two ways that matter, and both are why they are a
 # separate map rather than another _VALIDATORS entry:
 #
@@ -207,18 +217,21 @@ def _warn_interview_coverage(parsed: object, slug: str) -> list[dict]:
 #
 # They run after the write succeeds, so a recorded warning always refers to an output that
 # actually exists.
-_WARNERS: dict[str, Callable[[object, str], list[dict]]] = {
-    "value_chain_tree": _warn_value_chain_tree,
-    "themes": _warn_themes,
-    "interview_scripts": _warn_interview_coverage,
-}
-
-# The `source` recorded against each warning, so a reviewer can tell a tree finding from a
-# theme one without parsing the code.
-_WARNER_SOURCE: dict[str, str] = {
-    "value_chain_tree": "value_chain_tree",
-    "themes": "theme_anchor",
-    "interview_scripts": "interview_coverage",
+# One output type may owe several independent checks, so this maps to a LIST of
+# (source, warner) pairs rather than to one warner and a source looked up beside it.
+#
+# The source travels WITH the warner and is not a second map keyed on the output type, because
+# `record_validation_warnings_sync` is called once per source with complete=True - it re-derives
+# everything for that source and clears what is now absent. Two checks sharing one source would
+# therefore make each one's clean run wipe the other's findings, which is a silent loss rather
+# than a wrong label. The pairing is what keeps the clearing honest.
+_WARNERS: dict[str, list[tuple[str, Callable[[object, str], list[dict]]]]] = {
+    "value_chain_tree": [("value_chain_tree", _warn_value_chain_tree)],
+    "themes": [("theme_anchor", _warn_themes)],
+    "interview_scripts": [
+        ("interview_coverage", _warn_interview_coverage),
+        ("script_assertion", _warn_script_assertions),
+    ],
 }
 
 
@@ -575,8 +588,7 @@ class SQLiteStateTool(BaseTool):
                     self.slug, self.run_id, key, agent_name, parsed, registration_error
                 )
 
-            warner = _WARNERS.get(key)
-            if warner is not None:
+            for source, warner in _WARNERS.get(key, ()):
                 try:
                     found = warner(parsed, self.slug)
                     # complete=True: a warner re-derives every finding from the artefact it
@@ -585,13 +597,14 @@ class SQLiteStateTool(BaseTool):
                     # matters - run 29 raised missing_l0 on tree v17 and fixed it on v18,
                     # and without this the warning outlived the problem.
                     record_validation_warnings_sync(
-                        self.slug, self.run_id, _WARNER_SOURCE[key], found, complete=True
+                        self.slug, self.run_id, source, found, complete=True
                     )
                 except Exception:
                     # A warning is never worth failing a completed write over. The write and
                     # its row are durable by this point; telling the agent it failed would
-                    # make it write again and version a duplicate.
-                    pass
+                    # make it write again and version a duplicate. Per warner, so one that
+                    # raises does not take the others down with it.
+                    continue
 
             try:
                 link_output_sync(self.slug, self.run_id, self.agent_name, new_output_id)

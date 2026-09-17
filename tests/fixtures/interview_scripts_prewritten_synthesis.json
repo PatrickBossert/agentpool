@@ -1,0 +1,72 @@
+{
+  "_comment": [
+    "A real defect, committed so the guard is driven against real data on every machine rather",
+    "than against something written to be caught. SC-013.S10.Q1 is transcribed verbatim from",
+    "interview_scripts_v37.json on sp-gs-am - the question an internal auditor was read on",
+    "17 September 2026, to which she answered 'I think you have characterised that pretty well",
+    "actually'. Her endorsement of it is in the transcript. The closing_message is that",
+    "script's, and is the 'unfiltered' promise.",
+    "SC-901's synthesis_check.synthesis_prompt is the OTHER copy - the one the 4 September",
+    "withdrawal covered - kept here because the two are different text in different places and",
+    "a guard that sees only one of them is the guard we already had.",
+    "Trimmed to the fields the guard reads. Nothing here is invented."
+  ],
+  "SC-013": {
+    "script_id": "SC-013",
+    "node_id": "0.A",
+    "node_label": "Internal Audit Assessment",
+    "level": "L0",
+    "perspective": "A",
+    "welcome_message": "Thank you for making the time. We want your honest, unfiltered assessment to inform our transformation priorities.",
+    "sections": [
+      {
+        "title": "Wrap-Up and Critical Observations",
+        "questions": [
+          {
+            "id": "SC-013.S10.Q1",
+            "text": "Based on our conversation, let me offer a synthesis: governance maturity appears to be at the Developing to Managed level. The most material control gaps appear to be: the data quality risk to the investment case, the ISS performance data independence gap, and the absence of a formal benefit realisation framework. Does that align with your independent assessment - and what am I characterising incorrectly or incompletely?"
+          }
+        ],
+        "section_id": "SC-013.S1",
+        "discipline": "governance",
+        "question_intent": "context",
+        "elicitation": "unprompted"
+      }
+    ],
+    "closing_message": "Thank you - your independent perspective is the most important external input into the governance assessment. What you have shared will go directly into the board narrative and the transformation governance design, unfiltered. Thank you for your candour and your time.",
+    "relationship": "internal"
+  },
+  "SC-901": {
+    "script_id": "SC-901",
+    "node_id": "1.2",
+    "node_label": "Asset Planning",
+    "level": "L2",
+    "welcome_message": "Thanks for your time today.",
+    "sections": [
+      {
+        "title": "Closing",
+        "questions": [
+          {
+            "id": "SC-901.S6.Q1",
+            "text": "Who else should I speak to in order to get a full picture of this cluster?"
+          }
+        ],
+        "section_id": "SC-901.S1",
+        "discipline": "governance",
+        "question_intent": "context",
+        "elicitation": "unprompted"
+      }
+    ],
+    "synthesis_check": {
+      "synthesis_prompt": "Before I let you go - based on what you've told me, here's how I see this cluster: the strategic intent is asset lifecycle optimisation, maturity is Repeatable, the biggest constraint on decision quality is data latency, and the value opportunity is in condition-based intervention. Does that match your assessment?",
+      "response_probes": {
+        "if_positive": "Good - what would you add or emphasise differently?",
+        "if_defensive": "Where does my picture differ from yours?",
+        "if_uncertain": "What would you want me to verify with others?"
+      },
+      "peer_referral": "Who else should I speak to for a full picture?"
+    },
+    "closing_message": "Thank you for your time.",
+    "relationship": "internal"
+  }
+}
