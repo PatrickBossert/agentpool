@@ -41,6 +41,15 @@ import {
 
 const GRANT = { token: 'jwt', listen_params: { model: 'nova-3', language: 'en' } }
 
+/**
+ * The two things one halting interview said, written out so they can be *scanned for*.
+ *
+ * Distinctive rather than generic, and never a substring of each other, because they are what
+ * tells this interview's checkpoint from the one an earlier test left running.
+ */
+const FIRST_ANSWER = 'A finished answer to the first question, given in full.'
+const WORDS_IN_FLIGHT = 'Words spoken into a socket that is about to go.'
+
 /** Render the page without clicking Start - the refusals are about Start not being there. */
 function renderInterview() {
   render(
@@ -349,7 +358,11 @@ describe('an engagement that requires Deepgram', () => {
 
     // Question one, answered and committed.
     const first = await firstSocket()
-    first.say('A finished answer to the first question.', true)
+    // Long enough not to be pressed. An answer under `BRIEF_ANSWER_WORDS` draws an
+    // elaboration press, which inserts a whole question-and-answer cycle - and this test
+    // reads `FakeSocket.opened[1]` expecting question two, so a press would put its own
+    // socket there. The subject here is the checkpoint, not the press.
+    first.say(FIRST_ANSWER, true)
     await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
 
     // Question two, half spoken when the service goes.
@@ -359,31 +372,40 @@ describe('an engagement that requires Deepgram', () => {
       return FakeSocket.opened[1]
     }, { timeout: 10000 })
     await waitFor(() => expect(second.readyState).toBe(FakeSocket.OPEN))
-    second.say('Words spoken into a socket that is about to go.', true)
+    second.say(WORDS_IN_FLIGHT, true)
     second.drop()
 
     await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
 
+    // **Scanned for, never read off the end.** An earlier test's interview outlives its test -
+    // `cleanup()` unmounts the page and cannot stop an async loop over closures - and it halts
+    // and checkpoints through whatever `fetch` stub is installed *now*, which is this spy. So
+    // "the last checkpoint" is not necessarily this interview's, and reading it is unsound in
+    // exactly the way the keyterms file's `answersOfInterviewHearing` describes. A checkpoint
+    // that never arrives now fails on the timeout rather than passing on a stranger's.
     await waitFor(() => {
-      const calls = fetchSpy.mock.calls.filter(([url]) => String(url).endsWith('/checkpoint'))
-      expect(calls.length).toBeGreaterThan(0)
-      const body = JSON.parse(String((calls[calls.length - 1][1] as RequestInit).body))
-      const kept = JSON.stringify(body.checkpoint)
-      // The committed answer...
-      expect(kept).toContain('A finished answer to the first question.')
-      // ...and the one that had no pair yet, which is the half that was being lost.
-      expect(kept).toContain('Words spoken into a socket that is about to go.')
+      const mine = fetchSpy.mock.calls
+        .filter(([url]) => String(url).endsWith('/checkpoint'))
+        .map(([, init]) => JSON.stringify(JSON.parse(String((init as RequestInit).body)).checkpoint))
+        // The committed answer, and the one that had no pair yet - which is the half that was
+        // being lost. Both in one checkpoint, because either alone is satisfied by a different
+        // interview's.
+        .find(kept =>
+          kept.includes(FIRST_ANSWER) && kept.includes(WORDS_IN_FLIGHT))
+      expect(mine, 'no checkpoint carried both this interview\'s answers').toBeTruthy()
     }, { timeout: 10000 })
 
-    const reported = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/speech-failure'))
+    const reported = fetchSpy.mock.calls
+      .filter(([url]) => String(url).endsWith('/speech-failure'))
+      // Scanned for the same reason, and on the same evidence.
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
+      .find(body => JSON.stringify(body.qa_pairs).includes(FIRST_ANSWER))
     expect(reported).toBeTruthy()
-    const body = JSON.parse(String((reported![1] as RequestInit).body))
-    expect(body.reason).toBe('socket_failed')
+    expect(reported!.reason).toBe('socket_failed')
     // **The completed answers go with the report, and this is what makes the halt screen's
     // promise true.** The checkpoint holds the words with no question id; only these become
     // `interview_answers` rows, which is the only thing the crews read. A halt that sent the
     // report alone left the transcript empty behind a screen saying it had been saved.
-    expect(JSON.stringify(body.qa_pairs)).toContain('A finished answer to the first question.')
   }, 25000)
 
   // ── The sequence nothing drove: the balance runs out mid-interview ─────────
@@ -439,6 +461,13 @@ describe('an engagement that requires Deepgram', () => {
     // second time, so its own specific diagnosis is what the consultant reads.
     expect(body.reason).toBeNull()
     // And the answers still travel, because preserving is not what is being suppressed.
+    //
+    // **This answer is eight words, so it now draws an elaboration press - and the halt lands
+    // during that press rather than at question two.** That makes this the case for the other
+    // half of the repair: a pair is pushed the moment the answer is given rather than after the
+    // press, so an interview that halts mid-press still carries it. Pushed afterwards, as it
+    // was, this assertion reads `[]` - the words were in no pair, and `halt` can only carry
+    // what the *current* listen heard.
     expect(JSON.stringify(body.qa_pairs)).toContain('An answer given while there was still credit.')
   }, 25000)
 
@@ -505,7 +534,9 @@ describe('an engagement that requires Deepgram', () => {
 
     // Question one, answered and committed, so "Finish my last answer" is offered.
     const first = await firstSocket()
-    first.say('The first answer.', true)
+    // Long enough not to be pressed - see the note on the socket indices above. This test
+    // walks `socketAt(1)` and `socketAt(2)`, so an inserted press moves both.
+    first.say('The first answer, given at a length nobody would press on.', true)
     await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
 
     // Question two: say something, then tap "Finish my last answer" - those words become

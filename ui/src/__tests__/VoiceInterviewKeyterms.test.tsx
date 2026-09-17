@@ -41,6 +41,19 @@ import {
 // that is what makes the assertions about a project's own words rather than about a constant.
 const OUR_KEYTERMS = ['Renewals CapEx Allocation', 'Iberdrola', 'SP Energy Networks']
 
+/**
+ * What the browser's recogniser would hear, in the cases where it must not be reached at all.
+ *
+ * **Deliberately longer than `BRIEF_ANSWER_WORDS`.** A brief answer now draws an elaboration
+ * press, and these interviews outlive their tests - `cleanup()` unmounts the page and closes the
+ * `AudioContext`, which the running interview reads as a dropped capture and hands over to the
+ * browser's recogniser. A four-word control transcript therefore had a *finished* test's
+ * interview press, speak, and open a fresh socket into the **next** test's cleared
+ * `FakeSocket.opened`, where it arrived as that test's `firstSocket()`. The leak is the one
+ * `socketAt` documents; the length is what stops this file feeding it.
+ */
+const BROWSER_CONTROL = 'should not be reached by anything at all in this interview'
+
 function paramsOf(url: string) {
   return new URL(url).searchParams
 }
@@ -87,7 +100,7 @@ describe('the recogniser is told the project’s own words', () => {
 
   it('sends the project’s keyterms on the socket it opens', async () => {
     installStreaming()
-    installSpeechRecognition('should not be reached')
+    installSpeechRecognition(BROWSER_CONTROL)
     vi.stubGlobal('fetch', installFetch({
       token: 'jwt-from-the-server',
       listen_params: { model: 'nova-3', language: 'en', smart_format: 'true', keyterm: OUR_KEYTERMS },
@@ -116,7 +129,7 @@ describe('the recogniser is told the project’s own words', () => {
     // the words came down the wire: a different engagement, different terms, same code.
     const theirs = ['Berth Allocation', 'Clydeport']
     installStreaming()
-    installSpeechRecognition('should not be reached')
+    installSpeechRecognition(BROWSER_CONTROL)
     vi.stubGlobal('fetch', installFetch({
       token: 'jwt',
       listen_params: { model: 'nova-3', language: 'en', keyterm: theirs },
@@ -160,7 +173,7 @@ describe('the recogniser is told the project’s own words', () => {
     // posts into the next one - see `answersOfInterviewHearing` above for what that cost.
     // The control without which a fix that never connected would pass every assertion above.
     installStreaming()
-    installSpeechRecognition('should not be reached')
+    installSpeechRecognition(BROWSER_CONTROL)
     vi.stubGlobal('fetch', installFetch({
       token: 'jwt',
       listen_params: { model: 'nova-3', language: 'en', smart_format: 'true' },

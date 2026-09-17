@@ -189,7 +189,16 @@ function installAudioAndMic() {
  * corrects is a snapshot of what the interview captured - a hand-built props object would let
  * this file pass against a page that never populated it.
  */
-async function reachTheReviewStep(spoken = 'The recogniser heard this.') {
+/**
+ * The answer every question gets. **Long enough not to be pressed**: an answer under
+ * `BRIEF_ANSWER_WORDS` now draws an elaboration press, which would put a second pair on the
+ * review screen for every question and make a file about correcting three answers a file about
+ * six. The length is the fixture's business rather than this file's subject, so it is stated
+ * here once with the reason.
+ */
+const A_FULL_ANSWER = 'The recogniser heard this, and it heard the whole of it too.'
+
+async function reachTheReviewStep(spoken = A_FULL_ANSWER) {
   sent = []
   completeResponds = 'ok'
   vi.stubGlobal('fetch', installFetch())
@@ -240,7 +249,7 @@ describe('the review and correction step', () => {
     // And each already holds its answer, so they are the answers' own fields rather than
     // three empty boxes beside three read-only paragraphs.
     for (const field of fields) {
-      expect((field as HTMLTextAreaElement).value).toBe('The recogniser heard this.')
+      expect((field as HTMLTextAreaElement).value).toBe('The recogniser heard this, and it heard the whole of it too.')
     }
 
     // The control that hid them is gone, and so is its tooltip.
@@ -264,9 +273,9 @@ describe('the review and correction step', () => {
     expect(bodies).toHaveLength(2)
     const pairs = bodies[1].qa_pairs as { question: string; answer: string; question_id: string }[]
     expect(pairs.map(p => p.answer)).toEqual([
-      'The recogniser heard this.',
+      'The recogniser heard this, and it heard the whole of it too.',
       'Iberdrola, not ever brola.',
-      'The recogniser heard this.',
+      'The recogniser heard this, and it heard the whole of it too.',
     ])
     // With its address intact: `/complete` requires `question_id` on every pair, so a
     // correction sent as bare question-and-answer text would be refused at the door.
@@ -324,7 +333,7 @@ describe('the review and correction step', () => {
 
     await waitFor(() => expect(written).toHaveLength(1))
     expect(written[0]).toContain('Question 2?')
-    expect(written[0]).toContain('The recogniser heard this.')
+    expect(written[0]).toContain('The recogniser heard this, and it heard the whole of it too.')
     // And it says so, which is the half the case below is about.
     await screen.findByRole('button', { name: /copied/i })
   })
@@ -359,7 +368,7 @@ describe('the review and correction step', () => {
 
     const offered = await screen.findByRole('textbox', { name: /your transcript/i })
     expect((offered as HTMLTextAreaElement).value).toContain('Question 2?')
-    expect((offered as HTMLTextAreaElement).value).toContain('The recogniser heard this.')
+    expect((offered as HTMLTextAreaElement).value).toContain('The recogniser heard this, and it heard the whole of it too.')
     // Read-only: this is the copy, not a second place to correct the answers.
     expect((offered as HTMLTextAreaElement).readOnly).toBe(true)
   })

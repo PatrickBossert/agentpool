@@ -58,6 +58,52 @@ export function interviewerPortraitSrc(
   return `${import.meta.env.BASE_URL.replace(/\/+$/, '')}${imageUrl}`
 }
 
+/**
+ * Shorter than this, in words, and an answer is treated as asking to be drawn out.
+ *
+ * **Chosen against the 17 September interview rather than guessed.** Of its 91 answers, the
+ * eleven under nine words are the ones a reader of the transcript would call unelaborated -
+ * "No", "It should do", "It's still being established", "Not that I'm aware of", "No all that
+ * information is taken on trust" - while nine words up is already substantive: "I would say the
+ * controls are not very strong", "I think you have characterised that pretty well actually".
+ *
+ * So nine presses on **eleven of the ninety-one, and on none of the thirty-one primary
+ * answers** - the shortest primary answer in that interview was nine words. That is the balance
+ * to keep: a threshold at twelve would have pressed sixteen, including several that had said
+ * what they had to say.
+ *
+ * **A short answer to a yes/no question is not exempt, deliberately.** It is the clearest place
+ * an interviewer digs: asked whether there is a threshold and told "No", the useful next
+ * question is what it would take to have one. `probing_instructions` reaches
+ * `getElaborationPress`, so what gets asked is the script's own line of enquiry rather than a
+ * blunt "tell me more".
+ */
+export const BRIEF_ANSWER_WORDS = 9
+
+/**
+ * Whether this answer asks to be pressed - because it is brief, or because it evades.
+ *
+ * **Two triggers, and brevity is the one that was missing.** The evasion signals are phrases
+ * Maya writes at design time, matched as substrings; on the live corpus there are 597 of them
+ * across 199 questions and **not one fired in a real interview** - they are what a model
+ * imagines somebody will say ("we are on track", "the team manages it") rather than what
+ * somebody does. So the whole elaboration loop had never run. They are kept rather than
+ * replaced: a signal that does match is a strong one, and the two triggers are independent.
+ *
+ * An empty answer is **not** pressed. It means the recogniser heard nothing, and the reprompt
+ * path already exists for that; asking somebody to expand on a silence is the wrong response to
+ * a microphone that failed.
+ */
+export function needsElaboration(answer: string, evasionSignals: string[] | undefined): boolean {
+  const trimmed = answer.trim()
+  if (!trimmed) return false
+  if (trimmed.split(/\s+/).length < BRIEF_ANSWER_WORDS) return true
+  const lower = trimmed.toLowerCase()
+  return (evasionSignals ?? []).some(
+    sig => sig.trim() !== '' && lower.includes(sig.toLowerCase()),
+  )
+}
+
 /** Initials for an interviewer with no headshot - a state agents/identity.py declares legitimate. */
 function initialsOf(name: string): string {
   return name
@@ -1408,41 +1454,76 @@ export default function VoiceInterview() {
         await speakText(question.text)
 
         // Record primary answer
-        let answer = await listenWithRestart(lang, { text: question.text })
-
-        const needsElaboration =
-          answer.trim().length > 0 &&
-          question.evasion_signals.some(sig => answer.toLowerCase().includes(sig.toLowerCase()))
+        const answer = await listenWithRestart(lang, { text: question.text })
 
         let followUpCount = 0
+        // Presses are numbered independently of branches, so a press on a branch answer cannot
+        // collide with a branch's own id. `F` and `B` are separate series in `capturedPair`.
+        let pressCount = 0
 
-        if (needsElaboration) {
-          // Press for elaboration. An empty press means no press was produced in time, so
-          // the whole branch is skipped and the interview moves on to the next question -
-          // a missed follow-up costs depth on one answer, while speaking nothing and then
-          // listening costs the interviewee's confidence in the whole conversation.
-          const pressText = await getElaborationPress(question.text, answer, question.probing_instructions)
-          if (pressText) {
-            setCurrentQuestion(pressText)
-            await speakText(pressText)
-            const followUpAnswer = await listenWithRestart(lang)
-            qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, pressText, followUpAnswer, { kind: 'F', index: followUpCount + 1 }))
-            answer = `${answer} ${followUpAnswer}`.trim()
-            followUpCount++
-          }
+        /**
+         * Press once on an answer that asks for it, and return what came back.
+         *
+         * **Asked of branch answers as well as of the primary one**, which is where the
+         * reported defect actually lives: in the 17 September interview 60 of the 91 answers
+         * were to scripted branches, every answer under nine words was one of them, and this
+         * code had never looked at a branch answer at all. Pressing only the primary answer
+         * would have reached one of the eleven short ones.
+         *
+         * A press's *own* answer is never pressed again - the recursion is not there, and it is
+         * the bound that keeps a brief reply from becoming an interrogation. An empty press
+         * means none was produced in time, so the whole branch is skipped and the interview
+         * moves on: a missed follow-up costs depth on one answer, while speaking nothing and
+         * then listening costs the interviewee's confidence in the whole conversation.
+         */
+        const pressFor = async (asked: string, reply: string): Promise<string> => {
+          if (!needsElaboration(reply, question.evasion_signals)) return ''
+          const pressText = await getElaborationPress(asked, reply, question.probing_instructions)
+          if (!pressText) return ''
+          setCurrentQuestion(pressText)
+          await speakText(pressText)
+          const followUpAnswer = await listenWithRestart(lang)
+          pressCount++
+          qaRef.current.push(capturedPair(
+            scriptId, sectionId, questionNo, pressText, followUpAnswer,
+            { kind: 'F', index: pressCount },
+          ))
+          return followUpAnswer
         }
 
-        // Push primary Q&A before follow-up branches
-        qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, question.text, answer))
+        // **Recorded the moment it is given, and merged into afterwards.** The pair used to be
+        // pushed *after* the press, so an interview that halted during one - a grant refused,
+        // a socket that would not open - lost the answer it had just been given: it was in no
+        // pair, and `halt` can only carry what the *current* listen heard. Pre-existing, and
+        // pressing on brevity would have made it common. Pushing first also puts the pairs in
+        // the order they happened, which is the order the review screen shows them in.
+        const primaryPair = capturedPair(scriptId, sectionId, questionNo, question.text, answer)
+        qaRef.current.push(primaryPair)
+
+        const elaboration = await pressFor(question.text, answer)
+        if (elaboration) {
+          primaryPair.answer = `${primaryPair.answer} ${elaboration}`.trim()
+          // A press has always consumed a branch slot: it asked the thing the first scripted
+          // branch was there to ask.
+          followUpCount++
+        }
 
         // Pre-scripted follow-up branches
         while (followUpCount < question.follow_up_count && question.follow_up_branches[followUpCount]) {
           const branch = question.follow_up_branches[followUpCount]
+          const branchIndex = followUpCount + 1
           setCurrentQuestion(branch)
           await speakText(branch)
           const branchAnswer = await listenWithRestart(lang)
-          qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: followUpCount + 1 }))
           followUpCount++
+          // Recorded before its press and merged into afterwards, exactly as the primary
+          // answer above is, and for the same reason.
+          const branchPair = capturedPair(
+            scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: branchIndex },
+          )
+          qaRef.current.push(branchPair)
+          const drawnOut = await pressFor(branch, branchAnswer)
+          if (drawnOut) branchPair.answer = `${branchPair.answer} ${drawnOut}`.trim()
         }
       }
 
