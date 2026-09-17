@@ -188,6 +188,38 @@ Two things that look like evidence during forensics on `data/` and are not:
 - **A running server on :8000 rewrites `data/system.db` while idle** - the scheduler restamps
   its heartbeat. Checksum before and after before attributing a change to the suite.
 
+**A backup taken into `data/` used to become a project, and one of the sweeps that adopted it
+wrote to it.** Both startup sweeps enumerated `Path(database_dir).glob("*.db")`, which is a
+list of **files** and not a list of engagements, so a snapshot was indistinguishable from a
+client. Measured on the live deployment on 17 September: **seventeen** scheduled daily reports
+against **one** real project, eleven of the phantoms `sp-gs-am.*` snapshots and **four of them
+backups of `system.db` itself**. `scheduled_jobs` holds one row today.
+
+The noise was the harmless half. `_mark_stale_runs_failed` **writes** - `UPDATE crew_runs SET
+status='failed'` against every file it found - and ten runs in a six-week-old `sp-gs-am`
+backup had been flipped by restarts. **A backup that changes is not a backup**, so the
+forensic record those snapshots existed to preserve had been quietly edited by the thing
+meant to be reading it. Fixed in `7724fc6f`: both sweeps take `fetch_registered_slugs`, and
+registration also drops `scheduled_jobs` rows for slugs that are not projects - guarded so an
+empty registry cannot mean "delete everything", since a deployment part-way through creating
+its first project legitimately has none.
+
+Two halves survive the fix, and they are the reason it is written here rather than left in a
+commit message:
+
+- **Put a backup outside `data/`.** This session used `archive/`. A subdirectory is *not* far
+  enough: `_find_session_db` globs `data/*.db` **and** `data/*/*.db`, so `data/backups/` is
+  still on a search path.
+- **A database file is not a project. The registry is the definition.** Anything enumerating
+  engagements reads `project_registry`; anything enumerating files is answering a different
+  question and will be wrong the first time somebody names a file conveniently.
+
+One live demonstration came free with the repair. Two archived databases were **re-materialised
+as 0-byte files in `data/` within minutes of being moved**, by a pre-fix process still globbing
+for them - which is this file's own "probing a slug materialises a database file per guess"
+hazard, observed rather than reasoned about. Expect it while anything predating `7724fc6f` is
+still running, and do not read such a file as a project that lost its data.
+
 ## Reviewing changes: the recurring failure mode
 
 Repeatedly on this project a test has verified a property **one layer away from where it holds**.
@@ -1419,8 +1451,13 @@ presented as a complete list - a picker showing five voices where ninety exist g
 **Language is the axis; accent is a narrowing (sp64).** `en` is the language; `british`,
 `irish`, `american` and `new zealand` are accents *of* it, and ElevenLabs keeps them as separate
 query parameters. The door used to open filtered to the project's `interview_accent`, `british`
-by default, which showed **6 of 41** account voices - an axis that should broaden used as one
-that narrows. So the default sits on the language (`DEFAULT_LIBRARY_LANGUAGE` in
+by default, which showed **6 of 41** account voices when that was measured - an axis that
+should broaden used as one that narrows. **The account held 45 on 17 September**, read from
+`GET /v1/voices`, so treat the ratio as the finding and the pair of numbers as a moving
+target - the same caution this section already gives one paragraph up about which accents a
+listing happens to carry. An account grows whenever somebody adds a voice, and nothing in
+this repository is told when that happens. So the default sits on the language
+(`DEFAULT_LIBRARY_LANGUAGE` in
 `voice_catalogue.py`, never in TypeScript), the accent narrows nothing until asked, and the
 picker carries a control for each. The account listing is deliberately **never** narrowed by
 language: those are the deployment's own voices, every one added on purpose, and the parameter
@@ -2785,12 +2822,27 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - `python-pptx` must be installed inside the venv (not system pip on macOS with Homebrew Python 3.13 / PEP 668)
 - ~~`taskreimagination.ai` must be a verified sender domain in Resend before reminder emails
   deliver~~ - **closed, and it had been closed for some time before anybody checked.** The domain
-  is verified in `eu-west-1`, confirmed against `GET /domains` on 13 September 2026. It is left
+  is verified in `eu-west-1`, confirmed against `GET /domains` on 13 September 2026 and again on
+  17 September. It is left
   struck through rather than deleted because this entry was **cited as a reason** by four
   decisions elsewhere in this file, and a reader who finds those citations needs to land
-  somewhere that says the reason is void rather than find nothing. What is *not* closed by it:
-  `pam@` and `stakeholder-manager@` have never been sent from, inbound routing does not exist,
-  and `dev_mode` still defaults to `True` so project mail is still held.
+  somewhere that says the reason is void rather than find nothing.
+
+  **It had been false for seven weeks, not days.** The same response carries
+  `"created_at": "2026-07-26"`, so the domain has been verified since **26 July 2026** - which
+  makes this a considerably sharper instance of *a fact about an external service rots
+  silently* than the original write-up implied. Seven weeks is long enough for four decisions
+  to be taken on it, and four were.
+
+  **One of the residuals is now a measurement rather than an assumption.** The same read
+  answers `"capabilities": {"sending": "enabled", "receiving": "disabled"}` - so "inbound
+  routing does not exist" is not merely a statement about code we have not written; the
+  provider has receiving **disabled** on the domain, and enabling it is a prerequisite
+  nobody has met. That settles one of the two items the mail section lists as "assumed and
+  unconfirmed". The other - whether Resend permits arbitrary local parts on a verified
+  domain - is untouched by this and still unconfirmed. What else is *not* closed:
+  `pam@` and `stakeholder-manager@` have never been sent from, and `dev_mode` still defaults
+  to `True` so project mail is still held.
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
 - The `business_plan` crew has never completed a real run. It only became buildable when
   `visual_illustrator` was registered; before that `create_business_plan_crew` raised
@@ -2844,8 +2896,17 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   sp66 removed the review step's "email me a copy" checkbox - it promised a delivery that
   `dev_mode` was holding, and it was the *only* reader of the participant's edits, so a
   participant who corrected a mangled answer and left the box unticked had their corrections
-  discarded. The door behind it is still mounted, still tested (five backend files touch it),
-  and now has **no caller in `ui/src`**. Kept rather than retired for one reason: it is a
+  discarded. The door behind it is still mounted, still tested - **six** backend files touch
+  it, not the five this entry claimed for a while: `test_interviews_router.py` holds most of
+  it, alongside `test_interview_speech_policy.py`, `test_outbound_mail_seam.py`,
+  `test_participant_facing_name.py`, `test_reminder_email_copy.py`, and
+  `test_reply_tokens.py`. That number is this entry's own stated retirement cost, so recount
+  it rather than trusting it.
+  It now has **no caller in `ui/src`** - the only occurrences there are two comments
+  explaining the removal, a row on the Architecture page already describing it as "mounted,
+  no caller in the dashboard since sp66", and a test asserting the page **never** posts to
+  it, which is the good kind of evidence: the absence is asserted rather than assumed.
+  Kept rather than retired for one reason: it is a
   working, well-guarded send path and the product wants *some* route to a participant's own
   transcript, so deleting it would be deleting the mechanism rather than the promise. **Who can
   call it, and what happens:** anybody holding a `session_token` for a completed session, by
@@ -2854,7 +2915,7 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   relay attacker-chosen text from the sending domain. Under `dev_mode` it answers
   `{"sent": true}` and the transcript goes to the operator, which is the corrected sentence in
   the mail section above. **If it is ever retired, it takes the router handler, the request
-  model, the rate-limit registration, and tests in five files with it** - and that mail-section
+  model, the rate-limit registration, and tests in six files with it** - and that mail-section
   paragraph must be corrected a second time, since it would then describe no door at all.
 - **The keyterm read widens what a session token discloses, and that is a judgement rather
   than an oversight.** `GET /api/interviews/{session_token}/deepgram-token` answers the whole
@@ -2870,16 +2931,31 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   it fits the grant's 30-second TTL exactly, and the microphone stream *is* held for the whole
   interview so the browser's recording indicator does not flicker. If the latency is felt, the
   fix is to open the next socket while the question is being spoken, not to lengthen the grant.
-- `complete_session` and `_find_session_db` in `api/services/interview_service.py` open
-  their connections with a bare `aiosqlite.connect(db_path)`, not
-  `api.database.get_connection(slug)`. WAL survives that, because it is a persistent
-  property of the database file once any code path sets it; `busy_timeout` does not, since
-  it is per-connection and nothing sets it on this path. Found while proving twenty
-  concurrent interview completions in `tests/test_interview_concurrency.py` - it did not
-  fail the test on this workload, but the `get_connection` guarantee does not actually
-  reach the `/complete` endpoint's writes. Worth a follow-up task.
+- ~~`complete_session` and `_find_session_db` in `api/services/interview_service.py` open
+  their connections with a bare `aiosqlite.connect(db_path)`, so `busy_timeout` never
+  reaches the `/complete` endpoint's writes~~ - **closed by `98803116` on 9 August 2026**,
+  and it stood here for five weeks afterwards telling a reader to open a task that was
+  already dead. `api/services/interview_service.py` contains **no `aiosqlite.connect` at
+  all**: every open goes through `interview_db_connection` (`api/database.py:2292`), which
+  calls `_apply_connection_pragmas` and applies `PRAGMA busy_timeout = _BUSY_TIMEOUT_MS`
+  (10000) **unconditionally**. Only `wal` is optional, and `_find_session_db` opts out of
+  that deliberately, because `journal_mode=WAL` is a write and the scan touches every
+  candidate file. The constant's own comment names this entry's defect as the thing it
+  exists to prevent - *"Centralised here so `get_connection` and `interview_db_connection`
+  cannot drift apart on the value"*.
 
-  **`_find_session_db` also runs twice per grant request**, and that path is now per answer
+  **This is the dangerous kind of stale entry, and it is worth naming as a class**: not a
+  defect written up and then fixed, but a **premise about the world that rotted** while the
+  paragraph went on asserting it. It read as a standing instruction ("Worth a follow-up
+  task"), and its central claim - *nothing sets `busy_timeout` on this path* - was stated
+  as fact in the same sentence that carried its reasoning, so a reader had nothing to
+  distrust. Same shape as the Resend entry above, and found the same way: by checking the
+  code rather than the file. Struck through rather than deleted for the Resend entry's
+  reason - it was cited as a reason, and a reader who arrives at that citation needs to
+  land somewhere that says the reason is void.
+
+  **The second half was never stale and is still the live finding.**
+  **`_find_session_db` runs twice per grant request**, and that path is now per answer
   rather than per interview, so the cost is newly worth something: each call scans every
   project database. `api/routers/interviews.py` calls it once inside `get_session_with_script`
   and again to recover the slug the keyterms need - and `get_session_with_script` **already
@@ -2893,16 +2969,37 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
   `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
   re-run goes through the crew path. It is reachable from the API.
-- The Interview Coordinator still matches a stakeholder to a script by `node_label` when it
-  plans a session, because `stakeholder_assignments` carries no script id. The match is now made
-  once and recorded on `interview_sessions.script_id` rather than re-derived per answer, so the
-  ambiguity is no longer repeated - but the single arbitrary choice at plan time remains, and
-  `_resolve_script_id` deliberately stores NULL rather than guessing when a label is ambiguous.
-  The real fix is a `script_id` column on `stakeholder_assignments`.
+- ~~The Interview Coordinator still matches a stakeholder to a script by `node_label` when it
+  plans a session~~ - **closed by `273e151b` on 14 August 2026**, whose subject is the
+  correction: *"the producer stores the script id, and the fallback stops guessing"*. The
+  coordinator **emits `script_id` in every plan entry** and has since that commit - it is
+  instructed to in `agents/discovery/interview_coordinator.py` (the map "is keyed by
+  `script_id`", the worked example carries `"script_id": "SC-001"`, and the output contract
+  says "one entry per assigned stakeholder with `script_id`"). `_resolve_script_id`
+  (`agents/tools/interview_session_tool.py`) is built around that: `if supplied: return
+  supplied`, and its docstring calls that "the ordinary path". **The label scan is the
+  fallback, not the mechanism.**
+
+  **The tell was inside the entry.** It claimed "the single arbitrary choice at plan time
+  remains" and then, in the *next sentence*, that `_resolve_script_id` "deliberately stores
+  NULL rather than guessing when a label is ambiguous" - which cannot both be true, and the
+  code shows the second: `candidates[0] if len(candidates) == 1 else None` picks nothing
+  arbitrarily, ever. **A paragraph that contradicts itself in consecutive sentences is
+  reporting two different dates**, and that is cheaper to notice than the rot itself. Worth
+  looking for whenever an entry is half-updated.
+
+  **What is still true, and is the reason this is corrected rather than deleted:**
+  `stakeholder_assignments` carries **no `script_id` column** - verified against the live
+  schema, which holds `id, project_id, stakeholder_id, node_id, created_at` and a
+  `UNIQUE(project_id, stakeholder_id, node_id)`. So the named fix is genuinely unbuilt, and
+  a plan that omits the id still falls through to a label scan that answers NULL on an
+  ambiguous label. The real fix remains a `script_id` column on `stakeholder_assignments`.
 - **A helper with no production caller is a helper that will drift from production.**
   `api.database.insert_interview_session` was the recorded instance - driven by tests alone, and
   extended on one branch with a `script_id` column production never populated. **This entry is
-  closed**: sp62 moved it to `tests/support_interview_sessions.py` (28 call sites, 11 files),
+  closed**: sp62 moved it to `tests/support_interview_sessions.py` (**15 call sites across 10
+  files** at sp67 - this read "28 call sites, 11 files" until the interview tests were churned
+  by sp66 and sp67, and it is recounted here rather than adjusted),
   where being test-only is what it says on the tin, and
   `tests/test_interviewer_selection.py` asserts it has not come back to `api/database.py`.
   `InterviewSessionTool._create` is the sole producer. It is recorded rather than deleted
@@ -2932,15 +3029,32 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   the opposite of true, since local routing goes to the project's own `local_fast_url` /
   `local_deep_url`, Ollama on `:11434` by default. And `litellm_config.yaml` opened with *"all
   agents call :4000 instead of APIs directly"*. Six sites, then, not four: sp66 deleted the
-  setting, both files, `tests/test_litellm_routing.py` (whose docstring claimed it tested
-  "the correct model for each llm_mode", which `model_registry.py` and `deployment_modes.py`
-  decide and that file never touched), and the launch. **When a dead setting is catalogued,
+  setting, `litellm_config.yaml`, `tests/test_litellm_routing.py` (whose docstring claimed it
+  tested "the correct model for each llm_mode", which `model_registry.py` and
+  `deployment_modes.py` decide and that file never touched), and the launch.
+
+  **`start.sh` was not deleted, and this used to say "both files", which reads as though it
+  was.** Only the proxy-launch block went; the script is the one that starts the product and
+  survives, carrying a comment where the block stood that explains why there is no proxy. A
+  reader taking the old wording literally would go looking for a deleted launch script and
+  conclude the entry was describing some other repository. **When a correction lists what was
+  removed, name the things rather than counting them** - "both files" is a count standing in
+  for two names, and a count cannot say which two. **When a dead setting is catalogued,
   sweep for the thing it configures as well as for readers of the name** - a process being
   started is a louder claim than a string being declared, and a name-keyed grep finds the
   string.
 - Retiring an interview script - `interview_script_ledger.active = 0` - is unreachable in
-  practice. `SET active` appears exactly once in the codebase
-  (`register_scripts_sync`, `agents/tools/_db.py`), its only route is an
+  practice. `SET active` appears **twice** in production code, both in
+  `agents/tools/_db.py`: `register_scripts_sync` writes it `WHERE script_id=?`, and
+  `register_nodes_sync` writes it `WHERE node_id=?` on the *value chain* ledger, which
+  arrived with `989cf139` on 3 September 2026. Only the first is the subject of this entry.
+  **This sentence said "exactly once" for a fortnight after that** - the *enumerate by
+  behaviour, not by name* failure in its cheapest form: a count offered as the evidence for
+  a claim, keyed on a string, and never re-derived once the string acquired a second
+  occurrence. Note which half went. **The scoped claim survives and its evidence did not**,
+  which is the more misleading direction, because a reader checking the citation finds a
+  wrong number attached to a right conclusion and has no way to tell which they are
+  looking at. The script write's only route is an
   `interview_scripts` write carrying `active` on a script body, and Maya's own prompt
   (`agents/discovery/interaction_designer.py`) now tells her retirement is not done through
   that write - step 4 limits her to nodes with no script yet plus anything sent back, so an
@@ -2974,11 +3088,18 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   that assigns ids to items a reviewer has already read.
 - ~~**Both sp60 backfills are written and have not run.**~~ - **closed 17 September 2026**, and
   the entry was accurate rather than wrong: it predicted 89 nodes and 10 levers and that is
-  exactly what the live database now holds, `last_author = 'backfill'` on the lever rows. All
-  three registered projects are at `PRAGMA user_version = 22`; `smoke-test` and `vision-debug`
-  hold zero ledger rows **correctly**, having never written a `value_chain_registry` or
-  `value_levers` output to backfill from - a distinction worth making before reading a zero as
-  an un-run script. Both read doors were driven and serve the rows.
+  exactly what the live database now holds, `last_author = 'backfill'` on the lever rows.
+
+  **That sentence read "all three registered projects are at `PRAGMA user_version = 22`" for
+  one evening.** There is now **one**: `smoke-test` and `vision-debug` were removed on 17
+  September, hours after the entry was closed, and `project_registry` holds `sp-gs-am` alone.
+  A count in this file can go stale the same day it is written, which is the argument for
+  keeping the *reasoning* and re-deriving the *number* rather than the other way round. What
+  the reasoning said is the half worth keeping, and it is unchanged: both of those projects
+  held zero ledger rows **correctly**, having never written a `value_chain_registry` or
+  `value_levers` output to backfill from - so **a zero is not evidence the script did not
+  run**, and that distinction has to be made before reading one as a failure. Both read doors
+  were driven and serve the rows.
 
   What survives is the **sequence**, which is still the instruction for any deployment reaching
   sp60's migrations for the first time: restart the API, *then* run the backfills, in that
@@ -2997,9 +3118,15 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   row sent back to the agent is therefore invisible to the query but still reset by the copy -
   a send-back cleared without ever having been actionable. Unreachable only because
   retirement is (see above). Extract the condition rather than copying it a third time.
-- **`POST /projects` lets an `org_admin` claim an unregistered project.** It is the one route
-  in `api/routers/projects.py` with no `check_project_access`, it answers **200** to a re-POST
-  of a slug that already exists, and it registers that slug to the *caller's* organisation. So
+- **`POST /projects` lets an `org_admin` claim an unregistered project.** It answers **200**
+  to a re-POST of a slug that already exists, and it registers that slug to the *caller's*
+  organisation. It is **one of three** routes in `api/routers/projects.py` that call no
+  `check_project_access`, not the only one - this said "the one route" until sp67 enumerated
+  the file by parsing each handler for a **call** rather than grepping for the name. The
+  other two are `GET ""`, which has no slug to scope by, and `GET /{slug}/branding/image`,
+  which is one of the deliberate floor exceptions tabled further up and *is* a `{slug}`
+  route, so the claim was wrong on this file's own terms. The hazard is unchanged and is
+  this door's alone. So
   an org_admin of an unrelated organisation goes 403, re-POSTs the slug, and then reads the
   whole engagement as a legitimate member. Bounded twice: `register_project_if_unregistered`
   is `INSERT OR IGNORE`, so a project that *has* a registry row cannot be dragged out of its
