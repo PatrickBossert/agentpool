@@ -74,6 +74,19 @@ export interface InterviewBranding {
   primary_color: string
   text_color: string
   interviewer_image_url?: string
+  /**
+   * Which kind of address `interviewer_image_url` is - the server says, the page never guesses.
+   *
+   * `served` is an address this deployment answers on (a project override, or the promoted
+   * default's own door) and is fetched verbatim. `bundled` is the portrait shipped in
+   * `ui/public`, which Vite serves under the app's base - so the bare path has to have that
+   * base put back on it or it 404s, which is what a participant met in the first live
+   * interview. `''` is no portrait, and reaches the interviewer's initials.
+   *
+   * Optional because a session served by a deployment predating this field carries no value;
+   * `interviewerPortraitSrc` treats that as `served`, which is the old behaviour unchanged.
+   */
+  interviewer_image_source?: 'served' | 'bundled' | ''
   interviewer_name?: string
   interviewer_tagline?: string
 }

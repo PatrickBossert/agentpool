@@ -214,6 +214,43 @@ async def resolve_agent_config_with(conn: Any, *, slug: str, agent_id: str) -> d
     return _merge(defaults, row)
 
 
+# The two answers `image_address_kind` gives, and the whole of what a client has to know.
+# `SERVED_IMAGE` is an address this deployment answers on - a project override, or the
+# promoted default's own door - and is fetched exactly as it arrives. `BUNDLED_IMAGE` is the
+# portrait shipped in `ui/public`, which Vite serves under the front end's base, so the bare
+# path `AGENT_IDENTITY` holds 404s until the client puts its own base back on it.
+SERVED_IMAGE = "served"
+BUNDLED_IMAGE = "bundled"
+
+
+def image_address_kind(agent_id: str, image_url: str) -> str:
+    """Which kind of address this portrait is - `served`, `bundled`, or `""` for none.
+
+    **The server says which it handed over.** Three of the four levels in
+    `agent_default_images` resolve to an address this deployment answers on; the built-in asset
+    resolves to a bare `/agents/<name>.jpg`, which is a path into the front end's bundle and is
+    the trap `CLAUDE.md` records catching four separate pieces of work. The dashboard completes
+    the levels itself and is told which default is promoted; a client that *cannot* - the
+    participant's interview page, which has no agent roll and no login to fetch one with - needs
+    this instead, and the alternative is sniffing the shape of the URL, which is this rule
+    restated in TypeScript and wrong the moment a portrait is served from somewhere else.
+
+    Decided against `AGENT_IDENTITY`'s own declaration rather than against a URL shape: the only
+    authority on "is this the file shipped in the repository for this agent" is the roll that
+    declares it. A project that typed that exact path as its override is answered `bundled` and
+    that is correct - the path *is* the bundled asset, whoever wrote it down.
+
+    `""` for no portrait at all, which is a legitimate state (`AGENT_IDENTITY.image` is
+    nullable) and reaches the caller's initials.
+    """
+    if not image_url:
+        return ""
+    identity = AGENT_IDENTITY.get(agent_id)
+    if identity is not None and image_url == identity.image:
+        return BUNDLED_IMAGE
+    return SERVED_IMAGE
+
+
 def is_interviewer(agent_id: str) -> bool:
     """Whether this agent can conduct an interview.
 

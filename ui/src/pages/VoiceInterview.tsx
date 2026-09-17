@@ -26,6 +26,38 @@ declare const webkitSpeechRecognition: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const SpeechRecognitionEvent: any
 
+/**
+ * The interviewer's portrait, as an address this browser can actually fetch.
+ *
+ * **The `/dashboard` base trap, on the one page it reaches a participant.** Vite serves
+ * `ui/public` under the app's base, so the built-in portrait `AGENT_IDENTITY` declares -
+ * `/agents/avery-singh.jpg` - is not an address the browser resolves: it 404s, the `<img>`
+ * renders as an empty circle, and nothing anywhere says so. That is what the first live
+ * interview met on 17 September, and it is the fourth piece of work this trap has caught.
+ *
+ * The rule the fix follows is the one the dashboard already follows a level over: **the server
+ * says which kind of address it handed over**, and the base is this page's knowledge about
+ * itself. Nothing here sniffs the shape of the URL - a page that tested for an `/api/` prefix
+ * would be restating the server's rule in TypeScript and would break the first time a portrait
+ * was served from somewhere else.
+ *
+ * Exported so it can be driven directly: the property is about the *address*, and a test that
+ * only rendered the page would be asserting a string rather than something fetchable.
+ */
+export function interviewerPortraitSrc(
+  imageUrl: string | undefined,
+  source: 'served' | 'bundled' | '' | undefined,
+): string {
+  if (!imageUrl) return ''
+  // An absent `source` is a response from before the server named it: rendered verbatim, which
+  // is exactly what this page did before, rather than guessed at.
+  if (source !== 'bundled') return imageUrl
+  // `BASE_URL` ends in a slash and `imageUrl` starts with one; joining them unchanged yields
+  // `/dashboard//agents/...`, which resolves but is the same double slash that put
+  // `https://host//dashboard/login` in the welcome email.
+  return `${import.meta.env.BASE_URL.replace(/\/+$/, '')}${imageUrl}`
+}
+
 /** Initials for an interviewer with no headshot - a state agents/identity.py declares legitimate. */
 function initialsOf(name: string): string {
   return name
@@ -34,6 +66,56 @@ function initialsOf(name: string): string {
     .slice(0, 2)
     .map(part => part[0]!.toUpperCase())
     .join('')
+}
+
+/**
+ * The interviewer's face, or their initials - on the two screens a participant meets them.
+ *
+ * One component rather than the two near-identical blocks it replaces, for the reason
+ * `AgentAvatar` gives on the dashboard: the fallback belongs to whatever draws the face, so
+ * there is one answer for "no portrait" rather than one per screen. It is *not* `AgentAvatar`,
+ * which is dashboard-styled and has no `onError` - and `onError` is the half that matters here.
+ *
+ * **A truthy address that 404s is the state that reached a participant**, and neither this
+ * page's old fallback nor `AgentAvatar`'s would have caught it: both test whether there is a
+ * URL, and there was one. So a portrait that fails to load falls back to the initials too - a
+ * participant meets a person's initials or a person's face, never an empty circle.
+ */
+function InterviewerPortrait({
+  src, name, className, textClassName,
+}: {
+  src: string
+  name: string
+  /** Size, ring and shadow. The caller owns these; the two screens draw different sizes. */
+  className: string
+  /** Type size for the initials, which differ between the two screens as the circles do. */
+  textClassName: string
+}) {
+  const [broken, setBroken] = useState(false)
+  // A new address is a new chance to load: without this, one failure would blank the face for
+  // the rest of the interview even after a project uploaded a portrait mid-session.
+  useEffect(() => { setBroken(false) }, [src])
+
+  if (!src || broken) {
+    return (
+      <div
+        data-testid="interviewer-initials"
+        className={`${className} flex items-center justify-center font-semibold text-white bg-gradient-to-br from-slate-600 to-slate-800 ${textClassName}`}
+        aria-hidden="true"
+      >
+        {initialsOf(name)}
+      </div>
+    )
+  }
+  return (
+    <img
+      data-testid="interviewer-portrait"
+      src={src}
+      alt={name}
+      onError={() => setBroken(true)}
+      className={`${className} object-cover`}
+    />
+  )
 }
 
 type Phase =
@@ -1937,20 +2019,14 @@ export default function VoiceInterview() {
               the image hid the name of the only interviewer who is actually in that state. */}
           {branding?.interviewer_name && (
             <div className="flex flex-col items-center mb-6">
-              {branding.interviewer_image_url ? (
-                <img
-                  src={branding.interviewer_image_url}
-                  alt={branding.interviewer_name}
-                  className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
-                />
-              ) : (
-                <div
-                  className="w-24 h-24 rounded-full mb-3 ring-4 ring-white shadow-md flex items-center justify-center text-2xl font-semibold text-white bg-gradient-to-br from-slate-500 to-slate-700"
-                  aria-hidden="true"
-                >
-                  {initialsOf(branding.interviewer_name)}
-                </div>
-              )}
+              <InterviewerPortrait
+                src={interviewerPortraitSrc(
+                  branding.interviewer_image_url, branding.interviewer_image_source,
+                )}
+                name={branding.interviewer_name}
+                className="w-24 h-24 rounded-full mb-3 ring-4 ring-white shadow-md"
+                textClassName="text-2xl"
+              />
               <p className="font-semibold text-gray-800" style={{ color: branding.text_color }}>
                 {branding.interviewer_name}
               </p>
@@ -2060,7 +2136,9 @@ export default function VoiceInterview() {
   // and /agents/avery-singh-hires.jpg - which were the third and fourth declarations of the
   // interviewer's identity in the product, and they were what a participant read while Laura
   // was speaking to them. The server resolves both from the session's stamp.
-  const interviewerImg = branding?.interviewer_image_url ?? ''
+  const interviewerImg = interviewerPortraitSrc(
+    branding?.interviewer_image_url, branding?.interviewer_image_source,
+  )
   const interviewerName = branding?.interviewer_name ?? ''
 
   return (
@@ -2089,20 +2167,12 @@ export default function VoiceInterview() {
         {/* Interviewer panel */}
         <div className="w-56 flex-shrink-0 bg-slate-900 flex flex-col items-center justify-center gap-5 p-6 border-r border-slate-800">
           <div className="relative">
-            {interviewerImg ? (
-              <img
-                src={interviewerImg}
-                alt={interviewerName}
-                className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
-              />
-            ) : (
-              <div
-                className="w-40 h-40 rounded-full ring-4 ring-teal-400 shadow-2xl flex items-center justify-center text-4xl font-semibold text-white bg-gradient-to-br from-slate-600 to-slate-800"
-                aria-hidden="true"
-              >
-                {initialsOf(interviewerName)}
-              </div>
-            )}
+            <InterviewerPortrait
+              src={interviewerImg}
+              name={interviewerName}
+              className="w-40 h-40 rounded-full ring-4 ring-teal-400 shadow-2xl"
+              textClassName="text-4xl"
+            />
             {(statusMessage || isListening) && (
               <span
                 className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 animate-pulse"

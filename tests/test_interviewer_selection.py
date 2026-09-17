@@ -1385,6 +1385,87 @@ def test_an_unmigrated_database_answers_the_defaults_rather_than_five_hundred(pr
     assert _branding(token)["interviewer_name"] == "Avery Singh"
 
 
+# --- Which kind of address the portrait is ---------------------------------------------------
+
+
+def test_the_branding_says_which_kind_of_address_the_portrait_is(project_dir, monkeypatch):
+    """Finding 1 of the 17 September live interview, asserted where the server decides it.
+
+    The participant met an empty circle. `interviewer_image_url` was `/agents/avery-singh.jpg`,
+    which is a path into `ui/public` - served by Vite under the front end's `/dashboard` base -
+    so the `<img>` 404ed and nothing anywhere said so. The string was correct and the address
+    was not, which is why the old assertion beside this one could not see it.
+
+    The page cannot tell the two apart from the URL and must not try, so **the server says**.
+    Both arms in the same test: a built-in portrait is `bundled`, a portrait this project
+    uploaded is `served`, and a resolver that answered one value for everything would fail one
+    of them whichever value it chose.
+    """
+    from api.database import upsert_agent_config
+    from api.services.agent_config_service import CONFIG_FIELDS
+
+    _mock_voice_metadata(monkeypatch, {AVERY_VOICE_ID: "male", LAURA_VOICE_ID: "female"})
+
+    slug = "portrait-address"
+    _make_project(slug, {"interviewer_selection": "always_male"}, stakeholders=1)
+    _create_sessions(slug, _plan(1))
+    token = _rows(slug, project_dir)[0]["session_token"]
+
+    branding = _branding(token)
+    assert branding["interviewer_image_url"] == "/agents/avery-singh.jpg"
+    assert branding["interviewer_image_source"] == "bundled"
+
+    # The control, on the same project and the same agent: an uploaded portrait is already an
+    # address this deployment answers on, and a client that put a base on it would break it.
+    async def _configure() -> None:
+        async with get_connection(slug) as conn:
+            async with conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
+                project_id = (await cur.fetchone())["id"]
+            fields = dict.fromkeys(CONFIG_FIELDS, None)
+            fields["image_url"] = f"/projects/{slug}/agents/{AVERY}/image"
+            await upsert_agent_config(conn, project_id=project_id, agent_id=AVERY, **fields)
+
+    asyncio.run(_configure())
+
+    branding = _branding(token)
+    assert branding["interviewer_image_url"] == f"/projects/{slug}/agents/{AVERY}/image"
+    assert branding["interviewer_image_source"] == "served"
+
+
+def test_the_address_kind_is_decided_against_the_declaration_and_not_a_url_shape():
+    """The rule, driven directly, including the two ways a shape test would get it wrong.
+
+    A promoted default is served from `/api/agents/{id}/image` and a project override from
+    `/projects/{slug}/...`, so "does it start with `/agents/`" looks like it would work - and it
+    is the server's rule restated as a guess, wrong the first time a portrait is served from
+    anywhere else. The only authority on "is this the file shipped in the repository for this
+    agent" is `AGENT_IDENTITY`, so that is what is asked.
+    """
+    from agents.identity import AGENT_IDENTITY
+    from api.services.agent_config_service import image_address_kind
+
+    # Every agent's own declared portrait is bundled, and there are eighteen of them - the
+    # defect was found by reading one agent's default and the next session could stamp any.
+    declared = {a: i.image for a, i in AGENT_IDENTITY.items() if i.image}
+    assert len(declared) >= 2
+    for agent_id, image in declared.items():
+        assert image_address_kind(agent_id, image) == "bundled", agent_id
+
+    some_agent = next(iter(declared))
+    # Served, both shapes.
+    assert image_address_kind(some_agent, f"/api/agents/{some_agent}/image") == "served"
+    assert image_address_kind(some_agent, f"/projects/s/agents/{some_agent}/image") == "served"
+    # **Another agent's declared path is `served` for this one**, which is the assertion a
+    # prefix test fails: it is not this agent's bundled asset, and answering `bundled` would
+    # put a base on an address chosen deliberately by whoever configured the project.
+    other = next(a for a in declared if a != some_agent)
+    assert image_address_kind(some_agent, declared[other]) == "served"
+    # No portrait is no address, and must stay falsy so it reaches the initials.
+    assert image_address_kind(some_agent, "") == ""
+    # An id outside the roll has no declaration to match, so nothing can be bundled for it.
+    assert image_address_kind("no-such-agent", "/agents/avery-singh.jpg") == "served"
+
+
 # --- The artefact, not only the tool's return value -----------------------------------------
 
 
