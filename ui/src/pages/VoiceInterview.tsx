@@ -104,6 +104,85 @@ export function needsElaboration(answer: string, evasionSignals: string[] | unde
   )
 }
 
+/**
+ * How long this script says it should take, in minutes - or 0 when it does not say.
+ *
+ * **Summed from the sections rather than declared once**, because that is where the number
+ * lives: `target_minutes` is per section, is on every section of all twelve scripts in
+ * `interview_scripts_v9`, and totals between 34 and 54 minutes. A script that omits it
+ * anywhere answers 0, and the participant is shown elapsed time alone rather than elapsed time
+ * against a target invented here - which is the one thing worse than no target.
+ */
+export function scriptTimeboxMinutes(sections: { target_minutes?: number }[]): number {
+  let total = 0
+  for (const section of sections) {
+    if (typeof section.target_minutes !== 'number' || !Number.isFinite(section.target_minutes)) {
+      return 0
+    }
+    total += section.target_minutes
+  }
+  return total
+}
+
+/** `m:ss`, with the minutes unbounded - "72:15" rather than "1:12:15". */
+function clockFace(totalSeconds: number): string {
+  const whole = Math.max(0, Math.floor(totalSeconds))
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
+}
+
+/**
+ * What the top bar says about how long this has been going on.
+ *
+ * **The clock is passed in, never read here.** This project has already lost three tests to a
+ * `new Date()` default - `milestoneVariance.test.ts`, which detonated on a particular morning
+ * in August - so both ends of the interval are arguments and this function is pure.
+ *
+ * A clock that goes backwards - a device correcting itself over NTP mid-interview - reads as
+ * zero rather than as a negative time. The minutes are unbounded on purpose: "72:15 of 40:00"
+ * says what a participant wants to know at a glance, where "1:12:15" has to be compared.
+ */
+export function elapsedLabel(startedAt: number, now: number, timeboxMinutes: number): string {
+  const elapsed = clockFace((now - startedAt) / 1000)
+  if (timeboxMinutes <= 0) return elapsed
+  return `${elapsed} of ${clockFace(timeboxMinutes * 60)}`
+}
+
+/**
+ * Elapsed time, in the middle of the top bar.
+ *
+ * Finding 5 of the first live interview: *"the interview felt very long, but it was probably
+ * within the asked-for timebox - I wanted a way of checking."* So it is shown against the
+ * timebox wherever the script declares one, which is every live script today.
+ *
+ * `now` is a **prop**, defaulting to the real clock, so a test drives the time rather than
+ * waiting for it. It is not a live region: a timer that announced itself every second would
+ * talk over the interviewer.
+ */
+function ElapsedTime({
+  startedAt, timeboxMinutes, now = Date.now,
+}: {
+  startedAt: number
+  timeboxMinutes: number
+  now?: () => number
+}) {
+  const [tick, setTick] = useState(() => now())
+  useEffect(() => {
+    const timer = setInterval(() => setTick(now()), 1000)
+    return () => clearInterval(timer)
+  }, [now])
+
+  const over = timeboxMinutes > 0 && tick - startedAt > timeboxMinutes * 60_000
+  return (
+    <span
+      data-testid="elapsed-time"
+      aria-label="Time elapsed"
+      className={`tabular-nums ${over ? 'text-amber-600' : ''}`}
+    >
+      {elapsedLabel(startedAt, tick, timeboxMinutes)}
+    </span>
+  )
+}
+
 /** Initials for an interviewer with no headshot - a state agents/identity.py declares legitimate. */
 function initialsOf(name: string): string {
   return name
@@ -372,6 +451,9 @@ export default function VoiceInterview() {
   const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [isPaused, setIsPaused] = useState(false)
   const [silenceProgress, setSilenceProgress] = useState(0)
+  // When the participant tapped Start, which is what the elapsed clock counts from. `null`
+  // until then, so the top bar has nothing to show rather than a zero that has not started.
+  const [startedAt, setStartedAt] = useState<number | null>(null)
   // The whole pair, not `{question, answer}`. The corrected answers are re-submitted to
   // `/complete` when the participant finishes, and that door requires `question_id` on every
   // pair - narrowing the type here is how an edit would have been sent without its address.
@@ -1410,6 +1492,9 @@ export default function VoiceInterview() {
     const lang = `${voiceConfig.language}-${voiceConfig.country_code}`
     interviewLangRef.current = lang
 
+    // The clock starts when the interview does, not when the page loaded - a participant who
+    // left the device-setup screen open over lunch has not been interviewed for an hour.
+    setStartedAt(Date.now())
     setPhase('interviewing')
 
     // Activate session
@@ -2232,6 +2317,15 @@ export default function VoiceInterview() {
         <div className="flex-1 min-w-0">
           <div className="flex justify-between text-xs text-gray-400 mb-1">
             <span>Question {progress.current} of {progress.total}</span>
+            {/* The centre of the bar, between how far through the questions they are and how
+                far through as a percentage - which is where somebody looks to ask "how long
+                has this been going?" and found nothing on 17 September. */}
+            {startedAt !== null && (
+              <ElapsedTime
+                startedAt={startedAt}
+                timeboxMinutes={scriptTimeboxMinutes(sessionData?.script.sections ?? [])}
+              />
+            )}
             <span>{Math.round((progress.current / Math.max(progress.total, 1)) * 100)}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-1">
