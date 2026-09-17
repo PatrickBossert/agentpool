@@ -2972,13 +2972,25 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   a ledger rather than given one here, so the next agent to be built is measured against the
   rule while it is cheap - after the artefact exists, adding per-item identity means a backfill
   that assigns ids to items a reviewer has already read.
-- **Both sp60 backfills are written and have not run.** `scripts/backfill_value_chain_ledger.py`
-  (89 nodes) and `scripts/backfill_value_lever_ledger.py` (10 levers) are proven on copies of
-  `data/sp-gs-am.db` and skip against the live one, because the migrations have not reached the
-  running server's database - it is still at `PRAGMA user_version = 17` and holds neither
-  ledger. So a live `sp-gs-am` shows **empty** node and lever review panels until the API is
-  restarted and the backfills are run, in that order. A data state, not a defect in the
-  surface; diagnose it here before diagnosing it in `DiscoveryReviewExtra`.
+- ~~**Both sp60 backfills are written and have not run.**~~ - **closed 17 September 2026**, and
+  the entry was accurate rather than wrong: it predicted 89 nodes and 10 levers and that is
+  exactly what the live database now holds, `last_author = 'backfill'` on the lever rows. All
+  three registered projects are at `PRAGMA user_version = 22`; `smoke-test` and `vision-debug`
+  hold zero ledger rows **correctly**, having never written a `value_chain_registry` or
+  `value_levers` output to backfill from - a distinction worth making before reading a zero as
+  an un-run script. Both read doors were driven and serve the rows.
+
+  What survives is the **sequence**, which is still the instruction for any deployment reaching
+  sp60's migrations for the first time: restart the API, *then* run the backfills, in that
+  order - the scripts skip against a database the migration block has not yet opened, so
+  running them first looks like success and does nothing. And the diagnostic half stands: an
+  empty node or lever review panel is a data state, so check the ledger before looking at
+  `DiscoveryReviewExtra`.
+
+  **The entry outlived its own closure by a fortnight**, which is the recurring hazard this
+  file already names in the WebSocket row - a stale *Known issues* entry lends false confidence
+  to the ones beside it. It was closed by an operator action inside a working session and
+  nothing connected that action to the paragraph describing it.
 - `register_scripts_sync` carries a near-copy of `scripts_awaiting_regeneration`'s WHERE
   clause to reset a regenerated script's `review_status`, and the two have **already
   diverged**: the query filters `active=1` and `project_id`, the copy does neither. A retired
