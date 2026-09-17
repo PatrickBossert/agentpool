@@ -98,10 +98,9 @@ _MARKERS = _ASSERTS_A_SUMMARY + _SEEKS_CONFIRMATION_OF_ONE
 # "directly" and "unchanged" are matched only where they are bound to a destination, because both
 # are ordinary words - "your feedback goes directly into the improvement plan" promises nothing
 # false about attribution.
+# Phrases that are a promise about handling wherever they appear. Each names the destination
+# or the interviewee's own words, so none of them has an innocent reading in an instrument.
 _FALSE_HANDLING_PROMISES = (
-    "unfiltered",
-    "verbatim",
-    "word for word",
     "directly into the board",
     "directly to the board",
     "straight to the board",
@@ -109,6 +108,19 @@ _FALSE_HANDLING_PROMISES = (
     "without being edited",
     "exactly as you said",
 )
+
+# Words that mean a false promise **in the welcome or the closing** and mean something
+# ordinary in a question. Found live: SC-013 v38 asks "are they getting the unfiltered
+# picture or a management narrative?" - a question about what the *board* sees, which is a
+# perfectly good thing to ask an auditor and nothing to do with what happens to her answers.
+#
+# Matching it everywhere made the warner cry wolf on every write of a correct script, and
+# this one runs on the write path rather than only in tests: the noise would have reached
+# Maya on every run, inviting her to "fix" a question that was right. A promise about
+# handling is made where handling is described, which is why the two real instances were
+# both in `closing_message`.
+_AMBIGUOUS_HANDLING_WORDS = ("unfiltered", "verbatim", "word for word")
+_PROMISE_FIELDS = ("welcome_message", "closing_message")
 
 
 def _spoken_strings(script: object) -> list[tuple[str, str]]:
@@ -190,7 +202,10 @@ def find_false_handling_promises(scripts: dict) -> list[tuple[str, str, str]]:
     out: list[tuple[str, str, str]] = []
     for script_id, script in scripts.items():
         for where, text in _spoken_strings(script):
-            for marker in _hits(text, _FALSE_HANDLING_PROMISES):
+            markers = list(_hits(text, _FALSE_HANDLING_PROMISES))
+            if where.split(".")[0] in _PROMISE_FIELDS:
+                markers += _hits(text, _AMBIGUOUS_HANDLING_WORDS)
+            for marker in markers:
                 out.append((str(script_id), where, marker))
     return out
 

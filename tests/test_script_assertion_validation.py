@@ -312,3 +312,51 @@ async def test_the_two_scripts_warners_do_not_clear_each_other(
     assert by_source.get("script_assertion") is not None
     assert by_source.get("interview_coverage") == "incomplete_coverage"
     assert "prewritten_synthesis" in {r["code"] for r in rows}
+
+
+# ── The false positive the live corpus found ─────────────────────────────────
+
+def test_an_ambiguous_word_is_a_promise_in_the_closing_and_not_in_a_question():
+    """`unfiltered` means two different things depending on who it is about.
+
+    Found on SC-013 v38, the first script Maya regenerated after the send-back: she had
+    correctly removed the false promise from the closing, and the script still contained
+    the word - in a question asking *"are they getting the unfiltered picture or a
+    management narrative?"*. That is about what the **board** sees, which is a good thing
+    to ask an auditor, and nothing to do with what happens to her answers.
+
+    It matters more than an ordinary false positive because this validator runs on the
+    **write path**, not only in tests: the warning would have reached Maya on every run,
+    inviting her to repair a question that was right. Both real instances of the defect
+    were in `closing_message`, which is where a promise about handling is made.
+
+    Driven in all three directions - the unambiguous phrase anywhere, the ambiguous word
+    where a promise lives, and the ambiguous word where it does not. The third alone would
+    pass against a validator that reported nothing at all.
+    """
+    from api.services.script_assertion_validation import find_false_handling_promises
+
+    verbatim_question = {
+        "SC-A": {"sections": [{"questions": [
+            {"text": "Are they getting the unfiltered picture or a management narrative?"}
+        ]}]}
+    }
+    assert find_false_handling_promises(verbatim_question) == [], (
+        "a question about what the board sees was read as a promise to the interviewee"
+    )
+
+    promise_in_closing = {
+        "SC-B": {"closing_message": "What you share goes to the board unfiltered."}
+    }
+    assert [m for _, _, m in find_false_handling_promises(promise_in_closing)] == ["unfiltered"]
+
+    # The control: an unambiguous phrase is a promise wherever it is spoken, including in
+    # a question, because it names the destination and cannot be read innocently.
+    phrase_in_question = {
+        "SC-C": {"sections": [{"questions": [
+            {"text": "You know this goes directly to the board - does that change your answer?"}
+        ]}]}
+    }
+    assert find_false_handling_promises(phrase_in_question), (
+        "scoping the ambiguous words must not have narrowed the unambiguous phrases"
+    )
