@@ -4835,6 +4835,54 @@ async def fetch_org_projects(conn: aiosqlite.Connection, *, org_id: int) -> list
         return [dict(r) async for r in cur]
 
 
+async def fetch_registered_slugs(conn: aiosqlite.Connection) -> list[str]:
+    """Every slug that is a project, for the two startup sweeps that act on all of them.
+
+    It exists because both callers used to enumerate `Path(database_dir).glob("*.db")`
+    instead, which is not a list of projects but a list of **files** - so every backup
+    taken into `data/` became a project within hours of being made. Measured on 17
+    September 2026: seventeen scheduled daily reports against one real project, eleven
+    of the phantoms `sp-gs-am.*` snapshots and **four of them backups of `system.db`
+    itself**. Worse than noise, because the sibling sweep *writes*: ten crew_runs in a
+    six-week-old backup had been flipped to `failed` by restarts, so the backups were
+    not backups. The registry is the definition of a project; the directory listing is
+    an accident of how somebody names files.
+
+    Deliberately **not** `fetch_all_registry`, which JOINs `organisations` for a display
+    name this caller does not want. That is a statement about intent rather than about
+    safety, and the distinction is worth recording because the safety argument was
+    written here first and was wrong: `project_registry.org_id` is `NOT NULL REFERENCES
+    organisations(id) ON DELETE CASCADE`, so a row cannot outlive its organisation and
+    that JOIN cannot drop one. The test asserting otherwise failed on the foreign key,
+    which is the schema answering the question correctly.
+    """
+    async with conn.execute("SELECT slug FROM project_registry ORDER BY slug") as cur:
+        return [r["slug"] async for r in cur]
+
+
+async def delete_scheduled_jobs_for_unknown_slugs(
+    conn: aiosqlite.Connection, *, known: list[str]
+) -> int:
+    """Drop scheduled jobs for slugs that are not projects, and answer how many went.
+
+    The glob above left rows behind, and stopping it creating new ones does not remove
+    the old: the phantoms are in `system.db` and would have gone on firing daily against
+    frozen copies of a client's data. Takes the known slugs rather than reading the
+    registry itself, so the caller cannot sweep against a list it did not just compute.
+    """
+    if not known:
+        # Refuse to interpret "no projects" as "delete every job". A deployment mid-way
+        # through its first project creation legitimately has an empty registry, and a
+        # sweep here would delete the job the next statement is about to register.
+        return 0
+    placeholders = ",".join("?" for _ in known)
+    cur = await conn.execute(
+        f"DELETE FROM scheduled_jobs WHERE slug NOT IN ({placeholders})", tuple(known)
+    )
+    await conn.commit()
+    return cur.rowcount or 0
+
+
 async def fetch_all_registry(conn: aiosqlite.Connection) -> list[dict]:
     async with conn.execute(
         "SELECT pr.*, o.name AS org_name FROM project_registry pr "

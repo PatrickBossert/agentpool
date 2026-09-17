@@ -42,17 +42,24 @@ from api.routers import agent_config as agent_config_router
 from api.routers import agent_assets as agent_assets_router
 
 
-async def _mark_stale_runs_failed(database_dir: str) -> None:
+async def _mark_stale_runs_failed(database_dir: str, slugs: list[str]) -> None:
     """On startup, mark any crew_runs still in 'running' state as failed.
 
     Runs left in 'running' are orphaned by a previous server restart — no async
     task exists for them and they will never complete on their own.
+
+    Takes the registered slugs rather than listing the directory. This sweep **writes**,
+    and it used to write to every `.db` file it found: ten crew_runs in a six-week-old
+    `sp-gs-am` backup had been flipped to `failed` by restarts, which makes the backup
+    something other than the thing that was backed up. A file in `data/` is not a
+    project - see `fetch_registered_slugs`.
     """
     import aiosqlite
     import logging
     log = logging.getLogger(__name__)
-    for db_path in Path(database_dir).glob("*.db"):
-        if db_path.name == "system.db":
+    for slug in slugs:
+        db_path = Path(database_dir) / f"{slug}.db"
+        if not db_path.exists():
             continue
         try:
             async with aiosqlite.connect(str(db_path)) as conn:
@@ -102,20 +109,30 @@ async def _register_scheduled_jobs() -> None:
     import logging
     from datetime import datetime
 
-    from api.database import get_system_connection, upsert_scheduled_job
+    from api.database import (
+        delete_scheduled_jobs_for_unknown_slugs,
+        fetch_registered_slugs,
+        get_system_connection,
+        upsert_scheduled_job,
+    )
     from api.services.pam_report_job import JOB_NAME
     from api.services.scheduler_service import next_due_at
 
     log = logging.getLogger(__name__)
     try:
-        settings = get_settings()
         due = next_due_at(datetime.now())
-        slugs = [p.stem for p in Path(settings.database_dir).glob("*.db")
-                 if p.name != "system.db"]
         async with get_system_connection() as conn:
+            slugs = await fetch_registered_slugs(conn)
             for slug in slugs:
                 await upsert_scheduled_job(conn, job_name=JOB_NAME, slug=slug, next_due_at=due)
+            dropped = await delete_scheduled_jobs_for_unknown_slugs(conn, known=slugs)
         log.info("scheduler: registered the daily report job for %d project(s)", len(slugs))
+        if dropped:
+            log.warning(
+                "scheduler: dropped %d scheduled job(s) for slugs that are not projects - "
+                "these are usually database files in data/ that are backups rather than "
+                "engagements", dropped,
+            )
     except Exception:
         log.exception("scheduler: could not register jobs - continuing without them")
 
@@ -125,7 +142,11 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     Path(settings.database_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.projects_dir).mkdir(parents=True, exist_ok=True)
-    await _mark_stale_runs_failed(settings.database_dir)
+    # The registry, not the directory listing - both sweeps below act only on projects.
+    from api.database import fetch_registered_slugs, get_system_connection
+    async with get_system_connection() as conn:
+        registered = await fetch_registered_slugs(conn)
+    await _mark_stale_runs_failed(settings.database_dir, registered)
     await _reset_stale_scheduled_jobs()
 
     await _register_scheduled_jobs()
