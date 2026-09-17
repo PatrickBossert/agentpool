@@ -1084,6 +1084,22 @@ async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
     else:
         raise ValueError(f"Unknown agent key: '{agent_key}'")
 
+    # The approved library skills, exactly as the crew path applies them. Without this a
+    # standalone dispatch silently ran on a different prompt from the crew containing the same
+    # agent - and the omission bit precisely where it mattered most: Casey's `Theme Extraction`
+    # skill ("only flag a theme if it appears across multiple transcripts - never extrapolate a
+    # theme from one voice") is the instruction that decides whether his output is usable, and
+    # standalone dispatch was the path a consultant would reach for to synthesise a finished
+    # interview programme.
+    #
+    # Scoped by **crew** rather than by agent because that is what `build_and_run_crew` does -
+    # it prepends one block to every task - so a standalone run reproduces the crew rather than
+    # improving on it. Narrowing this to the single agent is defensible and is a different
+    # change; it would make the two paths disagree again, in the other direction.
+    skill_notes = await _fetch_skill_notes(AGENT_CREW_NAME[agent_key], slug)
+    if skill_notes:
+        task.description = skill_notes + "\n\n" + task.description
+
     crew = Crew(agents=[agent_obj], tasks=[task], process=Process.sequential, verbose=True)
     crew.step_callback = make_step_callback(slug, AGENT_CREW_NAME.get(agent_key, agent_key))
     return await crew.kickoff_async()
