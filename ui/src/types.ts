@@ -592,15 +592,23 @@ export interface FramingBlock {
 }
 
 export interface SynthesisCheck {
-  synthesis_prompt: string
+  // What Maya writes now: an invitation for the interviewee to summarise, the probes
+  // that follow it, and the referral question. Nothing here asserts a conclusion.
+  closing_invitation?: string
   response_probes: {
     if_positive: string
     if_defensive: string
     if_uncertain: string
   }
   peer_referral: string
-  forward_roadmap: string
-  portfolio_options?: string   // L0 only — interviewer presents sequencing options A/B/C
+  // Withdrawn 4 September 2026 and no longer written by Maya - each asserted to the
+  // participant something composed before the interview happened. Optional rather than
+  // deleted because every script written before the withdrawal still carries them, and
+  // MayaOutputExtra renders them so a consultant can see what an old script actually
+  // says. Nothing may speak them: see ui/src/__tests__/synthesisWithdrawn.test.ts.
+  synthesis_prompt?: string
+  forward_roadmap?: string
+  portfolio_options?: string   // L0 only — interviewer presented sequencing options A/B/C
   sponsorship_check?: string   // L0 only — commitment test for executive sponsors
 }
 

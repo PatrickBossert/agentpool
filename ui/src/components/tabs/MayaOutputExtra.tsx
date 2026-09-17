@@ -266,7 +266,17 @@ export function ScriptCard({ script }: { script: ReviewableScript }) {
           {script.synthesis_check && (
             <Block label="Synthesis check (spoken after sections)">
               <div className="space-y-1.5">
-                <Spoken text={script.synthesis_check.synthesis_prompt} />
+                {script.synthesis_check.closing_invitation && (
+                  <Spoken text={script.synthesis_check.closing_invitation} />
+                )}
+                {script.synthesis_check.synthesis_prompt && (
+                  <div>
+                    <p className="text-[9px] font-bold text-amber-600 uppercase tracking-widest mb-1">
+                      Withdrawn - not spoken
+                    </p>
+                    <Spoken text={script.synthesis_check.synthesis_prompt} />
+                  </div>
+                )}
                 {script.synthesis_check.response_probes && (
                   <div className="space-y-1">
                     {Object.entries(script.synthesis_check.response_probes).map(([k, v]) => (
@@ -286,7 +296,8 @@ export function ScriptCard({ script }: { script: ReviewableScript }) {
                 )}
                 {script.synthesis_check.forward_roadmap && (
                   <p className="text-[10px] text-gray-600 leading-relaxed">
-                    <span className="text-gray-400">Forward roadmap: </span>{script.synthesis_check.forward_roadmap}
+                    <span className="text-amber-600">Forward roadmap (withdrawn - not spoken): </span>
+                    {script.synthesis_check.forward_roadmap}
                   </p>
                 )}
               </div>
