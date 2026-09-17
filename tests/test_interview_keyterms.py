@@ -21,8 +21,11 @@ from httpx import ASGITransport, AsyncClient
 from api.config import get_settings
 from api.services import interview_service
 from api.services.interview_keyterms import (
+    DEEPGRAM_KEYTERM_TOKEN_LIMIT,
+    KEYTERM_TOKEN_BUDGET,
     MAX_KEYTERMS,
     build_keyterms,
+    estimate_keyterm_tokens,
     harvest_strings,
     terms_in_prose,
 )
@@ -413,10 +416,98 @@ def test_the_most_used_term_leads():
     assert terms_in_prose(text)[0] == "Ofgem"
 
 
-def test_the_list_is_capped():
-    """A vocabulary of everything boosts nothing."""
-    labels = [f"Distinctive Activity Number {n}" for n in range(MAX_KEYTERMS + 40)]
+def test_the_list_is_capped_by_the_number_of_terms_when_the_terms_are_cheap():
+    """A vocabulary of everything boosts nothing.
+
+    Short terms is the shape where the *count* is what binds - a hundred acronyms cost a few
+    hundred tokens between them, so the token budget below never comes into it. Both bounds are
+    real and they bind on different corpora, which is the whole reason for keeping two.
+    """
+    labels = [f"Bravo{n}" for n in range(MAX_KEYTERMS + 40)]
     assert len(build_keyterms(labels, "")) == MAX_KEYTERMS
+
+
+# Labels shaped like a real engagement's: multi-word, parenthesised, hyphenated. The live
+# `sp-gs-am` ledger is exactly this - "Regulatory Compliance and Record Retention (Asbestos and
+# Statutory)" - and it is the shape that broke transcription, because a hundred of them is
+# nowhere near a hundred tokens.
+_REALISTIC_LABELS = [
+    f"Regulatory Compliance{n} and Record Retention (Asbestos)"
+    for n in range(MAX_KEYTERMS + 40)
+]
+
+
+def test_the_vocabulary_this_deployment_sends_fits_deepgrams_published_limit():
+    """The defect that cost two live interviews their recogniser, asserted at its own scale.
+
+    Deepgram's limit is `500 tokens across all keyterms` and exceeding it is a **400 on the
+    handshake**, so the browser never holds an open socket, `openDeepgramSocket` answers `null`,
+    and two of those latch Deepgram off for the rest of the hour. Nothing errors in front of the
+    participant and nothing reaches the provider's usage, because no audio is ever transcribed -
+    which is precisely why this went unnoticed through two full interviews.
+
+    The old cap counted *terms* and was reasoned about against the URL length. On the live
+    corpus that let 918 estimated tokens go up under a limit of 500.
+    """
+    sent = build_keyterms(_REALISTIC_LABELS, "")
+    spent = sum(estimate_keyterm_tokens(term) for term in sent)
+    assert spent <= DEEPGRAM_KEYTERM_TOKEN_LIMIT, (
+        f"{len(sent)} terms costing about {spent} tokens against Deepgram's "
+        f"{DEEPGRAM_KEYTERM_TOKEN_LIMIT} - the handshake would be refused 400"
+    )
+    # And the headroom is deliberate: the tokeniser is unpublished, so the budget is what is
+    # spent and the limit is what must never be reached.
+    assert spent <= KEYTERM_TOKEN_BUDGET
+
+
+def test_a_vocabulary_that_does_not_fit_is_shortened_rather_than_emptied():
+    """The failure direction. A budget that refused everything would be the same outage."""
+    sent = build_keyterms(_REALISTIC_LABELS, "")
+    assert 15 <= len(sent) < MAX_KEYTERMS
+    # The terms kept are the ones worth keeping: registry labels lead, and truncation takes from
+    # the end, so the first declared label survives a budget it cannot all fit inside.
+    assert sent[0] == _REALISTIC_LABELS[0]
+
+
+def test_a_term_too_expensive_to_afford_does_not_cost_the_cheaper_ones_behind_it():
+    """Skipped, not a walk that stops.
+
+    The distinction is invisible until the budget is genuinely exhausted by **distinct** terms:
+    a repeated one is deduplicated before it is ever priced, so a list of forty copies spends the
+    budget once and proves nothing. These are forty different long labels, which is what a real
+    ledger looks like, followed by two acronyms - the cheapest and most valuable terms there are.
+    A walk that stopped at the first unaffordable label would drop both.
+    """
+    labels = _REALISTIC_LABELS[:40] + ["Ofgem", "SPT"]
+    sent = build_keyterms(labels, "")
+    assert "Ofgem" in sent and "SPT" in sent
+    # And the budget is still respected while they are kept - the point is which terms are
+    # dropped, not that the bound is relaxed to fit them.
+    assert sum(estimate_keyterm_tokens(t) for t in sent) <= KEYTERM_TOKEN_BUDGET
+
+
+@pytest.mark.parametrize(
+    "term, floor",
+    [
+        # Punctuation is a token of its own to every byte-pair tokeniser, and these terms are
+        # full of it. Counting words alone reads this as 4 and it is not.
+        ("Scottish Power Group Services UK (GS UK)", 9),
+        ("EV-Specific Service: Battery Health", 8),
+        # A long unusual word is several word-pieces, and every term here is chosen *because* it
+        # is unusual - which is exactly the case a word count gets wrong.
+        ("Decarbonisation", 3),
+        ("Audit", 1),
+    ],
+)
+def test_the_estimate_counts_what_a_word_count_misses(term, floor):
+    """Driven directly, in the direction that matters: it must never read low."""
+    assert estimate_keyterm_tokens(term) >= floor
+
+
+def test_the_estimate_never_reads_a_term_as_free():
+    """A zero-cost term would let an unbounded list through the budget."""
+    for term in ("A", "-", "", "   "):
+        assert estimate_keyterm_tokens(term) >= 1
 
 
 def test_a_label_that_is_a_sentence_is_not_a_term():

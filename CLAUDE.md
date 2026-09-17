@@ -1583,8 +1583,30 @@ failure mode here is worse than a wrong voice id: a hardcoded vocabulary is a **
 client's names, committed to this repository and sent up with every other client's interview**.
 The extraction is positional rather than a stopword list - the **first word** of a capitalised
 run that opens a sentence is dropped and the rest of the run kept, which is what removes "How"
-and "Please" without anybody listing them - capped at `MAX_KEYTERMS = 100`, registry labels
-first because declared vocabulary should outrank inferred.
+and "Please" without anybody listing them - registry labels first because declared vocabulary
+should outrank inferred.
+
+**The cap was counting the wrong thing, and it cost two live interviews their recogniser.**
+`MAX_KEYTERMS = 100` was reasoned about against the URL - "roughly three kilobytes encoded,
+comfortably inside every URL limit" - and the URL was never the binding constraint. Deepgram's
+limit is **500 tokens across all keyterms**, exceeding it is answered `Keyterm limit exceeded.
+The maximum number of tokens across all keyterms is 500.` with **HTTP 400**, and nothing in this
+codebase measured that quantity. The live `sp-gs-am` vocabulary was 100 terms at an estimated
+**918 tokens**. So a `KEYTERM_TOKEN_BUDGET = 350` now bounds the list, spent down an order that
+already puts the most valuable terms first, and a term that does not fit is **skipped rather
+than ending the walk** - or one long label silences every acronym behind it.
+
+Two things generalise past Deepgram. **On a streaming connection that 400 lands on the
+handshake**, so the browser never holds an open socket and cannot read a status: it sees `error`
+then `close`, `openDeepgramSocket` answers `null`, `deepgramFailuresRef` reaches two, and
+Deepgram is latched off for the rest of the hour. Nothing errors in front of the participant,
+nothing reaches the provider's usage page because no audio is ever transcribed, and the
+interview completes reporting success - **the provider's own console showed the account's whole
+day as one second of an operator's test tone.** And the estimator is a **deliberate
+over-count**, because Deepgram publishes the limit and not the tokeniser (their own
+`deepgram-python-sdk#503` is a user asking what a token is and getting no answer): under-counting
+buys a silently dead recogniser, over-counting costs a term off the end of a sorted list, and
+the headroom between 350 and 500 is which of those a wrong guess becomes.
 
 **That rule was written in the docstring and implemented for lone words only**, so a run of two
 survived it intact: `If ISS`, `Does GS UK`, `Before I`, `Which KPIs`, `Is Fraikin`. Measured on
