@@ -152,8 +152,11 @@ class ChromaQueryTool(BaseTool):
                 ),
             )
             # The message the agent sees. It used to say "Start Docker (docker compose up -d)",
-            # which was wrong on this deployment in the same way start.sh was: ChromaDB ships a
-            # CLI and does not need Docker, and the owner's machine has none.
+            # which is wrong twice over: ChromaDB ships a CLI and does not need Docker, and on a
+            # deployment with CHROMA_API_KEY set - which is this one - the vectors are in the
+            # cloud account and starting any local server would not have helped at all. The
+            # diagnosis in the alert is derived from the client the code actually builds, so it
+            # names the right remedy for whichever store this project uses.
             return (
                 "ChromaDB is not reachable, so there is nothing to retrieve. An operator has "
                 "been alerted. Say plainly in your output that the knowledge base was "

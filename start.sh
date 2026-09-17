@@ -116,11 +116,15 @@ fi
 # chroma_query pick CloudClient over HttpClient - so this is skipped outright when Chroma
 # Cloud is in use, rather than starting a local server nothing will connect to.
 #
-# **This block used to say "docker not installed (ChromaDB needs it)", and that was false.**
+# **This block used to say "docker not installed (ChromaDB needs it)", and that is false.**
 # ChromaDB ships a CLI, `venv/bin/chroma`, and `chroma run --path ... --port 8002` serves
-# exactly what the container serves. The owner's machine has no Docker at all, so every launch
-# printed an untrue reason and left the vector store down - and nothing downstream said so.
-# Three real interviews were conducted against a deployment whose Chroma was not running.
+# exactly what the container serves, so the stated reason was never the real one.
+#
+# Scope, stated honestly, because the first version of this comment overstated it: on *this*
+# machine `CHROMA_API_KEY` is set, so the cloud branch wins first and that message has never
+# actually been printed here - the engagement's vectors are in the cloud account and no local
+# server was ever needed. The message is wrong for a deployment **without** the key, which is
+# the one this branch fixes, and which is what an on-premises secure-mode customer runs.
 #
 # The venv CLI is preferred over Docker because it is the interpreter this project already
 # pins and requires; Docker is kept as the fallback for a deployment that has standardised on

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import socket
 
 import pytest
 
@@ -63,19 +62,26 @@ def alert_address(monkeypatch):
 
 @pytest.fixture
 def store_is_down(monkeypatch):
-    """Make the vector store unreachable, without touching the real one.
+    """Make the store this deployment uses unreachable, without touching any real one.
 
-    A refused connection rather than a patched boolean: `check_vector_store` opens a socket, and
-    a test that replaced the function would be asserting against its own stub rather than
-    against the probe the production path runs.
+    Points the *local* client at a dead port rather than stubbing the check, so the production
+    path really does try to build a client and really does fail. Port 1 is reserved and nothing
+    binds it, so the refusal is immediate.
+
+    `chromadb.HttpClient` connects during construction, so this fails at the build rather than
+    at `heartbeat()` - which is exactly the case the check must not report as misconfiguration,
+    and is why the two share one verdict.
+
+    The api_key is blanked so the local branch is taken. `tests/conftest.py` already blanks it
+    process-wide, and its own comment says why: "a real CHROMA_API_KEY flips ingest_service to
+    CloudClient". That is the whole finding this file was rewritten for, and the suite has been
+    guarding against it since long before anybody wrote this module.
     """
     from api.config import get_settings
 
     settings = get_settings()
-    monkeypatch.setattr(settings, "chroma_api_key", None, raising=False)
+    monkeypatch.setattr(settings, "chroma_api_key", "", raising=False)
     monkeypatch.setattr(settings, "chroma_host", "127.0.0.1", raising=False)
-    # Port 1 is reserved and nothing binds it, so the connection is refused immediately rather
-    # than hanging for the three-second timeout.
     monkeypatch.setattr(settings, "chroma_port", 1, raising=False)
 
 
@@ -106,65 +112,138 @@ def test_no_test_in_this_file_can_reach_resend(monkeypatch):
     operator_alert.alert_operator(key="probe", subject="s", diagnosis="d", body="b")
 
 
-# ── The probe ────────────────────────────────────────────────────────────────────────────────
+# ── The probe asks the seam the application asks ─────────────────────────────────────────────
 
-def test_the_probe_reports_a_store_that_is_not_listening(store_is_down):
-    result = health_checks.check_vector_store()
+def test_the_check_asks_the_same_seam_the_application_asks(monkeypatch):
+    """**The regression test for the worst defect this module has had.**
+
+    The first version probed `settings.chroma_host:chroma_port` directly and short-circuited to
+    "healthy" whenever `CHROMA_API_KEY` was set. On a deployment with the key set - which the
+    development machine is - that made the whole check a no-op that always answered healthy,
+    while its fallback probed a `localhost:8002` the application never speaks to.
+
+    A health check that examines a different store from the code is not checking the code, so
+    the property is asserted directly: the check calls `get_chroma_client`, with this project's
+    slug, and reaches its verdict from that client.
+    """
+    called: list[str] = []
+
+    class _Client:
+        def heartbeat(self):
+            return 1
+
+    def _seam(slug):
+        called.append(slug)
+        return _Client()
+
+    monkeypatch.setattr("api.services.chroma_client.get_chroma_client", _seam)
+    assert health_checks.check_vector_store("acme").ok is True
+    assert called == ["acme"], "the check must resolve its client through get_chroma_client"
+
+
+def test_a_cloud_deployment_is_really_probed_rather_than_assumed_healthy(monkeypatch):
+    """With a cloud key set, an unreachable store must still be reported down.
+
+    This is the exact shape of the original bug: `if settings.chroma_api_key: return ok` made
+    every cloud deployment permanently healthy, so the alert could never fire on the only store
+    that deployment actually uses.
+    """
+    from api.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "chroma_api_key", "ck-test", raising=False)
+
+    class _DeadCloud:
+        def heartbeat(self):
+            raise RuntimeError("cloud is unreachable")
+
+    monkeypatch.setattr("api.services.chroma_client.get_chroma_client", lambda _s: _DeadCloud())
+    result = health_checks.check_vector_store("acme")
+    assert result.ok is False, "a cloud key must not be treated as proof the cloud is up"
+
+
+def test_the_cloud_remedy_does_not_send_an_operator_to_start_a_local_server(monkeypatch):
+    """The remedy has to match the store, or the alert costs an operator an hour."""
+    from api.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "chroma_api_key", "ck-test", raising=False)
+    monkeypatch.setattr(
+        health_checks, "store_kind", lambda _s: "cloud"
+    )
+
+    class _DeadCloud:
+        def heartbeat(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr("api.services.chroma_client.get_chroma_client", lambda _s: _DeadCloud())
+    diagnosis = health_checks.check_vector_store("acme").diagnosis
+    assert "Chroma Cloud" in diagnosis
+    assert "chroma run" not in diagnosis, "starting a local server does not fix a cloud outage"
+    assert "will not help" in diagnosis
+
+
+def test_a_local_store_that_is_not_listening_is_reported_with_the_local_remedy(store_is_down):
+    """Driven through the real client against a dead port - no stub in the path at all."""
+    result = health_checks.check_vector_store("acme")
     assert result.ok is False
-    # The remedy must not send an operator to Docker - that is the false message this whole
-    # branch of work exists to remove, and it was in three places.
-    assert "docker" not in result.diagnosis.lower() or "does not need Docker" in result.diagnosis
     assert "chroma run" in result.diagnosis
+    # The remedy must not send an operator to Docker - the false message this branch removes.
+    assert "does not need Docker" in result.diagnosis
 
 
-def test_the_probe_reports_a_store_that_is_listening(monkeypatch):
-    """Driven against a real listening socket, so the healthy answer is established too."""
+def test_a_reachable_store_is_reported_healthy(monkeypatch):
+    """The healthy answer is established too, so the check is driven in both directions."""
+    class _Live:
+        def heartbeat(self):
+            return 1789
+
+    monkeypatch.setattr("api.services.chroma_client.get_chroma_client", lambda _s: _Live())
+    assert health_checks.check_vector_store("acme").ok is True
+
+
+def test_the_incident_key_separates_the_two_stores(monkeypatch):
+    """A deployment can have a cloud store and a local store failing independently.
+
+    A `sensitive` engagement is refused CLOUD_VECTOR_STORE and uses the local server while a
+    `standard` one uses the cloud, so collapsing both into one key would let a local outage
+    spend the budget that a cloud outage needed.
+    """
+    monkeypatch.setattr(health_checks, "store_kind", lambda _s: "cloud")
+    cloud = health_checks.incident_key("acme")
+    monkeypatch.setattr(health_checks, "store_kind", lambda _s: "local")
+    local = health_checks.incident_key("acme")
+    assert cloud != local
+    assert cloud.startswith(health_checks.VECTOR_STORE)
+
+
+def test_store_kind_follows_the_key_and_the_projects_grant(monkeypatch):
+    """`store_kind` must agree with `get_chroma_client`'s branch, which is the pair it labels."""
     from api.config import get_settings
 
-    server = socket.socket()
-    server.bind(("127.0.0.1", 0))
-    server.listen(1)
-    try:
-        settings = get_settings()
-        monkeypatch.setattr(settings, "chroma_api_key", None, raising=False)
-        monkeypatch.setattr(settings, "chroma_host", "127.0.0.1", raising=False)
-        monkeypatch.setattr(settings, "chroma_port", server.getsockname()[1], raising=False)
-        assert health_checks.check_vector_store().ok is True
-    finally:
-        server.close()
+    monkeypatch.setattr(get_settings(), "chroma_api_key", "", raising=False)
+    assert health_checks.store_kind("acme") == "local", "no key means no cloud, whatever the grant"
 
-
-def test_chroma_cloud_is_reported_reachable_without_a_socket(monkeypatch):
-    """A cloud deployment must not be probed, and must not be reported down."""
-    from api.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "chroma_api_key", "ck-test", raising=False)
-    monkeypatch.setattr(settings, "chroma_host", "127.0.0.1", raising=False)
-    monkeypatch.setattr(settings, "chroma_port", 1, raising=False)
-
-    def _no_sockets(*a, **k):
-        raise AssertionError("the cloud branch opened a socket")
-
-    monkeypatch.setattr(socket, "create_connection", _no_sockets)
-    assert health_checks.check_vector_store().ok is True
+    monkeypatch.setattr(get_settings(), "chroma_api_key", "ck-test", raising=False)
+    monkeypatch.setattr(health_checks, "project_permits", lambda *a, **k: False)
+    assert health_checks.store_kind("acme") == "local", (
+        "a project refused CLOUD_VECTOR_STORE uses the local server even with a key set"
+    )
 
 
 def test_a_store_that_answers_is_diagnosed_differently_from_one_that_is_down(monkeypatch):
     """The two need different remedies, which is the entire reason the probe runs at all."""
     monkeypatch.setattr(
-        health_checks, "check_vector_store", lambda: health_checks.HealthResult(ok=True)
+        health_checks, "check_vector_store", lambda _s: health_checks.HealthResult(ok=True)
     )
-    answering = health_checks.describe_vector_store_failure(RuntimeError("bad collection"))
+    answering = health_checks.describe_vector_store_failure("acme", RuntimeError("bad collection"))
     assert "is answering" in answering
     assert "restart" in answering.lower()
 
     monkeypatch.setattr(
         health_checks,
         "check_vector_store",
-        lambda: health_checks.HealthResult(ok=False, diagnosis="not reachable at all"),
+        lambda _s: health_checks.HealthResult(ok=False, diagnosis="not reachable at all"),
     )
-    assert health_checks.describe_vector_store_failure(None) == "not reachable at all"
+    assert health_checks.describe_vector_store_failure("acme", None) == "not reachable at all"
 
 
 # ── The alert reaches a person ───────────────────────────────────────────────────────────────
@@ -309,11 +388,18 @@ def test_indexing_answers_still_returns_zero_rather_than_raising(monkeypatch, ma
 def test_indexing_answers_alerts_and_names_what_was_lost(
     monkeypatch, mail, alert_address, store_is_down
 ):
-    """The demonstrated case: answers reach SQLite, reach no store, and somebody is told.
+    """Answers reach SQLite, fail to reach the store, and somebody is told how many.
 
-    Measured on this deployment on 17 September 2026 - 229 answers across three completed
-    interviews in SQLite and no `sp-gs-am_interviews` collection at all. Every one of those
-    failures logged and none of them reached a person.
+    The size matters because this path is silent by design: indexing must never fail an
+    interview a participant has already given, so the swallow stays and the alert is what
+    carries the number. "229 answers are not searchable" and "one retrieval came back empty"
+    send an operator to different places.
+
+    An earlier version of this docstring claimed this had *happened* on `sp-gs-am` - that all
+    229 answers were missing from Chroma. They were not: they are in Chroma Cloud, which is the
+    store `get_chroma_client` builds when `CHROMA_API_KEY` is set, and the three stale local
+    stores everyone kept measuring are not the ones the application uses. The scenario is real,
+    the incident was not, and the difference is left recorded rather than quietly deleted.
     """
     from api.services import interview_answer_service
 
@@ -372,17 +458,25 @@ def test_the_retrieval_tool_does_not_alert_when_the_store_is_fine(monkeypatch, m
 
 # ── The registry ─────────────────────────────────────────────────────────────────────────────
 
-def test_the_registry_declares_the_vector_store_and_its_probe_runs():
+def test_the_registry_declares_the_vector_store_and_its_probe_runs(monkeypatch):
     """One member, declared, with a probe that is actually callable.
 
     Asserted as *behaviour* - the probe is invoked - rather than as a count, so a member added
     with a broken or missing probe fails here rather than at the moment of an outage.
     """
+    class _Live:
+        def heartbeat(self):
+            return 1
+
+    # Stubbed so the registry test does not depend on whether a local ChromaDB happens to be
+    # running on the machine it is run on.
+    monkeypatch.setattr("api.services.chroma_client.get_chroma_client", lambda _s: _Live())
+
     keys = {check.key for check in health_checks.HEALTH_CHECKS}
     assert health_checks.VECTOR_STORE in keys
     for check in health_checks.HEALTH_CHECKS:
         assert check.label, f"{check.key} has no operator-readable label"
-        assert isinstance(check.probe(), health_checks.HealthResult)
+        assert isinstance(check.probe("acme"), health_checks.HealthResult)
 
 
 def test_nothing_calls_the_probe_on_a_timer():

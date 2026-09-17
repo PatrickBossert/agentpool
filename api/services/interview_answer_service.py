@@ -249,9 +249,8 @@ def index_answers(slug: str, rows: list[dict]) -> int:
         # The swallow above is right and stays: the SQLite rows are the system of record, and
         # failing here would lose an interview a person has already given. What was missing is
         # that the swallow was the *end* of it - a log line in a server nobody tails is not a
-        # person being told. Measured on this deployment on 17 September: 229 answers across
-        # three completed interviews in SQLite, and no `sp-gs-am_interviews` collection at all.
-        # Every one of those failures logged exactly here, and nobody knew for days.
+        # person being told, and this is the quietest indexing path in the product because the
+        # participant has already gone and no request is waiting on the answer.
         #
         # Never raises and never blocks; see `report_vector_store_failure`. `index_answers` runs
         # in a worker thread via `_index_in_background`, so the alert is sent inline from there
