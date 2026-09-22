@@ -290,13 +290,52 @@ def _warn_script_assertions(parsed: object, _slug: str, _batch: object) -> list[
 # ignores it; `_warn_script_durations` wants the batch and says why. It is passed to all of them
 # rather than to the one that reads it, so a new warner chooses which it is judging instead of
 # discovering that only one of the two was ever available.
-_WARNERS: dict[str, list[tuple[str, Callable[[object, str, object], list[dict]]]]] = {
-    "value_chain_tree": [("value_chain_tree", _warn_value_chain_tree)],
-    "themes": [("theme_anchor", _warn_themes), ("theme_evidence", _warn_theme_evidence)],
+#
+# THE THIRD ELEMENT OF EACH ENTRY IS THAT CHOICE, STATED. `record_validation_warnings_sync` is
+# called with complete=True, which deletes every open row for the source that this call did not
+# re-derive - honest for a warner that judged the whole artefact, and destructive for one that
+# judged a fragment of it. A batch-scoped warner must therefore say what it looked at, so the
+# clearing reaches exactly that far. Without it, Maya's batch 2 erased batch 1's findings while
+# the defective scripts stayed in the stored artefact: reported once, then silently unreported
+# for the life of the project.
+
+
+def _the_whole_artefact(_parsed: object, _slug: str, _batch: object) -> list[str] | None:
+    """This warner re-derived every finding for its source, so clearing may reach them all."""
+    return None
+
+
+def _the_scripts_in_this_batch(
+    _parsed: object, _slug: str, batch: object
+) -> list[str] | None:
+    """Only the scripts this write named - the ids `validate_script_durations` subjects by."""
+    return sorted(batch) if isinstance(batch, dict) else []
+
+
+# `themes` is NOT in _MERGE_ON_WRITE, so a themes write replaces the artefact outright and its
+# `batch` IS the whole of it - which is why `_warn_theme_evidence` reads the batch and is still
+# honestly whole-artefact scoped. That is a fact about the merge set rather than about the
+# warner, so it is asserted rather than assumed:
+# tests/test_sqlite_state_warnings.py::test_the_theme_warners_are_whole_artefact_only_because_themes_do_not_merge
+_WARNERS: dict[
+    str,
+    list[tuple[
+        str,
+        Callable[[object, str, object], list[dict]],
+        Callable[[object, str, object], "list[str] | None"],
+    ]],
+] = {
+    "value_chain_tree": [
+        ("value_chain_tree", _warn_value_chain_tree, _the_whole_artefact),
+    ],
+    "themes": [
+        ("theme_anchor", _warn_themes, _the_whole_artefact),
+        ("theme_evidence", _warn_theme_evidence, _the_whole_artefact),
+    ],
     "interview_scripts": [
-        ("interview_coverage", _warn_interview_coverage),
-        ("script_assertion", _warn_script_assertions),
-        ("script_duration", _warn_script_durations),
+        ("interview_coverage", _warn_interview_coverage, _the_whole_artefact),
+        ("script_assertion", _warn_script_assertions, _the_whole_artefact),
+        ("script_duration", _warn_script_durations, _the_scripts_in_this_batch),
     ],
 }
 
@@ -654,7 +693,7 @@ class SQLiteStateTool(BaseTool):
                     self.slug, self.run_id, key, agent_name, parsed, registration_error
                 )
 
-            for source, warner in _WARNERS.get(key, ()):
+            for source, warner, scope in _WARNERS.get(key, ()):
                 try:
                     found = warner(parsed, self.slug, batch)
                     # complete=True: a warner re-derives every finding from the artefact it
@@ -662,8 +701,13 @@ class SQLiteStateTool(BaseTool):
                     # when nothing was found, because that is precisely when clearing
                     # matters - run 29 raised missing_l0 on tree v17 and fixed it on v18,
                     # and without this the warning outlived the problem.
+                    #
+                    # judged_subjects says how far "every finding" reaches. A warner handed
+                    # the pre-merge batch re-derived findings for those ids and no others,
+                    # so clearing beyond them erases work it never looked at.
                     record_validation_warnings_sync(
-                        self.slug, self.run_id, source, found, complete=True
+                        self.slug, self.run_id, source, found, complete=True,
+                        judged_subjects=scope(parsed, self.slug, batch),
                     )
                 except Exception:
                     # A warning is never worth failing a completed write over. The write and

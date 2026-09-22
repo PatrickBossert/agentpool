@@ -122,10 +122,34 @@ def test_the_warning_names_the_scripts_and_the_arithmetic():
     warnings = validate_script_durations({"SC-014": _script("About 45 minutes.")})
     assert len(warnings) == 1
     assert warnings[0]["code"] == "stated_duration_disagrees"
-    assert warnings[0]["measure"] == 1
+    assert warnings[0]["subject"] == "SC-014"
+    # The size of the disagreement, not a count: a dismissal says "45 against 50 is close
+    # enough", and that judgement is about the gap, so the gap is what should expire it.
+    assert warnings[0]["measure"] == 20
     detail = warnings[0]["detail"]
-    assert "SC-014" in detail and "45" in detail and "65" in detail
+    assert "45" in detail and "65" in detail
     assert str(TRANSCRIPT_REVIEW_MINUTES) in detail
+
+
+def test_one_finding_per_script_each_keyed_by_its_own_id():
+    """Unlike both siblings, and deliberately - this is the only warner here that judges the
+    pre-merge batch, so its findings must be clearable one script at a time.
+
+    Aggregated under `subject=None` there is a single row for the set, and the moment a later
+    clean batch re-derives it the row goes - taking the earlier batch's defective scripts with
+    it while they sit unchanged in the stored artefact.
+    """
+    warnings = validate_script_durations({
+        "SC-001": _script("About 45 minutes."),
+        "SC-002": _script("About 30 minutes."),
+        "SC-003": _script("About 65 minutes, including 10 to review."),
+    })
+    assert sorted(w["subject"] for w in warnings) == ["SC-001", "SC-002"]
+    assert {w["code"] for w in warnings} == {"stated_duration_disagrees"}
+    # Each carries its own arithmetic, not the set's - 45 and 30 are different findings.
+    by_subject = {w["subject"]: w for w in warnings}
+    assert by_subject["SC-001"]["measure"] == 20
+    assert by_subject["SC-002"]["measure"] == 35
 
 
 def test_nothing_is_warned_about_when_every_script_agrees():
@@ -171,11 +195,21 @@ def test_the_warner_judges_the_batch_and_not_the_accumulated_artefact():
 def test_the_duration_warner_is_registered_on_the_write_path():
     """A guard nothing calls is a guard that does not exist - this repository's own recurring
     finding, recorded against a Deepgram door that was mounted and dark for four months."""
-    from agents.tools.sqlite_state import _WARNERS, _warn_script_durations
+    from agents.tools.sqlite_state import (
+        _WARNERS, _the_scripts_in_this_batch, _warn_script_durations,
+    )
 
-    registered = dict((warner, source) for source, warner in _WARNERS["interview_scripts"])
+    registered = {
+        warner: (source, scope)
+        for source, warner, scope in _WARNERS["interview_scripts"]
+    }
     assert _warn_script_durations in registered
-    assert registered[_warn_script_durations] == "script_duration"
+    source, scope = registered[_warn_script_durations]
+    assert source == "script_duration"
+    # And registered as BATCH-scoped. The warner reading the batch is only half of it: the
+    # recorder clears with complete=True, so a batch-scoped warner registered as
+    # whole-artefact deletes findings about scripts this write never looked at.
+    assert scope is _the_scripts_in_this_batch
 
 
 def test_maya_is_told_the_same_review_allowance_this_guard_checks():

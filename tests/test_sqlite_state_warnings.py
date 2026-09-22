@@ -423,3 +423,152 @@ async def test_a_warner_that_raises_says_so_in_the_log(tool_project, caplog):
     assert current_output_path(slug, "value_chain_tree") is not None, "the write must land"
     assert "value_chain_tree" in caplog.text
     assert "KeyError" in caplog.text
+
+
+# ── Maya's batches, and the clearing that must not reach past them ────────────────
+#
+# `_warn_script_durations` judges the PRE-MERGE batch on purpose, and the recorder clears
+# with complete=True. Unscoped, those two are in direct contradiction: a clean second batch
+# re-derives nothing and the clearing deletes the first batch's findings, while the
+# defective welcomes sit in the stored artefact unreported for the life of the project.
+# Maya writes in batches - the live artefact went v33=77 -> v34=80 -> v35=86 scripts.
+
+def _script(sid, stated_minutes, section_minutes):
+    return {
+        "script_id": sid, "node_id": "1.1", "node_label": "n", "level": "L2",
+        "relationship": "internal",
+        "welcome_message": f"This will take about {stated_minutes} minutes.",
+        "framing_block": "f", "closing_message": "c",
+        "sections": [{
+            "section_id": "S1", "target_minutes": section_minutes,
+            "discipline": "process", "question_intent": "context",
+            "elicitation": "prompted",
+            "questions": [{"id": "Q1", "text": "t", "discipline": "process",
+                           "question_intent": "context", "elicitation": "prompted"}],
+        }],
+    }
+
+
+def _write_scripts(slug, scripts, run_id=21):
+    from agents.tools.sqlite_state import SQLiteStateTool
+    return SQLiteStateTool(slug=slug, agent_name="interaction_designer", run_id=run_id)._run(
+        operation="write", key="interview_scripts",
+        agent_name="interaction_designer", value=json.dumps(scripts))
+
+
+async def _duration_subjects(slug, project_id):
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["script_duration"])
+    return sorted(r["subject"] for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_clean_batch_does_not_erase_an_earlier_batchs_findings(tool_project):
+    """The defect, driven end to end through the tool that writes the artefact."""
+    slug, project_id, _ = tool_project
+
+    bad = {f"SC-00{i}": _script(f"SC-00{i}", 20, 40) for i in (1, 2, 3)}
+    assert not _write_scripts(slug, bad).startswith("Error")
+    assert await _duration_subjects(slug, project_id) == ["SC-001", "SC-002", "SC-003"]
+
+    clean = {"SC-004": _script("SC-004", 50, 40)}
+    assert not _write_scripts(slug, clean, run_id=22).startswith("Error")
+    assert await _duration_subjects(slug, project_id) == ["SC-001", "SC-002", "SC-003"], \
+        "a batch that never looked at SC-001..003 must not clear findings about them"
+
+
+@pytest.mark.asyncio
+async def test_correcting_one_script_clears_that_script_alone(tool_project):
+    """The other half. Clearing was never wrong - only its reach was - so a rewritten
+    script must still stop being reported, and only that one."""
+    slug, project_id, _ = tool_project
+
+    _write_scripts(slug, {f"SC-00{i}": _script(f"SC-00{i}", 20, 40) for i in (1, 2, 3)})
+    _write_scripts(slug, {"SC-002": _script("SC-002", 50, 40)}, run_id=22)
+
+    assert await _duration_subjects(slug, project_id) == ["SC-001", "SC-003"]
+
+
+@pytest.mark.asyncio
+async def test_the_open_findings_match_the_scripts_the_stored_artefact_still_gets_wrong(
+    tool_project,
+):
+    """The property underneath both tests above, stated once against the artefact itself.
+
+    The warnings a reviewer sees must be exactly the scripts that are actually still wrong -
+    not a subset erased by a later batch, and not a superset kept after a fix.
+    """
+    from api.services.script_duration_validation import find_duration_disagreements
+
+    slug, project_id, _ = tool_project
+    _write_scripts(slug, {f"SC-00{i}": _script(f"SC-00{i}", 20, 40) for i in (1, 2, 3)})
+    _write_scripts(slug, {"SC-004": _script("SC-004", 50, 40)}, run_id=22)
+    _write_scripts(slug, {"SC-002": _script("SC-002", 50, 40)}, run_id=23)
+
+    stored = json.loads(current_output_path(slug, "interview_scripts").read_text())
+    still_wrong = sorted(s for s, _, _ in find_duration_disagreements(stored))
+    assert still_wrong == ["SC-001", "SC-003"], "precondition: the artefact is as expected"
+    assert await _duration_subjects(slug, project_id) == still_wrong
+
+
+@pytest.mark.asyncio
+async def test_the_script_the_agent_is_told_to_fix_is_named_in_the_prompt(tool_project):
+    """One layer on: a subject-keyed finding is worth nothing if Maya is handed a detail
+    with no id in it. `_fetch_validation_warnings` prefixes the subject, so this asserts the
+    text that actually reaches her."""
+    from api.services.run_service import _fetch_validation_warnings
+
+    slug, _, _ = tool_project
+    _write_scripts(slug, {"SC-001": _script("SC-001", 20, 40)})
+
+    text = await _fetch_validation_warnings(slug, "assessment_design")
+    assert "[SC-001]" in text
+    assert "50" in text, "the derived duration must be in the text she is asked to act on"
+
+
+@pytest.mark.asyncio
+async def test_a_whole_artefact_warner_still_clears_across_batches(tool_project):
+    """The scoping must not leak to the merged-artefact warners.
+
+    `script_assertion` judges the accumulated artefact, so a later batch that fixes a
+    pre-written synthesis anywhere in it must clear the finding - and would not if this
+    change had narrowed every warner's clearing to the ids in the batch.
+    """
+    slug, project_id, _ = tool_project
+
+    bad = _script("SC-001", 50, 40)
+    bad["closing_message"] = "Here's my summary of what you told me."
+    _write_scripts(slug, {"SC-001": bad})
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["script_assertion"])
+    assert [r["code"] for r in rows] == ["prewritten_synthesis"]
+
+    # A LATER batch, naming a different script, that leaves the merged artefact clean.
+    fixed = _script("SC-001", 50, 40)
+    _write_scripts(slug, {"SC-001": fixed, "SC-002": _script("SC-002", 50, 40)}, run_id=22)
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["script_assertion"])
+    assert rows == [], [(r["subject"], r["detail"]) for r in rows]
+
+
+def test_the_theme_warners_are_whole_artefact_only_because_themes_do_not_merge():
+    """`_warn_theme_evidence` reads the pre-merge batch, exactly as the duration warner does,
+    and is nonetheless registered whole-artefact scoped. That is correct ONLY because
+    `themes` is not in `_MERGE_ON_WRITE`, so a themes write replaces the artefact outright
+    and its batch IS the whole of it.
+
+    Asserted rather than assumed: adding `themes` to the merge set would silently give it the
+    batch-erasure defect, with nothing else in the code to notice.
+    """
+    from agents.tools.sqlite_state import (
+        _MERGE_ON_WRITE, _WARNERS, _the_whole_artefact,
+    )
+
+    assert "themes" not in _MERGE_ON_WRITE, (
+        "themes now merge on write, so `theme_evidence` is judging a fragment while "
+        "clearing the whole source - give it a batch scope, as script_duration has."
+    )
+    assert all(scope is _the_whole_artefact for _, _, scope in _WARNERS["themes"])

@@ -54,7 +54,6 @@ _DURATION = re.compile(
 # because "an hour" carries no digits for the pattern above to find.
 _HOURS = re.compile(r"\b(?:(\d(?:\.\d)?)\s*hours?|an?\s+hour)\b", re.IGNORECASE)
 
-_MAX_NAMED = 6
 
 
 def script_timebox_minutes(script: object) -> int:
@@ -137,32 +136,38 @@ def find_duration_disagreements(scripts: dict) -> list[tuple[str, int, int]]:
 def validate_script_durations(scripts: dict) -> list[dict]:
     """Zero warnings when every welcome's stated duration matches its own sections.
 
-    One warning for the set rather than one per script, matching both sibling validators: a
-    prompt that states the duration wrongly states it wrongly everywhere, and the actionable
-    fact is the set.
+    ONE WARNING PER SCRIPT, subject-keyed - and unlike its two siblings, deliberately.
+
+    They aggregate because their findings are about a set: one defective template produces
+    the same finding in every script it wrote, and 68 roll-call rows is a warner somebody
+    turns off. This one is different in kind, because it is the only warner here that judges
+    the PRE-MERGE BATCH. A finding with no subject cannot be cleared per script, and a
+    batch-scoped warner needs exactly that: Maya writes in batches (77 -> 80 -> 86 on the live
+    artefact), so batch 2 must be able to clear what batch 2 fixed and leave batch 1's three
+    defective welcomes standing. Aggregated, a clean second batch erased the first batch's
+    finding while the defective scripts stayed in the stored artefact, unreported for ever.
+
+    `measure` is the size of the disagreement in minutes, not a count. A dismissal says "45
+    against 50 is close enough"; that judgement is about the gap, so the gap is what should
+    expire it.
     """
     findings = find_duration_disagreements(scripts)
-    if not findings:
-        return []
-    shown = [
-        f"{s} says {stated} min, sections total {expected - TRANSCRIPT_REVIEW_MINUTES} "
-        f"+ {TRANSCRIPT_REVIEW_MINUTES} review = {expected}"
-        for s, stated, expected in findings[:_MAX_NAMED]
+    return [
+        {
+            "subject": script_id,
+            "code": "stated_duration_disagrees",
+            "measure": abs(stated - expected),
+            "detail": (
+                f"the welcome says {stated} min, but the sections total "
+                f"{expected - TRANSCRIPT_REVIEW_MINUTES} + {TRANSCRIPT_REVIEW_MINUTES} "
+                f"review = {expected}. The participant watches a timer built from "
+                f"target_minutes, so a welcome that understates it is contradicted on "
+                f"screen within the hour - and the review step afterwards, where they read "
+                f"and correct every answer, is real time nothing has ever told them about. "
+                f"State the sum of the section target_minutes plus "
+                f"{TRANSCRIPT_REVIEW_MINUTES} minutes to review the transcript, derived "
+                f"from the sections rather than typed."
+            ),
+        }
+        for script_id, stated, expected in findings
     ]
-    named = "; ".join(shown)
-    if len(findings) > _MAX_NAMED:
-        named += f"; and {len(findings) - _MAX_NAMED} more"
-    return [{
-        "subject": None,
-        "code": "stated_duration_disagrees",
-        "measure": len(findings),
-        "detail": (
-            f"{len(findings)} script(s) tell the interviewee a duration that disagrees with "
-            f"their own section budget. The participant watches a timer built from "
-            f"target_minutes, so a welcome that understates it is contradicted on screen within "
-            f"the hour - and the review step afterwards, where they read and correct every "
-            f"answer, is real time nothing has ever told them about. State the sum of the "
-            f"section target_minutes plus {TRANSCRIPT_REVIEW_MINUTES} minutes to review the "
-            f"transcript, derived from the sections rather than typed. Found: {named}."
-        ),
-    }]
