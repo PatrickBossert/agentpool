@@ -1,5 +1,6 @@
 # agents/tools/sqlite_state.py
 import json
+import logging
 from pathlib import Path
 from typing import Callable
 from pydantic import BaseModel, Field
@@ -669,6 +670,18 @@ class SQLiteStateTool(BaseTool):
                     # its row are durable by this point; telling the agent it failed would
                     # make it write again and version a duplicate. Per warner, so one that
                     # raises does not take the others down with it.
+                    #
+                    # LOGGED, because swallowing silently is how `theme_evidence` ran inert
+                    # for a whole branch: it emitted a warning shape the recorder could not
+                    # store, `w["detail"]` raised KeyError here, and a warner that recorded
+                    # nothing was indistinguishable from a warner that found nothing. A
+                    # database error and a programming error arrive at this line the same
+                    # way, and only one of them is something an operator can do anything
+                    # about - so say which warner, and say it loudly.
+                    logging.getLogger(__name__).exception(
+                        "warner '%s' raised on a %s write for %s - nothing was recorded and "
+                        "nothing was cleared for that source", source, key, self.slug,
+                    )
                     continue
 
             try:

@@ -101,7 +101,8 @@ def test_one_warning_per_code_however_many_rows_carry_it():
     ])
     warnings = validate_theme_evidence(themes, CORPUS)
     assert [w["code"] for w in warnings] == ["stakeholder_id_not_an_integer"]
-    assert "3 evidence entries" in warnings[0]["message"]
+    assert "3 evidence entries" in warnings[0]["detail"]
+    assert warnings[0]["measure"] == 3
 
 
 def test_an_unreadable_corpus_still_checks_what_it_can():

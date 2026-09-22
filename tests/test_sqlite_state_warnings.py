@@ -258,3 +258,168 @@ async def test_a_tree_warning_and_a_theme_warning_are_told_apart(tool_project):
             conn, project_id=project_id, sources=["theme_anchor"])
     assert [r["code"] for r in tree] == ["missing_l0"]
     assert [r["code"] for r in theme] == ["l3_skew"]
+
+
+# ── Casey's evidence attribution ──────────────────────────────────────────────────
+#
+# THE TEST THAT WAS MISSING. `tests/test_theme_evidence_validation.py` has ten tests and
+# every one of them drives the pure function; not one goes through `_warn_theme_evidence`
+# or the recorder. So the suite was green while the validator emitted
+# `{code, severity, message}` and `record_validation_warnings_sync` required `detail` -
+# `w["detail"]` raised KeyError, the per-warner `except Exception: continue` swallowed it,
+# and the raise landed before `commit` so the `complete=True` clearing did not run either.
+#
+# The warner worked only when it found NOTHING. A clean artefact recorded nothing and
+# cleared correctly; a defective one recorded nothing at all, which is the one case it
+# exists for. Would this test fail if the code were wrong? These ones would.
+
+def _theme_with_evidence(evidence):
+    return [{"id": "TH-01", "kind": "horizontal", "theme": "t", "description": "d",
+             "anchors": ["1.1"], "evidence": evidence}]
+
+
+async def _seed_answer(slug, answer_id, stakeholder_id):
+    """One interview_answers row, with the stakeholder and session it really hangs off.
+
+    Seeded through the foreign keys rather than around them: `_warn_theme_evidence` reads
+    `interview_answers.stakeholder_id`, and a corpus assembled in a shape production cannot
+    reach is a fake making a claim about this system (see the module header in
+    tests/test_theme_evidence_validation.py's sibling).
+    """
+    async with get_connection(slug) as conn:
+        async with conn.execute("SELECT id FROM projects WHERE slug=?", (slug,)) as cur:
+            pid = (await cur.fetchone())[0]
+        await conn.execute(
+            "INSERT OR IGNORE INTO stakeholders (id, project_id, name) VALUES (?,?,?)",
+            (stakeholder_id, pid, "A Person"))
+        await conn.execute(
+            "INSERT OR IGNORE INTO interview_sessions"
+            " (id, project_id, stakeholder_id, node_label, session_token)"
+            " VALUES (1,?,?,'1.1',?)",
+            (pid, stakeholder_id, f"tok-{slug}"))
+        await conn.execute(
+            "INSERT INTO interview_answers"
+            " (id, session_id, stakeholder_id, script_id, section_id, question_id,"
+            "  question_text, node_id, level, relationship, discipline, question_intent,"
+            "  elicitation)"
+            " VALUES (?,1,?,'SC-001','S1','Q1','q','1.1','L2','1.F','d','i','e')",
+            (answer_id, stakeholder_id))
+        await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_defective_theme_evidence_lands_a_row_in_validation_warnings(tool_project):
+    """The live defect, end to end: the first themes artefact filed the RELATIONSHIP in
+    `stakeholder_id` on 68 of 68 rows. Here one such row must produce a stored warning."""
+    slug, project_id, _ = tool_project
+    await _seed_answer(slug, 812, 10)
+
+    result = _write_themes(slug, _theme_with_evidence(
+        [{"answer_id": 812, "stakeholder_id": "1.F"}]))
+    assert not result.startswith("Error"), result
+    assert current_output_path(slug, "themes") is not None, "the write must still land"
+
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_evidence"])
+
+    codes = sorted(r["code"] for r in rows)
+    assert codes == ["no_relationship", "stakeholder_id_not_an_integer"], codes
+    by_code = {r["code"]: r for r in rows}
+    assert by_code["stakeholder_id_not_an_integer"]["run_id"] == 11
+    assert by_code["stakeholder_id_not_an_integer"]["subject"] is None
+    # measure is read by the dismissal-expiry rule; absent, that logic is inert.
+    assert by_code["stakeholder_id_not_an_integer"]["measure"] == 1
+    assert "1.F" in by_code["stakeholder_id_not_an_integer"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_evidence_naming_the_wrong_person_is_recorded(tool_project):
+    """The other half of the corpus check, which needs the project database read in
+    `_warn_theme_evidence` to have actually happened - an integer that is simply the wrong
+    integer is invisible without it."""
+    slug, project_id, _ = tool_project
+    await _seed_answer(slug, 812, 10)
+
+    _write_themes(slug, _theme_with_evidence(
+        [{"answer_id": 812, "stakeholder_id": 99, "relationship": "1.F"}]))
+
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_evidence"])
+    assert [r["code"] for r in rows] == ["stakeholder_id_disagrees"], [
+        (r["code"], r["detail"]) for r in rows]
+    assert "99 for answer 812" in rows[0]["detail"]
+    assert "whose own stakeholder is 10" in rows[0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_well_attributed_theme_evidence_records_nothing(tool_project):
+    """The control, and it is the one the broken shape also passed.
+
+    A warner that raises before it inserts is indistinguishable from a warner that found
+    nothing, so a clean case alone proves nothing about this path - which is exactly how
+    ten green tests sat over a KeyError. Kept because an assertion of a default and its
+    opposite is the pair; alone it is a test about the schema.
+    """
+    slug, project_id, _ = tool_project
+    await _seed_answer(slug, 812, 10)
+
+    _write_themes(slug, _theme_with_evidence(
+        [{"answer_id": 812, "stakeholder_id": 10, "relationship": "1.F"}]))
+
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_evidence"])
+    assert rows == [], [(r["code"], r["detail"]) for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_a_fixed_evidence_set_clears_the_stored_warning(tool_project):
+    """`complete=True` never ran either, because the KeyError fired before the commit. So
+    a finding could not clear once corrected - the shape of defect this codebase records as
+    worse than no warning at all, since acting on it is the wrong move."""
+    slug, project_id, _ = tool_project
+    await _seed_answer(slug, 812, 10)
+
+    _write_themes(slug, _theme_with_evidence([{"answer_id": 812, "stakeholder_id": "1.F"}]))
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_evidence"])
+    assert rows, "precondition: the defective write is warned about"
+
+    _write_themes(slug, _theme_with_evidence(
+        [{"answer_id": 812, "stakeholder_id": 10, "relationship": "1.F"}]))
+    async with get_connection(slug) as conn:
+        rows = await fetch_validation_warnings(
+            conn, project_id=project_id, sources=["theme_evidence"])
+    assert rows == [], [(r["code"], r["detail"]) for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_a_warner_that_raises_says_so_in_the_log(tool_project, caplog):
+    """The swallow is right; the silence was not.
+
+    `theme_evidence` emitted a shape the recorder could not store, so `w["detail"]` raised
+    here on every defective write and the `except` returned the run to a state
+    indistinguishable from a clean artefact. The write must still land - that half is
+    deliberate and asserted below - but an operator must be able to find out.
+    """
+    import logging
+    slug, project_id, _ = tool_project
+    import agents.tools.sqlite_state as st
+
+    def boom(*a, **k):
+        raise KeyError("detail")
+    st_record = st.record_validation_warnings_sync
+    try:
+        st.record_validation_warnings_sync = boom
+        with caplog.at_level(logging.ERROR):
+            result = _write_tree(slug, ROOTLESS)
+    finally:
+        st.record_validation_warnings_sync = st_record
+
+    assert not result.startswith("Error"), result
+    assert current_output_path(slug, "value_chain_tree") is not None, "the write must land"
+    assert "value_chain_tree" in caplog.text
+    assert "KeyError" in caplog.text

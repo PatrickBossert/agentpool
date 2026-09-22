@@ -16,6 +16,24 @@ prompt does not hold a schema on its own.
 Pure over given data - the answers' own ids are passed in rather than read here - so a hostile
 case can be driven directly. A validator that can only run against a live project is one that
 cannot be asked what it saw.
+
+THE SHAPE IS THE HOUSE SHAPE, AND THAT IS NOT COSMETIC
+`record_validation_warnings_sync` reads `subject`, `code`, `measure` and `detail`. This module
+first emitted `{code, severity, message}`, and the consequence was not a mislabelled row: the
+recorder's `w["detail"]` raised `KeyError`, the per-warner `except Exception: continue` in
+`agents/tools/sqlite_state.py` swallowed it, and because the raise came before `commit` the
+`complete=True` clearing did not run either. **The warner worked only when it found nothing** -
+a clean themes artefact recorded nothing and cleared correctly, and a defective one recorded
+nothing at all. Ten tests over the pure function below were green throughout, because none of
+them went near the recorder.
+
+`severity` is gone rather than kept alongside: nothing reads it, and a key nothing reads is a
+claim rather than data.
+
+`measure` is a COUNT of defective entries, not a fraction. `SKEW_RERAISE_DELTA` is 0.10, so a
+dismissal expires on any change of one - which is the right direction here, since a changed
+evidence set is a different claim about different rows, unlike the skew fraction that constant
+was calibrated for.
 """
 from __future__ import annotations
 
@@ -70,11 +88,12 @@ def find_evidence_defects(
 def validate_theme_evidence(
     themes: object, stakeholder_by_answer: dict[int, int]
 ) -> list[dict]:
-    """At most one warning per code, matching `validate_node_coverage` and its siblings.
+    """At most one warning per code, in the shape `record_validation_warnings_sync` stores.
 
     One misread instruction produces a defect in every evidence row it wrote, and the
     actionable fact is the set rather than the roll-call - 68 identical findings is a warner
-    somebody turns off, taking its siblings with it.
+    somebody turns off, taking its siblings with it. `subject` is therefore None, as it is on
+    every other set-level finding in this family.
     """
     defects = find_evidence_defects(themes, stakeholder_by_answer)
     if not defects:
@@ -108,8 +127,12 @@ def validate_theme_evidence(
         if len(hits) > _MAX_NAMED:
             shown += f"; and {len(hits) - _MAX_NAMED} more"
         warnings.append({
+            "subject": None,
             "code": code,
-            "severity": "warning",
-            "message": f"{len(hits)} evidence entr{'y' if len(hits) == 1 else 'ies'} {message}: {shown}",
+            "measure": len(hits),
+            "detail": (
+                f"{len(hits)} evidence entr{'y' if len(hits) == 1 else 'ies'} {message}: "
+                f"{shown}"
+            ),
         })
     return warnings
