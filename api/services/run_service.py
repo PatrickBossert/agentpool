@@ -214,6 +214,14 @@ _WARNING_SOURCE_CREW: dict[str, str] = {
     # validation_warnings and read by nobody, exactly the defect this fix exists to close
     # on the reporting side, not just the write side.
     "script_ledger_registration": "assessment_design",
+    # Maya again, for the same reason a third and a fourth time: both warners judge an
+    # `interview_scripts` artefact, and she is the only agent who writes one. A pre-written
+    # synthesis and a welcome that misstates its own duration are both hers to correct.
+    "script_assertion": "assessment_design",
+    "script_duration": "assessment_design",
+    # Casey writes `themes`, so the evidence attribution on a theme is hers, exactly as the
+    # anchor skew above already is.
+    "theme_evidence": "discovery_interviews",
 }
 
 
