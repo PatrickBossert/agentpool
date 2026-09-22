@@ -71,10 +71,35 @@ def test_the_question_an_auditor_was_read_is_caught(defective):
     assert ("SC-013", "SC-013.S10.Q1.text", "let me offer a synthesis") in found
 
 
-def test_the_withdrawn_synthesis_field_is_caught_as_well(defective):
-    """Both copies, not just the one the runtime already refuses to speak."""
+def test_a_withdrawn_synthesis_field_is_not_a_finding(defective):
+    """Deliberately reversed, and the measurement is the argument.
+
+    `synthesis_prompt` is commented out of `VoiceInterview.tsx` and no participant hears it,
+    so a marker there is not this guard's finding - the rule `_spoken_strings` states in its
+    own first line. Watching it cost 44 standing findings on the live `interview_scripts_v38`,
+    which `_merge_with_current` accumulates and the owner has decided to keep: a warner firing
+    on every write for ever, at a measure a dismissal cannot settle.
+
+    The half that keeps this honest is
+    test_every_synthesis_field_the_interview_speaks_is_watched below - if the field is ever
+    spoken again, it comes straight back under the guard and this test fails with it.
+    """
     where = {(s, w) for s, w, _ in find_asserted_summaries(defective)}
-    assert ("SC-901", "synthesis_check.synthesis_prompt") in where
+    assert ("SC-901", "synthesis_check.synthesis_prompt") not in where
+
+
+def test_the_one_synthesis_field_the_participant_hears_is_watched(defective):
+    """`peer_referral` is spoken, so a summary smuggled into it is a finding.
+
+    The necessary other half: an exclusion proved only by absence is satisfied by a guard
+    that looks at nothing in `synthesis_check` at all.
+    """
+    smuggled = json.loads(json.dumps(defective))
+    smuggled["SC-901"]["synthesis_check"]["peer_referral"] = (
+        "Here's my summary of your position - who else should I speak to?"
+    )
+    where = {(s, w) for s, w, _ in find_asserted_summaries(smuggled)}
+    assert ("SC-901", "synthesis_check.peer_referral") in where
 
 
 def test_a_confirmation_request_is_caught_even_without_an_assertion_marker():
@@ -147,6 +172,36 @@ def test_saying_truthfully_how_answers_are_handled_passes(clean):
     to a destination.
     """
     assert find_false_handling_promises({"SC-804": clean["SC-804"]}) == []
+
+
+def test_asking_an_auditor_where_their_findings_go_is_not_a_promise():
+    """The same argument as `unfiltered`, one phrase over, and latent rather than live.
+
+    "Does this go straight to the board, or through management?" is a question about the
+    organisation's reporting line - a perfectly good thing to ask an internal auditor, and
+    nothing to do with what happens to her answers. Matched everywhere, it made the warner
+    cry wolf on a correct question, on the write path, on every run.
+    """
+    question = {"SC-1": {"sections": [{"questions": [
+        {"id": "Q1", "text": "Does this go straight to the board, or through management?"},
+        {"id": "Q2", "text": "Are findings reported directly to the board, or filtered?"},
+    ]}]}}
+    assert find_false_handling_promises(question) == []
+
+
+def test_promising_an_auditor_her_words_go_straight_to_the_board_is_still_caught():
+    """The other direction, and the reason the phrases are restricted rather than deleted.
+
+    In a welcome or a closing there is no innocent reading: it is a promise about handling,
+    made where handling is described, and it is false - answers are synthesised first.
+    """
+    promise = {"SC-1": {
+        "welcome_message": "What you say goes straight to the board.",
+        "closing_message": "Your words go directly to the board, unedited.",
+    }}
+    where = {(w, m) for _, w, m in find_false_handling_promises(promise)}
+    assert ("welcome_message", "straight to the board") in where
+    assert ("closing_message", "directly to the board") in where
 
 
 # ── it does not fall over on the shapes a real artefact takes ───────────────────────────────
@@ -352,11 +407,146 @@ def test_an_ambiguous_word_is_a_promise_in_the_closing_and_not_in_a_question():
 
     # The control: an unambiguous phrase is a promise wherever it is spoken, including in
     # a question, because it names the destination and cannot be read innocently.
+    #
+    # This case read "goes directly to the board", and that phrase turned out to belong on
+    # the other side of this very test: "Are findings reported directly to the board, or
+    # filtered?" is the identical legitimate audit question as the `unfiltered` one above.
+    # So the phrase moved to the field-scoped set and the control moved to one with no
+    # innocent reading at all. The PROPERTY is unchanged - what changed is the example, which
+    # had been chosen to be unambiguous and was not.
     phrase_in_question = {
         "SC-C": {"sections": [{"questions": [
-            {"text": "You know this goes directly to the board - does that change your answer?"}
+            {"text": "You know this reaches the board exactly as you said it - does that "
+                     "change your answer?"}
         ]}]}
     }
     assert find_false_handling_promises(phrase_in_question), (
         "scoping the ambiguous words must not have narrowed the unambiguous phrases"
     )
+
+
+# ── the allow-list is held against the runtime, not against a comment ──────────────────────
+#
+# `_SPOKEN_SYNTHESIS_FIELDS` names the `synthesis_check` fields a participant actually hears,
+# and everything else in that block is outside the guard. An allow-list has one hazard - a NEW
+# spoken field goes unwatched - and that is precisely the "re-implementation under a different
+# name" this module exists for. So the list is not explained, it is established: the walk below
+# is a pure function over given text, driven both gated and ungated, and then run against
+# `VoiceInterview.tsx` itself.
+
+import re
+
+_SPEAKS = re.compile(
+    r"speakText\(\s*(?:sc|script\.synthesis_check)\.([A-Za-z_][A-Za-z0-9_]*)"
+)
+
+
+def spoken_synthesis_fields(source: str) -> set[str]:
+    """Which `synthesis_check` fields the given TypeScript speaks.
+
+    Pure over given text so it can be asked what it saw. Line comments only - this file uses
+    `//` for every withdrawal and nothing is wrapped in `/* */`, and a walk that claimed to
+    handle block comments without being driven on one would be describing its reach rather
+    than establishing it.
+    """
+    found: set[str] = set()
+    for line in source.splitlines():
+        if line.strip().startswith("//"):
+            continue
+        match = _SPEAKS.search(line)
+        if match:
+            found.add(match.group(1))
+    return found
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("      await speakText(sc.peer_referral)", {"peer_referral"}),
+    ("      // await speakText(sc.synthesis_prompt)", set()),
+    ("      await speakText(script.synthesis_check.peer_referral)", {"peer_referral"}),
+    # Not hardcoded to the one field that happens to be right today.
+    ("      await speakText(sc.closing_invitation)", {"closing_invitation"}),
+    ("      setCurrentQuestion(sc.forward_roadmap)", set()),
+    ("      await speakText(script.closing_message)", set()),
+], ids=["spoken", "commented out", "long form", "some other field",
+        "shown but not spoken", "not a synthesis field"])
+def test_the_walk_reports_a_spoken_field_and_not_a_withdrawn_one(source, expected):
+    """Both directions. A one-sided test passes against a walk reporting everything and
+    against one reporting nothing."""
+    assert spoken_synthesis_fields(source) == expected
+
+
+def test_the_walk_tells_the_withdrawn_block_from_the_live_line_in_one_pass():
+    """The real shape of the file: one live call among four commented-out ones."""
+    source = "\n".join([
+        "    if (script.synthesis_check) {",
+        "      // WITHDRAWN: scripted synthesis check.",
+        "      // await speakText(sc.synthesis_prompt)",
+        "      await speakText(sc.peer_referral)",
+        "      // await speakText(sc.forward_roadmap)",
+        "      // if (sc.portfolio_options) { await speakText(sc.portfolio_options) }",
+        "    }",
+    ])
+    assert spoken_synthesis_fields(source) == {"peer_referral"}
+
+
+def test_every_synthesis_field_the_interview_speaks_is_watched():
+    """The guard's allow-list and the runtime must name the same set.
+
+    Wiring `closing_invitation` - which Maya's prompt already describes as spoken - would
+    otherwise put a field carrying "here's how I see it" in front of a participant with
+    nothing looking at it. This fails on the day that happens, rather than on the day
+    somebody is read their own testimony back.
+    """
+    from api.services.script_assertion_validation import _SPOKEN_SYNTHESIS_FIELDS
+
+    page = Path(__file__).resolve().parents[1] / "ui/src/pages/VoiceInterview.tsx"
+    source = page.read_text()
+    spoken = spoken_synthesis_fields(source)
+
+    assert spoken, "precondition: the walk found something - a silent walk proves nothing"
+    assert spoken == set(_SPOKEN_SYNTHESIS_FIELDS), (
+        f"the interview speaks {sorted(spoken)} of synthesis_check while the assertion "
+        f"guard watches {sorted(_SPOKEN_SYNTHESIS_FIELDS)}. Decide which is right and "
+        f"change both - a spoken field outside the guard is the exact defect this module "
+        f"was written for."
+    )
+
+
+def test_the_live_artefact_that_must_not_cry_wolf_yields_nothing():
+    """Measured against the real file rather than a fixture, because the whole argument for
+    narrowing the field list is a count taken from it.
+
+    `interview_scripts_v38.json` yielded 67 findings across 26 of 86 scripts before this
+    change, every one in a field no participant hears, on an artefact the owner has decided
+    to keep - so the warner fired on every write for ever. Skipped rather than failed where
+    the artefact is not checked out; `projects/` holds two tracked files, so a clean clone
+    has none of this.
+    """
+    live = Path(__file__).resolve().parents[1] / (
+        "projects/sp-gs-am/outputs/interview_scripts_v38.json")
+    if not live.exists():
+        pytest.skip("the live artefact is not in this checkout")
+    scripts = json.loads(live.read_text())
+    assert len(scripts) > 50, "precondition: this is the whole artefact, not a fragment"
+    assert validate_script_assertions(scripts) == []
+
+
+def test_the_live_artefact_that_carried_the_defects_still_yields_them():
+    """The control for the test above, and the one that makes the narrowing safe.
+
+    v37 holds all three real defects: SC-013's Q10.1 "let me offer a synthesis", its
+    welcome's "unfiltered", and its closing's "directly into the board". A narrowing that
+    silenced v38 by silencing the guard would pass that test and fail this one.
+    """
+    live = Path(__file__).resolve().parents[1] / (
+        "projects/sp-gs-am/outputs/interview_scripts_v37.json")
+    if not live.exists():
+        pytest.skip("the live artefact is not in this checkout")
+    scripts = json.loads(live.read_text())
+
+    summaries = {(s, w, m) for s, w, m in find_asserted_summaries(scripts)}
+    assert ("SC-013", "Q10.1.text", "let me offer a synthesis") in summaries
+
+    promises = {(s, w, m) for s, w, m in find_false_handling_promises(scripts)}
+    assert ("SC-013", "welcome_message", "unfiltered") in promises
+    assert ("SC-013", "closing_message", "directly into the board") in promises

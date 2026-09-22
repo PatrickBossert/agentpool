@@ -101,9 +101,10 @@ _MARKERS = _ASSERTS_A_SUMMARY + _SEEKS_CONFIRMATION_OF_ONE
 # Phrases that are a promise about handling wherever they appear. Each names the destination
 # or the interviewee's own words, so none of them has an innocent reading in an instrument.
 _FALSE_HANDLING_PROMISES = (
+    # "into the board" reads as a claim about where the words END UP, where "to the board"
+    # and "straight to the board" are also how one asks about a reporting line - so those two
+    # moved to _AMBIGUOUS_HANDLING_WORDS below and are matched in the promise fields only.
     "directly into the board",
-    "directly to the board",
-    "straight to the board",
     "unchanged to the board",
     "without being edited",
     "exactly as you said",
@@ -119,8 +120,48 @@ _FALSE_HANDLING_PROMISES = (
 # Maya on every run, inviting her to "fix" a question that was right. A promise about
 # handling is made where handling is described, which is why the two real instances were
 # both in `closing_message`.
-_AMBIGUOUS_HANDLING_WORDS = ("unfiltered", "verbatim", "word for word")
+_AMBIGUOUS_HANDLING_WORDS = (
+    "unfiltered", "verbatim", "word for word",
+    # Same argument, one phrase over, and latent rather than live. "Does this go straight to
+    # the board, or through management?" is the identical legitimate audit question as the
+    # `unfiltered` case above - a question about what the BOARD sees, not a promise about what
+    # happens to the interviewee's answers. Restricted here rather than deleted, because in a
+    # welcome or a closing both really are promises about handling.
+    "directly to the board", "straight to the board",
+)
 _PROMISE_FIELDS = ("welcome_message", "closing_message")
+
+# Of `synthesis_check`, the runtime speaks exactly ONE field, and this is an allow-list rather
+# than a list of the withdrawn ones on purpose.
+#
+# `_spoken_strings` collected the whole of `synthesis_check`, and the cost was measured on the
+# live artefact: `interview_scripts_v38.json` yielded 67 findings across 26 of 86 scripts, all
+# of them in `synthesis_check.synthesis_prompt` (44) and `synthesis_check.response_probes`
+# (23). `_merge_with_current` accumulates and the owner has decided those scripts stay, so this
+# warner fired on every write for ever at measure 26 - verbatim the condition
+# `script_duration_validation`'s header argues is unacceptable, from a sibling on the same
+# output type. A dismissal could not settle it either: `SKEW_RERAISE_DELTA` is 0.10 and the
+# measure is a count, so any change of one re-raises.
+#
+# None of the 67 was in a field a participant hears. `VoiceInterview.tsx` speaks
+# `synthesis_check.peer_referral` and nothing else: `synthesis_prompt`, `forward_roadmap`,
+# `portfolio_options` and `sponsorship_check` were withdrawn on 4 September 2026 and are
+# commented out there; `response_probes` and `closing_invitation` were never wired at all,
+# though Maya's prompt describes them as spoken. This module's scope is the spoken ones - "a
+# marker in a field nobody speaks is not this guard's finding" - so the cut follows what the
+# runtime says, not what the schema offers.
+#
+# Excluding the four withdrawn fields alone is NOT enough, measured rather than assumed: v38
+# still yields 23 findings across 23 scripts, because `response_probes.if_defensive` carries
+# "Where does my picture differ from yours". With the allow-list, v38 yields zero and v37 still
+# catches all three live defects - SC-013's Q10.1 "let me offer a synthesis", its welcome's
+# "unfiltered", and its closing's "directly into the board".
+#
+# The hazard an allow-list carries is a NEW spoken field going unwatched, which is precisely
+# the "re-implementation under a different name" this module's header exists for. That is why
+# it is held against the runtime rather than merely commented:
+# tests/test_script_assertion_validation.py::test_every_synthesis_field_the_interview_speaks_is_watched
+_SPOKEN_SYNTHESIS_FIELDS = ("peer_referral",)
 
 
 def _spoken_strings(script: object) -> list[tuple[str, str]]:
@@ -135,6 +176,10 @@ def _spoken_strings(script: object) -> list[tuple[str, str]]:
     but rated it [N]" refers to something actually said, and it is filled at run time rather
     than composed in advance, so it is the one retrospective line in the schema that can be
     true.
+
+    Of `synthesis_check`, only `_SPOKEN_SYNTHESIS_FIELDS` is collected - see the reasoning
+    beside that constant. Collecting the whole block contradicted this docstring's own first
+    sentence and cost 67 standing findings on the live artefact, in fields nobody hears.
     """
     if not isinstance(script, dict):
         return []
@@ -153,7 +198,10 @@ def _spoken_strings(script: object) -> list[tuple[str, str]]:
 
     collect("welcome_message", script.get("welcome_message"))
     collect("framing_block", script.get("framing_block"))
-    collect("synthesis_check", script.get("synthesis_check"))
+    synthesis = script.get("synthesis_check")
+    if isinstance(synthesis, dict):
+        for field in _SPOKEN_SYNTHESIS_FIELDS:
+            collect(f"synthesis_check.{field}", synthesis.get(field))
     collect("closing_message", script.get("closing_message"))
 
     sections = script.get("sections")
