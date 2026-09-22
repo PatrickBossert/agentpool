@@ -151,6 +151,22 @@ def terms_in_prose(text: str) -> list[str]:
     first_seen: dict[str, str] = {}
     order: dict[str, int] = {}
 
+    # **A word this corpus also writes in lower case is an ordinary word**, whatever a sentence
+    # did to its first letter. Corpus-driven rather than a stopword list, for the reason this
+    # module already gives about vocabulary: a list of English words committed here is a second
+    # declaration free to rot, and one tuned to this client's prose would be worse.
+    #
+    # It earns its place under a cost-ordered budget. Previously the junk sat at the tail of a
+    # list nothing reached; now cheap terms are taken first, so "Thank", "Assess", "Identify",
+    # "Surface" and "Quantify" - all of which appear lower case in these very scripts - would be
+    # bought *ahead* of the labels. Measured on the live corpus: 1,023 prose candidates, of which
+    # these are among the cheapest.
+    #
+    # Two deliberate exemptions. An ALL-CAPS token is an acronym whose lower-case form is a
+    # different word (`SAP`, `ISO`, `KPI`), and a multi-word run is already strong evidence -
+    # ordinary English does not capitalise two words in a row mid-sentence.
+    lowercased = {m.group(0).casefold() for m in _WORD.finditer(text or "") if m.group(0).islower()}
+
     for sentence in _SENTENCE_SPLIT.split(text or ""):
         words = [(m.group(0), m.start()) for m in _WORD.finditer(sentence)]
         index = 0
@@ -178,6 +194,12 @@ def terms_in_prose(text: str) -> list[str]:
                 continue
             term = _strip_possessive(" ".join(run))
             if not _acceptable(term):
+                continue
+            if (
+                len(run) == 1
+                and not term.isupper()
+                and term.casefold() in lowercased
+            ):
                 continue
             key = term.casefold()
             counts[key] += 1
@@ -213,51 +235,65 @@ def estimate_keyterm_tokens(term: str) -> int:
 
 
 def build_keyterms(labels: Iterable[str], script_text: str) -> list[str]:
-    """The project's vocabulary: its registry labels first, then its scripts' proper nouns.
+    """The project's vocabulary, cheapest terms first so the budget buys the most of it.
 
-    Registry labels lead because they are declared rather than inferred - a node label *is* what
-    an id means for the life of the project, so it is the one vocabulary this system can be sure
-    belongs to the engagement. Script terms follow in order of how often the scripts use them.
+    **Ordered by token cost, not by source, and that is a correction.** Registry labels used to
+    lead outright, on the reasoning that declared vocabulary outranks inferred - which is sound
+    about *provenance* and is the wrong question. Keyterm prompting biases the recogniser
+    towards a literal phrase, so what matters is whether a term is **spoken and misheard**.
+
+    Measured on the live `sp-gs-am` corpus, 22 September 2026: the 350-token budget was spent
+    entirely on **33 registry labels averaging 10.6 tokens each**, and one of them costs as much
+    as five proper nouns. Nobody says *"Regulatory Compliance and Record Retention (Asbestos and
+    Statutory)"* out loud; the interviewee says *Fraikin*, *Tririga*, *FRACAS*, *DVSA* and *SAP*
+    constantly, and the recogniser mangles every one. All five were dropped by that ordering,
+    and three of them are among the four words the owner reported mangled after a real interview.
+
+    So terms are taken cheapest-first, with the source used only to break ties in favour of the
+    declared vocabulary. A long label still gets in if the budget reaches it - it is simply no
+    longer allowed to spend five short terms' worth of budget ahead of them.
 
     Deduplicated case-insensitively, keeping the first spelling seen, and **bounded twice**: by
     the number of terms, which is about the URL, and by an estimated token count, which is about
     Deepgram's `500 tokens across all keyterms`. The second binds first on every real corpus
     measured, and it is the one whose absence killed transcription outright.
 
-    Ordering is what makes the token bound safe to impose: the list is already sorted by value,
-    registry labels ahead of inferred ones, so spending a budget down it keeps the terms most
-    worth keeping. A term that does not fit is **skipped rather than ending the walk**, so one
-    long label cannot cost every cheaper term behind it.
-
     The order is total and derived from the inputs alone, so two calls on the same project answer
     the same list - a recogniser configured differently on each question would be worse than one
     configured on none.
     """
+    # (cost, source_rank, position, term) - a total order over the inputs alone. `source_rank`
+    # keeps a declared label ahead of an inferred term of the same price, so the original
+    # principle survives wherever it costs nothing; `position` keeps the sort stable and makes
+    # two calls on one project identical.
+    candidates: list[tuple[int, int, int, str]] = []
+    position = 0
+    for rank, source in ((0, labels), (1, terms_in_prose(script_text))):
+        for term in source:
+            term = " ".join((term or "").split())
+            if not _acceptable(term):
+                continue
+            candidates.append((estimate_keyterm_tokens(term), rank, position, term))
+            position += 1
+    candidates.sort()
+
     chosen: list[str] = []
     seen: set[str] = set()
     spent = 0
-
-    def take(term: str) -> None:
-        nonlocal spent
-        term = " ".join((term or "").split())
-        if not _acceptable(term):
-            return
+    for cost, _rank, _pos, term in candidates:
         key = term.casefold()
         if key in seen:
-            return
+            continue
         if len(chosen) >= MAX_KEYTERMS:
-            return
-        cost = estimate_keyterm_tokens(term)
+            break
+        # Skipped rather than ending the walk, so one expensive term cannot cost every cheaper
+        # one behind it. Under a cost ordering that can only happen at the very end of the list,
+        # but the guard is kept: it is what makes the bound safe whatever the order becomes.
         if spent + cost > KEYTERM_TOKEN_BUDGET:
-            return
+            continue
         seen.add(key)
         spent += cost
         chosen.append(term)
-
-    for label in labels:
-        take(label)
-    for term in terms_in_prose(script_text):
-        take(term)
 
     return chosen
 

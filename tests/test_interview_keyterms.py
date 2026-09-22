@@ -172,18 +172,61 @@ async def test_the_keyterms_are_this_project_s_own_words(two_engagements):
 
 
 @pytest.mark.asyncio
-async def test_both_sources_reach_the_list_and_the_registry_leads(two_engagements):
-    """Labels first, then prose - and the list is stable across calls.
+async def test_both_sources_reach_the_list_and_the_cheapest_terms_lead(two_engagements):
+    """Cheapest first, whatever the source - and the list is stable across calls.
 
-    The order is asserted because it decides what survives the cap. A registry label is declared
-    vocabulary; a proper noun in a question is inferred, and inference goes second.
+    **This asserted "labels first" until 22 September, and that ordering was the defect.** It
+    is sound about provenance and answers the wrong question: keyterm prompting biases towards
+    a literal phrase, so what matters is whether a term is *spoken and misheard*. Measured on
+    the live corpus, the 350-token budget went entirely on 33 registry labels averaging 10.6
+    tokens - phrases no interviewee utters - while `Fraikin`, `FRACAS`, `DVSA` and `SAP`, which
+    the recogniser mangles on every pass, were dropped for want of two tokens each.
+
+    So the order is by cost, and the assertion below is the property that matters: a cheap
+    inferred term precedes an expensive declared one. Its opposite is the old behaviour, which
+    is why it is asserted as an inequality of positions rather than as a prefix.
     """
     ours = await keyterms_for_project("sp-gs-am")
-    assert ours[: len(IBERDROLA_LEDGER)] == [label for _, label in IBERDROLA_LEDGER]
-    # Multi-word proper nouns out of the prose, which the registry does not carry.
+
+    # `Iberdrola` is inferred from a question and costs three tokens; this label is declared and
+    # costs eleven. Under the old ordering the label led; under a cost ordering it cannot.
+    expensive_label = "Renewals CapEx Allocation"
+    assert ours.index("Iberdrola") < ours.index(expensive_label)
+
+    # Both sources still reach the list - the ordering changed, not the vocabulary.
+    assert expensive_label in ours
     assert "SP Energy Networks" in ours
     assert "RIIO-T3" in ours
+
+    # And the order is total, derived from the inputs alone: a recogniser configured differently
+    # on each question would be worse than one configured on none.
     assert ours == await keyterms_for_project("sp-gs-am")
+
+
+@pytest.mark.asyncio
+async def test_a_word_the_corpus_also_writes_in_lower_case_is_not_a_proper_noun(two_engagements):
+    """The junk filter, which earns its place only under a cost ordering.
+
+    Cheap terms are now bought first, so "Thank", "Assess", "Identify" and "Surface" - ordinary
+    words a sentence happened to capitalise - would be bought *ahead* of the vocabulary. They
+    are dropped because the same corpus writes them in lower case elsewhere, which is evidence
+    rather than a word list: a list of English words committed here would be a second
+    declaration free to rot, and one tuned to this client's prose would be worse.
+    """
+    from api.services.interview_keyterms import terms_in_prose
+
+    # Every proper noun here sits **mid-sentence**, because a lone capitalised word that only
+    # ever opens a sentence is dropped by the positional rule above - correctly, and it caught
+    # this fixture's first draft, which had `Fraikin` leading its sentence and then asserted the
+    # code had wrongly filtered it.
+    text = (
+        "Assess the position. Please describe it. The work that Fraikin maintains is fleet. "
+        "We assess the risk and record it in SAP today."
+    )
+    found = terms_in_prose(text)
+    assert "Fraikin" in found, "a genuine proper noun was filtered out"
+    assert "SAP" in found, "an ALL-CAPS acronym must survive even if 'sap' appears lower case"
+    assert "Assess" not in found, "a word the corpus also writes lower case is not a proper noun"
 
 
 @pytest.mark.asyncio
