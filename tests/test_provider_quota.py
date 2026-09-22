@@ -54,18 +54,49 @@ def _answers(monkeypatch, *replies):
 
 # ── ElevenLabs ────────────────────────────────────────────────────────────────
 
-def test_a_key_that_cannot_read_the_allowance_says_so_and_names_the_remedy(monkeypatch):
-    """The live condition. Reported as a *permission*, never as a bad key.
+def test_a_key_refused_the_allowance_falls_through_to_what_it_can_read(monkeypatch):
+    """The live condition, and the reader must not stop at the refusal.
 
-    ElevenLabs spells quota exhaustion as a 401 too, so "401 means your key is wrong" is exactly
-    the conflation `provider_health.classify` exists to avoid one layer down. An operator told
-    to replace a working key spends time and the allowance still runs out.
+    Measured: the account's Editor role is served `/v1/usage/character-stats` and refused
+    `/v1/user/subscription`, which names the missing permission as `user_read`. So consumption
+    is knowable today and the allowance is not - and a reader that gave up at the 401 would
+    report nothing while a perfectly good number sat one request away.
+
+    Asserted on **both** requests being made, because a fallback that is never reached is the
+    defect this replaces.
     """
-    _answers(monkeypatch, (401, {"detail": {"status": "missing_permissions"}}))
+    calls = _answers(
+        monkeypatch,
+        (401, {"detail": {"status": "missing_permissions", "message": "missing the permission user_read"}}),
+        (200, {"usage": {"All": [100.0, 250.0]}}),
+    )
+    r = check_speech_quota()
+    assert len(calls) == 2 and "character-stats" in calls[1]
+    assert r.ok is True
+    assert "350 characters" in r.diagnosis
+    assert "not the allowance remaining" in r.diagnosis
+    assert "user_read" in r.diagnosis
+
+
+def test_a_key_refused_both_reports_the_permission_and_the_remedy(monkeypatch):
+    """Neither endpoint available - the only case where nothing can be said about spend."""
+    _answers(monkeypatch,
+             (401, {"detail": {"status": "missing_permissions"}}),
+             (401, {"detail": {"status": "missing_permissions"}}))
     r = check_speech_quota()
     assert r.ok is False
-    assert "user-read" in r.diagnosis
-    assert "not a bad key" in r.diagnosis
+    assert "user_read" in r.diagnosis and "not a bad key" in r.diagnosis
+
+
+def test_the_consumption_window_is_passed_not_read(monkeypatch):
+    """The clock is an argument. Three tests on this project died to a `new Date()` default."""
+    from api.services.provider_quota import _CONSUMPTION_WINDOW_DAYS, _speech_consumption
+
+    calls = _answers(monkeypatch, (200, {"usage": {"All": [1.0]}}))
+    _speech_consumption("k", now_ms=1_000_000_000_000)
+    assert "end_unix=1000000000000" in calls[0]
+    expected = 1_000_000_000_000 - _CONSUMPTION_WINDOW_DAYS * 24 * 3600 * 1000
+    assert f"start_unix={expected}" in calls[0]
 
 
 def test_an_account_with_room_is_healthy_and_is_not_reported(monkeypatch):

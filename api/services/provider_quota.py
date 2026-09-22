@@ -45,6 +45,11 @@ _WARN_AT = 0.85
 
 _TIMEOUT_SECONDS = 8.0
 
+# The window for a consumption read, when the allowance itself cannot be read. Thirty days
+# because ElevenLabs' allowance is monthly, so a shorter window would understate a month
+# that is nearly spent and a longer one would span two resets.
+_CONSUMPTION_WINDOW_DAYS = 30
+
 
 def _read(url: str, headers: dict[str, str]) -> tuple[int, object]:
     """One GET, answering `(status, parsed-or-text)`. Never raises.
@@ -87,13 +92,14 @@ def check_speech_quota(_slug: str = "") -> HealthResult:
         # refused this endpoint alone. Reporting it as a bad key would send an operator to
         # replace one that works - which is the same trap `classify` exists to avoid one layer
         # down, where ElevenLabs spells quota exhaustion as a 401 too.
-        return HealthResult(
-            False,
-            "The ElevenLabs key cannot read the account's character allowance - it is missing "
-            "the user-read permission. Speech synthesis is unaffected and this is not a bad "
-            "key: issue a key with user-read in the ElevenLabs console to see how much "
-            "allowance is left before it runs out.",
-        )
+        #
+        # **Fall through to consumption rather than giving up.** The allowance needs the
+        # `user_read` permission, which the account's Editor role does not carry - ElevenLabs
+        # names the missing permission in the refusal, which is how this is known rather than
+        # guessed. `/v1/usage/character-stats` is served to the same key and answers what has
+        # been *spent*, which is worth having: it cannot say "you are nearly out", and it can
+        # say "something is consuming this" and prove the account answers.
+        return _speech_consumption(key)
     if status != 200 or not isinstance(body, dict):
         return HealthResult(
             False, f"Could not read the ElevenLabs character allowance (HTTP {status}): {body}"
@@ -114,6 +120,46 @@ def check_speech_quota(_slug: str = "") -> HealthResult:
             f"stop speaking when it is exhausted - top up or raise the plan.",
         )
     return HealthResult(True, f"ElevenLabs at {fraction:.0%} of {limit:,} characters.")
+
+
+def _speech_consumption(key: str, *, now_ms: int | None = None) -> HealthResult:
+    """Characters spent over the last 30 days, for a key that may not read the allowance.
+
+    The second-best answer, and the one this deployment gets today. `now_ms` is a parameter
+    rather than a clock read here, so the window is deterministic in a test - this project has
+    lost three tests to a `new Date()` default and the rule is to pass the clock everywhere,
+    including where it cannot currently matter.
+    """
+    import time
+
+    end = now_ms if now_ms is not None else int(time.time() * 1000)
+    start = end - _CONSUMPTION_WINDOW_DAYS * 24 * 3600 * 1000
+    status, body = _read(
+        f"https://api.elevenlabs.io/v1/usage/character-stats?start_unix={start}&end_unix={end}",
+        {"xi-api-key": key},
+    )
+    if status != 200 or not isinstance(body, dict):
+        return HealthResult(
+            False,
+            "The ElevenLabs key can neither read the account's character allowance (it is "
+            "missing the `user_read` permission) nor its usage "
+            f"(HTTP {status}). Speech synthesis is unaffected and this is not a bad key: add "
+            "`user_read` to the key in the ElevenLabs console to see how much allowance is "
+            "left before it runs out.",
+        )
+
+    usage = body.get("usage")
+    spent = 0
+    if isinstance(usage, dict):
+        for series in usage.values():
+            if isinstance(series, list):
+                spent += sum(v for v in series if isinstance(v, (int, float)))
+    return HealthResult(
+        True,
+        f"ElevenLabs spent {spent:,.0f} characters in the last {_CONSUMPTION_WINDOW_DAYS} days. "
+        "This is consumption, not the allowance remaining - the key is missing the `user_read` "
+        "permission, so the limit cannot be read and no percentage can be given.",
+    )
 
 
 def check_transcription_usage(_slug: str = "") -> HealthResult:
