@@ -162,9 +162,18 @@ def terms_in_prose(text: str) -> list[str]:
     # bought *ahead* of the labels. Measured on the live corpus: 1,023 prose candidates, of which
     # these are among the cheapest.
     #
-    # Two deliberate exemptions. An ALL-CAPS token is an acronym whose lower-case form is a
-    # different word (`SAP`, `ISO`, `KPI`), and a multi-word run is already strong evidence -
-    # ordinary English does not capitalise two words in a row mid-sentence.
+    # One exemption: a multi-word run, which is already strong evidence - ordinary English does
+    # not capitalise two words in a row mid-sentence.
+    #
+    # **There was a second, for ALL-CAPS tokens, and it was wrong.** The reasoning was that an
+    # acronym's lower-case form is a different word, so `SAP` and `ISO` needed protecting from
+    # the test. Measured on the live corpus, the test protects them by itself: not one of SAP,
+    # ISO, KPI, TCO, PMO, DVSA, ICE, RIBA, ROI, GRC, TUPE or ISS appears in lower case anywhere
+    # in it, while NOT, WHAT, HOW, AND and WHEN - which the scripts capitalise in headings -
+    # all do. The exemption admitted exactly those five and nothing else, and under cost
+    # ordering they are one token each and bought **first**: five of the cheapest slots spent
+    # on words the recogniser has never once got wrong. An exemption that protects nothing it
+    # was written for is a way in for what it was not.
     lowercased = {m.group(0).casefold() for m in _WORD.finditer(text or "") if m.group(0).islower()}
 
     for sentence in _SENTENCE_SPLIT.split(text or ""):
@@ -195,11 +204,7 @@ def terms_in_prose(text: str) -> list[str]:
             term = _strip_possessive(" ".join(run))
             if not _acceptable(term):
                 continue
-            if (
-                len(run) == 1
-                and not term.isupper()
-                and term.casefold() in lowercased
-            ):
+            if len(run) == 1 and term.casefold() in lowercased:
                 continue
             key = term.casefold()
             counts[key] += 1

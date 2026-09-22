@@ -225,8 +225,17 @@ async def test_a_word_the_corpus_also_writes_in_lower_case_is_not_a_proper_noun(
     )
     found = terms_in_prose(text)
     assert "Fraikin" in found, "a genuine proper noun was filtered out"
-    assert "SAP" in found, "an ALL-CAPS acronym must survive even if 'sap' appears lower case"
+    # An acronym survives on the same evidence as anything else, not on an exemption. The
+    # first version of this filter exempted ALL-CAPS tokens outright, reasoning that an
+    # acronym's lower-case form is a different word - and measured on the live corpus the
+    # exemption protected nothing (SAP, ISO, KPI, TCO, DVSA and eight more never appear lower
+    # case) while admitting NOT, WHAT, HOW, AND and WHEN, which the scripts capitalise in
+    # headings. Under cost ordering those are one token each and bought first.
+    assert "SAP" in found, "an acronym the corpus never writes lower case must survive"
     assert "Assess" not in found, "a word the corpus also writes lower case is not a proper noun"
+    assert "NOT" not in terms_in_prose("Check this. NOT a heading, but the word not appears."), (
+        "an ALL-CAPS ordinary word was exempted from the corpus test"
+    )
 
 
 @pytest.mark.asyncio
