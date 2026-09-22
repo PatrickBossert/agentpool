@@ -128,10 +128,16 @@ async def _register_scheduled_jobs() -> None:
             dropped = await delete_scheduled_jobs_for_unknown_slugs(conn, known=slugs)
         log.info("scheduler: registered the daily report job for %d project(s)", len(slugs))
         if dropped:
+            # Deliberately not "these are usually backups". A database file with no
+            # `project_registry` row is exactly what a project created before registration
+            # existed looks like - `vc-sort-check.db` is one on this deployment - and such a
+            # project silently loses its daily report while the operator is told it was a
+            # stray file. Name the repair instead of guessing at the cause.
             log.warning(
-                "scheduler: dropped %d scheduled job(s) for slugs that are not projects - "
-                "these are usually database files in data/ that are backups rather than "
-                "engagements", dropped,
+                "scheduler: dropped %d scheduled job(s) for slugs with no project_registry "
+                "row. Some are backup database files in data/; a real project created before "
+                "registration existed looks identical and will now get no daily report. Run "
+                "scripts/backfill_project_registry.py to tell the two apart.", dropped,
             )
     except Exception:
         log.exception("scheduler: could not register jobs - continuing without them")
@@ -143,9 +149,25 @@ async def lifespan(app: FastAPI):
     Path(settings.database_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.projects_dir).mkdir(parents=True, exist_ok=True)
     # The registry, not the directory listing - both sweeps below act only on projects.
+    #
+    # Guarded, because this read is new and the old glob was not capable of failing. A locked
+    # or unreadable `system.db` at boot would otherwise abort the application outright, where
+    # `_register_scheduled_jobs` below - which asks the same question - already degrades to
+    # "continuing without them". An empty list is the safe answer: both sweeps below act only
+    # on the slugs they are given, so nothing is marked failed and nothing is dropped.
+    import logging
+
     from api.database import fetch_registered_slugs, get_system_connection
-    async with get_system_connection() as conn:
-        registered = await fetch_registered_slugs(conn)
+    log = logging.getLogger(__name__)
+    try:
+        async with get_system_connection() as conn:
+            registered = await fetch_registered_slugs(conn)
+    except Exception:
+        log.exception(
+            "startup: could not read the project registry - skipping the stale-run and "
+            "stale-job sweeps for this boot rather than refusing to start"
+        )
+        registered = []
     await _mark_stale_runs_failed(settings.database_dir, registered)
     await _reset_stale_scheduled_jobs()
 
