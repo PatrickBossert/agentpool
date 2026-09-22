@@ -95,11 +95,15 @@ has a different audience and must not ride in that email.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from dataclasses import dataclass
-
 from api.config import get_settings
+from api.services.health_types import HealthCheck, HealthResult
 from api.services.deployment_modes import Capability, project_permits
+from api.services.provider_quota import (
+    SPEECH_QUOTA,
+    TRANSCRIPTION_USAGE,
+    check_speech_quota,
+    check_transcription_usage,
+)
 from api.services.operator_alert import alert_operator
 
 _log = logging.getLogger(__name__)
@@ -110,26 +114,9 @@ _log = logging.getLogger(__name__)
 VECTOR_STORE = "vector_store"
 
 
-@dataclass(frozen=True)
-class HealthResult:
-    """Whether a dependency is working, and the operator's sentence if it is not."""
-
-    ok: bool
-    diagnosis: str = ""
-
-
-@dataclass(frozen=True)
-class HealthCheck:
-    """One declared dependency of this deployment.
-
-    `key` is the incident key the delivery seam rate-limits on. `probe` answers whether the
-    thing is working *now*; it is called at the moment of a real failure to tell an operator
-    which kind of failure it was, and deliberately not on a timer.
-    """
-
-    key: str
-    label: str
-    probe: Callable[[str], HealthResult]
+# Re-exported so every existing `from api.services.health_checks import HealthResult`
+# keeps working. They are *defined* in `health_types`, which imports nothing of ours, so a
+# probe module can import them without closing a cycle back to this registry.
 
 
 def store_kind(slug: str) -> str:
@@ -225,10 +212,24 @@ def check_vector_store(slug: str) -> HealthResult:
     return HealthResult(ok=True)
 
 
-# Every dependency this deployment declares. One member; the docstring says what the other
-# three would need. A new one is a function and a line here.
+# Every dependency this deployment declares. A new one is a function and a line here.
+#
+# Two of the three are **quota** rather than reachability, and they answer a different
+# question: `check_vector_store` asks "is it working", these ask "is there credit left to keep
+# it working". Neither kind is polled - see `provider_quota`'s docstring for why a balance
+# read on a timer is a number that lies between polls.
+#
+# Anthropic is deliberately absent: it publishes no balance endpoint, and its rate-limit
+# headers ride every response already, captured by the event hook on the shared client. A
+# probe here would have to *spend* tokens to ask how many are left.
 HEALTH_CHECKS: tuple[HealthCheck, ...] = (
     HealthCheck(key=VECTOR_STORE, label="Vector store (ChromaDB)", probe=check_vector_store),
+)
+HEALTH_CHECKS = HEALTH_CHECKS + (
+    HealthCheck(key=SPEECH_QUOTA, label="Speech synthesis quota (ElevenLabs)",
+                probe=check_speech_quota),
+    HealthCheck(key=TRANSCRIPTION_USAGE, label="Transcription usage (Deepgram)",
+                probe=check_transcription_usage),
 )
 
 
