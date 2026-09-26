@@ -16,8 +16,18 @@ import ReviewDialog from '../components/ReviewDialog'
 
 const resolveReview = vi.fn().mockResolvedValue({})
 
+// `can_review: true` is this file's premise, stated rather than assumed. The dialog's three
+// decision controls render only when `GET /my-permissions` says the caller may resolve the
+// review - the door they post to asks `caller_may_contribute` - so without this every test
+// below would fail on a missing button rather than on anything to do with intent. What is
+// asserted about gating lives in ReviewDialogAuthority.test.tsx.
+const resolveGrant = { can_review: true, can_approve: true }
+
 vi.mock('../api/endpoints', () => ({
-  projectsApi: { resolveReview: (...a: unknown[]) => resolveReview(...a) },
+  projectsApi: {
+    resolveReview: (...a: unknown[]) => resolveReview(...a),
+    getMyPermissions: () => Promise.resolve(resolveGrant),
+  },
 }))
 
 const review = {
@@ -39,19 +49,19 @@ describe('review intent', () => {
 
   it("offers the three choices in the reviewer's language", async () => {
     render(<Wrapper />)
-    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /request revision/i }))
     expect(screen.getByLabelText(/fix this output/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/true of this client/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/standing rule for this agent/i)).toBeInTheDocument()
   })
 
-  it('says the standing rule waits for a human, and does not promise it applies everywhere', () => {
+  it('says the standing rule waits for a human, and does not promise it applies everywhere', async () => {
     // The old copy said "becomes a capability this agent uses everywhere", which was untrue in
     // both halves: nothing read the column it set, and a proposal now waits in a queue and is
     // scoped to this engagement unless a reviewer widens it. A reviewer choosing this option
     // is choosing to raise a suggestion, and the control has to say so.
     render(<Wrapper />)
-    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /request revision/i }))
     const option = screen.getByLabelText(/standing rule for this agent/i)
       .closest('label') as HTMLElement
 
@@ -61,13 +71,13 @@ describe('review intent', () => {
 
   it('defaults to fixing this output', async () => {
     render(<Wrapper />)
-    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /request revision/i }))
     expect(screen.getByLabelText(/fix this output/i)).toBeChecked()
   })
 
   it('sends the chosen intent', async () => {
     render(<Wrapper />)
-    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /request revision/i }))
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'ISS only maintains property' },
     })
@@ -87,7 +97,7 @@ describe('review intent', () => {
     // and a form that rendered the choice and sent `change_request` would look identical here
     // and file nothing at all - which is the state this option was in before sp65.
     render(<Wrapper />)
-    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /request revision/i }))
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Refer to investments by their purpose, never by their figure' },
     })
@@ -104,7 +114,7 @@ describe('review intent', () => {
 
   it('sends change_request when the reviewer submits without touching any radio', async () => {
     render(<Wrapper />)
-    fireEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /request revision/i }))
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Looks mostly right, just tighten the summary' },
     })

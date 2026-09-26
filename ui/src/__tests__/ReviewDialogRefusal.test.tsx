@@ -36,8 +36,18 @@ import ReviewDialog from '../components/ReviewDialog'
 // nothing carries over, so no test's green can depend on a call another test made.
 let resolveReview: ReturnType<typeof vi.fn>
 
+// The premise of every test here: a caller the *server* says may resolve the review, whose
+// request is then refused anyway. That is the case the catch exists for and it is not
+// hypothetical - `GET /my-permissions` and `PATCH /reviews/{id}` are two requests, so authority
+// granted when the dialog opened can be revoked before the reviewer clicks, and a 404, a 422 on
+// the intent, or a lost connection all arrive here too. Gating is a separate property, asserted
+// in ReviewDialogAuthority.test.tsx; a refusal the dialog could have predicted is not what this
+// file is about.
 vi.mock('../api/endpoints', () => ({
-  projectsApi: { resolveReview: (...a: unknown[]) => resolveReview(...a) },
+  projectsApi: {
+    resolveReview: (...a: unknown[]) => resolveReview(...a),
+    getMyPermissions: () => Promise.resolve({ can_review: true, can_approve: true }),
+  },
 }))
 
 /** A refusal shaped the way axios delivers one, so `describeError` reads it for real rather
@@ -87,7 +97,7 @@ describe('a refused review reaches the reviewer', () => {
     resolveReview.mockRejectedValue(axiosError(403, REFUSAL))
     const onClose = renderDialog()
 
-    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /approve/i }))
 
     // The server's sentence, verbatim. A fixed string here ("Could not approve") would tell the
     // reviewer that something went wrong and nothing about what to do.
@@ -101,7 +111,7 @@ describe('a refused review reaches the reviewer', () => {
     resolveReview.mockRejectedValue(axiosError(403, REFUSAL))
     renderDialog()
 
-    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /approve/i }))
     await screen.findByRole('alert')
 
     // `finally` already did this before the fix; it is asserted because a `catch` written to
@@ -114,7 +124,7 @@ describe('a refused review reaches the reviewer', () => {
     resolveReview.mockRejectedValue(axiosError(403, REFUSAL))
     const onClose = renderDialog()
 
-    await userEvent.click(screen.getByRole('button', { name: /request revision/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /request revision/i }))
     await userEvent.type(screen.getByRole('textbox'), 'Tighten the summary')
     await userEvent.click(screen.getByRole('button', { name: /submit revision request/i }))
 
@@ -130,7 +140,7 @@ describe('a refused review reaches the reviewer', () => {
     resolveReview.mockRejectedValue(axiosError(403, REFUSAL))
     const onClose = renderDialog()
 
-    await userEvent.click(screen.getByRole('button', { name: /^reject$/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^reject$/i }))
     await userEvent.type(screen.getByRole('textbox'), 'Wrong organisation')
     await userEvent.click(screen.getByRole('button', { name: /confirm rejection/i }))
 
@@ -145,7 +155,7 @@ describe('a refused review reaches the reviewer', () => {
     resolveReview.mockRejectedValue(axiosError(500))
     renderDialog()
 
-    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /approve/i }))
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/could not approve this output/i)
@@ -160,10 +170,10 @@ describe('a refused review reaches the reviewer', () => {
     resolveReview.mockRejectedValueOnce(axiosError(403, REFUSAL)).mockResolvedValueOnce({})
     const onClose = renderDialog()
 
-    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /approve/i }))
     await screen.findByRole('alert')
 
-    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /approve/i }))
 
     await waitFor(() => expect(onClose).toHaveBeenCalled())
     expect(screen.queryByRole('alert')).toBeNull()
