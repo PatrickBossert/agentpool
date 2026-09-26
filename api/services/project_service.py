@@ -57,8 +57,9 @@ _INVITE_NOT_ISSUED = (
     "engagement until it is - use Resend invite on the Stakeholders tab."
 )
 _INVITE_ALREADY_ISSUED = (
-    "This engagement already exists and already has this approver, so no second invite was "
-    "issued. Use Resend invite on the Stakeholders tab if the original link was lost."
+    "This engagement already has an approver, so nothing was changed and no invite was "
+    "issued. Approvers are managed on the Stakeholders tab, which is also where Resend "
+    "invite retrieves a link that was lost."
 )
 
 
@@ -82,19 +83,27 @@ async def _ensure_approver(slug: str, name: str, email: str) -> dict:
       after the project directory, the database, the project row and the milestone schedule
       are all written, would be the worse trade in both directions.
 
-    **Idempotent on the address, which is what makes the re-POST safe.**
-    `create_project_endpoint` answers 200 to a re-POST of an existing slug, and that path
-    must not mint a second stakeholder or a second token. Keying on the email rather than on
-    a count of approvers is deliberate: a consultant who has since added a second approver
-    through the Stakeholders tab, or removed this one and named somebody else, must not have
-    their roster rewritten by a re-POST. The comparison is `.strip().lower()`, matching
-    `_stakeholder_matches_invite` rather than inventing a third convention.
+    **It writes nothing at all to an engagement that already has an approver, and the reason
+    is the door this runs behind.** `create_project_endpoint` answers 200 to a re-POST of an
+    existing slug and is one of the routes in `api/routers/projects.py` that call **no
+    `check_project_access`** - CLAUDE.md records it under *Known issues* as the way an
+    org_admin of an unrelated organisation claims a project whose slug they know. Keyed on the
+    address, this would have made that door a **roster write on somebody else's engagement**:
+    a claimant could add an approver stakeholder of their choosing simply by naming one in the
+    body. Nothing new became reachable by it - after claiming, `POST /{slug}/stakeholders`
+    grants the same thing - but a door that already has a hole in it is the last place to add
+    a write, and the narrower rule costs nothing.
 
-    That same condition is the repair path for the guarded half above: a creation whose
-    invite mint failed is re-POSTed, finds the stakeholder already there, and - because a row
-    that already exists is not re-invited - is told so rather than being handed a token
-    silently. The operator's route back is `resend-invite` either way, which is the one door
-    built for it.
+    It is also what the field actually means. `approver_name` names the engagement's **first**
+    approver; once there is one the field's job is done, and approvers are managed on the
+    Stakeholders tab. So a re-POST naming somebody different is a no-op answering 200, rather
+    than a second approver appearing on a roster a consultant has curated.
+
+    The condition still covers the repair path for the guarded half above, because a creation
+    whose *stakeholder* write failed has no approver at all: re-POSTing writes it. A creation
+    whose *invite* failed does have one, so the re-POST correctly does nothing and the
+    response says to use `resend-invite` - which is the door built for exactly that, and the
+    only one that can hand the token over.
 
     **No `has_linked_login` conjunct**, unlike `_issue_invite_if_newly_privileged` in
     `api/routers/stakeholders.py`, which needs it to stop a re-granted role minting an
@@ -105,7 +114,6 @@ async def _ensure_approver(slug: str, name: str, email: str) -> dict:
     worse than no guard - it reads to the next reader as a case that has been considered and
     handled. The re-POST path does not reach the mint at all.
     """
-    normalised = email.strip().lower()
     async with get_connection(slug) as conn:
         project = await fetch_project(conn, slug=slug)
         if not project:
@@ -113,9 +121,8 @@ async def _ensure_approver(slug: str, name: str, email: str) -> dict:
             # rather than an IndexError three frames down if it ever becomes reachable.
             raise RuntimeError(f"project {slug} vanished between creation and approver write")
         existing = [
-            s
-            for s in await fetch_stakeholders(conn, project_id=project["id"])
-            if (s.get("email") or "").strip().lower() == normalised
+            s for s in await fetch_stakeholders(conn, project_id=project["id"])
+            if s.get("is_approver")
         ]
         if existing:
             return {

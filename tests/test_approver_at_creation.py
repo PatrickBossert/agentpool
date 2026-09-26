@@ -740,31 +740,49 @@ async def test_re_posting_an_existing_slug_creates_no_second_approver_and_no_sec
         "the re-POST re-issued the invite, which invalidates the link the approver already has"
     )
     assert second.json()["approver"]["created"] is False
-    assert "already has this approver" in second.json()["approver"]["delivery"]
+    assert "already has an approver" in second.json()["approver"]["delivery"]
+    assert "Stakeholders tab" in second.json()["approver"]["delivery"], (
+        "the consultant is told nothing changed but not where approvers are managed"
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_re_post_naming_a_different_approver_does_not_rewrite_the_roster(creator):
-    """A re-POST with another name adds that person; it does not replace the first.
+async def test_a_re_post_naming_a_different_approver_writes_nothing_at_all(creator):
+    """A re-POST naming somebody else is a no-op. It adds nobody and replaces nobody.
 
-    Keyed on the **address**, not on "does this project have an approver yet", and the
-    difference is what protects a roster somebody has since edited. A consultant who added a
-    second approver, or removed the first and named somebody else, must not have that undone by
-    a re-POST - and a creation door is not where a roster is managed. The Stakeholders tab is.
+    Keyed on "does this engagement have an approver", **not** on the address, and the reason is
+    the door this runs behind. `POST /projects` calls no `check_project_access` - CLAUDE.md
+    records it under *Known issues* as the route by which an org_admin of an unrelated
+    organisation claims a project whose slug they know. Keyed on the address, that door would
+    have become a **roster write on somebody else's engagement**: name an approver, get a
+    stakeholder row carrying `is_approver`. Nothing new becomes reachable that way - after
+    claiming, `POST /{slug}/stakeholders` grants the same thing - but a door that already has a
+    hole in it is the last place to add a write.
+
+    It is also what the field means. `approver_name` names the engagement's **first** approver;
+    once there is one, approvers are managed on the Stakeholders tab. A creation door is not
+    where a roster is curated, and a consultant who has since replaced the approver must not
+    have a second one reappear because somebody re-POSTed the original body.
     """
     assert (await creator.post("/projects", json=_body())).status_code == 201
     original = (await _approver_rows())[0]["id"]
 
     other = "kwame.mensah@client.test"
     try:
-        again = await creator.post("/projects", json=_body(approver_email=other,
-                                                           approver_name="Kwame Mensah"))
+        again = await creator.post(
+            "/projects", json=_body(approver_email=other, approver_name="Kwame Mensah")
+        )
         assert again.status_code == 200, again.text
+        assert again.json()["approver"]["created"] is False
 
-        assert original in {r["id"] for r in (await _approver_rows(APPROVER_EMAIL))}, (
+        assert [r["id"] for r in await _approver_rows(APPROVER_EMAIL)] == [original], (
             "the first approver was removed or overwritten by a re-POST"
         )
-        assert len(await _approver_rows(other)) == 1
+        assert await _approver_rows(other) == [], (
+            "a re-POST added an approver to an engagement that already had one - on a door "
+            "with no membership check"
+        )
+        assert await _live_invites(other) == []
     finally:
         async with get_system_connection() as conn:
             await conn.execute("DELETE FROM auth_tokens WHERE email=?", (other,))
