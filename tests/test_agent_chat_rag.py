@@ -25,7 +25,7 @@ async def test_retrieved_chunks_reach_the_system_prompt(client):
     """The user's message is used as the query and results land in the prompt."""
     await client.post("/projects", json={
         "client_slug": "rag-test", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
 
     captured = {}
 
@@ -62,7 +62,7 @@ async def test_retrieved_chunks_reach_the_system_prompt(client):
 async def test_no_retrieval_results_produces_no_retrieval_section(client):
     await client.post("/projects", json={
         "client_slug": "rag-empty", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     captured = {}
 
     async def fake_create(**kwargs):
@@ -94,7 +94,7 @@ async def test_image_becomes_a_base64_content_block(client, tmp_path):
     """An attached image is sent to Claude as an image block, not as text."""
     await client.post("/projects", json={
         "client_slug": "vision-test", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
 
     png_bytes = b"\x89PNG\r\n\x1a\nFAKEIMAGEDATA"
     img = tmp_path / "chart.png"
@@ -148,7 +148,7 @@ async def test_text_only_turn_sends_a_plain_string(client):
     """With no images the message stays a plain string - no needless block wrapping."""
     await client.post("/projects", json={
         "client_slug": "vision-none", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     captured = {}
 
     async def fake_create(**kwargs):
@@ -178,7 +178,7 @@ async def test_retrieved_chunk_attributed_with_original_name_not_uuid(client):
     Chroma metadata must not reach the model."""
     await client.post("/projects", json={
         "client_slug": "rag-attrib", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
 
     from api.database import get_connection, fetch_project, insert_document
     uuid_name = "8867ecaf3ebe4128a86f4736c1a340a4.pdf"
@@ -224,7 +224,7 @@ async def test_retrieved_chunk_without_doc_id_falls_back_to_filename(client):
     doc_id. Attribution must not crash and must keep the existing filename."""
     await client.post("/projects", json={
         "client_slug": "rag-nodoc", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
 
     captured = {}
 
@@ -263,7 +263,7 @@ async def test_attached_document_name_appears_without_content(client):
     called. The old content-preview injection is not reintroduced."""
     await client.post("/projects", json={
         "client_slug": "rag-attach", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
 
     captured = {}
 

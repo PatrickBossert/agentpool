@@ -18,6 +18,8 @@ async def test_create_project_creates_db_and_dirs(tmp_path, monkeypatch):
         sector="finance",
         stakeholder_groups=["Finance", "Ops"],
         value_stream_labels=["Revenue"],
+        approver_name="Dana Iqbal",
+        approver_email="dana.iqbal@test-co.example",
     )
     result = await create_project(req)
     assert result["slug"] == "test-co"
@@ -44,6 +46,8 @@ async def test_create_project_idempotent(tmp_path, monkeypatch):
         sector="finance",
         stakeholder_groups=["Finance"],
         value_stream_labels=["Revenue"],
+        approver_name="Dana Iqbal",
+        approver_email="dana.iqbal@test-co.example",
     )
     r1 = await create_project(req)
     r2 = await create_project(req)
@@ -66,7 +70,12 @@ async def test_create_project_registers_a_daily_report_job(tmp_path, monkeypatch
     from api.services.pam_report_job import JOB_NAME
     from api.database import get_system_connection
     from api.models import ProjectCreate
-    req = ProjectCreate(client_slug="sched-on-create", sector="rail")
+    req = ProjectCreate(
+        client_slug="sched-on-create",
+        sector="rail",
+        approver_name="Dana Iqbal",
+        approver_email="dana.iqbal@sched.example",
+    )
     await create_project(req)
 
     async with get_system_connection() as conn:
@@ -88,7 +97,12 @@ async def test_get_project_status_includes_latest_orchestration_run_none(tmp_pat
 
     from api.services.project_service import create_project, get_project_status
     from api.models import ProjectCreate
-    req = ProjectCreate(client_slug="orch-status-test", sector="rail")
+    req = ProjectCreate(
+        client_slug="orch-status-test",
+        sector="rail",
+        approver_name="Dana Iqbal",
+        approver_email="dana.iqbal@orch.example",
+    )
     await create_project(req)
     status = await get_project_status("orch-status-test")
     assert status is not None

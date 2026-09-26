@@ -39,7 +39,7 @@ def clean():
 async def test_boot_registers_a_report_job_for_each_project(client):
     await client.post("/projects", json={
         "client_slug": "sched-reg-a", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.main import _register_scheduled_jobs
     from api.database import get_system_connection
     from api.services.pam_report_job import JOB_NAME
@@ -59,7 +59,7 @@ async def test_registering_twice_does_not_duplicate_or_reschedule(client):
     """Boot must not postpone a job that is already scheduled."""
     await client.post("/projects", json={
         "client_slug": "sched-reg-b", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.main import _register_scheduled_jobs
     from api.database import get_system_connection
     from api.services.pam_report_job import JOB_NAME

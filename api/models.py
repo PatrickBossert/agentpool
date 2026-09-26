@@ -1,6 +1,7 @@
 # api/models.py
+from api.services.email_shape import looks_like_email
 from api.services.interview_script_model import DEFAULT_DISCIPLINES
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 
 
@@ -13,6 +14,65 @@ class ProjectCreate(BaseModel):
     roadmap_time_axis: Literal["quarters", "years", "horizons"] = "quarters"
     review_gates: bool = True
     slack_channel: str = ""
+    # The engagement's first approver, named at creation and required.
+    #
+    # A project created without one has nobody who can approve anything: `caller_roles` walks
+    # JWT -> users -> project_memberships -> stakeholders and a fresh project has no
+    # stakeholders, so the walk reaches nothing for anybody and the first HumanInputTool gate
+    # is unopenable until it times out after twenty-four hours. `is_sys_admin` bootstraps the
+    # *administration* axis and deliberately implies nothing about content - both halves
+    # correct, and together they left the hole.
+    #
+    # Required rather than optional, and here rather than in the endpoint, because both
+    # callers must be held to it: the API door and `create_project` itself, which
+    # tests and any future script call directly. An optional field defaulting to "" would
+    # reinstate exactly the state this closes, and would do it silently.
+    #
+    # Name *and* email, both required: a stakeholder row is read by people. Every roster,
+    # every notice and the invite itself render the name, so an email-only approver is a
+    # nameless one in the client's own correspondence.
+    approver_name: str
+    approver_email: str
+
+    @field_validator("approver_name", "approver_email")
+    @classmethod
+    def _must_not_be_blank(cls, v: str) -> str:
+        """Refuse whitespace, and store the trimmed value.
+
+        A blank string passes `str` and is exactly the shape a form field submits when it was
+        never filled in, so without this the required field is required in name only. The
+        trim is not tidiness either: `has_linked_login`, `issue_invite` and
+        `_stakeholder_matches_invite` all find an account by exact `users.username` under
+        SQLite's binary collation, so an address stored with a stray space is an address no
+        door can ever match.
+        """
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError(
+                "an approver must be named at creation: this field cannot be blank"
+            )
+        return trimmed
+
+    @field_validator("approver_email")
+    @classmethod
+    def _must_look_like_an_address(cls, v: str) -> str:
+        """The approver's address must have the shape of one.
+
+        A typo'd approver is worse than the field's absence: the stakeholder row exists, the
+        role is set, the roster renders, the invite is minted against an address nobody
+        holds - and the engagement has a dead end that *looks* closed. Nobody finds out until
+        a gate has been waiting a day.
+
+        The rule is `api.services.email_shape.looks_like_email`, which is the same predicate
+        the stakeholder write doors enforce, so the approver named here and the same person
+        edited later on the Stakeholders tab are held to one rule rather than two.
+        """
+        if not looks_like_email(v):
+            raise ValueError(
+                "approver_email must be a valid address - the approver named at creation is "
+                "sent the invite that gives them access to this engagement"
+            )
+        return v
 
 
 class ProjectSettings(BaseModel):

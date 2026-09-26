@@ -5,8 +5,8 @@ from api.database import get_connection, fetch_project, insert_crew_run
 
 SLUG = "rev-test"
 SLUG2 = "rev-test-2"
-PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail"}
-PROJECT2 = {"client_slug": SLUG2, "llm_mode": "standard", "sector": "rail"}
+PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"}
+PROJECT2 = {"client_slug": SLUG2, "llm_mode": "standard", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"}
 
 
 @pytest.fixture(autouse=True)

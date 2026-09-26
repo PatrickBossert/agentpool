@@ -9,7 +9,7 @@ PROJECT = {
     "client_slug": SLUG,
     "llm_mode": "standard",
     "sector": "rail",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 
 @pytest.fixture(autouse=True)

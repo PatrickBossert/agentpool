@@ -11,7 +11,7 @@ from api.config import get_settings
 from api.database import get_connection, fetch_project, insert_stakeholder
 
 SLUG = "campaigns-test"
-PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail"}
+PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"}
 
 STAKEHOLDER_BASE = {
     "name": "Alice",

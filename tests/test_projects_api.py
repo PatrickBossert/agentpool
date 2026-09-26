@@ -46,7 +46,7 @@ PROJECT_PAYLOAD = {
     "roadmap_time_axis": "quarters",
     "review_gates": True,
     "slack_channel": "#test",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 
 @pytest.mark.asyncio
@@ -86,7 +86,7 @@ async def test_get_status_unknown_project_returns_404(client):
 @pytest.mark.asyncio
 async def test_create_project_minimal_payload(client):
     """POST /projects with only client_slug + sector uses model defaults."""
-    resp = await client.post("/projects", json={"client_slug": "minimal-co", "sector": "retail"})
+    resp = await client.post("/projects", json={"client_slug": "minimal-co", "sector": "retail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"})
     assert resp.status_code == 201
     data = resp.json()
     assert data["slug"] == "minimal-co"

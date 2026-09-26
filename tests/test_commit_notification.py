@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from api.config import get_settings
+from tests.support_projects import remove_creation_approver
 
 PROJECT = {
     "client_slug": "notify-test",
@@ -17,7 +18,7 @@ PROJECT = {
     "value_stream_labels": ["Asset Mgmt"],
     "review_gates": True,
     "slack_channel": "",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 SLUG = "notify-test"
 
@@ -254,6 +255,11 @@ async def test_a_failing_send_does_not_raise(client):
 @pytest.mark.asyncio
 async def test_no_recipients_sends_nothing(client):
     await client.post("/projects", json=PROJECT)
+    # "No recipients" has to be arranged now: creating a project writes an approver
+    # stakeholder, and `is_approver` is one of the flags this notice selects on. The state
+    # is still reachable - removing the approver on the Stakeholders tab produces it - so the
+    # premise is restored rather than the assertion weakened. See tests/support_projects.py.
+    assert await remove_creation_approver(SLUG) == 1
 
     from api.services.commit_notify_service import notify_crew_awaiting_commit
 

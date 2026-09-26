@@ -49,7 +49,7 @@ from api.services.data_architecture_service import (
 from api.services.knowledge_tiers import SHARED_TIERS, TIER_SCOPE
 
 SLUG = "data-arch-test"
-PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail"}
+PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"}
 URL = f"/projects/{SLUG}/data-architecture"
 
 

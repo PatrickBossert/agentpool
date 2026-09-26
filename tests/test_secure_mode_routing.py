@@ -131,7 +131,13 @@ async def test_creating_a_project_as_sensitive_is_not_pinned_to_standard(tmp_pat
         assert chroma_client.project_llm_mode("fresh-proj") == "standard"
 
         await create_project(
-            ProjectCreate(client_slug="fresh-proj", llm_mode="sensitive", sector="rail")
+            ProjectCreate(
+                client_slug="fresh-proj",
+                llm_mode="sensitive",
+                sector="rail",
+                approver_name="Dana Iqbal",
+                approver_email="dana.iqbal@fresh.example",
+            )
         )
 
         assert chroma_client.project_llm_mode("fresh-proj") == "sensitive"

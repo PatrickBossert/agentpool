@@ -93,7 +93,7 @@ def _project_body(slug: str) -> dict:
         "value_stream_labels": [],
         "review_gates": True,
         "slack_channel": "",
-    }
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 
 def _anonymous() -> AsyncClient:

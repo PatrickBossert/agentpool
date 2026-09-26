@@ -30,7 +30,7 @@ async def test_the_model_settings_survive_a_round_trip(client):
     await client.post("/projects", json={
         "client_slug": "modelsettings", "llm_mode": "standard", "sector": "test",
         "stakeholder_groups": [], "value_stream_labels": [], "review_gates": True, "slack_channel": "",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     r = await client.get("/projects/modelsettings/settings")
     body = r.json()
     body["local_deep_model"] = "qwen27b:reasoning"

@@ -48,7 +48,7 @@ def test_dev_mode_defaults_to_true():
 async def test_dev_mode_round_trips_through_the_settings_endpoint(client):
     await client.post("/projects", json={
         "client_slug": "devmode-test", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     got = await client.get("/projects/devmode-test/settings")
     assert got.json()["dev_mode"] is True
 
@@ -66,7 +66,7 @@ async def test_dev_mode_round_trips_through_the_settings_endpoint(client):
 async def test_a_stakeholder_can_be_both_reviewer_and_approver(client):
     await client.post("/projects", json={
         "client_slug": "roles-test", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     resp = await client.post("/projects/roles-test/stakeholders", json={
         "name": "Both Roles", "email": "both@example.test",
         "project_role": "recipient", "is_reviewer": True, "is_approver": True,

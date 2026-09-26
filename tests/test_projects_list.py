@@ -10,7 +10,7 @@ PROJECT_A = {
     "value_stream_labels": ["Asset Mgmt"],
     "review_gates": True,
     "slack_channel": "",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 PROJECT_B = {**PROJECT_A, "client_slug": "list-proj-b"}
 
 

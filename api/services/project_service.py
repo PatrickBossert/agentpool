@@ -1,5 +1,6 @@
 # api/services/project_service.py
 import json
+import logging
 import os
 import tempfile
 import yaml
@@ -10,6 +11,8 @@ from api.database import (
     get_db_path,
     is_contained_slug,
     insert_project,
+    insert_stakeholder,
+    fetch_stakeholders,
     seed_default_milestones,
     fetch_project,
     fetch_crew_runs,
@@ -24,7 +27,143 @@ from api.database import (
     fetch_org_projects,
     fetch_user_project_memberships,
 )
+from api.services.invite_service import issue_invite
 from api.models import ProjectCreate, ProjectSettings, OutputContent  # noqa: F401
+
+logger = logging.getLogger(__name__)
+
+# What the consultant is told about the invite that has just been minted, and it is worded
+# this way because the truth is narrower than "an email is on its way".
+#
+# **Nothing in this product delivers an invite.** `issue_invite` writes a row to
+# `auth_tokens` and returns the raw token; no caller anywhere passes it to
+# `send_project_mail` or `send_platform_mail`, in any deployment mode. The scope for this
+# work expected `dev_mode` to be the thing worth warning about - project mail is held and
+# redirected to the operator - and `dev_mode` does not reach this path at all, because there
+# is no send for it to hold. Saying "held and redirected" here would have been the exact
+# defect CLAUDE.md's mail section records and calls the shape to watch for: a door answering
+# `{"sent": true}` over a message nobody sent.
+#
+# So the response says what actually happened and what the consultant must now do. The route
+# is `POST /projects/{slug}/stakeholders/{id}/resend-invite`, which returns the raw token for
+# hand delivery, and its own docstring carries the second half of the bad news: there is no
+# page in `ui/src` that redeems a token, so the link currently has nowhere to send somebody.
+_INVITE_ISSUED = (
+    "An invite has been issued for the approver. Nothing delivers it automatically - use "
+    "Resend invite on the Stakeholders tab to retrieve the link and pass it to them."
+)
+_INVITE_NOT_ISSUED = (
+    "The approver was recorded, but their invite could not be issued. They cannot reach the "
+    "engagement until it is - use Resend invite on the Stakeholders tab."
+)
+_INVITE_ALREADY_ISSUED = (
+    "This engagement already exists and already has this approver, so no second invite was "
+    "issued. Use Resend invite on the Stakeholders tab if the original link was lost."
+)
+
+
+async def _ensure_approver(slug: str, name: str, email: str) -> dict:
+    """Record the engagement's first approver, and invite them. Returns the approver state.
+
+    **The two halves fail differently, on purpose, and this inverts one of CLAUDE.md's
+    standing rules.** That rule - *a side effect must not veto the thing it is a side effect
+    of* - is why `PATCH /reviews/{id}` files a skill proposal without letting a failed
+    proposal hold a paused crew. The approver is not a side effect of creating a project; it
+    is the reason this write exists. A creation that succeeded without the stakeholder row
+    would answer 201 over precisely the dead end the field was added to close.
+
+    So:
+
+    - **the stakeholder write is unguarded and propagates.** If it raises, the creation
+      fails.
+    - **the invite mint is guarded and does not.** Losing it costs a recoverable token, not
+      an engagement: `resend-invite` mints a fresh one, which is how the owner was unblocked
+      by hand on `helia-digital-tau`. Failing the creation for a transient `system.db` lock,
+      after the project directory, the database, the project row and the milestone schedule
+      are all written, would be the worse trade in both directions.
+
+    **Idempotent on the address, which is what makes the re-POST safe.**
+    `create_project_endpoint` answers 200 to a re-POST of an existing slug, and that path
+    must not mint a second stakeholder or a second token. Keying on the email rather than on
+    a count of approvers is deliberate: a consultant who has since added a second approver
+    through the Stakeholders tab, or removed this one and named somebody else, must not have
+    their roster rewritten by a re-POST. The comparison is `.strip().lower()`, matching
+    `_stakeholder_matches_invite` rather than inventing a third convention.
+
+    That same condition is the repair path for the guarded half above: a creation whose
+    invite mint failed is re-POSTed, finds the stakeholder already there, and - because a row
+    that already exists is not re-invited - is told so rather than being handed a token
+    silently. The operator's route back is `resend-invite` either way, which is the one door
+    built for it.
+
+    **No `has_linked_login` conjunct**, unlike `_issue_invite_if_newly_privileged` in
+    `api/routers/stakeholders.py`, which needs it to stop a re-granted role minting an
+    unsolicited password-reset credential onto a login that can already authenticate. That
+    question cannot have a true answer here: it asks whether a login already reaches *this*
+    project through `project_memberships`, and this project was created seconds ago with no
+    memberships and no stakeholders for one to point at. A guard that can never fire is
+    worse than no guard - it reads to the next reader as a case that has been considered and
+    handled. The re-POST path does not reach the mint at all.
+    """
+    normalised = email.strip().lower()
+    async with get_connection(slug) as conn:
+        project = await fetch_project(conn, slug=slug)
+        if not project:
+            # Unreachable from create_project, which has just inserted the row. Explicit
+            # rather than an IndexError three frames down if it ever becomes reachable.
+            raise RuntimeError(f"project {slug} vanished between creation and approver write")
+        existing = [
+            s
+            for s in await fetch_stakeholders(conn, project_id=project["id"])
+            if (s.get("email") or "").strip().lower() == normalised
+        ]
+        if existing:
+            return {
+                "stakeholder_id": existing[0]["id"],
+                "name": existing[0]["name"],
+                "email": existing[0]["email"],
+                "created": False,
+                "invited": False,
+                "delivery": _INVITE_ALREADY_ISSUED,
+            }
+        stakeholder_id = await insert_stakeholder(
+            conn,
+            project_id=project["id"],
+            name=name,
+            email=email,
+            # is_approver alone. Not is_reviewer as well, and not is_project_admin: the hole
+            # being closed is content approval, and the two axes are deliberately separate
+            # (see CLAUDE.md). An approver can already contribute - `caller_may_contribute`
+            # tests {reviewer, approver} - so adding is_reviewer would grant nothing and
+            # would overstate what the consultant asked for. is_participant stays false: an
+            # approver is not an interviewee by virtue of approving.
+            is_approver=True,
+            project_role="approver",
+        )
+
+    invited = False
+    try:
+        await issue_invite(email=email, project_slug=slug, stakeholder_id=stakeholder_id)
+        invited = True
+    except Exception:
+        # Loudly, and then carry on. The stakeholder row is the thing that could not be lost
+        # and it is already written; the token is the recoverable half. `exception` rather
+        # than `warning` so the traceback reaches the log - an operator reading
+        # `_INVITE_NOT_ISSUED` in the response needs somewhere to find out why.
+        logger.exception(
+            "approver stakeholder %s recorded on %s but the invite could not be issued",
+            stakeholder_id,
+            slug,
+        )
+
+    return {
+        "stakeholder_id": stakeholder_id,
+        "name": name,
+        "email": email,
+        "created": True,
+        "invited": invited,
+        "delivery": _INVITE_ISSUED if invited else _INVITE_NOT_ISSUED,
+    }
 
 
 async def create_project(req: ProjectCreate) -> dict:
@@ -41,7 +180,14 @@ async def create_project(req: ProjectCreate) -> dict:
     # the sole authority for it, and config.yaml is read with a fail-open default, so a
     # copy here would let a drifted file route a sensitive project's work to a hosted
     # provider. config_json below keeps it - that copy is what the Settings tab round-trips.
-    config = req.model_dump()
+    # The approver is excluded from both copies of the config, not merely from the YAML the
+    # way llm_mode is. The stakeholder row is the authority on who approves: it is what
+    # `caller_roles` walks, what the roster renders, and what the Stakeholders tab edits. A
+    # copy in config_json would be a second answer to "who is the approver?" that no door
+    # reads and nothing updates - stale the first time somebody changes the roster - and it
+    # would put an address into the blob `ProjectSettings` round-trips, which CLAUDE.md
+    # records as its own hazard.
+    config = req.model_dump(exclude={"approver_name", "approver_email"})
     config_path = project_dir / "config.yaml"
     if not config_path.exists():
         yaml_config = {k: v for k, v in config.items() if k != "llm_mode"}
@@ -74,6 +220,13 @@ async def create_project(req: ProjectCreate) -> dict:
         # the repair path for a project predating this change whose table is still empty.
         await seed_default_milestones(conn, slug)
         result = await fetch_project(conn, slug=slug)
+
+    # After the project row, because the stakeholder is a child of it - and unguarded,
+    # because a project with no approver is the state this field exists to make
+    # unreachable. See `_ensure_approver` for which half of it may fail and which may not.
+    result["approver"] = await _ensure_approver(
+        slug, req.approver_name, req.approver_email
+    )
 
     await _register_daily_report_job(slug)
     return result

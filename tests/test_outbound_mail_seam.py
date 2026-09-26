@@ -134,7 +134,7 @@ def domain() -> str:
 async def _make_project(client, slug: str, *, holds_mail: bool) -> None:
     await client.post("/projects", json={
         "client_slug": slug, "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     await _set_dev_mode(slug, holds_mail)
 
 
@@ -185,7 +185,15 @@ async def test_the_status_report_reaches_governance_when_mail_is_not_held(client
     await run_pam_daily_report(slug)
 
     assert len(sent) == 1
-    assert recipients(sent[0]) == ["governor@example.test"]
+    # Two recipients, not one, and the second is a consequence worth having in an assertion
+    # rather than in a comment somewhere: `REVIEW_FLAGS` is ("is_reviewer", "is_approver",
+    # "is_governor"), and every engagement is now created with an approver stakeholder. So
+    # the approver named at creation is on PAM's daily governance report from the first day
+    # of the engagement. That is the intended reading of the role - an approver who is never
+    # told a gate is waiting is the gap CLAUDE.md records under the review-notification
+    # paragraph - but it does mean naming an approver at creation starts correspondence to
+    # them, which nothing else in the creation flow does.
+    assert sorted(recipients(sent[0])) == ["approver@fixture.test", "governor@example.test"]
 
 
 @pytest.mark.asyncio

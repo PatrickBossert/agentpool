@@ -27,7 +27,7 @@ def _granted_authority():
 async def _make_project(client):
     await client.post("/projects", json={
         "client_slug": SLUG, "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
 
 
 @pytest.mark.asyncio

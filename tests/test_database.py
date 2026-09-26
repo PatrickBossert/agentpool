@@ -230,7 +230,7 @@ async def test_merge_project_config_adds_a_key_and_keeps_the_ones_already_there(
 
     await insert_project(
         db, slug="merge-test", llm_mode="sensitive", sector="maritime-defence",
-        config_json=json.dumps({"client_slug": "merge-test", "brand_header_colour": "#004d4d"}),
+        config_json=json.dumps({"client_slug": "merge-test", "brand_header_colour": "#004d4d", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"}),
     )
     project = await fetch_project(db, slug="merge-test")
 

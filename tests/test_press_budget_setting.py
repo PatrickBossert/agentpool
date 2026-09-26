@@ -34,7 +34,7 @@ async def project(tmp_path, monkeypatch, client):
     monkeypatch.setenv("DATABASE_DIR", str(tmp_path))
     monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
     get_settings.cache_clear()
-    r = await client.post("/projects", json={"client_slug": "press-proj", "sector": "rail"})
+    r = await client.post("/projects", json={"client_slug": "press-proj", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"})
     assert r.status_code in (200, 201), r.text
     yield "press-proj"
     get_settings.cache_clear()

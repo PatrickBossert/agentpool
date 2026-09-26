@@ -180,7 +180,7 @@ async def deliver(client, payload: dict, *, headers: dict | None = None, **sign_
 
 async def _make_project(client, slug: str, **config_keys) -> None:
     r = await client.post(
-        "/projects", json={"client_slug": slug, "llm_mode": "standard", "sector": "rail"}
+        "/projects", json={"client_slug": slug, "llm_mode": "standard", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"}
     )
     assert r.status_code in (200, 201), r.text
     from api.database import fetch_project, get_connection
@@ -561,11 +561,17 @@ async def test_a_reply_lands_on_the_project_that_minted_the_address_and_not_the_
     client, secret,
 ):
     """One mailbox serves every engagement, so "it was stored" is not the property - "it was
-    stored *here*" is. Stakeholder ids restart at 1 in every project file, so both people
-    below are id 1 and only the token tells them apart."""
+    stored *here*" is. Stakeholder ids restart in every project file, so both people below
+    carry the same id and only the token tells them apart.
+
+    That id is no longer 1. The approver named at creation takes the first stakeholder row in
+    every project, so both participants below are id 2. The **equality** is the property -
+    it is what makes the reply token the only thing distinguishing the two people - and it is
+    what is asserted; the literal 1 was only ever a consequence of the roster being empty at
+    creation, and pinning it again would be pinning this fixture rather than the property."""
     ours = await _participant(client, SLUG)
     theirs = await _participant(client, OTHER_SLUG, email="someone.else@example.test")
-    assert ours == theirs == 1
+    assert ours == theirs
     address = await _minted_address(OTHER_SLUG, theirs)
 
     await deliver(client, inbound(address))

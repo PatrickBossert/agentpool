@@ -45,7 +45,7 @@ PROJECT = {
     "client_slug": SLUG, "llm_mode": "standard", "sector": "utilities",
     "stakeholder_groups": [], "value_stream_labels": [], "review_gates": True,
     "slack_channel": "",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 # The reviewer's own sentence, in the shape Patrick's worked example takes: a rule about how to
 # write an instrument, drawn from a correction made on one engagement.

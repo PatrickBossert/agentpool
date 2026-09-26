@@ -326,12 +326,19 @@ async def test_a_failed_run_leaves_the_change_request_open(crew_project):
 DOOR_PROJECT_TEMPLATE = {
     "llm_mode": "standard", "sector": "utilities",
     "stakeholder_groups": [], "value_stream_labels": [], "review_gates": True, "slack_channel": "",
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",
 }
 
 
 async def _seed_door_project(client, slug: str) -> int:
     """A project with one current output owned by the requirements crew's own agent."""
-    await client.post("/projects", json={**DOOR_PROJECT_TEMPLATE, "client_slug": slug})
+    created = await client.post("/projects", json={**DOOR_PROJECT_TEMPLATE, "client_slug": slug})
+    # Asserted, which it was not before. This helper discarded the response, so when the
+    # approver became required at creation the POST 422'd in silence and the failure surfaced
+    # three lines down as `'NoneType' object is not subscriptable` on `fetch_project` - a
+    # seeding helper reporting a missing project rather than a refused creation. Every other
+    # project-seeding helper in the suite asserts the status; this one is now among them.
+    assert created.status_code in (200, 201), created.text
     from api.database import get_connection, fetch_project, insert_agent_output
 
     async with get_connection(slug) as conn:
