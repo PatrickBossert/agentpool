@@ -25,6 +25,14 @@ checked state, in three parts:
   3. the route out that does work - stakeholder, invite, accept - so the repair a consultant
      is now told to perform is a property of the suite rather than a paragraph.
 
+**Read this module alongside `tests/test_approver_at_creation.py`**, which is the same three
+rows running *automatically*. Part 3 below is the route an operator drives by hand, and it is
+still the recovery path - re-issuing a lost invite, or naming a second approver later - but it
+is no longer the only way an engagement acquires somebody who can approve. Creation now
+requires an approver and writes exactly these rows for them. What survives unchanged here, and
+is the reason this file is not superseded, is parts 1 and 2: the **creator** still holds no
+content authority, and seeding one for them still would not work.
+
 Driven over HTTP throughout. The brief for this work asked for exactly that and said why: a
 unit test of the predicate would pass whether or not any handler consults it. The caller is
 the **built-in env-var administrator**, because that is the login that creates engagements on
@@ -43,6 +51,7 @@ from api.database import (
     get_connection,
     get_system_connection,
 )
+from tests.support_projects import APPROVER_EMAIL, project_payload
 
 SLUG = "approval-bootstrap-tau"
 
@@ -120,6 +129,11 @@ async def _clean_shared_state():
             await conn.execute(
                 "DELETE FROM users WHERE username=?", ("dana.whitfield@client.test",)
             )
+            # And the approver creation itself names. Creation mints a live invite against
+            # this address on every `_create_project`, and `users` is global rather than
+            # per-project, so leaving either behind carries state into the next test.
+            await conn.execute("DELETE FROM users WHERE username=?", (APPROVER_EMAIL,))
+            await conn.execute("DELETE FROM auth_tokens WHERE email=?", (APPROVER_EMAIL,))
             await conn.commit()
         db = get_db_path(SLUG)
         for suffix in ("", "-wal", "-shm"):
@@ -132,8 +146,15 @@ async def _clean_shared_state():
 
 
 async def _create_project(client: AsyncClient) -> None:
-    """The engagement, through the door a consultant uses. Nothing is seeded by hand."""
-    r = await client.post("/projects", json={"client_slug": SLUG, "sector": "energy"})
+    """The engagement, through the door a consultant uses. Nothing is seeded by hand.
+
+    The approver is part of the body because creation requires one. Every test in this module
+    is about the **creator's** authority rather than the approver's, so the approver named
+    here is deliberately not the person any test below acts as: the point being pinned is that
+    administering an engagement does not confer content authority on anybody, and a fixture
+    that named the caller as the approver would make every assertion below vacuous.
+    """
+    r = await client.post("/projects", json=project_payload(SLUG, sector="energy"))
     assert r.status_code in (200, 201), r.text
 
 
@@ -382,9 +403,21 @@ async def test_the_content_gates_were_not_widened_for_the_built_in_administrator
     """
     from api.services.authority_service import caller_may_approve, caller_may_contribute
 
+    from tests.support_projects import remove_creation_approver
+
     await _create_project(creator)
     s = get_settings()
     payload = {"sub": s.admin_username, "role": "sysadmin"}
+
+    # The empty roster has to be arranged rather than assumed, and arranging it is the whole
+    # point of this test rather than a concession to the fixture. Creation now writes an
+    # approver, so a fresh project is not the condition a cheap "let is_sys_admin satisfy the
+    # content gates when the roster is empty" change would special-case - but that condition
+    # is still perfectly reachable, because removing the approver returns a populated project
+    # to it. That is the second of the two reasons in the docstring above, demonstrated: the
+    # authority of a caller who never changed must not depend on whether somebody else's row
+    # has been deleted.
+    assert await remove_creation_approver(SLUG) == 1
 
     async with get_connection(SLUG) as conn:
         project = await fetch_project(conn, slug=SLUG)
