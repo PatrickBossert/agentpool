@@ -63,10 +63,18 @@ export const projectsApi = {
   list: (): Promise<Project[]> =>
     apiClient.get<Project[]>('/projects').then((r) => r.data),
 
+  // approver_name and approver_email are required, on both sides, deliberately. An
+  // engagement created without an approver has nobody who can resolve its first HITL gate -
+  // `caller_roles` walks JWT -> users -> project_memberships -> stakeholders, and a project
+  // with no stakeholders reaches nothing for anybody - so the server refuses the creation
+  // with a 422 and this type refuses to compile a caller that omits them. Declaring them
+  // optional here would move the failure from `tsc` to a consultant's first crew run.
   create: (payload: {
     client_slug: string
     sector: string
     llm_mode?: string
+    approver_name: string
+    approver_email: string
   }): Promise<Project> =>
     apiClient.post<Project>('/projects', payload).then((r) => r.data),
 
