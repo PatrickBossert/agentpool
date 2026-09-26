@@ -6,6 +6,7 @@ import { X, Check, PauseCircle, Download, XCircle } from 'lucide-react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { projectsApi } from '../api/endpoints'
+import { describeError } from '../utils/describeError'
 import { CREW_LABELS } from './agentStatus'
 import { CREW_OUTPUT_TYPE } from './crewOutputs'
 import type { HumanReview, AgentOutput } from '../types'
@@ -356,8 +357,17 @@ export function OutputPreview({ slug, output }: { slug: string; output: AgentOut
 type ReviewIntent = 'change_request' | 'correction' | 'skill'
 
 // Declared (not cast) so a typo'd intent fails to compile rather than shipping a value the
-// API will 422 on - handleSubmit's try/finally has no catch, so a rejected request would
-// otherwise vanish silently from the reviewer's point of view.
+// API will 422 on.
+//
+// That comment used to end "- handleSubmit's try/finally has no catch, so a rejected request
+// would otherwise vanish silently from the reviewer's point of view", and it was describing a
+// live defect rather than guarding against one: neither handler had a catch, so *every*
+// refusal vanished, not only a 422 on a typo'd intent. An owner on a live engagement clicked
+// Approve, the door answered 403 "Only a reviewer or approver may resolve a review", the
+// promise rejected, `finally` reset the spinner, and the dialog sat there unchanged. CLAUDE.md
+// calls this shape out by name - quoting a rule is not applying it - and the citation did
+// active harm here, because it read to every later reader as evidence the hazard had been
+// accounted for. Both handlers catch now, and the reviewer is shown the server's own sentence.
 // Which structural warnings belong to which crew. A warning is only useful beside the
 // artefact it concerns: Alex's tree findings on his review, Casey's anchor findings on
 // hers.
@@ -401,6 +411,10 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   const [notes, setNotes] = useState('')
   const [intent, setIntent] = useState<ReviewIntent>('change_request')
   const [submitting, setSubmitting] = useState(false)
+  // The refusal the door gave, in the door's own words. Held in state rather than thrown at a
+  // boundary because there is no error boundary anywhere on this dialog's route, and a reviewer
+  // needs the sentence beside the control they just pressed.
+  const [error, setError] = useState<string | null>(null)
 
   const outputType = review.crew_name ? CREW_OUTPUT_TYPE[review.crew_name] : undefined
   const matchedOutput = outputType ? outputs.find(o => o.output_type === outputType) : undefined
@@ -412,12 +426,23 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   // it reads `agent_outputs.agent_name` off the output the review was made against, which is
   // the same answer without a second place for it to be got wrong.
 
+  // `describeError` is imported rather than given a fixed string, and for this door that is
+  // not a stylistic preference. "Only a reviewer or approver may resolve a review" is the one
+  // thing in the product that tells a consultant why their own approval is being refused -
+  // administering an engagement is not reviewing its content, and no fallback phrased by this
+  // component can say that. The fallback is reached only when the refusal carries no `detail`.
+  //
+  // The dialog stays open on a refusal. Closing it would discard the notes the reviewer typed
+  // and leave the sentence nowhere to be read, and the crew is still paused on this gate.
   async function handleApprove() {
     setSubmitting(true)
+    setError(null)
     try {
       await projectsApi.resolveReview(slug, review.id, 'approved', '')
       qc.invalidateQueries({ queryKey: ['reviews', slug] })
       onClose()
+    } catch (err) {
+      setError(describeError(err, 'Could not approve this output.'))
     } finally {
       setSubmitting(false)
     }
@@ -426,6 +451,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   async function handleSubmit() {
     if (!notes.trim()) return
     setSubmitting(true)
+    setError(null)
     try {
       const decision = mode === 'reject' ? 'rejected' : 'changes_requested'
       await projectsApi.resolveReview(
@@ -433,12 +459,24 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
       )
       qc.invalidateQueries({ queryKey: ['reviews', slug] })
       onClose()
+    } catch (err) {
+      setError(describeError(
+        err,
+        mode === 'reject'
+          ? 'Could not record the rejection.'
+          : 'Could not submit the revision request.',
+      ))
     } finally {
       setSubmitting(false)
     }
   }
 
-  function cancel() { setMode('idle'); setNotes(''); setIntent('change_request') }
+  function cancel() {
+    setMode('idle')
+    setNotes('')
+    setIntent('change_request')
+    setError(null)
+  }
 
   return (
     <>
@@ -542,7 +580,17 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
             )}
           </div>
 
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0 bg-gray-50 rounded-b-2xl">
+          <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 bg-gray-50 rounded-b-2xl space-y-2">
+            {/* In the footer rather than the scrolling body: the body can be scrolled away from
+                the control that was pressed, and a refusal a reviewer has to go looking for is
+                the defect this was written to close. `role="alert"` because it appears in
+                response to an action rather than being present on load. */}
+            {error && (
+              <p role="alert" className="text-xs text-red-600 leading-relaxed">
+                {error}
+              </p>
+            )}
+            <div className="flex items-center justify-end gap-3">
             {mode !== 'idle' ? (
               <>
                 <button onClick={cancel} disabled={submitting}
@@ -582,6 +630,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
                 </button>
               </>
             )}
+            </div>
           </div>
         </div>
       </div>
