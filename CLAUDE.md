@@ -498,6 +498,15 @@ no-ops — notes that save, display in the UI, and never reach the agent. `Rerun
 out**, posting one review per crew output, so anything assembling review feedback into a prompt
 must deduplicate or it repeats the same instruction N times.
 
+`PATCH /projects/{slug}/reviews/{id}` is also **the door that releases a paused crew** -
+`HumanInputTool` polls `human_reviews` for up to twenty-four hours and this write is what ends
+the wait - so it is the door a brand-new engagement has to be able to open. Until an approver
+was named at creation, no project could: see the two-axes section above for why, and
+`tests/test_approver_at_creation.py::test_the_person_named_at_creation_can_open_the_first_hitl_gate`
+for the whole path driven over HTTP. It takes `caller_may_contribute`, so a `reviewer` opens it
+too; creation names an `approver` because that is the role the *rest* of the content gates
+need, and an approver satisfies both.
+
 **Nothing notifies a reviewer that a gate is waiting.** `HumanInputTool` writes the review to the
 project database and polls it until a human decides. It used to post the review to an n8n webhook
 first, which relayed to Slack; SP50 retired n8n and no channel replaced the post. The gate is
@@ -505,6 +514,14 @@ unaffected — the polling was always the mechanism and the post only a nudge, a
 that never configured `N8N_WEBHOOK_URL` already ran exactly this way — but an agent can now sit on
 a gate for the full 24-hour timeout with nobody aware. `tests/test_human_input.py` asserts the
 absence at the boundary rather than describing it, so the state is checked rather than assumed.
+
+**Naming an approver at creation does not close this, and it is worth saying so because it
+looks as though it might.** Every engagement now has an approver who is on PAM's daily report
+recipient list, so there is at last a named person to notify - but the report is a status
+summary with a link and **does not enumerate pending gates**, so nothing still tells anybody a
+gate is waiting. What changed is that the gap moved from "nobody could open it" to "nobody is
+told to", which is a smaller problem and a different one. The replacement below is still the
+work.
 
 The intended replacement, decided 2026-08-17, is a **message push carrying a link and a token that
 brings the reviewer to the content on the server** — never the content itself. Half of it already
@@ -542,8 +559,54 @@ in `api/services/commit_service.py` - behind an
 `users` was empty, granting content authority to whoever could administer accounts.
 
 `is_sys_admin` is global and implies `project_admin` on every project, so a newly created
-project - which has no stakeholders, and therefore nobody the walk could ever reach - can be
-bootstrapped. It implies nothing about content. Administration and content are different axes.
+project can be bootstrapped on the administration axis. It implies nothing about content.
+Administration and content are different axes.
+
+**That sentence used to end "- which has no stakeholders, and therefore nobody the walk could
+ever reach -", and treated the flag as the whole bootstrap. It was half a bootstrap, and the
+missing half was a dead end.** A project created from nothing had total administration and
+**nobody who could approve anything**: the walk reached nothing for anybody, so the first
+`HumanInputTool` gate was unopenable and timed out after twenty-four hours.
+`helia-digital-tau` met it on its first day - Alex's value chain sat waiting, Morgan could not
+start, and the Approve button answered 403 into a handler with no `catch`. Both halves of the
+old sentence were correct and together they left the hole, which is why it survived so long:
+every reader checked the flag, found it right, and stopped.
+
+**The two axes are bootstrapped by two different mechanisms now.** Administration by
+`is_sys_admin`, as before. Content by an **approver named at creation**: `ProjectCreate`
+requires `approver_name` and `approver_email`, and `create_project` writes a stakeholder
+carrying `is_approver` and issues their invite. `/auth/accept` is what completes it - that is
+the call which creates the `users` row and the `project_memberships` row - so the engagement
+acquires somebody who can approve without any gate being widened.
+
+**Do not "just seed a stakeholder for the creator". It does not work, and the measurement is
+here so nobody spends a day rediscovering it.** `POST /auth/login` matches `ADMIN_USERNAME`
+from the environment **before** it reads `users`, so the built-in administrator - the login
+every deployment creates engagements with - has **no `users` row at all**, and `caller_roles`
+returns at step **one**. A stakeholder row is the walk's **last** step. Driven over HTTP: 201,
+the flags confirmed set on the row, and `can_approve` still `false`
+(`tests/test_new_project_approval_bootstrap.py::test_seeding_an_approver_stakeholder_for_the_creator_does_not_open_the_gate`).
+The only way to make it work would be to mint a `users` row for the environment-variable
+administrator - an account inert for login and live for authority - and every approval on
+every engagement would then be attributed to "admin". Naming a **person** works precisely
+because the invite loop builds all three rows.
+
+Two consequences worth expecting rather than diagnosing. **An engagement is created with one
+stakeholder**, so no project has an empty roster from creation - a state several tests were
+built on and now arrange deliberately (`tests/support_projects.py`). And **`REVIEW_FLAGS`
+includes `is_approver`**, so the approver named at creation is on PAM's daily governance report
+and on commit notices from the first day; that is the role behaving as intended, but naming
+an approver starts correspondence to them, which nothing else in the creation flow does.
+
+**Nothing delivers that invite.** `issue_invite` writes an `auth_tokens` row and returns the
+raw token, and no caller anywhere passes it to `send_project_mail` or `send_platform_mail`, in
+any mode - so `dev_mode` does not reach this path, because there is no send for it to hold.
+The creation response says so in as many words rather than claiming an email; a response
+claiming a redirected message would be the shape the mail section below records and calls the
+one to watch for. The operator retrieves the link through `POST
+.../stakeholders/{id}/resend-invite`, whose own docstring carries the rest of the bad news:
+there is no page in `ui/src` that redeems a token.
+
 **Both roles were ungrantable until sp44, and that had shaped three decisions before it was
 fixed.** `_reject_undeclared_role_flags` 422'd every truthy attempt to set
 `is_project_admin` or `is_governor`, so both were stored, migrated, walked, returned and
@@ -3186,6 +3249,20 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - **`api/services/interview_answer_service.py:217` still builds `f"{slug}_interviews"` by
   hand** - the sixth site constructing a collection name outside `collection_for`, and the
   shape this class of defect keeps arriving in.
+- **There are two email-shape regexes, and the second is the divergence.**
+  `api/services/email_shape.py` is the rule the stakeholder write doors and `ProjectCreate`'s
+  approver share - `^[^@\s]+@[^@\s]+\.[^@\s]+$`, extracted from `stakeholder_access.py` in
+  sp67 so the approver named at creation and the same person edited later on the Stakeholders
+  tab could not be judged by two rules. `api/routers/interviews.py:698` holds a third spelling
+  with length bounds the shared one does not have
+  (`^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{1,63}$`). It was left alone rather than folded in, for
+  two reasons worth stating so the next reader does not have to re-derive them: the bounds are
+  a real decision that adopting them would impose on every caller at once, and it guards
+  `POST /api/interviews/{session_token}/email-transcript`, which this file already records as
+  orphaned. **The scope for sp67 asserted there was no email validator anywhere in this
+  product**, which is the specific kind of claim worth checking against a grep - there were
+  two, already disagreeing, and "add the first such check" would have produced a third.
+  Folding `interviews.py` in is a small task; deciding whose bounds win is the whole of it.
 - **A migration that raises takes every later migration in the block down with it**, so each
   one must be defensive about the shape it finds. SQLite prepares a correlated subquery when
   the statement is prepared rather than when a row matches, so a `SELECT p.sector ...` raises
