@@ -703,9 +703,31 @@ async def _migrate_interview_answers(conn: aiosqlite.Connection) -> None:
             question_intent TEXT    NOT NULL,
             elicitation     TEXT    NOT NULL,
             rating          INTEGER,
+            recogniser      TEXT    NOT NULL DEFAULT '',
             answered_at     DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # **Which engine produced this text, recorded on the row whose trustworthiness it decides.**
+    #
+    # Two live interviews were transcribed end to end by the browser's fallback while every
+    # surface this product owns reported success, and the only way anybody found out was opening
+    # the provider's console - where the account's whole day turned out to be an operator's own
+    # test tone. Nothing here could answer "was this interview transcribed by the engine we
+    # configured?", which is the question an operator asks *afterwards*, about a named interview.
+    #
+    # Per answer rather than per session, because the engine changes mid-interview and that is
+    # the whole failure mode: a session-level stamp would have recorded Deepgram for an interview
+    # whose second answer onwards came from somewhere else. And a column rather than a log line,
+    # because the answer row is the thing a crew later reads and cites - provenance belongs to
+    # the evidence, not beside it, and a log is neither queryable per answer nor joined to it.
+    #
+    # `''` is "not recorded" and covers every row written before this column existed. It is not
+    # the same as `none`, which is a positive claim that nothing listened.
+    async with conn.execute("PRAGMA table_info(interview_answers)") as cur:
+        cols = {row["name"] async for row in cur}
+    if "recogniser" not in cols:
+        await conn.execute(
+            "ALTER TABLE interview_answers ADD COLUMN recogniser TEXT NOT NULL DEFAULT ''")
     await conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_answers_session ON interview_answers(session_id)")
     await conn.execute(
@@ -735,7 +757,7 @@ _ANSWER_COLUMNS = (
     "session_id", "stakeholder_id", "script_id", "section_id", "question_id",
     "question_text", "answer_text", "answered", "follow_up", "node_id", "node_label",
     "chain", "level", "relationship", "party_id", "discipline", "question_intent",
-    "elicitation", "rating",
+    "elicitation", "rating", "recogniser",
 )
 
 
@@ -2157,7 +2179,10 @@ async def delete_milestone(conn: aiosqlite.Connection, *, milestone_id: int, slu
 # the participant, rather than the administrator who would fix the provider.
 # tests/test_interview_speech_policy.py::
 # test_a_database_at_version_21_gains_the_speech_failure_column fails on 21 and passes on 22.
-_SCHEMA_VERSION = 22
+# 23: `interview_answers.recogniser` - which engine produced each answer. Added because two
+# live interviews were transcribed entirely by the browser fallback with every surface this
+# product owns reporting success.
+_SCHEMA_VERSION = 23
 
 # Slugs this process has opened and found (or brought) up to _SCHEMA_VERSION. Record-
 # keeping only, not a gate: get_connection reads PRAGMA user_version - part of the
@@ -4833,6 +4858,54 @@ async def fetch_org_projects(conn: aiosqlite.Connection, *, org_id: int) -> list
         "SELECT * FROM project_registry WHERE org_id=? ORDER BY display_name", (org_id,)
     ) as cur:
         return [dict(r) async for r in cur]
+
+
+async def fetch_registered_slugs(conn: aiosqlite.Connection) -> list[str]:
+    """Every slug that is a project, for the two startup sweeps that act on all of them.
+
+    It exists because both callers used to enumerate `Path(database_dir).glob("*.db")`
+    instead, which is not a list of projects but a list of **files** - so every backup
+    taken into `data/` became a project within hours of being made. Measured on 17
+    September 2026: seventeen scheduled daily reports against one real project, eleven
+    of the phantoms `sp-gs-am.*` snapshots and **four of them backups of `system.db`
+    itself**. Worse than noise, because the sibling sweep *writes*: ten crew_runs in a
+    six-week-old backup had been flipped to `failed` by restarts, so the backups were
+    not backups. The registry is the definition of a project; the directory listing is
+    an accident of how somebody names files.
+
+    Deliberately **not** `fetch_all_registry`, which JOINs `organisations` for a display
+    name this caller does not want. That is a statement about intent rather than about
+    safety, and the distinction is worth recording because the safety argument was
+    written here first and was wrong: `project_registry.org_id` is `NOT NULL REFERENCES
+    organisations(id) ON DELETE CASCADE`, so a row cannot outlive its organisation and
+    that JOIN cannot drop one. The test asserting otherwise failed on the foreign key,
+    which is the schema answering the question correctly.
+    """
+    async with conn.execute("SELECT slug FROM project_registry ORDER BY slug") as cur:
+        return [r["slug"] async for r in cur]
+
+
+async def delete_scheduled_jobs_for_unknown_slugs(
+    conn: aiosqlite.Connection, *, known: list[str]
+) -> int:
+    """Drop scheduled jobs for slugs that are not projects, and answer how many went.
+
+    The glob above left rows behind, and stopping it creating new ones does not remove
+    the old: the phantoms are in `system.db` and would have gone on firing daily against
+    frozen copies of a client's data. Takes the known slugs rather than reading the
+    registry itself, so the caller cannot sweep against a list it did not just compute.
+    """
+    if not known:
+        # Refuse to interpret "no projects" as "delete every job". A deployment mid-way
+        # through its first project creation legitimately has an empty registry, and a
+        # sweep here would delete the job the next statement is about to register.
+        return 0
+    placeholders = ",".join("?" for _ in known)
+    cur = await conn.execute(
+        f"DELETE FROM scheduled_jobs WHERE slug NOT IN ({placeholders})", tuple(known)
+    )
+    await conn.commit()
+    return cur.rowcount or 0
 
 
 async def fetch_all_registry(conn: aiosqlite.Connection) -> list[dict]:

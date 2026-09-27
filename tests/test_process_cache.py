@@ -309,6 +309,23 @@ _MODULE_LEVEL_STATE = {
         "bounded by the sends actually outstanding rather than growing. Nothing reads a value "
         "out of it, so there is no stale answer for a later test to inherit"
     ),
+    "api/services/operator_alert.py::_alert_mail_log": (
+        REGISTERED, "the same rate-limit ledger as speech_policy's above, in the general "
+        "operator-alert seam, and with the same accumulating trap - proved by probe below. It "
+        "is keyed on the **incident** rather than on the slug, which is the one difference "
+        "worth knowing: a vector store that is down is down for every engagement at once, so "
+        "keying per project would multiply one outage by the number of live projects. The "
+        "test-order consequence is if anything sharper than speech_policy's, because the key "
+        "is shared across projects: one test that exhausts the three messages silences every "
+        "later test in the process, whatever slug it uses"
+    ),
+    "api/services/operator_alert.py::_pending_alerts": (
+        NOT_A_CACHE, "the set of alert sends in flight, exactly as speech_policy's is and for "
+        "the same reasons: a strong reference per task because asyncio keeps only a weak one, "
+        "so clearing it between tests would let the loop collect a send mid-flight. It empties "
+        "itself through a done-callback, and nothing reads a value out of it, so there is no "
+        "stale answer for a later test to inherit"
+    ),
     "api/services/voice_metadata.py::_GENDER_CACHE": (
         REGISTERED, "a voice's sex as ElevenLabs reports it, held because it does not change "
         "- proved by probe below. Stale entries are the ordinary test-order trap and one that "
@@ -472,8 +489,23 @@ def _alert_mail_log_probe():
     )
 
 
+def _operator_alert_mail_log_probe():
+    """The general seam's ledger - keyed on the incident, not on a slug.
+
+    The probe key is deliberately not a slug-shaped string, so it reads as what the production
+    key is: `health_checks.VECTOR_STORE` is "vector_store", one incident across every project.
+    """
+    from api.services import operator_alert
+    key = "process-cache-probe-incident"
+    return (
+        lambda: operator_alert._alert_mail_log[key].append(1.0),
+        lambda: key in operator_alert._alert_mail_log,
+    )
+
+
 _REGISTERED_PROBES = {
     "api/services/speech_policy.py::_alert_mail_log": _alert_mail_log_probe,
+    "api/services/operator_alert.py::_alert_mail_log": _operator_alert_mail_log_probe,
     "api/services/voice_metadata.py::_GENDER_CACHE": _voice_gender_probe,
     "api/services/voice_catalogue.py::_LIBRARY_PROBE": _library_probe_probe,
     "api/services/chroma_client.py::_MODE_CACHE": _mode_cache_probe,

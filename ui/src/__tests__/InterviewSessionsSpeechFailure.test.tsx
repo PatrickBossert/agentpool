@@ -133,9 +133,9 @@ describe('the interview sessions panel', () => {
   })
 
   it('marks only the sessions that failed when others in the same run did not', async () => {
-    // The shape an engagement actually takes: one participant on an iPhone, the rest fine. A
-    // panel keyed on anything but the row - a flag on the run, a banner at the top - would tell
-    // the consultant the wrong person to ring.
+    // The shape an engagement actually takes: one participant's browser failed, the rest fine.
+    // A panel keyed on anything but the row - a flag on the run, a banner at the top - would
+    // tell the consultant the wrong person to ring.
     installSessions([
       { ...BASE, id: 1, name: 'Fiona Marshall', session_token: 'tok-1' },
       {
@@ -145,7 +145,9 @@ describe('the interview sessions panel', () => {
         session_token: 'tok-2',
         speech_failure: {
           at: '2026-09-13T11:02:00+00:00',
-          diagnosis: "this participant's browser records none of the audio containers Deepgram is opened for",
+          // A sentence the server composes today. It used to be the retired container
+          // diagnosis, which read as current in a fixture long after sp67 removed it.
+          diagnosis: "this participant's browser could not capture audio for Deepgram - its audio engine would not start",
         },
       },
     ])

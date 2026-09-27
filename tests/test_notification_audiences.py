@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from api.config import get_settings
+from tests.support_projects import remove_creation_approver
 
 PROJECT = {
     "client_slug": "audience-test",
@@ -21,7 +22,7 @@ PROJECT = {
     "value_stream_labels": ["Asset Mgmt"],
     "review_gates": True,
     "slack_channel": "",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 SLUG = "audience-test"
 
@@ -143,6 +144,10 @@ async def test_submission_does_not_fall_back_to_reviewers_when_there_are_no_appr
     """The reverse fallback must not apply: if nobody can approve, mailing
     reviewers instead would not help, so no email should go out at all."""
     await client.post("/projects", json=PROJECT)
+    # The engagement's creation-time approver is removed so that "there are no approvers" is
+    # true of this project. Without it this test proves nothing about the fallback - it would
+    # mail the creation approver and pass or fail for an unrelated reason.
+    assert await remove_creation_approver(SLUG) == 1
     await _add_stakeholder(SLUG, "Rev", "rev@example.com", reviewer=True, approver=False)
     await _set_dev_mode(SLUG, False)
 

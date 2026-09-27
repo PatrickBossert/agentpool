@@ -39,7 +39,7 @@ def clean():
 async def test_boot_registers_a_report_job_for_each_project(client):
     await client.post("/projects", json={
         "client_slug": "sched-reg-a", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.main import _register_scheduled_jobs
     from api.database import get_system_connection
     from api.services.pam_report_job import JOB_NAME
@@ -59,7 +59,7 @@ async def test_registering_twice_does_not_duplicate_or_reschedule(client):
     """Boot must not postpone a job that is already scheduled."""
     await client.post("/projects", json={
         "client_slug": "sched-reg-b", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.main import _register_scheduled_jobs
     from api.database import get_system_connection
     from api.services.pam_report_job import JOB_NAME
@@ -93,3 +93,39 @@ async def test_registration_failure_does_not_stop_the_app():
     with patch("api.database.upsert_scheduled_job", new_callable=AsyncMock,
                side_effect=RuntimeError("db locked")):
         await _register_scheduled_jobs()   # must not raise
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_registry_at_boot_does_not_stop_the_app():
+    """The registry read in `lifespan` was added without a `try`, where the glob it replaced
+    could not fail and `_register_scheduled_jobs` beside it already wraps its own.
+
+    A locked `system.db` is a transient condition - another process mid-write, a stale lock -
+    and it must cost this boot its two housekeeping sweeps, not the deployment. Driven through
+    `lifespan` itself rather than asserted about the source, because the property is that the
+    app comes up.
+    """
+    from fastapi import FastAPI
+
+    from api.main import lifespan
+
+    with patch("api.database.get_system_connection", side_effect=RuntimeError("locked")):
+        with patch("api.main._register_scheduled_jobs", new=AsyncMock()):
+            with patch("api.main.scheduler_loop", new=AsyncMock()):
+                async with lifespan(FastAPI()):
+                    pass  # reaching here IS the assertion: startup completed
+
+
+@pytest.mark.asyncio
+async def test_the_dropped_job_warning_names_the_backfill_rather_than_guessing():
+    """It used to tell the operator these "are usually database files in data/ that are
+    backups". A project created before registration existed looks identical and silently
+    loses its daily report - `vc-sort-check.db` is such a file on this deployment - so the
+    sentence sent somebody looking for a stray file instead of a missing row.
+    """
+    import inspect
+
+    import api.main as main
+    src = inspect.getsource(main._register_scheduled_jobs)
+    assert "scripts/backfill_project_registry.py" in src
+    assert "usually database files" not in src

@@ -94,7 +94,7 @@ async def _store_url(sysadmin, url: str = STORED_URL) -> None:
 async def _make_project(sysadmin, slug: str) -> None:
     resp = await sysadmin.post("/projects", json={
         "client_slug": slug, "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     assert resp.status_code in (200, 201), resp.text
     await _set_dev_mode(slug, False)
 

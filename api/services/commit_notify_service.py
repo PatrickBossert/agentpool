@@ -226,6 +226,44 @@ async def notify_script_sent_back(
     )
 
 
+async def notify_scripts_sent_back(
+    slug: str, script_ids: list[str], return_to: str, notes: str
+) -> None:
+    """Tell the right audience that a batch of scripts has been sent back. Never raises.
+
+    **One notification for the batch, and that is the whole reason the bulk door exists.**
+    Correcting the eighty-five scripts still carrying the old closing through the singular
+    door means eighty-five calls, each firing `notify_script_sent_back` - eighty-five emails
+    about one decision. A notifier called inside the door's loop would have removed the
+    eighty-five calls and kept the eighty-five emails, which is the defect arriving by a
+    different route.
+
+    The same audience and the same fallback as `notify_script_sent_back`, and written beside
+    it rather than folded into it: the subject names a count and the intro names a list, and a
+    shared function would have had to say "one or more scripts" to both of them.
+
+    Every id is named in the body. The list is the record of what was done, and a reviewer
+    opening the ledger needs to know which rows moved - eighty-five ids is roughly six hundred
+    characters, which is a smaller cost than an email that says only "some scripts".
+
+    The crew is `LEDGER_CREW["script"]`, for the reason its sibling records: `_notify`'s second
+    positional argument becomes `?crew=`, and passing anything item-shaped there builds a link
+    to a crew that does not exist.
+    """
+    count = len(script_ids)
+    noun = "script" if count == 1 else "scripts"
+    sent = (f"{count} interview {noun} sent back to the {return_to}: "
+            f"{', '.join(script_ids)}.")
+    await _notify(
+        slug, LEDGER_CREW["script"],
+        flags=("is_reviewer",),
+        fallback_flags=("is_approver",),
+        subject=f"{slug}: {count} interview {noun} were sent back",
+        intro=f"{sent} Note: {notes}" if notes else sent,
+        audience_label="reviewers",
+    )
+
+
 async def notify_item_sent_back(
     slug: str, kind: str, item_id: str, return_to: str, notes: str
 ) -> None:

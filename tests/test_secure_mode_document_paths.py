@@ -155,7 +155,7 @@ async def uploaded_document(tmp_path, monkeypatch, client):
 
     r = await client.post(
         "/projects",
-        json={"client_slug": "secure-del", "llm_mode": "sensitive", "sector": "rail"},
+        json={"client_slug": "secure-del", "llm_mode": "sensitive", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"},
     )
     assert r.status_code in (200, 201), r.text
     # The upload queues a real background ingest. Stubbed out so this fixture neither

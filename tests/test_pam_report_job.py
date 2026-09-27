@@ -81,7 +81,7 @@ def test_nobody_eligible_resolves_to_nobody():
 async def test_job_stores_the_report_as_a_current_versioned_output(client):
     await client.post("/projects", json={
         "client_slug": SLUG, "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.database import get_connection, set_project_status
     async with get_connection(SLUG) as conn:
         await set_project_status(conn, slug=SLUG, status="active")
@@ -102,7 +102,7 @@ async def test_second_run_supersedes_the_first(client):
     """insert_agent_output does not manage is_current - the job must."""
     await client.post("/projects", json={
         "client_slug": "pam-job-super", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.database import get_connection, set_project_status
     async with get_connection("pam-job-super") as conn:
         await set_project_status(conn, slug="pam-job-super", status="active")
@@ -125,7 +125,7 @@ async def test_second_run_supersedes_the_first(client):
 async def test_first_run_reports_no_changes(client):
     await client.post("/projects", json={
         "client_slug": "pam-job-first", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.database import get_connection, set_project_status
     async with get_connection("pam-job-first") as conn:
         await set_project_status(conn, slug="pam-job-first", status="active")
@@ -146,7 +146,7 @@ async def test_email_failure_does_not_lose_the_report(client):
     """The audit trail matters more than the notification."""
     await client.post("/projects", json={
         "client_slug": "pam-job-mail", "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.database import get_connection, set_project_status
     async with get_connection("pam-job-mail") as conn:
         await set_project_status(conn, slug="pam-job-mail", status="active")
@@ -194,7 +194,7 @@ async def test_an_inactive_project_produces_no_report(client):
     """
     await client.post("/projects", json={
         "client_slug": SLUG, "llm_mode": "standard", "sector": "rail",
-    })  # status defaults to 'created'
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})  # status defaults to 'created'
 
     from api.services.pam_report_job import run_pam_daily_report
     with patch("api.services.pam_report_job.send_project_mail", new_callable=AsyncMock) as send:
@@ -214,7 +214,7 @@ async def test_an_active_project_still_produces_a_report(client):
     """The guard must not stop the thing it is guarding."""
     await client.post("/projects", json={
         "client_slug": SLUG, "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     from api.database import get_connection, set_project_status
     async with get_connection(SLUG) as conn:
         await set_project_status(conn, slug=SLUG, status="active")

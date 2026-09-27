@@ -12,9 +12,10 @@ import type {
 import {
   browserCanStream,
   browserStreamingObstacle,
-  deepgramListenUrl,
+  createAudioContext,
   fetchDeepgramGrant,
   openDeepgramSocket,
+  startPcmCapture,
   type Recogniser,
   type RecogniserHooks,
 } from '../api/deepgram'
@@ -25,6 +26,199 @@ declare const webkitSpeechRecognition: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const SpeechRecognitionEvent: any
 
+/**
+ * The interviewer's portrait, as an address this browser can actually fetch.
+ *
+ * **The `/dashboard` base trap, on the one page it reaches a participant.** Vite serves
+ * `ui/public` under the app's base, so the built-in portrait `AGENT_IDENTITY` declares -
+ * `/agents/avery-singh.jpg` - is not an address the browser resolves: it 404s, the `<img>`
+ * renders as an empty circle, and nothing anywhere says so. That is what the first live
+ * interview met on 17 September, and it is the fourth piece of work this trap has caught.
+ *
+ * The rule the fix follows is the one the dashboard already follows a level over: **the server
+ * says which kind of address it handed over**, and the base is this page's knowledge about
+ * itself. Nothing here sniffs the shape of the URL - a page that tested for an `/api/` prefix
+ * would be restating the server's rule in TypeScript and would break the first time a portrait
+ * was served from somewhere else.
+ *
+ * Exported so it can be driven directly: the property is about the *address*, and a test that
+ * only rendered the page would be asserting a string rather than something fetchable.
+ */
+export function interviewerPortraitSrc(
+  imageUrl: string | undefined,
+  source: 'served' | 'bundled' | '' | undefined,
+): string {
+  if (!imageUrl) return ''
+  // An absent `source` is a response from before the server named it: rendered verbatim, which
+  // is exactly what this page did before, rather than guessed at.
+  if (source !== 'bundled') return imageUrl
+  // `BASE_URL` ends in a slash and `imageUrl` starts with one; joining them unchanged yields
+  // `/dashboard//agents/...`, which resolves but is the same double slash that put
+  // `https://host//dashboard/login` in the welcome email.
+  return `${import.meta.env.BASE_URL.replace(/\/+$/, '')}${imageUrl}`
+}
+
+/**
+ * Shorter than this, in words, and an answer is treated as asking to be drawn out.
+ *
+ * **Chosen against the 17 September interview rather than guessed.** Of its 91 answers, the
+ * eleven under nine words are the ones a reader of the transcript would call unelaborated -
+ * "No", "It should do", "It's still being established", "Not that I'm aware of", "No all that
+ * information is taken on trust" - while nine words up is already substantive: "I would say the
+ * controls are not very strong", "I think you have characterised that pretty well actually".
+ *
+ * So nine presses on **eleven of the ninety-one, and on none of the thirty-one primary
+ * answers** - the shortest primary answer in that interview was nine words. That is the balance
+ * to keep: a threshold at twelve would have pressed sixteen, including several that had said
+ * what they had to say.
+ *
+ * **A short answer to a yes/no question is not exempt, deliberately.** It is the clearest place
+ * an interviewer digs: asked whether there is a threshold and told "No", the useful next
+ * question is what it would take to have one. `probing_instructions` reaches
+ * `getElaborationPress`, so what gets asked is the script's own line of enquiry rather than a
+ * blunt "tell me more".
+ */
+export const BRIEF_ANSWER_WORDS = 9
+
+/**
+ * Whether this answer asks to be pressed - because it is brief, or because it evades.
+ *
+ * **Two triggers, and brevity is the one that was missing.** The evasion signals are phrases
+ * Maya writes at design time, matched as substrings; on the live corpus there are 597 of them
+ * across 199 questions and **not one fired in a real interview** - they are what a model
+ * imagines somebody will say ("we are on track", "the team manages it") rather than what
+ * somebody does. So the whole elaboration loop had never run. They are kept rather than
+ * replaced: a signal that does match is a strong one, and the two triggers are independent.
+ *
+ * An empty answer is **not** pressed. It means the recogniser heard nothing, and the reprompt
+ * path already exists for that; asking somebody to expand on a silence is the wrong response to
+ * a microphone that failed.
+ */
+export function needsElaboration(answer: string, evasionSignals: string[] | undefined): boolean {
+  const trimmed = answer.trim()
+  if (!trimmed) return false
+  if (trimmed.split(/\s+/).length < BRIEF_ANSWER_WORDS) return true
+  const lower = trimmed.toLowerCase()
+  return (evasionSignals ?? []).some(
+    sig => sig.trim() !== '' && lower.includes(sig.toLowerCase()),
+  )
+}
+
+/**
+ * Everything the interviewer will say from this script, in the order it will be said.
+ *
+ * **Only what is scripted.** An elaboration press, a re-prompt and "Of course, go on" are
+ * composed while the interview is running and cannot be on this list - which is the whole
+ * reason `primeNextUtterance` advances on a *match* rather than on every utterance: a press
+ * that moved the cursor would have the interview prefetch the wrong question for ever after.
+ *
+ * Mirrors `conductInterview`'s own walk, including what that loop deliberately does not speak:
+ * the framing block's positioning line alone rather than its bullets and lenses, and of the
+ * synthesis check only the peer referral - the rest was withdrawn on 4 September and stays
+ * withdrawn. **If either changes, this changes with it**, and the cost of forgetting is a
+ * prefetch that misses rather than a wrong interview: the cursor stops matching, the cache
+ * stops helping, and every question goes back to being synthesised while somebody waits.
+ *
+ * A branch is listed only while its `follow_up_count` allows it, because that is the condition
+ * the loop asks. It cannot know whether a press will consume one of those slots, so a script
+ * whose question draws a press has one listed branch it never reaches - which costs one
+ * speculative synthesis and no correctness, since the cursor matches on the words.
+ */
+export function scriptedSpeech(script: InterviewScript): string[] {
+  const plan: string[] = [script.welcome_message]
+  if (script.framing_block) plan.push(script.framing_block.positioning)
+  for (const section of script.sections) {
+    for (const question of section.questions) {
+      plan.push(question.text)
+      const branches = question.follow_up_branches ?? []
+      for (let i = 0; i < question.follow_up_count && branches[i]; i++) plan.push(branches[i])
+    }
+    if (section.maturity_rating) plan.push(section.maturity_rating.prompt)
+  }
+  if (script.synthesis_check) plan.push(script.synthesis_check.peer_referral)
+  plan.push(script.closing_message)
+  return plan.filter(Boolean)
+}
+
+/**
+ * How long this script says it should take, in minutes - or 0 when it does not say.
+ *
+ * **Summed from the sections rather than declared once**, because that is where the number
+ * lives: `target_minutes` is per section, is on every section of all twelve scripts in
+ * `interview_scripts_v9`, and totals between 34 and 54 minutes. A script that omits it
+ * anywhere answers 0, and the participant is shown elapsed time alone rather than elapsed time
+ * against a target invented here - which is the one thing worse than no target.
+ */
+export function scriptTimeboxMinutes(sections: { target_minutes?: number }[]): number {
+  let total = 0
+  for (const section of sections) {
+    if (typeof section.target_minutes !== 'number' || !Number.isFinite(section.target_minutes)) {
+      return 0
+    }
+    total += section.target_minutes
+  }
+  return total
+}
+
+/** `m:ss`, with the minutes unbounded - "72:15" rather than "1:12:15". */
+function clockFace(totalSeconds: number): string {
+  const whole = Math.max(0, Math.floor(totalSeconds))
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
+}
+
+/**
+ * What the top bar says about how long this has been going on.
+ *
+ * **The clock is passed in, never read here.** This project has already lost three tests to a
+ * `new Date()` default - `milestoneVariance.test.ts`, which detonated on a particular morning
+ * in August - so both ends of the interval are arguments and this function is pure.
+ *
+ * A clock that goes backwards - a device correcting itself over NTP mid-interview - reads as
+ * zero rather than as a negative time. The minutes are unbounded on purpose: "72:15 of 40:00"
+ * says what a participant wants to know at a glance, where "1:12:15" has to be compared.
+ */
+export function elapsedLabel(startedAt: number, now: number, timeboxMinutes: number): string {
+  const elapsed = clockFace((now - startedAt) / 1000)
+  if (timeboxMinutes <= 0) return elapsed
+  return `${elapsed} of ${clockFace(timeboxMinutes * 60)}`
+}
+
+/**
+ * Elapsed time, in the middle of the top bar.
+ *
+ * Finding 5 of the first live interview: *"the interview felt very long, but it was probably
+ * within the asked-for timebox - I wanted a way of checking."* So it is shown against the
+ * timebox wherever the script declares one, which is every live script today.
+ *
+ * `now` is a **prop**, defaulting to the real clock, so a test drives the time rather than
+ * waiting for it. It is not a live region: a timer that announced itself every second would
+ * talk over the interviewer.
+ */
+function ElapsedTime({
+  startedAt, timeboxMinutes, now = Date.now,
+}: {
+  startedAt: number
+  timeboxMinutes: number
+  now?: () => number
+}) {
+  const [tick, setTick] = useState(() => now())
+  useEffect(() => {
+    const timer = setInterval(() => setTick(now()), 1000)
+    return () => clearInterval(timer)
+  }, [now])
+
+  const over = timeboxMinutes > 0 && tick - startedAt > timeboxMinutes * 60_000
+  return (
+    <span
+      data-testid="elapsed-time"
+      aria-label="Time elapsed"
+      className={`tabular-nums ${over ? 'text-amber-600' : ''}`}
+    >
+      {elapsedLabel(startedAt, tick, timeboxMinutes)}
+    </span>
+  )
+}
+
 /** Initials for an interviewer with no headshot - a state agents/identity.py declares legitimate. */
 function initialsOf(name: string): string {
   return name
@@ -33,6 +227,56 @@ function initialsOf(name: string): string {
     .slice(0, 2)
     .map(part => part[0]!.toUpperCase())
     .join('')
+}
+
+/**
+ * The interviewer's face, or their initials - on the two screens a participant meets them.
+ *
+ * One component rather than the two near-identical blocks it replaces, for the reason
+ * `AgentAvatar` gives on the dashboard: the fallback belongs to whatever draws the face, so
+ * there is one answer for "no portrait" rather than one per screen. It is *not* `AgentAvatar`,
+ * which is dashboard-styled and has no `onError` - and `onError` is the half that matters here.
+ *
+ * **A truthy address that 404s is the state that reached a participant**, and neither this
+ * page's old fallback nor `AgentAvatar`'s would have caught it: both test whether there is a
+ * URL, and there was one. So a portrait that fails to load falls back to the initials too - a
+ * participant meets a person's initials or a person's face, never an empty circle.
+ */
+function InterviewerPortrait({
+  src, name, className, textClassName,
+}: {
+  src: string
+  name: string
+  /** Size, ring and shadow. The caller owns these; the two screens draw different sizes. */
+  className: string
+  /** Type size for the initials, which differ between the two screens as the circles do. */
+  textClassName: string
+}) {
+  const [broken, setBroken] = useState(false)
+  // A new address is a new chance to load: without this, one failure would blank the face for
+  // the rest of the interview even after a project uploaded a portrait mid-session.
+  useEffect(() => { setBroken(false) }, [src])
+
+  if (!src || broken) {
+    return (
+      <div
+        data-testid="interviewer-initials"
+        className={`${className} flex items-center justify-center font-semibold text-white bg-gradient-to-br from-slate-600 to-slate-800 ${textClassName}`}
+        aria-hidden="true"
+      >
+        {initialsOf(name)}
+      </div>
+    )
+  }
+  return (
+    <img
+      data-testid="interviewer-portrait"
+      src={src}
+      alt={name}
+      onError={() => setBroken(true)}
+      className={`${className} object-cover`}
+    />
+  )
 }
 
 type Phase =
@@ -57,6 +301,27 @@ const BASE = '/api'
  */
 class SpeechHalted extends Error {}
 
+/**
+ * Which of the closed reasons the server is told, for each way starting Deepgram can fail.
+ *
+ * `null` means "say nothing": the token door has already recorded and alerted with the HTTP
+ * status that distinguishes a refused key from an exhausted balance from a rate limit, and a
+ * vague sentence written over a specific one is worse than no second report.
+ *
+ * The rest are genuinely different problems and must not share a sentence. `capture` is this
+ * browser's audio engine refusing to run - on iOS, a context interrupted by a call or the screen
+ * locking - and an operator told "the socket would not stay open" checks the key, the balance
+ * and the network, none of which is the fault.
+ */
+function haltReasonForFailureKind(
+  kind: 'grant' | 'socket' | 'browser' | 'capture' | 'microphone' | null,
+): string | null {
+  if (kind === 'grant') return null
+  if (kind === 'browser') return 'no_audio_worklet'
+  if (kind === 'capture') return 'audio_capture_failed'
+  return 'socket_failed'
+}
+
 // What a participant is told, in each of the three ways this can end an interview. Plain words
 // about what happened, what it means for them, and what to do - never a status code, and never
 // the diagnosis the operator gets, which names this deployment's provider and its billing.
@@ -65,11 +330,17 @@ const HALT_NO_SERVICE =
   'so we cannot start. Nothing you say could be recorded, and this interview is not permitted to ' +
   'use your browser’s own transcription instead. Please try your link again later, or ' +
   'contact the person who invited you. They have been told.'
+// **This no longer names a device, because sp67 stopped there being one to name.** It used to
+// send the participant away from Safari and therefore off every iPhone and iPad, which was
+// honest while the audio went through `MediaRecorder` and its container. Raw PCM has no
+// container, and Safari has had `AudioWorklet` since 14.1 - so what is left is an out-of-date
+// browser of any make, and the remedy is to update it rather than to find another device.
 const HALT_BROWSER =
-  'We are sorry - this interview cannot be conducted in this browser. It cannot record audio in a ' +
-  'format our transcription service accepts, and this interview is not permitted to use your ' +
-  'browser’s own transcription instead. Please reopen your interview link in Chrome or Edge ' +
-  'on a computer. Safari, including on an iPhone or iPad, will not work for this interview.'
+  'We are sorry - this interview cannot be conducted in this browser, because it is too old to ' +
+  'record audio in the way our transcription service needs, and this interview is not permitted ' +
+  'to use your browser’s own transcription instead. Please update your browser, or reopen ' +
+  'your interview link in an up-to-date Chrome, Edge, Safari or Firefox. The person who invited ' +
+  'you has been told.'
 // **Every clause here is something that is now true.** The first version said "Everything you
 // answered up to this point has been saved, and nothing has been lost" - and a halted interview
 // wrote a `checkpoint_json` that nothing in the product read, left `interview_answers` empty and
@@ -105,6 +376,43 @@ export interface CapturedPair {
   question: string
   answer: string
   follow_up: 0 | 1
+  /**
+   * Which of this page's engines produced `answer` - `deepgram`, `browser`, `deepgram+browser`
+   * for an answer handed over mid-sentence, or `none` when nothing could listen.
+   *
+   * **Recorded because nothing recorded it.** Two live interviews were transcribed end to end by
+   * the browser's fallback while every surface this product owns reported success, and the only
+   * way anybody found out was opening the provider's console. An operator asking "was this
+   * interview transcribed by the engine we configured?" had nowhere to look.
+   *
+   * It is a claim about *this page*, never about Deepgram: it says which engine the answer text
+   * came out of, which is exactly the fact that was missing.
+   */
+  recogniser: string
+}
+
+/**
+ * The engines behind one answer, combined.
+ *
+ * An answer can be produced by both - Deepgram drops mid-sentence and the browser's recogniser
+ * picks up the rest of the same answer - and `listenWithRestart` can compose several listens
+ * into one answer besides. Reporting only the last of those would describe a handover as though
+ * the whole answer came from the engine that finished it, which is the more flattering half.
+ *
+ * `none` is a positive claim that nothing listened, so it is **absorbed** by any real engine
+ * rather than combined with one: an answer partly heard is not an answer nothing heard. `''` is
+ * "not recorded" and gives way to anything at all.
+ */
+export function mergeRecognisers(a: string, b: string): string {
+  const engines = new Set<string>()
+  for (const part of [a, b]) {
+    for (const one of part.split('+')) {
+      if (one && one !== 'none') engines.add(one)
+    }
+  }
+  if (engines.size === 0) return a === 'none' || b === 'none' ? 'none' : ''
+  // Sorted, so `deepgram+browser` is one string rather than two spellings of one fact.
+  return [...engines].sort().reverse().join('+')
 }
 
 /**
@@ -136,6 +444,11 @@ export function capturedPair(
     question,
     answer,
     follow_up: followUp ? 1 : 0,
+    // Left blank here and stamped where the pair is recorded. This function is pure and knows
+    // nothing about which engine was listening; obliging every call site to pass it would be a
+    // signature that makes each caller restate state it does not own, which is the defect this
+    // repository records under `merge_project_config`.
+    recogniser: '',
   }
 }
 
@@ -177,7 +490,8 @@ export default function VoiceInterview() {
   // diagnosed from one only this end saw. `grant` means the token door refused, and it alerted
   // with the status code that distinguishes a revoked key from an exhausted balance - reporting
   // again from here wrote "the socket would not open" over it and mailed the operator twice.
-  const deepgramFailureKindRef = useRef<'grant' | 'socket' | 'browser' | 'microphone' | null>(null)
+  const deepgramFailureKindRef =
+    useRef<'grant' | 'socket' | 'browser' | 'capture' | 'microphone' | null>(null)
   // The words already spoken for the current question that no pair holds yet - carried across a
   // "Restart answer" or a "Finish my last answer" by `listenWithRestart`. A ref because the halt
   // lives one closure in, inside `listenForAnswer`, and cannot see that local.
@@ -196,6 +510,15 @@ export default function VoiceInterview() {
   // one transient blip condemned the rest of the interview to a recogniser that has never
   // heard of the client, which is the whole thing this branch exists to fix.
   const interviewStreamRef = useRef<MediaStream | null>(null)
+  // The audio graph's context, held beside the stream and released with it - see
+  // `interviewAudioContext` for why it is one per interview rather than one per answer.
+  const audioContextRef = useRef<AudioContext | null>(null)
+  // Which engines produced the most recent single listen, and the answer being assembled from
+  // one or more of them. Two refs because they have different lifetimes: `listenWithRestart`
+  // composes several listens into one answer (a restart, a carried "finish my last answer"), and
+  // the "finish my last answer" text belongs to the *previous* pair rather than this one.
+  const lastListenRecogniserRef = useRef('')
+  const answerRecogniserRef = useRef('')
   const deepgramFailuresRef = useRef(0)
   const deepgramDropsRef = useRef(0)
   const deepgramOffRef = useRef(false)
@@ -212,6 +535,16 @@ export default function VoiceInterview() {
   const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [isPaused, setIsPaused] = useState(false)
   const [silenceProgress, setSilenceProgress] = useState(0)
+  // When the participant tapped Start, which is what the elapsed clock counts from. `null`
+  // until then, so the top bar has nothing to show rather than a zero that has not started.
+  const [startedAt, setStartedAt] = useState<number | null>(null)
+  // Everything the interviewer will say, in order, and how far down it playback has got. The
+  // pair is what lets one utterance be synthesised while the previous one is being heard.
+  const speechPlanRef = useRef<string[]>([])
+  const planCursorRef = useRef(0)
+  // Audio asked for but not yet spoken, keyed on the words. At most two entries live: the one
+  // being said and the one after it.
+  const speechAheadRef = useRef<Map<string, Promise<Blob | null>>>(new Map())
   // The whole pair, not `{question, answer}`. The corrected answers are re-submitted to
   // `/complete` when the participant finishes, and that door requires `question_id` on every
   // pair - narrowing the type here is how an edit would have been sent without its address.
@@ -463,13 +796,17 @@ export default function VoiceInterview() {
    *
    * **Two questions, not one**, and either failing refuses the interview:
    *
-   *  1. **Can this browser produce a container Deepgram accepts?** `f914bc56` made a browser that
-   *     records none of webm/opus, webm or ogg/opus decline the socket rather than stream
-   *     MP4/AAC into a connection configured for Opus. Safari and iOS record MP4/AAC - so this
-   *     arm fails for reasons that have nothing to do with Deepgram, on the device a participant
-   *     is most likely holding, and on this kind of engagement it must still mean "cannot
-   *     proceed". That is an accepted operational constraint, not a defect to engineer around:
-   *     the alternative is the participant's voice going to Apple.
+   *  1. **Can this browser capture audio for us at all?** Raw PCM comes out of an `AudioWorklet`,
+   *     so this arm asks whether the browser has one. It fails for reasons that have nothing to
+   *     do with Deepgram, and on this kind of engagement it must still mean "cannot proceed" -
+   *     the alternative is the participant's voice going to Google or Apple.
+   *
+   *     **It used to ask a much narrower question and refuse a great many more people.** While
+   *     the audio went through `MediaRecorder`, the browser negotiated a container and Safari
+   *     negotiated MP4/AAC against a socket opened for webm/opus, so this arm declined every
+   *     iPhone and iPad. Raw PCM negotiates nothing, and Safari has had `AudioWorklet` since
+   *     14.1 on macOS and iOS 14.5, so what is left is an out-of-date browser rather than a
+   *     device.
    *  2. **Is Deepgram reachable and in credit?** Minting a grant is the same call the interview
    *     makes, so a refused key or an exhausted balance fails here. The grant is then discarded -
    *     it lives thirty seconds and could not be held for the first question anyway - and that
@@ -486,7 +823,7 @@ export default function VoiceInterview() {
     setSpeechProbe('checking')
     const obstacle = browserStreamingObstacle()
     if (obstacle) {
-      setHaltNotice(obstacle === 'unsupported_container' ? HALT_BROWSER : HALT_NO_SERVICE)
+      setHaltNotice(obstacle === 'no_audio_worklet' ? HALT_BROWSER : HALT_NO_SERVICE)
       setSpeechProbe('unavailable')
       await reportSpeechFailure(obstacle)
       return
@@ -529,19 +866,80 @@ export default function VoiceInterview() {
     setPhase('speech_halted')
   }
 
-  async function speakText(text: string): Promise<void> {
-    setStatusMessage('Speaking…')
-    const res = await fetch(`${BASE}/interviews/${sessionToken}/speak`, {
+  /**
+   * Ask the speak door for one utterance, at most once at a time.
+   *
+   * Keyed on the text, so the prefetch below and the `speakText` that later wants the same
+   * words share **one** request rather than racing: whichever arrives first, the other awaits
+   * the same promise.
+   *
+   * **A failure is never cached.** `null` means this utterance could not be had *this time* - a
+   * refused request, a dropped connection - and leaving that in the map would silently mute
+   * that question for the rest of the interview, which is a worse outcome than the round trip
+   * the cache exists to save. So the entry removes itself and the next asker tries again.
+   */
+  function requestSpeech(text: string): Promise<Blob | null> {
+    const inFlight = speechAheadRef.current.get(text)
+    if (inFlight) return inFlight
+    const pending = fetch(`${BASE}/interviews/${sessionToken}/speak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     })
-    if (!res.ok) {
-      // Non-fatal: skip audio, continue
-      console.warn('speak endpoint error', res.status)
+      .then(async res => {
+        if (!res.ok) {
+          // Non-fatal: skip audio, continue.
+          console.warn('speak endpoint error', res.status)
+          return null
+        }
+        return await res.blob()
+      })
+      .catch(() => null)
+      .then(blob => {
+        if (!blob) speechAheadRef.current.delete(text)
+        return blob
+      })
+    speechAheadRef.current.set(text, pending)
+    return pending
+  }
+
+  /**
+   * Start synthesising whatever comes next, while this utterance is still being said.
+   *
+   * **Measured, not guessed.** In the 17 September interview 95 of the 96 speak calls were
+   * cache misses - every question synthesised live with the participant waiting - because
+   * `prewarm_script_audio` on the server has no production caller and the cache key includes
+   * the voice, so sp62's per-project voice invalidated the entries a previous run had left.
+   * The idle time is real: an utterance plays for fifteen to twenty seconds and the answer to
+   * it takes twenty more, against a synthesis of a few seconds.
+   *
+   * **One ahead, and only after the current blob is in hand**, so the prefetch never competes
+   * with the request somebody is actually waiting on.
+   *
+   * The cursor advances only when what was just spoken *is* the next planned utterance, which
+   * is what keeps a dynamic one - an elaboration press, a re-prompt, "Of course, go on" - from
+   * skipping a question. It is a position rather than a search, so two questions with the same
+   * words cannot confuse it.
+   */
+  function primeNextUtterance(justSpoken: string): void {
+    const plan = speechPlanRef.current
+    if (plan[planCursorRef.current] !== justSpoken) return
+    planCursorRef.current += 1
+    const next = plan[planCursorRef.current]
+    if (next) void requestSpeech(next)
+  }
+
+  async function speakText(text: string): Promise<void> {
+    setStatusMessage('Speaking…')
+    const blob = await requestSpeech(text)
+    speechAheadRef.current.delete(text)
+    // After the await, so the next utterance is synthesised during this one rather than beside
+    // it. Before the playback await, so it has the whole of the utterance to be ready in.
+    primeNextUtterance(text)
+    if (!blob) {
+      setStatusMessage('')
       return
     }
-    const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     await new Promise<void>((resolve) => {
       const audio = new Audio(url)
@@ -651,6 +1049,27 @@ export default function VoiceInterview() {
   function releaseInterviewStream() {
     interviewStreamRef.current?.getTracks().forEach(track => track.stop())
     interviewStreamRef.current = null
+    // Chrome caps a page at six concurrent `AudioContext`s, and one that is never closed keeps
+    // the audio hardware awake after the interview has finished.
+    const context = audioContextRef.current
+    audioContextRef.current = null
+    if (context) { try { void context.close() } catch { /* already gone */ } }
+  }
+
+  /**
+   * The `AudioContext` the capture graph runs in, acquired once and kept.
+   *
+   * The same argument as the microphone stream above, with an iOS-specific third: Safari starts a
+   * context suspended and reports a fourth state, `interrupted`, when the participant switches
+   * tabs or lets the screen lock. `startPcmCapture` resumes it before every answer, which is
+   * cheap on a context that is already running and is the only thing that brings back one that
+   * is not - and doing that to one long-lived context is a great deal more reliable than
+   * constructing a fresh one inside an answer loop, where there is no user gesture in the call
+   * chain at all.
+   */
+  function interviewAudioContext(): AudioContext | null {
+    if (!audioContextRef.current) audioContextRef.current = createAudioContext()
+    return audioContextRef.current
   }
 
   async function interviewStream(): Promise<MediaStream | null> {
@@ -696,9 +1115,27 @@ export default function VoiceInterview() {
       deepgramFailureKindRef.current = 'microphone'
       return null
     }
+    const context = interviewAudioContext()
+    if (!context) {
+      // No Web Audio at all. Reported as a browser failure rather than a socket one: nothing was
+      // opened, and an administrator sent to check Deepgram would be looking in the wrong place.
+      deepgramFailureKindRef.current = 'browser'
+      return null
+    }
+    // **Two calls, because they fail for different reasons and an operator is sent to different
+    // places.** A capture that will not start is this browser's audio engine - on iOS, a context
+    // that would not resume - and reporting it as a socket failure tells an administrator to
+    // check the Deepgram key, the balance and the network, every one of which is fine.
+    const capture = await startPcmCapture(stream, context)
+    if (!capture) {
+      deepgramFailureKindRef.current = 'capture'
+      return null
+    }
     deepgramFailureKindRef.current = 'socket'
-    const engine = await openDeepgramSocket(stream, deepgramListenUrl(grant), hooks)
+    const engine = await openDeepgramSocket(capture, grant, hooks)
     if (engine) deepgramFailureKindRef.current = null
+    // The socket declining owns the teardown from the moment it was handed the capture, so
+    // there is nothing to release here - see `settle` in `openDeepgramSocket`.
     return engine
   }
 
@@ -724,6 +1161,10 @@ export default function VoiceInterview() {
       // the handover branch would start a second browser recogniser on an engine that has just
       // failed, so the distinction is structural rather than a nicety.
       let engineKind: 'deepgram' | 'browser' | null = null
+      // Every engine that listened during *this* answer, not only the one that finished it - a
+      // handover is two, and reporting the second alone describes a dropped socket as a clean
+      // Deepgram answer.
+      let enginesUsed = ''
       let stopRequested = false
 
       // Longer initial wait (before first speech), shorter gap once they've started
@@ -739,6 +1180,9 @@ export default function VoiceInterview() {
       function finish() {
         if (resolved) return
         resolved = true
+        // `none` rather than `''`: nothing listened, which is a fact worth recording and is not
+        // the same as this build not having recorded anything.
+        lastListenRecogniserRef.current = enginesUsed || 'none'
         recognitionRef.current = null
         clearSilenceTimers()
         setSilenceProgress(0)
@@ -759,6 +1203,7 @@ export default function VoiceInterview() {
       function halt(reason: string | null) {
         if (resolved) return
         resolved = true
+        lastListenRecogniserRef.current = enginesUsed || 'none'
         recognitionRef.current = null
         clearSilenceTimers()
         setSilenceProgress(0)
@@ -855,6 +1300,7 @@ export default function VoiceInterview() {
           // about a handover is a claim about something that has already happened.
           const handover = startWebSpeech(lang, hooks)
           engineKind = handover ? 'browser' : null
+          if (handover) enginesUsed = mergeRecognisers(enginesUsed, 'browser')
           if (!handover) {
             setRecogniserNotice(
               'The transcription service dropped out, and this browser cannot transcribe on ' +
@@ -899,7 +1345,7 @@ export default function VoiceInterview() {
           // socket would not open" over "the balance is exhausted or the card has expired" and
           // mailed the operator twice for one incident.
           if (speechPolicyRef.current === 'required') {
-            halt(deepgramFailureKindRef.current === 'grant' ? null : 'socket_failed')
+            halt(haltReasonForFailureKind(deepgramFailureKindRef.current))
             return
           }
           deepgramFailuresRef.current += 1
@@ -908,8 +1354,10 @@ export default function VoiceInterview() {
           if (deepgramFailuresRef.current >= 2) deepgramOffRef.current = true
           engine = startWebSpeech(lang, hooks)
           engineKind = engine ? 'browser' : null
+          if (engine) enginesUsed = mergeRecognisers(enginesUsed, 'browser')
         } else {
           engineKind = 'deepgram'
+          enginesUsed = mergeRecognisers(enginesUsed, 'deepgram')
           deepgramFailuresRef.current = 0
         }
 
@@ -1015,15 +1463,21 @@ export default function VoiceInterview() {
     // participant who had tapped "Finish my last answer" would lose the most of anybody.
     let carried = ''
     carriedTextRef.current = ''
+    // Accumulated across every listen that contributes to the answer this call returns, and
+    // cleared alongside `carried` on a restart - the words go, so their provenance goes with
+    // them.
+    let answerEngines = ''
     // eslint-disable-next-line no-constant-condition
     while (true) {
       setInterimText('')
       const heard = await listenForAnswer(lang)
+      answerEngines = mergeRecognisers(answerEngines, lastListenRecogniserRef.current)
 
       if (restartAnswerRef.current) {
         restartAnswerRef.current = false
         carried = ''
         carriedTextRef.current = ''
+        answerEngines = ''
         setStatusMessage('Restarting…')
         await new Promise(r => setTimeout(r, 300))
         setStatusMessage('')
@@ -1047,7 +1501,13 @@ export default function VoiceInterview() {
         if (reprompt) await speakText('Of course — go on.')
         const extra = await listenForAnswer(lang)
         setStatusMessage('')
-        if (extra.trim()) previous.answer = `${previous.answer} ${extra}`.trim()
+        if (extra.trim()) {
+          previous.answer = `${previous.answer} ${extra}`.trim()
+          // The words were added to an answer already recorded, so the engine that heard them
+          // belongs to *that* pair. Stamping it on the current one would credit this question
+          // with a recogniser that produced none of its text.
+          previous.recogniser = mergeRecognisers(previous.recogniser, lastListenRecogniserRef.current)
+        }
         // Back to where we were.
         if (reprompt) {
           setCurrentQuestion(reprompt.text)
@@ -1072,8 +1532,26 @@ export default function VoiceInterview() {
       // well as on entry, or a halt on a *later* question would re-send words that already
       // reached the transcript under their own question.
       carriedTextRef.current = ''
+      // Published for the pair this answer is about to become. One place, so a new recording
+      // site cannot forget to work out its own provenance and cannot get it wrong.
+      answerRecogniserRef.current = answerEngines
       return answer
     }
+  }
+
+  /**
+   * Record one captured pair, stamped with the engines that produced it.
+   *
+   * **The single place a pair reaches the transcript.** `capturedPair` is pure and knows nothing
+   * about which recogniser was listening, and there are four recording sites - the primary
+   * answer, a generated press, a scripted branch, and the peer referral. Passing the stamp at
+   * each would oblige four callers to restate state none of them owns, which is exactly how one
+   * of them ends up spelling it differently from the other three.
+   */
+  function recordPair(pair: CapturedPair): CapturedPair {
+    pair.recogniser = mergeRecognisers(pair.recogniser, answerRecogniserRef.current)
+    qaRef.current.push(pair)
+    return pair
   }
 
   async function getElaborationPress(
@@ -1169,6 +1647,17 @@ export default function VoiceInterview() {
    * left to do but stop unwinding. Anything else is a real fault and is left to propagate.
    */
   async function runInterview() {
+    // **Built here, synchronously, because this runs in the task the Start click created.**
+    // iOS starts an `AudioContext` suspended when it is constructed outside a user gesture, and
+    // whether `resume()` is then granted on sticky activation alone is exactly the thing nobody
+    // has driven on a real device. Constructed lazily at the first answer it certainly *was*
+    // outside one - `conductInterview` awaits `PATCH /status` and then the interviewer speaking
+    // before anything reaches `startDeepgram`, so the gesture's task had long since yielded.
+    // The refusal is clean either way (the capture declines rather than capturing silence), but
+    // a clean refusal at question one on every iPhone is this branch's headline claim inverted.
+    // Nothing here depends on the context being usable, so a browser without Web Audio is
+    // unaffected: the probe has already refused it, and `startDeepgram` re-asks.
+    interviewAudioContext()
     try {
       await conductInterview()
     } catch (err) {
@@ -1196,6 +1685,12 @@ export default function VoiceInterview() {
     const lang = `${voiceConfig.language}-${voiceConfig.country_code}`
     interviewLangRef.current = lang
 
+    // The clock starts when the interview does, not when the page loaded - a participant who
+    // left the device-setup screen open over lunch has not been interviewed for an hour.
+    setStartedAt(Date.now())
+    speechPlanRef.current = scriptedSpeech(script)
+    planCursorRef.current = 0
+    speechAheadRef.current.clear()
     setPhase('interviewing')
 
     // Activate session
@@ -1240,41 +1735,83 @@ export default function VoiceInterview() {
         await speakText(question.text)
 
         // Record primary answer
-        let answer = await listenWithRestart(lang, { text: question.text })
-
-        const needsElaboration =
-          answer.trim().length > 0 &&
-          question.evasion_signals.some(sig => answer.toLowerCase().includes(sig.toLowerCase()))
+        const answer = await listenWithRestart(lang, { text: question.text })
 
         let followUpCount = 0
+        // Presses are numbered independently of branches, so a press on a branch answer cannot
+        // collide with a branch's own id. `F` and `B` are separate series in `capturedPair`.
+        let pressCount = 0
 
-        if (needsElaboration) {
-          // Press for elaboration. An empty press means no press was produced in time, so
-          // the whole branch is skipped and the interview moves on to the next question -
-          // a missed follow-up costs depth on one answer, while speaking nothing and then
-          // listening costs the interviewee's confidence in the whole conversation.
-          const pressText = await getElaborationPress(question.text, answer, question.probing_instructions)
-          if (pressText) {
-            setCurrentQuestion(pressText)
-            await speakText(pressText)
-            const followUpAnswer = await listenWithRestart(lang)
-            qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, pressText, followUpAnswer, { kind: 'F', index: followUpCount + 1 }))
-            answer = `${answer} ${followUpAnswer}`.trim()
-            followUpCount++
-          }
+        /**
+         * Press once on an answer that asks for it, and return what came back.
+         *
+         * **Asked of branch answers as well as of the primary one**, which is where the
+         * reported defect actually lives: in the 17 September interview 60 of the 91 answers
+         * were to scripted branches, every answer under nine words was one of them, and this
+         * code had never looked at a branch answer at all. Pressing only the primary answer
+         * would have reached one of the eleven short ones.
+         *
+         * A press's *own* answer is never pressed again - the recursion is not there, and it is
+         * the bound that keeps a brief reply from becoming an interrogation. An empty press
+         * means none was produced in time, so the whole branch is skipped and the interview
+         * moves on: a missed follow-up costs depth on one answer, while speaking nothing and
+         * then listening costs the interviewee's confidence in the whole conversation.
+         */
+        const pressFor = async (asked: string, reply: string): Promise<string> => {
+          if (!needsElaboration(reply, question.evasion_signals)) return ''
+          const pressText = await getElaborationPress(asked, reply, question.probing_instructions)
+          if (!pressText) return ''
+          setCurrentQuestion(pressText)
+          await speakText(pressText)
+          const followUpAnswer = await listenWithRestart(lang)
+          pressCount++
+          recordPair(capturedPair(
+            scriptId, sectionId, questionNo, pressText, followUpAnswer,
+            { kind: 'F', index: pressCount },
+          ))
+          return followUpAnswer
         }
 
-        // Push primary Q&A before follow-up branches
-        qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, question.text, answer))
+        // **Recorded the moment it is given, and merged into afterwards.** The pair used to be
+        // pushed *after* the press, so an interview that halted during one - a grant refused,
+        // a socket that would not open - lost the answer it had just been given: it was in no
+        // pair, and `halt` can only carry what the *current* listen heard. Pre-existing, and
+        // pressing on brevity would have made it common. Pushing first also puts the pairs in
+        // the order they happened, which is the order the review screen shows them in.
+        const primaryPair = recordPair(
+          capturedPair(scriptId, sectionId, questionNo, question.text, answer))
+
+        const elaboration = await pressFor(question.text, answer)
+        if (elaboration) {
+          primaryPair.answer = `${primaryPair.answer} ${elaboration}`.trim()
+          // The press's words joined this answer, so its engine did too.
+          primaryPair.recogniser = mergeRecognisers(
+            primaryPair.recogniser, answerRecogniserRef.current)
+          // A press has always consumed a branch slot: it asked the thing the first scripted
+          // branch was there to ask.
+          followUpCount++
+        }
 
         // Pre-scripted follow-up branches
         while (followUpCount < question.follow_up_count && question.follow_up_branches[followUpCount]) {
           const branch = question.follow_up_branches[followUpCount]
+          const branchIndex = followUpCount + 1
           setCurrentQuestion(branch)
           await speakText(branch)
           const branchAnswer = await listenWithRestart(lang)
-          qaRef.current.push(capturedPair(scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: followUpCount + 1 }))
           followUpCount++
+          // Recorded before its press and merged into afterwards, exactly as the primary
+          // answer above is, and for the same reason.
+          const branchPair = capturedPair(
+            scriptId, sectionId, questionNo, branch, branchAnswer, { kind: 'B', index: branchIndex },
+          )
+          recordPair(branchPair)
+          const drawnOut = await pressFor(branch, branchAnswer)
+          if (drawnOut) {
+            branchPair.answer = `${branchPair.answer} ${drawnOut}`.trim()
+            branchPair.recogniser = mergeRecognisers(
+              branchPair.recogniser, answerRecogniserRef.current)
+          }
         }
       }
 
@@ -1325,7 +1862,7 @@ export default function VoiceInterview() {
       setCurrentQuestion(sc.peer_referral)
       await speakText(sc.peer_referral)
       const referralResponse = await listenWithRestart(lang)
-      qaRef.current.push(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
+      recordPair(capturedPair(scriptId, 'SYNTH', 2, sc.peer_referral, referralResponse))
 
       // WITHDRAWN: forward roadmap.
       // setCurrentQuestion(sc.forward_roadmap)
@@ -1596,8 +2133,25 @@ export default function VoiceInterview() {
                 <div className="space-y-4 mb-6">
                   {editableTranscript.map((pair, i) => (
                     <div key={pair.question_id || i} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                      <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-                        <p id={`review-question-${i}`} className="text-sm text-gray-600 leading-relaxed">
+                      {/* **White on dark grey, and deliberately not a branding colour.**
+                          Finding 10 of the 17 September interview: the question was
+                          `text-gray-600` on `bg-gray-50` and the answer `text-gray-700` on
+                          white, so on a screen carrying dozens of pairs there was almost
+                          nothing to tell one from the other at a glance. A dark band reads as
+                          "asked" against a light field that reads as "said".
+
+                          A project sets `primary_color` and `text_color` and neither is used
+                          here, on purpose: this pair is chosen for contrast and checked, and
+                          deriving either half from an operator's colour picker would make the
+                          legibility of the one screen where a participant corrects their own
+                          words depend on a choice made for a logo. The heading and the buttons
+                          above still carry the branding, so the page is still theirs. */}
+                      <div className="px-4 py-3 bg-slate-700">
+                        <p
+                          id={`review-question-${i}`}
+                          data-testid="review-question"
+                          className="text-sm text-white leading-relaxed"
+                        >
                           {pair.question}
                         </p>
                       </div>
@@ -1851,20 +2405,14 @@ export default function VoiceInterview() {
               the image hid the name of the only interviewer who is actually in that state. */}
           {branding?.interviewer_name && (
             <div className="flex flex-col items-center mb-6">
-              {branding.interviewer_image_url ? (
-                <img
-                  src={branding.interviewer_image_url}
-                  alt={branding.interviewer_name}
-                  className="w-24 h-24 rounded-full object-cover shadow-md mb-3 ring-4 ring-white"
-                />
-              ) : (
-                <div
-                  className="w-24 h-24 rounded-full mb-3 ring-4 ring-white shadow-md flex items-center justify-center text-2xl font-semibold text-white bg-gradient-to-br from-slate-500 to-slate-700"
-                  aria-hidden="true"
-                >
-                  {initialsOf(branding.interviewer_name)}
-                </div>
-              )}
+              <InterviewerPortrait
+                src={interviewerPortraitSrc(
+                  branding.interviewer_image_url, branding.interviewer_image_source,
+                )}
+                name={branding.interviewer_name}
+                className="w-24 h-24 rounded-full mb-3 ring-4 ring-white shadow-md"
+                textClassName="text-2xl"
+              />
               <p className="font-semibold text-gray-800" style={{ color: branding.text_color }}>
                 {branding.interviewer_name}
               </p>
@@ -1974,7 +2522,9 @@ export default function VoiceInterview() {
   // and /agents/avery-singh-hires.jpg - which were the third and fourth declarations of the
   // interviewer's identity in the product, and they were what a participant read while Laura
   // was speaking to them. The server resolves both from the session's stamp.
-  const interviewerImg = branding?.interviewer_image_url ?? ''
+  const interviewerImg = interviewerPortraitSrc(
+    branding?.interviewer_image_url, branding?.interviewer_image_source,
+  )
   const interviewerName = branding?.interviewer_name ?? ''
 
   return (
@@ -1987,6 +2537,15 @@ export default function VoiceInterview() {
         <div className="flex-1 min-w-0">
           <div className="flex justify-between text-xs text-gray-400 mb-1">
             <span>Question {progress.current} of {progress.total}</span>
+            {/* The centre of the bar, between how far through the questions they are and how
+                far through as a percentage - which is where somebody looks to ask "how long
+                has this been going?" and found nothing on 17 September. */}
+            {startedAt !== null && (
+              <ElapsedTime
+                startedAt={startedAt}
+                timeboxMinutes={scriptTimeboxMinutes(sessionData?.script.sections ?? [])}
+              />
+            )}
             <span>{Math.round((progress.current / Math.max(progress.total, 1)) * 100)}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-1">
@@ -2003,20 +2562,12 @@ export default function VoiceInterview() {
         {/* Interviewer panel */}
         <div className="w-56 flex-shrink-0 bg-slate-900 flex flex-col items-center justify-center gap-5 p-6 border-r border-slate-800">
           <div className="relative">
-            {interviewerImg ? (
-              <img
-                src={interviewerImg}
-                alt={interviewerName}
-                className="w-40 h-40 rounded-full object-cover ring-4 ring-teal-400 shadow-2xl"
-              />
-            ) : (
-              <div
-                className="w-40 h-40 rounded-full ring-4 ring-teal-400 shadow-2xl flex items-center justify-center text-4xl font-semibold text-white bg-gradient-to-br from-slate-600 to-slate-800"
-                aria-hidden="true"
-              >
-                {initialsOf(interviewerName)}
-              </div>
-            )}
+            <InterviewerPortrait
+              src={interviewerImg}
+              name={interviewerName}
+              className="w-40 h-40 rounded-full ring-4 ring-teal-400 shadow-2xl"
+              textClassName="text-4xl"
+            />
             {(statusMessage || isListening) && (
               <span
                 className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 animate-pulse"

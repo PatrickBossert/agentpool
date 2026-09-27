@@ -678,7 +678,7 @@ export default function Architecture() {
           <KV k="What travels" v="Two things: the participant's audio, and this engagement's vocabulary - its active value chain labels and the proper nouns from its interview scripts. Declared as PARTICIPANT_SPEECH_EGRESS in agents/egress.py." />
           <KV k="Used by" v="VoiceInterview page - the primary recogniser for every answer since sp66. Connected then; the door was written in May 2026 and called by nothing for four months." />
           <KV k="Fallback" v="The browser's Web Speech API, silently, when Deepgram is unavailable; a mid-answer drop keeps what was heard and hands the same answer over, saying so. A browser that can do neither is told plainly that nothing is being recorded." />
-          <p className="text-xs text-slate-500 mt-2">Never exercised against the real provider - the URL form, the keyterm spelling and the webm/opus stream are documentation-derived. Treat the first live interview as the test.</p>
+          <p className="text-xs text-slate-500 mt-2">Never exercised against the real provider - the URL form, the keyterm spelling and the linear16 PCM stream and its sample rate are documentation-derived. Treat the first live interview as the test.</p>
         </Card>
 
         <Card title="Cloudflare Tunnel" accent="border-slate-600">

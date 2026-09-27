@@ -24,7 +24,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import VoiceInterview from '../pages/VoiceInterview'
 import {
-  FakeRecorder,
+  FakeAudioContext,
+  FakeAudioWorkletNode,
   FakeSocket,
   SCRIPT_THREE_QUESTIONS,
   SCRIPT_TWO_QUESTIONS,
@@ -40,6 +41,15 @@ import {
 
 const GRANT = { token: 'jwt', listen_params: { model: 'nova-3', language: 'en' } }
 
+/**
+ * The two things one halting interview said, written out so they can be *scanned for*.
+ *
+ * Distinctive rather than generic, and never a substring of each other, because they are what
+ * tells this interview's checkpoint from the one an earlier test left running.
+ */
+const FIRST_ANSWER = 'A finished answer to the first question, given in full.'
+const WORDS_IN_FLIGHT = 'Words spoken into a socket that is about to go.'
+
 /** Render the page without clicking Start - the refusals are about Start not being there. */
 function renderInterview() {
   render(
@@ -52,20 +62,24 @@ function renderInterview() {
 }
 
 /**
- * A browser that records only MP4/AAC - Safari, and therefore every iPhone and iPad.
+ * A browser with no `AudioWorklet` - which since sp67 means an out-of-date one, and no longer
+ * means an iPhone.
  *
- * `isTypeSupported` answering false to all three containers is what `f914bc56` made decline the
- * Deepgram socket rather than stream a container it was not opened for. On a standard engagement
- * that costs nothing, because the browser's own recogniser picks it up. Here it is fatal, and
- * that is the accepted operational constraint rather than a defect: the alternative is the
- * participant's voice going to Apple.
+ * **This used to be `installSafariRecorder`, and the change is the point of the branch.** While
+ * the audio went through `MediaRecorder` the browser negotiated a container, Safari negotiated
+ * MP4/AAC against a socket opened for webm/opus, and the page had to decline - so an engagement
+ * requiring Deepgram could not be interviewed on an iPhone or iPad at all. Raw PCM negotiates
+ * nothing and Safari has had `AudioWorklet` since 14.1 on macOS and iOS 14.5, so this arm no
+ * longer refuses any current device. What it still catches is a browser old enough to have Web
+ * Audio without worklets, where the consequence on this kind of engagement is what it always
+ * was: the interview does not happen, because the alternative is the participant's voice going
+ * to Google or Apple.
  */
-function installSafariRecorder() {
-  vi.stubGlobal('MediaRecorder', class {
-    static isTypeSupported = () => false
-    start() {}
-    stop() {}
-  })
+function installBrowserWithoutWorklets() {
+  // Web Audio is present - so this is not the `no_streaming_support` arm - and the thing that
+  // reads samples out of the graph is not.
+  vi.stubGlobal('AudioContext', FakeAudioContext)
+  vi.stubGlobal('AudioWorkletNode', undefined)
 }
 
 /** Every request the page made, as [method, url] pairs. */
@@ -137,16 +151,50 @@ describe('an engagement that requires Deepgram', () => {
     expect(screen.queryByTestId('recogniser-notice')).toBeNull()
   }, 20000)
 
-  // ── Half two of the probe: the browser's container ─────────────────────────
+  // ── Half two of the probe: can this browser capture for us? ───────────────
 
-  it('refuses an iPhone or iPad, on its own, before Deepgram is even asked', async () => {
-    // **This half must refuse alone.** Deepgram is perfectly healthy here - the grant would be
-    // answered - and the interview still cannot go ahead, because this browser cannot produce
-    // audio the socket is opened for. `f914bc56` created this case and it lands on the device a
-    // participant is most likely holding.
+  it('conducts the interview on the very device this used to refuse', async () => {
+    // **The whole prize of sp67, asserted as the case it replaces.** This is verbatim the browser
+    // the old probe declined: `MediaRecorder.isTypeSupported` answering false to webm/opus, webm
+    // and ogg/opus alike, which is Safari and therefore every iPhone and iPad. It could not be
+    // interviewed on an engagement that requires Deepgram, and that refusal was correct while the
+    // audio went through a container - the alternative was the participant's voice going to Apple.
+    //
+    // Raw PCM has no container to negotiate, and Safari has had `AudioWorklet` since 14.1 on
+    // macOS and iOS 14.5. So the device is now served: the probe passes, Start is offered, and
+    // the socket that opens is Deepgram's. Asserted on the socket rather than on the button,
+    // because a Start button in front of a capture that cannot run is worse than a refusal.
     installStreaming()
-    installSafariRecorder()
-    installSpeechRecognition('webkitSpeechRecognition, which Safari has and must not use')
+    vi.stubGlobal('MediaRecorder', class {
+      static isTypeSupported = () => false
+      start() {}
+      stop() {}
+    })
+    installSpeechRecognition('webkitSpeechRecognition, which Safari has and must still not use')
+    vi.stubGlobal('fetch', installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required'))
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    // It listened, on Deepgram, on a device that could not be interviewed at all before this.
+    const socket = await firstSocket()
+    expect(socket.url).toContain('encoding=linear16')
+    // And the browser's own recogniser is still refused - what lifted is the container
+    // constraint, not the policy. Safari has `webkitSpeechRecognition` sitting right there.
+    expect(recognisersBuiltSoFar()).toBe(0)
+    expect(screen.queryByTestId('speech-unavailable-notice')).toBeNull()
+  }, 25000)
+
+  it('refuses a browser too old to capture, on its own, before Deepgram is even asked', async () => {
+    // **This half must still refuse alone.** Deepgram is perfectly healthy here - the grant would
+    // be answered - and the interview still cannot go ahead, because this browser has no
+    // `AudioWorklet` to read samples out of the audio graph.
+    //
+    // What changed in sp67 is the *population*, not the rule: this used to be every iPhone and
+    // iPad, and is now a browser from before April 2021.
+    installStreaming()
+    installBrowserWithoutWorklets()
+    installSpeechRecognition('webkitSpeechRecognition, which must not be used')
     const fetchSpy = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
     vi.stubGlobal('fetch', fetchSpy)
 
@@ -154,9 +202,11 @@ describe('an engagement that requires Deepgram', () => {
 
     const notice = await screen.findByTestId('speech-unavailable-notice', undefined, { timeout: 10000 })
     expect(notice.textContent).toMatch(/cannot be conducted in this browser/i)
-    // Named, because "try a different browser" is useless to somebody holding the only browser
-    // their device has.
-    expect(notice.textContent).toMatch(/iPhone or iPad/i)
+    // The remedy named, because "try a different browser" is useless on its own - and it is now
+    // a remedy the participant can actually apply on the device in their hand.
+    expect(notice.textContent).toMatch(/update your browser/i)
+    // And it must no longer send anybody away from their phone: that sentence stopped being true.
+    expect(notice.textContent).not.toMatch(/iPhone|iPad|Safari will not/i)
 
     expect(screen.queryByRole('button', { name: /start interview/i })).toBeNull()
     expectNothingListened()
@@ -170,9 +220,9 @@ describe('an engagement that requires Deepgram', () => {
   it('tells the server which half failed, so the alert names the right problem', async () => {
     // The reason the browser reports at all: this is the half the server cannot see. The
     // vocabulary is closed - the sentence an administrator reads is composed server-side,
-    // because this door is unauthenticated.
+    // because this door is unauthenticated - and the word changed with the question it answers.
     installStreaming()
-    installSafariRecorder()
+    installBrowserWithoutWorklets()
     installSpeechRecognition(null)
     const fetchSpy = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
     vi.stubGlobal('fetch', fetchSpy)
@@ -184,9 +234,76 @@ describe('an engagement that requires Deepgram', () => {
       const reported = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/speech-failure'))
       expect(reported).toBeTruthy()
       const body = JSON.parse(String((reported![1] as RequestInit).body))
-      expect(body.reason).toBe('unsupported_container')
+      expect(body.reason).toBe('no_audio_worklet')
     }, { timeout: 10000 })
   }, 20000)
+
+  it('builds the audio context in the task the Start click created', async () => {
+    // **iOS, and the reason the claim about phones cannot rest on an assumption.** Safari starts
+    // an `AudioContext` suspended when it is constructed outside a user gesture, and whether
+    // `resume()` is then granted on sticky activation alone is exactly what nobody has driven on
+    // a real device. Built lazily at the first answer it certainly *was* outside one:
+    // `conductInterview` awaits `PATCH /status` and then the interviewer speaking before
+    // anything reaches `startDeepgram`, so the gesture's task had long since yielded.
+    //
+    // The refusal would be clean either way - the capture declines rather than capturing
+    // silence - but a clean refusal at question one on every iPhone is this branch's headline
+    // claim inverted.
+    //
+    // Asserted against the **first request the interview makes**, which is the first await after
+    // the click: a context that exists by then was built synchronously in the click's own task.
+    // A lazy construction fails this, because at `/status` there is no context at all.
+    installStreaming()
+    installSpeechRecognition(null)
+    const inner = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
+    const contextsWhenAsked: [string, number][] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      contextsWhenAsked.push([String(url), FakeAudioContext.built.length])
+      return inner(url, init)
+    })
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    await waitFor(() => {
+      expect(contextsWhenAsked.some(([url]) => url.endsWith('/status'))).toBe(true)
+    }, { timeout: 10000 })
+    const [, contextsAtStatus] = contextsWhenAsked.find(([url]) => url.endsWith('/status'))!
+    expect(contextsAtStatus).toBeGreaterThanOrEqual(1)
+  }, 25000)
+
+  it('reports a capture that would not run as the browser’s fault, not Deepgram’s', async () => {
+    // **The operator is sent to the wrong place by the wrong word.** A context that will not
+    // resume is this participant's own audio engine - on an iPhone, one an incoming call or the
+    // screen locking interrupted. Reported as `socket_failed`, the alert reads "could not hold a
+    // streaming connection to Deepgram open", and an administrator checks the key, the balance
+    // and the network, every one of which is fine. The only thing that would have helped is
+    // ringing the participant back.
+    //
+    // Deepgram is deliberately healthy here: the grant is answered, so nothing but the capture
+    // can be at fault, and a door that still blamed the socket could not be right by accident.
+    installStreaming()
+    class WillNotResume extends FakeAudioContext {
+      async resume() { /* answers, and stays exactly where it was */ }
+    }
+    vi.stubGlobal('AudioContext', WillNotResume)
+    installSpeechRecognition('must not be reached')
+    const fetchSpy = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
+    vi.stubGlobal('fetch', fetchSpy)
+
+    renderInterview()
+    await userEvent.click(await screen.findByRole('button', { name: /start interview/i }))
+
+    await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
+    await waitFor(() => {
+      const reported = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/speech-failure'))
+      expect(reported).toBeTruthy()
+      const body = JSON.parse(String((reported![1] as RequestInit).body))
+      expect(body.reason).toBe('audio_capture_failed')
+    }, { timeout: 10000 })
+    // And the interview stopped rather than handing the microphone to Apple.
+    expect(recognisersBuiltSoFar()).toBe(0)
+  }, 25000)
 
   // ── Mid-interview ──────────────────────────────────────────────────────────
 
@@ -241,7 +358,11 @@ describe('an engagement that requires Deepgram', () => {
 
     // Question one, answered and committed.
     const first = await firstSocket()
-    first.say('A finished answer to the first question.', true)
+    // Long enough not to be pressed. An answer under `BRIEF_ANSWER_WORDS` draws an
+    // elaboration press, which inserts a whole question-and-answer cycle - and this test
+    // reads `FakeSocket.opened[1]` expecting question two, so a press would put its own
+    // socket there. The subject here is the checkpoint, not the press.
+    first.say(FIRST_ANSWER, true)
     await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
 
     // Question two, half spoken when the service goes.
@@ -251,31 +372,40 @@ describe('an engagement that requires Deepgram', () => {
       return FakeSocket.opened[1]
     }, { timeout: 10000 })
     await waitFor(() => expect(second.readyState).toBe(FakeSocket.OPEN))
-    second.say('Words spoken into a socket that is about to go.', true)
+    second.say(WORDS_IN_FLIGHT, true)
     second.drop()
 
     await screen.findByTestId('speech-halted-notice', undefined, { timeout: 10000 })
 
+    // **Scanned for, never read off the end.** An earlier test's interview outlives its test -
+    // `cleanup()` unmounts the page and cannot stop an async loop over closures - and it halts
+    // and checkpoints through whatever `fetch` stub is installed *now*, which is this spy. So
+    // "the last checkpoint" is not necessarily this interview's, and reading it is unsound in
+    // exactly the way the keyterms file's `answersOfInterviewHearing` describes. A checkpoint
+    // that never arrives now fails on the timeout rather than passing on a stranger's.
     await waitFor(() => {
-      const calls = fetchSpy.mock.calls.filter(([url]) => String(url).endsWith('/checkpoint'))
-      expect(calls.length).toBeGreaterThan(0)
-      const body = JSON.parse(String((calls[calls.length - 1][1] as RequestInit).body))
-      const kept = JSON.stringify(body.checkpoint)
-      // The committed answer...
-      expect(kept).toContain('A finished answer to the first question.')
-      // ...and the one that had no pair yet, which is the half that was being lost.
-      expect(kept).toContain('Words spoken into a socket that is about to go.')
+      const mine = fetchSpy.mock.calls
+        .filter(([url]) => String(url).endsWith('/checkpoint'))
+        .map(([, init]) => JSON.stringify(JSON.parse(String((init as RequestInit).body)).checkpoint))
+        // The committed answer, and the one that had no pair yet - which is the half that was
+        // being lost. Both in one checkpoint, because either alone is satisfied by a different
+        // interview's.
+        .find(kept =>
+          kept.includes(FIRST_ANSWER) && kept.includes(WORDS_IN_FLIGHT))
+      expect(mine, 'no checkpoint carried both this interview\'s answers').toBeTruthy()
     }, { timeout: 10000 })
 
-    const reported = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/speech-failure'))
+    const reported = fetchSpy.mock.calls
+      .filter(([url]) => String(url).endsWith('/speech-failure'))
+      // Scanned for the same reason, and on the same evidence.
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
+      .find(body => JSON.stringify(body.qa_pairs).includes(FIRST_ANSWER))
     expect(reported).toBeTruthy()
-    const body = JSON.parse(String((reported![1] as RequestInit).body))
-    expect(body.reason).toBe('socket_failed')
+    expect(reported!.reason).toBe('socket_failed')
     // **The completed answers go with the report, and this is what makes the halt screen's
     // promise true.** The checkpoint holds the words with no question id; only these become
     // `interview_answers` rows, which is the only thing the crews read. A halt that sent the
     // report alone left the transcript empty behind a screen saying it had been saved.
-    expect(JSON.stringify(body.qa_pairs)).toContain('A finished answer to the first question.')
   }, 25000)
 
   // ── The sequence nothing drove: the balance runs out mid-interview ─────────
@@ -331,6 +461,13 @@ describe('an engagement that requires Deepgram', () => {
     // second time, so its own specific diagnosis is what the consultant reads.
     expect(body.reason).toBeNull()
     // And the answers still travel, because preserving is not what is being suppressed.
+    //
+    // **This answer is eight words, so it now draws an elaboration press - and the halt lands
+    // during that press rather than at question two.** That makes this the case for the other
+    // half of the repair: a pair is pushed the moment the answer is given rather than after the
+    // press, so an interview that halts mid-press still carries it. Pushed afterwards, as it
+    // was, this assertion reads `[]` - the words were in no pair, and `halt` can only carry
+    // what the *current* listen heard.
     expect(JSON.stringify(body.qa_pairs)).toContain('An answer given while there was still credit.')
   }, 25000)
 
@@ -361,13 +498,12 @@ describe('an engagement that requires Deepgram', () => {
     // Found by power-check: `halt(null)` unconditionally passed all twelve tests.
     //
     // Here the token door answers 200, so the server records nothing and alerts nobody, and
-    // `startDeepgram` still returns null because the recorder cannot be built. If this end also
+    // `startDeepgram` still returns null because the capture cannot be started. If this end also
     // stayed quiet, the incident would reach no one at all - the opposite failure from the
     // double report, and the reason the branch tests the *kind* rather than suppressing wholesale.
     installStreaming()
-    vi.stubGlobal('MediaRecorder', class {
-      static isTypeSupported = () => true
-      constructor() { throw new Error('this browser cannot record from this stream') }
+    vi.stubGlobal('AudioWorkletNode', class extends FakeAudioWorkletNode {
+      connect(): void { throw new Error('this browser cannot connect this node') }
     })
     installSpeechRecognition('must not be reached')
     const fetchSpy = installFetch(GRANT, SCRIPT_TWO_QUESTIONS, 'required')
@@ -398,7 +534,9 @@ describe('an engagement that requires Deepgram', () => {
 
     // Question one, answered and committed, so "Finish my last answer" is offered.
     const first = await firstSocket()
-    first.say('The first answer.', true)
+    // Long enough not to be pressed - see the note on the socket indices above. This test
+    // walks `socketAt(1)` and `socketAt(2)`, so an inserted press moves both.
+    first.say('The first answer, given at a length nobody would press on.', true)
     await userEvent.click(await screen.findByRole('button', { name: /done speaking/i }))
 
     // Question two: say something, then tap "Finish my last answer" - those words become
@@ -510,6 +648,6 @@ describe('a standard engagement is unaffected', () => {
     expect(notice.textContent).toMatch(/carrying on using your browser/i)
     // And it did not halt: this engagement has somewhere to hand over to.
     expect(screen.queryByTestId('speech-halted-notice')).toBeNull()
-    expect(FakeRecorder.built.length).toBeGreaterThan(0)
+    expect(FakeAudioWorkletNode.built.length).toBeGreaterThan(0)
   }, 25000)
 })

@@ -240,6 +240,24 @@ async def ingest_document(
     try:
         await asyncio.to_thread(_upsert)
     except Exception as exc:
+        # The document row already records this failure and the document library renders it, so
+        # the operator has a surface here that `index_answers` does not. The alert is still
+        # worth sending: the row says *this document* failed, and only the alert says the
+        # *store* is down - which is the difference between re-trying an upload and starting a
+        # service. Rate-limited on the incident, so a bulk upload of forty documents into a dead
+        # store is three messages rather than forty.
+        from api.services.health_checks import report_vector_store_failure
+
+        report_vector_store_failure(
+            operation=f"ingesting the document '{path.name}'",
+            slug=slug,
+            exc=exc,
+            consequence=(
+                "the document was uploaded and stored, and is recorded as failed in the "
+                "document library. It is not indexed, so no agent will retrieve from it until "
+                "it is re-ingested."
+            ),
+        )
         return await _fail(f"ChromaDB upsert failed for {path.name}: {exc}", exc)
 
     try:

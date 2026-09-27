@@ -37,11 +37,17 @@ questions and either one failing refuses a sensitive engagement:
 1. **Is Deepgram reachable and in credit?** Answered by minting a grant, which is the same call
    the interview makes, so a refused key or an exhausted account fails here rather than at the
    first question.
-2. **Can this browser produce a container Deepgram accepts?** `f914bc56` made a browser that
-   records none of webm/opus, webm or ogg/opus decline the socket rather than stream MP4/AAC into
-   a connection configured for Opus. Safari and iOS record MP4/AAC. So on a sensitive engagement
-   **an iPhone or iPad cannot be interviewed**, and that is an accepted operational constraint
-   rather than a defect: the alternative is the participant's voice going to Apple.
+2. **Can this browser capture audio for us at all?** It asks whether the browser has
+   `AudioWorklet`, which is what hands raw PCM samples out of the audio graph.
+
+   **This question used to be about containers, and that is what changed in sp67.** `MediaRecorder`
+   negotiates a container and the browser chooses it: Safari, including on iOS, chose MP4/AAC
+   while the socket was opened for webm/opus, so the page had to decline - and an engagement that
+   requires Deepgram therefore **could not be interviewed on an iPhone or iPad**. That was an
+   accepted operational constraint rather than a defect, because the alternative was the
+   participant's voice going to Apple. Raw PCM has no container to negotiate, so the constraint is
+   gone: Safari has had `AudioWorklet` since 14.1 on macOS and iOS 14.5, in April 2021. What this
+   arm still catches is a genuinely out-of-date browser, where the consequence is unchanged.
 
 ## The alert: three legs
 
@@ -113,13 +119,22 @@ def speech_policy_for(slug: str) -> str:
 # here rather than sent up from a participant's browser - a free-text reason from an
 # unauthenticated door would put an attacker's words into an administrator's alert.
 _BROWSER_DIAGNOSES: dict[str, str] = {
-    "unsupported_container": (
-        "this participant's browser records none of the audio containers Deepgram is opened for "
-        "(webm/opus, webm, ogg/opus). Safari and iOS record MP4/AAC, so an iPhone or iPad cannot "
-        "conduct an interview on an engagement that requires Deepgram"
+    "no_audio_worklet": (
+        "this participant's browser has no AudioWorklet, so it cannot hand raw audio to Deepgram. "
+        "Every current browser has had it since 2021 - Safari since 14.1 on macOS and iOS 14.5 - "
+        "so this is an out-of-date browser rather than a device that cannot be interviewed, and "
+        "the remedy is for the participant to update it or use another one"
+    ),
+    "audio_capture_failed": (
+        "this participant's browser could not capture audio for Deepgram - its audio engine "
+        "would not start, or stopped while they were speaking. On an iPhone or iPad that is what "
+        "an incoming call, the screen locking or switching apps does, and it does not recover on "
+        "its own. Nothing is wrong with the Deepgram key, the balance or the network, so this is "
+        "the one reason here that is worth ringing the participant about rather than "
+        "investigating"
     ),
     "no_streaming_support": (
-        "this participant's browser has no MediaRecorder or no WebSocket, so it cannot stream "
+        "this participant's browser has no Web Audio or no WebSocket, so it cannot stream "
         "audio to Deepgram at all"
     ),
     "socket_failed": (
@@ -174,6 +189,11 @@ def describe_deepgram_failure(exc: BaseException) -> str:
                  "or the card has expired",
             429: "Deepgram is rate-limiting or has exceeded this account's token limit (429) - "
                  "this one clears on its own, unlike the others",
+            400: "Deepgram rejected the *request* as malformed (400) - this is a defect in what "
+                 "this deployment sent, not a problem with the key, the balance or the network. "
+                 "'Keyterm limit exceeded' is the known example, and it means the vocabulary "
+                 "assembled for this engagement is too large for the model. Topping up the "
+                 "account and waiting both change nothing; the code has to be fixed",
         }
         if status in known:
             return known[status]

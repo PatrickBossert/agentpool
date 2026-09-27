@@ -1,12 +1,17 @@
 // ui/src/components/tabs/TestInterviewDialog.tsx
-// Smoke-test interview dialog.
+// The rehearsal interview dialog.
+//
+// It was the "smoke-test interview dialog": the script it conducted came from the `smoke-test`
+// project's crew output, and there was no other. The script is now the committed sample in
+// `api/fixtures/` or one the consultant chose from this project's own ledger, which is why the
+// only thing this file knows about it is the `scriptId` it was handed.
 //
 // Phases: setup → ready → interviewing → complete
 // Closing mid-interview saves position to localStorage; the ready screen
 // offers "Resume from Q{n}" so nothing is lost on accidental dismissal.
 // Empty responses trigger a single gentle repeat before moving on.
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2, Pause, Play, Pencil, Check } from 'lucide-react'
+import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2, Pause, Play, Pencil, Check, ShieldCheck } from 'lucide-react'
 import { bcp47 } from '../../utils/holidays'
 import AgentAvatar from '../AgentAvatar'
 
@@ -43,6 +48,30 @@ const NO_RESPONSE_PROMPTS = [
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('ap_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+/**
+ * What to tell a consultant when the script will not load.
+ *
+ * The server's own `detail`, when it sent one, rather than a fixed string composed here. The
+ * fixed string it replaces was `'Smoke-test script not found - run discovery_mapping on the
+ * smoke-test project first.'`, which outlived the project it named: the door began answering 404
+ * once `smoke-test` was archived, and the dialog then told whoever read it to run a crew on a
+ * project that no longer existed. A message assembled on this side cannot go stale gracefully,
+ * because nothing on this side knows why the door refused.
+ *
+ * `describeError` is not reached for: it reads an axios error's shape, and this is a raw
+ * `fetch` `Response`. Widening it to cover both would mean one helper guessing which of two
+ * unrelated shapes it holds.
+ */
+async function describeScriptFailure(res: Response): Promise<string> {
+  try {
+    const body = await res.json()
+    if (typeof body?.detail === 'string' && body.detail) return body.detail
+  } catch {
+    // A refusal with no JSON body, which is every proxy error between here and the API.
+  }
+  return `Failed to load the interview script (${res.status})`
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -98,13 +127,25 @@ interface Props {
    * voice, and nothing on either side would say so.
    */
   agentId: string
+  /**
+   * Which script to rehearse: a `script_id` from this project's ledger, or `''` for the
+   * committed sample.
+   *
+   * Optional with a default of `''`, unlike `agentId`, and the asymmetry is deliberate. A wrong
+   * `agentId` rehearses the wrong *person* in the wrong voice and looks entirely correct, so it
+   * must be stated; a missing `scriptId` is the sample script, which is what every caller before
+   * the dropdown existed wanted and is the honest meaning of "no choice was made".
+   */
+  scriptId?: string
   /** What this project calls them. Spoken in the briefing, and written on the screen. */
   displayName: string
   /** Their portrait, or `null`/`''` when there is none and `AgentAvatar` draws initials. */
   imageUrl: string | null
 }
 
-// The slug is not decoration. The script comes from the smoke-test project, but the answers
+// The slug is not decoration, and it is now load-bearing twice over: it scopes all three doors -
+// every one of them asks `check_project_access` - and it is what names the engagement whose
+// scripts may be rehearsed. What follows was written when only the press needed it, and the answers
 // the consultant types are this project's, and the elaboration press is what sends them to a
 // model - so the press has to say which project it belongs to or it cannot be routed by that
 // project's llm_mode.
@@ -113,6 +154,7 @@ export default function TestInterviewDialog({
   onClose,
   locale = 'GB',
   agentId,
+  scriptId = '',
   displayName,
   imageUrl,
 }: Props) {
@@ -130,6 +172,16 @@ export default function TestInterviewDialog({
   const [progress, setProgress]       = useState({ current: 0, total: 0 })
   const [transcript, setTranscript]   = useState<QAPair[]>([])
   const [showTranscript, setShowTx]   = useState(false)
+  // What the recogniser has heard on the answer in progress - the finalised parts plus the
+  // interim tail, which is the shape `VoiceInterview.tsx` displays to a participant and not a
+  // second one invented here. The dialog had set `interimResults = true` since it was written and
+  // used the text for one thing only, pre-warming the elaboration press, so a consultant
+  // rehearsing an interview watched a countdown bar and had to open the transcript afterwards to
+  // find out what had been captured.
+  //
+  // It is cleared when an answer resolves, which is not decoration: left standing, the previous
+  // answer's words sit under the next question and read as the recogniser having mis-heard it.
+  const [interimText, setInterimText] = useState('')
   const [isBriefing, setIsBriefing]   = useState(false)
   const [editingIdx, setEditingIdx]   = useState<number | null>(null)
   const [editText, setEditText]       = useState('')
@@ -175,12 +227,14 @@ export default function TestInterviewDialog({
 
   async function loadScript() {
     try {
-      const res = await fetch(`${API_BASE}/script`, { headers: authHeaders() })
-      if (!res.ok) throw new Error(
-        res.status === 404
-          ? 'Smoke-test script not found — run discovery_mapping on the smoke-test project first.'
-          : `Failed to load script (${res.status})`
-      )
+      // The slug travels even when `scriptId` is blank, because the door requires it: it gained a
+      // slug and a floor in the same change, and the default arm is scoped like the chosen one.
+      // `script_id` is **omitted** rather than sent empty when there is no choice, so there is one
+      // spelling of "the sample" on the wire rather than two the server has to agree about.
+      const query = new URLSearchParams({ slug })
+      if (scriptId) query.set('script_id', scriptId)
+      const res = await fetch(`${API_BASE}/script?${query}`, { headers: authHeaders() })
+      if (!res.ok) throw new Error(await describeScriptFailure(res))
       const data: InterviewScript = await res.json()
       const total = data.sections.reduce((n, s) => n + s.questions.length, 0)
       setScript(data)
@@ -372,6 +426,19 @@ export default function TestInterviewDialog({
 
   function listenForAnswer(lang = bcp47(locale), question?: ScriptQuestion): Promise<string> {
     return new Promise(resolve => {
+      // Belt to `finish`'s braces, above the early returns deliberately: the two returns below
+      // resolve this promise without reaching `finish`, so a caption from the previous answer
+      // would outlive a listen that never starts.
+      //
+      // **It has no behavioural half, and that is recorded rather than implied.** `finish` clears
+      // the caption on every path that resolves normally, so with `finish` correct this line can
+      // never be the difference - deleting it leaves all four tests in
+      // `TestInterviewLiveCaptions.test.tsx` green, which was measured and not assumed. It is
+      // kept for the one path neither covers: `stopListeningInternal` reaches `finish` only via
+      // `recognition.stop()`, and that call is inside a `try/catch`, so a recogniser that throws
+      // on stop would leave the caption standing. Do not read it as a guard the suite is holding.
+      setInterimText('')
+
       const SpeechRecognition =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -441,6 +508,7 @@ export default function TestInterviewDialog({
         setIsListening(false)
         setIsPaused(false)
         isPausedRef.current = false
+        setInterimText('')
         resolve(finalText.trim())
       }
 
@@ -463,7 +531,13 @@ export default function TestInterviewDialog({
           if (event.results[i].isFinal) parts.push(event.results[i][0].transcript)
           else currentInterim += event.results[i][0].transcript
         }
-        maybeStartSpeculative((parts.join(' ') + ' ' + currentInterim).trim())
+        // One string, two readers, and they do different things with it. The caption shows it
+        // immediately and unconditionally; the speculative press waits for ten words and an
+        // 800ms lull before spending a request on it. Computing it once is what keeps the two
+        // from drifting into disagreeing about what was heard.
+        const heardSoFar = (parts.join(' ') + ' ' + currentInterim).trim()
+        setInterimText(heardSoFar)
+        maybeStartSpeculative(heardSoFar)
       }
 
       recognition.onend = () => {
@@ -834,6 +908,9 @@ export default function TestInterviewDialog({
               </ul>
             </div>
 
+            {/* Said before they start, which is when a consultant in front of a client needs it. */}
+            <RehearsalNotSavedNotice className="w-full max-w-md" />
+
             {isBriefing ? (
               <div className="flex items-center gap-3 text-slate-400 text-sm">
                 <WaveformIcon />
@@ -891,10 +968,28 @@ export default function TestInterviewDialog({
               </div>
 
               {/* Question + controls */}
-              <div className="flex-1 flex flex-col justify-center px-8 py-8 gap-6">
+              {/*
+                * `min-w-0` is load-bearing, and it is what the transcript spilling out of the
+                * card was.
+                *
+                * A flex item's automatic minimum size is its *content-based* minimum, so
+                * `flex-1` alone will not shrink this column below the widest unbreakable thing
+                * in it - and `min-width` beats `max-width`, so nothing above can rein it in. The
+                * transcript's `Q:` line is `truncate`, which is `white-space: nowrap`, so a long
+                * question made this column's min-content width the whole of that line. Measured
+                * in a real browser against this exact class chain: the card held at its 768px
+                * `max-w-3xl` while the column ran 40px past its right edge, and at a 420px
+                * viewport it ran **420px** past - a full viewport, with the question and every
+                * control pushed out of the visible card. The card's `overflow-hidden` then
+                * clipped it, which is what the spill looks like from the outside.
+                *
+                * The sibling column is `flex-shrink-0 w-52`, so it is not a candidate; this is
+                * the only item in the row that can absorb the width.
+                */}
+              <div className="flex-1 min-w-0 flex flex-col justify-center px-8 py-8 gap-6">
                 {currentQuestion && (
                   <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700">
-                    <p className="text-white text-lg leading-relaxed">{currentQuestion}</p>
+                    <p className="text-white text-lg leading-relaxed break-words">{currentQuestion}</p>
                   </div>
                 )}
 
@@ -902,6 +997,24 @@ export default function TestInterviewDialog({
                   {speakingIndicator}
                   {!isBusy && statusMsg && (
                     <p className="text-xs text-amber-400 text-center max-w-xs">{statusMsg}</p>
+                  )}
+                  {/*
+                    * The live caption. Same position in the stack as the participant page's -
+                    * after the status line, before the listening controls - and the same italic
+                    * quoted shape, in this dialog's own palette rather than the page's, for the
+                    * reason `FALLBACK_FACE` gives above: a light grey on this dark surface reads
+                    * as a rendering fault.
+                    *
+                    * `break-words` because a caption is unbroken machine output and the card it
+                    * sits in must not be widened by it.
+                    */}
+                  {interimText && (
+                    <p
+                      data-testid="live-caption"
+                      className="text-sm text-slate-400 italic text-center leading-relaxed px-4 max-w-md break-words"
+                    >
+                      &ldquo;{interimText}&rdquo;
+                    </p>
                   )}
                   {isListening && (
                     <div className="flex flex-col items-center gap-3 w-full max-w-xs">
@@ -962,8 +1075,22 @@ export default function TestInterviewDialog({
                       <div className="mt-3 space-y-3 max-h-40 overflow-y-auto pr-1">
                         {transcript.map((pair, i) => (
                           <div key={i} className="space-y-1">
+                            {/*
+                              * The answer wraps and breaks; the question stays on one line with
+                              * an ellipsis, which is the shape this panel was designed in and now
+                              * actually gets - `truncate`'s ellipsis could never engage while the
+                              * column was growing to fit the line instead of clipping it.
+                              *
+                              * `break-words` rather than a horizontal scroller: these are two
+                              * lines of prose, and CLAUDE.md's rule about wide content scrolling
+                              * in its own container is about content that cannot wrap - a table,
+                              * a code block. A transcript that scrolled sideways would be worse
+                              * than one that wrapped. What the rule does require either way is
+                              * that the page body never scroll horizontally, which is asserted in
+                              * the reproduction rather than assumed.
+                              */}
                             <p className="text-[11px] text-teal-400 font-medium truncate">Q: {pair.question}</p>
-                            <p className="text-[11px] text-slate-400 line-clamp-2">A: {pair.answer || '—'}</p>
+                            <p className="text-[11px] text-slate-400 line-clamp-2 break-words">A: {pair.answer || '—'}</p>
                           </div>
                         ))}
                       </div>
@@ -1003,6 +1130,14 @@ export default function TestInterviewDialog({
             </div>
 
             <div className="flex-1 overflow-y-auto px-8 py-6 space-y-5">
+              {/*
+                * Repeated here deliberately, and this is the screen that needed it most: the
+                * header one line up says "{n} exchanges **recorded**", which was the only word in
+                * the product describing what had become of the transcript - and it is the word the
+                * owner's concern was about. The count is honest about the transcript in front of
+                * them; this says where it is not.
+                */}
+              <RehearsalNotSavedNotice />
               {transcript.map((pair, i) => (
                 <div key={i} className="space-y-2">
                   <div className="flex items-start gap-3">
@@ -1012,12 +1147,22 @@ export default function TestInterviewDialog({
                       className="w-6 h-6 flex-shrink-0 mt-0.5 opacity-80"
                       fallbackClassName={`${FALLBACK_FACE} text-[9px]`}
                     />
-                    <div className="bg-slate-800 rounded-xl rounded-tl-none px-4 py-3 flex-1">
-                      <p className="text-slate-200 text-sm leading-relaxed">{pair.question}</p>
+                    {/*
+                      * The same `min-w-0` the interviewing panel needs, one phase over. The two
+                      * bubbles are `flex-1` items whose content-based minimum is the longest
+                      * unbreakable run in a transcript, so a pasted URL or a run-on answer pushes
+                      * them past the card. It surfaces differently here rather than not at all:
+                      * the scroll area around them is `overflow-y-auto`, which makes it a scroll
+                      * container on both axes, so this phase gains a sideways scrollbar where the
+                      * interviewing phase spilled and was clipped. Same defect, quieter symptom -
+                      * fixed together so the next reader does not have to find it twice.
+                      */}
+                    <div className="bg-slate-800 rounded-xl rounded-tl-none px-4 py-3 flex-1 min-w-0">
+                      <p className="text-slate-200 text-sm leading-relaxed break-words">{pair.question}</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-3 pl-9 flex-row-reverse">
-                    <div className="bg-teal-900/40 border border-teal-800/40 rounded-xl rounded-tr-none px-4 py-3 flex-1">
+                    <div className="bg-teal-900/40 border border-teal-800/40 rounded-xl rounded-tr-none px-4 py-3 flex-1 min-w-0">
                       {editingIdx === i ? (
                         <div className="space-y-2">
                           <textarea
@@ -1049,7 +1194,7 @@ export default function TestInterviewDialog({
                         </div>
                       ) : (
                         <div className="flex items-start gap-2">
-                          <p className="flex-1 text-slate-200 text-sm leading-relaxed">
+                          <p className="flex-1 min-w-0 text-slate-200 text-sm leading-relaxed break-words">
                             {pair.answer || <span className="text-slate-500 italic">No response recorded</span>}
                           </p>
                           <button
@@ -1125,6 +1270,42 @@ export default function TestInterviewDialog({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * "This rehearsal is not being saved", in one place and rendered on two screens.
+ *
+ * The project owner asked for this after rehearsing for a client demonstration, and the concern
+ * is the right one even though the answer was already yes: the person in the interviewee's chair
+ * for a demonstration is not the stakeholder whose answers the engagement wants, so a rehearsal
+ * that recorded would file wrong answers under a real name.
+ *
+ * It is true **structurally** rather than by policy. This dialog opens three doors - `/test/
+ * script`, `/test/speak`, `/test/elaboration-press` - and none of them writes an interview; every
+ * door that does is scoped to a session token, which a rehearsal never holds. The transcript is
+ * component state and dies with the dialog.
+ *
+ * Which is exactly why it is worth saying out loud, and worth asserting: it holds because no
+ * recording call exists, and that is the kind of property a later "save this rehearsal" button
+ * removes without anybody noticing. `TestInterviewRecordsNothing.test.tsx` holds both halves -
+ * the restraint, as an allow-list over every request the rehearsal makes, and this sentence.
+ *
+ * One component rather than two copies of the markup, because the two screens saying slightly
+ * different things about whether a client's data is being stored is the worst available outcome.
+ */
+function RehearsalNotSavedNotice({ className = '' }: { className?: string }) {
+  return (
+    <div
+      data-testid="rehearsal-not-saved-notice"
+      className={`flex items-start gap-2.5 rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 ${className}`}
+    >
+      <ShieldCheck size={15} className="text-teal-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
+      <p className="text-xs text-slate-300 leading-relaxed break-words">
+        This is a rehearsal - nothing is saved. No interview record is created for this project,
+        and the transcript is lost when this dialogue closes.
+      </p>
     </div>
   )
 }

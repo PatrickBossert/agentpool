@@ -18,6 +18,7 @@ The two arms are asserted separately throughout, and per field: resolution is pe
 to trust.
 """
 import ast
+import re
 import sqlite3
 
 import httpx
@@ -58,12 +59,21 @@ AVERY = "stakeholder_interviewer"
 
 
 def _code_lines(text: str) -> str:
-    """The source with `//` comment lines removed.
+    """The source with its comments removed - `/* */` blocks as well as `//` lines.
 
     Prose naming a wrong id is the record of the defect and is why these comments are worth
     reading; code naming it is the defect. The guards below assert about the second.
+
+    **Both kinds, since sp67.** It stripped `//` lines alone, so a JSDoc block explaining why
+    `/agents/avery-singh.jpg` 404s under the `/dashboard` base - written to record the very
+    defect these guards exist to prevent - failed one of them. Same shape as
+    `milestoneClockDiscipline`'s sweep listing a file for *citing* the lesson it obeys:
+    enumerate by behaviour, not by name, and a comment is not behaviour however it is spelled.
     """
-    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("//"))
+    without_blocks = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return "\n".join(
+        line for line in without_blocks.splitlines() if not line.lstrip().startswith("//")
+    )
 
 
 def _capture_tts(monkeypatch, tmp_path) -> list[dict]:
@@ -489,10 +499,9 @@ def test_the_interview_portal_declares_no_voice_of_its_own():
     constant was a decision rather than a mirror.
 
     So the assertion inverts. The portal must name **no** voice id at all, and must not send
-    one: `POST /{token}/speak` reads the stamp. Comment lines are stripped, and the
-    distinction is real rather than a convenience - prose naming a wrong id is the *record* of
-    the defect and is why the comments in that file are worth reading, while code naming one
-    is the defect.
+    one: `POST /{token}/speak` reads the stamp. Comments are stripped, and the distinction is
+    real rather than a convenience - prose naming a wrong id is the *record* of the defect and
+    is why the comments in that file are worth reading, while code naming one is the defect.
 
     A source guard cannot say the portal *behaves* this way. `VoiceInterviewStampedVoice.
     test.tsx` asserts what is sent, and neither claim is worth much without the other.
@@ -500,10 +509,7 @@ def test_the_interview_portal_declares_no_voice_of_its_own():
     from pathlib import Path
 
     source = Path(__file__).resolve().parents[1] / "ui/src/pages/VoiceInterview.tsx"
-    text = source.read_text()
-    code = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("//")
-    )
+    code = _code_lines(source.read_text())
 
     assert RACHEL not in code, "the stock female voice is back in the interview portal"
     assert GEORGE not in code, "the rehearsal dialog's voice is back in the interview portal"
@@ -794,7 +800,7 @@ async def two_engagements(tmp_path, monkeypatch, client):
                 "value_stream_labels": [],
                 "review_gates": True,
                 "slack_channel": "",
-            },
+                "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",},
         )
         assert res.status_code in (200, 201), res.text
 

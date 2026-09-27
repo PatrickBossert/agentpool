@@ -133,7 +133,35 @@ class ChromaQueryTool(BaseTool):
 
         settings = get_settings()
         if not settings.chroma_api_key and not _chroma_reachable(settings.chroma_host, settings.chroma_port):
-            return "ChromaDB is not reachable. Start Docker (docker compose up -d) and retry."
+            # This is the blocking case: an agent is mid-run and its retrieval has just returned
+            # nothing, so the synthesis it is about to write is uninformed and nothing in the
+            # output will say why. It must reach a person promptly rather than in a digest.
+            #
+            # Rate-limited on the incident, which is what makes this safe to put on a per-query
+            # path: a crew run asking forty times during one synthesis sends three messages, not
+            # forty. It cannot fail the run - see `report_vector_store_failure`.
+            from api.services.health_checks import report_vector_store_failure
+
+            report_vector_store_failure(
+                operation=f"a knowledge base retrieval by agent '{self.agent_name}'",
+                slug=self.slug,
+                consequence=(
+                    "a crew run is in progress and its retrieval returned nothing. The agent "
+                    "will carry on and produce an output built without the knowledge base, "
+                    "which will read as a thin answer rather than as an error."
+                ),
+            )
+            # The message the agent sees. It used to say "Start Docker (docker compose up -d)",
+            # which is wrong twice over: ChromaDB ships a CLI and does not need Docker, and on a
+            # deployment with CHROMA_API_KEY set - which is this one - the vectors are in the
+            # cloud account and starting any local server would not have helped at all. The
+            # diagnosis in the alert is derived from the client the code actually builds, so it
+            # names the right remedy for whichever store this project uses.
+            return (
+                "ChromaDB is not reachable, so there is nothing to retrieve. An operator has "
+                "been alerted. Say plainly in your output that the knowledge base was "
+                "unavailable rather than presenting an answer as if it were fully informed."
+            )
         client = get_chroma_client(self.slug)
 
         try:

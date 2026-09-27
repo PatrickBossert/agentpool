@@ -295,3 +295,136 @@ async def test_the_task_description_maya_receives_contains_the_registration_fail
     assert len(seen_at_kickoff) == 1
     assert "SC-002" in seen_at_kickoff[0]
     assert seen_at_kickoff[0].endswith("\n\noriginal task body")
+
+
+# --- Every warner's findings must reach some agent -------------------------------------
+#
+# The defect above was recorded twice, closed twice, and reintroduced three times on one
+# branch - `script_assertion`, `script_duration` and `theme_evidence` all produced rows
+# that `_fetch_validation_warnings` could never select, because `_WARNING_SOURCE_CREW` had
+# no entry for them. Two of the three modules' own docstrings claimed the opposite.
+#
+# So this is the guard that generalises rather than three more hand-written cases: it
+# enumerates what the write path actually PRODUCES and asserts each one reaches a prompt.
+# A new warner added with no consumer fails here on the day it lands, whatever it is called.
+# It is deliberately not an assertion about `_WARNING_SOURCE_CREW` - a test over that dict
+# is a test over a dict, and would have passed against a map keyed on sources nothing emits.
+
+def _declared_warner_sources() -> list[str]:
+    """Every source the write path records under, read off `_WARNERS` itself.
+
+    `*_` rather than a two-tuple unpack so a warner entry that grows a third element (its
+    judged scope) does not silently stop being swept.
+    """
+    from agents.tools.sqlite_state import _WARNERS
+    return sorted({source for pairs in _WARNERS.values() for source, *_ in pairs})
+
+
+# Visibly unlike any detail this system composes, so an assertion on it cannot pass because
+# some other warning happened to carry the words - the rule CHOSEN_VOICE states for ids.
+_UNMISTAKEABLE = "ZZQX-warner-reached-the-prompt-ZZQX"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", _declared_warner_sources())
+async def test_every_warner_source_reaches_some_crews_prompt(crew_project, source):
+    """A warner that records where nothing reads is a producer with no consumer."""
+    slug, _ = crew_project
+    from api.services.run_service import _CREW_AGENT_NAMES, _fetch_validation_warnings
+
+    record_validation_warnings_sync(slug, 1, source, [
+        {"subject": None, "code": "any_code", "detail": _UNMISTAKEABLE, "measure": None}])
+
+    reached = [
+        crew for crew in sorted(_CREW_AGENT_NAMES)
+        if _UNMISTAKEABLE in await _fetch_validation_warnings(slug, crew)
+    ]
+    assert reached, (
+        f"'{source}' is recorded by the write path and read by no crew - a producer with "
+        f"no consumer. Add it to _WARNING_SOURCE_CREW, naming the crew that can act on it."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", _declared_warner_sources())
+async def test_each_warner_source_reaches_exactly_one_crew(crew_project, source):
+    """Scoping is the point of the map: a finding goes to the agent who can act on it.
+
+    Paired with the test above deliberately. That one alone is satisfied by a map that
+    sends every source to every crew, which would put Maya's duration findings in Casey's
+    prompt and tell her to rewrite a welcome she cannot write.
+    """
+    slug, _ = crew_project
+    from api.services.run_service import _CREW_AGENT_NAMES, _fetch_validation_warnings
+
+    record_validation_warnings_sync(slug, 1, source, [
+        {"subject": None, "code": "any_code", "detail": _UNMISTAKEABLE, "measure": None}])
+
+    reached = [
+        crew for crew in sorted(_CREW_AGENT_NAMES)
+        if _UNMISTAKEABLE in await _fetch_validation_warnings(slug, crew)
+    ]
+    assert len(reached) == 1, f"'{source}' reached {reached}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source,crew", [
+    ("script_assertion", "assessment_design"),
+    ("script_duration", "assessment_design"),
+    ("theme_evidence", "discovery_interviews"),
+])
+async def test_the_three_inert_sources_reach_the_agent_who_writes_the_artefact(
+    crew_project, source, crew,
+):
+    """Named as well as swept, because the sweep cannot say WHICH crew is right.
+
+    Maya writes `interview_scripts`, so a pre-written synthesis and a wrong duration are
+    hers; Casey writes `themes`, so the evidence attribution is hers.
+    """
+    slug, _ = crew_project
+    from api.services.run_service import _fetch_validation_warnings
+
+    record_validation_warnings_sync(slug, 1, source, [
+        {"subject": None, "code": "any_code", "detail": _UNMISTAKEABLE, "measure": None}])
+
+    assert _UNMISTAKEABLE in await _fetch_validation_warnings(slug, crew)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["script_assertion", "script_duration"])
+async def test_the_task_description_maya_receives_contains_the_new_script_warnings(
+    assessment_project, source,
+):
+    """The real property rather than the mechanism, for the two sources this fix wires.
+
+    Mirrors test_the_task_description_maya_receives_contains_the_coverage_warning: the
+    warning must be in the text handed to the crew BEFORE kickoff, not merely fetchable.
+    """
+    slug = assessment_project
+    record_validation_warnings_sync(slug, 1, source, [
+        {"subject": None, "code": "any_code", "detail": _UNMISTAKEABLE, "measure": None}])
+
+    mock_task = MagicMock()
+    mock_task.description = "original task body"
+    mock_crew = MagicMock()
+    mock_crew.tasks = [mock_task]
+    seen_at_kickoff: list[str] = []
+
+    async def _fake_kickoff():
+        seen_at_kickoff.append(mock_task.description)
+        return "done"
+
+    mock_crew.kickoff_async = AsyncMock(side_effect=_fake_kickoff)
+
+    import agents.crews.assessment_design_crew  # noqa: F401  importable before patching
+    with patch(
+        "agents.crews.assessment_design_crew.create_assessment_design_crew",
+        return_value=mock_crew,
+    ):
+        from api.services.run_service import build_and_run_crew
+        result = await build_and_run_crew(slug, "assessment_design", run_id=7)
+
+    assert result == "done"
+    assert len(seen_at_kickoff) == 1
+    assert _UNMISTAKEABLE in seen_at_kickoff[0]
+    assert seen_at_kickoff[0].endswith("\n\noriginal task body")

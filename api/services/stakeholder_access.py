@@ -40,20 +40,17 @@ that act on these answers (`has_linked_login` below, `issue_invite`, `reissue_in
 a login by `users.username`, which is TEXT UNIQUE under SQLite's binary collation. A read
 model that matched more loosely than the door would report access nobody has.
 """
-import re
-
 from api.database import (
     fetch_open_invite_emails,
     fetch_project_login_emails,
     get_system_connection,
 )
+from api.services.email_shape import looks_like_email
 
 # Every role flag other than is_participant. Holding any of them is what makes a login
 # necessary, which is why the tuple is stated once and imported everywhere it is asked -
 # api/routers/stakeholders.py binds it as _ROLE_FLAGS.
 ROLE_FLAGS = ("is_reviewer", "is_approver", "is_project_admin", "is_governor")
-
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 HAS_LOGIN = "has_login"
 INVITED = "invited"
@@ -75,9 +72,13 @@ def has_deliverable_email(flags: dict) -> bool:
     this combined with holds_role_beyond_participant; `_issue_invite_if_newly_privileged`
     needs the two apart, since a row can go from role-with-no-email to role-with-email
     without ever losing the role, and that transition is itself what must trigger the
-    invite."""
-    email = (flags.get("email") or "").strip()
-    return bool(email) and bool(_EMAIL_RE.match(email))
+    invite.
+
+    The shape rule itself lives in `api.services.email_shape.looks_like_email` so that the
+    approver named at project creation is held to the same one this door enforces. Two
+    declarations of "what an address looks like" is how the product came to have two that
+    already disagreed - see that module's docstring."""
+    return looks_like_email(flags.get("email") or "")
 
 
 def access_state(row: dict, *, login_emails: set[str], invited_emails: set[str]) -> str:

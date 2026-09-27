@@ -2,10 +2,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import ValidationWarnings from './ValidationWarnings'
-import { X, Check, PauseCircle, Download, XCircle } from 'lucide-react'
+import { X, Check, PauseCircle, Download, XCircle, Lock } from 'lucide-react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { projectsApi } from '../api/endpoints'
+import { describeError } from '../utils/describeError'
 import { CREW_LABELS } from './agentStatus'
 import { CREW_OUTPUT_TYPE } from './crewOutputs'
 import type { HumanReview, AgentOutput } from '../types'
@@ -356,8 +357,17 @@ export function OutputPreview({ slug, output }: { slug: string; output: AgentOut
 type ReviewIntent = 'change_request' | 'correction' | 'skill'
 
 // Declared (not cast) so a typo'd intent fails to compile rather than shipping a value the
-// API will 422 on - handleSubmit's try/finally has no catch, so a rejected request would
-// otherwise vanish silently from the reviewer's point of view.
+// API will 422 on.
+//
+// That comment used to end "- handleSubmit's try/finally has no catch, so a rejected request
+// would otherwise vanish silently from the reviewer's point of view", and it was describing a
+// live defect rather than guarding against one: neither handler had a catch, so *every*
+// refusal vanished, not only a 422 on a typo'd intent. An owner on a live engagement clicked
+// Approve, the door answered 403 "Only a reviewer or approver may resolve a review", the
+// promise rejected, `finally` reset the spinner, and the dialog sat there unchanged. CLAUDE.md
+// calls this shape out by name - quoting a rule is not applying it - and the citation did
+// active harm here, because it read to every later reader as evidence the hazard had been
+// accounted for. Both handlers catch now, and the reviewer is shown the server's own sentence.
 // Which structural warnings belong to which crew. A warning is only useful beside the
 // artefact it concerns: Alex's tree findings on his review, Casey's anchor findings on
 // hers.
@@ -388,6 +398,57 @@ const INTENT_OPTIONS: [ReviewIntent, string, string][] = [
    'Goes to the skills queue - nothing changes until a reviewer approves it, and they decide whether it applies here or everywhere.'],
 ]
 
+/** Why the three decision controls are not on screen, and what to do about it.
+ *
+ *  A gated control owes the reader a reason. CLAUDE.md states it for `PlatformTierNote` on the
+ *  Settings page - a greyed or absent control with no explanation beside it reads as a bug, and
+ *  the reader's next move is to reload the page rather than to ask somebody - and the shape it
+ *  prescribes is this one: `data-explains` naming the controls the note accounts for, so the
+ *  association is something the DOM carries rather than something proximity implies.
+ *
+ *  It exists because of a state nothing in the product previously said anything about. A
+ *  newly created engagement has no stakeholders, and `caller_roles` reads content authority
+ *  from a stakeholder row - so on a fresh project *nobody* holds it, including the consultant
+ *  who created the engagement, configured it and started the run. They hold total
+ *  administration and no content authority at all, which is the design working as intended on
+ *  both axes and unusable where they meet. See tests/test_new_project_approval_bootstrap.py,
+ *  which pins the dead end and the route out.
+ *
+ *  The sentence is about the **caller**, deliberately, and not about the roster. "Nobody on
+ *  this engagement can approve anything" is the more useful diagnosis and this component cannot
+ *  honestly make it - it would need a roster read, and a note that overstates what it knows is
+ *  worse than one that is merely narrow. What it can say, truthfully and without another
+ *  request, is which axis the refusal came from and which door grants it. */
+function ContentAuthorityNote({ reason }: { reason: 'refused' | 'unknown' }) {
+  return (
+    <p
+      data-explains="approve revise reject"
+      className="text-xs text-muted leading-relaxed flex items-start gap-1.5"
+    >
+      <Lock size={12} className="mt-0.5 shrink-0" />
+      {/* Two sentences, because the two states owe the reader different things to do. Telling a
+          consultant to add a stakeholder when the truth is that the permissions request failed
+          sends them to reconfigure an engagement that was never misconfigured - the same class
+          of harm as the knowledge-tier refusal that named the wrong verb. */}
+      {reason === 'refused' ? (
+        <span>
+          Deciding on an agent's output is a content role, read from your stakeholder record on
+          this engagement - administering the project does not confer it, and a new engagement
+          starts with no stakeholders at all. Add yourself or a colleague on the Stakeholders tab
+          with the Reviewer or Approver role and send the invite; redeeming it grants the
+          authority this gate is waiting for.
+        </span>
+      ) : (
+        <span>
+          Your authority on this engagement could not be checked, so no decision is offered -
+          the crew is still waiting and nothing has been recorded. Reopen this review to try
+          again.
+        </span>
+      )}
+    </p>
+  )
+}
+
 export interface ReviewDialogProps {
   slug: string
   review: HumanReview
@@ -401,6 +462,38 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   const [notes, setNotes] = useState('')
   const [intent, setIntent] = useState<ReviewIntent>('change_request')
   const [submitting, setSubmitting] = useState(false)
+  // The refusal the door gave, in the door's own words. Held in state rather than thrown at a
+  // boundary because there is no error boundary anywhere on this dialog's route, and a reviewer
+  // needs the sentence beside the control they just pressed.
+  const [error, setError] = useState<string | null>(null)
+
+  // Whether this caller may resolve this review, asked of the server rather than restated here.
+  //
+  // `can_review`, **not** `can_approve`. All three controls in this dialog post to
+  // `PATCH /projects/{slug}/reviews/{id}`, and that door asks `caller_may_contribute` -
+  // `{reviewer, approver}` - so a `reviewer` may approve a HITL gate, and gating on
+  // `can_approve` would hide the button from a caller the door accepts. `DiscoveryReviewExtra`
+  // reads `can_approve` correctly for its own Approve, because the item-review door asks
+  // `caller_may_approve` when the decision is `approved`. Two doors, two predicates; the rule
+  // is to read the one the door being called actually refuses with.
+  const { data: permissions, isError: authorityUnknown } = useQuery({
+    queryKey: ['my-permissions', slug],
+    queryFn: () => projectsApi.getMyPermissions(slug),
+  })
+  // Four states, not two, and the two middle ones are the ones worth spelling out.
+  //
+  // In flight: neither the controls nor a note. Collapsing that into "not permitted" would flash
+  // a note claiming the reviewer lacks an authority they may well hold, and collapsing it the
+  // other way gives a button that appears and then refuses.
+  //
+  // The request *failed*: no controls - an unanswered authority question must never open one -
+  // but a note all the same, and a different one. That arm was missing from the first version of
+  // this change and its own test found it: `isError` leaves `data` undefined, so the footer
+  // rendered completely empty, no control and no explanation, which is the exact "greyed out
+  // with no reason given" failure the note exists to prevent.
+  const mayResolve = permissions?.can_review
+  const explainWhyNotOffered: 'refused' | 'unknown' | null =
+    mayResolve === false ? 'refused' : authorityUnknown ? 'unknown' : null
 
   const outputType = review.crew_name ? CREW_OUTPUT_TYPE[review.crew_name] : undefined
   const matchedOutput = outputType ? outputs.find(o => o.output_type === outputType) : undefined
@@ -412,12 +505,23 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   // it reads `agent_outputs.agent_name` off the output the review was made against, which is
   // the same answer without a second place for it to be got wrong.
 
+  // `describeError` is imported rather than given a fixed string, and for this door that is
+  // not a stylistic preference. "Only a reviewer or approver may resolve a review" is the one
+  // thing in the product that tells a consultant why their own approval is being refused -
+  // administering an engagement is not reviewing its content, and no fallback phrased by this
+  // component can say that. The fallback is reached only when the refusal carries no `detail`.
+  //
+  // The dialog stays open on a refusal. Closing it would discard the notes the reviewer typed
+  // and leave the sentence nowhere to be read, and the crew is still paused on this gate.
   async function handleApprove() {
     setSubmitting(true)
+    setError(null)
     try {
       await projectsApi.resolveReview(slug, review.id, 'approved', '')
       qc.invalidateQueries({ queryKey: ['reviews', slug] })
       onClose()
+    } catch (err) {
+      setError(describeError(err, 'Could not approve this output.'))
     } finally {
       setSubmitting(false)
     }
@@ -426,6 +530,7 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
   async function handleSubmit() {
     if (!notes.trim()) return
     setSubmitting(true)
+    setError(null)
     try {
       const decision = mode === 'reject' ? 'rejected' : 'changes_requested'
       await projectsApi.resolveReview(
@@ -433,12 +538,24 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
       )
       qc.invalidateQueries({ queryKey: ['reviews', slug] })
       onClose()
+    } catch (err) {
+      setError(describeError(
+        err,
+        mode === 'reject'
+          ? 'Could not record the rejection.'
+          : 'Could not submit the revision request.',
+      ))
     } finally {
       setSubmitting(false)
     }
   }
 
-  function cancel() { setMode('idle'); setNotes(''); setIntent('change_request') }
+  function cancel() {
+    setMode('idle')
+    setNotes('')
+    setIntent('change_request')
+    setError(null)
+  }
 
   return (
     <>
@@ -542,7 +659,22 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
             )}
           </div>
 
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0 bg-gray-50 rounded-b-2xl">
+          <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 bg-gray-50 rounded-b-2xl space-y-2">
+            {/* In the footer rather than the scrolling body: the body can be scrolled away from
+                the control that was pressed, and a refusal a reviewer has to go looking for is
+                the defect this was written to close. `role="alert"` because it appears in
+                response to an action rather than being present on load. */}
+            {error && (
+              <p role="alert" className="text-xs text-red-600 leading-relaxed">
+                {error}
+              </p>
+            )}
+            {/* Only once the server has answered no, and only where the controls it accounts
+                for would otherwise be. */}
+            {mode === 'idle' && explainWhyNotOffered && (
+              <ContentAuthorityNote reason={explainWhyNotOffered} />
+            )}
+            <div className="flex items-center justify-end gap-3">
             {mode !== 'idle' ? (
               <>
                 <button onClick={cancel} disabled={submitting}
@@ -566,22 +698,33 @@ export default function ReviewDialog({ slug, review, outputs, onClose }: ReviewD
                   }
                 </button>
               </>
-            ) : (
+            ) : mayResolve ? (
+              // All three post to the same door, so all three are gated on the same answer -
+              // a reviewer who may not approve may not reject or send back either, and
+              // offering two of the three would refuse them one click later.
+              //
+              // Each carries the `id` the note names in `data-explains`. That is what makes
+              // the explanation checkable rather than decorative: the ids rendered here and
+              // the names declared there are held equal by test, so a fourth control added to
+              // this footer fails rather than shipping gated-but-unexplained, or explained
+              // under a name nothing answers to. Same mechanism as the Settings page's
+              // `fieldProps`, which pairs a field's `id` with its gate for the same reason.
               <>
-                <button onClick={() => setMode('reject')}
+                <button id="reject" onClick={() => setMode('reject')}
                   className="text-sm font-medium px-5 py-2 rounded-lg bg-white hover:bg-red-50 text-red-600 border border-red-200 hover:border-red-400 transition-colors flex items-center gap-1.5">
                   <XCircle size={13} />Reject
                 </button>
-                <button onClick={() => setMode('revise')}
+                <button id="revise" onClick={() => setMode('revise')}
                   className="text-sm font-medium px-5 py-2 rounded-lg bg-white hover:bg-amber-50 text-amber-600 border border-amber-200 hover:border-amber-400 transition-colors">
                   Request revision
                 </button>
-                <button onClick={handleApprove} disabled={submitting}
+                <button id="approve" onClick={handleApprove} disabled={submitting}
                   className="text-sm font-semibold px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white transition-colors">
                   {submitting ? 'Approving…' : <span className="flex items-center gap-1"><Check size={13} />Approve</span>}
                 </button>
               </>
-            )}
+            ) : null}
+            </div>
           </div>
         </div>
       </div>

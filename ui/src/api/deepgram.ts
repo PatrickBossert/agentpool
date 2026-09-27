@@ -13,6 +13,15 @@
 // Nova-2 takes `keywords` and that pairing is one fact - restating it in TypeScript would be a
 // second declaration free to fall behind the first. What crosses is data: parameter names and
 // values. This file knows only how to encode a query string and how to hold a socket open.
+//
+// **The one exception, and it is an exception for a stated reason.** `encoding` and `sample_rate`
+// are decided here, because the server cannot observe an `AudioContext`'s sample rate and they
+// are a pairing in exactly the way `model` and `keyterm` are: an encoding declared apart from the
+// rate that goes with it is the same defect one axis over. So both are set in one place, from the
+// live context, and `deepgram_listen_params` declares neither -
+// `tests/test_interview_keyterms.py` asserts the server's silence so the pair cannot be split
+// later by somebody adding "just the encoding" to the server's dict.
+import { PCM_BATCH_FRAMES, PCM_CHANNELS, PCM_ENCODING, floatTo16BitPcm } from './pcm'
 
 export const DEEPGRAM_LISTEN_URL = 'wss://api.deepgram.com/v1/listen'
 
@@ -58,8 +67,21 @@ export interface Recogniser {
  *
  * An array value is repeated rather than joined - `keyterm=A&keyterm=B` - which is how Deepgram
  * spells a repeated parameter.
+ *
+ * **`sampleRate` is required and is measured, never assumed.** It is 48000 on most machines and
+ * 44100 on plenty of real ones, and the browser is the only end that can see which - so it is
+ * read off the live `AudioContext` and passed in here rather than defaulted. A wrong rate does
+ * not error: Deepgram's documentation requires `sample_rate` whenever `encoding` is given, so
+ * omitting it is refused, but a rate that is merely *wrong* opens the socket, streams the audio,
+ * decodes it at the wrong speed and returns a transcript that is gibberish or empty, with
+ * nothing raised at either end. Taking it as a required argument is what stops a caller
+ * defaulting it to the common case.
  */
-export function deepgramListenUrl(grant: DeepgramGrant, base: string = DEEPGRAM_LISTEN_URL): string {
+export function deepgramListenUrl(
+  grant: DeepgramGrant,
+  audio: { sampleRate: number },
+  base: string = DEEPGRAM_LISTEN_URL,
+): string {
   const url = new URL(base)
   for (const [name, value] of Object.entries(grant.listen_params ?? {})) {
     if (Array.isArray(value)) {
@@ -68,6 +90,11 @@ export function deepgramListenUrl(grant: DeepgramGrant, base: string = DEEPGRAM_
       url.searchParams.set(name, String(value))
     }
   }
+  // The browser's half of the configuration - see the note at the head of this file for why
+  // these two are not the server's, and why they must not be separated from one another.
+  url.searchParams.set('encoding', PCM_ENCODING)
+  url.searchParams.set('sample_rate', String(audio.sampleRate))
+  url.searchParams.set('channels', String(PCM_CHANNELS))
   url.searchParams.set('access_token', grant.token)
   return url.toString()
 }
@@ -99,32 +126,15 @@ export async function fetchDeepgramGrant(
   }
 }
 
-/** Whether this browser could stream to Deepgram at all, asked before anything is fetched. */
-export function browserCanStream(): boolean {
-  return typeof WebSocket !== 'undefined' && typeof MediaRecorder !== 'undefined'
-}
+type AudioContextConstructor = new (options?: AudioContextOptions) => AudioContext
 
-/**
- * The container to record in - and `null` when the browser has been asked and said no to all of
- * them.
- *
- * **Three answers, not two.** `undefined` is "this browser will not say", which is a reason to
- * try its default and see; `null` is "this browser has said it records none of these", which is
- * a reason not to try at all. Collapsing them - which is what `.find()` returning `undefined`
- * did - builds the recorder with whatever container the browser prefers and streams it to a
- * socket configured for webm/opus.
- *
- * **Safari, including on iOS, records MP4/AAC and answers false to all three**, which is the
- * device a participant is most likely to be holding. If Deepgram answers that stream with no
- * transcripts rather than closing the socket, nothing fires `onDropped` and the participant
- * gets a countdown and an empty answer - the silent failure this branch exists to remove.
- * Declining here costs Safari nothing: it has `webkitSpeechRecognition`, so the fallback works.
- */
-function recorderMimeType(): string | null | undefined {
-  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
-  const supported = (MediaRecorder as unknown as { isTypeSupported?: (t: string) => boolean }).isTypeSupported
-  if (typeof supported !== 'function') return undefined
-  return candidates.find(type => supported.call(MediaRecorder, type)) ?? null
+/** `AudioContext`, or Safari's old prefixed spelling, or `null` on a browser with neither. */
+function audioContextConstructor(): AudioContextConstructor | null {
+  const scope = globalThis as unknown as {
+    AudioContext?: AudioContextConstructor
+    webkitAudioContext?: AudioContextConstructor
+  }
+  return scope.AudioContext ?? scope.webkitAudioContext ?? null
 }
 
 /**
@@ -133,25 +143,264 @@ function recorderMimeType(): string | null | undefined {
  *
  * **The second half of the probe, and the half that has nothing to do with Deepgram.** On an
  * engagement that forbids the browser's own recogniser there is no fallback, so "this browser
- * records only MP4/AAC" and "Deepgram refused our key" have the same consequence and must both
- * be found at device setup rather than at the participant's first question.
+ * cannot capture audio for us" and "Deepgram refused our key" have the same consequence and must
+ * both be found at device setup rather than at the participant's first question.
  *
- * It answers the same three-way question `recorderMimeType` does and collapses it to the two
- * that matter here: a browser that *will not say* what it supports has refused nothing, so it is
- * allowed to try - declining there would take Deepgram away from every browser with no
- * `isTypeSupported`, which is the control `openDeepgramSocket` already keeps.
+ * **What it asks changed in sp67, and the shape did not.** It used to ask whether the browser
+ * could produce one of three containers, because `MediaRecorder` negotiates a container and
+ * Safari negotiates MP4/AAC - which meant an engagement requiring Deepgram could not be
+ * interviewed on an iPhone or iPad. Raw PCM has no container, so the question is now whether the
+ * browser has `AudioWorklet` at all. **Safari has had it since 14.1 on macOS and iOS 14.5**
+ * (April 2021), so this arm no longer refuses any current device; what it still catches is a
+ * genuinely old browser, where the honest answer is the same as it ever was.
  *
  * The strings are the closed vocabulary `POST /{token}/speech-failure` accepts. They are reasons,
  * not sentences: that door is unauthenticated and its output reaches an administrator's alert, so
  * the wording is composed on the server.
  */
-export function browserStreamingObstacle(): 'no_streaming_support' | 'unsupported_container' | null {
-  if (!browserCanStream()) return 'no_streaming_support'
-  return recorderMimeType() === null ? 'unsupported_container' : null
+export function browserStreamingObstacle(): 'no_streaming_support' | 'no_audio_worklet' | null {
+  // No socket, or no Web Audio whatsoever - there is nothing to build a capture out of.
+  if (typeof WebSocket === 'undefined' || audioContextConstructor() === null) {
+    return 'no_streaming_support'
+  }
+  // Web Audio, but from before worklets. The graph can exist and nothing can read samples off it.
+  return typeof AudioWorkletNode === 'undefined' ? 'no_audio_worklet' : null
 }
 
-/** How often a chunk of audio is handed to the socket. Small enough to feel live. */
-const CHUNK_MS = 250
+/**
+ * Whether this browser could stream to Deepgram at all, asked before anything is fetched.
+ *
+ * **Derived rather than declared.** It was a second list of the same capabilities, which is a
+ * second declaration free to drift from the probe's - and drifting means the probe passing a
+ * browser this refuses, or the reverse, with the participant on the far end of either.
+ */
+export function browserCanStream(): boolean {
+  return browserStreamingObstacle() === null
+}
+
+/**
+ * Where the worklet processor is served from.
+ *
+ * **`new URL(..., import.meta.url)` and never a bare path.** `ui/public` and the built assets are
+ * served under the `/dashboard` base, so `'/pcm-worklet.js'` 404s in the browser - a trap this
+ * repository records catching three separate pieces of work. This form is the one Vite rewrites:
+ * the built bundle addresses `/dashboard/assets/pcm-worklet-<hash>.js`, verified against a real
+ * `vite build` rather than against a test, because a test that stubs `addModule` cannot see a
+ * 404.
+ */
+export const PCM_WORKLET_URL = new URL('./pcm-worklet.js', import.meta.url).href
+
+/**
+ * The capture graph, in the same shape `MediaRecorder` had - so that the flush machinery below
+ * is the same machinery, with the tail arriving by a different route.
+ *
+ * `onbatch` is `ondataavailable`; `onflushed` is `onstop`; `flush()` is `stop()`. The one that
+ * has no counterpart is `onerror`, and it is new because it has to be: a `MediaRecorder` that
+ * dies fires an event, and a worklet processor that throws simply stops being called, which is
+ * a participant talking into a graph that is no longer listening.
+ */
+export interface PcmCapture {
+  /** The live context's rate, read rather than assumed. Goes on the URL as `sample_rate`. */
+  readonly sampleRate: number
+  /** A batch of audio, already the bytes the socket should carry. */
+  onbatch: ((bytes: ArrayBuffer) => void) | null
+  /** The worklet has handed over its last samples. Sent after the final `onbatch`. */
+  onflushed: (() => void) | null
+  /**
+   * The capture has failed and no more audio is coming.
+   *
+   * Two things reach it: a processor that threw, and **a context that stopped running while the
+   * participant was still speaking** - see the `statechange` watch in `startPcmCapture`.
+   */
+  onerror: (() => void) | null
+  /** Connect the graph and begin. Separate from construction so nothing is captured early. */
+  start: () => void
+  /** Ask the worklet for whatever it still holds. `onflushed` follows it. */
+  flush: () => void
+  /** Tear the graph down. Does not close the context, which outlives one answer. */
+  close: () => void
+}
+
+/**
+ * Bring a context to `running`, which on iOS is not a formality.
+ *
+ * Safari suspends an `AudioContext` when the participant switches tabs, takes a call or lets the
+ * screen lock, and reports a **fourth** state, `interrupted`, beside `suspended` and `closed`. It
+ * does not come back on its own. So this asks whether the context is *running* rather than which
+ * of the three ways it is not - a check written against `suspended` alone would walk straight
+ * past an interrupted one, which is the state a participant who answered a phone call is in.
+ *
+ * **A suspended context is the silent failure this whole path exists to remove**: `process()` is
+ * never called, no samples are posted, the socket stays open, and the answer comes back empty
+ * with nothing raised anywhere. So the state is checked *after* the resume rather than trusted,
+ * and a context that will not run refuses the capture - which reaches the participant as a
+ * handover on a standard engagement and as a clean refusal on one that requires Deepgram, both
+ * of which are better than silence.
+ */
+async function wakeAudioContext(context: AudioContext): Promise<boolean> {
+  if (context.state === 'running') return true
+  try {
+    await context.resume()
+  } catch {
+    return false
+  }
+  // Re-read rather than assume: `resume()` resolving is not the same claim as the context
+  // running, and the narrowing above is about the state before it was called.
+  return (context.state as AudioContextState) === 'running'
+}
+
+/**
+ * A context for the whole interview - or `null` when this browser has no Web Audio.
+ *
+ * One per interview rather than one per answer, held by the page beside the microphone stream
+ * and for the same reasons it holds that: `addModule` is fetched once instead of per question,
+ * and on iOS a context created inside the answer loop is created outside any user gesture, where
+ * it starts suspended. Chrome caps a page at six concurrent contexts, which is a second reason
+ * not to open one per answer and rely on `close()` keeping up.
+ */
+export function createAudioContext(): AudioContext | null {
+  const Ctor = audioContextConstructor()
+  if (!Ctor) return null
+  try {
+    // No `sampleRate` option, deliberately. Asking for a rate Deepgram likes would be the
+    // browser resampling for us where it can and throwing where it cannot - Safari has
+    // historically done the latter - when the alternative is simply telling Deepgram the rate we
+    // have. Measure, do not negotiate.
+    return new Ctor()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Build the capture graph on an existing context. `null` for every reason it cannot be built.
+ *
+ * **The graph must pull, or `process()` is never called.** An `AudioWorkletNode` with an input
+ * and no path to `destination` may simply never be scheduled, so the node is connected onward -
+ * through a gain node whose gain is **zero**. Connecting it straight to `destination` would put
+ * the participant's own voice in their ears a fraction of a second late, which is the worst
+ * possible interview experience and a mistake that is very easy to make while proving the graph
+ * runs at all. The processor writes nothing to its outputs, so the zero gain is the second of
+ * two reasons nothing is heard rather than the only one.
+ */
+/**
+ * The `addModule` call for each context, so one interview fetches the processor once.
+ *
+ * `startPcmCapture` runs per answer, so a forty-question interview asked for the module forty
+ * times. The browser's module map makes the repeats cheap, but "cheap" is a claim about the
+ * browser and this removes the question rather than resting on it. A **rejection is not cached** -
+ * it is deleted on the way out, so a transient failure to fetch the worklet costs one answer
+ * rather than the rest of the interview.
+ */
+const _moduleLoads = new WeakMap<AudioContext, Promise<void>>()
+
+function loadWorkletModule(context: AudioContext, moduleUrl: string): Promise<void> {
+  const started = _moduleLoads.get(context)
+  if (started) return started
+  const loading = context.audioWorklet.addModule(moduleUrl).catch((err: unknown) => {
+    _moduleLoads.delete(context)
+    throw err
+  })
+  _moduleLoads.set(context, loading)
+  return loading
+}
+
+export async function startPcmCapture(
+  stream: MediaStream,
+  context: AudioContext,
+  moduleUrl: string = PCM_WORKLET_URL,
+): Promise<PcmCapture | null> {
+  if (typeof AudioWorkletNode === 'undefined') return null
+  if (!(await wakeAudioContext(context))) return null
+  try {
+    await loadWorkletModule(context, moduleUrl)
+    const node = new AudioWorkletNode(context, 'pcm-capture', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: PCM_CHANNELS,
+      // **`explicit`, because `channelCount` alone does not downmix.** Under the default `max`
+      // the count is ignored and a stereo microphone hands the processor two channels, of which
+      // it reads the first - so the right channel is *discarded* rather than mixed, and half a
+      // stereo capture is quieter and can be almost silent on a device that puts most of the
+      // signal in one channel. `explicit` with `speakers` makes the node mix down to the one
+      // channel `channels=1` promises Deepgram.
+      channelCountMode: 'explicit',
+      channelInterpretation: 'speakers',
+      // Declared once in `pcm.ts` and passed in, so the processor holds no number of its own.
+      processorOptions: { batchFrames: PCM_BATCH_FRAMES },
+    })
+    const source = context.createMediaStreamSource(stream)
+    const silence = context.createGain()
+    silence.gain.value = 0
+    // Whether the graph is connected and samples are expected. The `statechange` watch below
+    // reads it, so an interruption before `start()` or after `close()` reports nothing.
+    let capturing = false
+
+    const capture: PcmCapture = {
+      get sampleRate() {
+        // Read off the context every time rather than copied at construction: a copy is a second
+        // declaration of the one number on this path that is silently wrong when it disagrees.
+        return context.sampleRate
+      },
+      onbatch: null,
+      onflushed: null,
+      onerror: null,
+      start() {
+        source.connect(node)
+        node.connect(silence)
+        silence.connect(context.destination)
+        capturing = true
+      },
+      flush() {
+        node.port.postMessage({ type: 'flush' })
+      },
+      close() {
+        capturing = false
+        node.port.onmessage = null
+        context.onstatechange = null
+        for (const part of [source, node, silence]) {
+          try { part.disconnect() } catch { /* already gone */ }
+        }
+      },
+    }
+
+    // **The answer that would otherwise come back empty with nothing raised.** The state is
+    // checked before each answer, which catches a context that was already interrupted - but iOS
+    // interrupts one *mid-answer* too, on an incoming call, the screen locking, or the tab going
+    // to the background. `process()` then stops being called, no batches are posted, the socket
+    // stays open, and the silence timer ends the answer three seconds later: an empty answer, no
+    // notice, and a context the next answer quietly resumes, so it reads as somebody who said
+    // nothing.
+    //
+    // It is a new exposure and it lands on the population this branch exists to serve - before
+    // PCM, an iPhone was refused outright and could not reach this path at all. Routed to
+    // `onerror`, which is the same drop the socket reports: a handover on a standard engagement,
+    // an honest halt on one that requires Deepgram, and the answer so far kept either way.
+    //
+    // `onstatechange` rather than `addEventListener`, because one capture is live at a time and
+    // the assignment is what makes that structural: a stale handler from the previous answer is
+    // overwritten rather than accumulated, and `close()` clears the last one.
+    context.onstatechange = () => {
+      if (capturing && context.state !== 'running') capture.onerror?.()
+    }
+
+    node.port.onmessage = (event: MessageEvent) => {
+      // The worklet posts Float32 and the conversion happens here, on the main thread, so that
+      // it is a pure function a test can drive with a sample outside the range - which is the
+      // only way to see the clamp. Batching is the worklet's half; the format is this one's.
+      if (event.data instanceof ArrayBuffer) {
+        capture.onbatch?.(floatTo16BitPcm(new Float32Array(event.data)))
+        return
+      }
+      if (event.data && (event.data as { type?: string }).type === 'flushed') capture.onflushed?.()
+    }
+    node.onprocessorerror = () => capture.onerror?.()
+    return capture
+  } catch {
+    return null
+  }
+}
+
 /** A handshake that has not completed by now is one the participant is waiting on. */
 const OPEN_TIMEOUT_MS = 6000
 /**
@@ -164,18 +413,32 @@ const OPEN_TIMEOUT_MS = 6000
 export const FLUSH_TIMEOUT_MS = 1500
 
 /**
- * Open the socket, start recording, and translate Deepgram's frames into the page's hooks.
+ * Open the socket, start capturing, and translate Deepgram's frames into the page's hooks.
  *
- * Answers `null` rather than throwing when the socket does not open in time or closes during the
- * handshake, because the caller's response to every one of those is the same: fall back. Once the
- * socket *is* open, a later failure is a different matter - the participant is mid-answer by
- * then - and that goes to `onDropped`, which keeps what was heard and says so.
+ * Answers `null` rather than throwing when the capture cannot be built, the socket does not open
+ * in time, or it closes during the handshake, because the caller's response to every one of those
+ * is the same: fall back. Once the socket *is* open, a later failure is a different matter - the
+ * participant is mid-answer by then - and that goes to `onDropped`, which keeps what was heard
+ * and says so.
+ *
+ * **It takes a built capture rather than a stream and a context**, and the two calls are separate
+ * for a reason the participant feels. The URL carries `sample_rate` and only the live context
+ * knows it, so the capture has to exist first either way - but composing them *here* left the
+ * caller unable to tell "this browser's audio engine would not start" from "Deepgram refused the
+ * socket", and it reported the second. An operator then checks the key, the balance and the
+ * network, all of which are fine. Two calls, two answers, and the page reports the half that
+ * actually declined.
+ *
+ * Ownership passes with the capture: from here on every route that ends the answer - flushed,
+ * deadline, error, close, and all four refusals - tears the graph down.
  */
-export function openDeepgramSocket(
-  stream: MediaStream,
-  url: string,
+export async function openDeepgramSocket(
+  capture: PcmCapture,
+  grant: DeepgramGrant,
   hooks: RecogniserHooks,
+  base: string = DEEPGRAM_LISTEN_URL,
 ): Promise<Recogniser | null> {
+  const url = deepgramListenUrl(grant, { sampleRate: capture.sampleRate }, base)
   return new Promise((resolve) => {
     let settled = false
     let opened = false
@@ -194,15 +457,30 @@ export function openDeepgramSocket(
     // hook both engines share, so making it at-most-once **once** is what lets every caller -
     // including `startWebSpeech`'s - treat it as an event rather than a level.
     let dropped = false
-    let recorder: MediaRecorder | null = null
+    let capturing = false
     let flushTimer: ReturnType<typeof setTimeout> | null = null
     let socket: WebSocket
 
     try {
       socket = new WebSocket(url)
     } catch {
+      capture.close()
       resolve(null)
       return
+    }
+
+    // **Armed before the handshake rather than in `onopen`.** The graph exists from the moment
+    // the capture was built, so a processor that throws - or a context iOS interrupts - during
+    // the second or two the socket takes to open would otherwise reach a `null` handler and be
+    // swallowed, leaving a participant talking into a dead capture on an open socket.
+    capture.onerror = () => {
+      if (stopping) return
+      if (!opened) {
+        settle(null)
+        try { socket.close() } catch { /* already gone */ }
+        return
+      }
+      reportDropped()
     }
 
     const timer = setTimeout(() => {
@@ -215,6 +493,12 @@ export function openDeepgramSocket(
       if (settled) return
       settled = true
       clearTimeout(timer)
+      // Answering `null` means no `Recogniser` reaches the caller, and `finishStop` - the only
+      // other place the graph comes down - is reachable only through the `stop` on that object.
+      // So this is the last chance to disconnect, on every one of the four routes that refuse:
+      // the handshake deadline, an error before open, a close before open, and the `catch` in
+      // `onopen`. A graph left connected holds the microphone and posts into nothing.
+      if (value === null) capture.close()
       resolve(value)
     }
 
@@ -235,22 +519,31 @@ export function openDeepgramSocket(
      * "Done" or "Finish my last answer", which is exactly the moment somebody is mid-thought.
      *
      *   1. the deadline, first, so nothing below can hold a participant on a dead socket;
-     *   2. `recorder.stop()`, and `CloseStream` only once its final `dataavailable` has been
-     *      sent - sending it earlier discards the very audio this exists to keep;
+     *   2. `capture.flush()`, and `CloseStream` only once the worklet's remaining samples have
+     *      been sent - sending it earlier discards the very audio this exists to keep;
      *   3. the socket stays open until Deepgram closes it, or the deadline passes.
+     *
+     * **PCM has no `onstop`, so step 2 is a round trip rather than an event.** The worklet holds
+     * up to a batch of samples that have not been posted, so it is asked for them
+     * (`{type:'flush'}`), it posts the tail and then acknowledges, and the acknowledgement is
+     * what sends `CloseStream`. A `MessagePort` delivers in order, so "the tail is on the wire
+     * before the close" is a property of the port rather than of a timer - which is a stronger
+     * guarantee than the `MediaRecorder` path had, where the final `dataavailable` and `onstop`
+     * were two independently queued tasks. The deadline is unchanged and still bounds the whole
+     * of it, because a worklet on a context that has been interrupted will never answer at all.
      */
     function stop() {
       if (stopping) return
       stopping = true
       flushTimer = setTimeout(finishStop, FLUSH_TIMEOUT_MS)
-      if (!recorder) {
+      if (!capturing) {
         requestCloseStream()
         return
       }
-      // `onstop` fires after the recorder has handed over its final chunk.
-      recorder.onstop = () => requestCloseStream()
+      // Fires after the worklet has posted its last samples - see the processor's `_emit` order.
+      capture.onflushed = () => requestCloseStream()
       try {
-        recorder.stop()
+        capture.flush()
       } catch {
         requestCloseStream()
       }
@@ -274,6 +567,11 @@ export function openDeepgramSocket(
       if (finished) return
       finished = true
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+      // The graph comes down here rather than in the page, because this is the only place that
+      // knows the answer is over by every route - flushed, deadline, error and close alike. A
+      // graph left connected goes on calling `process()` and posting batches into a closed
+      // socket for the rest of the interview.
+      capture.close()
       try { socket.close() } catch { /* already gone */ }
       hooks.onClosed()
     }
@@ -286,37 +584,29 @@ export function openDeepgramSocket(
 
     socket.onopen = () => {
       opened = true
-      const mimeType = recorderMimeType()
-      if (mimeType === null) {
-        // Asked, and told no to every container this socket is configured for. Fall back rather
-        // than stream something Deepgram was not asked to decode - see `recorderMimeType`. The
-        // `dropped` claim is the same one the constructor failure makes below, for the same
-        // reason: this closure is ours, and the caller has already been told to fall back.
-        dropped = true
-        settle(null)
-        try { socket.close() } catch { /* already gone */ }
-        return
-      }
       try {
-        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
-        recorder.ondataavailable = (event: BlobEvent) => {
-          if (!event.data || event.data.size === 0) return
+        capture.onbatch = (bytes: ArrayBuffer) => {
+          if (bytes.byteLength === 0) return
+          // A real WebSocket **discards** a send on a socket that is no longer open rather than
+          // throwing, so without this guard a batch arriving after a drop vanishes in the
+          // quietest way there is - and the guard's absence is invisible to any assertion about
+          // transcripts. It is asserted directly, on what reached the wire.
           if (socket.readyState !== WebSocket.OPEN) return
-          socket.send(event.data)
+          socket.send(bytes)
         }
-        recorder.start(CHUNK_MS)
+        capture.start()
+        capturing = true
       } catch {
-        // **The route the flag above did not cover.** This `catch` answers the promise with
-        // `null` - "fall back" - and then closes the socket, and that close arrives at a socket
-        // which is open and not stopping, so `onclose` below called `reportDropped()`. The
-        // caller then had two reasons to start a browser recogniser, the null answer and the
+        // **The route the `dropped` flag did not cover, kept.** This `catch` answers the promise
+        // with `null` - "fall back" - and then closes the socket, and that close arrives at a
+        // socket which is open and not stopping, so `onclose` below called `reportDropped()`.
+        // The caller then had two reasons to start a browser recogniser, the null answer and the
         // drop, and started one for each: two on one microphone, the first orphaned beyond the
-        // reach of `stop()` and restarting itself for the rest of the interview. That is
-        // verbatim the defect `dropped` was added to prevent, reached by a different door.
+        // reach of `stop()` and restarting itself for the rest of the interview.
         //
         // Claiming the drop here rather than suppressing it at `onclose` is deliberate: this is
         // the only place that knows the closure was ours, and a test on `onclose` for "was the
-        // recorder built?" would be the same knowledge written where it cannot be checked.
+        // capture started?" would be the same knowledge written where it cannot be checked.
         dropped = true
         settle(null)
         try { socket.close() } catch { /* already gone */ }

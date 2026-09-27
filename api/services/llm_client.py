@@ -179,7 +179,41 @@ async def project_completion(
         kwargs: dict = {"model": model, "max_tokens": max_tokens, "messages": messages}
         if system:
             kwargs["system"] = system
-        response = await client.messages.create(**kwargs)
+        try:
+            response = await client.messages.create(**kwargs)
+        except Exception as exc:
+            # Classified and reported, then **re-raised unchanged**. The caller's contract does
+            # not move: this is a monitoring leg, not error handling, and swallowing here would
+            # turn a refused completion into an empty answer - which is the silent failure the
+            # whole exercise is about, reintroduced by the fix for it.
+            #
+            # Anthropic spells a credit exhaustion as a 400 carrying "credit balance is too
+            # low", so the classifier reads the body rather than the status; see
+            # `provider_health.classify`.
+            from api.services.provider_health import ANTHROPIC, report_provider_failure
+
+            report_provider_failure(
+                provider=ANTHROPIC,
+                operation=f"a {tier} completion on model '{model}'",
+                exc=exc,
+                slug=slug,
+                consequence=(
+                    "the caller was given an error rather than an answer. Anything that was "
+                    "mid-run will have failed or degraded."
+                ),
+            )
+            raise
+        # The rate-limit headers are **not** read here, deliberately. Anthropic's SDK returns a
+        # parsed `Message` that has discarded them, so reading them at this seam means calling
+        # `messages.with_raw_response.create` - which is a different attribute, and which every
+        # one of the eighteen existing mocks across five test files stubs by the old name. That
+        # was measured rather than guessed: making the change failed fourteen tests that are
+        # about prompt assembly and have nothing to do with monitoring.
+        #
+        # A leading indicator is worth having only while it is free, and rewriting eighteen
+        # mocks is not free. It is captured at the transport instead - see the response event
+        # hook in `http_clients.get_anthropic_client`, which sees every Anthropic response
+        # without any call site knowing about it.
         return response.content[0].text.strip()
 
     payload = {

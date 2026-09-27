@@ -3,6 +3,12 @@
 from crewai import Agent, Task, LLM
 from crewai.tools import BaseTool
 
+# The one declaration of the review allowance. Interpolated into the prompt below and read by
+# `script_duration_validation`, so the number Maya is told to state and the number the guard
+# checks against cannot drift apart - which is precisely the defect this instruction exists to
+# fix, one layer up.
+from api.services.script_duration_validation import TRANSCRIPT_REVIEW_MINUTES
+
 _CONCEPTUAL_SHIFT = """\
 CONCEPTUAL SHIFT — L0 → L1 → L2 → L3  |  C (Customer — outside-in)
 ─────────────────────────────────────────────────────────────────────
@@ -367,24 +373,30 @@ SECTION SELECTION RULES
 _L2_SYNTHESIS_TEMPLATE = """\
 L2 SYNTHESIS CHECK — MANDATORY CLOSING ELEMENT
 ────────────────────────────────────────────────
-Before closing_message, every L2 script must include a synthesis_check that validates
-the interviewer's emerging picture with the interviewee. This is not a question — it
-is a reflective summary offered to the interviewee for correction and endorsement.
+Before closing_message, every L2 script must include a synthesis_check. It invites the
+interviewee to summarise; it never summarises for them.
 
-The synthesis_check has four elements:
+NO synthesis_prompt and NO forward_roadmap. Both were withdrawn on 4 September 2026
+and must not be written again. You are writing this weeks before the interview
+happens, so a summary of "what you've told me" is a guess presented to a real person
+as their own testimony - and their agreement with it then sits in the transcript as
+evidence they never gave. A roadmap they have not been asked about is the same
+mistake pointed forwards.
 
-1. SYNTHESIS PROMPT (interviewer speaks this)
-   Template: "Before I let you go — based on what you've told me, here's how I see
-   this cluster: [brief synthesis of strategic intent], [current maturity level and
-   why], [the biggest constraint on decision quality], [the key data gap], [the value
-   opportunity]. Does that match your assessment?"
-   This must be customised to the node in the script. Do not leave it as a template —
-   Maya should draft a plausible synthesis based on the node's known context, which the
-   interviewee will then confirm or correct.
+The synthesis_check has three elements:
+
+1. CLOSING INVITATION (interviewer speaks this)
+   "Before we finish - what are the two or three things from this conversation you
+   would most want to reach [the decision-makers for this cluster]?"
+   Customise the bracket to the node. The interviewee does the summarising, which is
+   both safer and better evidence than asking them to endorse yours.
 
 2. RESPONSE PROBES (interviewer uses one based on the reply)
-   - If positive confirmation: "Good — what would you add or emphasise differently?"
-   - If qualified or defensive: "Where does my picture differ from yours?"
+   Each probe must make sense after a QUESTION, not after a summary - nothing has been
+   offered for the interviewee to correct.
+   - If they answer expansively: "Of those, which would you put first, and why?"
+   - If they answer thinly or diplomatically: "What is the thing you would want said
+     about this cluster that nobody has said yet?"
      (This is the most valuable response — it surfaces blind spots or political sensitivities
      that the interviewee would not have volunteered as an answer to a direct question.)
    - If uncertain or deflecting: "What would you want me to verify with others?"
@@ -395,14 +407,10 @@ The synthesis_check has four elements:
    I'm looking for [upstream input providers / downstream executors /
    governance stakeholders / data and IT owners]."
 
-4. FORWARD ROADMAP
-   "If you were shaping how we improve this cluster, where would you start —
-   quick wins in the next 6 months, or building the foundations for the next 2 years?
-   And what's your biggest concern about making that change?"
-
-TONE NOTE: The synthesis should feel like a collegial debrief, not a report-back.
-The interviewer is checking understanding and inviting correction — not presenting
-conclusions. Language: "Here's how I see it — tell me where I'm wrong."
+TONE NOTE: The close should feel like a collegial debrief, not a report-back. The
+interviewer is inviting the interviewee's own account - not presenting conclusions
+and asking for a signature. Language: "What would you most want carried back?",
+never "here's how I see it".
 """
 
 _L2_MATURITY_TEMPLATE = """\
@@ -647,52 +655,39 @@ S6. Strategic Priorities & Board Questions (~5 min)
 _L0_SYNTHESIS_TEMPLATE = """\
 L0 SYNTHESIS CHECK — MANDATORY CLOSING ELEMENT
 ────────────────────────────────────────────────
-L0 synthesis_check has FOUR elements — two more than L1/L2. The additional elements
-(portfolio_options and sponsorship_check) are unique to board/exec level and use
-two new optional schema fields not present in L1/L2 synthesis_checks.
+L0 synthesis_check has the same three elements as L1 and L2. It invites the executive
+to summarise; it never summarises for them.
 
-1. SYNTHESIS PROMPT (interviewer speaks this)
-   Template: "Based on what you've told me, here's the strategic picture: [L1 capabilities]
-   transformation is [strategic/tactical] to [organisation]; total investment envelope is
-   [£X] over [Y years], with ROI expectations of [Z] and payback by [period]; the key
-   constraint is [capex/capacity/clarity]; the biggest execution risk is [named risk]; and
-   the decision the board needs to make is [clear decision statement].
-   Does that capture it correctly? What am I missing?"
-   MUST be customised to the specific interviewee and portfolio context. No placeholders.
+NO synthesis_prompt, NO forward_roadmap, NO portfolio_options and NO sponsorship_check.
+All four were withdrawn on 4 September 2026 and must not be written again. Each
+asserted something to the interviewee that was composed before the interview: a
+summary of what they had said, a roadmap they had not been asked about, and - in
+portfolio_options - three sequencing choices offered to an executive who had already
+ruled two of them out during the conversation itself. Seniority makes this worse, not
+better: an executive's recorded endorsement of a fabricated strategic picture carries
+further than anybody else's.
+
+1. CLOSING INVITATION (interviewer speaks this)
+   "Before we finish - what are the two or three things from this conversation you
+   would most want to reach the board?"
+   Customise to the portfolio and the interviewee's own remit.
 
 2. RESPONSE PROBES
-   - If positive: "Good — what would you emphasise differently, or what did I miss?"
-   - If qualified or defensive: "Where does my picture differ from yours — and why?"
+   - If expansive: "What would you emphasise most, of those?"
+   - If brief or guarded: "What is the thing you would want said that nobody has
+     said yet?"
      (Surfaces undisclosed constraints or political tensions at exec level.)
-   - If uncertain: "What needs to be resolved before you'd be confident in that picture?"
+   - If uncertain: "What needs to be resolved before you'd be confident in that?"
      (Reveals what is genuinely unknown vs. what is being avoided.)
 
-3. PORTFOLIO OPTIONS (unique to L0 — put in synthesis_check.portfolio_options field)
-   Present three sequencing options for validation; do not ask which is best — ask which
-   resonates and what the interviewee would add or change.
-   Template: "Following discovery interviews, I'll present three portfolio options:
-   Option A: Sequential — [first L1] established first, then [second L1].
-             Lower risk, slower combined value, tests the model before scaling.
-   Option B: Parallel — both capabilities transform simultaneously.
-             Higher complexity, faster combined value, shared infrastructure leverage.
-   Option C: Phased with gates — begin both, with defined decision gates at [milestones].
-             Balanced risk; allows sequencing adjustment if capacity constraints emerge.
-   We'll present a recommendation within [4–6 weeks]. Which framing resonates at this stage
-   — or is there a fourth option you would add?"
+3. PEER REFERRAL
+   "Whose perspective should I be especially careful to get before I take this
+   further? And is there anyone whose view is likely to differ from yours?"
 
-4. SPONSORSHIP CHECK (unique to L0 — put in synthesis_check.sponsorship_check field)
-   Template: "Can we count on your support to unblock barriers as they emerge — particularly
-   [specific barrier named in the interview, e.g. funding approval, cross-functional alignment,
-   partner readiness, board bandwidth]?"
-   Listen for:
-   - Direct commitment → strong sponsorship signal
-   - "That is up to [someone else]" → reveals where real authority sits
-   - "Within limits" → conditional — probe the limits explicitly
-   - Deflection → sponsorship risk; flag in output summary
-
-TONE NOTE: At L0, the synthesis is presented with confidence. You hold a cross-cutting view
-across all levels that the executive does not. Present as a peer debrief: "Here is my read —
-correct me where I am wrong." Do not present as a learner summarising notes.
+TONE NOTE: At L0 the close is a peer exchange, not a report-back and not a learner
+summarising notes. You hold a cross-cutting view the executive does not, and the
+right use of it is to ask a sharper question - never to hand them a conclusion to
+approve.
 """
 
 _L0_OUTPUT_TEMPLATE = """\
@@ -987,13 +982,17 @@ S7. Competitive & Market Context (~4 min)
    - Our competitive advantage: from their perspective, what's our biggest strength?
      External view of strengths — use directly in the change narrative and board presentation.
 
-S8. Wrap-Up & Partnership (~4 min — this IS the synthesis_check)
-   This section maps directly to the synthesis_check fields:
-   - SUMMARISE → synthesis_prompt: restate their biggest friction, team impact, what
-     would make the biggest difference, satisfaction rating and what would move it.
-   - VALIDATE → response_probes: confirm the synthesis or surface what was missed.
-   - NEXT STEPS → forward_roadmap: preview proposed transformation outcomes for customer
-     validation (better visibility, predictive capabilities, closer partnership, key sector priorities).
+S8. Wrap-Up & Partnership (~4 min)
+   This section maps to the synthesis_check object - it is NOT a separate narrative
+   section, and it contains NO question that summarises the conversation back to the
+   interviewee. You are writing this weeks before the interview happens: any summary
+   you write here is a guess presented to a real person as their own testimony, and
+   their agreement with it then sits in the transcript as evidence they never gave.
+   Never write one.
+   - INVITE → the section's own questions ask the customer to summarise; they do not
+     summarise for the customer. Open with: "Before we finish - what are the two or
+     three things from this conversation you would most want us to act on?"
+   - VALIDATE → response_probes: surface what was missed.
    - ONGOING → peer_referral: invite ongoing engagement and identify other contacts.
 """
 
@@ -1005,22 +1004,27 @@ synthesis is about strategic/operational insight, customer synthesis is about be
 heard and building confidence in partnership. The interviewee should leave feeling
 respected and optimistic — even if they gave critical feedback.
 
-SYNTHESIS PROMPT (synthesis_check.synthesis_prompt — interviewer speaks this)
-   Template: "So if I understand correctly: your biggest friction with [the service]
-   is [X]; the impact on your team is [Y, quantified]; what would make the
-   biggest difference is [Z]; and you're [A]/10 satisfied, and would move to [target]
-   if [specific condition]. Does that capture it? What am I missing?"
-   MUST be customised to what was actually said in this interview — no template
-   placeholders. Speak with confidence, as a peer debrief: "Here is what I heard —
-   correct me where I've got it wrong."
+NO synthesis_prompt and NO forward_roadmap. Both were withdrawn on 4 September 2026
+and must not be written again. You are writing this weeks before the interview, so
+"here is what I heard" is a guess presented to a real person as their own words. With
+a customer it also costs the relationship the close exists to build: a supplier who
+opens the wrap-up by telling a customer what the customer thinks has demonstrated
+precisely the not-listening the interview was meant to disprove.
+
+CLOSING INVITATION (synthesis_check.closing_invitation — interviewer speaks this)
+   Template: "Before we finish - what are the two or three things from this
+   conversation you would most want us to act on?"
+   Then stop and let them answer. Their own summary is the thing worth having.
 
 RESPONSE PROBES (synthesis_check.response_probes)
-   - if_positive: "Good — what would you add or emphasise differently?"
-   - if_defensive: "Where does my picture differ from what you'd say?
-     Let's make sure I take back the right thing." (Customers are often diplomatic —
-     probe gently for the honest view behind polite agreement.)
-   - if_uncertain: "What would you want me to take back that I might have missed?
-     Even something small might be important for how we prioritise."
+   Each probe must make sense after a QUESTION, not after a summary - nothing has been
+   offered for the customer to correct.
+   - if_positive: "Of those, which would make the biggest difference to your team?"
+   - if_defensive: "What is the thing you would say to us if you knew it would be
+     taken well?" (Customers are often diplomatic — probe gently for the honest view
+     behind polite agreement.)
+   - if_uncertain: "What would you want us to take away that we might not have asked
+     about? Even something small might be important for how we prioritise."
 
 PEER REFERRAL / ONGOING ENGAGEMENT (synthesis_check.peer_referral)
    Template: "Can we stay connected? We'd like your perspective as improvements are
@@ -1029,15 +1033,12 @@ PEER REFERRAL / ONGOING ENGAGEMENT (synthesis_check.peer_referral)
    Dual purpose: identify additional customer contacts for interviews, and establish
    ongoing relationship for change adoption and co-design participation.
 
-FORWARD ROADMAP / TRANSFORMATION PREVIEW (synthesis_check.forward_roadmap)
-   Template: "As we look at improvements, we're exploring a few things and would
-   value your reaction: better real-time visibility into service status — would that
-   change how your team plans? Predictive alerts before failures — would that let
-   you take different action? Closer partnership with regular check-ins — would
-   that be useful? And how can we help your team with your own strategic priorities?"
-   Listen for: enthusiasm (champion signal), indifference (priority mismatch),
-   concern (adoption risk), or a redirect to a completely different priority
-   (reveals what we missed earlier in the interview).
+A NOTE ON WHAT THE CLOSE MAY PROMISE
+   The customer is telling a supplier what is wrong with that supplier's service.
+   Say how their feedback will be handled - combined with the other interviews and
+   analysed before anything is reported - and never that it goes to anyone verbatim
+   or unchanged. See the CONFIDENTIALITY rule in the output schema section, which
+   applies to this script as it does to every other.
 """
 
 _AUDIT_PRINCIPLES = """\
@@ -1149,7 +1150,9 @@ lighter sections if a key section yields material findings.
 DO NOT include maturity_rating blocks in any audit interview section.
 Auditors give qualitative maturity assessments (Ad-hoc / Repeatable / Managed / etc.)
 conversationally within sections — these are captured as narrative, not structured
-0–4 per-section ratings. The overall governance maturity rating goes in the synthesis.
+0–4 per-section ratings. An overall governance maturity rating is the auditor's to
+give, in their own words, in answer to a question - it is never written into the
+script in advance for them to agree with.
 
 S1. Governance & Accountability Framework (~6 min)
    Core themes:
@@ -1319,50 +1322,57 @@ S9. Comparative & Peer Assessment (~4 min)
    - Overall capability confidence vs. peers: 1–10 comparative assessment.
      Press for what evidence supports the rating.
 
-S10. Wrap-Up & Critical Observations (~5 min — this IS the synthesis_check)
-   This section maps directly to the synthesis_check fields:
-   - SUMMARISE → synthesis_prompt: multi-dimensional summary covering governance
-     maturity, material control gaps, compliance status, data integrity, vendor
-     management quality, transformation readiness, overall risk rating, and top
-     priorities for remediation.
-   - VALIDATE → response_probes: "Do these observations align with your team's
-     assessment? What am I missing or mischaracterising?"
+S10. Wrap-Up & Critical Observations (~5 min)
+   This section maps to the synthesis_check object - it is NOT a separate narrative
+   section, and it contains NO question that summarises the conversation back to the
+   interviewee. You are writing this weeks before the interview happens: any summary
+   you write here is a guess presented to a real person as their own testimony, and
+   their agreement with it then sits in the transcript as evidence they never gave.
+   Never write one.
+   - INVITE → the section's own questions ask the auditor to summarise; they do not
+     summarise for the auditor. Open with: "What are the two or three findings from
+     this conversation you would most want to reach the board and the audit
+     committee?"
+   - VALIDATE → response_probes: probes that follow an open question, never an
+     offered summary - e.g. "What has not been asked about today that should have
+     been?"
    - FUTURE ENGAGEMENT → peer_referral: ongoing involvement during transformation
      ("I'd recommend periodic check-ins to ensure controls are maintained").
-   - NEXT STEPS → forward_roadmap: key findings for board/management/regulatory
-     body, recommendations, follow-up actions, timeline for re-assessment.
 """
 
 _AUDIT_SYNTHESIS_TEMPLATE = """\
 AUDIT INTERVIEW SYNTHESIS CHECK — SECTION 10 WRAP-UP
 ─────────────────────────────────────────────────────
-Audit synthesis is multi-dimensional and evidence-anchored. Unlike the relational
-synthesis in customer interviews, audit synthesis is an independent assessment
-summary — findings, ratings, gaps, and recommendations. Present with confidence;
-the auditor should recognise their own observations in the synthesis.
+The audit close collects the auditor's own assessment. It does not offer them one.
 
-SYNTHESIS PROMPT (synthesis_check.synthesis_prompt — interviewer speaks this)
-   Template: "Based on our discussion, here is my summary of your assessment:
-   Governance maturity: [Ad-hoc / Repeatable / Managed — evidence];
-   material control gaps: [1–3 named gaps];
-   compliance status: [on track / at risk / issues found];
-   data integrity: [high confidence / adequate / concerns — what drives this];
-   vendor management: [strong / adequate / gaps with key outsourced providers];
-   transformation readiness: [ready / adequate / concerns — named risks];
-   overall risk rating: [X/10 — your assessment];
-   and the top priorities you would recommend addressing: [1–3].
-   Do those observations align with your assessment? What am I missing or
-   mischaracterising?"
-   MUST be customised to what was actually said. Material findings stated directly.
-   Do not soften or qualify the auditor's observations in the synthesis — state
-   them as they gave them. This is the auditor's independent view, not management's.
+NO synthesis_prompt and NO forward_roadmap. Both were withdrawn on 4 September 2026
+and must not be written again. This template is where the rule was broken in
+practice, so it is worth stating the consequence exactly. A script written weeks in
+advance carried a summary beginning "governance maturity appears to be at the
+Developing to Managed level"; it was read aloud to an internal auditor as a summary
+of her own testimony; she answered "I think you have characterised that pretty well
+actually"; and a fabrication composed before she had said a word now sits in the
+transcript as her professional opinion. A rating she never gave, attributable to her.
+That is what a pre-written synthesis does at this level, and nothing about phrasing
+it carefully prevents it.
+
+CLOSING INVITATION (synthesis_check.closing_invitation — interviewer speaks this)
+   Template: "Before we finish - what are the two or three findings from this
+   conversation you would most want to reach the board and the audit committee?"
+   Then stop. The auditor names their own material findings and their own
+   priorities; you record them. Do not offer ratings, maturity levels or a list of
+   gaps for them to confirm - an auditor's assessment is theirs to state, and a
+   summary offered for agreement is a leading question wearing a courtesy.
 
 RESPONSE PROBES (synthesis_check.response_probes)
-   - if_positive: "Good — what would you emphasise differently, or what's the
-     single most urgent thing we should act on first?"
-   - if_defensive: "Where does my characterisation differ from yours? I want to
-     make sure I take back an accurate picture." (Auditors may have been diplomatic
-     mid-interview — the synthesis is often where the real view surfaces.)
+   Each probe must make sense after a QUESTION, not after a summary - nothing has been
+   offered for the auditor to correct.
+   - if_positive: "Of those, which is the single most urgent thing we should act on
+     first?"
+   - if_defensive: "What is the finding you would want on the record that has not
+     been asked about today?" (Auditors are often diplomatic mid-interview — the
+     close is where the real view surfaces, and an open question gets it where an
+     invitation to correct a summary does not.)
    - if_uncertain: "What would you want verified independently before you'd be
      confident in that assessment? What data would change your view?"
 
@@ -1375,16 +1385,15 @@ FUTURE ENGAGEMENT (synthesis_check.peer_referral)
    Purpose: establish ongoing audit engagement as a programme governance mechanism,
    not just a point-in-time assessment. Also surface additional assurance contacts.
 
-NEXT STEPS (synthesis_check.forward_roadmap)
-   Template: "I'll compile your observations into the governance assessment.
-   Key outputs will include: the material findings for board and audit committee;
-   specific control improvement recommendations with priority and timeline; suggested
-   follow-up actions for the transformation programme governance; and a proposed
-   schedule for re-assessment at key programme milestones. Do the areas I've mentioned
-   cover what's most important from your perspective?"
-   Listen for: gaps in coverage (areas the auditor expected to be assessed but
-   weren't), urgency signals (something that needs to go to board immediately),
-   or scope expansion (areas outside the original brief that should be included).
+A NOTE ON WHAT THE CLOSE MAY PROMISE
+   An auditor describing control weaknesses in their own organisation is taking a
+   professional risk, and the closing_message must not make that risk worse by
+   overstating where their words will land. Say that their observations will be
+   analysed together with the other interviews and will inform the governance
+   assessment. Never say that anything they said travels to the board unfiltered,
+   verbatim, directly or unchanged - it does not, and promising it to this
+   interviewee in particular is the opposite of the assurance they need. See the
+   CONFIDENTIALITY rule in the output schema section.
 """
 
 _FRONTLINE_PRINCIPLES = """\
@@ -1576,8 +1585,9 @@ SECTION 8 — Feedback Loop & Voice (target_minutes: 5)
     • Open-ended close: anything they want us to know that we haven't asked?
 
 SECTION 9 — Wrap-Up & Confidentiality (target_minutes: 4)
-  This section maps to the synthesis_check object — it is NOT a separate narrative section.
-  The interviewer summarises what they heard, validates it, makes a commitment to act,
+  This section maps to the synthesis_check object — it is NOT a separate narrative section,
+  and it contains NO question that summarises the conversation back to the interviewee.
+  The interviewer INVITES the worker to say what mattered most, makes a commitment to act,
   and reinforces confidentiality. See _FRONTLINE_SYNTHESIS_TEMPLATE for the design guide.
 """
 
@@ -1588,21 +1598,28 @@ The synthesis_check maps to Section 9 (Wrap-Up). It is the conversational close,
 not an analytical debrief. The register must stay warm, grateful, and human — the
 interviewee has shared something honest and personal.
 
-SYNTHESIS PROMPT:
-  Summarise what you heard across: what's working well; what's most frustrating;
-  what would help most; their confidence in management and in safety; morale and
-  likelihood to stay. Phrase it as: "To recap what I heard..." followed by 4–5 specific
-  points drawn from THIS interview — not a generic template. End with: "Did I capture
-  that accurately? Anything I missed?"
-  The synthesis must be SPECIFIC — name their role, top frustrations, and the
-  improvements they called out. Generic summaries break trust.
+NO synthesis_prompt and NO forward_roadmap. Both were withdrawn on 4 September 2026
+and must not be written again. "To recap what I heard..." cannot be written weeks
+before the interview: whatever follows it is invented, and a frontline worker who is
+told what they just said - and who is being asked to disagree with the person sent to
+listen to them - will usually agree. That is the trust this interview exists to build,
+spent on a sentence nobody needed.
+
+CLOSING INVITATION:
+  "Before we finish - what are the two or three things from this conversation you
+  would most want management to hear?"
+  Then stop and let them answer. They name what mattered; you carry that back. It is
+  better evidence than agreement with a summary, and it is the question a worker who
+  has never been asked their opinion will remember being asked.
 
 RESPONSE PROBES:
-  if_positive (they agree): "Is there anything else — something we haven't covered
-    that's on your mind?"
-  if_defensive (they correct you): "Where did I get the picture wrong? I want to make
-    sure I carry the right story back."
-  if_uncertain (they hesitate): "What's hard to summarise? What else should I know
+  Each probe must make sense after a QUESTION, not after a summary - nothing has been
+  offered for the worker to correct.
+  if_positive (they answer readily): "Is there anything else — something we haven't
+    covered that's on your mind?"
+  if_defensive (they answer thinly): "If management could only fix one thing on your
+    patch, what should it be?"
+  if_uncertain (they hesitate): "Take your time - what would you want someone to know
     before I leave?"
 
 PEER REFERRAL:
@@ -1611,13 +1628,19 @@ PEER REFERRAL:
   different experiences from yours."
   Invite voluntary referral — never instruct them to send colleagues.
 
-FORWARD ROADMAP:
-  "We're going to include your feedback — anonymised — in the improvement plan. Your
-  name won't appear anywhere. We may follow up if we need to explore specific areas
-  further. Before the main changes happen, we'll let you know what's been acted on.
-  Does that sound okay?"
-  This closes the psychological contract: they gave honest feedback; we commit to act
-  on it and communicate back what changed.
+THE HANDLING COMMITMENT (goes in closing_message, not in a roadmap field)
+  The psychological contract this interview runs on is real and must survive: they
+  gave honest feedback, and we commit to act on it and to say what changed. Put it in
+  the closing_message, in one or two sentences:
+  "Your feedback goes into the improvement plan alongside everyone else's, and you
+  won't be quoted by name without being asked first. Before the main changes happen,
+  we'll let you know what's been acted on."
+  Say "won't be quoted by name without being asked first" rather than promising
+  anonymity outright, unless the cohort is genuinely large enough that a single
+  worker cannot be identified from what they described. Where a cohort has one or two
+  members, or where the worker has just described an incident only they were present
+  for, anonymity is not ours to promise and claiming it is a second broken promise on
+  top of the first. See the CONFIDENTIALITY rule in the output schema section.
 """
 
 _CORP_SERVICES_PRINCIPLES = """\
@@ -1836,9 +1859,10 @@ SECTION 7 — Advice for Transformation Success (target_minutes: 5)
     • What they want Asset Management to know about their function that isn't understood
 
 SECTION 8 — Wrap-Up & Feedback (target_minutes: 4)
-  This section maps to the synthesis_check object — it is NOT a separate narrative section.
-  The interviewer summarises the function's perspective, validates it, commits to sharing
-  it with leadership, and confirms next steps. See _CORP_SERVICES_SYNTHESIS_TEMPLATE.
+  This section maps to the synthesis_check object — it is NOT a separate narrative section,
+  and it contains NO question that summarises the conversation back to the interviewee.
+  The interviewer INVITES the function to say what leadership most needs to understand,
+  commits to sharing it, and confirms next steps. See _CORP_SERVICES_SYNTHESIS_TEMPLATE.
 """
 
 _CORP_SERVICES_SYNTHESIS_TEMPLATE = """\
@@ -1849,23 +1873,27 @@ reflecting the function's perspective back to them and making a commitment. The
 register should be professional and collegial — acknowledging that their support
 is essential and their constraints matter for transformation success.
 
-SYNTHESIS PROMPT:
-  Summarise the function's perspective across: biggest frustration; what would help
-  most; biggest concern about transformation; their readiness to support it; and
-  their key advice for success. Phrase it as: "So from your perspective..." followed
-  by 4–5 specific points drawn from THIS interview — not generic. End with: "Did I
-  capture that accurately? What am I missing?"
-  MUST be customised to this function: name the specific systems, data quality issues,
-  governance gaps, or capability constraints they raised. Generic summaries signal
-  that you weren't listening — the opposite of what this interview is for.
+NO synthesis_prompt and NO forward_roadmap. Both were withdrawn on 4 September 2026
+and must not be written again. "So from your perspective..." written weeks in advance
+is a guess, and the guide's own warning applies to it exactly: a generic summary
+signals you weren't listening. A pre-written one is worse, because it is specific
+enough to sound as though you were.
+
+CLOSING INVITATION:
+  "Before we finish - what are the two or three things about your function's position
+  that you would most want Asset Management leadership to understand?"
+  Then stop and let them answer. This function's constraints are usually invisible to
+  the people planning around them, and the interviewee is the one who knows which of
+  them matter most.
 
 RESPONSE PROBES:
-  if_positive (they agree): "What would you add? Anything else on your mind
+  Each probe must make sense after a QUESTION, not after a summary - nothing has been
+  offered for the interviewee to correct.
+  if_positive (they answer readily): "What would you add? Anything else on your mind
     that you want to make sure I carry back?"
-  if_defensive (they correct): "Where did I get the picture wrong? I want to make
-    sure leadership hears the right story from your function."
-  if_uncertain (they hesitate): "What's hard to summarise? What matters most
-    that we haven't covered?"
+  if_defensive (they answer thinly): "What does Asset Management consistently get
+    wrong about what your function needs?"
+  if_uncertain (they hesitate): "What matters most that we haven't covered?"
 
 PEER REFERRAL:
   "I'll likely want to follow up with others in your function on [specific topics
@@ -1873,12 +1901,15 @@ PEER REFERRAL:
   data/system/governance issues from a different angle?"
   Frame as follow-up to this interview, not a generic referral request.
 
-FORWARD ROADMAP:
-  "I'm going to share your function's perspective — anonymised — with Asset Management
-  leadership. Your needs and constraints will inform the transformation roadmap.
-  We'll want to involve your function in [specific workstream] as planning progresses.
-  I'll follow up on [named next step]. Does that sound right?"
-  Name the specific next step — vague commitments erode the trust built in this interview.
+THE HANDLING COMMITMENT (goes in closing_message, not in a roadmap field)
+  "Your function's perspective goes into the transformation design alongside the other
+  interviews, and you won't be quoted by name without being asked first. I'll follow
+  up on [named next step]."
+  Name the specific next step - vague commitments erode the trust built in this
+  interview. Be careful with anonymity here: a corporate services interviewee is
+  often the only holder of their role, so "anonymised" is frequently untrue in this
+  script even where it is honest in a frontline one. See the CONFIDENTIALITY rule in
+  the output schema section.
 """
 
 _L1_PRINCIPLES = """\
@@ -2216,30 +2247,35 @@ SECTION SELECTION RULES
 _L1_SYNTHESIS_TEMPLATE = """\
 L1 SYNTHESIS CHECK — MANDATORY CLOSING ELEMENT
 ────────────────────────────────────────────────
-Before closing_message, every L1 script must include a synthesis_check that validates
-the interviewer's strategic picture with the interviewee. This is a collegial debrief
-— the interviewer offers their emerging synthesis for correction and endorsement.
+Before closing_message, every L1 script must include a synthesis_check. It invites the
+interviewee to summarise; it never summarises for them.
 
-The synthesis_check has four elements:
+NO synthesis_prompt and NO forward_roadmap. Both were withdrawn on 4 September 2026
+and must not be written again. The instruction that stood here asked for something
+impossible and then asked you to disguise it: "draft it using evidence gathered in the
+interview" cannot be followed, because you write the instrument weeks before the
+interview exists, and "write a plausible synthesis the interviewee will confirm" is
+therefore a request to invent one that sounds researched. Plausibility is exactly the
+property that makes a fabrication dangerous - an implausible summary gets corrected,
+and a plausible one gets agreed with.
 
-1. SYNTHESIS PROMPT (interviewer speaks this)
-   Template: "Based on what you've told me, here's how I see the strategic picture for
-   [L1 capability area]: the mandate is [strategic objective]; current maturity sits at
-   [overall level] — constrained mainly by [binding dimension]; the value opportunity
-   is in the range of [£estimate]; the critical path runs [H1 priority → H2 goal]; and
-   the biggest transformation risk is [key CSF Red/Yellow]. Does that match your assessment?"
+The synthesis_check has three elements:
 
-   This MUST be customised to the specific L1 node. Draft it using evidence gathered in
-   the interview. Do not leave placeholders — write a plausible synthesis the interviewee
-   will confirm or correct.
+1. CLOSING INVITATION (interviewer speaks this)
+   "Before we finish - what are the two or three things from this conversation you
+   would most want to reach the executive team?"
+   Customise the bracket to who actually decides for this L1 capability area.
 
 2. RESPONSE PROBES (use one based on the interviewee's reply)
-   - If validation: "Good — what would you emphasise differently, or what did I miss?"
-     (Even positive responses often surface useful nuance or priority corrections.)
-   - If qualified or defensive: "Where does my picture differ from yours — and why?"
+   Each probe must make sense after a QUESTION, not after a summary - nothing has been
+   offered for the interviewee to correct.
+   - If they answer expansively: "Of those, which would you put first, and why?"
+     (Even a ready answer often has a priority order worth surfacing.)
+   - If they answer thinly or guardedly: "What is the thing about this capability area
+     that nobody has said out loud yet?"
      (The most valuable response: reveals blind spots or undisclosed constraints.)
    - If uncertain or deflecting: "What would you want me to verify with other stakeholders
-     before I rely on this summary?"
+     before I rely on that?"
      (Signals where this view may be incomplete or politically sensitive.)
 
 3. PEER REFERRAL (executive stakeholder mapping)
@@ -2251,18 +2287,10 @@ The synthesis_check has four elements:
    Customise the role list to the organisation's structure. Add partner or supplier stakeholders
    where the L1 involves significant external dependency.
 
-4. FORWARD ROADMAP & COMMITMENT CHECK
-   "If you were shaping the first 90 days of this transformation — what would you start with?
-   And are you personally committed to making this happen?"
-   Listen for:
-   - H1 thinking (data, governance, quick wins) → sequencing maturity
-   - Direct personal commitment → sponsorship confidence
-   - Conditional commitment ("if the business case stacks up") → conditional support only
-   - Weak commitment ("I support it in principle") → change management risk
-
-TONE NOTE: Offer the synthesis with curiosity, not authority.
-"Here's how I see it — tell me where I'm wrong" is more productive than "here's the summary."
-An interviewee correcting you is a better outcome than nodding agreement.
+TONE NOTE: Close with curiosity, not authority. "What would you most want carried
+back?" is more productive than "here's the summary", and it is the only one of the two
+you can honestly write in advance. An interviewee telling you something you did not
+have is a better outcome than an interviewee nodding at something you invented.
 """
 
 _L1_OUTPUT_TEMPLATE = """\
@@ -2542,19 +2570,17 @@ def create_interaction_designer_task(
             f"   Use {preferred_questions} narrative questions per section, plus follow_up_branches (2 per\n"
             "   question) and evasion_signals (phrases signalling drift from portfolio framing).\n"
             "   NO maturity_rating blocks in any L0 section.\n\n"
-            "   c) SYNTHESIS CHECK — mandatory closing element with FOUR components.\n"
+            "   c) SYNTHESIS CHECK — mandatory closing element with THREE components.\n"
             "   Using the L0 Synthesis Check guide from your task context, write a synthesis_check\n"
-            "   object with all four components:\n"
-            "   - synthesis_prompt: customised portfolio synthesis covering strategic role, total\n"
-            "     investment (£), ROI expectations, key constraint, biggest execution risk, and\n"
-            "     the board decision needed. End with 'Does that capture it correctly?'\n"
-            "     MUST be customised — no generic placeholders.\n"
-            "   - response_probes: three probe phrases for positive / qualified / uncertain replies\n"
-            "   - peer_referral: stakeholder mapping question naming who else to interview\n"
-            "   - forward_roadmap: 90-day question ('What would you do first?')\n"
-            "   - portfolio_options: present Options A (Sequential), B (Parallel), C (Phased/gated)\n"
-            "     using the L1 capability names. End: 'Which framing resonates at this stage?'\n"
-            "   - sponsorship_check: commitment question naming a specific barrier from the interview\n\n"
+            "   object with all three components. Write NO synthesis_prompt, NO forward_roadmap,\n"
+            "   NO portfolio_options and NO sponsorship_check: all four were withdrawn on\n"
+            "   4 September 2026 because each asserted to the interviewee something composed\n"
+            "   before the interview happened.\n"
+            "   - closing_invitation: 'Before we finish - what are the two or three things from\n"
+            "     this conversation you would most want to reach the board?' Customised to the\n"
+            "     portfolio and the interviewee's remit.\n"
+            "   - response_probes: three probe phrases for expansive / guarded / uncertain replies\n"
+            "   - peer_referral: stakeholder mapping question naming who else to interview\n\n"
             "   d) Complete script fields:\n"
             "      - research_brief and study_objectives framed at portfolio / capital allocation level\n"
             "      - welcome_message: brief, professional, board-appropriate tone. State the purpose\n"
@@ -2625,15 +2651,15 @@ def create_interaction_designer_task(
             "   e) SYNTHESIS CHECK — mandatory closing element, written after sections.\n"
             "   Using the L1 Synthesis Check guide from your task context, write a synthesis_check\n"
             "   object with:\n"
-            "   - synthesis_prompt: a draft synthesis of the L1's strategic mandate, composite\n"
-            "     maturity, binding constraint, value opportunity (£ estimate), critical path,\n"
-            "     and biggest transformation risk — written as the interviewer would speak it,\n"
-            "     ending with 'Does that match your assessment?' Customise to the node.\n"
-            "   - response_probes: three probe phrases covering positive / defensive / uncertain replies\n"
+            "   Write NO synthesis_prompt and NO forward_roadmap: both were withdrawn on\n"
+            "   4 September 2026 because both asserted to the interviewee something composed\n"
+            "   before the interview happened.\n"
+            "   - closing_invitation: 'Before we finish - what are the two or three things from\n"
+            "     this conversation you would most want to reach the executive team?' Customise\n"
+            "     the bracket to who actually decides for this L1 capability area.\n"
+            "   - response_probes: three probe phrases covering expansive / guarded / uncertain replies\n"
             "   - peer_referral: stakeholder mapping question naming CFO, CTO, HR/OD, COO, and any\n"
-            "     major external partners relevant to this L1 node\n"
-            "   - forward_roadmap: 90-day question ('What would you start with?') plus commitment\n"
-            "     check ('Are you personally committed to making this happen?')\n\n"
+            "     major external partners relevant to this L1 node\n\n"
             "   f) Complete script fields:\n"
             "      - research_brief and study_objectives framed at strategic / portfolio level\n"
             "      - welcome_message: warm, senior-appropriate, frames this as a strategic dialogue\n"
@@ -2703,13 +2729,14 @@ def create_interaction_designer_task(
             "   e) SYNTHESIS CHECK — mandatory closing element, written after sections.\n"
             "   Using the L2 Synthesis Check guide from your task context, write a synthesis_check\n"
             "   object with:\n"
-            "   - synthesis_prompt: a draft synthesis of the node's strategic intent, current\n"
-            "     maturity, biggest constraint, key data gap, and value opportunity — written\n"
-            "     as the interviewer would speak it, ending with 'Does that match your assessment?'\n"
-            "     Customise this to the node; do not leave it as a template.\n"
-            "   - response_probes: three probe phrases for positive / defensive / uncertain replies\n"
-            "   - peer_referral: a referral question naming the four triangulation perspectives\n"
-            "   - forward_roadmap: a roadmap question asking where to start and what risks concern them\n\n"
+            "   Write NO synthesis_prompt and NO forward_roadmap: both were withdrawn on\n"
+            "   4 September 2026 because both asserted to the interviewee something composed\n"
+            "   before the interview happened.\n"
+            "   - closing_invitation: 'Before we finish - what are the two or three things from\n"
+            "     this conversation you would most want to reach the decision-makers for this\n"
+            "     cluster?' Customise the bracket to the node.\n"
+            "   - response_probes: three probe phrases for expansive / guarded / uncertain replies\n"
+            "   - peer_referral: a referral question naming the four triangulation perspectives\n\n"
 
             "   f) Complete script fields:\n"
             "      - research_brief and study_objectives framed at decision orchestration level\n"
@@ -2812,13 +2839,13 @@ def create_interaction_designer_task(
             "        ('push for hours/week or frequency' / 'probe below 5 risk factors')\n"
             "      - NO maturity_rating block in any section\n\n"
             "   c) SYNTHESIS CHECK — maps to Section 8 (Wrap-Up). Using the Customer Synthesis guide:\n"
-            "   - synthesis_prompt: customised summary of their biggest friction, team impact,\n"
-            "     what would make the biggest difference, and their satisfaction rating. No placeholders.\n"
-            "   - response_probes: three probes for positive / defensive (diplomatic) / uncertain\n"
-            "   - peer_referral: ongoing engagement invitation plus additional customer contact question\n"
-            "   - forward_roadmap: transformation preview to validate (visibility, predictive\n"
-            "     capabilities, closer partnership, client's key strategic priorities) —\n"
-            "     probe for enthusiasm, concern, or redirection\n\n"
+            "   Write NO synthesis_prompt and NO forward_roadmap: both were withdrawn on\n"
+            "   4 September 2026 because both asserted to the interviewee something composed\n"
+            "   before the interview happened.\n"
+            "   - closing_invitation: 'Before we finish - what are the two or three things from\n"
+            "     this conversation you would most want us to act on?'\n"
+            "   - response_probes: three probes for expansive / diplomatic / uncertain replies\n"
+            "   - peer_referral: ongoing engagement invitation plus additional customer contact question\n\n"
             "   d) Complete script fields:\n"
             "      - node_label: '[Segment name] Customer Interview' (e.g. 'Field Team Customer Interview')\n"
             "      - level: 'L1', perspective: 'C' - the tier and the role are two separate "
@@ -2868,15 +2895,16 @@ def create_interaction_designer_task(
             "      - NO maturity_rating block in any section (auditors give narrative assessments\n"
             "        and 1–10 confidence ratings, not structured 0–4 per-section ratings)\n\n"
             "   c) SYNTHESIS CHECK — maps to Section 10 (Wrap-Up). Using the Audit Synthesis guide:\n"
-            "   - synthesis_prompt: multi-dimensional summary covering governance maturity, material\n"
-            "     control gaps, compliance status, data integrity, vendor management, transformation\n"
-            "     readiness, overall risk rating, and top priorities. MUST be customised — no\n"
-            "     placeholders. State findings directly as the auditor gave them.\n"
-            "   - response_probes: three probes for aligned / diplomatic (hedged) / uncertain\n"
+            "   Write NO synthesis_prompt and NO forward_roadmap: both were withdrawn on\n"
+            "   4 September 2026. This is the script kind where the rule was broken in practice -\n"
+            "   a pre-written summary was read to an internal auditor as her own testimony and she\n"
+            "   agreed with it, so a rating she never gave is now attributed to her. Do not offer\n"
+            "   an auditor ratings, maturity levels or named gaps to confirm; collect theirs.\n"
+            "   - closing_invitation: 'Before we finish - what are the two or three findings from\n"
+            "     this conversation you would most want to reach the board and the audit committee?'\n"
+            "   - response_probes: three probes for expansive / hedged / uncertain replies\n"
             "   - peer_referral: ongoing engagement invitation during transformation + additional\n"
-            "     assurance contacts (other audit functions or regulatory bodies)\n"
-            "   - forward_roadmap: next steps — key findings for board/audit committee,\n"
-            "     recommendations, remediation plan, re-assessment schedule\n\n"
+            "     assurance contacts (other audit functions or regulatory bodies)\n\n"
             "   d) Complete script fields:\n"
             "      - node_label: '[Auditor/Regulator name] Audit Interview' or '[Function] Assessment'\n"
             "      - level: 'L0', perspective: 'A' - an audit script anchors to the "
@@ -2886,10 +2914,17 @@ def create_interaction_designer_task(
             "        'Assess governance maturity, control effectiveness, and transformation readiness\n"
             "        from the perspective of [auditor/regulatory function]'\n"
             "      - welcome_message: professional, grateful, non-defensive. Acknowledge their\n"
-            "        independent mandate. State the purpose: 'We want your honest, unfiltered\n"
-            "        assessment to inform our transformation priorities.'\n"
-            "      - closing_message: thank them for their independent perspective, confirm\n"
-            "        how findings will feed into the governance assessment and board reporting\n\n"
+            "        independent mandate. State the purpose: 'We want your honest, candid\n"
+            "        assessment to inform our transformation priorities.' Then state how their\n"
+            "        answers will be handled, per the CONFIDENTIALITY rule below. Never use the\n"
+            "        word 'unfiltered' anywhere in this script: it is ambiguous between 'tell us\n"
+            "        frankly' and 'we will repeat your words verbatim', and the second is untrue.\n"
+            "      - closing_message: thank them for their independent perspective. Say that their\n"
+            "        observations will be analysed together with the other interviews and will\n"
+            "        inform the governance assessment. Do NOT promise that anything they said\n"
+            "        travels to the board unchanged, unfiltered, verbatim or attributed to them -\n"
+            "        it does not, and promising it to somebody describing control weaknesses in\n"
+            "        their own organisation is the opposite of the assurance they need.\n\n"
             "   e) After drafting, produce one Audit Interview Summary using this template:\n"
 
             "── FRONTLINE INTERVIEWS (ground-truth — operational workers) ─────────────────────\n"
@@ -2934,12 +2969,16 @@ def create_interaction_designer_task(
             "        completion rate, % time on admin' / 'name specific systems, not categories')\n"
             "      - NO maturity_rating block in any section\n\n"
             "   c) SYNTHESIS CHECK — maps to Section 9 (Wrap-Up). Using the Frontline Synthesis guide:\n"
-            "   - synthesis_prompt: specific summary of what worked, top frustrations, what would\n"
-            "     help most, management confidence, and morale — named from this interview, not\n"
-            "     generic. End with: 'Did I capture that accurately? Anything I missed?'\n"
-            "   - response_probes: three probes for agreement / correction / hesitation\n"
-            "   - peer_referral: voluntary invitation to refer colleagues — never instruct them\n"
-            "   - forward_roadmap: explicit commitment — anonymised, acted on, communicated back\n\n"
+            "   Write NO synthesis_prompt and NO forward_roadmap: both were withdrawn on\n"
+            "   4 September 2026 because both asserted to the interviewee something composed\n"
+            "   before the interview happened.\n"
+            "   - closing_invitation: 'Before we finish - what are the two or three things from\n"
+            "     this conversation you would most want management to hear?'\n"
+            "   - response_probes: three probes for expansive / guarded / hesitant replies\n"
+            "   - peer_referral: voluntary invitation to refer colleagues - never instruct them\n"
+            "   The handling commitment that used to sit in forward_roadmap moves into\n"
+            "   closing_message: their feedback goes into the improvement plan, they will not be\n"
+            "   quoted by name without being asked first, and they will hear what was acted on.\n\n"
             "   d) Complete script fields:\n"
             "      - node_label: '[Cohort name] Frontline Interview'\n"
             "        (e.g. 'Maintenance Technician Frontline Interview', using the actual\n"
@@ -3004,14 +3043,18 @@ def create_interaction_designer_task(
             "      - NO maturity_rating block in any section\n\n"
             "   c) SYNTHESIS CHECK — maps to Section 8 (Wrap-Up). Using the Corporate Services\n"
             "   Synthesis guide:\n"
-            "   - synthesis_prompt: specific summary of biggest frustration, what would help,\n"
-            "     biggest transformation concern, readiness, and key advice — named from this\n"
-            "     interview and this function, not generic. No placeholders.\n"
-            "   - response_probes: three probes for agreement / correction / hesitation\n"
+            "   Write NO synthesis_prompt and NO forward_roadmap: both were withdrawn on\n"
+            "   4 September 2026 because both asserted to the interviewee something composed\n"
+            "   before the interview happened.\n"
+            "   - closing_invitation: 'Before we finish - what are the two or three things about\n"
+            "     your function's position that you would most want Asset Management leadership\n"
+            "     to understand?'\n"
+            "   - response_probes: three probes for expansive / guarded / hesitant replies\n"
             "   - peer_referral: targeted follow-up invitation naming specific topics from this\n"
             "     interview (not a generic referral)\n"
-            "   - forward_roadmap: named specific next step — which workstream, which discussion,\n"
-            "     when — vague commitments erode the trust built in the interview\n\n"
+            "   The named next step that used to sit in forward_roadmap moves into\n"
+            "   closing_message - which workstream, which discussion, when. Vague commitments\n"
+            "   erode the trust built in the interview.\n\n"
             "   d) Complete script fields:\n"
             "      - node_label: '[Function name] Corporate Services Interview'\n"
             "        (e.g. 'Finance Corporate Services Interview')\n"
@@ -3031,6 +3074,50 @@ def create_interaction_designer_task(
             "   e) After drafting, produce one Corporate Services Interview Summary per function\n"
             "   using this template:\n"
 
+            "── CONFIDENTIALITY — EVERY SCRIPT, EVERY LEVEL, NO EXCEPTIONS ──────────────────\n"
+            "Every welcome_message states how the interviewee's answers will be handled, before\n"
+            "the first question. This is not a frontline-only courtesy: an executive describing a\n"
+            "governance failure, an auditor describing a control weakness, and a technician\n"
+            "describing a workaround are all taking the same risk, and the more senior the\n"
+            "interviewee the more consequential the attribution.\n\n"
+            "The welcome carries privacy and tone; the framing carries the interview's purpose.\n"
+            "Do not repeat the privacy statement in the framing_block.\n\n"
+            "What is TRUE and may be said:\n"
+            "  - answers are combined with other interviews and analysed before anything is reported\n"
+            "  - the interviewee will not be quoted by name without being asked first\n"
+            "  - findings are shared as themes and evidence, not as a transcript\n\n"
+            "What is FALSE and must NEVER be said:\n"
+            "  - that what they say goes to the board 'unfiltered', verbatim, directly, or unchanged\n"
+            "  - that their words are passed through to anyone without analysis\n"
+            "  - any assurance of anonymity the engagement has not actually agreed to - where the\n"
+            "    interviewee is the only holder of their role, anonymity cannot be promised, and\n"
+            "    the honest form is 'you will not be quoted by name without being asked first'\n\n"
+            "closing_message repeats the handling commitment in one short sentence and never\n"
+            "contradicts the welcome.\n\n"
+
+            "── HOW LONG IT TAKES — EVERY SCRIPT, EVERY LEVEL, NO EXCEPTIONS ────────────────\n"
+            "The welcome_message states the duration, and the number is DERIVED, never typed:\n\n"
+            "   duration = (sum of every section's target_minutes) + "
+            f"{TRANSCRIPT_REVIEW_MINUTES} minutes to review the transcript\n\n"
+            "Add up the target_minutes you have just assigned to this script's own sections, add "
+            f"{TRANSCRIPT_REVIEW_MINUTES}, and state that total. Do not reach for a round number "
+            "you have seen on another script, and do not state a duration before the sections "
+            "exist to be added up - write the sections first.\n\n"
+            "WHY BOTH HALVES MATTER\n"
+            "The interviewee watches a timer built from target_minutes, so a welcome that says "
+            "'about 45 minutes' over sections totalling 55 is contradicted on screen inside the "
+            "hour. Measured across the live artefact, 83 of 84 scripts disagreed with their own "
+            "section budget - two declarations of one fact, neither looking at the other.\n\n"
+            "And the review step is real time the interviewee spends that nothing has ever told "
+            "them about: after the last question they are asked to read every answer they gave "
+            "and correct anything mis-transcribed. Leaving it out of the number means every "
+            "interview overruns the promise made at the start, however well the sections are "
+            "kept to.\n\n"
+            "Phrase it plainly - 'this will take about [total] minutes, which includes about "
+            f"{TRANSCRIPT_REVIEW_MINUTES} minutes at the end to read through your answers and "
+            "correct anything we got wrong'. A range is fine if the upper bound is the derived "
+            "total; a single number is better.\n\n"
+
             "── OUTPUT ───────────────────────────────────────────────────────────────────────\n"
             "15. Output the INTERVIEW SCRIPTS you generated this run - per step 4, that is the "
             "nodes that had none yet plus any sent back for revision, across L0, L1, L2, L3, C, "
@@ -3040,7 +3127,9 @@ def create_interaction_designer_task(
             "update the one already there. "
             "L0, L1, L2, C, A, F, and S scripts include framing_block and synthesis_check. "
             "L1 and L2 sections include a maturity_rating block; L0, L3, C, A, F, and S sections do not. "
-            "L0 synthesis_check includes the additional portfolio_options and sponsorship_check fields. "
+            "Every synthesis_check has the same three fields at every level - closing_invitation, "
+            "response_probes and peer_referral. L0 has no extra ones: portfolio_options and "
+            "sponsorship_check are withdrawn along with synthesis_prompt and forward_roadmap. "
             "This is the ONLY script artefact — there is no separate questionnaire.\n"
             "   {\n"
             "     \"<script_id>\": {\n"
@@ -3107,28 +3196,29 @@ def create_interaction_designer_task(
             "       ],\n"
             "       // L0, L1, L2, C, A, F, and S — synthesis check spoken after sections, before closing:\n"
             "       \"synthesis_check\": {   // PRESENT for L0, L1, L2, C, A, F, and S; OMIT for L3\n"
-            "         \"synthesis_prompt\": \"Before I let you go — based on what you've "
-            "told me, here's how I see this cluster: [customised synthesis of intent, "
-            "maturity, constraint, data gap, opportunity]. Does that match your assessment?\",\n"
+            "         // NO synthesis_prompt, NO forward_roadmap, NO portfolio_options and NO\n"
+            "         // sponsorship_check. All four were withdrawn from the interview on\n"
+            "         // 4 September 2026 and must not be written again. Each asserted a\n"
+            "         // conclusion to the participant that was composed before the interview:\n"
+            "         // a summary of what they had said, a roadmap they had not been asked\n"
+            "         // about, three sequencing options they had already ruled out, and a\n"
+            "         // commitment question built on a barrier nobody had named yet. The rule:\n"
+            "         // anything the interviewer says TO a participant in real time has no\n"
+            "         // reviewer between it and them, so it is either scripted and true, or\n"
+            "         // absent. A summary of a conversation that has not happened cannot be\n"
+            "         // scripted and true.\n"
+            "         \"closing_invitation\": \"Before we finish - what are the two or three "
+            "things from this conversation you would most want to reach [the board / the "
+            "executive team / management]?\",\n"
             "         \"response_probes\": {\n"
-            "           \"if_positive\": \"Good — what would you add or emphasise differently?\",\n"
-            "           \"if_defensive\": \"Where does my picture differ from yours?\",\n"
+            "           \"if_positive\": \"What would you emphasise most, of those?\",\n"
+            "           \"if_defensive\": \"What is the thing you would want said that nobody "
+            "has said yet?\",\n"
             "           \"if_uncertain\": \"What would you want me to verify with others?\"\n"
             "         },\n"
             "         \"peer_referral\": \"Who else should I speak to for a full picture? "
             "I'm looking for upstream input providers, downstream executors, governance "
-            "stakeholders, and data or IT owners.\",\n"
-            "         \"forward_roadmap\": \"If you were shaping the improvement roadmap "
-            "for this cluster, where would you start — quick wins in 6 months, or building "
-            "foundations for 2 years? And what's your biggest concern?\",\n"
-            "         // L0 ONLY — omit for L1 and L2:\n"
-            "         \"portfolio_options\": \"Following discovery interviews, I'll present three "
-            "portfolio options: Option A (Sequential) — [L1a] established first, then [L1b]; "
-            "Option B (Parallel) — both transform simultaneously; Option C (Phased with gates) — "
-            "both begin with defined decision gates at [milestones]. Which framing resonates? "
-            "Or is there a fourth option you would add?\",\n"
-            "         \"sponsorship_check\": \"Can we count on your support to unblock barriers "
-            "as they emerge — particularly [specific barrier from the interview]?\"\n"
+            "stakeholders, and data or IT owners.\"\n"
             "       },\n"
             "       \"closing_message\": \"...\"\n"
             "     }\n"
@@ -3216,8 +3306,10 @@ def create_interaction_designer_task(
             "and one per C (customer), A (audit), F (frontline), and S (corporate services) "
             "role node, with no node passed over; "
             "L0, L1, L2, C, A, F, and S scripts include framing_block "
-            "and synthesis_check; L0 synthesis_check also includes portfolio_options and "
-            "sponsorship_check; L1 and L2 sections include maturity_rating blocks; L0, L3, C, A, "
+            "and synthesis_check; every synthesis_check holds exactly closing_invitation, "
+            "response_probes and peer_referral, and never a synthesis_prompt, forward_roadmap, "
+            "portfolio_options or sponsorship_check; "
+            "L1 and L2 sections include maturity_rating blocks; L0, L3, C, A, "
             "F, and S sections have no maturity_rating blocks; L3 scripts have exactly 8 fixed "
             "sections with no framing_block or synthesis_check; C scripts have exactly 8 fixed "
             "sections with framing_block and synthesis_check; A scripts have exactly 10 fixed "
@@ -3227,7 +3319,8 @@ def create_interaction_designer_task(
             "that had none and does not rewrite a script that already exists, except for a "
             "script sent back for revision, which is regenerated in full under its existing "
             "script_id. No separate questionnaire artefact, and no other "
-            "artefact of any kind - the in-interview synthesis_check is the only summary Maya "
+            "artefact of any kind - the in-interview synthesis_check invites the interviewee's "
+            "own summary and contains none of Maya's, and it "
             "produces, and it lives inside the script, not as a separate key."
         ),
         agent=agent,

@@ -415,7 +415,7 @@ async def test_get_sessions_no_runs(client, clean_sessions_no_runs):
     # Create the project (no orchestration runs)
     r = await client.post(
         "/projects",
-        json={"client_slug": _SESSIONS_SLUG_NO_RUNS, "llm_mode": "standard", "sector": "test"},
+        json={"client_slug": _SESSIONS_SLUG_NO_RUNS, "llm_mode": "standard", "sector": "test", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"},
     )
     assert r.status_code in (200, 201)
 
@@ -448,7 +448,7 @@ async def test_get_sessions_with_data(client, clean_sessions_with_data):
     # Create project via API to ensure full migration
     r = await client.post(
         "/projects",
-        json={"client_slug": _SESSIONS_SLUG_WITH_DATA, "llm_mode": "standard", "sector": "test"},
+        json={"client_slug": _SESSIONS_SLUG_WITH_DATA, "llm_mode": "standard", "sector": "test", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"},
     )
     assert r.status_code in (200, 201)
 
@@ -541,7 +541,7 @@ async def _seed_completed_session(client, token: str) -> None:
     """Create a project with one completed session for _STAKEHOLDER_EMAIL."""
     r = await client.post(
         "/projects",
-        json={"client_slug": _EMAIL_SLUG, "llm_mode": "standard", "sector": "test"},
+        json={"client_slug": _EMAIL_SLUG, "llm_mode": "standard", "sector": "test", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"},
     )
     assert r.status_code in (200, 201)
 
@@ -688,7 +688,7 @@ async def _seed_pending_session(client, token: str) -> None:
     """Create a project with one pending session - no completed/email trappings needed."""
     r = await client.post(
         "/projects",
-        json={"client_slug": _STATUS_SLUG, "llm_mode": "standard", "sector": "test"},
+        json={"client_slug": _STATUS_SLUG, "llm_mode": "standard", "sector": "test", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"},
     )
     assert r.status_code in (200, 201)
 

@@ -342,7 +342,8 @@ def complete_hitl_review(slug: str, review_id: int, decision: str) -> None:
 
 
 def record_validation_warnings_sync(
-    slug: str, run_id: int, source: str, warnings: list[dict], *, complete: bool = False
+    slug: str, run_id: int, source: str, warnings: list[dict], *, complete: bool = False,
+    judged_subjects: list[str] | None = None,
 ) -> None:
     """Best-effort, exactly as record_blocked_write_sync is best-effort.
 
@@ -367,6 +368,27 @@ def record_validation_warnings_sync(
     cannot if the row it lives on was deleted the moment the finding stopped appearing. An
     acknowledged warning that has been fixed is deleted: raised, acknowledged, fixed is the
     loop completing, not a record to keep.
+
+    `judged_subjects` STATES THE SCOPE `complete` IS COMPLETE OVER, and a warner that looked
+    at less than the whole artefact must give it. The default `None` means "the whole
+    source", which is what every merged-artefact warner honestly is.
+
+    Why it had to exist. `_warn_script_durations` judges the PRE-MERGE batch on purpose (its
+    module says why), and Maya writes in batches - the live artefact went 77 -> 80 -> 86
+    scripts across three writes. With the scope unstated, batch 1 recorded three findings and
+    a clean batch 2 deleted them, while the three defective welcomes sat in the stored
+    artefact unreported. Note that a `subject` per script does NOT fix that on its own: the
+    `NOT (pairs)` clause below is only appended `if seen`, so a call carrying NO findings
+    still deletes every open row for the source whatever its subject. Both halves are needed,
+    which is why this is a parameter and not a convention.
+
+    Dropping `complete` for such a warner is the other obvious repair and is worse: a fixed
+    script's warning would then never clear, which `_record_registration_state` already
+    records as worse than no warning at all, because acting on it is the wrong move. The
+    clearing was never wrong - only its reach was.
+
+    An empty `judged_subjects` means "this call judged nothing", so nothing is cleared. That
+    is different from `None`.
     """
     from api.services.anchor_validation import SKEW_RERAISE_DELTA
 
@@ -419,7 +441,7 @@ def record_validation_warnings_sync(
                     (run_id or None, w["detail"], measure, warning_id),
                 )
 
-        if complete:
+        if complete and judged_subjects != []:
             seen = [(w.get("subject") or "", w["code"]) for w in warnings]
             sql = (
                 "DELETE FROM validation_warnings"
@@ -432,6 +454,12 @@ def record_validation_warnings_sync(
                 sql += f" AND NOT ({pairs})"
                 for subject, code in seen:
                     params.extend([subject, code])
+            if judged_subjects is not None:
+                # Only rows about something this call actually looked at. A finding about a
+                # script written in an earlier batch is not absent - it was never examined.
+                placeholders = ",".join("?" * len(judged_subjects))
+                sql += f" AND IFNULL(subject,'') IN ({placeholders})"
+                params.extend(judged_subjects)
             conn.execute(sql, params)
         conn.commit()
 

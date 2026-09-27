@@ -326,7 +326,7 @@ async def engagements(tmp_path, monkeypatch, client):
                 "value_stream_labels": [],
                 "review_gates": True,
                 "slack_channel": "",
-            },
+                "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",},
         )
         assert res.status_code in (200, 201), res.text
 

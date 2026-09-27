@@ -13,7 +13,7 @@ from api.database import (
 )
 
 SLUG = "stakeholders-test"
-PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail"}
+PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"}
 
 
 @pytest.fixture(autouse=True)
@@ -64,11 +64,15 @@ async def test_insert_and_fetch_stakeholders(client):
         project = await fetch_project(conn, slug=SLUG)
         sid = await insert_stakeholder(conn, project_id=project["id"], **STAKEHOLDER)
         rows = await fetch_stakeholders(conn, project_id=project["id"])
-    assert len(rows) == 1
-    assert rows[0]["id"] == sid
-    assert rows[0]["name"] == "Jane Smith"
-    assert rows[0]["stakeholder_groups"] == ["Finance"]
-    assert rows[0]["value_streams"] == ["Customer Onboarding"]
+    # Scoped to the row this test created rather than counting the table, because creating a
+    # project now writes the engagement's first approver as a stakeholder - so the roster is
+    # never empty and `rows[0]` is whichever name sorts first, not necessarily Jane. This is
+    # the shape CLAUDE.md prescribes for every test on the shared `client` fixture; these
+    # assertions were a global count only because an empty roster used to be guaranteed.
+    row = next(r for r in rows if r["id"] == sid)
+    assert row["name"] == "Jane Smith"
+    assert row["stakeholder_groups"] == ["Finance"]
+    assert row["value_streams"] == ["Customer Onboarding"]
 
 
 @pytest.mark.asyncio
@@ -114,7 +118,11 @@ async def test_delete_stakeholder(client):
         ok = await delete_stakeholder(conn, stakeholder_id=sid)
         rows = await fetch_stakeholders(conn, project_id=project["id"])
     assert ok is True
-    assert rows == []
+    # The row is gone, asserted on the id rather than on an empty table: the engagement's
+    # first approver is written at creation, so "deleted" and "the table is empty" stopped
+    # being the same statement. Asserting the id is also the stronger claim - an empty table
+    # would be satisfied by a delete that removed somebody else's row as well.
+    assert sid not in {r["id"] for r in rows}
 
 
 # ── API-level tests ──────────────────────────────────────────────────────────
@@ -141,7 +149,20 @@ STAKEHOLDER_PAYLOAD = {
 
 @pytest.mark.asyncio
 async def test_list_stakeholders_empty(client):
+    """An empty roster answers 200 and `[]` - not 404, and not null.
+
+    The premise has to be *restored* now rather than assumed: creating a project writes the
+    engagement's first approver, so no project is born with an empty roster. It is still a
+    reachable state in production - a consultant who removes the approver through the
+    Stakeholders tab is in exactly it - and the property being pinned is about the endpoint's
+    answer for an empty table, so the approver is deleted through the real door and the
+    original assertion kept. Weakening this to "one row" would have quietly retired the test.
+    """
     await client.post("/projects", json=PROJECT)
+    roster = await client.get(f"/projects/{SLUG}/stakeholders")
+    for row in roster.json():
+        assert (await client.delete(f"/projects/{SLUG}/stakeholders/{row['id']}")).status_code == 204
+
     resp = await client.get(f"/projects/{SLUG}/stakeholders")
     assert resp.status_code == 200
     assert resp.json() == []
@@ -158,8 +179,10 @@ async def test_create_stakeholder(client):
     assert data["value_streams"] == ["Customer Onboarding"]
     assert "id" in data
 
+    # Scoped to the created row: the roster already holds the approver written at creation,
+    # so a count of one would now be a count of the wrong thing.
     list_resp = await client.get(f"/projects/{SLUG}/stakeholders")
-    assert len(list_resp.json()) == 1
+    assert data["id"] in {r["id"] for r in list_resp.json()}
 
 
 @pytest.mark.asyncio
@@ -184,8 +207,10 @@ async def test_delete_stakeholder_api(client):
     del_resp = await client.delete(f"/projects/{SLUG}/stakeholders/{sid}")
     assert del_resp.status_code == 204
 
+    # On the id, not on an empty roster - the creation-time approver is still there, and
+    # asserting its absence is in any case the stronger claim.
     list_resp = await client.get(f"/projects/{SLUG}/stakeholders")
-    assert list_resp.json() == []
+    assert sid not in {r["id"] for r in list_resp.json()}
 
 
 @pytest.mark.asyncio

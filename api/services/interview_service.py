@@ -15,6 +15,7 @@ from pathlib import Path
 import httpx
 
 from api.config import get_settings
+from api.services.agent_config_service import image_address_kind
 from api.services.http_clients import get_tts_client
 from api.services.interview_keyterms import build_keyterms, harvest_strings
 from api.services.llm_client import LocalModelError, project_completion
@@ -179,6 +180,14 @@ async def get_session_with_script(session_token: str) -> dict | None:
 
         interviewer = await _interviewer_identity(conn, slug, dict(session_row))
 
+    # The id the portrait was resolved for, read exactly as `_interviewer_identity` reads it -
+    # `.get` on a dict rather than a subscript on the Row, because a session database that
+    # predates the stamp has no such column at all and the missing-stamp arm is a legitimate
+    # state rather than an error.
+    interviewer_agent_id = (
+        dict(session_row).get("interviewer_agent_id") or "stakeholder_interviewer"
+    )
+
     branding = {
         "header_image_url": config.get("brand_header_image_url", ""),
         "primary_color": config.get("brand_primary_color", "#0d9488"),
@@ -191,6 +200,15 @@ async def get_session_with_script(session_token: str) -> dict | None:
         # every project's participants would have heard Laura and read Avery. The answer
         # belongs to the agent and `project_agent_config` is where a project overrides it.
         "interviewer_image_url": interviewer["image_url"] or "",
+        # **Which kind of address that is**, because the participant's page cannot tell and
+        # must not guess. A built-in portrait is a bare path into the front end's bundle, which
+        # Vite serves under `/dashboard` - so handing one over with no label rendered an
+        # `<img>` that 404ed and a participant met an empty circle where the interviewer's face
+        # should be, in the first live interview this path ever conducted. The dashboard is
+        # told which default is promoted for the same reason, one level over.
+        "interviewer_image_source": image_address_kind(
+            interviewer_agent_id, interviewer["image_url"] or ""
+        ),
         "interviewer_name": interviewer["display_name"],
         # The tagline stays project branding: it describes the engagement's tone rather than
         # naming a person, and it is the same sentence whoever is speaking.
@@ -389,7 +407,29 @@ async def synthesise(text: str, voice_id: str, model_id: str) -> bytes:
         },
         timeout=30.0,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception as exc:
+        # Reported and **re-raised unchanged**: the caller decides what a participant hears, and
+        # swallowing here would hand back empty audio, which is the silent failure this reporting
+        # exists to remove rather than to create.
+        #
+        # ElevenLabs spells a quota exhaustion as a **401** carrying
+        # `{"detail": {"status": "quota_exceeded"}}` - the same status as a bad key - so the
+        # classifier reads the body before the status. A plain 401-means-auth rule would send an
+        # operator to replace a key that is working perfectly.
+        from api.services.provider_health import ELEVENLABS, report_provider_failure
+
+        report_provider_failure(
+            provider=ELEVENLABS,
+            operation="synthesising interview speech",
+            exc=exc,
+            consequence=(
+                "an interview question could not be spoken. The participant is mid-interview, "
+                "so this is worth acting on now rather than at the next working day."
+            ),
+        )
+        raise
     return resp.content
 
 

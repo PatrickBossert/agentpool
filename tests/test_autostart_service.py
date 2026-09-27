@@ -35,7 +35,7 @@ PROJECT = {
     "value_stream_labels": ["Asset Mgmt"],
     "review_gates": True,
     "slack_channel": "",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 # What NewProjectModal actually creates: it collects client_slug, sector and llm_mode and
 # nothing else, and api/models.py defaults both of Delivery's required keys to []. Two of
@@ -45,7 +45,7 @@ UNCONFIGURED_PROJECT = {
     "client_slug": UNCONFIGURED_SLUG,
     "llm_mode": "standard",
     "sector": "transport",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 
 @pytest.fixture(autouse=True)

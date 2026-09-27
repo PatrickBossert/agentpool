@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import socket
 import sqlite3
 from pathlib import Path
@@ -421,12 +422,100 @@ def test_an_unreachable_host_is_not_reported_as_a_refusal():
     assert "reach" in unreachable.lower()
 
 
-def test_the_browser_diagnosis_names_the_device_a_participant_is_holding():
-    """The container case is the one an operator will otherwise diagnose as a Deepgram outage."""
-    container = describe_browser_failure("unsupported_container")
-    assert "safari" in container.lower()
-    assert "ios" in container.lower() or "iphone" in container.lower()
-    assert container != describe_browser_failure("no_streaming_support")
+def test_the_browser_diagnosis_names_the_remedy_rather_than_a_device():
+    """The capture case is the one an operator will otherwise diagnose as a Deepgram outage.
+
+    **Its wording changed in sp67 and the change is the point.** While the audio went through
+    `MediaRecorder` the browser negotiated a container, Safari negotiated MP4/AAC, and the honest
+    diagnosis was that an iPhone or iPad could not be interviewed on this kind of engagement. Raw
+    PCM negotiates nothing and Safari has had `AudioWorklet` since 14.1, so what reaches this
+    door now is an out-of-date browser - and an operator told to expect a device problem would
+    ring the participant and tell them to find a computer, which is no longer the remedy.
+    """
+    capture = describe_browser_failure("no_audio_worklet")
+    assert "audioworklet" in capture.lower()
+    # The remedy, which is now something the participant can do on the device in their hand.
+    assert "update" in capture.lower()
+    assert capture != describe_browser_failure("no_streaming_support")
+
+
+def test_a_capture_that_would_not_run_is_not_reported_as_a_deepgram_problem():
+    """The two failures send an operator to different places, so they must not share a sentence.
+
+    A context that will not resume is the participant's own audio engine - on iOS, one an
+    incoming call or the screen locking interrupted. Told "could not hold a streaming connection
+    to Deepgram open", an operator checks the key, the balance and the network, every one of
+    which is fine, and the participant nobody rang is the only thing that would have helped.
+
+    The sweep below stops this one naming a device as *the* cause; this asserts it may still say
+    where the case comes up, which is the difference between a diagnosis and a dead end.
+    """
+    capture = describe_browser_failure("audio_capture_failed")
+    socket = describe_browser_failure("socket_failed")
+
+    assert capture != socket
+    assert "deepgram" in socket.lower()
+    # Names the remedy - a person to ring - rather than a system to investigate.
+    assert "audio engine" in capture.lower()
+    assert capture != describe_browser_failure("no_audio_worklet")
+
+
+def test_the_retired_container_reason_is_not_still_answered():
+    """The word went with the question it answered, and a stale entry would outlive the truth.
+
+    `unsupported_container` described a `MediaRecorder` negotiation that no longer happens, and
+    its sentence said an iPhone or iPad cannot be interviewed - which is the sentence this branch
+    exists to make false. Left in the table it would keep being served to an operator, because
+    nothing else in the system would contradict it. Asserted as *absent*, so a reinstatement has
+    to argue for itself.
+    """
+    assert describe_browser_failure("unsupported_container") == describe_browser_failure("no-such-reason")
+
+
+# A sentence claiming a device cannot be interviewed, in either order. Not the bare word
+# "iPhone": `audio_capture_failed` names the device deliberately, because "an incoming call or
+# the screen locking does this" is the difference between a diagnosis and a dead end. What must
+# never come back is the *claim*.
+_CANNOT_BE_INTERVIEWED = re.compile(
+    r"(iphone|ipad)[^.]*\bcannot\b|\bcannot\b[^.]*(iphone|ipad)", re.IGNORECASE
+)
+
+# Verbatim the sentence `unsupported_container` carried until sp67, kept as the control. Without
+# it the sweep below passes against a pattern that matches nothing at all, which is the shape of
+# guard this project has been caught by four times.
+_THE_RETIRED_CLAIM = (
+    "this participant's browser records none of the audio containers Deepgram is opened for "
+    "(webm/opus, webm, ogg/opus). Safari and iOS record MP4/AAC, so an iPhone or iPad cannot "
+    "conduct an interview on an engagement that requires Deepgram"
+)
+
+
+def test_the_sweep_below_can_actually_fail():
+    """The control, driven against the exact sentence that was removed.
+
+    A pattern that matched nothing would make the sweep green for ever, and it is the sweep that
+    is supposed to stop the claim coming back. So it is established rather than described: the
+    retired sentence must match, and a sentence that merely mentions the device must not.
+    """
+    assert _CANNOT_BE_INTERVIEWED.search(_THE_RETIRED_CLAIM)
+    assert not _CANNOT_BE_INTERVIEWED.search(
+        "on an iPhone or iPad that is what an incoming call does, and it does not recover"
+    )
+
+
+def test_no_diagnosis_still_tells_an_operator_a_phone_cannot_be_interviewed():
+    """The whole closed vocabulary, because the claim was in one entry and could return to any.
+
+    Swept rather than spot-checked: the sentence an operator reads is composed here, and a
+    device-shaped refusal written into `socket_failed` or `no_streaming_support` would be just as
+    wrong and would be read by exactly the same person. It is the *claim* that is banned and not
+    the word - see the pattern above, and the control that proves it can fail.
+    """
+    for reason in (
+        "no_audio_worklet", "no_streaming_support", "socket_failed", "audio_capture_failed",
+        "unknown",
+    ):
+        assert not _CANNOT_BE_INTERVIEWED.search(describe_browser_failure(reason)), reason
 
 
 def test_a_reason_the_server_does_not_recognise_is_not_echoed_back(engagements):
@@ -652,7 +741,7 @@ async def test_a_session_that_never_failed_is_unaffected_by_the_clearing(engagem
 async def test_the_browser_half_of_the_probe_is_recorded_on_a_sensitive_engagement(
     engagements, no_network
 ):
-    """Safari records MP4/AAC, so it declines the socket - and only the browser can say so.
+    """A browser with no AudioWorklet declines the capture - and only the browser can say so.
 
     This is the half of the probe the server cannot see for itself, and on this kind of
     engagement it has the same consequence as Deepgram being down: the interview does not happen.
@@ -662,14 +751,14 @@ async def test_the_browser_half_of_the_probe_is_recorded_on_a_sensitive_engageme
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/api/interviews/tok-alpha/speech-failure",
-            json={"reason": "unsupported_container"},
+            json={"reason": "no_audio_worklet"},
         )
 
     assert resp.status_code == 200
     assert resp.json()["recorded"] is True
     recorded = _failure_on(engagements, "locked-down", "tok-alpha")
     assert recorded is not None
-    assert "safari" in recorded["diagnosis"].lower()
+    assert "audioworklet" in recorded["diagnosis"].lower()
 
 
 @pytest.mark.asyncio
@@ -680,7 +769,7 @@ async def test_the_same_report_records_nothing_on_a_standard_engagement(engageme
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/api/interviews/tok-beta/speech-failure",
-            json={"reason": "unsupported_container"},
+            json={"reason": "no_audio_worklet"},
         )
 
     assert resp.status_code == 200

@@ -188,6 +188,38 @@ Two things that look like evidence during forensics on `data/` and are not:
 - **A running server on :8000 rewrites `data/system.db` while idle** - the scheduler restamps
   its heartbeat. Checksum before and after before attributing a change to the suite.
 
+**A backup taken into `data/` used to become a project, and one of the sweeps that adopted it
+wrote to it.** Both startup sweeps enumerated `Path(database_dir).glob("*.db")`, which is a
+list of **files** and not a list of engagements, so a snapshot was indistinguishable from a
+client. Measured on the live deployment on 17 September: **seventeen** scheduled daily reports
+against **one** real project, eleven of the phantoms `sp-gs-am.*` snapshots and **four of them
+backups of `system.db` itself**. `scheduled_jobs` holds one row today.
+
+The noise was the harmless half. `_mark_stale_runs_failed` **writes** - `UPDATE crew_runs SET
+status='failed'` against every file it found - and ten runs in a six-week-old `sp-gs-am`
+backup had been flipped by restarts. **A backup that changes is not a backup**, so the
+forensic record those snapshots existed to preserve had been quietly edited by the thing
+meant to be reading it. Fixed in `7724fc6f`: both sweeps take `fetch_registered_slugs`, and
+registration also drops `scheduled_jobs` rows for slugs that are not projects - guarded so an
+empty registry cannot mean "delete everything", since a deployment part-way through creating
+its first project legitimately has none.
+
+Two halves survive the fix, and they are the reason it is written here rather than left in a
+commit message:
+
+- **Put a backup outside `data/`.** This session used `archive/`. A subdirectory is *not* far
+  enough: `_find_session_db` globs `data/*.db` **and** `data/*/*.db`, so `data/backups/` is
+  still on a search path.
+- **A database file is not a project. The registry is the definition.** Anything enumerating
+  engagements reads `project_registry`; anything enumerating files is answering a different
+  question and will be wrong the first time somebody names a file conveniently.
+
+One live demonstration came free with the repair. Two archived databases were **re-materialised
+as 0-byte files in `data/` within minutes of being moved**, by a pre-fix process still globbing
+for them - which is this file's own "probing a slug materialises a database file per guess"
+hazard, observed rather than reasoned about. Expect it while anything predating `7724fc6f` is
+still running, and do not read such a file as a project that lost its data.
+
 ## Reviewing changes: the recurring failure mode
 
 Repeatedly on this project a test has verified a property **one layer away from where it holds**.
@@ -337,9 +369,13 @@ found by a reviewer reading the code against the WebSocket and MediaRecorder spe
 
 So: **when a test's world is simulated, the fake needs its own review against the real thing's
 contract, and it is worth writing the contract down beside it.** The fakes now fire `error`
-then `close`, and hand over a final chunk before `onstop`, because that is what the real ones
-do - and where a fake deliberately simplifies, the simplification is a comment rather than a
-silence. The cheapest tell that you are in this territory: a test whose green depends on an
+then `close`, and hand over the audio still held before acknowledging a flush, because that is
+what the real ones do - and where a fake deliberately simplifies, the simplification is a comment
+rather than a silence. sp67 replaced the recorder with an `AudioWorklet` and the discipline
+carried: its `AudioContext` reports **44100** rather than the 48000 a guess would use, its
+`addModule` **rejects** for an address that does not resolve, and its context starts
+**suspended** - three claims chosen because a more obliging fake would hide a defect that is
+silent in the browser. The cheapest tell that you are in this territory: a test whose green depends on an
 event ordering you have not read the specification for.
 
 ---
@@ -462,6 +498,15 @@ no-ops — notes that save, display in the UI, and never reach the agent. `Rerun
 out**, posting one review per crew output, so anything assembling review feedback into a prompt
 must deduplicate or it repeats the same instruction N times.
 
+`PATCH /projects/{slug}/reviews/{id}` is also **the door that releases a paused crew** -
+`HumanInputTool` polls `human_reviews` for up to twenty-four hours and this write is what ends
+the wait - so it is the door a brand-new engagement has to be able to open. Until an approver
+was named at creation, no project could: see the two-axes section above for why, and
+`tests/test_approver_at_creation.py::test_the_person_named_at_creation_can_open_the_first_hitl_gate`
+for the whole path driven over HTTP. It takes `caller_may_contribute`, so a `reviewer` opens it
+too; creation names an `approver` because that is the role the *rest* of the content gates
+need, and an approver satisfies both.
+
 **Nothing notifies a reviewer that a gate is waiting.** `HumanInputTool` writes the review to the
 project database and polls it until a human decides. It used to post the review to an n8n webhook
 first, which relayed to Slack; SP50 retired n8n and no channel replaced the post. The gate is
@@ -469,6 +514,14 @@ unaffected — the polling was always the mechanism and the post only a nudge, a
 that never configured `N8N_WEBHOOK_URL` already ran exactly this way — but an agent can now sit on
 a gate for the full 24-hour timeout with nobody aware. `tests/test_human_input.py` asserts the
 absence at the boundary rather than describing it, so the state is checked rather than assumed.
+
+**Naming an approver at creation does not close this, and it is worth saying so because it
+looks as though it might.** Every engagement now has an approver who is on PAM's daily report
+recipient list, so there is at last a named person to notify - but the report is a status
+summary with a link and **does not enumerate pending gates**, so nothing still tells anybody a
+gate is waiting. What changed is that the gap moved from "nobody could open it" to "nobody is
+told to", which is a smaller problem and a different one. The replacement below is still the
+work.
 
 The intended replacement, decided 2026-08-17, is a **message push carrying a link and a token that
 brings the reviewer to the content on the server** — never the content itself. Half of it already
@@ -506,8 +559,54 @@ in `api/services/commit_service.py` - behind an
 `users` was empty, granting content authority to whoever could administer accounts.
 
 `is_sys_admin` is global and implies `project_admin` on every project, so a newly created
-project - which has no stakeholders, and therefore nobody the walk could ever reach - can be
-bootstrapped. It implies nothing about content. Administration and content are different axes.
+project can be bootstrapped on the administration axis. It implies nothing about content.
+Administration and content are different axes.
+
+**That sentence used to end "- which has no stakeholders, and therefore nobody the walk could
+ever reach -", and treated the flag as the whole bootstrap. It was half a bootstrap, and the
+missing half was a dead end.** A project created from nothing had total administration and
+**nobody who could approve anything**: the walk reached nothing for anybody, so the first
+`HumanInputTool` gate was unopenable and timed out after twenty-four hours.
+`helia-digital-tau` met it on its first day - Alex's value chain sat waiting, Morgan could not
+start, and the Approve button answered 403 into a handler with no `catch`. Both halves of the
+old sentence were correct and together they left the hole, which is why it survived so long:
+every reader checked the flag, found it right, and stopped.
+
+**The two axes are bootstrapped by two different mechanisms now.** Administration by
+`is_sys_admin`, as before. Content by an **approver named at creation**: `ProjectCreate`
+requires `approver_name` and `approver_email`, and `create_project` writes a stakeholder
+carrying `is_approver` and issues their invite. `/auth/accept` is what completes it - that is
+the call which creates the `users` row and the `project_memberships` row - so the engagement
+acquires somebody who can approve without any gate being widened.
+
+**Do not "just seed a stakeholder for the creator". It does not work, and the measurement is
+here so nobody spends a day rediscovering it.** `POST /auth/login` matches `ADMIN_USERNAME`
+from the environment **before** it reads `users`, so the built-in administrator - the login
+every deployment creates engagements with - has **no `users` row at all**, and `caller_roles`
+returns at step **one**. A stakeholder row is the walk's **last** step. Driven over HTTP: 201,
+the flags confirmed set on the row, and `can_approve` still `false`
+(`tests/test_new_project_approval_bootstrap.py::test_seeding_an_approver_stakeholder_for_the_creator_does_not_open_the_gate`).
+The only way to make it work would be to mint a `users` row for the environment-variable
+administrator - an account inert for login and live for authority - and every approval on
+every engagement would then be attributed to "admin". Naming a **person** works precisely
+because the invite loop builds all three rows.
+
+Two consequences worth expecting rather than diagnosing. **An engagement is created with one
+stakeholder**, so no project has an empty roster from creation - a state several tests were
+built on and now arrange deliberately (`tests/support_projects.py`). And **`REVIEW_FLAGS`
+includes `is_approver`**, so the approver named at creation is on PAM's daily governance report
+and on commit notices from the first day; that is the role behaving as intended, but naming
+an approver starts correspondence to them, which nothing else in the creation flow does.
+
+**Nothing delivers that invite.** `issue_invite` writes an `auth_tokens` row and returns the
+raw token, and no caller anywhere passes it to `send_project_mail` or `send_platform_mail`, in
+any mode - so `dev_mode` does not reach this path, because there is no send for it to hold.
+The creation response says so in as many words rather than claiming an email; a response
+claiming a redirected message would be the shape the mail section below records and calls the
+one to watch for. The operator retrieves the link through `POST
+.../stakeholders/{id}/resend-invite`, whose own docstring carries the rest of the bad news:
+there is no page in `ui/src` that redeems a token.
+
 **Both roles were ungrantable until sp44, and that had shaped three decisions before it was
 fixed.** `_reject_undeclared_role_flags` 422'd every truthy attempt to set
 `is_project_admin` or `is_governor`, so both were stored, migrated, walked, returned and
@@ -1415,8 +1514,13 @@ presented as a complete list - a picker showing five voices where ninety exist g
 **Language is the axis; accent is a narrowing (sp64).** `en` is the language; `british`,
 `irish`, `american` and `new zealand` are accents *of* it, and ElevenLabs keeps them as separate
 query parameters. The door used to open filtered to the project's `interview_accent`, `british`
-by default, which showed **6 of 41** account voices - an axis that should broaden used as one
-that narrows. So the default sits on the language (`DEFAULT_LIBRARY_LANGUAGE` in
+by default, which showed **6 of 41** account voices when that was measured - an axis that
+should broaden used as one that narrows. **The account held 45 on 17 September**, read from
+`GET /v1/voices`, so treat the ratio as the finding and the pair of numbers as a moving
+target - the same caution this section already gives one paragraph up about which accents a
+listing happens to carry. An account grows whenever somebody adds a voice, and nothing in
+this repository is told when that happens. So the default sits on the language
+(`DEFAULT_LIBRARY_LANGUAGE` in
 `voice_catalogue.py`, never in TypeScript), the accent narrows nothing until asked, and the
 picker carries a control for each. The account listing is deliberately **never** narrowed by
 language: those are the deployment's own voices, every one added on purpose, and the parameter
@@ -1542,8 +1646,30 @@ failure mode here is worse than a wrong voice id: a hardcoded vocabulary is a **
 client's names, committed to this repository and sent up with every other client's interview**.
 The extraction is positional rather than a stopword list - the **first word** of a capitalised
 run that opens a sentence is dropped and the rest of the run kept, which is what removes "How"
-and "Please" without anybody listing them - capped at `MAX_KEYTERMS = 100`, registry labels
-first because declared vocabulary should outrank inferred.
+and "Please" without anybody listing them - registry labels first because declared vocabulary
+should outrank inferred.
+
+**The cap was counting the wrong thing, and it cost two live interviews their recogniser.**
+`MAX_KEYTERMS = 100` was reasoned about against the URL - "roughly three kilobytes encoded,
+comfortably inside every URL limit" - and the URL was never the binding constraint. Deepgram's
+limit is **500 tokens across all keyterms**, exceeding it is answered `Keyterm limit exceeded.
+The maximum number of tokens across all keyterms is 500.` with **HTTP 400**, and nothing in this
+codebase measured that quantity. The live `sp-gs-am` vocabulary was 100 terms at an estimated
+**918 tokens**. So a `KEYTERM_TOKEN_BUDGET = 350` now bounds the list, spent down an order that
+already puts the most valuable terms first, and a term that does not fit is **skipped rather
+than ending the walk** - or one long label silences every acronym behind it.
+
+Two things generalise past Deepgram. **On a streaming connection that 400 lands on the
+handshake**, so the browser never holds an open socket and cannot read a status: it sees `error`
+then `close`, `openDeepgramSocket` answers `null`, `deepgramFailuresRef` reaches two, and
+Deepgram is latched off for the rest of the hour. Nothing errors in front of the participant,
+nothing reaches the provider's usage page because no audio is ever transcribed, and the
+interview completes reporting success - **the provider's own console showed the account's whole
+day as one second of an operator's test tone.** And the estimator is a **deliberate
+over-count**, because Deepgram publishes the limit and not the tokeniser (their own
+`deepgram-python-sdk#503` is a user asking what a token is and getting no answer): under-counting
+buys a silently dead recogniser, over-counting costs a term off the end of a sorted list, and
+the headroom between 350 and 500 is which of those a wrong guess becomes.
 
 **That rule was written in the docstring and implemented for lone words only**, so a run of two
 survived it intact: `If ISS`, `Does GS UK`, `Before I`, `Which KPIs`, `Is Fraikin`. Measured on
@@ -1607,6 +1733,17 @@ a successful open resets that one, so a drop recorded there could never reach tw
 drops still turn Deepgram off, because an amber notice on every question for an hour is its own
 defect.
 
+**A completion is not evidence about the interview that was running when it arrived.**
+`cleanup()` cannot stop an interview, so an earlier test's goes on answering and posts through
+whatever `fetch` stub is installed *now* - and nothing in the body distinguishes it. Reading "the
+last completion" is therefore unsound in these files, and it was not hypothetical: one extra
+`await` in `startDeepgram` shifted an interview a test to the right, and an assertion about the
+*browser fallback* failed carrying a transcript from two tests earlier. Two halves to the repair,
+because either alone leaves it latent: a test settles its own interview before it ends, and one
+that reads a completion scans for the answer **its own** recogniser was given. The diagnosis is
+the reusable part - when a timing change breaks a test that has nothing to do with it, suspect
+the shared sink before the change.
+
 **Anything that counts sockets across questions belongs in a test file of its own**, which is
 why `VoiceInterviewDeepgramRecovery.test.tsx` exists and is not part of its sibling.
 `cleanup()` unmounts the page and cannot stop the interview - an async loop over closures - so
@@ -1633,33 +1770,139 @@ guarded in `deepgram.ts` rather than in the page, because "an abnormal post-open
 guard a second recogniser starts on one microphone and the first is orphaned, holding the
 microphone for the rest of the interview.
 
-**`recorderMimeType` answers three things, not two, and Safari is why.** `undefined` is "this
-browser will not say", which is a reason to try its default; `null` is "this browser has said it
-records none of these", which is a reason not to open the socket at all. They were one value -
-`.find()` returning `undefined` - so a browser that answered **false** to webm/opus, webm and
-ogg/opus alike had its negative probe discarded and got a recorder built with its own preferred
-container, streamed to a socket configured for webm/opus. **Safari, including on iOS, records
-MP4/AAC and answers false to all three**, and that is the device a participant is most likely to
-be holding. If Deepgram answers such a stream with no transcripts rather than closing the
-socket, nothing fires `onDropped` at all and the participant meets the silent empty answer this
-section's fifth case is about. Declining costs Safari nothing - it has
-`webkitSpeechRecognition`, so the fallback works - and it is the one place in this file where
-the safe direction is *not* to try.
+**The audio is raw PCM from an `AudioWorklet`, and sp67 is why - the container is gone and so is
+the constraint it imposed.** Until then the page recorded through `MediaRecorder`, which
+*negotiates* a container: Chrome and Firefox record webm/opus and Safari records MP4/AAC, and a
+socket opened for one and fed the other returns no transcripts rather than an error. So the page
+had to ask `MediaRecorder.isTypeSupported` and decline a browser that answered false to all
+three - which is Safari, **and therefore every iPhone and iPad**. On an engagement that requires
+Deepgram that meant the device a participant is most likely to be holding could not be
+interviewed at all. It was an accepted operational constraint rather than a defect, because the
+alternative was the participant's voice going to Apple.
 
-**A flag guards the routes that set it, and one route did not.** `new MediaRecorder(...)`
-throwing reaches a `catch` that answers the promise `null` - "fall back" - and *then* closes the
+**That was never a fact about Safari's microphone. It was a fact about `MediaRecorder`.**
+`AudioWorklet` hands over `Float32Array` samples straight from the audio graph, in the same shape
+on every browser, so there is nothing to negotiate and nothing to decline - and Safari has had it
+since **14.1 on macOS and iOS 14.5**, April 2021. **An iPhone can now be interviewed on a
+sensitive engagement**, and `VoiceInterviewSpeechPolicy.test.tsx` drives verbatim the browser the
+old probe refused (`isTypeSupported` false to all three) and asserts the Deepgram socket opens.
+Nothing else about the policy moved: the browser's own recogniser is still refused on such an
+engagement, and Deepgram being unreachable or out of credit still stops the interview.
+
+The probe kept its two-question shape and changed what the second question *is*: "can this
+browser produce a container Deepgram accepts" became "does this browser have `AudioWorklet`".
+The reason word changed with it - `unsupported_container` is retired and `no_audio_worklet`
+replaces it, because the retired sentence told an operator an iPhone could not be interviewed
+and nothing else in the system would have contradicted it. The population it refuses is now a
+browser predating April 2021 rather than a current device, so the participant's notice names
+updating their browser instead of finding a computer.
+
+Four things about the PCM path fail **silently** when they are wrong, which is why each is driven
+as a pure function in `PcmCapture.test.ts` rather than through a screen:
+
+- **The sample rate is measured, never assumed.** It goes on the URL as `sample_rate`, read off
+  the live `AudioContext` - commonly 48000, and 44100 on plenty of real machines. A mismatch does
+  not error: the socket opens, the audio streams, Deepgram decodes it at the wrong speed, and the
+  transcript is gibberish or empty. The fakes report **44100**, deliberately, so a rate hardcoded
+  to the common case fails every test in the directory rather than passing by coincidence.
+- **Float32 to Int16 needs an explicit clamp.** `DataView.setInt16` takes its value modulo 2^16,
+  so an unclamped 1.5 arrives as -16386 - the loudest part of a word inverts, and transcribes as
+  noise. The two halves scale by different maxima (`0x8000` negative, `0x7fff` positive), because
+  two's complement holds -32768 and only +32767. A round trip over in-range samples can see
+  neither; the test drives plus and minus 2.0, in both directions.
+- **`linear16` is little-endian**, which is `setInt16`'s third argument and `false` by default.
+- **The graph must pull.** An `AudioWorkletNode` with an input and no path to `destination` may
+  never be scheduled, so it is connected onward through a **zero-gain** node. Connecting it
+  straight to `destination` is the easy mistake while proving the graph runs, and it puts the
+  participant's own voice in their ears.
+
+Two more are about iOS specifically, and both were found by reading specifications rather than by
+the suite. A context starts **suspended**, and iOS reports a **fourth** state, `interrupted`,
+when the participant switches tabs or lets the screen lock - which never clears on its own.
+`process()` is called on neither, so the answer comes back empty with nothing raised anywhere,
+which is precisely the class of failure this path was rebuilt to remove: the capture therefore
+checks the state *after* resuming rather than trusting the resume, and refuses rather than
+capturing into silence. And the render quantum is **no longer fixed at 128** - Chrome 153 shipped
+`AudioContextOptions.renderSizeHint` in September 2026, so 128 is the specification's default
+rather than its value, and the processor reads the block's own length.
+
+**The capture and the socket are two calls, because they fail for different reasons.**
+`startPcmCapture` builds the graph and `openDeepgramSocket` takes the built capture; the page
+calls them in turn, so it can say which half declined. Composed into one function it could not,
+and it reported the socket - so a context that would not run reached the operator as *"could not
+hold a streaming connection to Deepgram open"*, sending them to check the key, the balance and
+the network, none of which was the fault. `audio_capture_failed` is the reason for the capture
+half and it names the remedy, which is ringing the participant back rather than investigating
+anything. Ownership of the graph passes with the capture: from the moment `openDeepgramSocket`
+is handed one, every route that ends the answer tears it down.
+
+**The context is built in the task the Start click created, and that is about iOS.** Safari
+starts an `AudioContext` suspended when it is constructed outside a user gesture, and whether
+`resume()` is then granted on sticky activation alone is exactly what nobody has driven on a real
+device. Built lazily at the first answer it certainly *was* outside one - `conductInterview`
+awaits `PATCH /status` and then the interviewer speaking before anything reaches `startDeepgram`.
+So `runInterview`, which **is** the click handler, calls `interviewAudioContext()` as its first
+statement. The refusal would be clean either way, because the capture declines rather than
+capturing silence - but a clean refusal at question one on every iPhone is this section's
+headline claim inverted. Asserted against the first request the interview makes, since a context
+that exists by `/status` was built synchronously in the click's own task.
+
+**A mid-answer interruption is watched for, and it is an exposure this branch created.** The
+context's state is checked before each answer, which catches one that was already interrupted -
+but iOS interrupts one *during* an answer too, on an incoming call, the screen locking, or the
+tab going to the background. `process()` then stops being called: no batches, no error, the
+socket still open, and the three-second silence timer ends the answer. An empty answer, nothing
+said to the participant, and the next answer resumes the context so it self-heals and reads as
+somebody who did not speak. Before PCM an iPhone was refused outright and could never reach this
+path, so **the population this change exists to serve is the population it exposed.**
+`context.onstatechange` routes it to the same drop the socket reports - handover on a standard
+engagement, honest halt on one that requires Deepgram. It reports only a transition **away from**
+`running`, because a context coming back fires the event too and an amber notice on every
+recovery is the "report everything" failure this file already records on the browser recogniser's
+`onerror`.
+
+**`channelCount: 1` does not downmix on its own.** Under the default `channelCountMode` of `max`
+the count is ignored: a stereo microphone hands the processor two channels, it reads channel 0,
+and the right channel is **discarded** rather than mixed - a capture that is quiet or nearly
+silent on a device that puts most of the signal in one channel, and a `channels=1` on the URL
+that is a promise to Deepgram nothing keeps. It is `explicit` with `speakers`.
+
+**`encoding`, `sample_rate` and `channels` are the client's, and that is the one exception to the
+rule above.** `model` and `keyterm` are the server's because they are one fact *about Deepgram*.
+These three are one fact about *this browser's audio graph*, and the server cannot observe an
+`AudioContext`'s sample rate at all - so they are set together in `deepgramListenUrl`, and
+`deepgram_listen_params` declares none of them, which
+`test_the_server_declares_nothing_about_the_shape_of_the_audio` holds. What that exists to stop
+is somebody adding "just the encoding" server-side, which looks entirely reasonable and splits a
+pair whose disagreement is silent at both ends.
+
+**A flag guards the routes that set it, and one route did not.** A capture that fails to start
+reaches a `catch` that answers the promise `null` - "fall back" - and *then* closes the
 socket, and that close arrived at `onclose` with the socket open and not stopping, so it
 reported a drop. The caller then had two reasons to start a browser recogniser, the null answer
 and the drop, and started one for each: verbatim the defect the flag was added to prevent, by a
 door the flag did not cover. The `catch` claims `dropped` itself, because it is the only place
 that knows the closure was ours. It is asserted as the **route** - the failure driven through
-the constructor - and counted through the page, where a one-question interview builds exactly
+the graph connection - and counted through the page, where a one-question interview builds exactly
 two recognisers (the answer, and the spoken section rating) and built three before the fix. A
-transcript cannot see this: both recognisers write into the same answer. And `stop()` **waits for the flush**, bounded at
+transcript cannot see this: both recognisers write into the same answer.
+
+And `stop()` **waits for the flush**, bounded at
 `FLUSH_TIMEOUT_MS = 1500`: closing the socket in the same tick discarded the tail of any answer
 ended by tapping "Done speaking", which was a regression against the path being replaced -
 `recognition.stop()` delivers a pending `onresult` before `onend`, so the browser engine never
 lost it. The deadline is a ceiling and not a cost; the ordinary wait is one round trip.
+
+**PCM has no `onstop`, so that guarantee is kept by a different mechanism and is stronger for
+it.** `stop()` asks the worklet for the samples it is still holding, the processor posts its tail
+and *then* acknowledges, and `CloseStream` goes out on the acknowledgement. A `MessagePort`
+delivers in order, so "the tail is on the wire before the close" is a property of the port rather
+than of two independently queued tasks - which is what the final `dataavailable` and `onstop`
+were. The deadline still bounds the whole of it, because a worklet on an interrupted context
+never answers at all. One thing the `MediaRecorder` path did not need: the graph is **torn down**
+when the answer ends and on every route that declines, because one `AudioContext` serves the
+whole interview and a graph left connected goes on posting into a closed socket for every
+remaining question.
 
 **That flush guarantee was unfalsifiable as first tested, and the fake was only half of why.**
 `FakeRecorder.stop()` fired `ondataavailable` **synchronously**, while a real `MediaRecorder`
@@ -1675,6 +1918,24 @@ socket rather than throwing; and stopping a socket that is no longer open sends 
 and ends the answer at once rather than holding a participant for the whole deadline. The
 generalisable half: **repairing a fake does not add the assertion the fake was hiding.** It
 makes the assertion possible, and it has to be written.
+
+**The conversion was asserted as a function and not as a wire property, which is this file's
+recurring failure in its thirteenth instance.** `floatTo16BitPcm` was driven thoroughly - clamp,
+scale and byte order, in both directions - and nothing asserted it was *applied at the seam*.
+Deleting the call, so the worklet's raw Float32 buffer went straight to `socket.send`, left the
+whole frontend suite green: the only test reading the wire checked `typeof s !== 'string'`, which
+a Float32 buffer satisfies perfectly. Live, the socket would then carry 32-bit float bytes under
+`encoding=linear16` - Deepgram reads two float samples as one Int16 pair and decodes noise at
+double speed, with no error at either end. It is asserted on **bytes rather than length**, driven
+with a sample outside ±1.0, so one assertion covers four mutations: no conversion, no clamp,
+wrong scale and wrong byte order. *What calls this, and is that tested?*
+
+`FakeRecorder` is gone with the recorder, and **every one of those assertions survived the
+move** - rewritten against the worklet's port rather than deleted with the thing they were about.
+That is the test of whether a lesson was understood or merely recorded: the batch reaching the
+wire before `CloseStream`, the send guard on a socket that has gone, and the stop that sends no
+`CloseStream` to a closed socket are all still asserted, and the fakes that replace it carry
+their contract in a comment naming which specification each claim comes from.
 
 **Two things travel to Deepgram, not one**, and `PARTICIPANT_SPEECH_EGRESS` in `agents/egress.py`
 names both - the participant's audio, and this engagement's vocabulary, which is client material
@@ -1697,8 +1958,19 @@ satisfied by a value set beside the keyterms, and the branch that would then opt
 *empty-vocabulary* one - a project with no registry yet, which is every engagement on its first
 interview.
 
+**Raw PCM costs about forty times the bandwidth, and nobody priced it before enabling mobile.**
+`linear16` mono at 48 kHz is ~96 kB/s - roughly 768 kbit/s sustained, against roughly 24 kbit/s
+for webm/opus - so **a 45-minute interview uploads about 260 MB**. Nothing consults
+`socket.bufferedAmount`, so a connection that cannot keep up buffers without bound rather than
+shedding or complaining. No change was made: the fallback still covers a socket that fails, and
+guessing at a threshold is worse than measuring one. But it is a real cost of serving phones, and
+the device it lands hardest on is the device this branch exists to enable. **Run the first iPhone
+test on cellular rather than office Wi-Fi**, and watch what a weak signal does to the transcript
+before concluding anything about the recogniser.
+
 **Nothing on this path has ever spoken to the real Deepgram.** The `access_token`-in-URL form,
-the `keyterm` spelling and the webm/opus stream are all read off documentation, so every test
+the `keyterm` spelling and the `linear16`/`sample_rate`/`channels` triple are all read off
+documentation, so every test
 encodes a *reading of the docs* rather than the provider's behaviour, and a wrong reading opens a
 socket that transcribes and boosts nothing. This is the same honesty the ElevenLabs add-voice
 door is recorded with under *Known issues* - "never confirmed against the real provider" - and
@@ -2635,12 +2907,27 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - `python-pptx` must be installed inside the venv (not system pip on macOS with Homebrew Python 3.13 / PEP 668)
 - ~~`taskreimagination.ai` must be a verified sender domain in Resend before reminder emails
   deliver~~ - **closed, and it had been closed for some time before anybody checked.** The domain
-  is verified in `eu-west-1`, confirmed against `GET /domains` on 13 September 2026. It is left
+  is verified in `eu-west-1`, confirmed against `GET /domains` on 13 September 2026 and again on
+  17 September. It is left
   struck through rather than deleted because this entry was **cited as a reason** by four
   decisions elsewhere in this file, and a reader who finds those citations needs to land
-  somewhere that says the reason is void rather than find nothing. What is *not* closed by it:
-  `pam@` and `stakeholder-manager@` have never been sent from, inbound routing does not exist,
-  and `dev_mode` still defaults to `True` so project mail is still held.
+  somewhere that says the reason is void rather than find nothing.
+
+  **It had been false for seven weeks, not days.** The same response carries
+  `"created_at": "2026-07-26"`, so the domain has been verified since **26 July 2026** - which
+  makes this a considerably sharper instance of *a fact about an external service rots
+  silently* than the original write-up implied. Seven weeks is long enough for four decisions
+  to be taken on it, and four were.
+
+  **One of the residuals is now a measurement rather than an assumption.** The same read
+  answers `"capabilities": {"sending": "enabled", "receiving": "disabled"}` - so "inbound
+  routing does not exist" is not merely a statement about code we have not written; the
+  provider has receiving **disabled** on the domain, and enabling it is a prerequisite
+  nobody has met. That settles one of the two items the mail section lists as "assumed and
+  unconfirmed". The other - whether Resend permits arbitrary local parts on a verified
+  domain - is untouched by this and still unconfirmed. What else is *not* closed:
+  `pam@` and `stakeholder-manager@` have never been sent from, and `dev_mode` still defaults
+  to `True` so project mail is still held.
 - The Architecture page (`/architecture`) is not linked from the nav — navigate directly
 - The `business_plan` crew has never completed a real run. It only became buildable when
   `visual_illustrator` was registered; before that `create_business_plan_crew` raised
@@ -2664,10 +2951,13 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   participant's audio and this engagement's vocabulary. Both are declared in
   `PARTICIPANT_SPEECH_EGRESS`; the decision itself is unchanged. The residual is the one
   ElevenLabs' add-voice door already carries below: **no part of this path has spoken to the
-  real provider.** The URL form, the `keyterm` spelling and the webm/opus stream are read off
+  real provider.** The URL form, the `keyterm` spelling and the raw PCM stream with its measured sample
+  rate are read off
   documentation, so a wrong reading opens a socket that boosts nothing, and the fallback is
   what keeps the worst case at "today's behaviour" rather than "a lost interview". Argued in
-  full under *Listening to a participant*. ElevenLabs is reached for a **second** kind of request - the two
+  full under *Listening to a participant*. **The audio is raw `linear16` PCM since sp67 rather
+  than webm/opus** - the same speech in a different shape on the wire, and the row is unchanged
+  in what it declares leaves. ElevenLabs is reached for a **second** kind of request - the two
   voice listings behind `GET /projects/{slug}/voices` (`api/services/voice_catalogue.py`) -
   and that request carries no client material at all: an accent, a sex, and a search term the
   consultant typed. It is recorded because the row said "interview text" and would otherwise
@@ -2691,8 +2981,17 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   sp66 removed the review step's "email me a copy" checkbox - it promised a delivery that
   `dev_mode` was holding, and it was the *only* reader of the participant's edits, so a
   participant who corrected a mangled answer and left the box unticked had their corrections
-  discarded. The door behind it is still mounted, still tested (five backend files touch it),
-  and now has **no caller in `ui/src`**. Kept rather than retired for one reason: it is a
+  discarded. The door behind it is still mounted, still tested - **six** backend files touch
+  it, not the five this entry claimed for a while: `test_interviews_router.py` holds most of
+  it, alongside `test_interview_speech_policy.py`, `test_outbound_mail_seam.py`,
+  `test_participant_facing_name.py`, `test_reminder_email_copy.py`, and
+  `test_reply_tokens.py`. That number is this entry's own stated retirement cost, so recount
+  it rather than trusting it.
+  It now has **no caller in `ui/src`** - the only occurrences there are two comments
+  explaining the removal, a row on the Architecture page already describing it as "mounted,
+  no caller in the dashboard since sp66", and a test asserting the page **never** posts to
+  it, which is the good kind of evidence: the absence is asserted rather than assumed.
+  Kept rather than retired for one reason: it is a
   working, well-guarded send path and the product wants *some* route to a participant's own
   transcript, so deleting it would be deleting the mechanism rather than the promise. **Who can
   call it, and what happens:** anybody holding a `session_token` for a completed session, by
@@ -2701,7 +3000,7 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   relay attacker-chosen text from the sending domain. Under `dev_mode` it answers
   `{"sent": true}` and the transcript goes to the operator, which is the corrected sentence in
   the mail section above. **If it is ever retired, it takes the router handler, the request
-  model, the rate-limit registration, and tests in five files with it** - and that mail-section
+  model, the rate-limit registration, and tests in six files with it** - and that mail-section
   paragraph must be corrected a second time, since it would then describe no door at all.
 - **The keyterm read widens what a session token discloses, and that is a judgement rather
   than an oversight.** `GET /api/interviews/{session_token}/deepgram-token` answers the whole
@@ -2717,16 +3016,31 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   it fits the grant's 30-second TTL exactly, and the microphone stream *is* held for the whole
   interview so the browser's recording indicator does not flicker. If the latency is felt, the
   fix is to open the next socket while the question is being spoken, not to lengthen the grant.
-- `complete_session` and `_find_session_db` in `api/services/interview_service.py` open
-  their connections with a bare `aiosqlite.connect(db_path)`, not
-  `api.database.get_connection(slug)`. WAL survives that, because it is a persistent
-  property of the database file once any code path sets it; `busy_timeout` does not, since
-  it is per-connection and nothing sets it on this path. Found while proving twenty
-  concurrent interview completions in `tests/test_interview_concurrency.py` - it did not
-  fail the test on this workload, but the `get_connection` guarantee does not actually
-  reach the `/complete` endpoint's writes. Worth a follow-up task.
+- ~~`complete_session` and `_find_session_db` in `api/services/interview_service.py` open
+  their connections with a bare `aiosqlite.connect(db_path)`, so `busy_timeout` never
+  reaches the `/complete` endpoint's writes~~ - **closed by `98803116` on 9 August 2026**,
+  and it stood here for five weeks afterwards telling a reader to open a task that was
+  already dead. `api/services/interview_service.py` contains **no `aiosqlite.connect` at
+  all**: every open goes through `interview_db_connection` (`api/database.py:2292`), which
+  calls `_apply_connection_pragmas` and applies `PRAGMA busy_timeout = _BUSY_TIMEOUT_MS`
+  (10000) **unconditionally**. Only `wal` is optional, and `_find_session_db` opts out of
+  that deliberately, because `journal_mode=WAL` is a write and the scan touches every
+  candidate file. The constant's own comment names this entry's defect as the thing it
+  exists to prevent - *"Centralised here so `get_connection` and `interview_db_connection`
+  cannot drift apart on the value"*.
 
-  **`_find_session_db` also runs twice per grant request**, and that path is now per answer
+  **This is the dangerous kind of stale entry, and it is worth naming as a class**: not a
+  defect written up and then fixed, but a **premise about the world that rotted** while the
+  paragraph went on asserting it. It read as a standing instruction ("Worth a follow-up
+  task"), and its central claim - *nothing sets `busy_timeout` on this path* - was stated
+  as fact in the same sentence that carried its reasoning, so a reader had nothing to
+  distrust. Same shape as the Resend entry above, and found the same way: by checking the
+  code rather than the file. Struck through rather than deleted for the Resend entry's
+  reason - it was cited as a reason, and a reader who arrives at that citation needs to
+  land somewhere that says the reason is void.
+
+  **The second half was never stale and is still the live finding.**
+  **`_find_session_db` runs twice per grant request**, and that path is now per answer
   rather than per interview, so the cost is newly worth something: each call scans every
   project database. `api/routers/interviews.py` calls it once inside `get_session_with_script`
   and again to recover the slug the keyterms need - and `get_session_with_script` **already
@@ -2740,16 +3054,37 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   three feedback channels `build_and_run_crew` gives it. Not currently reachable from the UI:
   `runAgent` is defined in `ui/src/api/endpoints.ts` and called by nothing, so every human
   re-run goes through the crew path. It is reachable from the API.
-- The Interview Coordinator still matches a stakeholder to a script by `node_label` when it
-  plans a session, because `stakeholder_assignments` carries no script id. The match is now made
-  once and recorded on `interview_sessions.script_id` rather than re-derived per answer, so the
-  ambiguity is no longer repeated - but the single arbitrary choice at plan time remains, and
-  `_resolve_script_id` deliberately stores NULL rather than guessing when a label is ambiguous.
-  The real fix is a `script_id` column on `stakeholder_assignments`.
+- ~~The Interview Coordinator still matches a stakeholder to a script by `node_label` when it
+  plans a session~~ - **closed by `273e151b` on 14 August 2026**, whose subject is the
+  correction: *"the producer stores the script id, and the fallback stops guessing"*. The
+  coordinator **emits `script_id` in every plan entry** and has since that commit - it is
+  instructed to in `agents/discovery/interview_coordinator.py` (the map "is keyed by
+  `script_id`", the worked example carries `"script_id": "SC-001"`, and the output contract
+  says "one entry per assigned stakeholder with `script_id`"). `_resolve_script_id`
+  (`agents/tools/interview_session_tool.py`) is built around that: `if supplied: return
+  supplied`, and its docstring calls that "the ordinary path". **The label scan is the
+  fallback, not the mechanism.**
+
+  **The tell was inside the entry.** It claimed "the single arbitrary choice at plan time
+  remains" and then, in the *next sentence*, that `_resolve_script_id` "deliberately stores
+  NULL rather than guessing when a label is ambiguous" - which cannot both be true, and the
+  code shows the second: `candidates[0] if len(candidates) == 1 else None` picks nothing
+  arbitrarily, ever. **A paragraph that contradicts itself in consecutive sentences is
+  reporting two different dates**, and that is cheaper to notice than the rot itself. Worth
+  looking for whenever an entry is half-updated.
+
+  **What is still true, and is the reason this is corrected rather than deleted:**
+  `stakeholder_assignments` carries **no `script_id` column** - verified against the live
+  schema, which holds `id, project_id, stakeholder_id, node_id, created_at` and a
+  `UNIQUE(project_id, stakeholder_id, node_id)`. So the named fix is genuinely unbuilt, and
+  a plan that omits the id still falls through to a label scan that answers NULL on an
+  ambiguous label. The real fix remains a `script_id` column on `stakeholder_assignments`.
 - **A helper with no production caller is a helper that will drift from production.**
   `api.database.insert_interview_session` was the recorded instance - driven by tests alone, and
   extended on one branch with a `script_id` column production never populated. **This entry is
-  closed**: sp62 moved it to `tests/support_interview_sessions.py` (28 call sites, 11 files),
+  closed**: sp62 moved it to `tests/support_interview_sessions.py` (**15 call sites across 10
+  files** at sp67 - this read "28 call sites, 11 files" until the interview tests were churned
+  by sp66 and sp67, and it is recounted here rather than adjusted),
   where being test-only is what it says on the tin, and
   `tests/test_interviewer_selection.py` asserts it has not come back to `api/database.py`.
   `InterviewSessionTool._create` is the sole producer. It is recorded rather than deleted
@@ -2779,15 +3114,32 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   the opposite of true, since local routing goes to the project's own `local_fast_url` /
   `local_deep_url`, Ollama on `:11434` by default. And `litellm_config.yaml` opened with *"all
   agents call :4000 instead of APIs directly"*. Six sites, then, not four: sp66 deleted the
-  setting, both files, `tests/test_litellm_routing.py` (whose docstring claimed it tested
-  "the correct model for each llm_mode", which `model_registry.py` and `deployment_modes.py`
-  decide and that file never touched), and the launch. **When a dead setting is catalogued,
+  setting, `litellm_config.yaml`, `tests/test_litellm_routing.py` (whose docstring claimed it
+  tested "the correct model for each llm_mode", which `model_registry.py` and
+  `deployment_modes.py` decide and that file never touched), and the launch.
+
+  **`start.sh` was not deleted, and this used to say "both files", which reads as though it
+  was.** Only the proxy-launch block went; the script is the one that starts the product and
+  survives, carrying a comment where the block stood that explains why there is no proxy. A
+  reader taking the old wording literally would go looking for a deleted launch script and
+  conclude the entry was describing some other repository. **When a correction lists what was
+  removed, name the things rather than counting them** - "both files" is a count standing in
+  for two names, and a count cannot say which two. **When a dead setting is catalogued,
   sweep for the thing it configures as well as for readers of the name** - a process being
   started is a louder claim than a string being declared, and a name-keyed grep finds the
   string.
 - Retiring an interview script - `interview_script_ledger.active = 0` - is unreachable in
-  practice. `SET active` appears exactly once in the codebase
-  (`register_scripts_sync`, `agents/tools/_db.py`), its only route is an
+  practice. `SET active` appears **twice** in production code, both in
+  `agents/tools/_db.py`: `register_scripts_sync` writes it `WHERE script_id=?`, and
+  `register_nodes_sync` writes it `WHERE node_id=?` on the *value chain* ledger, which
+  arrived with `989cf139` on 3 September 2026. Only the first is the subject of this entry.
+  **This sentence said "exactly once" for a fortnight after that** - the *enumerate by
+  behaviour, not by name* failure in its cheapest form: a count offered as the evidence for
+  a claim, keyed on a string, and never re-derived once the string acquired a second
+  occurrence. Note which half went. **The scoped claim survives and its evidence did not**,
+  which is the more misleading direction, because a reader checking the citation finds a
+  wrong number attached to a right conclusion and has no way to tell which they are
+  looking at. The script write's only route is an
   `interview_scripts` write carrying `active` on a script body, and Maya's own prompt
   (`agents/discovery/interaction_designer.py`) now tells her retirement is not done through
   that write - step 4 limits her to nodes with no script yet plus anything sent back, so an
@@ -2819,22 +3171,47 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
   a ledger rather than given one here, so the next agent to be built is measured against the
   rule while it is cheap - after the artefact exists, adding per-item identity means a backfill
   that assigns ids to items a reviewer has already read.
-- **Both sp60 backfills are written and have not run.** `scripts/backfill_value_chain_ledger.py`
-  (89 nodes) and `scripts/backfill_value_lever_ledger.py` (10 levers) are proven on copies of
-  `data/sp-gs-am.db` and skip against the live one, because the migrations have not reached the
-  running server's database - it is still at `PRAGMA user_version = 17` and holds neither
-  ledger. So a live `sp-gs-am` shows **empty** node and lever review panels until the API is
-  restarted and the backfills are run, in that order. A data state, not a defect in the
-  surface; diagnose it here before diagnosing it in `DiscoveryReviewExtra`.
+- ~~**Both sp60 backfills are written and have not run.**~~ - **closed 17 September 2026**, and
+  the entry was accurate rather than wrong: it predicted 89 nodes and 10 levers and that is
+  exactly what the live database now holds, `last_author = 'backfill'` on the lever rows.
+
+  **That sentence read "all three registered projects are at `PRAGMA user_version = 22`" for
+  one evening.** There is now **one**: `smoke-test` and `vision-debug` were removed on 17
+  September, hours after the entry was closed, and `project_registry` holds `sp-gs-am` alone.
+  A count in this file can go stale the same day it is written, which is the argument for
+  keeping the *reasoning* and re-deriving the *number* rather than the other way round. What
+  the reasoning said is the half worth keeping, and it is unchanged: both of those projects
+  held zero ledger rows **correctly**, having never written a `value_chain_registry` or
+  `value_levers` output to backfill from - so **a zero is not evidence the script did not
+  run**, and that distinction has to be made before reading one as a failure. Both read doors
+  were driven and serve the rows.
+
+  What survives is the **sequence**, which is still the instruction for any deployment reaching
+  sp60's migrations for the first time: restart the API, *then* run the backfills, in that
+  order - the scripts skip against a database the migration block has not yet opened, so
+  running them first looks like success and does nothing. And the diagnostic half stands: an
+  empty node or lever review panel is a data state, so check the ledger before looking at
+  `DiscoveryReviewExtra`.
+
+  **The entry outlived its own closure by a fortnight**, which is the recurring hazard this
+  file already names in the WebSocket row - a stale *Known issues* entry lends false confidence
+  to the ones beside it. It was closed by an operator action inside a working session and
+  nothing connected that action to the paragraph describing it.
 - `register_scripts_sync` carries a near-copy of `scripts_awaiting_regeneration`'s WHERE
   clause to reset a regenerated script's `review_status`, and the two have **already
   diverged**: the query filters `active=1` and `project_id`, the copy does neither. A retired
   row sent back to the agent is therefore invisible to the query but still reset by the copy -
   a send-back cleared without ever having been actionable. Unreachable only because
   retirement is (see above). Extract the condition rather than copying it a third time.
-- **`POST /projects` lets an `org_admin` claim an unregistered project.** It is the one route
-  in `api/routers/projects.py` with no `check_project_access`, it answers **200** to a re-POST
-  of a slug that already exists, and it registers that slug to the *caller's* organisation. So
+- **`POST /projects` lets an `org_admin` claim an unregistered project.** It answers **200**
+  to a re-POST of a slug that already exists, and it registers that slug to the *caller's*
+  organisation. It is **one of three** routes in `api/routers/projects.py` that call no
+  `check_project_access`, not the only one - this said "the one route" until sp67 enumerated
+  the file by parsing each handler for a **call** rather than grepping for the name. The
+  other two are `GET ""`, which has no slug to scope by, and `GET /{slug}/branding/image`,
+  which is one of the deliberate floor exceptions tabled further up and *is* a `{slug}`
+  route, so the claim was wrong on this file's own terms. The hazard is unchanged and is
+  this door's alone. So
   an org_admin of an unrelated organisation goes 403, re-POSTs the slug, and then reads the
   whole engagement as a legitimate member. Bounded twice: `register_project_if_unregistered`
   is `INSERT OR IGNORE`, so a project that *has* a registry row cannot be dragged out of its
@@ -2872,6 +3249,20 @@ The main branch is `master`. Feature branches follow `feature/sp<N><letter>-<sho
 - **`api/services/interview_answer_service.py:217` still builds `f"{slug}_interviews"` by
   hand** - the sixth site constructing a collection name outside `collection_for`, and the
   shape this class of defect keeps arriving in.
+- **There are two email-shape regexes, and the second is the divergence.**
+  `api/services/email_shape.py` is the rule the stakeholder write doors and `ProjectCreate`'s
+  approver share - `^[^@\s]+@[^@\s]+\.[^@\s]+$`, extracted from `stakeholder_access.py` in
+  sp67 so the approver named at creation and the same person edited later on the Stakeholders
+  tab could not be judged by two rules. `api/routers/interviews.py:698` holds a third spelling
+  with length bounds the shared one does not have
+  (`^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{1,63}$`). It was left alone rather than folded in, for
+  two reasons worth stating so the next reader does not have to re-derive them: the bounds are
+  a real decision that adopting them would impose on every caller at once, and it guards
+  `POST /api/interviews/{session_token}/email-transcript`, which this file already records as
+  orphaned. **The scope for sp67 asserted there was no email validator anywhere in this
+  product**, which is the specific kind of claim worth checking against a grep - there were
+  two, already disagreeing, and "add the first such check" would have produced a third.
+  Folding `interviews.py` in is a small task; deciding whose bounds win is the whole of it.
 - **A migration that raises takes every later migration in the block down with it**, so each
   one must be defensive about the shape it finds. SQLite prepares a correlated subquery when
   the statement is prepared rather than when a row matches, so a `SELECT p.sector ...` raises

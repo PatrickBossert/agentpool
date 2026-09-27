@@ -13,9 +13,10 @@ from api.database import (
     update_orchestration_run_status,
 )
 from unittest.mock import patch, AsyncMock
+from tests.support_projects import remove_creation_approver
 
 SLUG = "assignment-test"
-PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail"}
+PROJECT = {"client_slug": SLUG, "llm_mode": "standard", "sector": "rail", "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test"}
 
 
 @pytest.fixture(autouse=True)
@@ -154,6 +155,11 @@ STAKEHOLDER = {
 @pytest.mark.asyncio
 async def test_get_assignment_answers_a_project_with_no_mapping_yet(client):
     await client.post("/projects", json=PROJECT)
+    # An engagement with no *people* mapped yet, which since the approver became required at
+    # creation is a state to arrange rather than to assume. The property under test is the
+    # shape of the answer for an unmapped project - two empty lists, not a 404 - so the
+    # premise is restored instead of the assertion being relaxed to "one stakeholder".
+    assert await remove_creation_approver(SLUG) == 1
 
     resp = await client.get(f"/projects/{SLUG}/assignment")
     assert resp.status_code == 200

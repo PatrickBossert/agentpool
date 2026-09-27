@@ -92,7 +92,7 @@ def subject(request: httpx.Request) -> str:
 async def _make_project(client, slug: str) -> None:
     await client.post("/projects", json={
         "client_slug": slug, "llm_mode": "standard", "sector": "rail",
-    })
+        "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",})
     await _set_config(slug, dev_mode=False)
 
 

@@ -1,5 +1,6 @@
 # agents/tools/sqlite_state.py
 import json
+import logging
 from pathlib import Path
 from typing import Callable
 from pydantic import BaseModel, Field
@@ -168,7 +169,7 @@ _VALIDATORS: dict[str, Callable[[dict, str], list[str]]] = {
 }
 
 
-def _warn_themes(parsed: object, slug: str) -> list[dict]:
+def _warn_themes(parsed: object, slug: str, _batch: object) -> list[dict]:
     from api.services.anchor_validation import validate_theme_anchors
 
     if not isinstance(parsed, list):
@@ -178,7 +179,7 @@ def _warn_themes(parsed: object, slug: str) -> list[dict]:
     return validate_theme_anchors(parsed, _current_registry(slug))
 
 
-def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
+def _warn_value_chain_tree(parsed: object, slug: str, _batch: object) -> list[dict]:
     from api.services.tree_validation import validate_tree_structure
 
     previous = _current_registry(slug)
@@ -187,12 +188,81 @@ def _warn_value_chain_tree(parsed: object, slug: str) -> list[dict]:
     return validate_tree_structure(parsed, previous or None)
 
 
-def _warn_interview_coverage(parsed: object, slug: str) -> list[dict]:
+def _warn_interview_coverage(parsed: object, slug: str, _batch: object) -> list[dict]:
     from api.services.coverage_validation import validate_node_coverage
 
     if not isinstance(parsed, dict):
         return []
     return validate_node_coverage(parsed, _current_registry(slug))
+
+
+def _warn_script_durations(_parsed: object, _slug: str, batch: object) -> list[dict]:
+    """Whether each script this batch wrote states a duration matching its own sections.
+
+    **Judges `batch`, not `parsed`, and that is the whole design of it.** Every other warner here
+    is handed the merged artefact deliberately, because their findings are about the accumulated
+    set. This one is not: 83 of the 84 scripts already stored disagree with their own budget, the
+    owner has decided they stay as they are, and a warner reporting all 83 on every write for
+    ever is a warner somebody turns off - taking its siblings with it. The scripts this write
+    produced are the only ones the agent can still act on.
+    """
+    from api.services.script_duration_validation import validate_script_durations
+
+    if not isinstance(batch, dict):
+        return []
+    return validate_script_durations(batch)
+
+
+def _warn_theme_evidence(_parsed: object, slug: str, batch: object) -> list[dict]:
+    """Whether the themes this write produced say who their evidence came from.
+
+    **Judges `batch`, for `_warn_script_durations`' reason.** The first themes artefact carries
+    the defect on all 68 of its evidence rows, and it is staying - so a warner handed the merged
+    artefact would report it on every write for ever, which is a warner somebody turns off.
+
+    The answers' stakeholder ids are read here and passed in, so the validator itself stays a
+    pure function over given data and a hostile case can be driven without a project.
+    """
+    import sqlite3
+    from pathlib import Path
+
+    from api.config import get_settings
+    from api.services.theme_evidence_validation import validate_theme_evidence
+
+    if not isinstance(batch, (dict, list)):
+        return []
+
+    by_answer: dict[int, int] = {}
+    db_path = Path(get_settings().database_dir) / f"{slug}.db"
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                by_answer = {
+                    int(a): int(s)
+                    for a, s in conn.execute(
+                        "SELECT id, stakeholder_id FROM interview_answers "
+                        "WHERE stakeholder_id IS NOT NULL"
+                    )
+                }
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            # An unreadable corpus means the id checks cannot be made. The `relationship`
+            # check does not need it and still runs - a partial answer beats none, and a
+            # warner must never be the thing that fails a write.
+            by_answer = {}
+    return validate_theme_evidence(batch, by_answer)
+
+
+def _warn_script_assertions(parsed: object, _slug: str, _batch: object) -> list[dict]:
+    from api.services.script_assertion_validation import validate_script_assertions
+
+    if not isinstance(parsed, dict):
+        return []
+    # Takes no registry and no project: whether a spoken line tells the interviewee what they
+    # said is a property of the line.
+    return validate_script_assertions(parsed)
 
 
 # Warners differ from validators in two ways that matter, and both are why they are a
@@ -207,18 +277,66 @@ def _warn_interview_coverage(parsed: object, slug: str) -> list[dict]:
 #
 # They run after the write succeeds, so a recorded warning always refers to an output that
 # actually exists.
-_WARNERS: dict[str, Callable[[object, str], list[dict]]] = {
-    "value_chain_tree": _warn_value_chain_tree,
-    "themes": _warn_themes,
-    "interview_scripts": _warn_interview_coverage,
-}
+# One output type may owe several independent checks, so this maps to a LIST of
+# (source, warner) pairs rather than to one warner and a source looked up beside it.
+#
+# The source travels WITH the warner and is not a second map keyed on the output type, because
+# `record_validation_warnings_sync` is called once per source with complete=True - it re-derives
+# everything for that source and clears what is now absent. Two checks sharing one source would
+# therefore make each one's clean run wipe the other's findings, which is a silent loss rather
+# than a wrong label. The pairing is what keeps the clearing honest.
+# The third argument is the **pre-merge batch** - what this write actually produced, before it
+# was merged into the accumulated artefact. Almost every warner wants the merged artefact and
+# ignores it; `_warn_script_durations` wants the batch and says why. It is passed to all of them
+# rather than to the one that reads it, so a new warner chooses which it is judging instead of
+# discovering that only one of the two was ever available.
+#
+# THE THIRD ELEMENT OF EACH ENTRY IS THAT CHOICE, STATED. `record_validation_warnings_sync` is
+# called with complete=True, which deletes every open row for the source that this call did not
+# re-derive - honest for a warner that judged the whole artefact, and destructive for one that
+# judged a fragment of it. A batch-scoped warner must therefore say what it looked at, so the
+# clearing reaches exactly that far. Without it, Maya's batch 2 erased batch 1's findings while
+# the defective scripts stayed in the stored artefact: reported once, then silently unreported
+# for the life of the project.
 
-# The `source` recorded against each warning, so a reviewer can tell a tree finding from a
-# theme one without parsing the code.
-_WARNER_SOURCE: dict[str, str] = {
-    "value_chain_tree": "value_chain_tree",
-    "themes": "theme_anchor",
-    "interview_scripts": "interview_coverage",
+
+def _the_whole_artefact(_parsed: object, _slug: str, _batch: object) -> list[str] | None:
+    """This warner re-derived every finding for its source, so clearing may reach them all."""
+    return None
+
+
+def _the_scripts_in_this_batch(
+    _parsed: object, _slug: str, batch: object
+) -> list[str] | None:
+    """Only the scripts this write named - the ids `validate_script_durations` subjects by."""
+    return sorted(batch) if isinstance(batch, dict) else []
+
+
+# `themes` is NOT in _MERGE_ON_WRITE, so a themes write replaces the artefact outright and its
+# `batch` IS the whole of it - which is why `_warn_theme_evidence` reads the batch and is still
+# honestly whole-artefact scoped. That is a fact about the merge set rather than about the
+# warner, so it is asserted rather than assumed:
+# tests/test_sqlite_state_warnings.py::test_the_theme_warners_are_whole_artefact_only_because_themes_do_not_merge
+_WARNERS: dict[
+    str,
+    list[tuple[
+        str,
+        Callable[[object, str, object], list[dict]],
+        Callable[[object, str, object], "list[str] | None"],
+    ]],
+] = {
+    "value_chain_tree": [
+        ("value_chain_tree", _warn_value_chain_tree, _the_whole_artefact),
+    ],
+    "themes": [
+        ("theme_anchor", _warn_themes, _the_whole_artefact),
+        ("theme_evidence", _warn_theme_evidence, _the_whole_artefact),
+    ],
+    "interview_scripts": [
+        ("interview_coverage", _warn_interview_coverage, _the_whole_artefact),
+        ("script_assertion", _warn_script_assertions, _the_whole_artefact),
+        ("script_duration", _warn_script_durations, _the_scripts_in_this_batch),
+    ],
 }
 
 
@@ -575,23 +693,40 @@ class SQLiteStateTool(BaseTool):
                     self.slug, self.run_id, key, agent_name, parsed, registration_error
                 )
 
-            warner = _WARNERS.get(key)
-            if warner is not None:
+            for source, warner, scope in _WARNERS.get(key, ()):
                 try:
-                    found = warner(parsed, self.slug)
+                    found = warner(parsed, self.slug, batch)
                     # complete=True: a warner re-derives every finding from the artefact it
                     # just judged, so anything absent is fixed and is cleared. Called even
                     # when nothing was found, because that is precisely when clearing
                     # matters - run 29 raised missing_l0 on tree v17 and fixed it on v18,
                     # and without this the warning outlived the problem.
+                    #
+                    # judged_subjects says how far "every finding" reaches. A warner handed
+                    # the pre-merge batch re-derived findings for those ids and no others,
+                    # so clearing beyond them erases work it never looked at.
                     record_validation_warnings_sync(
-                        self.slug, self.run_id, _WARNER_SOURCE[key], found, complete=True
+                        self.slug, self.run_id, source, found, complete=True,
+                        judged_subjects=scope(parsed, self.slug, batch),
                     )
                 except Exception:
                     # A warning is never worth failing a completed write over. The write and
                     # its row are durable by this point; telling the agent it failed would
-                    # make it write again and version a duplicate.
-                    pass
+                    # make it write again and version a duplicate. Per warner, so one that
+                    # raises does not take the others down with it.
+                    #
+                    # LOGGED, because swallowing silently is how `theme_evidence` ran inert
+                    # for a whole branch: it emitted a warning shape the recorder could not
+                    # store, `w["detail"]` raised KeyError here, and a warner that recorded
+                    # nothing was indistinguishable from a warner that found nothing. A
+                    # database error and a programming error arrive at this line the same
+                    # way, and only one of them is something an operator can do anything
+                    # about - so say which warner, and say it loudly.
+                    logging.getLogger(__name__).exception(
+                        "warner '%s' raised on a %s write for %s - nothing was recorded and "
+                        "nothing was cleared for that source", source, key, self.slug,
+                    )
+                    continue
 
             try:
                 link_output_sync(self.slug, self.run_id, self.agent_name, new_output_id)

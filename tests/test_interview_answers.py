@@ -17,7 +17,7 @@ SLUG = "answers-test"
 PROJECT = {
     "client_slug": SLUG, "llm_mode": "standard", "sector": "utilities",
     "stakeholder_groups": [], "value_stream_labels": [], "review_gates": True, "slack_channel": "",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 SCRIPT = {
     "script_id": "SC-014", "node_id": "1.2", "level": "L2", "relationship": "internal",
     "node_label": "Planned Maintenance", "sections": [{

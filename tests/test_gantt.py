@@ -10,7 +10,7 @@ PROJECT = {
     "client_slug": SLUG,
     "llm_mode": "standard",
     "sector": "rail",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 MINIMAL_ROADMAP = {
     "periods": ["Q1 2025", "Q2 2025"],

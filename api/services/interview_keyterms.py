@@ -31,7 +31,39 @@ from typing import Iterable
 # A vocabulary of everything boosts nothing, and the list travels in a WebSocket URL that also
 # carries a JWT. A hundred terms is roughly three kilobytes encoded, comfortably inside every
 # URL limit, and far more project vocabulary than one interview can use.
+#
+# **This bound is about the URL, and the URL was never the binding constraint.** It reads as
+# though it settles how much vocabulary may be sent, and it does not - see the token budget
+# below, which is the one Deepgram actually enforces and which binds first on every real corpus
+# measured so far. Both are kept because they bound different things: a project whose terms are
+# all acronyms spends few tokens and could otherwise send thousands of them.
 MAX_KEYTERMS = 100
+
+# **Deepgram's own limit, and it is a limit on tokens rather than on terms.** Exceeding it is
+# answered `Keyterm limit exceeded. The maximum number of tokens across all keyterms is 500.`
+# with HTTP 400 - https://developers.deepgram.com/docs/keyterm, read 17 September 2026.
+#
+# On a **streaming** connection that 400 lands on the handshake, so the browser never gets an
+# open socket and cannot read the status: it sees `error` then `close`, `openDeepgramSocket`
+# answers `null`, and two of those in a row latch Deepgram off for the rest of the interview.
+# Nothing is transcribed, nothing appears in the provider's usage, and the interview completes
+# on the browser's recogniser reporting success. That is not hypothetical - it is what the live
+# `sp-gs-am` vocabulary did, at an estimated 918 tokens against this 500.
+DEEPGRAM_KEYTERM_TOKEN_LIMIT = 500
+
+# What is actually spent, and the gap is the point rather than timidity.
+#
+# Deepgram does not document its tokeniser, and its own issue tracker carries a user asking what
+# a token is and getting no answer (deepgram-python-sdk#503), so `estimate_keyterm_tokens` below
+# is an estimate of something unpublished. An estimate that runs *under* the truth buys a
+# silently dead recogniser, which is the failure this whole constant exists to stop; one that
+# runs over costs a few terms off the end of a list that is already ordered by value. The
+# headroom is which of those two a wrong guess becomes.
+#
+# It also lands where Deepgram's own guidance points - the documentation recommends focusing on
+# "the most important 20-50 terms", and this budget spends on about thirty-three of the live
+# corpus's.
+KEYTERM_TOKEN_BUDGET = 350
 
 # A ledger label is the project's own words, but a *sentence* is not a term. Anything longer
 # than this is prose that happened to be filed as a label, and biasing towards a whole sentence
@@ -119,6 +151,31 @@ def terms_in_prose(text: str) -> list[str]:
     first_seen: dict[str, str] = {}
     order: dict[str, int] = {}
 
+    # **A word this corpus also writes in lower case is an ordinary word**, whatever a sentence
+    # did to its first letter. Corpus-driven rather than a stopword list, for the reason this
+    # module already gives about vocabulary: a list of English words committed here is a second
+    # declaration free to rot, and one tuned to this client's prose would be worse.
+    #
+    # It earns its place under a cost-ordered budget. Previously the junk sat at the tail of a
+    # list nothing reached; now cheap terms are taken first, so "Thank", "Assess", "Identify",
+    # "Surface" and "Quantify" - all of which appear lower case in these very scripts - would be
+    # bought *ahead* of the labels. Measured on the live corpus: 1,023 prose candidates, of which
+    # these are among the cheapest.
+    #
+    # One exemption: a multi-word run, which is already strong evidence - ordinary English does
+    # not capitalise two words in a row mid-sentence.
+    #
+    # **There was a second, for ALL-CAPS tokens, and it was wrong.** The reasoning was that an
+    # acronym's lower-case form is a different word, so `SAP` and `ISO` needed protecting from
+    # the test. Measured on the live corpus, the test protects them by itself: not one of SAP,
+    # ISO, KPI, TCO, PMO, DVSA, ICE, RIBA, ROI, GRC, TUPE or ISS appears in lower case anywhere
+    # in it, while NOT, WHAT, HOW, AND and WHEN - which the scripts capitalise in headings -
+    # all do. The exemption admitted exactly those five and nothing else, and under cost
+    # ordering they are one token each and bought **first**: five of the cheapest slots spent
+    # on words the recogniser has never once got wrong. An exemption that protects nothing it
+    # was written for is a way in for what it was not.
+    lowercased = {m.group(0).casefold() for m in _WORD.finditer(text or "") if m.group(0).islower()}
+
     for sentence in _SENTENCE_SPLIT.split(text or ""):
         words = [(m.group(0), m.start()) for m in _WORD.finditer(sentence)]
         index = 0
@@ -147,6 +204,8 @@ def terms_in_prose(text: str) -> list[str]:
             term = _strip_possessive(" ".join(run))
             if not _acceptable(term):
                 continue
+            if len(run) == 1 and term.casefold() in lowercased:
+                continue
             key = term.casefold()
             counts[key] += 1
             if key not in first_seen:
@@ -159,37 +218,89 @@ def terms_in_prose(text: str) -> list[str]:
     ]
 
 
+def estimate_keyterm_tokens(term: str) -> int:
+    """A deliberate **over**-estimate of what one term costs against Deepgram's 500.
+
+    Deepgram publishes the limit and not the tokeniser, so this cannot be exact and must not try
+    to be: the two directions of error are not symmetric. Under-counting sends a request that is
+    refused on the handshake, which reaches a participant as an interview transcribed by a
+    recogniser that has never heard of the client and reaches an operator as nothing at all.
+    Over-counting drops a term or two off the end of a list already ordered by value.
+
+    So it counts the way the most granular plausible tokeniser would: every run of letters and
+    digits costs a token per four characters, and every punctuation mark costs one of its own -
+    which is what a byte-pair tokeniser does with `(GS UK)` and with `EV-Specific`. A bare word
+    never costs less than one.
+
+    Pure, and driven directly, so what it claims about a term is checkable without a socket.
+    """
+    pieces = [p for p in re.split(r"[^0-9A-Za-z]+", term) if p]
+    punctuation = sum(1 for c in term if not c.isalnum() and not c.isspace())
+    return punctuation + sum(max(1, -(-len(p) // 4)) for p in pieces) or 1
+
+
 def build_keyterms(labels: Iterable[str], script_text: str) -> list[str]:
-    """The project's vocabulary: its registry labels first, then its scripts' proper nouns.
+    """The project's vocabulary, cheapest terms first so the budget buys the most of it.
 
-    Registry labels lead because they are declared rather than inferred - a node label *is* what
-    an id means for the life of the project, so it is the one vocabulary this system can be sure
-    belongs to the engagement. Script terms follow in order of how often the scripts use them.
+    **Ordered by token cost, not by source, and that is a correction.** Registry labels used to
+    lead outright, on the reasoning that declared vocabulary outranks inferred - which is sound
+    about *provenance* and is the wrong question. Keyterm prompting biases the recogniser
+    towards a literal phrase, so what matters is whether a term is **spoken and misheard**.
 
-    Deduplicated case-insensitively, keeping the first spelling seen, and capped. The order is
-    total and derived from the inputs alone, so two calls on the same project answer the same
-    list - a recogniser configured differently on each question would be worse than one
+    Measured on the live `sp-gs-am` corpus, 22 September 2026: the 350-token budget was spent
+    entirely on **33 registry labels averaging 10.6 tokens each**, and one of them costs as much
+    as five proper nouns. Nobody says *"Regulatory Compliance and Record Retention (Asbestos and
+    Statutory)"* out loud; the interviewee says *Fraikin*, *Tririga*, *FRACAS*, *DVSA* and *SAP*
+    constantly, and the recogniser mangles every one. All five were dropped by that ordering,
+    and three of them are among the four words the owner reported mangled after a real interview.
+
+    So terms are taken cheapest-first, with the source used only to break ties in favour of the
+    declared vocabulary. A long label still gets in if the budget reaches it - it is simply no
+    longer allowed to spend five short terms' worth of budget ahead of them.
+
+    Deduplicated case-insensitively, keeping the first spelling seen, and **bounded twice**: by
+    the number of terms, which is about the URL, and by an estimated token count, which is about
+    Deepgram's `500 tokens across all keyterms`. The second binds first on every real corpus
+    measured, and it is the one whose absence killed transcription outright.
+
+    The order is total and derived from the inputs alone, so two calls on the same project answer
+    the same list - a recogniser configured differently on each question would be worse than one
     configured on none.
     """
+    # (cost, source_rank, position, term) - a total order over the inputs alone. `source_rank`
+    # keeps a declared label ahead of an inferred term of the same price, so the original
+    # principle survives wherever it costs nothing; `position` keeps the sort stable and makes
+    # two calls on one project identical.
+    candidates: list[tuple[int, int, int, str]] = []
+    position = 0
+    for rank, source in ((0, labels), (1, terms_in_prose(script_text))):
+        for term in source:
+            term = " ".join((term or "").split())
+            if not _acceptable(term):
+                continue
+            candidates.append((estimate_keyterm_tokens(term), rank, position, term))
+            position += 1
+    candidates.sort()
+
     chosen: list[str] = []
     seen: set[str] = set()
-
-    def take(term: str) -> None:
-        term = " ".join((term or "").split())
-        if not _acceptable(term):
-            return
+    spent = 0
+    for cost, _rank, _pos, term in candidates:
         key = term.casefold()
         if key in seen:
-            return
+            continue
+        if len(chosen) >= MAX_KEYTERMS:
+            break
+        # Skipped rather than ending the walk, so one expensive term cannot cost every cheaper
+        # one behind it. Under a cost ordering that can only happen at the very end of the list,
+        # but the guard is kept: it is what makes the bound safe whatever the order becomes.
+        if spent + cost > KEYTERM_TOKEN_BUDGET:
+            continue
         seen.add(key)
+        spent += cost
         chosen.append(term)
 
-    for label in labels:
-        take(label)
-    for term in terms_in_prose(script_text):
-        take(term)
-
-    return chosen[:MAX_KEYTERMS]
+    return chosen
 
 
 def harvest_strings(value: object) -> list[str]:

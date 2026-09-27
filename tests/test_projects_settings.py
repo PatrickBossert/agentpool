@@ -13,7 +13,7 @@ PROJECT = {
     "roadmap_time_axis": "quarters",
     "review_gates": True,
     "slack_channel": "#rail",
-}
+    "approver_name": "Approver Fixture", "approver_email": "approver@fixture.test",}
 
 
 @pytest.fixture(autouse=True)

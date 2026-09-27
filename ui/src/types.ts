@@ -74,6 +74,19 @@ export interface InterviewBranding {
   primary_color: string
   text_color: string
   interviewer_image_url?: string
+  /**
+   * Which kind of address `interviewer_image_url` is - the server says, the page never guesses.
+   *
+   * `served` is an address this deployment answers on (a project override, or the promoted
+   * default's own door) and is fetched verbatim. `bundled` is the portrait shipped in
+   * `ui/public`, which Vite serves under the app's base - so the bare path has to have that
+   * base put back on it or it 404s, which is what a participant met in the first live
+   * interview. `''` is no portrait, and reaches the interviewer's initials.
+   *
+   * Optional because a session served by a deployment predating this field carries no value;
+   * `interviewerPortraitSrc` treats that as `served`, which is the old behaviour unchanged.
+   */
+  interviewer_image_source?: 'served' | 'bundled' | ''
   interviewer_name?: string
   interviewer_tagline?: string
 }
@@ -579,15 +592,23 @@ export interface FramingBlock {
 }
 
 export interface SynthesisCheck {
-  synthesis_prompt: string
+  // What Maya writes now: an invitation for the interviewee to summarise, the probes
+  // that follow it, and the referral question. Nothing here asserts a conclusion.
+  closing_invitation?: string
   response_probes: {
     if_positive: string
     if_defensive: string
     if_uncertain: string
   }
   peer_referral: string
-  forward_roadmap: string
-  portfolio_options?: string   // L0 only — interviewer presents sequencing options A/B/C
+  // Withdrawn 4 September 2026 and no longer written by Maya - each asserted to the
+  // participant something composed before the interview happened. Optional rather than
+  // deleted because every script written before the withdrawal still carries them, and
+  // MayaOutputExtra renders them so a consultant can see what an old script actually
+  // says. Nothing may speak them: see ui/src/__tests__/synthesisWithdrawn.test.ts.
+  synthesis_prompt?: string
+  forward_roadmap?: string
+  portfolio_options?: string   // L0 only — interviewer presented sequencing options A/B/C
   sponsorship_check?: string   // L0 only — commitment test for executive sponsors
 }
 

@@ -55,6 +55,23 @@ def _locate(script: dict, question_id: str) -> tuple[dict, dict]:
     return {}, {}
 
 
+# The engines a page can honestly report having used. A closed vocabulary, for the reason the
+# speech-failure door's `reason` is one: this text reaches an operator's judgement about whether
+# an interview is trustworthy, and the door that carries it checks only a session token.
+RECOGNISERS = frozenset({"deepgram", "browser", "deepgram+browser", "none"})
+
+
+def _recogniser_of(pair: dict) -> str:
+    """Which engine the page says produced this answer, or `''` for "not recorded".
+
+    `''` is deliberately the answer for both an older client that sends nothing and a value this
+    build does not know. Neither can be reported as an engine, and inventing one - defaulting to
+    `browser`, say - would put a fact in front of an operator that nobody established.
+    """
+    claimed = str(pair.get("recogniser", "") or "").strip().lower()
+    return claimed if claimed in RECOGNISERS else ""
+
+
 async def record_answers(
     conn, slug: str, session_id: int, qa_pairs: list[dict], script: dict
 ) -> int:
@@ -111,6 +128,12 @@ async def record_answers(
             question_intent=tags.get("question_intent") or "",
             elicitation=tags.get("elicitation") or "",
             rating=None,
+            # Sanitised rather than trusted: this door is unauthenticated, a session token is the
+            # whole of what it checks, and this string is read back by an operator deciding
+            # whether an interview is trustworthy. An unrecognised value is recorded as `''`
+            # ("not recorded") rather than stored verbatim, which is the same rule
+            # `SpeechFailureBody.reason` follows one model over and for the same reason.
+            recogniser=_recogniser_of(pair),
         ))
 
     if written_ids:
@@ -221,8 +244,30 @@ def index_answers(slug: str, rows: list[dict]) -> int:
             metadatas=[answer_metadata(r) for r in rows],
         )
         return len(rows)
-    except Exception:
+    except Exception as exc:
         _log.exception("index_answers[%s]: %d answers not indexed", slug, len(rows))
+        # The swallow above is right and stays: the SQLite rows are the system of record, and
+        # failing here would lose an interview a person has already given. What was missing is
+        # that the swallow was the *end* of it - a log line in a server nobody tails is not a
+        # person being told, and this is the quietest indexing path in the product because the
+        # participant has already gone and no request is waiting on the answer.
+        #
+        # Never raises and never blocks; see `report_vector_store_failure`. `index_answers` runs
+        # in a worker thread via `_index_in_background`, so the alert is sent inline from there
+        # rather than scheduled - which is correct, because no request is waiting on this thread.
+        from api.services.health_checks import report_vector_store_failure
+
+        report_vector_store_failure(
+            operation="indexing interview answers",
+            slug=slug,
+            exc=exc,
+            consequence=(
+                f"{len(rows)} answers from a completed interview were saved to the project "
+                f"database but are not searchable. They are not lost - re-indexing will pick "
+                f"them up once the store is back - but no agent retrieving from this "
+                f"engagement's interviews will find them until then."
+            ),
+        )
         return 0
 
 

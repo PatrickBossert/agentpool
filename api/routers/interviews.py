@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pathlib import Path
 from pydantic import BaseModel, Field
 
@@ -46,6 +46,13 @@ from api.services.interview_service import (
 )
 from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
 from api.services.process_cache import register_cache
+from api.services.rehearsal_script import (
+    RehearsalScriptUnavailable,
+    ScriptNotOffered,
+    default_rehearsal_script,
+    project_rehearsal_script,
+    rehearsal_script_options,
+)
 from api.services.speech_policy import (
     SPEECH_REQUIRED,
     alert_speech_unavailable,
@@ -172,23 +179,72 @@ async def get_sessions_for_project(slug: str, payload: dict = Depends(require_an
 # Test interview endpoints (JWT auth — no session required)
 # ---------------------------------------------------------------------------
 
+@router.get("/test/script-options")
+async def get_test_interview_script_options(
+    slug: str = Query(min_length=1), payload: dict = Depends(require_any_auth)
+):
+    """The scripts this project offers for rehearsal, beside the committed default.
+
+    The default is deliberately **not** in this list. It is a product constant rather than one of
+    the project's scripts, so the client renders it first and selected and sends no id for it;
+    putting it here would make the server the author of a piece of UI copy and would give the
+    list two kinds of member.
+
+    `active = 1` is applied in `rehearsal_script_options`, on this side. So is the decision to
+    offer every active script with its `review_status` shown rather than approved-only - argued
+    where it is implemented, because the measurement behind it is about this engagement's data
+    rather than about this door.
+
+    Answers `{"scripts": []}` rather than 404 for a project with none. A fresh engagement has no
+    scripts, and the rehearsal must not require Maya to have run.
+    """
+    await check_project_access(slug, payload)
+    return {"scripts": await rehearsal_script_options(slug)}
+
+
 @router.get("/test/script")
-async def get_test_interview_script(payload: dict = Depends(require_any_auth)):
-    """Return the smoke-test interview script for the built-in test interview."""
-    scripts_path = (
-        Path(get_settings().projects_dir) / "smoke-test" / "outputs" / "interview_scripts.json"
-    )
-    if not scripts_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Smoke-test script not found — run discovery_mapping on the smoke-test project first.",
-        )
+async def get_test_interview_script(
+    slug: str = Query(min_length=1),
+    script_id: str = "",
+    payload: dict = Depends(require_any_auth),
+):
+    """The script a rehearsal is conducted from - the committed default, or a chosen one.
+
+    A blank `script_id` means the committed default, which is the state a fresh engagement is
+    permanently in. It is the fixture in `api/fixtures/`, not a project's output: this door used
+    to read `projects/smoke-test/outputs/interview_scripts.json`, and when that project was
+    archived the rehearsal button began answering 404 with advice to run a crew on a project that
+    no longer existed. `api/services/rehearsal_script.py` carries the whole argument.
+
+    **The slug is required, and so this door now has a floor.** It took no slug at all until this
+    change; CLAUDE.md records that a door which gains a slug gains a floor in the same change,
+    and that the route sweep - keyed on `{slug}` in the *path* - will not remind you, because
+    this one takes it as a query parameter. `check_project_access` is the first line, before the
+    slug reaches a database, for the same reason the two sibling test doors put it there: a
+    refusal raised after the project's ledger has been read is not a refusal.
+
+    The slug is required **even for the default**, where it decides nothing about which script is
+    served. That is deliberate, and it is the arm somebody would reasonably leave unscoped: a
+    door answering a stranger 200 confirms the slug exists, and an optional slug is a slug a
+    caller omits. The two sibling doors would then be the only scoped ones - and the rehearsal
+    dialog is opened from a real project and holds the slug in its props, so there is no honest
+    caller without one.
+
+    **500, not 404, for a missing fixture.** Its absence is a broken deployment rather than an
+    engagement that has not reached the mapping stage - and "404" is exactly the answer that read
+    as the latter for as long as this door was broken, sending whoever saw it to run a crew
+    instead of to look at the deployment. A refused `script_id` is a genuine 404.
+    """
+    await check_project_access(slug, payload)
+    if not script_id:
+        try:
+            return default_rehearsal_script()
+        except RehearsalScriptUnavailable as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
     try:
-        data = json.loads(scripts_path.read_text())
-        first_key = next(iter(data))
-        return data[first_key]
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        return await project_rehearsal_script(slug, script_id)
+    except ScriptNotOffered as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 class TestSpeakRequest(BaseModel):
@@ -573,6 +629,13 @@ class CapturedPair(BaseModel):
     question: str
     answer: str = ""
     follow_up: int = 0
+    # Which engine produced `answer` - `deepgram`, `browser`, `deepgram+browser` for an answer
+    # handed over mid-sentence, or `none` when nothing could listen. Defaulted rather than
+    # required because this door is also reached by a halted interview's checkpoint and by older
+    # clients, and an answer that arrives without its provenance is still evidence; `''` says so
+    # rather than guessing. It is never trusted as a *claim about Deepgram* - it is the page
+    # reporting which of its own engines it used, which is exactly the fact nothing recorded.
+    recogniser: str = ""
 
 class SpeechFailureBody(BaseModel):
     """The half of the probe only the participant's browser can answer, and what it still holds.
@@ -603,11 +666,17 @@ class SpeechFailureBody(BaseModel):
 async def report_speech_failure(session_token: str, body: SpeechFailureBody):
     """The interview could not be transcribed, and this engagement forbids the fallback.
 
-    Two things reach this door, and neither is visible from the server: a browser that records
-    none of the containers Deepgram is opened for - Safari and iOS record MP4/AAC, which since
-    `f914bc56` declines the socket - and a socket that would not stay open. The Deepgram half of
-    the probe is answered at the token door above, where the status code that distinguishes a
-    refused key from an exhausted balance actually is.
+    Two things reach this door, and neither is visible from the server: a browser that cannot
+    capture audio for us at all, and a socket that would not stay open. The Deepgram half of the
+    probe is answered at the token door above, where the status code that distinguishes a refused
+    key from an exhausted balance actually is.
+
+    The first of those used to be narrower and used to land on far more people. While the page
+    recorded through `MediaRecorder` the browser negotiated a container, Safari and iOS
+    negotiated MP4/AAC against a socket opened for webm/opus, and `f914bc56` made the page
+    decline rather than stream it - so every iPhone and iPad reported here and could not be
+    interviewed. sp67 sends raw PCM, which negotiates nothing, so what arrives now is
+    `no_audio_worklet` from a browser predating April 2021.
 
     **It records nothing on an engagement permitted hosted inference**, and answers so. There the
     browser's own recogniser is the designed answer, the amber notice already says which

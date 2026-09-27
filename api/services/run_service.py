@@ -214,6 +214,14 @@ _WARNING_SOURCE_CREW: dict[str, str] = {
     # validation_warnings and read by nobody, exactly the defect this fix exists to close
     # on the reporting side, not just the write side.
     "script_ledger_registration": "assessment_design",
+    # Maya again, for the same reason a third and a fourth time: both warners judge an
+    # `interview_scripts` artefact, and she is the only agent who writes one. A pre-written
+    # synthesis and a welcome that misstates its own duration are both hers to correct.
+    "script_assertion": "assessment_design",
+    "script_duration": "assessment_design",
+    # Casey writes `themes`, so the evidence attribution on a theme is hers, exactly as the
+    # anchor skew above already is.
+    "theme_evidence": "discovery_interviews",
 }
 
 
@@ -425,6 +433,20 @@ def agent_name_for_task(task: Any) -> str:
 # 3 September 2026, and the rule Maya's revision of it actually turned on. A general
 # instruction to "propose the rule, not the note" is the sort of thing an agent agrees with and
 # then ignores; one worked pair of the two is what makes the distinction operable.
+#
+# That rule is now also a standing design instruction, in the CONFIDENTIALITY block of
+# `interaction_designer.py` - which is where it belonged all along, and where it was not when
+# CLAUDE.md recorded it as a rule the project held. Until then it existed in exactly one place
+# in the codebase: here, as an illustration of how to propose a rule. It was never a rule.
+#
+# Keeping it as the example is deliberate, and the final sentence is what makes it safe. An
+# example whose rule is silently already in the reader's prompt teaches the wrong thing - it
+# models restating an existing instruction, which lands on the queue as a novel pending rule
+# that nothing needs. Naming the outcome instead turns the duplication into the lesson: this is
+# what a proposal is *for*, and this is where an approved one ends up. The alternative - swapping
+# in a different pair - was considered and rejected, because every candidate drawn from this
+# work (the pre-written synthesis, the unfiltered promise) is now prompt text too, so the
+# substitution would buy nothing and would spend a real, attributable piece of provenance.
 _SKILL_PROPOSAL_INSTRUCTION = (
     "AFTER you have made every revision asked for above - not instead of making them - ask "
     "whether the correction has a general rule behind it, and if it has, record that rule "
@@ -435,7 +457,9 @@ _SKILL_PROPOSAL_INSTRUCTION = (
     "SC-014 was: \"'not a performance review' appears twice, and the framing repeats the "
     "welcome\". The rule behind it is: \"the welcome carries privacy and tone, the framing "
     "carries the interview's purpose\". The first is about a script. The second is about every "
-    "script.\n"
+    "script - and it is now a standing design instruction, which is where a good proposal "
+    "ends up. Do not propose a rule your own instructions already state; propose the one they "
+    "are missing.\n"
     "At most one proposal per correction, and none at all where the correction was particular "
     "to this piece of work and generalises to nothing - an approved rule is applied to every "
     "future run, so a rule that should not have been proposed costs more than a lesson left "
@@ -1067,6 +1091,22 @@ async def build_and_run_agent(slug: str, agent_key: str, run_id: int) -> Any:
 
     else:
         raise ValueError(f"Unknown agent key: '{agent_key}'")
+
+    # The approved library skills, exactly as the crew path applies them. Without this a
+    # standalone dispatch silently ran on a different prompt from the crew containing the same
+    # agent - and the omission bit precisely where it mattered most: Casey's `Theme Extraction`
+    # skill ("only flag a theme if it appears across multiple transcripts - never extrapolate a
+    # theme from one voice") is the instruction that decides whether his output is usable, and
+    # standalone dispatch was the path a consultant would reach for to synthesise a finished
+    # interview programme.
+    #
+    # Scoped by **crew** rather than by agent because that is what `build_and_run_crew` does -
+    # it prepends one block to every task - so a standalone run reproduces the crew rather than
+    # improving on it. Narrowing this to the single agent is defensible and is a different
+    # change; it would make the two paths disagree again, in the other direction.
+    skill_notes = await _fetch_skill_notes(AGENT_CREW_NAME[agent_key], slug)
+    if skill_notes:
+        task.description = skill_notes + "\n\n" + task.description
 
     crew = Crew(agents=[agent_obj], tasks=[task], process=Process.sequential, verbose=True)
     crew.step_callback = make_step_callback(slug, AGENT_CREW_NAME.get(agent_key, agent_key))

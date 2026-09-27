@@ -21,8 +21,11 @@ from httpx import ASGITransport, AsyncClient
 from api.config import get_settings
 from api.services import interview_service
 from api.services.interview_keyterms import (
+    DEEPGRAM_KEYTERM_TOKEN_LIMIT,
+    KEYTERM_TOKEN_BUDGET,
     MAX_KEYTERMS,
     build_keyterms,
+    estimate_keyterm_tokens,
     harvest_strings,
     terms_in_prose,
 )
@@ -169,18 +172,70 @@ async def test_the_keyterms_are_this_project_s_own_words(two_engagements):
 
 
 @pytest.mark.asyncio
-async def test_both_sources_reach_the_list_and_the_registry_leads(two_engagements):
-    """Labels first, then prose - and the list is stable across calls.
+async def test_both_sources_reach_the_list_and_the_cheapest_terms_lead(two_engagements):
+    """Cheapest first, whatever the source - and the list is stable across calls.
 
-    The order is asserted because it decides what survives the cap. A registry label is declared
-    vocabulary; a proper noun in a question is inferred, and inference goes second.
+    **This asserted "labels first" until 22 September, and that ordering was the defect.** It
+    is sound about provenance and answers the wrong question: keyterm prompting biases towards
+    a literal phrase, so what matters is whether a term is *spoken and misheard*. Measured on
+    the live corpus, the 350-token budget went entirely on 33 registry labels averaging 10.6
+    tokens - phrases no interviewee utters - while `Fraikin`, `FRACAS`, `DVSA` and `SAP`, which
+    the recogniser mangles on every pass, were dropped for want of two tokens each.
+
+    So the order is by cost, and the assertion below is the property that matters: a cheap
+    inferred term precedes an expensive declared one. Its opposite is the old behaviour, which
+    is why it is asserted as an inequality of positions rather than as a prefix.
     """
     ours = await keyterms_for_project("sp-gs-am")
-    assert ours[: len(IBERDROLA_LEDGER)] == [label for _, label in IBERDROLA_LEDGER]
-    # Multi-word proper nouns out of the prose, which the registry does not carry.
+
+    # `Iberdrola` is inferred from a question and costs three tokens; this label is declared and
+    # costs eleven. Under the old ordering the label led; under a cost ordering it cannot.
+    expensive_label = "Renewals CapEx Allocation"
+    assert ours.index("Iberdrola") < ours.index(expensive_label)
+
+    # Both sources still reach the list - the ordering changed, not the vocabulary.
+    assert expensive_label in ours
     assert "SP Energy Networks" in ours
     assert "RIIO-T3" in ours
+
+    # And the order is total, derived from the inputs alone: a recogniser configured differently
+    # on each question would be worse than one configured on none.
     assert ours == await keyterms_for_project("sp-gs-am")
+
+
+@pytest.mark.asyncio
+async def test_a_word_the_corpus_also_writes_in_lower_case_is_not_a_proper_noun(two_engagements):
+    """The junk filter, which earns its place only under a cost ordering.
+
+    Cheap terms are now bought first, so "Thank", "Assess", "Identify" and "Surface" - ordinary
+    words a sentence happened to capitalise - would be bought *ahead* of the vocabulary. They
+    are dropped because the same corpus writes them in lower case elsewhere, which is evidence
+    rather than a word list: a list of English words committed here would be a second
+    declaration free to rot, and one tuned to this client's prose would be worse.
+    """
+    from api.services.interview_keyterms import terms_in_prose
+
+    # Every proper noun here sits **mid-sentence**, because a lone capitalised word that only
+    # ever opens a sentence is dropped by the positional rule above - correctly, and it caught
+    # this fixture's first draft, which had `Fraikin` leading its sentence and then asserted the
+    # code had wrongly filtered it.
+    text = (
+        "Assess the position. Please describe it. The work that Fraikin maintains is fleet. "
+        "We assess the risk and record it in SAP today."
+    )
+    found = terms_in_prose(text)
+    assert "Fraikin" in found, "a genuine proper noun was filtered out"
+    # An acronym survives on the same evidence as anything else, not on an exemption. The
+    # first version of this filter exempted ALL-CAPS tokens outright, reasoning that an
+    # acronym's lower-case form is a different word - and measured on the live corpus the
+    # exemption protected nothing (SAP, ISO, KPI, TCO, DVSA and eight more never appear lower
+    # case) while admitting NOT, WHAT, HOW, AND and WHEN, which the scripts capitalise in
+    # headings. Under cost ordering those are one token each and bought first.
+    assert "SAP" in found, "an acronym the corpus never writes lower case must survive"
+    assert "Assess" not in found, "a word the corpus also writes lower case is not a proper noun"
+    assert "NOT" not in terms_in_prose("Check this. NOT a heading, but the word not appears."), (
+        "an ALL-CAPS ordinary word was exempted from the corpus test"
+    )
 
 
 @pytest.mark.asyncio
@@ -297,6 +352,38 @@ def test_the_language_is_the_sessions_and_falls_back_to_english():
     assert deepgram_listen_params([], "")["language"] == "en"
 
 
+@pytest.mark.parametrize("keyterms", [[], ["Iberdrola"]])
+@pytest.mark.parametrize("language", ["en", "cy"])
+def test_the_server_declares_nothing_about_the_shape_of_the_audio(keyterms, language):
+    """The encoding, the rate and the channel count are the browser's, and must stay together.
+
+    **This is the mirror of the `model`/`keyterm` rule, running the other way, and the reason it
+    is asserted here is that the two halves fail differently.** `model` and its boost parameter
+    are one fact about Deepgram, so restating them in TypeScript would be a second declaration of
+    a server-side pairing. `encoding` and `sample_rate` are one fact about *this browser's audio
+    graph*, and the server cannot observe an `AudioContext`'s sample rate at all - so they are
+    set in `deepgramListenUrl` from the live context, and the server declares neither.
+
+    What this test exists to stop is somebody adding "just the encoding" here, which looks
+    entirely reasonable: `linear16` is a constant, it is not going to change, and the server
+    already owns every other parameter. Split that way, a client that later captured at a
+    different depth would send bytes the server was still describing as 16-bit, and **the failure
+    is silent** - the socket opens, the audio streams, and the transcript comes back as noise.
+
+    Parametrised over both inputs because the property is that it is unconditional, and the
+    empty-vocabulary branch is the one every engagement takes on its first interview.
+    """
+    params = deepgram_listen_params(keyterms, language)
+
+    for owned_by_the_browser in ("encoding", "sample_rate", "channels"):
+        assert owned_by_the_browser not in params, (
+            f"{owned_by_the_browser} describes the audio this browser produces, not how Deepgram "
+            f"is configured. It belongs with the sample rate in deepgramListenUrl, which reads "
+            f"the live AudioContext; declaring it here separates a pair that must travel "
+            f"together, and a mismatch between them is silent at both ends."
+        )
+
+
 # ---------------------------------------------------------------------------
 # The extraction rules, driven directly and in both directions
 # ---------------------------------------------------------------------------
@@ -381,10 +468,98 @@ def test_the_most_used_term_leads():
     assert terms_in_prose(text)[0] == "Ofgem"
 
 
-def test_the_list_is_capped():
-    """A vocabulary of everything boosts nothing."""
-    labels = [f"Distinctive Activity Number {n}" for n in range(MAX_KEYTERMS + 40)]
+def test_the_list_is_capped_by_the_number_of_terms_when_the_terms_are_cheap():
+    """A vocabulary of everything boosts nothing.
+
+    Short terms is the shape where the *count* is what binds - a hundred acronyms cost a few
+    hundred tokens between them, so the token budget below never comes into it. Both bounds are
+    real and they bind on different corpora, which is the whole reason for keeping two.
+    """
+    labels = [f"Bravo{n}" for n in range(MAX_KEYTERMS + 40)]
     assert len(build_keyterms(labels, "")) == MAX_KEYTERMS
+
+
+# Labels shaped like a real engagement's: multi-word, parenthesised, hyphenated. The live
+# `sp-gs-am` ledger is exactly this - "Regulatory Compliance and Record Retention (Asbestos and
+# Statutory)" - and it is the shape that broke transcription, because a hundred of them is
+# nowhere near a hundred tokens.
+_REALISTIC_LABELS = [
+    f"Regulatory Compliance{n} and Record Retention (Asbestos)"
+    for n in range(MAX_KEYTERMS + 40)
+]
+
+
+def test_the_vocabulary_this_deployment_sends_fits_deepgrams_published_limit():
+    """The defect that cost two live interviews their recogniser, asserted at its own scale.
+
+    Deepgram's limit is `500 tokens across all keyterms` and exceeding it is a **400 on the
+    handshake**, so the browser never holds an open socket, `openDeepgramSocket` answers `null`,
+    and two of those latch Deepgram off for the rest of the hour. Nothing errors in front of the
+    participant and nothing reaches the provider's usage, because no audio is ever transcribed -
+    which is precisely why this went unnoticed through two full interviews.
+
+    The old cap counted *terms* and was reasoned about against the URL length. On the live
+    corpus that let 918 estimated tokens go up under a limit of 500.
+    """
+    sent = build_keyterms(_REALISTIC_LABELS, "")
+    spent = sum(estimate_keyterm_tokens(term) for term in sent)
+    assert spent <= DEEPGRAM_KEYTERM_TOKEN_LIMIT, (
+        f"{len(sent)} terms costing about {spent} tokens against Deepgram's "
+        f"{DEEPGRAM_KEYTERM_TOKEN_LIMIT} - the handshake would be refused 400"
+    )
+    # And the headroom is deliberate: the tokeniser is unpublished, so the budget is what is
+    # spent and the limit is what must never be reached.
+    assert spent <= KEYTERM_TOKEN_BUDGET
+
+
+def test_a_vocabulary_that_does_not_fit_is_shortened_rather_than_emptied():
+    """The failure direction. A budget that refused everything would be the same outage."""
+    sent = build_keyterms(_REALISTIC_LABELS, "")
+    assert 15 <= len(sent) < MAX_KEYTERMS
+    # The terms kept are the ones worth keeping: registry labels lead, and truncation takes from
+    # the end, so the first declared label survives a budget it cannot all fit inside.
+    assert sent[0] == _REALISTIC_LABELS[0]
+
+
+def test_a_term_too_expensive_to_afford_does_not_cost_the_cheaper_ones_behind_it():
+    """Skipped, not a walk that stops.
+
+    The distinction is invisible until the budget is genuinely exhausted by **distinct** terms:
+    a repeated one is deduplicated before it is ever priced, so a list of forty copies spends the
+    budget once and proves nothing. These are forty different long labels, which is what a real
+    ledger looks like, followed by two acronyms - the cheapest and most valuable terms there are.
+    A walk that stopped at the first unaffordable label would drop both.
+    """
+    labels = _REALISTIC_LABELS[:40] + ["Ofgem", "SPT"]
+    sent = build_keyterms(labels, "")
+    assert "Ofgem" in sent and "SPT" in sent
+    # And the budget is still respected while they are kept - the point is which terms are
+    # dropped, not that the bound is relaxed to fit them.
+    assert sum(estimate_keyterm_tokens(t) for t in sent) <= KEYTERM_TOKEN_BUDGET
+
+
+@pytest.mark.parametrize(
+    "term, floor",
+    [
+        # Punctuation is a token of its own to every byte-pair tokeniser, and these terms are
+        # full of it. Counting words alone reads this as 4 and it is not.
+        ("Scottish Power Group Services UK (GS UK)", 9),
+        ("EV-Specific Service: Battery Health", 8),
+        # A long unusual word is several word-pieces, and every term here is chosen *because* it
+        # is unusual - which is exactly the case a word count gets wrong.
+        ("Decarbonisation", 3),
+        ("Audit", 1),
+    ],
+)
+def test_the_estimate_counts_what_a_word_count_misses(term, floor):
+    """Driven directly, in the direction that matters: it must never read low."""
+    assert estimate_keyterm_tokens(term) >= floor
+
+
+def test_the_estimate_never_reads_a_term_as_free():
+    """A zero-cost term would let an unbounded list through the budget."""
+    for term in ("A", "-", "", "   "):
+        assert estimate_keyterm_tokens(term) >= 1
 
 
 def test_a_label_that_is_a_sentence_is_not_a_term():

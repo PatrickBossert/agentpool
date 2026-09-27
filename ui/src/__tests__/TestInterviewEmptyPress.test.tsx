@@ -41,7 +41,13 @@ let spoken: string[] = []
 
 function installFetch(pressText: unknown) {
   return vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith('/script')) {
+    // The script door takes a query string now - `?slug=...` always, and `&script_id=...` when the
+    // consultant has chosen one of the project's own scripts - so the path is matched rather than the
+    // whole URL. `endsWith('/script')` stopped matching the moment the slug was added, and the fake
+    // then fell through to its catch-all `{}`: every test in this file failed on a script with no
+    // sections, which is a fake going stale rather than the product breaking. Matching the **pathname**
+    // also keeps this from matching `/test/script-options`, which a bare `includes('/script')` would.
+    if (new URL(url, 'http://test').pathname.endsWith('/script')) {
       return new Response(JSON.stringify(SCRIPT), { status: 200 })
     }
     if (url.endsWith('/speak')) {
