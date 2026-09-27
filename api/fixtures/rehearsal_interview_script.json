@@ -1,0 +1,112 @@
+{
+  "script_id": "REHEARSAL",
+  "node_id": "0",
+  "level": "L0",
+  "node_label": "Rehearsal - Strategy and Market Development",
+  "research_brief": "A short rehearsal instrument, shipped with the product so that anyone can hear an agent conduct an interview without an engagement having reached the mapping stage. It is written to exercise the mechanism rather than to gather evidence: one warm-up, two questions that reward a real answer, one that invites a specific example, and one closing reflection. Every question carries probing instructions, follow-up branches, and evasion signals, so the elaboration press has something to press on.",
+  "study_objectives": [
+    "Hear how this agent sounds, paces a question, and follows up",
+    "Confirm the microphone, the speaker, and the transcription before a participant meets them",
+    "Show a stakeholder what taking part will feel like"
+  ],
+  "welcome_message": "Hello, and thank you for making the time. This is a rehearsal interview, so nothing you say here is recorded against a project - it is here so you can hear how I ask questions and how I follow up. I will ask you five short questions about strategy and market development in your organisation. There are no right answers, and you are welcome to say that something is outside your area. Please answer in your own words, and take as long as you like.",
+  "framing_block": "My interest is in how decisions actually get made rather than how they are meant to, so please describe what happens in practice. If I ask you to go further on something, it is because the detail is where the value is - not because the first answer was wrong.",
+  "sections": [
+    {
+      "title": "Role and Remit",
+      "questions": [
+        {
+          "id": "Q1",
+          "text": "To begin with, could you describe your role and the part of the strategy you are accountable for?",
+          "follow_up_count": 2,
+          "probing_instructions": "Establish scope, decision rights, and who they answer to. Probe for what they personally decide as against what they recommend. If the answer is only a job title, ask what lands on their desk in a typical week.",
+          "follow_up_branches": [
+            "Which of those decisions are yours to make, and which do you recommend on?",
+            "Who else has to agree before one of those decisions takes effect?"
+          ],
+          "evasion_signals": [
+            "it varies",
+            "hard to say",
+            "a bit of everything",
+            "that is a good question"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Where Growth Comes From",
+      "questions": [
+        {
+          "id": "Q2",
+          "text": "Where do you expect your organisation's growth to come from over the next three years?",
+          "follow_up_count": 2,
+          "probing_instructions": "Probe for whether this is a stated plan or their own reading of it, and for how confident they are. Look for named markets, segments, or propositions rather than directions of travel. If they answer with a percentage, ask what has to be true for it.",
+          "follow_up_branches": [
+            "Is that the agreed plan, or your own view of where it will actually come from?",
+            "What would have to be true for that to happen?"
+          ],
+          "evasion_signals": [
+            "more of the same",
+            "organic growth",
+            "we are still working that out",
+            "it depends on the market"
+          ]
+        },
+        {
+          "id": "Q3",
+          "text": "When a new market or proposition is put forward, how does it get decided on?",
+          "follow_up_count": 2,
+          "probing_instructions": "Probe for the forum, the evidence it expects, and who can stop something. The interesting answer is usually about what is *not* asked for. If they describe a formal gate, ask about the last thing that went through it.",
+          "follow_up_branches": [
+            "What evidence does that forum expect to see before it says yes?",
+            "Can you think of something that was put forward and did not proceed?"
+          ],
+          "evasion_signals": [
+            "through the usual channels",
+            "the board decides",
+            "there is a process",
+            "case by case"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Evidence and Friction",
+      "questions": [
+        {
+          "id": "Q4",
+          "text": "Can you give me a recent example where the information you needed to make a call was not there?",
+          "follow_up_count": 2,
+          "probing_instructions": "Ask for one concrete instance, not a general complaint. Probe for what they did instead, what it cost, and whether it has since been fixed. A specific story here is worth more than the whole of the rest of the interview.",
+          "follow_up_branches": [
+            "What did you do in the absence of it?",
+            "Has anything changed since, or would it happen the same way again today?"
+          ],
+          "evasion_signals": [
+            "nothing springs to mind",
+            "we manage",
+            "data is always a problem",
+            "not really"
+          ]
+        },
+        {
+          "id": "Q5",
+          "text": "If you could change one thing about how strategy turns into action here, what would it be?",
+          "follow_up_count": 1,
+          "probing_instructions": "Probe for the underlying cause rather than the symptom, and for what success would look like if it were fixed. Ask who else would have to want the same thing.",
+          "follow_up_branches": [
+            "What would that make possible that is not possible now?"
+          ],
+          "evasion_signals": [
+            "difficult to say",
+            "I would not change anything",
+            "more resource",
+            "better communication"
+          ]
+        }
+      ]
+    }
+  ],
+  "synthesis_check": "Before we finish - have I understood correctly that the growth you expect is driven mainly by what you described first, and that the decision you would most like to make differently is the one you just named?",
+  "closing_message": "That is everything I wanted to ask - thank you. That was a rehearsal, so nothing here has been filed against a project. You have now heard how I open an interview, how I follow up when there is more to get at, and how I close. If the pace or the framing is not what you want a participant to meet, it is all configurable before anybody is invited."
+}

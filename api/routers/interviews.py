@@ -46,6 +46,10 @@ from api.services.interview_service import (
 )
 from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
 from api.services.process_cache import register_cache
+from api.services.rehearsal_script import (
+    RehearsalScriptUnavailable,
+    default_rehearsal_script,
+)
 from api.services.speech_policy import (
     SPEECH_REQUIRED,
     alert_speech_unavailable,
@@ -174,20 +178,21 @@ async def get_sessions_for_project(slug: str, payload: dict = Depends(require_an
 
 @router.get("/test/script")
 async def get_test_interview_script(payload: dict = Depends(require_any_auth)):
-    """Return the smoke-test interview script for the built-in test interview."""
-    scripts_path = (
-        Path(get_settings().projects_dir) / "smoke-test" / "outputs" / "interview_scripts.json"
-    )
-    if not scripts_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Smoke-test script not found — run discovery_mapping on the smoke-test project first.",
-        )
+    """The script a rehearsal interview is conducted from: the committed fixture.
+
+    It read `projects/smoke-test/outputs/interview_scripts.json` until this change - a crew
+    output on a deletable project, behind a product feature - and answered 404 with advice to
+    run `discovery_mapping` on that project once it was archived. The fixture is owned by the
+    product now; `api/services/rehearsal_script.py` carries the whole argument.
+
+    **500, not 404.** The fixture is committed, so its absence is a broken deployment rather
+    than an engagement that has not reached the mapping stage - and "404" is exactly the answer
+    that read as the latter for as long as this door was broken, sending whoever saw it to run
+    a crew instead of to look at the deployment.
+    """
     try:
-        data = json.loads(scripts_path.read_text())
-        first_key = next(iter(data))
-        return data[first_key]
-    except Exception as exc:
+        return default_rehearsal_script()
+    except RehearsalScriptUnavailable as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
 

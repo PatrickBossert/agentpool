@@ -45,6 +45,30 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+/**
+ * What to tell a consultant when the script will not load.
+ *
+ * The server's own `detail`, when it sent one, rather than a fixed string composed here. The
+ * fixed string it replaces was `'Smoke-test script not found - run discovery_mapping on the
+ * smoke-test project first.'`, which outlived the project it named: the door began answering 404
+ * once `smoke-test` was archived, and the dialog then told whoever read it to run a crew on a
+ * project that no longer existed. A message assembled on this side cannot go stale gracefully,
+ * because nothing on this side knows why the door refused.
+ *
+ * `describeError` is not reached for: it reads an axios error's shape, and this is a raw
+ * `fetch` `Response`. Widening it to cover both would mean one helper guessing which of two
+ * unrelated shapes it holds.
+ */
+async function describeScriptFailure(res: Response): Promise<string> {
+  try {
+    const body = await res.json()
+    if (typeof body?.detail === 'string' && body.detail) return body.detail
+  } catch {
+    // A refusal with no JSON body, which is every proxy error between here and the API.
+  }
+  return `Failed to load the interview script (${res.status})`
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ScriptQuestion {
@@ -176,11 +200,7 @@ export default function TestInterviewDialog({
   async function loadScript() {
     try {
       const res = await fetch(`${API_BASE}/script`, { headers: authHeaders() })
-      if (!res.ok) throw new Error(
-        res.status === 404
-          ? 'Smoke-test script not found — run discovery_mapping on the smoke-test project first.'
-          : `Failed to load script (${res.status})`
-      )
+      if (!res.ok) throw new Error(await describeScriptFailure(res))
       const data: InterviewScript = await res.json()
       const total = data.sections.reduce((n, s) => n + s.questions.length, 0)
       setScript(data)
