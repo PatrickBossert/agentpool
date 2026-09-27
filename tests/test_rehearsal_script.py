@@ -601,3 +601,47 @@ async def test_choosing_a_script_on_a_project_that_has_none_is_refused(isolated)
     await _make_project(slug)
     with pytest.raises(ScriptNotOffered):
         await project_rehearsal_script(slug, "SC-001")
+
+
+@pytest.mark.asyncio
+async def test_asking_about_an_unknown_slug_materialises_no_database(isolated):
+    """Neither reader may leave a database behind for a slug that has none.
+
+    Driven by counting the files in `DATABASE_DIR`, not by reading the code: `get_connection`
+    creates the file and migrates it, and `current_output_path` reaches `get_project_id`, a bare
+    `sqlite3.connect`, which creates it too - so there are two independent ways to fail this and
+    an assertion about either function alone would miss the other. Before the guard, this left
+    `definitely-not-a-project.db` and `also-not-a-project.db` on disk.
+
+    CLAUDE.md forbids it outright and `caller_roles`, `_stakeholder_matches_invite` and
+    `keyterms_for_project` all carry the same guard. Both doors ask `check_project_access` first,
+    so an org_admin naming somebody else's slug is refused before reaching here - but a
+    `sysadmin` passes that floor unconditionally, so this is a reachable probe rather than a
+    theoretical one, and a standing rule is not kept by the reachability of its exceptions.
+    """
+    database_dir = Path(get_settings().database_dir)
+    before = set(os.listdir(database_dir))
+
+    assert await rehearsal_script_options("definitely-not-a-project") == []
+    with pytest.raises(ScriptNotOffered):
+        await project_rehearsal_script("also-not-a-project", "SC-001")
+
+    assert set(os.listdir(database_dir)) == before, \
+        "a slug that does not exist left a database behind"
+
+
+@pytest.mark.asyncio
+async def test_a_project_that_does_exist_is_still_read(isolated, client):
+    """The control, and it is what stops the guard above being satisfied by reading nothing at all.
+
+    A `_database_exists` that answered `False` unconditionally passes the test above perfectly and
+    offers every engagement an empty list for ever.
+    """
+    slug = "rehearsal-real"
+    project_id = await _make_project(slug)
+    scripts = {"SC-001": _script("SC-001", CHOSEN_LABEL, "Where does growth come from?")}
+    await _seed_scripts(slug, project_id, scripts, active={"SC-001": 1})
+
+    offered = await rehearsal_script_options(slug)
+    assert [s["script_id"] for s in offered] == ["SC-001"]
+    assert (await project_rehearsal_script(slug, "SC-001"))["node_label"] == CHOSEN_LABEL

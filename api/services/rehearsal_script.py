@@ -33,6 +33,7 @@ import json
 import logging
 from pathlib import Path
 
+from api.config import get_settings
 from api.database import fetch_project, get_connection
 
 _log = logging.getLogger(__name__)
@@ -135,8 +136,32 @@ async def project_rehearsal_script(slug: str, script_id: str) -> dict:
     return script
 
 
+def _database_exists(slug: str) -> bool:
+    """Whether this slug has a database, asked without creating one.
+
+    **Neither of the two readers below may materialise a database for a slug that has none.**
+    `get_connection` creates the file and runs every migration on it; `current_output_path`
+    resolves its row through `get_project_id`, a bare `sqlite3.connect`, which creates it too. So
+    a caller naming slugs would otherwise leave one empty database per guess - which CLAUDE.md
+    forbids outright, and which `caller_roles`, `_stakeholder_matches_invite` and
+    `keyterms_for_project` all carry this same guard for.
+
+    Driven rather than reasoned about: without it, asking these two functions about two
+    non-existent slugs left `also-not-a-project.db` and `definitely-not-a-project.db` on disk.
+
+    Both doors call `check_project_access` first, so an org_admin naming a slug outside their
+    organisation is refused before reaching here - but a `sysadmin` passes that floor
+    unconditionally, so the probe is reachable rather than theoretical. And a standing rule is
+    not kept by the reachability of its exceptions, which is the sentence
+    `keyterms_for_project`'s own guard is written under.
+    """
+    return (Path(get_settings().database_dir) / f"{slug}.db").exists()
+
+
 async def _active_ledger_rows(slug: str) -> list[dict]:
     """The active ledger rows, or `[]` for any reason there are none to read."""
+    if not _database_exists(slug):
+        return []
     try:
         async with get_connection(slug) as conn:
             project = await fetch_project(conn, slug=slug)
@@ -171,6 +196,13 @@ def _current_artefact(slug: str) -> dict | None:
     human had already rejected.
     """
     from agents.tools._db import current_output_path
+
+    # The same guard `_active_ledger_rows` carries, for the reason `_database_exists` states:
+    # `current_output_path` reaches `get_project_id`, a bare `sqlite3.connect`, which creates the
+    # file. Both callers already return early on an empty ledger, so this is unreachable today -
+    # and it is here because a standing rule must not depend on that staying true.
+    if not _database_exists(slug):
+        return None
 
     try:
         path = current_output_path(slug, "interview_scripts")
