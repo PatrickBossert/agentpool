@@ -11,7 +11,7 @@
 // offers "Resume from Q{n}" so nothing is lost on accidental dismissal.
 // Empty responses trigger a single gentle repeat before moving on.
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2, Pause, Play, Pencil, Check } from 'lucide-react'
+import { X, Mic, MicOff, CheckCircle2, Copy, ChevronDown, ChevronUp, Volume2, Pause, Play, Pencil, Check, ShieldCheck } from 'lucide-react'
 import { bcp47 } from '../../utils/holidays'
 import AgentAvatar from '../AgentAvatar'
 
@@ -908,6 +908,9 @@ export default function TestInterviewDialog({
               </ul>
             </div>
 
+            {/* Said before they start, which is when a consultant in front of a client needs it. */}
+            <RehearsalNotSavedNotice className="w-full max-w-md" />
+
             {isBriefing ? (
               <div className="flex items-center gap-3 text-slate-400 text-sm">
                 <WaveformIcon />
@@ -1127,6 +1130,14 @@ export default function TestInterviewDialog({
             </div>
 
             <div className="flex-1 overflow-y-auto px-8 py-6 space-y-5">
+              {/*
+                * Repeated here deliberately, and this is the screen that needed it most: the
+                * header one line up says "{n} exchanges **recorded**", which was the only word in
+                * the product describing what had become of the transcript - and it is the word the
+                * owner's concern was about. The count is honest about the transcript in front of
+                * them; this says where it is not.
+                */}
+              <RehearsalNotSavedNotice />
               {transcript.map((pair, i) => (
                 <div key={i} className="space-y-2">
                   <div className="flex items-start gap-3">
@@ -1259,6 +1270,42 @@ export default function TestInterviewDialog({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * "This rehearsal is not being saved", in one place and rendered on two screens.
+ *
+ * The project owner asked for this after rehearsing for a client demonstration, and the concern
+ * is the right one even though the answer was already yes: the person in the interviewee's chair
+ * for a demonstration is not the stakeholder whose answers the engagement wants, so a rehearsal
+ * that recorded would file wrong answers under a real name.
+ *
+ * It is true **structurally** rather than by policy. This dialog opens three doors - `/test/
+ * script`, `/test/speak`, `/test/elaboration-press` - and none of them writes an interview; every
+ * door that does is scoped to a session token, which a rehearsal never holds. The transcript is
+ * component state and dies with the dialog.
+ *
+ * Which is exactly why it is worth saying out loud, and worth asserting: it holds because no
+ * recording call exists, and that is the kind of property a later "save this rehearsal" button
+ * removes without anybody noticing. `TestInterviewRecordsNothing.test.tsx` holds both halves -
+ * the restraint, as an allow-list over every request the rehearsal makes, and this sentence.
+ *
+ * One component rather than two copies of the markup, because the two screens saying slightly
+ * different things about whether a client's data is being stored is the worst available outcome.
+ */
+function RehearsalNotSavedNotice({ className = '' }: { className?: string }) {
+  return (
+    <div
+      data-testid="rehearsal-not-saved-notice"
+      className={`flex items-start gap-2.5 rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 ${className}`}
+    >
+      <ShieldCheck size={15} className="text-teal-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
+      <p className="text-xs text-slate-300 leading-relaxed break-words">
+        This is a rehearsal - nothing is saved. No interview record is created for this project,
+        and the transcript is lost when this dialogue closes.
+      </p>
     </div>
   )
 }
