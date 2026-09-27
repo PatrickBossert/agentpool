@@ -965,10 +965,28 @@ export default function TestInterviewDialog({
               </div>
 
               {/* Question + controls */}
-              <div className="flex-1 flex flex-col justify-center px-8 py-8 gap-6">
+              {/*
+                * `min-w-0` is load-bearing, and it is what the transcript spilling out of the
+                * card was.
+                *
+                * A flex item's automatic minimum size is its *content-based* minimum, so
+                * `flex-1` alone will not shrink this column below the widest unbreakable thing
+                * in it - and `min-width` beats `max-width`, so nothing above can rein it in. The
+                * transcript's `Q:` line is `truncate`, which is `white-space: nowrap`, so a long
+                * question made this column's min-content width the whole of that line. Measured
+                * in a real browser against this exact class chain: the card held at its 768px
+                * `max-w-3xl` while the column ran 40px past its right edge, and at a 420px
+                * viewport it ran **420px** past - a full viewport, with the question and every
+                * control pushed out of the visible card. The card's `overflow-hidden` then
+                * clipped it, which is what the spill looks like from the outside.
+                *
+                * The sibling column is `flex-shrink-0 w-52`, so it is not a candidate; this is
+                * the only item in the row that can absorb the width.
+                */}
+              <div className="flex-1 min-w-0 flex flex-col justify-center px-8 py-8 gap-6">
                 {currentQuestion && (
                   <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700">
-                    <p className="text-white text-lg leading-relaxed">{currentQuestion}</p>
+                    <p className="text-white text-lg leading-relaxed break-words">{currentQuestion}</p>
                   </div>
                 )}
 
@@ -1054,8 +1072,22 @@ export default function TestInterviewDialog({
                       <div className="mt-3 space-y-3 max-h-40 overflow-y-auto pr-1">
                         {transcript.map((pair, i) => (
                           <div key={i} className="space-y-1">
+                            {/*
+                              * The answer wraps and breaks; the question stays on one line with
+                              * an ellipsis, which is the shape this panel was designed in and now
+                              * actually gets - `truncate`'s ellipsis could never engage while the
+                              * column was growing to fit the line instead of clipping it.
+                              *
+                              * `break-words` rather than a horizontal scroller: these are two
+                              * lines of prose, and CLAUDE.md's rule about wide content scrolling
+                              * in its own container is about content that cannot wrap - a table,
+                              * a code block. A transcript that scrolled sideways would be worse
+                              * than one that wrapped. What the rule does require either way is
+                              * that the page body never scroll horizontally, which is asserted in
+                              * the reproduction rather than assumed.
+                              */}
                             <p className="text-[11px] text-teal-400 font-medium truncate">Q: {pair.question}</p>
-                            <p className="text-[11px] text-slate-400 line-clamp-2">A: {pair.answer || '—'}</p>
+                            <p className="text-[11px] text-slate-400 line-clamp-2 break-words">A: {pair.answer || '—'}</p>
                           </div>
                         ))}
                       </div>
@@ -1104,12 +1136,22 @@ export default function TestInterviewDialog({
                       className="w-6 h-6 flex-shrink-0 mt-0.5 opacity-80"
                       fallbackClassName={`${FALLBACK_FACE} text-[9px]`}
                     />
-                    <div className="bg-slate-800 rounded-xl rounded-tl-none px-4 py-3 flex-1">
-                      <p className="text-slate-200 text-sm leading-relaxed">{pair.question}</p>
+                    {/*
+                      * The same `min-w-0` the interviewing panel needs, one phase over. The two
+                      * bubbles are `flex-1` items whose content-based minimum is the longest
+                      * unbreakable run in a transcript, so a pasted URL or a run-on answer pushes
+                      * them past the card. It surfaces differently here rather than not at all:
+                      * the scroll area around them is `overflow-y-auto`, which makes it a scroll
+                      * container on both axes, so this phase gains a sideways scrollbar where the
+                      * interviewing phase spilled and was clipped. Same defect, quieter symptom -
+                      * fixed together so the next reader does not have to find it twice.
+                      */}
+                    <div className="bg-slate-800 rounded-xl rounded-tl-none px-4 py-3 flex-1 min-w-0">
+                      <p className="text-slate-200 text-sm leading-relaxed break-words">{pair.question}</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-3 pl-9 flex-row-reverse">
-                    <div className="bg-teal-900/40 border border-teal-800/40 rounded-xl rounded-tr-none px-4 py-3 flex-1">
+                    <div className="bg-teal-900/40 border border-teal-800/40 rounded-xl rounded-tr-none px-4 py-3 flex-1 min-w-0">
                       {editingIdx === i ? (
                         <div className="space-y-2">
                           <textarea
@@ -1141,7 +1183,7 @@ export default function TestInterviewDialog({
                         </div>
                       ) : (
                         <div className="flex items-start gap-2">
-                          <p className="flex-1 text-slate-200 text-sm leading-relaxed">
+                          <p className="flex-1 min-w-0 text-slate-200 text-sm leading-relaxed break-words">
                             {pair.answer || <span className="text-slate-500 italic">No response recorded</span>}
                           </p>
                           <button
