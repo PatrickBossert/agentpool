@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pathlib import Path
 from pydantic import BaseModel, Field
 
@@ -48,7 +48,10 @@ from api.services.outbound_mail import STAKEHOLDERS, send_project_mail
 from api.services.process_cache import register_cache
 from api.services.rehearsal_script import (
     RehearsalScriptUnavailable,
+    ScriptNotOffered,
     default_rehearsal_script,
+    project_rehearsal_script,
+    rehearsal_script_options,
 )
 from api.services.speech_policy import (
     SPEECH_REQUIRED,
@@ -176,24 +179,72 @@ async def get_sessions_for_project(slug: str, payload: dict = Depends(require_an
 # Test interview endpoints (JWT auth — no session required)
 # ---------------------------------------------------------------------------
 
-@router.get("/test/script")
-async def get_test_interview_script(payload: dict = Depends(require_any_auth)):
-    """The script a rehearsal interview is conducted from: the committed fixture.
+@router.get("/test/script-options")
+async def get_test_interview_script_options(
+    slug: str = Query(min_length=1), payload: dict = Depends(require_any_auth)
+):
+    """The scripts this project offers for rehearsal, beside the committed default.
 
-    It read `projects/smoke-test/outputs/interview_scripts.json` until this change - a crew
-    output on a deletable project, behind a product feature - and answered 404 with advice to
-    run `discovery_mapping` on that project once it was archived. The fixture is owned by the
-    product now; `api/services/rehearsal_script.py` carries the whole argument.
+    The default is deliberately **not** in this list. It is a product constant rather than one of
+    the project's scripts, so the client renders it first and selected and sends no id for it;
+    putting it here would make the server the author of a piece of UI copy and would give the
+    list two kinds of member.
 
-    **500, not 404.** The fixture is committed, so its absence is a broken deployment rather
-    than an engagement that has not reached the mapping stage - and "404" is exactly the answer
-    that read as the latter for as long as this door was broken, sending whoever saw it to run
-    a crew instead of to look at the deployment.
+    `active = 1` is applied in `rehearsal_script_options`, on this side. So is the decision to
+    offer every active script with its `review_status` shown rather than approved-only - argued
+    where it is implemented, because the measurement behind it is about this engagement's data
+    rather than about this door.
+
+    Answers `{"scripts": []}` rather than 404 for a project with none. A fresh engagement has no
+    scripts, and the rehearsal must not require Maya to have run.
     """
+    await check_project_access(slug, payload)
+    return {"scripts": await rehearsal_script_options(slug)}
+
+
+@router.get("/test/script")
+async def get_test_interview_script(
+    slug: str = Query(min_length=1),
+    script_id: str = "",
+    payload: dict = Depends(require_any_auth),
+):
+    """The script a rehearsal is conducted from - the committed default, or a chosen one.
+
+    A blank `script_id` means the committed default, which is the state a fresh engagement is
+    permanently in. It is the fixture in `api/fixtures/`, not a project's output: this door used
+    to read `projects/smoke-test/outputs/interview_scripts.json`, and when that project was
+    archived the rehearsal button began answering 404 with advice to run a crew on a project that
+    no longer existed. `api/services/rehearsal_script.py` carries the whole argument.
+
+    **The slug is required, and so this door now has a floor.** It took no slug at all until this
+    change; CLAUDE.md records that a door which gains a slug gains a floor in the same change,
+    and that the route sweep - keyed on `{slug}` in the *path* - will not remind you, because
+    this one takes it as a query parameter. `check_project_access` is the first line, before the
+    slug reaches a database, for the same reason the two sibling test doors put it there: a
+    refusal raised after the project's ledger has been read is not a refusal.
+
+    The slug is required **even for the default**, where it decides nothing about which script is
+    served. That is deliberate, and it is the arm somebody would reasonably leave unscoped: a
+    door answering a stranger 200 confirms the slug exists, and an optional slug is a slug a
+    caller omits. The two sibling doors would then be the only scoped ones - and the rehearsal
+    dialog is opened from a real project and holds the slug in its props, so there is no honest
+    caller without one.
+
+    **500, not 404, for a missing fixture.** Its absence is a broken deployment rather than an
+    engagement that has not reached the mapping stage - and "404" is exactly the answer that read
+    as the latter for as long as this door was broken, sending whoever saw it to run a crew
+    instead of to look at the deployment. A refused `script_id` is a genuine 404.
+    """
+    await check_project_access(slug, payload)
+    if not script_id:
+        try:
+            return default_rehearsal_script()
+        except RehearsalScriptUnavailable as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
     try:
-        return default_rehearsal_script()
-    except RehearsalScriptUnavailable as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        return await project_rehearsal_script(slug, script_id)
+    except ScriptNotOffered as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 class TestSpeakRequest(BaseModel):

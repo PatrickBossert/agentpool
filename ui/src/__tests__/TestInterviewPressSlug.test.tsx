@@ -40,10 +40,19 @@ const EVASIVE_ANSWER = 'I am not sure really'
 
 let pressBodies: Record<string, unknown>[] = []
 let speakBodies: Record<string, unknown>[] = []
+/** Every URL the dialog fetched a script with. The script door takes the slug too now. */
+let scriptRequests: string[] = []
 
 function installFetch() {
   return vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith('/script')) {
+    // The script door takes a query string now - `?slug=...` always, and `&script_id=...` when the
+    // consultant has chosen one of the project's own scripts - so the path is matched rather than the
+    // whole URL. `endsWith('/script')` stopped matching the moment the slug was added, and the fake
+    // then fell through to its catch-all `{}`: every test in this file failed on a script with no
+    // sections, which is a fake going stale rather than the product breaking. Matching the **pathname**
+    // also keeps this from matching `/test/script-options`, which a bare `includes('/script')` would.
+    if (new URL(url, 'http://test').pathname.endsWith('/script')) {
+      scriptRequests.push(String(url))
       return new Response(JSON.stringify(SCRIPT), { status: 200 })
     }
     if (url.endsWith('/speak')) {
@@ -138,6 +147,7 @@ describe('the smoke-test dialog and the project it was opened from', () => {
   it('sends that project slug with every elaboration press', async () => {
     pressBodies = []
     speakBodies = []
+    scriptRequests = []
     vi.stubGlobal('fetch', installFetch())
     installSpeechRecognition(EVASIVE_ANSWER)
     installAudioAndMic()
@@ -161,6 +171,16 @@ describe('the smoke-test dialog and the project it was opened from', () => {
     for (const body of pressBodies) {
       expect(body.slug).toBe('secure-proj')
     }
+
+    // The script door takes the slug too, since sp67 gave it one so a consultant can rehearse one
+    // of the project's own scripts. A door that gains a slug gains a floor in the same change, so
+    // a request that omits it is answered 422 - the rehearsal would not start at all. Asserted in
+    // this file because "the slug this dialog was opened with reaches the server" is its subject,
+    // and the door it is now true of is a third one rather than the two it was written for.
+    expect(scriptRequests.length).toBeGreaterThan(0)
+    for (const url of scriptRequests) {
+      expect(new URL(url, 'http://test').searchParams.get('slug')).toBe('secure-proj')
+    }
   })
 
   it('names no voice of its own, and sends the slug so the server resolves one', async () => {
@@ -174,6 +194,7 @@ describe('the smoke-test dialog and the project it was opened from', () => {
     // absent from the request, and it was the weaker of the two that let this survive.
     pressBodies = []
     speakBodies = []
+    scriptRequests = []
     vi.stubGlobal('fetch', installFetch())
     installSpeechRecognition(EVASIVE_ANSWER)
     installAudioAndMic()

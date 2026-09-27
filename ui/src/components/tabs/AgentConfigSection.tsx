@@ -30,6 +30,7 @@ import {
   type PortraitUpload,
 } from '../../api/agentConfig'
 import { projectsApi } from '../../api/endpoints'
+import { DEFAULT_REHEARSAL_SCRIPT, rehearsalApi } from '../../api/rehearsal'
 import { describeError } from '../../utils/describeError'
 import { useAgentIdentity } from '../../hooks/useAgentIdentity'
 import { AGENT_IDS } from '../agentStatus'
@@ -150,6 +151,10 @@ export default function AgentConfigSection({
   // The rehearsal dialog, mounted only once it is asked for. Mounting it always would fetch a
   // script and post a `/test/speak` the moment anybody opened the Agents tab.
   const [rehearsing, setRehearsing] = useState(false)
+  // Which script to rehearse. `''` is the committed sample, which is what the control opens on -
+  // and it is the value the dialog's own prop defaults to, so the two spellings of "no choice"
+  // agree rather than needing to be kept in step.
+  const [scriptChoice, setScriptChoice] = useState(DEFAULT_REHEARSAL_SCRIPT)
   // What the last upload actually cost, kept so the downscale is visible. An administrator who
   // is never told their 8 MB photograph became 74 kB uploads the same 8 MB file again.
   const [uploaded, setUploaded] = useState<PortraitUpload | null>(null)
@@ -181,6 +186,21 @@ export default function AgentConfigSection({
     queryFn: () => voicesApi.list(slug, { accent: '' }),
     enabled: !!slug,
     staleTime: 5 * 60_000,
+  })
+
+  // The scripts this engagement offers for rehearsal. Asked only for an agent who conducts one,
+  // and only once `config` has said so - `is_interviewer` is read from the server rather than
+  // derived from a list of agent ids here, which is the same rule the rehearsal button follows.
+  //
+  // `error` is bound as well as `data`, for the reason the configuration query above states: a
+  // failed listing and a pending one render the same control otherwise, and the consultant is
+  // left waiting for options that are never coming. The failure is not fatal - the sample is
+  // still there - so it is reported beside the control rather than in place of it.
+  const { data: scriptOptions, error: scriptOptionsError } = useQuery({
+    queryKey: ['rehearsal-scripts', slug],
+    queryFn: () => rehearsalApi.options(slug),
+    enabled: !!slug && !!config?.is_interviewer,
+    staleTime: 60_000,
   })
 
   const voiceName = (id: string | null | undefined): string | null => {
@@ -509,15 +529,63 @@ export default function AgentConfigSection({
       */}
       {config.is_interviewer && (
         <div className="border-t border-gray-100 pt-4 flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">
               Test interview
             </p>
             <p className="text-[11px] text-gray-500 leading-relaxed max-w-sm">
-              Rehearse a short interview with {humanName} using the sample script. They ask real
-              questions in the voice configured above and you answer aloud - a way to hear this
-              configuration before a participant does.
+              Rehearse an interview with {humanName}. They ask real questions in the voice
+              configured above and you answer aloud - a way to hear this configuration before a
+              participant does.
             </p>
+            {/*
+              Which instrument to rehearse.
+
+              **The sample first and selected**, so the control has a working answer before any
+              engagement has scripts of its own - which is every engagement until Maya has run,
+              and the state the whole product is in on a first demonstration.
+
+              **The reference and the description**, which is `script_id` and `node_label`. A
+              consultant cites SC-005 and recognises the activity; neither alone identifies an
+              interview to somebody choosing between eighty-six of them.
+
+              **The review state is shown and nothing is filtered on it.** Measured on the live
+              engagement: exactly one of 86 scripts is approved and it is a van technician's
+              interview, while every script suiting a strategy audience is `pending`. A rehearsal
+              is not a client deliverable, so the state informs the choice rather than
+              restricting it.
+
+              `active = 1` is **not** applied here. The door answers only active scripts, and
+              CLAUDE.md's rule for the knowledge-tier picker holds one layer over: never restate
+              the rule in TypeScript. A list this side filters is a list the next caller forgets
+              to filter.
+            */}
+            <label
+              htmlFor={`rehearsal-script-${agentId}`}
+              className="block text-[10px] font-medium text-gray-500 mt-3 mb-1"
+            >
+              Script
+            </label>
+            <select
+              id={`rehearsal-script-${agentId}`}
+              data-testid="rehearsal-script-choice"
+              value={scriptChoice}
+              onChange={(e) => setScriptChoice(e.target.value)}
+              className="w-full max-w-sm text-xs border border-gray-200 rounded px-2 py-1.5 bg-white"
+            >
+              <option value={DEFAULT_REHEARSAL_SCRIPT}>Sample script (default)</option>
+              {(scriptOptions ?? []).map((s) => (
+                <option key={s.script_id} value={s.script_id}>
+                  {s.script_id} - {s.node_label} ({s.review_status})
+                </option>
+              ))}
+            </select>
+            {scriptOptionsError && (
+              <p className="text-[10px] text-amber-600 mt-1">
+                This project&rsquo;s own scripts could not be listed, so only the sample is
+                offered. {describeError(scriptOptionsError, 'The list could not be loaded.')}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -534,6 +602,10 @@ export default function AgentConfigSection({
         <TestInterviewDialog
           slug={slug}
           agentId={agentId}
+          // The consultant's choice, or `''` for the committed sample. Read from state rather
+          // than from the `<select>` at click time: the element's value is what the DOM holds and
+          // this is what the component decided, which is the half a test can drive.
+          scriptId={scriptChoice}
           displayName={humanName}
           imageUrl={imageUrl}
           // This agent's country, not the project's. It decides which BCP-47 tag the browser

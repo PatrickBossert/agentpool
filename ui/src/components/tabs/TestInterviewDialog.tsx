@@ -1,5 +1,10 @@
 // ui/src/components/tabs/TestInterviewDialog.tsx
-// Smoke-test interview dialog.
+// The rehearsal interview dialog.
+//
+// It was the "smoke-test interview dialog": the script it conducted came from the `smoke-test`
+// project's crew output, and there was no other. The script is now the committed sample in
+// `api/fixtures/` or one the consultant chose from this project's own ledger, which is why the
+// only thing this file knows about it is the `scriptId` it was handed.
 //
 // Phases: setup → ready → interviewing → complete
 // Closing mid-interview saves position to localStorage; the ready screen
@@ -122,13 +127,25 @@ interface Props {
    * voice, and nothing on either side would say so.
    */
   agentId: string
+  /**
+   * Which script to rehearse: a `script_id` from this project's ledger, or `''` for the
+   * committed sample.
+   *
+   * Optional with a default of `''`, unlike `agentId`, and the asymmetry is deliberate. A wrong
+   * `agentId` rehearses the wrong *person* in the wrong voice and looks entirely correct, so it
+   * must be stated; a missing `scriptId` is the sample script, which is what every caller before
+   * the dropdown existed wanted and is the honest meaning of "no choice was made".
+   */
+  scriptId?: string
   /** What this project calls them. Spoken in the briefing, and written on the screen. */
   displayName: string
   /** Their portrait, or `null`/`''` when there is none and `AgentAvatar` draws initials. */
   imageUrl: string | null
 }
 
-// The slug is not decoration. The script comes from the smoke-test project, but the answers
+// The slug is not decoration, and it is now load-bearing twice over: it scopes all three doors -
+// every one of them asks `check_project_access` - and it is what names the engagement whose
+// scripts may be rehearsed. What follows was written when only the press needed it, and the answers
 // the consultant types are this project's, and the elaboration press is what sends them to a
 // model - so the press has to say which project it belongs to or it cannot be routed by that
 // project's llm_mode.
@@ -137,6 +154,7 @@ export default function TestInterviewDialog({
   onClose,
   locale = 'GB',
   agentId,
+  scriptId = '',
   displayName,
   imageUrl,
 }: Props) {
@@ -199,7 +217,13 @@ export default function TestInterviewDialog({
 
   async function loadScript() {
     try {
-      const res = await fetch(`${API_BASE}/script`, { headers: authHeaders() })
+      // The slug travels even when `scriptId` is blank, because the door requires it: it gained a
+      // slug and a floor in the same change, and the default arm is scoped like the chosen one.
+      // `script_id` is **omitted** rather than sent empty when there is no choice, so there is one
+      // spelling of "the sample" on the wire rather than two the server has to agree about.
+      const query = new URLSearchParams({ slug })
+      if (scriptId) query.set('script_id', scriptId)
+      const res = await fetch(`${API_BASE}/script?${query}`, { headers: authHeaders() })
       if (!res.ok) throw new Error(await describeScriptFailure(res))
       const data: InterviewScript = await res.json()
       const total = data.sections.reduce((n, s) => n + s.questions.length, 0)
