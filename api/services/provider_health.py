@@ -59,6 +59,14 @@ network, no settings, no clock - so every one of these cases is driven directly 
 says so**, rather than guessing a remedy. An alert that says "this deployment does not recognise
 this refusal" and quotes it is honest; one that guesses "top up" is not.
 
+That promise **includes the two ambiguous pairs above**, and did not when it was first written:
+an Anthropic 400 or an ElevenLabs 401 whose body did not match a credit phrase fell straight
+through to `MALFORMED_REQUEST` and `AUTH_REFUSED`, whose remedies say in bold *do not top up*
+and *replace the key*. A reworded message - or a body that could not be read, which a streamed
+response makes routine - turned the two most expensive conditions in the system into confident
+instructions to do the wrong thing. `_AMBIGUOUS_STATUSES` is the fix: for those pairs the body
+must affirmatively say which cause it is, or the operator is told to read the response.
+
 ## What is deliberately not built
 
 No dashboard, no history table, no forecasting, no auto-top-up, and no trend. The registry, the
@@ -117,6 +125,32 @@ _RATE_PHRASES = (
     "concurrent",
 )
 
+# `(provider, status)` pairs where the provider reuses one status for an exhausted account and
+# for something with the opposite remedy. Declared rather than inferred: it is a fact about each
+# provider's API, and a third entry should be added by somebody who has seen the provider do it.
+_AMBIGUOUS_STATUSES = {
+    (ANTHROPIC, 400),     # credit exhaustion, or a genuinely malformed request
+    (ELEVENLABS, 401),    # quota exhaustion, or a bad key
+}
+
+# Affirmative signals that resolve an ambiguous pair. Only phrases a provider actually uses -
+# "invalid_request_error" is deliberately absent, because Anthropic carries it on the credit
+# message too and so discriminates nothing.
+_AUTH_PHRASES = (
+    "invalid_api_key",
+    "invalid api key",
+    "authentication_error",
+    "invalid x-api-key",
+    "could not be authenticated",
+)
+_MALFORMED_PHRASES = (
+    "malformed",
+    "is not valid json",
+    "unexpected keyword",
+    "field required",
+    "input should be",
+)
+
 
 @dataclass(frozen=True)
 class ProviderFault:
@@ -144,14 +178,21 @@ def _body_text(exc: BaseException) -> str:
     Never raises: this runs inside failure handling, and a body that cannot be read must not
     become a second failure on top of the first.
     """
-    parts = [str(exc)]
+    # **The provider's words, not ours.** `str(exc)` on an httpx error contains the request URL,
+    # so a path containing "billing" - `/v1/billing/usage` - would match `_CREDIT_PHRASES` and
+    # flip the remedy on a refusal that had nothing to do with credit. When there is a response,
+    # its body is the only thing read; `str(exc)` is the fallback for errors that carry no
+    # response at all, where it is the only text there is.
     response = getattr(exc, "response", None)
     if response is not None:
         try:
-            parts.append(response.text or "")
+            return (response.text or "").lower()
         except Exception:
-            pass
-    return " ".join(parts).lower()
+            # A streamed response raises `ResponseNotRead` here. Deliberately resolves to "" -
+            # an unreadable body must not be matched against `str(exc)`, which would reintroduce
+            # the URL, and `_AMBIGUOUS_STATUSES` is what stops "" becoming a confident guess.
+            return ""
+    return str(exc).lower()
 
 
 def _status_of(exc: BaseException) -> int | None:
@@ -183,6 +224,31 @@ def classify(provider: str, exc: BaseException) -> ProviderFault:
 
     if status == 429 or any(phrase in text for phrase in _RATE_PHRASES):
         return ProviderFault(provider, RATE_LIMITED, _detail(exc, status))
+
+    # **The two pairs where the provider uses one status for two opposite causes.**
+    #
+    # Anthropic spells an exhausted balance `400`, the same status as a malformed request;
+    # ElevenLabs spells an exhausted quota `401`, the same status as a bad key. The credit
+    # phrases above catch the exhaustion *when the body says so* - but a body that has been
+    # reworded, or that could not be read at all (a streamed response raises `ResponseNotRead`,
+    # which `_body_text` swallows to ""), then falls through to a remedy that says in bold **do
+    # not top up** while the balance is zero, or **replace the key** while the key is fine.
+    #
+    # A wrong-but-unrecognised refusal is cheap; a confidently wrong one is not. So for these
+    # pairs an unmatched body resolves to `UNKNOWN`, whose remedy tells the operator to read the
+    # response before assuming a cause - unless the body affirmatively says which it is.
+    if (provider, status) in _AMBIGUOUS_STATUSES:
+        if any(phrase in text for phrase in _AUTH_PHRASES):
+            return ProviderFault(provider, AUTH_REFUSED, _detail(exc, status))
+        if any(phrase in text for phrase in _MALFORMED_PHRASES):
+            return ProviderFault(provider, MALFORMED_REQUEST, _detail(exc, status))
+        return ProviderFault(
+            provider,
+            UNKNOWN,
+            f"{_detail(exc, status)} - and {provider} uses HTTP {status} for an exhausted "
+            f"{'balance' if provider == ANTHROPIC else 'quota'} as well as for the obvious "
+            f"cause, so this deployment will not guess between them",
+        )
 
     if status == 400:
         # Deepgram's "Keyterm limit exceeded" lives here, and it is a defect in what we sent
@@ -257,6 +323,63 @@ def remedy(fault: ProviderFault) -> str:
     return _REMEDIES.get(fault.fault, _REMEDIES[UNKNOWN])
 
 
+# Which reader answers "how much was left?" for each provider.
+#
+# **This mapping is what gives `provider_quota`'s readers a production caller at all.** Being a
+# member of `HEALTH_CHECKS` is not a caller: nothing outside `tests/` iterates that registry, so
+# both readers were reachable only from a test that enumerated the registry and asserted each
+# returned a `HealthResult` - which reads as coverage and proves only that a function is
+# callable. CLAUDE.md's *a helper with no production caller is a helper that will drift from
+# production*, arriving through a registry rather than through a test helper.
+#
+# Anthropic is absent because no balance endpoint exists; Chroma because its cloud publishes no
+# quota endpoint at all. Both are argued in `provider_quota`'s docstring.
+_QUOTA_READERS = {
+    ELEVENLABS: "check_speech_quota",
+    DEEPGRAM: "check_transcription_usage",
+}
+
+# The faults where "how much was left?" is the operator's next question.
+#
+# Not every fault: a rate limit is about the rate and a malformed request is about the code, so
+# reading a balance for either would cost a network call to answer a question nobody asked, and
+# would put a number in front of an operator that has nothing to do with their problem.
+_QUOTA_RELEVANT_FAULTS = (OUT_OF_CREDIT, AUTH_REFUSED)
+
+
+def _quota_reading(provider: str, fault: "ProviderFault") -> str:
+    """What the provider says about its own remaining credit, if it will say anything.
+
+    Called lazily from the alert body, so it runs at most three times an hour per incident
+    rather than once per refused call.
+
+    Never raises and never blocks the alert: a reader that fails costs the message one
+    paragraph, and the classification and remedy above it are unaffected.
+    """
+    if fault.fault not in _QUOTA_RELEVANT_FAULTS:
+        return ""
+    reader_name = _QUOTA_READERS.get(provider)
+    if not reader_name:
+        return ""
+    try:
+        from api.services import provider_quota
+
+        result = getattr(provider_quota, reader_name)("")
+        if result.degraded:
+            headline = "What the account says (this could not be read in full)"
+        elif result.ok:
+            headline = "What the account says"
+        else:
+            headline = "What the account says (and it agrees something is wrong)"
+        return f"{headline}: {result.diagnosis}\n\n"
+    except Exception:
+        _log.exception("provider quota reading failed for %s", provider)
+        return (
+            "What the account says: this deployment could not read it. The refusal above "
+            "stands on its own.\n\n"
+        )
+
+
 def report_provider_failure(
     *, provider: str, operation: str, exc: BaseException, slug: str = "", consequence: str = ""
 ) -> ProviderFault | None:
@@ -273,11 +396,12 @@ def report_provider_failure(
         fault = classify(provider, exc)
         where = f" on engagement '{slug}'" if slug else ""
         action = remedy(fault)
-        alert_operator(
-            key=fault.incident_key,
-            subject=f"{provider} refused this deployment - {fault.fault.replace('_', ' ')}",
-            diagnosis=f"{operation}{where} was refused by {provider} ({fault.detail}): {action}",
-            body=(
+
+        def _compose_body() -> str:
+            # Resolved by `alert_operator` **after** the rate limit, never before - see
+            # `_quota_reading`, which makes a network call. Forty refused queries in one crew
+            # synthesis therefore read a quota at most three times, not forty.
+            return (
                 f"A paid provider refused a call this deployment made.\n\n"
                 f"Provider: {provider}\n"
                 f"What failed: {operation}{where}\n"
@@ -285,12 +409,20 @@ def report_provider_failure(
                 f"What the provider said: {fault.detail}\n\n"
                 f"What to do: {action}\n\n"
                 + (f"What this cost: {consequence}\n\n" if consequence else "")
+                + _quota_reading(provider, fault)
                 + "These three causes need opposite actions - topping up does not fix a rate "
                 "limit or a malformed request, and waiting does not fix an exhausted balance - "
                 "so the classification above is worth reading before acting.\n\n"
                 "This message is rate-limited to three per hour for this provider and fault. "
                 "The server log carries every occurrence."
-            ),
+            )
+
+        alert_operator(
+            key=fault.incident_key,
+            subject=f"{provider} refused this deployment - {fault.fault.replace('_', ' ')}",
+            diagnosis=f"{operation}{where} was refused by {provider} ({fault.detail}): {action}",
+            body=_compose_body,
+            summary=f"{provider} {fault.fault} during {operation}{where}.",
         )
         return fault
     except Exception:

@@ -35,11 +35,29 @@ from api.services.provider_health import (
 )
 
 
-def _http_error(status: int, body: str = "") -> httpx.HTTPStatusError:
-    """A real `httpx.HTTPStatusError`, so the classifier is driven against the type it will meet."""
-    request = httpx.Request("POST", "https://provider.example/v1/thing")
+def _http_error(
+    status: int, body: str = "", url: str = "https://provider.example/v1/thing"
+) -> httpx.HTTPStatusError:
+    """An `httpx.HTTPStatusError` **raised the way httpx raises one**, not merely constructed.
+
+    The difference is not cosmetic and it hid a defect. Building it by hand as
+    `HTTPStatusError("403", ...)` gives `str(exc) == "403"`; a real one comes from
+    `raise_for_status()`, whose message is *"Client error '403 Forbidden' for url
+    'https://…/v1/billing/usage'"* - **the request URL is in the exception's own text**. The
+    classifier matched against that text, so a path containing "billing" flipped the remedy to
+    "top up the account" on evidence taken from our own request.
+
+    The hand-built fake could not see it, and passed the test written to catch it: *a fake is a
+    claim about an external system*, wrong in the same direction as the bug. Raising it properly
+    is what makes that test able to fail.
+    """
+    request = httpx.Request("POST", url)
     response = httpx.Response(status, text=body, request=request)
-    return httpx.HTTPStatusError(f"{status}", request=request, response=response)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return exc
+    raise AssertionError(f"HTTP {status} is not an error status")
 
 
 @pytest.fixture(autouse=True)
@@ -161,7 +179,10 @@ def test_the_three_remedies_contradict_each_other_rather_than_merely_differing()
     """Each remedy must rule out the others' action, which is the point of distinguishing them."""
     credit = provider_health.remedy(classify(ANTHROPIC, _http_error(402)))
     limited = provider_health.remedy(classify(ANTHROPIC, _http_error(429)))
-    malformed = provider_health.remedy(classify(ANTHROPIC, _http_error(400, "bad shape")))
+    # Deepgram rather than Anthropic for the malformed case: Anthropic/400 is one of the two
+    # ambiguous pairs, where an unmatched body deliberately resolves to UNKNOWN rather than to a
+    # confident "this is a defect, do not top up". Deepgram's 400 means what it says.
+    malformed = provider_health.remedy(classify(DEEPGRAM, _http_error(400, "bad shape")))
 
     assert "top it up" in credit and "will not clear on its own" in credit
     assert "Topping up changes nothing" in limited
@@ -449,3 +470,85 @@ def test_the_real_client_is_built_with_the_response_hook(monkeypatch):
     assert hooks, "the Anthropic client was built with no response hook, so no headers are read"
 
     monkeypatch.setattr(http_clients, "_anthropic_client", None, raising=False)
+
+
+# ── The two statuses a provider reuses for opposite causes ───────────────────────────────────
+
+def test_an_anthropic_400_with_no_credit_phrase_does_not_claim_to_be_a_defect():
+    """**A confidently wrong remedy is the expensive kind.**
+
+    Anthropic uses 400 for an exhausted balance *and* for a malformed request. If the credit
+    message is reworded, or the body cannot be read, a `400 -> MALFORMED_REQUEST` rule tells the
+    operator in bold "this is a defect, do not top up and do not wait" while the balance is zero.
+    """
+    fault = classify(ANTHROPIC, _http_error(400, '{"error":{"message":"something new"}}'))
+    assert fault.fault == UNKNOWN
+    assert "will not guess" in fault.detail
+    action = provider_health.remedy(fault)
+    assert "Do not top up" not in action
+    assert "read it before assuming a cause" in action
+
+
+def test_an_elevenlabs_401_with_no_quota_phrase_does_not_claim_the_key_is_bad():
+    """The mirror image: it would send an operator to replace a key that works."""
+    fault = classify(ELEVENLABS, _http_error(401, '{"detail":{"status":"something_new"}}'))
+    assert fault.fault == UNKNOWN
+    assert "replace it" not in provider_health.remedy(fault)
+
+
+def test_an_unreadable_body_on_an_ambiguous_status_is_not_guessed():
+    """A streamed response raises `ResponseNotRead`, which resolves the body to "".
+
+    That is routine rather than exotic, and it used to fall straight through to the confident
+    branch - the worst case, because there is no evidence at all.
+    """
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+
+    class _Unread(httpx.Response):
+        @property
+        def text(self):
+            raise httpx.ResponseNotRead()
+
+    response = _Unread(400, request=request)
+    fault = classify(ANTHROPIC, httpx.HTTPStatusError("400", request=request, response=response))
+    assert fault.fault == UNKNOWN
+
+
+def test_an_affirmative_body_still_resolves_an_ambiguous_status():
+    """The control. Without it, resolving every ambiguous pair to UNKNOWN passes the three
+    tests above and throws away every classification the body *can* support."""
+    assert classify(
+        ELEVENLABS, _http_error(401, '{"detail":{"status":"invalid_api_key"}}')
+    ).fault == AUTH_REFUSED
+    assert classify(
+        ANTHROPIC, _http_error(400, '{"error":{"message":"credit balance is too low"}}')
+    ).fault == OUT_OF_CREDIT
+    assert classify(
+        ANTHROPIC, _http_error(400, '{"error":{"message":"field required: messages"}}')
+    ).fault == MALFORMED_REQUEST
+
+
+def test_a_url_containing_a_credit_word_does_not_flip_the_remedy():
+    """`str(exc)` on an httpx error carries the request URL.
+
+    A path like `/v1/billing/usage` matched `_CREDIT_PHRASES` and turned any refusal on that
+    endpoint into "top up the account", on evidence that came from our own request rather than
+    from the provider.
+    """
+    exc = _http_error(
+        403, '{"err_msg":"insufficient scope"}',
+        url="https://api.deepgram.com/v1/billing/usage",
+    )
+    assert "billing" in str(exc), (
+        "the fake must carry the URL in its message, or this test cannot see the defect"
+    )
+    assert classify(DEEPGRAM, exc).fault == AUTH_REFUSED, (
+        "the remedy came from the URL rather than from the provider's body"
+    )
+
+
+def test_an_error_with_no_response_still_reads_its_own_message():
+    """The fallback half: with no response there is no body, and `str(exc)` is all there is."""
+    assert classify(ANTHROPIC, RuntimeError("insufficient credit on this account")).fault == (
+        OUT_OF_CREDIT
+    )

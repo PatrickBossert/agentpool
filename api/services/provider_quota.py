@@ -7,10 +7,17 @@ means "you have exceeded your character quota" - and that is the guarantee, beca
 the call that was actually refused. These readers are the *warning before* that, and they are
 only as fresh as the last time somebody asked.
 
-So they are `HealthCheck` probes, called at the moment of a real failure to tell an operator
-which kind it was, in the same shape and for the same reason as `check_vector_store`. **Nothing
-calls them on a timer.** A quota that is fine between polls and exhausted during one is a poll
-that lied, and this module would rather answer a question somebody is actually asking.
+**Who calls them.** `report_provider_failure` in `provider_health.py` consults the reader for
+the provider that just refused us, on the `out_of_credit` and `auth_refused` faults - the two
+where "how much was left?" is the operator's next question - and puts the reading in the alert.
+Nothing calls them on a timer: a quota that is fine between polls and exhausted during one is a
+poll that lied.
+
+They are `HealthCheck` probes as well, so the registry can enumerate them, but **being in the
+registry is not a caller** - nothing outside `tests/` iterates `HEALTH_CHECKS` today. This
+paragraph previously described a call pattern that did not exist, and a registry test that
+called every probe read as coverage while proving only that the functions were callable. The
+caller is asserted directly now, in `tests/test_provider_quota.py`.
 
 ## What each provider exposes, measured on 17 September 2026 rather than recalled
 
@@ -88,10 +95,16 @@ def check_speech_quota(_slug: str = "") -> HealthResult:
     )
 
     if status == 401:
-        # Measured, not assumed: the live key synthesises and lists voices perfectly and is
-        # refused this endpoint alone. Reporting it as a bad key would send an operator to
-        # replace one that works - which is the same trap `classify` exists to avoid one layer
-        # down, where ElevenLabs spells quota exhaustion as a 401 too.
+        # Measured on **17 September 2026**, and **no longer what production does**: the key was
+        # re-scoped afterwards and now reads the allowance, so this branch is the fallback for a
+        # key that has not been, not a description of this deployment. Dated deliberately - the
+        # undated version of this comment went on describing a state that had been fixed, which
+        # is the class of claim CLAUDE.md warns rots silently because nothing here can check it.
+        #
+        # The reasoning still holds for any key lacking `user_read`: the key synthesises and
+        # lists voices perfectly and is refused this endpoint alone, so reporting it as a bad key
+        # would send an operator to replace one that works - the same trap `classify` exists to
+        # avoid one layer down, where ElevenLabs spells quota exhaustion as a 401 too.
         #
         # **Fall through to consumption rather than giving up.** The allowance needs the
         # `user_read` permission, which the account's Editor role does not carry - ElevenLabs
@@ -154,11 +167,17 @@ def _speech_consumption(key: str, *, now_ms: int | None = None) -> HealthResult:
         for series in usage.values():
             if isinstance(series, list):
                 spent += sum(v for v in series if isinstance(v, (int, float)))
+    # **Degraded, not healthy.** This read succeeded and still did not answer the question the
+    # check exists to ask: it is spend, with no limit to measure it against, so it cannot say
+    # "you are nearly out" and must not be rendered as if it had. `ok=True` here reported an
+    # account green while nothing had read its allowance.
     return HealthResult(
-        True,
+        False,
         f"ElevenLabs spent {spent:,.0f} characters in the last {_CONSUMPTION_WINDOW_DAYS} days. "
         "This is consumption, not the allowance remaining - the key is missing the `user_read` "
-        "permission, so the limit cannot be read and no percentage can be given.",
+        "permission, so the limit cannot be read and no percentage can be given. Add "
+        "`user_read` to the key in the ElevenLabs console to see how much is left.",
+        degraded=True,
     )
 
 
@@ -185,6 +204,11 @@ def check_transcription_usage(_slug: str = "") -> HealthResult:
             False, f"Could not reach the Deepgram account (HTTP {status}): {body}"
         )
 
+    # **The first project, arbitrarily**, and that is a real limitation rather than a choice:
+    # Deepgram accounts can hold several and nothing here says which one this deployment's key
+    # transcribes against, so on a multi-project account this may report usage for the wrong
+    # one. Recorded rather than guessed at - the fix is a DEEPGRAM_PROJECT_ID setting, and it is
+    # not worth one until an account here has two.
     project_id = body["projects"][0].get("project_id")
     status, body = _read(
         f"https://api.deepgram.com/v1/projects/{project_id}/usage", headers
@@ -205,9 +229,13 @@ def check_transcription_usage(_slug: str = "") -> HealthResult:
     hours = sum(
         r.get("hours", 0) or 0 for r in results if isinstance(r, dict)
     ) if isinstance(results, list) else 0
+    # Degraded for the same reason as ElevenLabs' consumption read above: hours spent is not a
+    # balance, so nothing here can warn that the account is about to run out.
     return HealthResult(
-        True,
+        False,
         f"Deepgram answered: {hours:.2f} hours transcribed between "
         f"{body.get('start', '?')} and {body.get('end', '?')}. This is consumption, not a "
-        f"remaining balance - the key may not read balances.",
+        f"remaining balance - the key may not read balances. Issue a key with Admin or Owner "
+        f"authorisation to read the balance before it is exhausted.",
+        degraded=True,
     )

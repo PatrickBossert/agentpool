@@ -146,24 +146,55 @@ def _send_off_the_request_path(*, key: str, to: str, subject: str, body: str) ->
     task.add_done_callback(_pending_alerts.discard)
 
 
-def alert_operator(*, key: str, subject: str, diagnosis: str, body: str) -> None:
+def _resolve(value):
+    """A string, or a callable answering one. Never raises: a diagnosis that cannot be built
+    must not take down the alert it was for."""
+    if not callable(value):
+        return value
+    try:
+        return value()
+    except Exception:
+        _log.exception("operator alert: composing the message failed")
+        return "(this deployment could not compose the diagnosis for this alert)"
+
+
+def alert_operator(
+    *,
+    key: str,
+    subject: str,
+    diagnosis,
+    body,
+    summary: str = "",
+) -> None:
     """Tell the operator that `key` has failed. Returns None in every path, raises in none.
 
     `key` names the incident and is what the rate limit is keyed on, so two call sites reporting
     the same outage share a budget rather than each having their own.
 
-    `diagnosis` is the operator's sentence - what went wrong and what to do about it - and goes
-    in the log line as well as the message, because the log is the leg that always happens.
-    """
-    _log.error("operator alert [%s]: %s", key, diagnosis)
+    **`diagnosis` and `body` may be callables, and the rate limit is consulted before they are
+    resolved.** That ordering is the whole point of allowing callables. Composing them is not
+    always cheap: the vector store's diagnosis builds a Chroma client and makes a network call,
+    and the provider alerts read a quota endpoint. Resolved eagerly, forty refused queries in one
+    crew synthesis meant three messages - correct - and **forty client constructions and forty
+    heartbeat timeouts inside the agent's loop**, because the expensive leg sat in front of the
+    limiter this module's own comments call "what makes this safe to put on a per-query path".
 
+    `summary` is the cheap sentence logged when an alert is suppressed. Every occurrence still
+    produces a log line; a suppressed one carries what was already known rather than paying to
+    find out more, which is the trade that makes the limiter worth having.
+    """
     if not _may_mail_about(key):
         _log.error(
             "operator alert [%s]: suppressing the message - %d have already been sent for this "
-            "incident within the last %d minutes, and they are one incident. The log carries "
-            "every one.", key, MAIL_LIMIT, MAIL_WINDOW_SECONDS // 60,
+            "incident within the last %d minutes, and they are one incident. %s",
+            key, MAIL_LIMIT, MAIL_WINDOW_SECONDS // 60,
+            summary or "The earlier alerts carry the diagnosis.",
         )
         return
+
+    diagnosis = _resolve(diagnosis)
+    body = _resolve(body)
+    _log.error("operator alert [%s]: %s", key, diagnosis)
 
     try:
         to = get_settings().admin_alert_email.strip()

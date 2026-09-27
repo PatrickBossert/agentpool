@@ -114,11 +114,6 @@ _log = logging.getLogger(__name__)
 VECTOR_STORE = "vector_store"
 
 
-# Re-exported so every existing `from api.services.health_checks import HealthResult`
-# keeps working. They are *defined* in `health_types`, which imports nothing of ours, so a
-# probe module can import them without closing a cycle back to this registry.
-
-
 def store_kind(slug: str) -> str:
     """Which store this project resolves to - `cloud` or `local`.
 
@@ -222,10 +217,13 @@ def check_vector_store(slug: str) -> HealthResult:
 # Anthropic is deliberately absent: it publishes no balance endpoint, and its rate-limit
 # headers ride every response already, captured by the event hook on the shared client. A
 # probe here would have to *spend* tokens to ask how many are left.
+#
+# **Membership of this tuple is not a caller.** Nothing outside `tests/` iterates it today; the
+# quota readers are reached by `provider_health.report_provider_failure`, which consults the
+# reader for the provider that just refused us. The registry exists so a future consumer can
+# enumerate the dependencies - it is not what makes any of them run.
 HEALTH_CHECKS: tuple[HealthCheck, ...] = (
     HealthCheck(key=VECTOR_STORE, label="Vector store (ChromaDB)", probe=check_vector_store),
-)
-HEALTH_CHECKS = HEALTH_CHECKS + (
     HealthCheck(key=SPEECH_QUOTA, label="Speech synthesis quota (ElevenLabs)",
                 probe=check_speech_quota),
     HealthCheck(key=TRANSCRIPTION_USAGE, label="Transcription usage (Deepgram)",
@@ -298,17 +296,28 @@ def report_vector_store_failure(
                 )
                 return
 
-        diagnosis = describe_vector_store_failure(slug, exc)
         where = f" on engagement '{slug}'" if slug else ""
-        alert_operator(
-            key=incident_key(slug),
-            subject="Vector store unavailable - retrieval and indexing are failing",
-            diagnosis=f"{operation}{where} could not reach the vector store: {diagnosis}",
-            body=(
+
+        # **Both composed lazily, and that is a correctness property rather than a tidy-up.**
+        # `describe_vector_store_failure` probes the store: it builds a Chroma client and makes a
+        # network call. Resolved eagerly - which is how this was first written - forty refused
+        # retrievals in one crew synthesis meant three messages, correctly, and **forty client
+        # constructions and forty heartbeat timeouts inside the agent's loop**, because the
+        # expensive leg sat in front of the limiter that `operator_alert` describes as "what
+        # makes this safe to put on a per-query path". `alert_operator` consults the limiter
+        # first and resolves these only when it is going to use them.
+        def _diagnose() -> str:
+            return (
+                f"{operation}{where} could not reach the vector store: "
+                f"{describe_vector_store_failure(slug, exc)}"
+            )
+
+        def _compose_body() -> str:
+            return (
                 f"An operation on this deployment needed the vector store and could not reach "
                 f"it.\n\n"
                 f"What failed: {operation}{where}\n\n"
-                f"What went wrong: {diagnosis}\n\n"
+                f"What went wrong: {describe_vector_store_failure(slug, exc)}\n\n"
                 + (f"What this cost: {consequence}\n\n" if consequence else "")
                 + "The underlying records are unaffected - SQLite is the system of record "
                 "throughout, and anything that failed to index can be re-indexed once the "
@@ -317,7 +326,14 @@ def report_vector_store_failure(
                 "store was down will not be searchable until they are re-indexed.\n\n"
                 "This message is rate-limited to three per hour for this incident. The server "
                 "log carries every occurrence."
-            ),
+            )
+
+        alert_operator(
+            key=incident_key(slug),
+            subject="Vector store unavailable - retrieval and indexing are failing",
+            diagnosis=_diagnose,
+            body=_compose_body,
+            summary=f"{operation}{where} could not reach the vector store.",
         )
     except Exception:
         _log.exception(

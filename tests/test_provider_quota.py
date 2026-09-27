@@ -14,6 +14,7 @@ No network: `httpx.get` is replaced at its source, so no test here can reach a p
 """
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from api.config import get_settings
@@ -72,7 +73,13 @@ def test_a_key_refused_the_allowance_falls_through_to_what_it_can_read(monkeypat
     )
     r = check_speech_quota()
     assert len(calls) == 2 and "character-stats" in calls[1]
-    assert r.ok is True
+    # **Degraded, not healthy.** The read succeeded and still did not answer the question the
+    # check exists to ask - it is spend with no limit to measure it against - so it cannot say
+    # "you are nearly out" and must not render green. `ok is True` here reported an account
+    # healthy while nothing had read its allowance.
+    assert r.ok is False
+    assert r.degraded is True
+    assert r.failed is False, "this is 'could not look', not 'looked and it is broken'"
     assert "350 characters" in r.diagnosis
     assert "not the allowance remaining" in r.diagnosis
     assert "user_read" in r.diagnosis
@@ -162,7 +169,11 @@ def test_usage_is_read_through_the_account_and_never_called_a_balance(monkeypatc
                "results": [{"hours": 1.5}, {"hours": 0.25}]}),
     )
     r = check_transcription_usage()
-    assert r.ok is True
+    # Degraded for the same reason as ElevenLabs' consumption read: hours spent is not a
+    # balance, so nothing here can warn that the account is about to run out.
+    assert r.ok is False
+    assert r.degraded is True
+    assert r.failed is False
     assert "1.75 hours" in r.diagnosis
     assert "not a remaining balance" in r.diagnosis
     assert calls[1].endswith("/projects/p1/usage")
@@ -241,3 +252,173 @@ def test_the_registry_holds_the_same_members_whichever_module_is_imported_first(
 
     assert members("api.services.health_checks") == members("api.services.provider_quota")
     assert "speech_quota" in members("api.services.provider_quota")
+
+
+# ── The readers have a production caller, and it is asserted directly ────────────────────────
+
+def test_a_refused_elevenlabs_call_reads_the_allowance_into_the_alert(monkeypatch):
+    """**The regression test for a helper with no production caller.**
+
+    Both readers were reachable only from a test that iterated `HEALTH_CHECKS` and asserted each
+    probe returned a `HealthResult` - which reads as coverage and proves only that a function is
+    callable. Nothing outside `tests/` iterates that registry, so ElevenLabs could cross 85% of
+    its allowance with nobody told, which is the exact case this work exists to close.
+
+    Asserted on the **caller**: a real refusal goes through `report_provider_failure`, and the
+    reading has to come out in the message.
+    """
+    from api.services import operator_alert, provider_health, provider_quota
+
+    operator_alert._alert_mail_log.clear()
+    sent: list[dict] = []
+
+    async def _fake_send(*, to, subject, body):
+        sent.append({"body": body})
+        return True
+
+    monkeypatch.setattr("api.services.outbound_mail.send_platform_mail", _fake_send)
+    from api.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "admin_alert_email", "ops@example.com", raising=False)
+
+    read: list[str] = []
+
+    def _reader(_slug=""):
+        read.append("called")
+        from api.services.health_types import HealthResult
+
+        return HealthResult(False, "ElevenLabs is 91% through its character allowance.")
+
+    monkeypatch.setattr(provider_quota, "check_speech_quota", _reader)
+
+    request = httpx.Request("POST", "https://api.elevenlabs.io/v1/text-to-speech/x")
+    response = httpx.Response(401, text='{"detail":{"status":"quota_exceeded"}}', request=request)
+    exc = httpx.HTTPStatusError("401", request=request, response=response)
+
+    provider_health.report_provider_failure(
+        provider=provider_health.ELEVENLABS, operation="synthesising speech", exc=exc
+    )
+
+    assert read == ["called"], "the alert must consult the quota reader"
+    assert len(sent) == 1
+    assert "91% through its character allowance" in sent[0]["body"]
+    operator_alert._alert_mail_log.clear()
+
+
+def test_a_deepgram_refusal_reads_its_usage_into_the_alert(monkeypatch):
+    """The second of the two, so the mapping is not satisfied by one provider being wired."""
+    from api.services import operator_alert, provider_health, provider_quota
+
+    operator_alert._alert_mail_log.clear()
+    sent: list[dict] = []
+
+    async def _fake_send(*, to, subject, body):
+        sent.append({"body": body})
+        return True
+
+    monkeypatch.setattr("api.services.outbound_mail.send_platform_mail", _fake_send)
+    from api.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "admin_alert_email", "ops@example.com", raising=False)
+
+    from api.services.health_types import HealthResult
+
+    monkeypatch.setattr(
+        provider_quota, "check_transcription_usage",
+        lambda _slug="": HealthResult(False, "Deepgram answered: 12.00 hours transcribed.",
+                                      degraded=True),
+    )
+
+    request = httpx.Request("POST", "https://api.deepgram.com/v1/auth/grant")
+    response = httpx.Response(402, text="payment required", request=request)
+    exc = httpx.HTTPStatusError("402", request=request, response=response)
+
+    provider_health.report_provider_failure(
+        provider=provider_health.DEEPGRAM, operation="minting a grant", exc=exc
+    )
+    assert len(sent) == 1
+    assert "12.00 hours transcribed" in sent[0]["body"]
+    assert "could not be read in full" in sent[0]["body"], (
+        "a degraded reading must be labelled as one, not presented as the allowance"
+    )
+    operator_alert._alert_mail_log.clear()
+
+
+def test_the_quota_reader_is_not_consulted_for_a_rate_limit(monkeypatch):
+    """A balance has nothing to do with a 429, and reading one costs a network call.
+
+    Without this, a wiring that consulted the reader on every fault would pass the two tests
+    above perfectly.
+    """
+    from api.services import operator_alert, provider_health, provider_quota
+
+    operator_alert._alert_mail_log.clear()
+    sent: list[dict] = []
+
+    async def _fake_send(*, to, subject, body):
+        sent.append({"body": body})
+        return True
+
+    monkeypatch.setattr("api.services.outbound_mail.send_platform_mail", _fake_send)
+    from api.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "admin_alert_email", "ops@example.com", raising=False)
+
+    read: list[str] = []
+    monkeypatch.setattr(
+        provider_quota, "check_speech_quota", lambda _slug="": read.append("called"))
+
+    request = httpx.Request("POST", "https://api.elevenlabs.io/v1/text-to-speech/x")
+    response = httpx.Response(429, text="too many requests", request=request)
+    provider_health.report_provider_failure(
+        provider=provider_health.ELEVENLABS,
+        operation="synthesising speech",
+        exc=httpx.HTTPStatusError("429", request=request, response=response),
+    )
+    assert read == [], "a rate limit must not trigger a balance read"
+    operator_alert._alert_mail_log.clear()
+
+
+def test_the_quota_read_happens_at_most_once_per_rate_limited_incident(monkeypatch):
+    """**The expensive leg must sit behind the limiter, not in front of it.**
+
+    `report_provider_failure` is on a per-query path: forty refused retrievals in one crew
+    synthesis must cost three messages *and three quota reads*, not forty. Composing the body
+    eagerly put the network call ahead of `_may_mail_about`, which is the one thing
+    `operator_alert`'s own comments claim makes this safe to call per query.
+    """
+    from api.services import operator_alert, provider_health, provider_quota
+
+    operator_alert._alert_mail_log.clear()
+
+    async def _fake_send(*, to, subject, body):
+        return True
+
+    monkeypatch.setattr("api.services.outbound_mail.send_platform_mail", _fake_send)
+    from api.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "admin_alert_email", "ops@example.com", raising=False)
+
+    from api.services.health_types import HealthResult
+
+    reads: list[str] = []
+
+    def _reader(_slug=""):
+        reads.append("read")
+        return HealthResult(False, "91% used")
+
+    monkeypatch.setattr(provider_quota, "check_speech_quota", _reader)
+
+    request = httpx.Request("POST", "https://api.elevenlabs.io/v1/text-to-speech/x")
+    response = httpx.Response(401, text='{"detail":{"status":"quota_exceeded"}}', request=request)
+    exc = httpx.HTTPStatusError("401", request=request, response=response)
+
+    for _ in range(40):
+        provider_health.report_provider_failure(
+            provider=provider_health.ELEVENLABS, operation="synthesising speech", exc=exc
+        )
+
+    assert len(reads) == operator_alert.MAIL_LIMIT == 3, (
+        f"the quota endpoint was read {len(reads)} times for one incident"
+    )
+    operator_alert._alert_mail_log.clear()

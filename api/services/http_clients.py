@@ -29,7 +29,11 @@ def get_anthropic_client() -> AsyncAnthropic:
     configured only through `.env` would otherwise leave the SDK with no key.
     """
     global _anthropic_client
-    if _anthropic_client is None:
+    # `is_closed` on the underlying httpx client, matching both siblings above. Without it a
+    # closed client is handed out for the life of the process: the two plain httpx clients have
+    # always rebuilt on that condition and this one did not, which is the sort of asymmetry that
+    # reads as deliberate and is not.
+    if _anthropic_client is None or getattr(_anthropic_client._client, "is_closed", False):
         from api.config import get_settings
 
         # A response event hook, so the rate-limit headers are read where they actually arrive.

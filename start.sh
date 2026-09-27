@@ -40,7 +40,20 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # outside an abandoned worktree. There is no second store to choose between, so nothing here
 # needs to be made configurable to avoid picking the wrong one.
 CHROMA_PATH="data/chroma"
-CHROMA_PORT="8002"
+
+# Host and port come from .env, because `api/config.py` declares `chroma_host`/`chroma_port` and
+# `.env.example` invites an operator to set them.
+#
+# **Hardcoding 8002 here recreated the very failure the block below refuses.** With
+# `CHROMA_PORT=8003`, the probe asked 8002, saw nothing, and started a *second* server on
+# 8002 - while the application opened 8003 - then announced 8002 as the running store. That is
+# "a check that examines a different store from the code", which `check_vector_store` was
+# repaired for one file over; the two remedies in one product must not disagree about where the
+# store is. `check_vector_store`'s local remedy already prints `--port {settings.chroma_port}`.
+#
+# The defaults match `api/config.py`'s, and are the only place this file states them.
+CHROMA_HOST="$(env_value CHROMA_HOST)"; [ -n "$CHROMA_HOST" ] || CHROMA_HOST="localhost"
+CHROMA_PORT="$(env_value CHROMA_PORT)"; [ -n "$CHROMA_PORT" ] || CHROMA_PORT="8002"
 
 # Whether something is already answering as ChromaDB on the port.
 #
@@ -52,10 +65,16 @@ CHROMA_PORT="8002"
 # rather than merely opening a socket, so "a process holds the port" and "ChromaDB is
 # answering" are not confused. Both API versions are tried: v2 is what the pinned CLI
 # answers, v1 is what the 0.6.3 image in docker-compose.yml answers.
+# Answers 0 (answering), 1 (not answering), or 2 (cannot tell).
+#
+# **"Cannot tell" is not "not answering".** Without curl there is no way to probe, and treating
+# that as "nothing is running" starts a server on top of whatever is already there - the degrade-
+# rather-than-fail shape, arriving in the function written to prevent it. The caller skips with
+# an honest reason instead.
 chroma_answering() {
-  have curl || return 1
-  curl -fsS -m 3 -o /dev/null "http://localhost:$CHROMA_PORT/api/v2/heartbeat" 2>/dev/null && return 0
-  curl -fsS -m 3 -o /dev/null "http://localhost:$CHROMA_PORT/api/v1/heartbeat" 2>/dev/null && return 0
+  have curl || return 2
+  curl -fsS -m 3 -o /dev/null "http://$CHROMA_HOST:$CHROMA_PORT/api/v2/heartbeat" 2>/dev/null && return 0
+  curl -fsS -m 3 -o /dev/null "http://$CHROMA_HOST:$CHROMA_PORT/api/v1/heartbeat" 2>/dev/null && return 0
   return 1
 }
 
@@ -77,6 +96,10 @@ chroma_answering() {
 chroma_decision() {
   if [ "$1" = "1" ]; then
     echo "cloud"
+  elif [ "$2" = "unknown" ]; then
+    # Cannot probe, so cannot promise the port is free. Refusing to start is the safe
+    # direction: a missed start is visible in the skip list, a duplicate server is not.
+    echo "cannot-probe"
   elif [ "$2" = "1" ]; then
     echo "already-running"
   elif [ "$3" = "1" ]; then
@@ -132,7 +155,11 @@ fi
 # is told what to install rather than being sent to install the one thing this block used to
 # know about.
 CHROMA_HAVE_KEY=0;   [ -n "$(env_value CHROMA_API_KEY)" ] && CHROMA_HAVE_KEY=1
-CHROMA_ANSWERING=0;  chroma_answering && CHROMA_ANSWERING=1
+chroma_answering; case $? in
+  0) CHROMA_ANSWERING=1 ;;
+  2) CHROMA_ANSWERING="unknown" ;;
+  *) CHROMA_ANSWERING=0 ;;
+esac
 CHROMA_HAVE_CLI=0;   [ -x "./venv/bin/chroma" ] && CHROMA_HAVE_CLI=1
 CHROMA_HAVE_DOCKER=0; have docker && CHROMA_HAVE_DOCKER=1
 
@@ -140,24 +167,27 @@ case "$(chroma_decision "$CHROMA_HAVE_KEY" "$CHROMA_ANSWERING" "$CHROMA_HAVE_CLI
   cloud)
     SKIPPED+=("Local ChromaDB - CHROMA_API_KEY is set, so Chroma Cloud is in use")
     ;;
+  cannot-probe)
+    SKIPPED+=("ChromaDB - curl is not installed, so this script cannot tell whether one is already listening on $CHROMA_HOST:$CHROMA_PORT. Refusing to start a second one. Install curl, or start it yourself with './venv/bin/chroma run --host $CHROMA_HOST --port $CHROMA_PORT --path $CHROMA_PATH'.")
+    ;;
   already-running)
     # Deliberately starts nothing. The operator who started this by hand is the reason the
     # store has any data at all, and a second server on the same port would either fail to
     # bind or split reads from writes.
-    STARTED+=("ChromaDB       http://localhost:$CHROMA_PORT (already running - left alone)")
+    STARTED+=("ChromaDB       http://$CHROMA_HOST:$CHROMA_PORT (already running - left alone)")
     ;;
   cli)
-    echo "Starting ChromaDB on :$CHROMA_PORT (venv CLI, --path $CHROMA_PATH)..."
+    echo "Starting ChromaDB on $CHROMA_HOST:$CHROMA_PORT (venv CLI, --path $CHROMA_PATH)..."
     mkdir -p "$CHROMA_PATH"
-    ./venv/bin/chroma run --host localhost --port "$CHROMA_PORT" --path "$CHROMA_PATH" \
+    ./venv/bin/chroma run --host "$CHROMA_HOST" --port "$CHROMA_PORT" --path "$CHROMA_PATH" \
       >/dev/null 2>&1 &
     echo $! > .pids/chroma.pid
-    STARTED+=("ChromaDB       http://localhost:$CHROMA_PORT (venv CLI, $CHROMA_PATH)")
+    STARTED+=("ChromaDB       http://$CHROMA_HOST:$CHROMA_PORT (venv CLI, $CHROMA_PATH)")
     ;;
   docker)
     echo "Starting ChromaDB via Docker (no venv/bin/chroma found)..."
     if docker compose up -d 2>/dev/null; then
-      STARTED+=("ChromaDB       http://localhost:$CHROMA_PORT (Docker, $CHROMA_PATH)")
+      STARTED+=("ChromaDB       http://$CHROMA_HOST:$CHROMA_PORT (Docker, $CHROMA_PATH)")
     else
       SKIPPED+=("ChromaDB - 'docker compose up' failed (is Docker running?) and there is no venv/bin/chroma")
     fi

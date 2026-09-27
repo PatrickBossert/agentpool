@@ -49,6 +49,7 @@ echo "start.sh ChromaDB decision - every branch:"
 
 # The five routes, each reached on its own terms.
 expect cloud           1 0 0 0 "CHROMA_API_KEY set - Chroma Cloud is in use, start nothing local"
+expect cannot-probe    0 unknown 1 1 "curl missing - cannot tell if one is running, so start nothing"
 expect already-running 0 1 1 1 "already answering on :8002 - leave the operator's server alone"
 expect cli             0 0 1 0 "venv/bin/chroma present - the preferred local route"
 expect docker          0 0 0 1 "no venv CLI but docker present - the container fallback"
@@ -69,6 +70,12 @@ expect cloud 1 1 0 0 "CHROMA_API_KEY wins over a server already running"
 expect already-running 0 1 1 0 "a running server is not replaced by the venv CLI"
 expect already-running 0 1 0 1 "a running server is not replaced by Docker"
 expect already-running 0 1 0 0 "a running server is left alone even with no way to start one"
+
+# "Cannot tell" must never be read as "nothing is running" - that is how a second server gets
+# started on top of an operator's own, which is the outcome this whole block exists to refuse.
+expect cannot-probe    0 unknown 1 0 "unprobeable is not the same as absent, with the CLI available"
+expect cannot-probe    0 unknown 0 1 "unprobeable is not the same as absent, with Docker available"
+expect cloud           1 unknown 1 1 "the cloud branch still wins when the probe is unavailable"
 
 # The venv CLI is preferred to Docker, which is the substantive change: the old block knew
 # only about Docker and reported its absence as the reason ChromaDB could not run.
